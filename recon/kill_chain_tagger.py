@@ -118,50 +118,112 @@ def ioc_to_technique_ids(ioc_type: str, ioc_value: str) -> list[str]:
     Returns a list of matching technique_ids based on IOC context.
     Used for quick triage when full text matching is unnecessary.
     """
-    results: list[str] = []
     val_lower = ioc_value.lower()
-    if ioc_type in ('domain', 'fqdn'):
-        results.extend(['T1590', 'T1590.001', 'T1590.002', 'T1591', 'T1598'])
-        if 'github' in val_lower or 'gitlab' in val_lower:
-            results.extend(['T1596', 'T1585'])
-        if any((k in val_lower for k in ('aws', 's3', 'cloudfront'))):
-            results.extend(['T1583', 'T1583.002'])
-        if 'azure' in val_lower:
-            results.extend(['T1583', 'T1583.002'])
-    elif ioc_type in ('ipv4', 'ipv6', 'ip'):
-        results.extend(['T1590', 'T1590.003', 'T1590.004', 'T1592'])
-        results.extend(['T1583', 'T1583.001'])
-        if any((k in val_lower for k in ('tor', 'onion'))):
-            results.extend(['T1583.002', 'T1584.002'])
-        if 'vpn' in val_lower or 'openvpn' in val_lower:
-            results.append('T1583.003')
-    elif ioc_type == 'url':
-        results.extend(['T1590', 'T1592', 'T1598'])
-        if any((k in val_lower for k in ('pastebin', 'github', 'gist'))):
-            results.extend(['T1596', 'T1585.001'])
-        if 'phishing' in val_lower or 'login' in val_lower or 'signin' in val_lower:
-            results.extend(['T1598', 'T1586.001'])
-        if 'download' in val_lower or 'malware' in val_lower:
-            results.extend(['T1588.001', 'T1585'])
-    elif ioc_type in ('md5', 'sha1', 'sha256', 'sha512'):
-        results.extend(['T1588.001', 'T1585.001'])
-        if any((k in val_lower for k in ('malware', 'ransomware', 'trojan'))):
-            results.append('T1585')
-    elif ioc_type in ('email', 'email_addr'):
-        results.extend(['T1598', 'T1586.001'])
-        if any((k in val_lower for k in ('spearphishing', 'phishing'))):
-            results.append('T1598')
-    elif ioc_type in ('certificate', 'cert_fingerprint'):
-        results.extend(['T1590.004', 'T1588.004'])
-    else:
-        results.extend(['T1590', 'T1593', 'T1594'])
-    seen = set()
-    unique: list[str] = []
-    for tid in results:
-        if tid not in seen:
-            seen.add(tid)
-            unique.append(tid)
-    return unique
+
+    # Base techniques by IOC type
+    base_techniques: dict[str, list[str]] = {
+        'domain': ['T1590', 'T1590.001', 'T1590.002', 'T1591', 'T1598'],
+        'fqdn': ['T1590', 'T1590.001', 'T1590.002', 'T1591', 'T1598'],
+        'ipv4': ['T1590', 'T1590.003', 'T1590.004', 'T1592', 'T1583', 'T1583.001'],
+        'ipv6': ['T1590', 'T1590.003', 'T1590.004', 'T1592', 'T1583', 'T1583.001'],
+        'ip': ['T1590', 'T1590.003', 'T1590.004', 'T1592', 'T1583', 'T1583.001'],
+        'url': ['T1590', 'T1592', 'T1598'],
+        'md5': ['T1588.001', 'T1585.001'],
+        'sha1': ['T1588.001', 'T1585.001'],
+        'sha256': ['T1588.001', 'T1585.001'],
+        'sha512': ['T1588.001', 'T1585.001'],
+        'email': ['T1598', 'T1586.001'],
+        'email_addr': ['T1598', 'T1586.001'],
+        'certificate': ['T1590.004', 'T1588.004'],
+        'cert_fingerprint': ['T1590.004', 'T1588.004'],
+    }
+
+    # Keyword modifiers by IOC type
+    keyword_modifiers: dict[str, dict[str, list[str]]] = {
+        'domain': {
+            'github': ['T1596', 'T1585'],
+            'gitlab': ['T1596', 'T1585'],
+            'aws': ['T1583', 'T1583.002'],
+            's3': ['T1583', 'T1583.002'],
+            'cloudfront': ['T1583', 'T1583.002'],
+            'azure': ['T1583', 'T1583.002'],
+        },
+        'fqdn': {
+            'github': ['T1596', 'T1585'],
+            'gitlab': ['T1596', 'T1585'],
+            'aws': ['T1583', 'T1583.002'],
+            's3': ['T1583', 'T1583.002'],
+            'cloudfront': ['T1583', 'T1583.002'],
+            'azure': ['T1583', 'T1583.002'],
+        },
+        'ipv4': {
+            'tor': ['T1583.002', 'T1584.002'],
+            'onion': ['T1583.002', 'T1584.002'],
+            'vpn': ['T1583.003'],
+            'openvpn': ['T1583.003'],
+        },
+        'ipv6': {
+            'tor': ['T1583.002', 'T1584.002'],
+            'onion': ['T1583.002', 'T1584.002'],
+            'vpn': ['T1583.003'],
+            'openvpn': ['T1583.003'],
+        },
+        'ip': {
+            'tor': ['T1583.002', 'T1584.002'],
+            'onion': ['T1583.002', 'T1584.002'],
+            'vpn': ['T1583.003'],
+            'openvpn': ['T1583.003'],
+        },
+        'url': {
+            'pastebin': ['T1596', 'T1585.001'],
+            'github': ['T1596', 'T1585.001'],
+            'gist': ['T1596', 'T1585.001'],
+            'phishing': ['T1598', 'T1586.001'],
+            'login': ['T1598', 'T1586.001'],
+            'signin': ['T1598', 'T1586.001'],
+            'download': ['T1588.001', 'T1585'],
+            'malware': ['T1588.001', 'T1585'],
+        },
+        'md5': {
+            'malware': ['T1585'],
+            'ransomware': ['T1585'],
+            'trojan': ['T1585'],
+        },
+        'sha1': {
+            'malware': ['T1585'],
+            'ransomware': ['T1585'],
+            'trojan': ['T1585'],
+        },
+        'sha256': {
+            'malware': ['T1585'],
+            'ransomware': ['T1585'],
+            'trojan': ['T1585'],
+        },
+        'sha512': {
+            'malware': ['T1585'],
+            'ransomware': ['T1585'],
+            'trojan': ['T1585'],
+        },
+        'email': {
+            'spearphishing': ['T1598'],
+            'phishing': ['T1598'],
+        },
+        'email_addr': {
+            'spearphishing': ['T1598'],
+            'phishing': ['T1598'],
+        },
+    }
+
+    results: list[str] = list(base_techniques.get(ioc_type, ['T1590', 'T1593', 'T1594']))
+
+    # Apply keyword modifiers
+    modifiers = keyword_modifiers.get(ioc_type, {})
+    for keyword, techniques in modifiers.items():
+        if keyword in val_lower:
+            results.extend(techniques)
+
+    # Deduplicate while preserving order
+    return list(dict.fromkeys(results))
 
 class KillChainTagger:
     """

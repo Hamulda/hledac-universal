@@ -132,6 +132,65 @@ class RAGOrchestrator:
                 self._init_error = None
                 logger.info('RAGOrchestrator: ready (mode=%s, sqlite_vec=%s, lancedb=%s)', self._backend_mode, self._sqlite_vec_store is not None, self._lancedb_store is not None)
 
+    def _filter_sources(self, results: list[dict[str, Any]], confidence_threshold: float) -> tuple[list[dict[str, Any]], list[str]]:
+        """Filter search results into sources based on confidence threshold."""
+        sources: list[dict[str, Any]] = []
+        for r in results:
+            score = float(r.get('distance') or r.get('similarity') or 0.0)
+            if score < confidence_threshold:
+                continue
+            text = ((r.get('metadata') or {}).get('text') or r.get('text') or '').strip()[:_TOKEN_CHARS_PER_SOURCE]
+            if not text:
+                continue
+            item_id = r.get('item_id') or r.get('id') or ''
+            sources.append({
+                'id': item_id,
+                'text': text,
+                'similarity': score,
+                'metadata': {k: v for k, v in r.items() if k not in ('item_id', 'id', 'text', 'distance', 'metadata', '_embedding', 'embedding')}
+            })
+            if len(sources) >= _MAX_SOURCES:
+                break
+        return sources, []
+
+    async def _dual_search(self, embedding: list[float], sanitized: str, top_k: int) -> tuple[list[dict[str, Any]], list[str], list[str]]:
+        """Perform dual-engine search: sqlite-vec primary + LanceDB fallback."""
+        results: list[dict[str, Any]] = []
+        stages: list[str] = []
+        errors: list[str] = []
+
+        # Primary: sqlite-vec search
+        if self._sqlite_vec_store is not None:
+            try:
+                results = await self._sqlite_vec_store.search(
+                    query_embedding=embedding, top_k=min(10, top_k), threshold=0.0
+                )
+                stages.append('sqlite_vec_search')
+            except Exception as e:
+                errors.append(f'sqlite_vec: {e}')
+                logger.debug('RAGOrchestrator: sqlite-vec search failed: %s', e)
+
+        # Fallback: LanceDB if results insufficient
+        if self._lancedb_store is not None and len(results) < top_k:
+            try:
+                lancedb_results = await self._lancedb_store.search_similar_adaptive(
+                    query_text=sanitized,
+                    query_emb=embedding,
+                    top_k=min(5, top_k - len(results))
+                )
+                seen_ids = {r.get('item_id') or r.get('id') for r in results}
+                for r in lancedb_results:
+                    rid = r.get('id') or r.get('item_id')
+                    if rid and rid not in seen_ids:
+                        results.append(r)
+                        seen_ids.add(rid)
+                stages.append('lancedb_fallback')
+            except Exception as e:
+                errors.append(f'lancedb: {e}')
+                logger.debug('RAGOrchestrator: LanceDB fallback failed: %s', e)
+
+        return results, stages, errors
+
     async def research_and_answer(self, query: str, confidence_threshold: float=0.7, priority: int=5) -> dict[str, Any]:
         """
         Dual-engine RAG retrieval + answer synthesis.
@@ -153,68 +212,63 @@ class RAGOrchestrator:
         """
         started = time.monotonic()
         stages: list[str] = [f'priority={priority}']
+
         if not self._initialized:
             await self.initialize()
+
         if self._sqlite_vec_store is None and self._lancedb_store is None:
             return self._empty_result(error=self._init_error or 'no backend available', started=started)
+
         sanitized = (query or '').strip()[:_MAX_QUERY_CHARS]
         if not sanitized:
             return self._empty_result(error='empty query', started=started)
+
         stages.append('sanitize')
+
         try:
             embedding = await self._embed_offloop(sanitized)
         except Exception as e:
             logger.warning('RAGOrchestrator: embed failed: %s', e)
             return self._empty_result(error=f'embed: {e}', started=started)
+
         stages.append('embed')
         if not embedding:
             return self._empty_result(error='embed returned empty', started=started)
-        results: list[dict[str, Any]] = []
-        search_errors: list[str] = []
-        if self._sqlite_vec_store is not None:
-            try:
-                results = await self._sqlite_vec_store.search(query_embedding=embedding, top_k=min(10, _MAX_SOURCES), threshold=confidence_threshold)
-                stages.append('sqlite_vec_search')
-            except Exception as e:
-                search_errors.append(f'sqlite_vec: {e}')
-                logger.debug('RAGOrchestrator: sqlite-vec search failed: %s', e)
-        if self._lancedb_store is not None and len(results) < _MAX_SOURCES:
-            try:
-                lancedb_results = await self._lancedb_store.search_similar_adaptive(query_text=sanitized, query_emb=embedding, top_k=min(5, _MAX_SOURCES - len(results)))
-                seen_ids = {r.get('item_id') or r.get('id') for r in results}
-                for r in lancedb_results:
-                    rid = r.get('id') or r.get('item_id')
-                    if rid and rid not in seen_ids:
-                        results.append(r)
-                        seen_ids.add(rid)
-                stages.append('lancedb_fallback')
-            except Exception as e:
-                search_errors.append(f'lancedb: {e}')
-                logger.debug('RAGOrchestrator: LanceDB fallback failed: %s', e)
+
+        results, search_stages, search_errors = await self._dual_search(embedding, sanitized, _MAX_SOURCES)
+        stages.extend(search_stages)
+
         if not results:
             return self._empty_result(error=f"no results from any backend: {'; '.join(search_errors) or 'unknown'}", started=started)
+
         stages.append('search')
-        sources: list[dict[str, Any]] = []
-        for r in results:
-            score = float(r.get('distance') or r.get('similarity') or 0.0)
-            if score < confidence_threshold:
-                continue
-            text = ((r.get('metadata') or {}).get('text') or r.get('text') or '').strip()[:_TOKEN_CHARS_PER_SOURCE]
-            if not text:
-                continue
-            item_id = r.get('item_id') or r.get('id') or ''
-            sources.append({'id': item_id, 'text': text, 'similarity': score, 'metadata': {k: v for k, v in r.items() if k not in ('item_id', 'id', 'text', 'distance', 'metadata', '_embedding', 'embedding')}})
-            if len(sources) >= _MAX_SOURCES:
-                break
+        sources, _ = self._filter_sources(results, confidence_threshold)
         stages.append('filter')
+
         answer, tokens_used = self._synthesize(sanitized, sources)
         stages.append('synthesize')
+
         if sources:
             confidence = sum((s['similarity'] for s in sources)) / len(sources)
         else:
             confidence = _FALLBACK_CONFIDENCE if results else 0.0
         confidence = max(0.0, min(1.0, confidence))
-        return {'sources': sources, 'answer': answer, 'confidence': confidence, 'tokens_used': tokens_used, 'stages_completed': stages, 'metadata': {'processing_time': time.monotonic() - started, 'validation_score': None, 'compressed': False, 'fallback_used': not sources and len(results or []) == 0, 'backend_mode': self._backend_mode, 'search_errors': search_errors if search_errors else None}}
+
+        return {
+            'sources': sources,
+            'answer': answer,
+            'confidence': confidence,
+            'tokens_used': tokens_used,
+            'stages_completed': stages,
+            'metadata': {
+                'processing_time': time.monotonic() - started,
+                'validation_score': None,
+                'compressed': False,
+                'fallback_used': not sources and len(results or []) == 0,
+                'backend_mode': self._backend_mode,
+                'search_errors': search_errors if search_errors else None
+            }
+        }
 
     async def _embed_offloop(self, text: str) -> list[float]:
         """Embed text via MLX, off the event loop.

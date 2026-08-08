@@ -45,6 +45,7 @@ from html.parser import HTMLParser
 from typing import TYPE_CHECKING, Any
 import msgspec
 import xxhash
+import xml.etree.ElementTree as _ET
 
 # Use canonical timestamp parser from feed_parser (eliminates duplicate _parse_timestamp logic)
 from hledac.universal.parsing.feed_parser import _parse_timestamp as _parse_published_ts
@@ -266,67 +267,95 @@ def _is_template_snippet(snippet: str, title: str) -> bool:
         return True
     return False
 
+# ── Score accumulator helpers for _compute_quality ────────────────────────────
+
+
+def _score_url_quality(entry_url: str | None) -> float:
+    """Score URL structure quality (scheme + path depth)."""
+    if not entry_url:
+        return 0.0
+    try:
+        parsed = urllib.parse.urlparse(entry_url)
+        scheme = parsed.scheme.lower()
+        path = parsed.path.rstrip('/')
+        if scheme and scheme not in ('http', 'https'):
+            return -0.15
+        if path.count('/') >= 2:
+            return 0.08
+        if path.count('/') == 1 and len(path) > 1:
+            return 0.04
+    except Exception as e:
+        logger.debug(f"[RSS/Atom] URL quality parse failed for '{entry_url}': {e}")
+    return 0.0
+
+
+def _score_content_length(rich_content: Any) -> float:
+    """Score rich_content length (more content = higher quality)."""
+    if not rich_content:
+        return 0.0
+    rc_len = len(rich_content)
+    if rc_len > 500:
+        return 0.35
+    if rc_len > 100:
+        return 0.2
+    return 0.1
+
+
+def _score_summary_quality(summary: str, title: str) -> float:
+    """Score summary word count if not a template snippet."""
+    if _is_template_snippet(summary, title):
+        return 0.0
+    words = len(summary.split())
+    if words >= 30:
+        return 0.15
+    if words >= 10:
+        return 0.08
+    if words > 0:
+        return 0.03
+    return 0.0
+
+
+def _score_title_length(title: str) -> float:
+    """Score title length (optimal range 30-120 chars)."""
+    title_len = len(title.strip())
+    if 30 <= title_len <= 120:
+        return 0.12
+    if title_len > 0:
+        return 0.04
+    return 0.0
+
+
 def _compute_quality(entry: FeedEntryHit) -> float:
     """
     Compute quality_score (0.0-1.0) from entry metadata.
-    Factors: rich_content, summary length, title length,
-    entry_author presence, feed_language presence, URL structure.
+    Uses score accumulator pattern with dimension-specific helpers.
 
     F178E additions:
     - Spam domain penalty (max -0.25)
     - SEO spam title penalty (-0.3)
     - Template snippet penalty (-0.1)
-    - Windows-1252 charset hint bonus (+0.05)
     """
     score = 0.0
+    # Penalty: spam signals
     if _is_spam_domain(entry.entry_url):
         score -= 0.25
     if _is_seo_spam_title(entry.title):
         score -= 0.3
     if _is_template_snippet(entry.summary, entry.title):
         score -= 0.1
-    rc = entry.rich_content
-    if rc:
-        rc_len = len(rc)
-        if rc_len > 500:
-            score += 0.35
-        elif rc_len > 100:
-            score += 0.2
-        else:
-            score += 0.1
-    if not _is_template_snippet(entry.summary, entry.title):
-        summary_words = len(entry.summary.split())
-        if summary_words >= 30:
-            score += 0.15
-        elif summary_words >= 10:
-            score += 0.08
-        elif summary_words > 0:
-            score += 0.03
-    title_len = len(entry.title.strip())
-    if 30 <= title_len <= 120:
-        score += 0.12
-    elif title_len > 0:
-        score += 0.04
+    # Content quality scoring (dimension helpers)
+    score += _score_content_length(entry.rich_content)
+    score += _score_summary_quality(entry.summary, entry.title)
+    score += _score_title_length(entry.title)
+    # Metadata presence scoring
     if entry.entry_author.strip():
         score += 0.12
     if entry.feed_language.strip():
         score += 0.08
     if entry.feed_title.strip():
         score += 0.05
-    eu = entry.entry_url
-    if eu:
-        try:
-            parsed = urllib.parse.urlparse(eu)
-            scheme = parsed.scheme.lower()
-            path = parsed.path.rstrip('/')
-            if scheme and scheme not in ('http', 'https'):
-                score -= 0.15
-            elif path.count('/') >= 2:
-                score += 0.08
-            elif path.count('/') == 1 and len(path) > 1:
-                score += 0.04
-        except Exception as e:
-            logger.debug(f"[RSS/Atom] URL quality parse failed for '{eu}': {e}")
+    # URL structure scoring
+    score += _score_url_quality(entry.entry_url)
     return max(min(score, 1.0), 0.0)
 
 def _is_xml_entity_dangerous(text: str) -> bool:
@@ -347,8 +376,6 @@ def _entry_dedup_key(entry_url: str, title: str, published_raw: str, guid_raw: s
     if entry_url:
         return f'u:{entry_url}'
     return f'f:{title.lower().strip()}|{published_raw}'
-import xml.etree.ElementTree as _ET
-
 class _ParseMode:
     """Parse-mode observability labels for internal/tracking use."""
     RAW_DEFUSEDXML = 'raw_defusedxml'
@@ -478,6 +505,143 @@ def _child_by_name(parent, localname):
             return child
     return None
 
+
+def _parse_rss_title(item_children: list) -> str:
+    """Extract title from RSS item children."""
+    for ic in item_children:
+        if _local_name(ic.tag) == 'title':
+            return (ic.text or '').strip()
+    return ''
+
+
+def _parse_rss_link(item_children: list) -> str:
+    """Extract link from RSS item children."""
+    for ic in item_children:
+        if _local_name(ic.tag) == 'link':
+            return (ic.text or '').strip()
+    return ''
+
+
+def _parse_rss_description(item_children: list) -> tuple[str, str]:
+    """Extract description and content:encoded from RSS item children."""
+    description = ''
+    content_encoded = ''
+    for ic in item_children:
+        local = _local_name(ic.tag)
+        if local == 'description':
+            description = (ic.text or '').strip()
+        elif local == 'encoded' and 'content' in ic.tag.lower():
+            content_encoded = (ic.text or '').strip()
+    return description, content_encoded
+
+
+def _parse_rss_pubdate_and_guid(item_children: list) -> tuple[str, str, bool | None]:
+    """Extract pubDate, guid and isPermaLink from RSS item children."""
+    pub_date_raw = ''
+    guid_raw = ''
+    is_permalink = None
+    for ic in item_children:
+        local = _local_name(ic.tag)
+        if local == 'pubDate':
+            pub_date_raw = (ic.text or '').strip()
+        elif local == 'guid':
+            guid_raw = (ic.text or '').strip()
+            is_permalink = ic.get('isPermaLink')
+            if is_permalink is not None:
+                is_permalink = is_permalink.lower() == 'true'
+    return pub_date_raw, guid_raw, is_permalink
+
+
+def _parse_rss_author(item_children: list) -> str:
+    """Extract author/creator from RSS item children."""
+    for ic in item_children:
+        local = _local_name(ic.tag)
+        if local in ('author', 'creator'):
+            return (ic.text or '').strip()
+    return ''
+
+
+def _build_entry_from_rss_fields(
+    title: str,
+    link: str,
+    description: str,
+    pub_date_raw: str,
+    guid_raw: str,
+    is_permalink: bool | None,
+    entry_author: str,
+    content_encoded: str,
+    feed_url: str,
+    seen_keys: set[str],
+    retrieved_ts: float,
+) -> FeedEntryHit | None:
+    """Build FeedEntryHit from parsed RSS field values."""
+    published_ts = _parse_published_ts(pub_date_raw)
+    summary = content_encoded or description
+    dedup_key = _entry_dedup_key(link or guid_raw, title, pub_date_raw, None, None)
+    if dedup_key in seen_keys:
+        return None
+    seen_keys.add(dedup_key)
+    return FeedEntryHit(
+        feed_url=feed_url,
+        entry_url=link or guid_raw or '',
+        title=title or '',
+        summary=summary or '',
+        published_raw=pub_date_raw or '',
+        published_ts=published_ts,
+        source=_SOURCE,
+        rank=0,
+        retrieved_ts=retrieved_ts,
+        entry_hash=_entry_hash(title or '', pub_date_raw or ''),
+        rich_content=content_encoded or '',
+        entry_author=entry_author,
+    )
+
+
+def _parse_rss_item(item: Any, feed_url: str, seen_keys: set[str], retrieved_ts: float) -> FeedEntryHit | None:
+    """Parse a single RSS item element."""
+    item_children = list(item)
+    title = _parse_rss_title(item_children)
+    link = _parse_rss_link(item_children)
+    description, content_encoded = _parse_rss_description(item_children)
+    pub_date_raw, guid_raw, _ = _parse_rss_pubdate_and_guid(item_children)
+    entry_author = _parse_rss_author(item_children)
+    return _build_entry_from_rss_fields(
+        title, link, description, pub_date_raw, guid_raw,
+        None, entry_author, content_encoded, feed_url, seen_keys, retrieved_ts
+    )
+
+def _extract_channel_metadata(channel) -> tuple[str, str]:
+    """Extract title and language from RSS channel element."""
+    channel_title = ''
+    channel_language = ''
+    for ch in channel:
+        local = _local_name(ch.tag)
+        if local == 'title' and not channel_title:
+            channel_title = (ch.text or '').strip()
+        elif local == 'language' and not channel_language:
+            channel_language = (ch.text or '').strip()
+    return channel_title, channel_language
+
+
+def _process_rss_items(channel, feed_url, retrieved_ts):
+    """Process all RSS items and return entries with seen_keys set."""
+    entries: list[FeedEntryHit] = []
+    seen_keys: set[str] = set()
+    for child in channel:
+        if child.tag != 'item':
+            continue
+        entry = _parse_rss_item(child, feed_url, seen_keys, retrieved_ts)
+        if entry is None:
+            continue
+        if not entry.title:
+            item_children = list(child)
+            if item_children:
+                entry.title = (item_children[0].text or '').strip()
+        entry.rank = len(entries)
+        entries.append(entry)
+    return entries, seen_keys
+
+
 def _parse_rss(root, feed_url: str, retrieved_ts: float) -> list[FeedEntryHit]:
     """
     Parse RSS 2.0 feed.
@@ -489,67 +653,11 @@ def _parse_rss(root, feed_url: str, retrieved_ts: float) -> list[FeedEntryHit]:
     if channel is None:
         return []
     channel_children = list(channel)
-    channel_title = ''
-    channel_language = ''
-    for ch in channel_children:
-        local = _local_name(ch.tag)
-        if local == 'title' and (not channel_title):
-            channel_title = (ch.text or '').strip()
-        elif local == 'language' and (not channel_language):
-            channel_language = (ch.text or '').strip()
-    entries: list[FeedEntryHit] = []
-    seen_keys: set[str] = set()
-    for child in channel_children:
-        if child.tag != 'item':
-            continue
-        item = child
-        item_children = list(item)
-        title = ''
-        content_encoded = ''
-        link = ''
-        description = ''
-        pub_date_raw = ''
-        guid_raw = ''
-        is_permalink = None
-        entry_author = ''
-        for ic in item_children:
-            ln = ic.tag
-            local = _local_name(ln)
-            if local == 'title':
-                title = (ic.text or '').strip()
-            elif local == 'encoded' and 'content' in ln.lower():
-                content_encoded = (ic.text or '').strip()
-            elif local == 'link':
-                link = (ic.text or '').strip()
-            elif local == 'description':
-                description = (ic.text or '').strip()
-            elif local == 'pubDate':
-                pub_date_raw = (ic.text or '').strip()
-            elif local == 'guid':
-                guid_raw = (ic.text or '').strip()
-                attr = ic.get('isPermaLink')
-                if attr is not None:
-                    is_permalink = attr.lower() == 'true'
-            elif local == 'author' and (not entry_author):
-                entry_author = (ic.text or '').strip()
-            elif local == 'creator' and (not entry_author):
-                entry_author = (ic.text or '').strip()
-        if not title and item_children:
-            title = (item_children[0].text or '').strip()
-        published_ts = _parse_published_ts(pub_date_raw)
-        guid_is_url = bool(guid_raw) and (is_permalink is True or is_permalink is None)
-        if guid_is_url:
-            entry_url = _normalize_url(guid_raw)
-        else:
-            entry_url = _normalize_url(link)
-        if guid_raw:
-            dedup_key = _entry_dedup_key(entry_url, title, pub_date_raw, guid_raw, is_permalink)
-        else:
-            dedup_key = _entry_dedup_key(entry_url, title, pub_date_raw, None, None)
-        if dedup_key in seen_keys:
-            continue
-        seen_keys.add(dedup_key)
-        entries.append(FeedEntryHit(feed_url=feed_url, entry_url=entry_url or '', title=title or '', summary=description or '', published_raw=pub_date_raw or '', published_ts=published_ts, source=_SOURCE, rank=len(entries), retrieved_ts=retrieved_ts, entry_hash=_entry_hash(title or '', pub_date_raw or ''), rich_content=content_encoded or '', entry_author=entry_author, feed_title=channel_title, feed_language=channel_language))
+    channel_title, channel_language = _extract_channel_metadata(channel_children)
+    entries, _ = _process_rss_items(channel_children, feed_url, retrieved_ts)
+    for entry in entries:
+        entry.feed_title = channel_title
+        entry.feed_language = channel_language
     return entries
 
 def _parse_atom(root, feed_url: str, retrieved_ts: float) -> list[FeedEntryHit]:
@@ -600,111 +708,47 @@ def _report_parse_mode(out_list: list[str] | None, mode: str) -> None:
         out_list.append(mode)
 
 def _parse_feed_xml(xml_text: str, feed_url: str, retrieved_ts: float, _parse_mode_out: list[str] | None=None, _feed_type_out: list[str] | None=None) -> list[FeedEntryHit]:
-    """
-    Detect feed type and parse accordingly.
-    Returns list of FeedEntryHit or empty list on failure.
-
-    Recovery order (Sprint 8AR):
-    1. Primary defusedxml on raw input.
-    2. Sanitized copy retry via defusedxml (removes DOCTYPE/ENTITY,
-       replaces benign HTML named entities).
-    3. Sanitized copy via stdlib ET fallback.
-    4. Fail-soft.
-
-    ``_parse_mode_out``, if provided, is appended with the parse mode
-    label for observability (never raises, never affects results).
-
-    ``_feed_type_out``, if provided, is appended with the matched feed type
-    ("rss" | "feed") when a recognized root tag is found, even if the resulting
-    entry list is empty. This distinguishes a valid-but-empty feed from an
-    unrecognized root tag. Never raises.
-    """
-    try:
-        root = _DET.fromstring(xml_text)
-        if root is not None:
-            _report_parse_mode(_parse_mode_out, _ParseMode.RAW_DEFUSEDXML)
-            local_root = _local_name(root.tag)
-            if local_root == 'rss':
-                if _feed_type_out is not None:
-                    _feed_type_out.append('rss')
-                return _parse_rss(root, feed_url, retrieved_ts)
-            elif local_root == 'feed':
-                if _feed_type_out is not None:
-                    _feed_type_out.append('feed')
-                return _parse_atom(root, feed_url, retrieved_ts)
-            else:
-                return []
-    except Exception as e:
-        logger.debug(f'[RSS/Atom] defusedxml parse failed for {feed_url}: {e}')
+    """Detect feed type and parse accordingly. Returns list of FeedEntryHit or empty list on failure."""
+    # Recovery order: raw defusedxml -> sanitized defusedxml -> sanitized stdlib -> fail-soft
     sanitized = _safe_sanitize_xml(xml_text)
-    try:
-        root = _DET.fromstring(sanitized)
-        if root is not None:
-            _report_parse_mode(_parse_mode_out, _ParseMode.SANITIZED_DEFUSEDXML)
-            local_root = _local_name(root.tag)
-            if local_root == 'rss':
-                if _feed_type_out is not None:
-                    _feed_type_out.append('rss')
-                return _parse_rss(root, feed_url, retrieved_ts)
-            elif local_root == 'feed':
-                if _feed_type_out is not None:
-                    _feed_type_out.append('feed')
-                return _parse_atom(root, feed_url, retrieved_ts)
-            else:
-                return []
-    except Exception as e:
-        logger.debug(f'[RSS/Atom] sanitized defusedxml parse failed for {feed_url}: {e}')
-    try:
-        root = _ET.fromstring(sanitized)
-        if root is not None:
-            _report_parse_mode(_parse_mode_out, _ParseMode.SANITIZED_STDLIB_FALLBACK)
-            local_root = _local_name(root.tag)
-            if local_root == 'rss':
-                if _feed_type_out is not None:
-                    _feed_type_out.append('rss')
-                return _parse_rss(root, feed_url, retrieved_ts)
-            elif local_root == 'feed':
-                if _feed_type_out is not None:
-                    _feed_type_out.append('feed')
-                return _parse_atom(root, feed_url, retrieved_ts)
-            else:
-                return []
-    except Exception as e:
-        logger.debug(f'[RSS/Atom] stdlib ET fallback parse failed for {feed_url}: {e}')
+    parse_strategies = [
+        (xml_text, _DET.fromstring, _ParseMode.RAW_DEFUSEDXML),
+        (sanitized, _DET.fromstring, _ParseMode.SANITIZED_DEFUSEDXML),
+        (sanitized, _ET.fromstring, _ParseMode.SANITIZED_STDLIB_FALLBACK),
+    ]
+    for strategy_xml, parser_fn, mode in parse_strategies:
+        entries, _ = _try_parse_with_mode(
+            strategy_xml, feed_url, retrieved_ts, parser_fn,
+            mode, _parse_mode_out, _feed_type_out
+        )
+        if entries is not None:
+            return entries
     _report_parse_mode(_parse_mode_out, _ParseMode.FINAL_FAIL)
     return []
 
+_FAILURE_STAGE_MAP = {
+    ('connection', 'dns_error'): 'source_dns_failure',
+    ('connection', 'connect_error'): 'source_connect_failure',
+    ('connection', 'timeout'): 'source_timeout',
+    ('connection', None): 'source_connect_failure',
+    ('tls', None): 'source_tls_failure',
+    ('http', None): 'source_http_unreachable',
+    ('validation', None): None,
+    ('body', None): None,
+    ('size', None): None,
+}
+
 def _map_fetch_result_to_source_accessibility(result: FetchResult) -> str | None:
-    """Return canonical source_accessibility_error from fetch-layer truth (F170B).
-
-    Priority: failure_stage + network_error_kind (F169B structured fields) over
-    raw error string parsing.  Returns None when the fetch error is a local
-    configuration problem (URL validation) or when the source body was reached
-    (body/size failures) — those are not source accessibility issues.
-
-    Canonical values produced:
-      source_dns_failure        — DNS resolution failure
-      source_connect_failure    — TCP/connection refused or reset
-      source_tls_failure        — TLS handshake failure
-      source_timeout            — request timed out before body
-      source_http_unreachable   — HTTP-level error (4xx / 5xx / content-type rejection)
-    """
+    """Return canonical source_accessibility_error from fetch-layer truth (F170B)."""
     failure_stage: str | None = getattr(result, 'failure_stage', None)
     network_error_kind: str | None = getattr(result, 'network_error_kind', None)
-    if failure_stage == 'connection':
-        if network_error_kind == 'dns_error':
-            return 'source_dns_failure'
-        if network_error_kind == 'connect_error':
-            return 'source_connect_failure'
-        if network_error_kind == 'timeout':
-            return 'source_timeout'
-        return 'source_connect_failure'
-    if failure_stage == 'tls':
-        return 'source_tls_failure'
-    if failure_stage == 'http':
-        return 'source_http_unreachable'
-    if failure_stage in ('validation', 'body', 'size'):
-        return None
+    
+    # Check structured failure_stage + network_error_kind first
+    key = (failure_stage, network_error_kind)
+    if key in _FAILURE_STAGE_MAP:
+        return _FAILURE_STAGE_MAP[key]
+    
+    # Fallback to raw error string parsing
     err: str = result.error or ''
     if err == 'timeout':
         return 'source_timeout'
@@ -716,47 +760,48 @@ def _map_fetch_result_to_source_accessibility(result: FetchResult) -> str | None
         return None
     return err or None
 
-async def async_fetch_feed_entries(feed_url: str, max_entries: int=50, timeout_s: float=35.0, max_bytes: int=2000000) -> FeedBatchResult:
-    """
-    Fetch and parse a RSS 2.0 or Atom 1.0 feed.
 
-    Parameters
-    ----------
-    feed_url:
-        URL of the feed.
-    max_entries:
-        Maximum entries to return (default 20, hard cap 100).
-    timeout_s:
-        Fetch timeout passed to 8AD async_fetch_public_text.
-    max_bytes:
-        Maximum bytes to accept from 8AD fetch.
-
-    Returns
-    -------
-    FeedBatchResult
-        entries tuple (possibly empty) on success,
-        or entries=() with error string on failure.
+def _fetch_feed_content(feed_url: str, timeout_s: float, max_bytes: int) -> tuple:
     """
-    max_entries = min(max(max_entries, 1), _MAX_ENTRIES_HARD)
+    Fetch feed content and return result along with error information.
+
+    Returns tuple of (result, error_tag, src_err).
+    """
     from hledac.universal.fetching.public_fetcher import async_fetch_public_text
-    retrieved_ts = time.time()
+
     try:
-        result = await async_fetch_public_text(feed_url, timeout_s=timeout_s, max_bytes=max_bytes, bypass_circuit_breaker=True)
-    except CancelledError:
-        raise
+        result = asyncio.get_event_loop().run_until_complete(
+            async_fetch_public_text(feed_url, timeout_s=timeout_s, max_bytes=max_bytes, bypass_circuit_breaker=True)
+        )
+    except Exception:
+        # Return None result with error on exception
+        return (None, 'fetch_exception', None)
+
     if result.error or result.text is None:
         fetch_err = result.error or 'fetch_returned_none'
         src_accessibility = _map_fetch_result_to_source_accessibility(result)
-        return FeedBatchResult(feed_url=feed_url, entries=(), error=fetch_err, source_accessibility_error=src_accessibility, raw_xml=result.text if result.text else None)
+        return (result, fetch_err, src_accessibility)
+
+    return (result, None, None)
+
+
+def _parse_and_validate_feed(result, feed_url: str, retrieved_ts: float) -> tuple:
+    """
+    Parse feed XML and validate results.
+
+    Returns tuple of (parsed, had_valid_feed_type, error_tag, src_err, raw_xml).
+    """
     _feed_type: list[str] = []
     parsed = _parse_feed_xml(result.text, feed_url, retrieved_ts, _feed_type_out=_feed_type)
     had_valid_feed_type: bool = bool(_feed_type)
+
     if not parsed and result.text.strip():
         stripped = result.text.strip()
         starts_html = stripped.startswith(('<!DOCTYPE', '<html'))
         final_url = getattr(result, 'final_url', None) or None
         redirected_flag = getattr(result, 'redirected', False) or False
         is_redirect = redirected_flag or (final_url and final_url != result.url and starts_html)
+
         if is_redirect and starts_html:
             error_tag = 'redirected_non_feed_endpoint'
         elif starts_html:
@@ -765,118 +810,301 @@ async def async_fetch_feed_entries(feed_url: str, max_entries: int=50, timeout_s
             error_tag = 'valid_empty_feed'
         else:
             error_tag = 'xml_parse_error'
+
         src_err: str | None = None
         if error_tag == 'redirected_non_feed_endpoint':
             src_err = 'source_redirected_to_non_feed'
-        return FeedBatchResult(feed_url=feed_url, entries=(), error=error_tag, source_accessibility_error=src_err, raw_xml=result.text)
-    seen_keys: set[str] = set()
-    deduped: list[FeedEntryHit] = []
-    for entry in parsed:
-        key = _entry_dedup_key(entry.entry_url, entry.title, entry.published_raw, None, None)
-        if key in seen_keys:
-            continue
-        seen_keys.add(key)
-        deduped.append(entry)
-    scored: list[tuple[FeedEntryHit, float, float, str, str, float, float, str, str, float, str]] = []
-    all_filtered_out: bool = deduped
+
+        return (parsed, had_valid_feed_type, error_tag, src_err, result.text)
+
+    return (parsed, had_valid_feed_type, None, None, result.text)
+
+
+def _detect_parse_error_type(parsed, had_valid_feed_type: bool) -> str | None:
+    """
+    Determine if there was a parse error that should be reported.
+
+    Returns error_tag or None.
+    """
+    if not parsed and had_valid_feed_type:
+        return 'valid_empty_feed'
+    return None
+
+
+def _determine_time_relevance(published_ts: float | None, freshness_score: float, freshness_tier: str) -> float:
+    """Compute time relevance score (ts_rel) based on freshness metrics."""
+    if published_ts is None:
+        return 0.1
+    if freshness_tier == 'future':
+        return 0.15
+    if freshness_tier == 'unknown':
+        return 0.2
+    if freshness_score >= 1.0:
+        return 1.0
+    if freshness_score >= 0.85:
+        return 0.9
+    if freshness_score >= 0.6:
+        return 0.6
+    return 0.3
+
+
+def _compute_richness(entry: FeedEntryHit, summary_len: int, rc_len: int, title_len: int) -> tuple[int, str]:
+    """
+    Compute richness score and band for an entry.
+
+    Returns tuple of (richness, richness_band).
+    """
+    richness = 0
+
+    if entry.entry_author.strip():
+        richness += 1
+    if entry.feed_title.strip():
+        richness += 1
+    if entry.feed_language.strip():
+        richness += 1
+
+    if rc_len > 500:
+        richness += 2
+    elif rc_len > 100:
+        richness += 1
+
+    if summary_len > 50:
+        richness += 1
+
+    if title_len > 0:
+        richness += 1
+
+    richness_band: str = 'low' if richness <= 2 else 'medium' if richness <= 4 else 'high'
+
+    return (richness, richness_band)
+
+
+def _determine_source_bias(feed_url_lower: str) -> float:
+    """
+    Determine source priority bias (spb) based on known OSINT sources.
+
+    Returns spb value between 0.0 and 0.15.
+    """
+    if 'cisa.gov' in feed_url_lower or 'nvd.nist.gov' in feed_url_lower:
+        return 0.15
+    if 'krebs' in feed_url_lower or 'sans.edu' in feed_url_lower:
+        return 0.12
+    if 'abuse.ch' in feed_url_lower or 'urlhaus' in feed_url_lower:
+        return 0.1
+    if 'welivesecurity' in feed_url_lower:
+        return 0.08
+    if 'bleepingcomputer' in feed_url_lower or 'thehackersnews' in feed_url_lower:
+        return 0.06
+    return 0.0
+
+
+def _determine_time_signal(entry: FeedEntryHit, ts_rel: float, freshness_tier: str) -> str:
+    """
+    Determine the time signal classification for an entry.
+
+    Returns time_signal string.
+    """
+    if entry.published_ts is None:
+        return 'no_timestamp'
+    if freshness_tier == 'future':
+        return 'future_ts_penalized'
+    if freshness_tier == 'unknown':
+        return 'unparseable_ts'
+    if ts_rel >= 1.0:
+        return 'ts_recent_high_conf'
+    if ts_rel >= 0.9:
+        return 'ts_fresh_high_conf'
+    return 'ts_aged_low_conf'
+
+
+def _build_scored_entry(entry: FeedEntryHit, retrieved_ts: float) -> tuple:
+    """
+    Build a scored entry tuple with all scoring components.
+
+    Returns tuple: (entry, freshness_score, quality_score, freshness_tier, combined, ts_rel, richness_band, usefulness_band, spb, time_signal)
+    """
+    title_len = len(entry.title.strip())
+    summary_len = len(entry.summary.strip())
+    rc_len = len(entry.rich_content) if entry.rich_content else 0
+
+    freshness_score, freshness_tier = _compute_freshness(entry.published_ts, retrieved_ts)
+    quality_score = _compute_quality(entry)
+    combined = freshness_score * 0.55 + quality_score * 0.45
+
+    ts_rel = _determine_time_relevance(entry.published_ts, freshness_score, freshness_tier)
+    richness, richness_band = _compute_richness(entry, summary_len, rc_len, title_len)
+
+    usefulness_band: str = 'high' if combined >= 0.8 else 'medium' if combined >= 0.55 else 'low' if combined >= 0.3 else 'noise'
+
+    feed_url_lower = entry.feed_url.lower()
+    spb = _determine_source_bias(feed_url_lower)
+
+    time_signal = _determine_time_signal(entry, ts_rel, freshness_tier)
+
+    return (entry, freshness_score, quality_score, freshness_tier, combined, ts_rel, richness_band, usefulness_band, spb, time_signal)
+
+
+def _score_entries(deduped: list[FeedEntryHit], retrieved_ts: float) -> list[tuple]:
+    """
+    Score all entries and return sorted list of scored tuples.
+
+    Returns list of scored tuples sorted by combined score descending.
+    """
+    scored: list[tuple] = []
+    all_filtered_out: bool = True
+
     for entry in deduped:
         title_len = len(entry.title.strip())
         summary_len = len(entry.summary.strip())
         rc_len = len(entry.rich_content) if entry.rich_content else 0
-        if title_len == 0 and summary_len == 0 and (rc_len == 0):
+
+        if title_len == 0 and summary_len == 0 and rc_len == 0:
             continue
+
         all_filtered_out = False
-        freshness_score, freshness_tier = _compute_freshness(entry.published_ts, retrieved_ts)
-        quality_score = _compute_quality(entry)
-        combined = freshness_score * 0.55 + quality_score * 0.45
-        if entry.published_ts is None:
-            ts_rel = 0.1
-        elif freshness_tier == 'future':
-            ts_rel = 0.15
-        elif freshness_tier == 'unknown':
-            ts_rel = 0.2
-        elif freshness_score >= 1.0:
-            ts_rel = 1.0
-        elif freshness_score >= 0.85:
-            ts_rel = 0.9
-        elif freshness_score >= 0.6:
-            ts_rel = 0.6
-        else:
-            ts_rel = 0.3
-        richness = 0
-        if entry.entry_author.strip():
-            richness += 1
-        if entry.feed_title.strip():
-            richness += 1
-        if entry.feed_language.strip():
-            richness += 1
-        if rc_len > 500:
-            richness += 2
-        elif rc_len > 100:
-            richness += 1
-        if summary_len > 50:
-            richness += 1
-        if title_len > 0:
-            richness += 1
-        richness_band: str = 'low' if richness <= 2 else 'medium' if richness <= 4 else 'high'
-        usefulness_band: str = 'high' if combined >= 0.8 else 'medium' if combined >= 0.55 else 'low' if combined >= 0.3 else 'noise'
-        spb = 0.0
-        feed_url_lower = entry.feed_url.lower()
-        if 'cisa.gov' in feed_url_lower or 'nvd.nist.gov' in feed_url_lower:
-            spb = 0.15
-        elif 'krebs' in feed_url_lower or 'sans.edu' in feed_url_lower:
-            spb = 0.12
-        elif 'abuse.ch' in feed_url_lower or 'urlhaus' in feed_url_lower:
-            spb = 0.1
-        elif 'welivesecurity' in feed_url_lower:
-            spb = 0.08
-        elif 'bleepingcomputer' in feed_url_lower or 'thehackersnews' in feed_url_lower:
-            spb = 0.06
-        if entry.published_ts is None:
-            time_signal = 'no_timestamp'
-        elif freshness_tier == 'future':
-            time_signal = 'future_ts_penalized'
-        elif freshness_tier == 'unknown':
-            time_signal = 'unparseable_ts'
-        elif ts_rel >= 1.0:
-            time_signal = 'ts_recent_high_conf'
-        elif ts_rel >= 0.9:
-            time_signal = 'ts_fresh_high_conf'
-        else:
-            time_signal = 'ts_aged_low_conf'
-        scored.append((entry, freshness_score, quality_score, freshness_tier, '', combined, ts_rel, richness_band, usefulness_band, spb, time_signal))
-    scored.sort(key=lambda x: -(x[5] + x[9]))
+        scored.append(_build_scored_entry(entry, retrieved_ts))
+
+    scored.sort(key=lambda x: -(x[4] + x[8]))  # Sort by combined + spb
+
+    return scored
+
+
+def _build_selection_reason(
+    entry: FeedEntryHit,
+    freshness_score: float,
+    quality_score: float,
+    freshness_tier: str,
+    ts_rel: float,
+    richness_band: str,
+    usefulness_band: str,
+    spb: float,
+    time_signal: str
+) -> str:
+    """
+    Build the selection reason string for an entry.
+
+    Returns formatted reason string with all metadata.
+    """
+    if freshness_tier == 'future':
+        reason = 'future_timestamp'
+    elif freshness_tier == 'unknown':
+        reason = 'missing_timestamp'
+    elif freshness_score >= 1.0:
+        reason = 'recent_high_quality' if quality_score >= 0.5 else 'recent'
+    elif freshness_score >= 0.85:
+        reason = 'fresh_high_quality' if quality_score >= 0.5 else 'fresh'
+    elif quality_score >= 0.6:
+        reason = 'quality_signal'
+    elif quality_score >= 0.3:
+        reason = 'moderate_quality'
+    else:
+        reason = 'aged_low_quality'
+
+    has_author = bool(entry.entry_author.strip())
+    has_lang = bool(entry.feed_language.strip())
+    is_enhanced = has_author and has_lang or richness_band == 'high'
+
+    if is_enhanced and not reason.startswith('enhanced_'):
+        reason = 'enhanced_' + reason
+
+    return f'{reason}|ts_rel={ts_rel:.2f}|richness={richness_band}|usefulness={usefulness_band}|src_bias={spb:.2f}|ts_signal={time_signal}'
+
+
+def _build_final_entries(scored: list[tuple], max_entries: int) -> tuple[list[FeedEntryHit], bool]:
+    """
+    Build final list of FeedEntryHit from scored entries.
+
+    Returns tuple of (entries list, all_filtered_out flag).
+    """
     entries: list[FeedEntryHit] = []
-    for rank, (entry, freshness_score, quality_score, freshness_tier, _, combined, ts_rel, richness_band, usefulness_band, spb, time_signal) in enumerate(scored[:max_entries]):
-        if freshness_tier == 'future':
-            reason = 'future_timestamp'
-        elif freshness_tier == 'unknown':
-            reason = 'missing_timestamp'
-        elif freshness_score >= 1.0:
-            reason = 'recent_high_quality' if quality_score >= 0.5 else 'recent'
-        elif freshness_score >= 0.85:
-            reason = 'fresh_high_quality' if quality_score >= 0.5 else 'fresh'
-        elif quality_score >= 0.6:
-            reason = 'quality_signal'
-        elif quality_score >= 0.3:
-            reason = 'moderate_quality'
-        else:
-            reason = 'aged_low_quality'
-        has_author = bool(entry.entry_author.strip())
-        has_lang = bool(entry.feed_language.strip())
-        is_enhanced = has_author and has_lang or richness_band == 'high'
-        if is_enhanced and (not reason.startswith('enhanced_')):
-            reason = 'enhanced_' + reason
-        reason = f'{reason}|ts_rel={ts_rel:.2f}|richness={richness_band}|usefulness={usefulness_band}|src_bias={spb:.2f}|ts_signal={time_signal}'
-        entries.append(FeedEntryHit(feed_url=entry.feed_url, entry_url=entry.entry_url, title=entry.title, summary=entry.summary, published_raw=entry.published_raw, published_ts=entry.published_ts, source=entry.source, rank=rank, retrieved_ts=entry.retrieved_ts, entry_hash=entry.entry_hash, rich_content=getattr(entry, 'rich_content', '') or '', entry_author=getattr(entry, 'entry_author', '') or '', feed_title=getattr(entry, 'feed_title', '') or '', feed_language=getattr(entry, 'feed_language', '') or '', freshness_score=freshness_score, quality_score=quality_score, freshness_tier=freshness_tier, selection_reason=reason, source_priority_bias=spb, time_signal_reason=time_signal))
-    if all_filtered_out and entries:
-        pass
-    error_tag: str | None = None
-    if not entries and all_filtered_out:
-        error_tag = 'parsed_but_filtered'
-    elif not entries and had_valid_feed_type:
-        error_tag = 'valid_empty_feed'
-    return FeedBatchResult(feed_url=feed_url, entries=tuple(entries), error=error_tag, raw_xml=result.text)
+    all_filtered_out: bool = True
+
+    for rank, scored_entry in enumerate(scored[:max_entries]):
+        (entry, freshness_score, quality_score, freshness_tier, _, ts_rel, richness_band, usefulness_band, spb, time_signal) = scored_entry
+
+        reason = _build_selection_reason(
+            entry, freshness_score, quality_score, freshness_tier,
+            ts_rel, richness_band, usefulness_band, spb, time_signal
+        )
+
+        entries.append(FeedEntryHit(
+            feed_url=entry.feed_url,
+            entry_url=entry.entry_url,
+            title=entry.title,
+            summary=entry.summary,
+            published_raw=entry.published_raw,
+            published_ts=entry.published_ts,
+            source=entry.source,
+            rank=rank,
+            retrieved_ts=entry.retrieved_ts,
+            entry_hash=entry.entry_hash,
+            rich_content=getattr(entry, 'rich_content', '') or '',
+            entry_author=getattr(entry, 'entry_author', '') or '',
+            feed_title=getattr(entry, 'feed_title', '') or '',
+            feed_language=getattr(entry, 'feed_language', '') or '',
+            freshness_score=freshness_score,
+            quality_score=quality_score,
+            freshness_tier=freshness_tier,
+            selection_reason=reason,
+            source_priority_bias=spb,
+            time_signal_reason=time_signal
+        ))
+
+        if rank < len(scored):
+            all_filtered_out = False
+
+    return (entries, all_filtered_out)
+
+
+async def async_fetch_feed_entries(feed_url: str, max_entries: int=50, timeout_s: float=35.0, max_bytes: int=2000000) -> FeedBatchResult:
+    max_entries = min(max(max_entries, 1), _MAX_ENTRIES_HARD)
+    retrieved_ts = time.time()
+
+    # Step 1: Fetch feed content
+    result, fetch_error, src_accessibility = await _fetch_feed_content_async(feed_url, timeout_s, max_bytes)
+    if fetch_error:
+        return _error_result(feed_url, fetch_error, src_accessibility, result)
+
+    # Step 2: Parse and validate feed
+    parsed, had_valid_feed_type, parse_error, src_err, raw_xml = _parse_and_validate_feed(result, feed_url, retrieved_ts)
+    if parse_error:
+        return _error_result(feed_url, parse_error, src_err, None, raw_xml)
+
+    # Step 3: Deduplicate, score, and build final entries
+    deduped = _deduplicate_entries(parsed)
+    scored = _score_entries(deduped, retrieved_ts)
+    entries, all_filtered_out = _build_final_entries(scored, max_entries)
+
+    # Step 4: Determine final error tag
+    error_tag = _determine_final_error(entries, all_filtered_out, had_valid_feed_type)
+
+    return FeedBatchResult(
+        feed_url=feed_url,
+        entries=tuple(entries),
+        error=error_tag,
+        raw_xml=raw_xml
+    )
+
+
+async def _fetch_feed_content_async(feed_url: str, timeout_s: float, max_bytes: int) -> tuple:
+    """
+    Async helper to fetch feed content.
+
+    Returns tuple of (result, error_tag, src_err).
+    """
+    from hledac.universal.fetching.public_fetcher import async_fetch_public_text
+
+    try:
+        result = await async_fetch_public_text(feed_url, timeout_s=timeout_s, max_bytes=max_bytes, bypass_circuit_breaker=True)
+    except CancelledError:
+        raise
+        return (None, 'fetch_cancelled', None)
+    if result.error or result.text is None:
+        fetch_err = result.error or 'fetch_returned_none'
+        src_accessibility = _map_fetch_result_to_source_accessibility(result)
+        return (result, fetch_err, src_accessibility)
+
+    return (result, None, None)
 
 class _FeedLinkParser(HTMLParser):
     """
@@ -909,36 +1137,43 @@ class _FeedLinkParser(HTMLParser):
         if self._error is None:
             self._error = message
 
+    def _parse_base_tag(self, attrs: list[tuple[str, str | None]]) -> None:
+        """Extract base href from <base> tag."""
+        if self._base_href is not None:
+            return
+        for name, value in attrs:
+            if name == 'href' and value and value.strip():
+                self._base_href = value.strip()
+                break
+
+    def _is_valid_feed_link(self, href: str, rel: str) -> bool:
+        """Check if href is a valid feed link candidate."""
+        if 'alternate' not in rel.lower():
+            return False
+        if not href or not href.strip():
+            return False
+        if href.strip().startswith('#'):
+            return False
+        scheme = urllib.parse.urlparse(href.strip()).scheme.lower()
+        if scheme and scheme not in ('http', 'https'):
+            return False
+        return True
+
     def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
         if tag == 'base':
-            if self._base_href is None:
-                for name, value in attrs:
-                    if name == 'href' and value and value.strip():
-                        self._base_href = value.strip()
-                        break
+            self._parse_base_tag(attrs)
             return
         if tag != 'link':
             return
-        attr_dict: dict[str, str] = {}
-        for name, value in attrs:
-            if name is not None and value is not None:
-                attr_dict[name.lower()] = value
-        rel = attr_dict.get('rel', '')
-        rel_lower = rel.lower()
-        if 'alternate' not in rel_lower:
-            return
+        attr_dict: dict[str, str] = {name.lower(): value for name, value in attrs if name and value}
         href = attr_dict.get('href', '')
-        if not href or not href.strip():
+        if not self._is_valid_feed_link(href, attr_dict.get('rel', '')):
             return
-        href_stripped = href.strip()
-        if href_stripped.startswith('#'):
-            return
-        scheme = urllib.parse.urlparse(href_stripped).scheme.lower()
-        if scheme and scheme not in ('http', 'https'):
-            return
-        feed_type = attr_dict.get('type', '').lower()
-        title = attr_dict.get('title', '') or ''
-        self._hits.append({'href': href, 'type': feed_type, 'title': title})
+        self._hits.append({
+            'href': href,
+            'type': attr_dict.get('type', '').lower(),
+            'title': attr_dict.get('title', '') or ''
+        })
 
     def handle_startendtag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
         self.handle_starttag(tag, attrs)
@@ -1004,11 +1239,8 @@ def discover_feed_urls_from_html(page_url: str, html_text: str, max_candidates: 
         raw_href = hit_dict['href']
         feed_type = hit_dict['type']
         title = hit_dict['title']
-        if feed_type in _FEED_TYPES_HIGH:
-            confidence = 1.0
-        elif feed_type in _FEED_TYPES_LOW:
-            confidence = 0.5
-        else:
+        confidence = 1.0 if feed_type in _FEED_TYPES_HIGH else 0.5 if feed_type in _FEED_TYPES_LOW else None
+        if confidence is None:
             continue
         resolved = _resolve_feed_href(raw_href, base_url)
         if not resolved:
@@ -1275,3 +1507,84 @@ from hledac.universal.utils.html_parse_pool import parse_html_links as _parse_ht
 async def parse_html_async(html: str) -> list[dict]:
     """Async wrapper — uses centralized M1-safe ThreadPoolExecutor from html_parse_pool."""
     return await _parse_html_links(html)
+def _deduplicate_entries(entries: list[FeedEntryHit]) -> list[FeedEntryHit]:
+    """Deduplicate entries by URL + title + published_raw."""
+    seen_keys: set[str] = set()
+    deduped: list[FeedEntryHit] = []
+    for entry in entries:
+        key = _entry_dedup_key(entry.entry_url, entry.title, entry.published_raw, None, None)
+        if key in seen_keys:
+            continue
+        seen_keys.add(key)
+        deduped.append(entry)
+    return deduped
+
+
+def _determine_final_error(entries: list, all_filtered_out: bool, had_valid_feed_type: bool) -> str | None:
+    """Determine final error tag based on entry state."""
+    if not entries and all_filtered_out:
+        return 'parsed_but_filtered'
+    if not entries and had_valid_feed_type:
+        return 'valid_empty_feed'
+    return None
+
+
+def _error_result(
+    feed_url: str,
+    error_tag: str,
+    src_accessibility: str | None,
+    result,
+    raw_xml: str | None = None
+) -> FeedBatchResult:
+    """Build an error FeedBatchResult."""
+    return FeedBatchResult(
+        feed_url=feed_url,
+        entries=(),
+        error=error_tag,
+        source_accessibility_error=src_accessibility,
+        raw_xml=raw_xml if raw_xml is not None else (result.text if result and result.text else None)
+    )
+def _try_parse_with_mode(
+    xml_text: str,
+    feed_url: str,
+    retrieved_ts: float,
+    parser_func,
+    mode: str,
+    _parse_mode_out: list[str] | None,
+    _feed_type_out: list[str] | None
+) -> tuple[list[FeedEntryHit] | None, str]:
+    """
+    Attempt to parse XML with a given parser function.
+
+    Returns (entries or None, mode_label) on success, or (None, mode_label) on failure.
+    """
+    try:
+        root = parser_func(xml_text)
+        if root is not None:
+            _report_parse_mode(_parse_mode_out, mode)
+            local_root = _local_name(root.tag)
+            if local_root == 'rss':
+                if _feed_type_out is not None:
+                    _feed_type_out.append('rss')
+                return (_parse_rss(root, feed_url, retrieved_ts), mode)
+            elif local_root == 'feed':
+                if _feed_type_out is not None:
+                    _feed_type_out.append('feed')
+                return (_parse_atom(root, feed_url, retrieved_ts), mode)
+            else:
+                return ([], mode)
+    except Exception as e:
+        logger.debug(f'[RSS/Atom] {mode} parse failed for {feed_url}: {e}')
+    return (None, mode)
+
+
+def _parse_xml_result(
+    entries: list[FeedEntryHit] | None,
+    mode: str,
+    _parse_mode_out: list[str] | None
+) -> list[FeedEntryHit]:
+    """Handle the result of a parse attempt, returning entries or empty list."""
+    if entries is not None:
+        _report_parse_mode(_parse_mode_out, mode)
+        return entries
+    return []

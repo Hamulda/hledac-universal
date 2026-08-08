@@ -374,23 +374,88 @@ def _validate_ggml_model(path: Path, config: dict[str, Any]) -> bool:
     return True
 
 
+def _is_coreml_model_valid(path: Path) -> bool:
+    """Check if a CoreML model directory contains valid model files."""
+    if not path.exists() or not path.is_dir():
+        return False
+    return (path / "model.mil").exists() or any(path.glob("*.mlmodel"))
+
+
+def _log_coreml_found(path: Path, source: str = "") -> None:
+    """Log successful CoreML model discovery."""
+    logger.info("[WhisperEngine] CoreML model found%s: %s", source, path)
+
+
+async def _download_coreml_zip(url: str, zip_path: Path, timeout_s: int) -> bool:
+    """Download CoreML zip using fetch_content or curl fallback."""
+    try:
+        from hledac.universal.fetching.public_fetcher import fetch_content
+        content = await fetch_content(url, timeout=timeout_s)
+        if content:
+            zip_path.write_bytes(content)
+            return True
+    except Exception:  # noqa: BLE001
+        pass
+    return False
+
+
+async def _curl_download_coreml(url: str, zip_path: Path, timeout_s: int) -> bool:
+    """Download CoreML zip using curl as fallback."""
+    proc = await asyncio.create_subprocess_exec(
+        "curl", "-L", "-o", str(zip_path),
+        "--connect-timeout", "30",
+        "--max-time", str(timeout_s),
+        url,
+        stdout=asyncio.subprocess.DEVNULL,
+        stderr=asyncio.subprocess.PIPE,
+    )
+    _, stderr = await asyncio.wait_for(
+        proc.communicate(),
+        timeout=timeout_s + 30,
+    )
+    if proc.returncode != 0:
+        err = stderr.decode()[:200] if stderr else "unknown"
+        logger.warning("[WhisperEngine] CoreML model download failed: %s", err)
+        zip_path.unlink(missing_ok=True)
+        return False
+    return True
+
+
+async def _extract_coreml_model(
+    zip_path: Path,
+    coreml_path: Path,
+    model_size: str,
+) -> Path | None:
+    """Extract CoreML model from downloaded zip."""
+    if not zip_path.exists() or zip_path.stat().st_size == 0:
+        return None
+    import zipfile
+    extract_dir = _MODEL_CACHE_DIR / f"_extract_{model_size}"
+    extract_dir.mkdir(exist_ok=True)
+    with zipfile.ZipFile(zip_path, "r") as zf:
+        zf.extractall(extract_dir)
+    zip_path.unlink(missing_ok=True)
+    # Find the .mlmodelc directory
+    for root, dirs, _files in os.walk(str(extract_dir)):
+        root_path = Path(root)
+        for d in dirs:
+            candidate = root_path / d
+            if candidate.name.endswith(".mlmodelc"):
+                if coreml_path.exists():
+                    shutil.rmtree(coreml_path, ignore_errors=True)
+                shutil.move(str(candidate), str(coreml_path))
+                shutil.rmtree(extract_dir, ignore_errors=True)
+                _log_coreml_found(coreml_path, " installed")
+                return coreml_path
+    shutil.rmtree(extract_dir, ignore_errors=True)
+    return None
+
+
 async def _ensure_coreml_model(
     ggml_path: Path,
     model_size: str,
 ) -> Path | None:
-    """
-    Ensure CoreML model (.mlmodelc) is available for ANE acceleration.
-
-    whisper.cpp auto-detects the CoreML model directory next to the ggml file.
-    Convention: ggml-tiny.bin → ggml-tiny-encoder.mlmodelc (same directory)
-
-    Strategy (tried in order):
-      1. Detect existing .mlmodelc next to ggml file
-      2. Download pre-converted CoreML model from whisper.cpp releases
-      3. Log instructions for manual conversion via whisper.cpp build tools
-
-    Returns path to .mlmodelc directory or None.
-    """
+    """Ensure CoreML model (.mlmodelc) is available for ANE acceleration."""
     config = _MODEL_CONFIGS.get(model_size)
     if config is None:
         return None
@@ -398,31 +463,16 @@ async def _ensure_coreml_model(
     coreml_name = config["coreml_name"]
     coreml_path = _MODEL_CACHE_DIR / coreml_name
 
-    # Strategy 1: Already exists?
-    if coreml_path.exists() and coreml_path.is_dir():
-        if (coreml_path / "model.mil").exists() or any(
-            coreml_path.glob("*.mlmodel")
-        ):
-            logger.info(
-                "[WhisperEngine] CoreML model found: %s", coreml_path
-            )
-            return coreml_path
-        else:
-            logger.debug(
-                "[WhisperEngine] CoreML dir exists but appears incomplete: %s",
-                coreml_path,
-            )
+    # Strategy 1: Check cache location
+    if _is_coreml_model_valid(coreml_path):
+        _log_coreml_found(coreml_path)
+        return coreml_path
 
     # Also check next to ggml file (whisper.cpp convention)
     sibling_path = ggml_path.parent / coreml_name
-    if sibling_path.exists() and sibling_path.is_dir():
-        if (sibling_path / "model.mil").exists() or any(
-            sibling_path.glob("*.mlmodel")
-        ):
-            logger.info(
-                "[WhisperEngine] CoreML model found (sibling): %s", sibling_path
-            )
-            return sibling_path
+    if _is_coreml_model_valid(sibling_path):
+        _log_coreml_found(sibling_path, " (sibling)")
+        return sibling_path
 
     # Strategy 2: Download pre-converted CoreML model
     if not _check_ane():
@@ -436,70 +486,14 @@ async def _ensure_coreml_model(
     logger.info(
         "[WhisperEngine] Downloading pre-converted CoreML %s model...", model_size
     )
-    try:
-        # Download as zip and extract
-        zip_path = _MODEL_CACHE_DIR / f"{coreml_name}.zip"
-        try:
-            from hledac.universal.fetching.public_fetcher import fetch_content
-            content = await fetch_content(coreml_url, timeout=_MODEL_DOWNLOAD_TIMEOUT_S)
-            if content:
-                zip_path.write_bytes(content)
-        except Exception:  # noqa: BLE001
-            pass
+    zip_path = _MODEL_CACHE_DIR / f"{coreml_name}.zip"
+    if not await _download_coreml_zip(coreml_url, zip_path, _MODEL_DOWNLOAD_TIMEOUT_S):
+        if not await _curl_download_coreml(coreml_url, zip_path, _MODEL_DOWNLOAD_TIMEOUT_S):
+            return None
 
-        if not zip_path.exists():
-            proc = await asyncio.create_subprocess_exec(
-                "curl", "-L", "-o", str(zip_path),
-                "--connect-timeout", "30",
-                "--max-time", str(_MODEL_DOWNLOAD_TIMEOUT_S),
-                coreml_url,
-                stdout=asyncio.subprocess.DEVNULL,
-                stderr=asyncio.subprocess.PIPE,
-            )
-            _, stderr = await asyncio.wait_for(
-                proc.communicate(),
-                timeout=_MODEL_DOWNLOAD_TIMEOUT_S + 30,
-            )
-            if proc.returncode != 0:
-                err = stderr.decode()[:200] if stderr else "unknown"
-                logger.warning(
-                    "[WhisperEngine] CoreML model download failed: %s", err
-                )
-                zip_path.unlink(missing_ok=True)
-                return None
-
-        # Extract zip
-        if zip_path.exists() and zip_path.stat().st_size > 0:
-            import zipfile
-            extract_dir = _MODEL_CACHE_DIR / f"_extract_{model_size}"
-            extract_dir.mkdir(exist_ok=True)
-            with zipfile.ZipFile(zip_path, 'r') as zf:
-                zf.extractall(extract_dir)
-            zip_path.unlink(missing_ok=True)
-
-            # Find the .mlmodelc directory in the extracted files
-            for root, dirs, _files in os.walk(str(extract_dir)):
-                root_path = Path(root)
-                for d in dirs:
-                    candidate = root_path / d
-                    if candidate.name.endswith(".mlmodelc"):
-                        # Move to cache location
-                        if coreml_path.exists():
-                            shutil.rmtree(coreml_path, ignore_errors=True)
-                        shutil.move(str(candidate), str(coreml_path))
-                        shutil.rmtree(extract_dir, ignore_errors=True)
-                        logger.info(
-                            "[WhisperEngine] CoreML model installed: %s",
-                            coreml_path,
-                        )
-                        return coreml_path
-
-            shutil.rmtree(extract_dir, ignore_errors=True)
-
-    except asyncio.TimeoutError:
-        logger.warning("[WhisperEngine] CoreML model download timed out")
-    except Exception as exc:
-        logger.warning("[WhisperEngine] CoreML model setup failed: %s", exc)
+    # Extract and install
+    if extracted := await _extract_coreml_model(zip_path, coreml_path, model_size):
+        return extracted
 
     # Strategy 3: Log manual instructions
     logger.info(

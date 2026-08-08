@@ -3278,74 +3278,38 @@ class DeepHermes3Engine:
         return None
 
     # ------------------------------------------------------------------
-    # generate() exit paths (for complexity analysis)
-    # ------------------------------------------------------------------
-    # Path 0: pipeline.submit() -> return                      (Issue #17)
-    # Path 1: scheduler.submit_inference() -> return
-    # Path 2: batcher.execute() -> return
-    # Path 3: response -> return (main success)
-    # Path 4: TimeoutError -> raise
-    # Path 5: CancelledError -> raise
-    # Path 6: Exception -> return f'Error: {str(e)}'
-    # Path 7: RuntimeError (context rejected, circuit breaker) -> raise
-    # ------------------------------------------------------------------
-
-    @_otel_instrumented('hermes.generate', component='mlx')
-    async def generate(self, prompt: str, temperature: float | None=None, max_tokens: int | None=None, system_msg: str | None=None, *, thinking: bool=True, adapter_path: str | None=None, logits_processors: list[Any] | None=None, prompt_tokens: list[int] | None=None) -> str:
-        """
-        Generovat text pomocí DeepHermes-3.
-
-        Args:
-            prompt: Vstupní prompt
-            temperature: Teplota (0-1)
-            max_tokens: Maximální počet tokenů
-            system_msg: Systémová zpráva
-            thinking: Režim deep thinking (přidá system prompt pro
-                     řetězení myšlenek před odpověď)
-            adapter_path: Optional LoRA adapter path for fine-tuned inference.
-                          When set, loads (or retrieves from cache) the LoRA adapter
-                          and routes inference through it. KV cache is reduced
-                          (8192→4096) to compensate for LoRA Metal SRAM footprint.
-                          Pass None to use base model (default).
-            logits_processors: M-10: Optional xgrammar LogitsProcessor list for
-                             constrained JSON generation (e.g., outlines).
-            prompt_tokens: M-03: Pre-tokenized prompt to avoid double encode.
-
-        Returns:
-            Vygenerovaný text
-        """
-        # Guard: model initialization
-        if self._model is None:
-            await self._ensure_model_loaded()
-            if self._model is None:
-                raise RuntimeError('Model not initialized — Hermes load failed')
-
-        # Guard: wait for ongoing compilation
-        while self._compile_in_progress:
-            await asyncio.sleep(0.1)
-
-        # Path 0: Try bounded 3-stage pipeline (Issue #17)
-        # Routes through BoundedInferencePipeline for 3-stage overlap with
-        # backpressure.  Text-only path (no structured output, no adapter_path,
-        # no logits_processors) — for those cases fall through to direct path.
-        if adapter_path is None and logits_processors is None:
-            try:
-                pipeline = await self._ensure_inference_pipeline()
-                if pipeline is not None:
-                    return await pipeline.submit(
-                        prompt=prompt,
-                        temperature=temperature,
-                        max_tokens=max_tokens,
-                        system_msg=system_msg,
-                        thinking=thinking,
-                    )
-            except Exception as _pipeline_err:
-                logger.debug(
-                    '[Issue-17] Pipeline routing failed, falling back: %s',
-                    _pipeline_err,
+    async def _try_pipeline_path(
+        self,
+        prompt: str,
+        temperature: float | None,
+        max_tokens: int | None,
+        system_msg: str | None,
+        thinking: bool,
+        adapter_path: str | None,
+        logits_processors: list[Any] | None,
+    ) -> str | None:
+        """Path 0: Try bounded 3-stage pipeline (Issue #17)."""
+        if adapter_path is not None or logits_processors is not None:
+            return None
+        try:
+            pipeline = await self._ensure_inference_pipeline()
+            if pipeline is not None:
+                return await pipeline.submit(
+                    prompt=prompt, temperature=temperature,
+                    max_tokens=max_tokens, system_msg=system_msg, thinking=thinking,
                 )
+        except Exception as _pipeline_err:
+            logger.debug('[Issue-17] Pipeline routing failed, falling back: %s', _pipeline_err)
+        return None
 
-        # Path 1: Try scheduler routing (ISSUE-120)
+    async def _try_scheduler_path(
+        self,
+        prompt: str,
+        temperature: float | None,
+        max_tokens: int | None,
+        system_msg: str | None,
+    ) -> str | None:
+        """Path 1: Try scheduler routing (ISSUE-120)."""
         try:
             scheduler = await self._ensure_mlx_scheduler()
             if scheduler is not None:
@@ -3356,8 +3320,16 @@ class DeepHermes3Engine:
                     priority=LanePriority.INTERACTIVE)
         except Exception as _scheduler_err:
             logger.debug('[ISSUE-120] Scheduler routing failed, falling back to batcher: %s', _scheduler_err)
+        return None
 
-        # Path 2: Try batcher routing (P0-2)
+    async def _try_batcher_path(
+        self,
+        prompt: str,
+        temperature: float | None,
+        max_tokens: int | None,
+        system_msg: str | None,
+    ) -> str | None:
+        """Path 2: Try batcher routing (P0-2)."""
         _max_tokens_for_batch = max_tokens if max_tokens is not None else self.config.max_tokens
         try:
             batcher = await self._ensure_mlx_batcher()
@@ -3370,8 +3342,10 @@ class DeepHermes3Engine:
                     max_tokens=max_tokens, system_msg=system_msg, priority=1.0)
         except Exception as _batching_err:
             logger.debug('[P0-2] batching routing failed, falling back to direct: %s', _batching_err)
+        return None
 
-        # Guards: model admission + circuit breaker
+    def _check_model_admission(self) -> None:
+        """Check model admission and circuit breaker status."""
         if check_model_allowed is not None:
             decision = check_model_allowed('hermes')
             if not decision.allowed:
@@ -3382,7 +3356,18 @@ class DeepHermes3Engine:
             raise RuntimeError(f"GAP-3/1: ModelCircuitBreaker OPEN for {snap['model_id']!r} "
                              f"(failures={snap['failure_count']}, last={snap['last_failure_kind']!r})")
 
-        # Direct inference path with full exception handling
+    async def _direct_inference_path(
+        self,
+        prompt: str,
+        temperature: float | None,
+        max_tokens: int | None,
+        system_msg: str | None,
+        thinking: bool,
+        adapter_path: str | None,
+        logits_processors: list[Any] | None,
+        prompt_tokens: list[int] | None,
+    ) -> str:
+        """Direct inference with full exception handling."""
         try:
             return await self._generate_direct(
                 prompt=prompt, temperature=temperature, max_tokens=max_tokens,
@@ -3398,6 +3383,65 @@ class DeepHermes3Engine:
             raise
         except Exception as e:
             raise self._classify_and_record_failure(e)
+
+    @_otel_instrumented('hermes.generate', component='mlx')
+    async def generate(
+        self,
+        prompt: str,
+        temperature: float | None = None,
+        max_tokens: int | None = None,
+        system_msg: str | None = None,
+        *,
+        thinking: bool = True,
+        adapter_path: str | None = None,
+        logits_processors: list[Any] | None = None,
+        prompt_tokens: list[int] | None = None,
+    ) -> str:
+        """
+        Generovat text pomocí DeepHermes-3.
+
+        Args:
+            prompt: Vstupní prompt
+            temperature: Teplota (0-1)
+            max_tokens: Maximální počet tokenů
+            system_msg: Systémová zpráva
+            thinking: Režim deep thinking (přidá system prompt pro
+                     řetězení myšlenek před odpověď)
+            adapter_path: Optional LoRA adapter path for fine-tuned inference.
+            logits_processors: M-10: Optional xgrammar LogitsProcessor list.
+            prompt_tokens: M-03: Pre-tokenized prompt to avoid double encode.
+
+        Returns:
+            Vygenerovaný text
+        """
+        # Guard: model initialization
+        if self._model is None:
+            await self._ensure_model_loaded()
+            if self._model is None:
+                raise RuntimeError('Model not initialized — Hermes load failed')
+
+        # Guard: wait for ongoing compilation
+        while self._compile_in_progress:
+            await asyncio.sleep(0.1)
+
+        # Try routing paths in order
+        if result := await self._try_pipeline_path(prompt, temperature, max_tokens, system_msg, thinking, adapter_path, logits_processors):
+            return result
+
+        if result := await self._try_scheduler_path(prompt, temperature, max_tokens, system_msg):
+            return result
+
+        if result := await self._try_batcher_path(prompt, temperature, max_tokens, system_msg):
+            return result
+
+        # Guards: model admission + circuit breaker
+        self._check_model_admission()
+
+        # Direct inference path
+        return await self._direct_inference_path(
+            prompt, temperature, max_tokens, system_msg, thinking,
+            adapter_path, logits_processors, prompt_tokens,
+        )
 
     # ------------------------------------------------------------------
     # _generate_direct: extracted from generate() to reduce complexity
@@ -4453,37 +4497,25 @@ class DeepHermes3Engine:
                 await asyncio.sleep(0)
         return results
 
-    async def unload(self) -> None:
-        """
-        Sprint 7K + Issue #17: Unload model with FULL lifecycle closure.
+    # ── Unload phase helpers ─────────────────────────────────────────────────────
 
-        NEW ORDER (Sprint 7K + P1-3 + Issue #17):
-        0.5 _pipeline.shutdown() — bounded 3-stage pipeline (Issue #17)
-        1. _shutdown_batch_worker(timeout=3.0) — bounded, fail-pending-futures
-        2. _batch_queue = None + _batch_worker_task = None (done by shutdown)
-        3. _save_cache() — persists system_prompt_cache + warmup_cache to disk
-        4. _warmup_cache + _warmup_prompt_hash eviction
-        5. _prompt_cache / _system_prompt_cache eviction
-        6. _kv_cache_pool.clear() — F03: cleared here because model is unloaded;
-           Metal allocations in pool are invalid after _model = None.
-           Cross-turn reuse (_kv_cache_pool survives reset_session()) does not apply
-           when the model itself is being unloaded.
-        7. _model = None + _tokenizer = None
-        8. gc.collect()
-        9. Flush lazy ops + reclaim Metal memory (via helper — F219B)
-
-        Safe-clear: Emergency flag is NOT auto-cleared here — caller decides.
-        """
-        # Issue #17: shutdown bounded 3-stage pipeline first
+    async def _unload_pipeline(self) -> None:
+        """Phase 0.5: Shutdown bounded 3-stage pipeline (Issue #17)."""
         if self._pipeline is not None:
             try:
                 await self._pipeline.shutdown()
             except Exception as _e:
                 logger.debug('[Issue-17] Pipeline shutdown error: %s', _e)
             self._pipeline = None
+
+    async def _unload_batch_worker(self) -> None:
+        """Phase 1-2: Shutdown batch worker and clear queue references."""
         await self._shutdown_batch_worker(timeout=3.0)
         self._batch_queue = None
         self._batch_worker_task = None
+
+    async def _unload_caches(self) -> None:
+        """Phase 3-6: Save and evict all caches."""
         await self._save_cache()
         if self._warmup_cache is not None:
             self._warmup_cache = None
@@ -4498,15 +4530,12 @@ class DeepHermes3Engine:
         self._kv_cache_pool.clear()
         logger.debug('[LIFECYCLE][F289] _kv_cache_pool evicted')
         self.invalidate_prefix_cache()
-        logger.info('Unloading Hermes-3...')
-        # R5: Only shut down executors if NOT from shared pool (R1 or domain_executors).
-        # Shared pools persist across engine instances and are cleaned up
-        # by domain_executors' multi-layer shutdown (signal + atexit + weakref).
-        # Fallback raw executors (if any remain) are shut down here.
+
+    def _unload_executors(self) -> None:
+        """Phase 7: Shutdown thread executors (non-shared only)."""
         _shared = getattr(self, '_executors_shared', False)
         if not _shared:
             self._inference_executor.shutdown(wait=True)
-            # Issue #14: shutdown thread pools (prep + post)
             if hasattr(self, '_prep_executor') and self._prep_executor is not None:
                 self._prep_executor.shutdown(wait=False)
                 self._prep_executor = None
@@ -4517,12 +4546,14 @@ class DeepHermes3Engine:
                 self._compile_executor.shutdown(wait=False)
                 self._compile_executor = None
         else:
-            # R1 pools: clear local references only (pool lives in R1 singleton)
             if hasattr(self, '_prep_executor'):
                 self._prep_executor = None
             if hasattr(self, '_post_executor'):
                 self._post_executor = None
             self._compile_executor = None
+
+    async def _unload_mlx_components(self) -> None:
+        """Phase 8: Shutdown MLX batcher and worker thread."""
         if self._mlx_batcher is not None:
             try:
                 await self._mlx_batcher.shutdown()
@@ -4533,15 +4564,21 @@ class DeepHermes3Engine:
                 self._mlx_worker_thread.shutdown(timeout=5.0)
             except Exception as _e:
                 logger.debug('[P0-3] worker thread shutdown skipped: %s', _e)
+        self._mlx_batcher = None
+        self._mlx_worker_thread = None
+
+    def _unload_model_refs(self) -> None:
+        """Phase 9: Clear model/tokenizer references and GC."""
         self._model = None
         self._tokenizer = None
         self._outlines_model = None
-        self._mlx_batcher = None
-        self._mlx_worker_thread = None
         try:
             gc.freeze()
         except Exception:  # noqa: BLE001
             pass
+
+    def _unload_metal_memory(self) -> None:
+        """Phase 10: Reclaim Metal memory (unless MLX prewarm active)."""
         global _MLX_PREWARM_LAST_UNLOAD_TIME, _mlx_prewarm_active
         if _MLX_PREWARM_ENABLED and _mlx_prewarm_active:
             try:
@@ -4551,15 +4588,34 @@ class DeepHermes3Engine:
                 pass
             logger.debug('[F267] MLX prewarm: skipping clear_cache, model kept warm')
         else:
-            # M5: metal_reclaim() = canonical gc+eval+clear+dynamic_limit at model swap
             from hledac.universal.utils.mlx_memory import metal_reclaim
             metal_reclaim()
         _mlx_prewarm_active = False
+
+    def _unload_ane_mutex(self) -> None:
+        """Phase 11: Release ANE mutex for LLM."""
         try:
             from hledac.universal.brain.ane_embedder import get_ane_mlx_mutex
             get_ane_mlx_mutex().release('llm')
         except Exception:  # noqa: BLE001
             pass
+
+    async def unload(self) -> None:
+        """
+        Sprint 7K + Issue #17: Unload model with FULL lifecycle closure.
+        Orchestrates phased cleanup via helper methods.
+
+        Safe-clear: Emergency flag is NOT auto-cleared here — caller decides.
+        """
+        logger.info('Unloading Hermes-3...')
+        await self._unload_pipeline()
+        await self._unload_batch_worker()
+        await self._unload_caches()
+        self._unload_executors()
+        await self._unload_mlx_components()
+        self._unload_model_refs()
+        self._unload_metal_memory()
+        self._unload_ane_mutex()
         # G2: Notify observers that model is unloaded
         self._notify_state(ModelLoadState.UNLOADED)
         logger.info('✓ Hermes-3 unloaded (Sprint 7K lifecycle closed)')

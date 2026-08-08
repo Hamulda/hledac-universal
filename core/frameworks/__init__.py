@@ -68,77 +68,38 @@ def is_framework_available(name: str) -> bool:
 # The _AVAILABLE flags gate all real imports. At runtime, attributes are set
 # via globals() inside __getattr__.
 
-def __getattr__(name: str):
-    # ── Vision (VNRecognizeTextRequest, VNDetectBarcodesRequest, etc.) ─────────
-    if name == "Vision":
-        if not VISION_AVAILABLE:
-            try:
-                import Vision as _v
-                globals()["Vision"] = _v
-                globals()["VISION_AVAILABLE"] = True
-            except ImportError:
-                globals()["Vision"] = None  # type: ignore[assignment]
-                globals()["VISION_AVAILABLE"] = False
-        return Vision  # type: ignore[return-value]
+from typing import Any
 
-    # ── NaturalLanguage (NLTagger, NLTokenUnit, NLTagScheme) ──────────────────
-    if name == "NaturalLanguage":
-        if not NATURALLANGUAGE_AVAILABLE:
-            try:
-                import NaturalLanguage as _nl
-                globals()["NaturalLanguage"] = _nl
-                globals()["NATURALLANGUAGE_AVAILABLE"] = True
-            except ImportError:
-                globals()["NaturalLanguage"] = None  # type: ignore[assignment]
-                globals()["NATURALLANGUAGE_AVAILABLE"] = False
-        return NaturalLanguage  # type: ignore[return-value]
+# Framework metadata: (module_name, available_flag_name)
+_FRAMEWORK_DEFS: dict[str, tuple[str, str]] = {
+    "Vision": ("Vision", "VISION_AVAILABLE"),
+    "NaturalLanguage": ("NaturalLanguage", "NATURALLANGUAGE_AVAILABLE"),
+    "CoreML": ("CoreML", "COREML_AVAILABLE"),
+    "Quartz": ("Quartz", "QUARTZ_AVAILABLE"),
+    "Cocoa": ("Cocoa", "COCOA_AVAILABLE"),
+    "WebKit": ("WebKit", "WEBKIT_AVAILABLE"),
+}
 
-    # ── CoreML (VNCoreMLModel, MLModel) ───────────────────────────────────────
-    if name == "CoreML":
-        if not COREML_AVAILABLE:
-            try:
-                import CoreML as _cml
-                globals()["CoreML"] = _cml
-                globals()["COREML_AVAILABLE"] = True
-            except ImportError:
-                globals()["CoreML"] = None  # type: ignore[assignment]
-                globals()["COREML_AVAILABLE"] = False
-        return CoreML  # type: ignore[return-value]
 
-    # ── Quartz (CGWindowList, CGImage) ──────────────────────────────────────────
-    if name == "Quartz":
-        if not QUARTZ_AVAILABLE:
-            try:
-                import Quartz as _q
-                globals()["Quartz"] = _q
-                globals()["QUARTZ_AVAILABLE"] = True
-            except ImportError:
-                globals()["Quartz"] = None  # type: ignore[assignment]
-                globals()["QUARTZ_AVAILABLE"] = False
-        return Quartz  # type: ignore[return-value]
+def _lazy_load_framework(name: str) -> Any:
+    """Load a framework lazily, caching the result in globals()."""
+    meta = _FRAMEWORK_DEFS[name]
+    module_name, flag_name = meta
+    available = globals().get(flag_name, False)
+    if available:
+        return globals()[name]
+    try:
+        mod = __import__(module_name, fromlist=[name])
+        globals()[name] = mod
+        globals()[flag_name] = True
+        return mod
+    except ImportError:
+        globals()[name] = None
+        globals()[flag_name] = False
+        return None
 
-    # ── Cocoa / AppKit ────────────────────────────────────────────────────────
-    if name == "Cocoa":
-        if not COCOA_AVAILABLE:
-            try:
-                import Cocoa as _c
-                globals()["Cocoa"] = _c
-                globals()["COCOA_AVAILABLE"] = True
-            except ImportError:
-                globals()["Cocoa"] = None  # type: ignore[assignment]
-                globals()["COCOA_AVAILABLE"] = False
-        return Cocoa  # type: ignore[return-value]
 
-    # ── WebKit (WKWebView, WKWebsiteDataStore) ────────────────────────────────
-    if name == "WebKit":
-        if not WEBKIT_AVAILABLE:
-            try:
-                import WebKit as _wk
-                globals()["WebKit"] = _wk
-                globals()["WEBKIT_AVAILABLE"] = True
-            except ImportError:
-                globals()["WebKit"] = None  # type: ignore[assignment]
-                globals()["WEBKIT_AVAILABLE"] = False
-        return WebKit  # type: ignore[return-value]
-
+def __getattr__(name: str) -> Any:
+    if name in _FRAMEWORK_DEFS:
+        return _lazy_load_framework(name)
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

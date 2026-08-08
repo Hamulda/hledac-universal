@@ -528,184 +528,124 @@ class QualityAssessor:
         """
         _logger = _logging.getLogger(__name__)
 
-        # Sprint 8AK: URL-first fingerprint
+        # Compute fingerprint and entropy
         url_from_provenance = self._state._extract_url_from_provenance(finding.provenance)
         url_fingerprint = _compute_url_fingerprint(url_from_provenance) if url_from_provenance else ""
+        fingerprint, entropy = self._compute_fingerprint(finding, url_fingerprint)
 
-        # Map text for quality checks (only needed for entropy when no URL)
+        # Tier 1: hot cache check
+        dup_decision = self._check_duplicate_caches(fingerprint, url_fingerprint, entropy)
+        if dup_decision is not None:
+            return dup_decision
+
+        # URL-first: short-circuit to accept
         if url_fingerprint:
-            fingerprint = url_fingerprint
-            entropy = 0.0  # not meaningful when URL is identity
-        else:
-            text = finding.payload_text if finding.payload_text else finding.query
-            if not text or not text.strip():
-                text = finding.query
-            normalized = _normalize_for_quality(text)
-            entropy = _compute_entropy(normalized)
-            fingerprint = _compute_dedup_fingerprint(normalized)
+            return self._accept_and_store(finding, fingerprint, entropy)
 
-        # Tier 1: hot cache (fast path, bounded)
+        # Source type check
+        is_feed_source = finding.source_type in _FEED_SOURCE_TYPES
+        text_for_embed = url_from_provenance or (finding.payload_text or finding.query)
+
+        # Short string path
+        if len(fingerprint) < _QUALITY_MIN_ENTROPY_LEN:
+            return self._assess_short_string(finding, fingerprint, entropy, text_for_embed, is_feed_source, url_from_provenance, _logger)
+
+        # High-confidence IoC check
+        is_high_conf_ioc = self._is_high_conf_ioc(text_for_embed)
+
+        # Entropy threshold check
+        if entropy < _QUALITY_ENTROPY_THRESHOLD:
+            return self._reject_low_entropy(finding, entropy, fingerprint, text_for_embed, url_from_provenance, _logger)
+
+        # Semantic dedup
+        sem_dup_decision = self._check_semantic_dedup(fingerprint, entropy, text_for_embed, is_high_conf_ioc, is_feed_source, url_from_provenance, _logger)
+        if sem_dup_decision is not None:
+            return sem_dup_decision
+
+        # Accept and store
+        return self._accept_and_store(finding, fingerprint, entropy)
+
+    def _compute_fingerprint(self, finding: CanonicalFinding, url_fingerprint: str) -> tuple[str, float]:
+        """Compute fingerprint and entropy for finding."""
+        if url_fingerprint:
+            return url_fingerprint, 0.0
+        text = finding.payload_text if finding.payload_text else finding.query
+        if not text or not text.strip():
+            text = finding.query
+        normalized = _normalize_for_quality(text)
+        return _compute_dedup_fingerprint(normalized), _compute_entropy(normalized)
+
+    def _check_duplicate_caches(self, fingerprint: str, url_fingerprint: str, entropy: float) -> FindingQualityDecision | None:
+        """Check hot cache and LMDB for duplicates."""
         duplicate = self._state.hot_cache_lookup(fingerprint)
         if duplicate is not None:
             self._state._quality_duplicate_count += 1
-            reason = "persistent_duplicate" if url_fingerprint else "duplicate_detected"
-            return self._make_decision(
-                accepted=False,
-                reason=reason,
-                entropy=entropy,
-                fingerprint=fingerprint,
-                duplicate=True,
-            )
-
-        # Tier 2: persistent LMDB (authority)
+            return self._make_decision(False, "persistent_duplicate" if url_fingerprint else "duplicate_detected", entropy, fingerprint, True)
         if self._lmdb_lookup_fn is not None:
             stored_finding_id = self._lmdb_lookup_fn(fingerprint)
             if stored_finding_id is not None:
                 self._state.add_to_hot_cache(fingerprint, stored_finding_id)
                 self._state._persistent_duplicate_count += 1
-                reason = "persistent_duplicate" if url_fingerprint else "duplicate_detected"
-                return self._make_decision(
-                    accepted=False,
-                    reason=reason,
-                    entropy=entropy,
-                    fingerprint=fingerprint,
-                    duplicate=True,
-                )
+                return self._make_decision(False, "persistent_duplicate" if url_fingerprint else "duplicate_detected", entropy, fingerprint, True)
+        return None
 
-        # URL-first path: short-circuit to store (no entropy check needed)
-        if url_fingerprint:
-            if self._lmdb_store_fn is not None:
-                self._lmdb_store_fn(fingerprint, finding.finding_id)
-            self._state.add_to_hot_cache(fingerprint, finding.finding_id)
-            return self._make_decision(
-                accepted=True,
-                reason=None,
-                entropy=entropy,
-                fingerprint=fingerprint,
-                duplicate=False,
-            )
-
-        # Sprint F265D: Compute source flags once at outer scope for all paths below
-        is_feed_source = finding.source_type in _FEED_SOURCE_TYPES
-
-        # Short strings (< 8 chars) skip entropy filter — accept immediately
-        # WITHOUT storing to LMDB/hotcache. Storage deferred to after semantic dedup pass.
-        if len(fingerprint) < _QUALITY_MIN_ENTROPY_LEN:
-            # Sprint-F265B P2: High-confidence IoC bypass — hex hashes skip semantic dedup
-            # Sprint F265D: Feed sources also skip semantic dedup
-            text_for_embed = url_from_provenance or (finding.payload_text or finding.query)
-            is_high_conf_ioc = (
-                text_for_embed is not None
-                and _HIGH_CONF_IOC_RE.match(text_for_embed.strip()) is not None
-            )
-            if self._semantic_dedup_cache is not None and not is_high_conf_ioc and not is_feed_source:
-                try:
-                    if text_for_embed and len(text_for_embed) >= 16:
-                        is_dup = self._semantic_dedup_cache.check_and_cache(  # type: ignore[attr-defined]
-                            text_for_embed, threshold=0.75  # Sprint-F265B: was 0.80, too tight for IOC data (caused 100% rejection in sprint 300s)
-                        )
-                        if is_dup:
-                            self._state._quality_duplicate_count += 1
-                            _logger.debug(
-                                "[QUALITY] short_string semantic_dup hit fp=%s url=%s",
-                                fingerprint[:16],
-                                (url_from_provenance or "")[:80],
-                            )
-                            return self._make_decision(
-                                accepted=False,
-                                reason="semantic_duplicate",
-                                entropy=entropy,
-                                fingerprint=fingerprint,
-                                duplicate=True,
-                            )
-                except Exception as e:
-                    _logger.warning(f"Quality gate error (short_string path): {e}")
-            # Short string + no semantic duplicate → store and accept
-            if self._lmdb_store_fn is not None:
-                self._lmdb_store_fn(fingerprint, finding.finding_id)
-            self._state.add_to_hot_cache(fingerprint, finding.finding_id)
-            return self._make_decision(
-                accepted=True,
-                reason="short_string_skip",
-                entropy=entropy,
-                fingerprint=fingerprint,
-                duplicate=False,
-            )
-
-        # Sprint-F265B P2: High-confidence IoC bypass — hex hashes skip semantic dedup
-        text_for_embed = url_from_provenance or (finding.payload_text or finding.query)
-        is_high_conf_ioc = (
-            text_for_embed is not None
-            and _HIGH_CONF_IOC_RE.match(text_for_embed.strip()) is not None
-        )
-
-        # Entropy threshold check
-        if entropy < _QUALITY_ENTROPY_THRESHOLD:
-            self._state._quality_rejected_count += 1
-            _logger.debug(
-                "[QUALITY] low_entropy rejected entropy=%.3f threshold=%.3f fp=%s url=%s text=%s",
-                entropy,
-                _QUALITY_ENTROPY_THRESHOLD,
-                fingerprint[:16],
-                (url_from_provenance or "")[:80],
-                (finding.payload_text or "")[:60],
-            )
-            return self._make_decision(
-                accepted=False,
-                reason="low_entropy_rejected",
-                entropy=entropy,
-                fingerprint=fingerprint,
-                duplicate=False,
-            )
-
-        # Sprint F197B + Sprint-F265B P2: Semantic dedup BEFORE storing
-        # High-confidence IoC (hex hash) bypass: hashes are exact-match dedup keys,
-        # semantic similarity is meaningless for cryptographic hashes.
-        # Sprint F265D: Feed sources skip semantic dedup (feed content naturally shares
-        # structure — titles, metadata — and recall > precision is desirable there).
-        if (
-            self._semantic_dedup_cache is not None
-            and not is_high_conf_ioc
-            and not is_feed_source
-        ):
-            _dedup_cache = self._semantic_dedup_cache
-            assert _dedup_cache is not None
-            try:
-                text_for_embed = url_from_provenance or (finding.payload_text or finding.query)
-                if text_for_embed and len(text_for_embed) >= 16:
-                    is_dup = _dedup_cache.check_and_cache(  # type: ignore[attr-defined]
-                        text_for_embed, threshold=0.75  # Sprint-F265B: was 0.80, too tight for IOC data (caused 100% rejection in sprint 300s)
-                    )
-                    if is_dup:
-                        self._state._quality_duplicate_count += 1
-                        _logger.debug(
-                            "[QUALITY] semantic_dup hit fp=%s url=%s",
-                            fingerprint[:16],
-                            (url_from_provenance or "")[:80],
-                        )
-                        return self._make_decision(
-                            accepted=False,
-                            reason="semantic_duplicate",
-                            entropy=entropy,
-                            fingerprint=fingerprint,
-                            duplicate=True,
-                        )
-            except Exception as e:
-                _logger.warning(f"Quality gate error (entropy path): {e}")
-
-        # Only reach here if semantic dedup passed or was skipped (fail-open)
-        # Now safe to commit to LMDB + hot cache
+    def _assess_short_string(self, finding: CanonicalFinding, fingerprint: str, entropy: float, text_for_embed: str, is_feed_source: bool, url_from_provenance: str, _logger) -> FindingQualityDecision:
+        """Assess short strings that skip entropy filter."""
+        is_high_conf_ioc = self._is_high_conf_ioc(text_for_embed)
+        if self._semantic_dedup_cache is not None and not is_high_conf_ioc and not is_feed_source:
+            dup_decision = self._try_semantic_dedup_short(fingerprint, entropy, text_for_embed, url_from_provenance, _logger)
+            if dup_decision is not None:
+                return dup_decision
         if self._lmdb_store_fn is not None:
             self._lmdb_store_fn(fingerprint, finding.finding_id)
         self._state.add_to_hot_cache(fingerprint, finding.finding_id)
+        return self._make_decision(True, "short_string_skip", entropy, fingerprint, False)
 
-        return self._make_decision(
-            accepted=True,
-            reason=None,
-            entropy=entropy,
-            fingerprint=fingerprint,
-            duplicate=False,
-        )
+    def _try_semantic_dedup_short(self, fingerprint: str, entropy: float, text_for_embed: str, url_from_provenance: str, _logger) -> FindingQualityDecision | None:
+        """Try semantic dedup for short strings."""
+        try:
+            if text_for_embed and len(text_for_embed) >= 16:
+                is_dup = self._semantic_dedup_cache.check_and_cache(text_for_embed, threshold=0.75)
+                if is_dup:
+                    self._state._quality_duplicate_count += 1
+                    _logger.debug("[QUALITY] short_string semantic_dup hit fp=%s url=%s", fingerprint[:16], (url_from_provenance or "")[:80])
+                    return self._make_decision(False, "semantic_duplicate", entropy, fingerprint, True)
+        except Exception as e:
+            _logger.warning(f"Quality gate error (short_string path): {e}")
+        return None
+
+    def _is_high_conf_ioc(self, text_for_embed: str) -> bool:
+        """Check if text is high-confidence IoC."""
+        return text_for_embed is not None and _HIGH_CONF_IOC_RE.match(text_for_embed.strip()) is not None
+
+    def _reject_low_entropy(self, finding: CanonicalFinding, entropy: float, fingerprint: str, text_for_embed: str, url_from_provenance: str, _logger) -> FindingQualityDecision:
+        """Reject finding due to low entropy."""
+        self._state._quality_rejected_count += 1
+        _logger.debug("[QUALITY] low_entropy rejected entropy=%.3f threshold=%.3f fp=%s url=%s text=%s",
+            entropy, _QUALITY_ENTROPY_THRESHOLD, fingerprint[:16], (url_from_provenance or "")[:80], (finding.payload_text or "")[:60])
+        return self._make_decision(False, "low_entropy_rejected", entropy, fingerprint, False)
+
+    def _check_semantic_dedup(self, fingerprint: str, entropy: float, text_for_embed: str, is_high_conf_ioc: bool, is_feed_source: bool, url_from_provenance: str, _logger) -> FindingQualityDecision | None:
+        """Check semantic dedup (skip for high-conf IOC and feed sources)."""
+        if self._semantic_dedup_cache is None or is_high_conf_ioc or is_feed_source:
+            return None
+        try:
+            if text_for_embed and len(text_for_embed) >= 16:
+                is_dup = self._semantic_dedup_cache.check_and_cache(text_for_embed, threshold=0.75)
+                if is_dup:
+                    self._state._quality_duplicate_count += 1
+                    _logger.debug("[QUALITY] semantic_dup hit fp=%s url=%s", fingerprint[:16], (url_from_provenance or "")[:80])
+                    return self._make_decision(False, "semantic_duplicate", entropy, fingerprint, True)
+        except Exception as e:
+            _logger.warning(f"Quality gate error (entropy path): {e}")
+        return None
+
+    def _accept_and_store(self, finding: CanonicalFinding, fingerprint: str, entropy: float) -> FindingQualityDecision:
+        """Accept finding and store to LMDB + hot cache."""
+        if self._lmdb_store_fn is not None:
+            self._lmdb_store_fn(fingerprint, finding.finding_id)
+        self._state.add_to_hot_cache(fingerprint, finding.finding_id)
+        return self._make_decision(True, None, entropy, fingerprint, False)
 
     # ---------------------------------------------------------------------------
     # Sprint P1-2: Batch quality gate — rayon-parallel Rust kernels

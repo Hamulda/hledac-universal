@@ -1081,6 +1081,134 @@ def _configure_patterns_impl(registry: tuple[tuple[str, str], ...]) -> None:
             )
 
 
+# ── Pattern scan helpers ─────────────────────────────────────────────────────────
+
+
+def _scan_with_regex_alternation(
+    text: str,
+    text_lower: str,
+    regex_alt: Any,
+    label_map: dict[str, tuple[str, str]],
+    boundary_policy: str,
+) -> list[PatternHit]:
+    """O(n) single-pass regex alternation scan for pattern matching."""
+    hits: list[PatternHit] = []
+    for m in regex_alt.finditer(text_lower):
+        matched = m.group()
+        key = matched.lower()
+        if key not in label_map:
+            for pk in label_map:
+                if pk.lower() == key:
+                    key = pk
+                    break
+            else:
+                continue
+        pattern, label = label_map[key]
+        start, end = m.start(), m.end()
+        if boundary_policy == "word" and not _is_word_boundary(text, start, end):
+            continue
+        hits.append(PatternHit(
+            pattern=sys.intern(pattern),
+            start=start,
+            end=end,
+            value=text[start:end],
+            label=sys.intern(label) if label else None,
+        ))
+    return hits
+
+
+def _scan_with_str_find(
+    text: str,
+    text_lower: str,
+    boundary_policy: str,
+) -> list[PatternHit]:
+    """O(p×n) str.find() loop — fallback when regex alternation unavailable."""
+    hits: list[PatternHit] = []
+    for pattern, label in _matcher_state._registry_snapshot:
+        pattern_lower = pattern.lower()
+        pos = 0
+        while True:
+            idx = text_lower.find(pattern_lower, pos)
+            if idx == -1:
+                break
+            if boundary_policy == "word" and not _is_word_boundary(text, idx, idx + len(pattern)):
+                pos = idx + 1
+                continue
+            hits.append(PatternHit(
+                pattern=sys.intern(pattern),
+                start=idx,
+                end=idx + len(pattern),
+                value=text[idx:idx + len(pattern)],
+                label=sys.intern(label) if label else None,
+            ))
+            pos = idx + 1
+    return hits
+
+
+def _extract_structured_entities_python(
+    text: str,
+    text_lower: str,
+) -> list[PatternHit]:
+    """Python fallback: 25× re.finditer() for structured entity extraction."""
+    hits: list[PatternHit] = []
+    for _pattern, _label in [
+        (_RE_CVE, "cve_identifier"),
+        (_RE_GHSA, "ghsa_identifier"),
+        (_RE_BTC_LEGACY, "btc_address"),
+        (_RE_BTC_BECH32, "btc_address"),
+        (_RE_TELEGRAM, "telegram_link"),
+        (_RE_MISP_UUID, "misp_uuid"),
+        (_RE_ONION_V3, "onion_v3"),
+        (_RE_XMR_ADDR, "xmr_address"),
+        (_RE_I2P_ADDR, "i2p_address"),
+        (_RE_PGP_FP, "pgp_fingerprint"),
+        (_RE_IPFS_CID, "ipfs_cid"),
+        (_RE_SHA256, "sha256_hash"),
+        (_RE_MD5, "md5_hash"),
+        (_RE_SHA1, "sha1_hash"),
+        (_RE_ETH_ADDR, "eth_address"),
+        (_RE_USDT_TRC20, "usdt_trc20"),
+        (_RE_LTC_ADDR, "ltc_address"),
+        (_RE_DOGE_ADDR, "doge_address"),
+        (_RE_ETH_ADDR, "eth_contract"),
+        (_RE_AWS_KEY_ID, "aws_access_key_id"),
+        (_RE_GOOGLE_API_KEY, "google_api_key"),
+        (_RE_STRIPE_SK, "stripe_secret_key"),
+        (_RE_SLACK_TOKEN, "slack_token"),
+    ]:
+        for m in _pattern.finditer(text_lower):
+            hits.append(PatternHit(
+                pattern=sys.intern(m.group()),
+                start=m.start(),
+                end=m.end(),
+                value=text[m.start():m.end()],
+                label=sys.intern(_label),
+            ))
+    return hits
+
+
+def _scan_rust_aco(text_lower: str, boundary_policy: str) -> list[PatternHit]:
+    """Scan using Rust Aho-Corasick (primary path)."""
+    rust_boundary: str | None = boundary_policy if boundary_policy != "none" else None
+    return list(_matcher_state._rust_aco.scan(text_lower, rust_boundary))
+
+
+def _extract_structured_rust(text: str, text_lower: str, boundary_policy: str) -> list[PatternHit]:
+    """Extract structured entities using Rust extractor."""
+    hits: list[PatternHit] = []
+    for r_start, r_end, r_value, r_label in _rust_extract_structured(text_lower):
+        if boundary_policy == "word" and not _is_word_boundary(text, r_start, r_end):
+            continue
+        hits.append(PatternHit(
+            pattern=sys.intern(r_value),
+            start=r_start,
+            end=r_end,
+            value=text[r_start:r_end],
+            label=sys.intern(r_label),
+        ))
+    return hits
+
+
 def match_text(
     text: str, *, boundary_policy: str = "none"
 ) -> list[PatternHit]:
@@ -1097,148 +1225,29 @@ def match_text(
         Empty list when no matches or empty registry.
     """
     # F270: Lazy bootstrap — apply default OSINT patterns on first match
-    # call if registry is empty. Saves ~50MB automaton + ~200ms startup
-    # when pattern matching is never used during a sprint run.
     if not _matcher_state._bootstrap_applied:
         configure_default_bootstrap_patterns_if_empty()
 
-    # Now check if we have patterns to match against
     if not _matcher_state._registry_snapshot or not text:
         return []
 
-    hits: list[PatternHit] = []
-
-    # Case-insensitive search: normalize text once
     text_lower = text.lower()
 
-    # === Rust Aho-Corasick scan (primary) ===
-    # Issue #37: Rust returns PatternHit objects directly — no tuple unpacking,
-    # no NamedTuple construction, no sys.intern() calls, labels interned in Rust.
-    # Issue #14: label inline (no Python dict lookup).
-    # Issue #18: boundary check done in Rust.
+    # === Pattern scan: Rust ACO or Python fallback ===
     if _RUST_ACO_AVAILABLE and _matcher_state._rust_aco is not None:
-        rust_boundary: str | None = boundary_policy if boundary_policy != "none" else None
-        # Rust scan() returns List[PatternHit] — already sorted, labels interned
-        for hit in _matcher_state._rust_aco.scan(text_lower, rust_boundary):
-            hits.append(hit)  # zero-copy: Rust PatternHit used directly
+        hits = _scan_rust_aco(text_lower, boundary_policy)
+    elif _matcher_state._regex_alternation is not None:
+        label_map = cast(dict[str, tuple[str, str]], _matcher_state._label_map_cache)
+        hits = _scan_with_regex_alternation(text, text_lower, _matcher_state._regex_alternation, label_map, boundary_policy)
     else:
-        # Linear scan fallback — Issue #17
-        # Priority: (1) pre-compiled regex alternation O(n), (2) str.find() O(p×n)
-        regex_alt = _matcher_state._regex_alternation
-        if regex_alt is not None:
-            # O(n) single-pass regex alternation scan
-            # Issue #35: use cached label_map (built once in configure_patterns)
-            # Invariant: label_map_cache is set whenever regex_alternation is set
-            # (both built together in configure_patterns else-branch)
-            label_map = cast(dict[str, tuple[str, str]], _matcher_state._label_map_cache)
-            for m in regex_alt.finditer(text_lower):
-                matched = m.group()
-                key = matched.lower()
-                if key not in label_map:
-                    # Try case-insensitive lookup
-                    for pk in label_map:
-                        if pk.lower() == key:
-                            key = pk
-                            break
-                    else:
-                        continue
-                pattern, label = label_map[key]
-                start, end = m.start(), m.end()
-                if boundary_policy == "word" and not _is_word_boundary(text, start, end):
-                    continue
-                hits.append(PatternHit(
-                    pattern=sys.intern(pattern),
-                    start=start,
-                    end=end,
-                    value=text[start:end],
-                    label=sys.intern(label) if label else None,
-                ))
-        else:
-            # O(p×n) str.find() loop — only when regex alternation unavailable
-            # (e.g., all patterns are prefix-style that need iterative matching)
-            for pattern, label in _matcher_state._registry_snapshot:
-                pattern_lower = pattern.lower()
-                pos = 0
-                while True:
-                    idx = text_lower.find(pattern_lower, pos)
-                    if idx == -1:
-                        break
-                    if boundary_policy == "word" and not _is_word_boundary(text, idx, idx + len(pattern)):
-                        pos = idx + 1
-                        continue
-                    hits.append(PatternHit(
-                        pattern=sys.intern(pattern),
-                        start=idx,
-                        end=idx + len(pattern),
-                        value=text[idx:idx + len(pattern)],
-                        label=sys.intern(label) if label else None,
-                    ))
-                    pos = idx + 1
+        hits = _scan_with_str_find(text, text_lower, boundary_policy)
 
-    # Sprint 8QB V4 + Sprint 8SC V5: regex post-pass for structured patterns
-    # Issue #15: Rust unified RegexSet replaces 25× Python re.finditer() calls.
-    # Single GIL acquisition vs 25× GIL acquisitions; rayon parallel for batch.
-    # text_lower is already defined from AC scan path above.
-    #
-    # Rust extract_structured_entities_py returns (start, end, value, label)
-    # tuples — already sorted by start offset, deduplicated by (label, value).
-    # Entropy filtering (hex hash trivial-value rejection) is done in Rust.
+    # === Structured entity extraction: Rust or Python fallback ===
     if _RUST_STRUCTURED_EXTRACTOR_AVAILABLE and _rust_extract_structured is not None:
-        for r_start, r_end, r_value, r_label in _rust_extract_structured(text_lower):
-            if boundary_policy == "word" and not _is_word_boundary(text, r_start, r_end):
-                continue
-            # Use original-case value from text slice for display/storage fidelity
-            hits.append(PatternHit(
-                pattern=sys.intern(r_value),
-                start=r_start,
-                end=r_end,
-                value=text[r_start:r_end],  # original case from un-lowered text
-                label=sys.intern(r_label),
-            ))
+        hits.extend(_extract_structured_rust(text, text_lower, boundary_policy))
     else:
-        # Python fallback — original 25× re.finditer() loop
-        for _pattern, _label in [
-            (_RE_CVE, "cve_identifier"),
-            (_RE_GHSA, "ghsa_identifier"),
-            (_RE_BTC_LEGACY, "btc_address"),
-            (_RE_BTC_BECH32, "btc_address"),
-            (_RE_TELEGRAM, "telegram_link"),
-            (_RE_MISP_UUID, "misp_uuid"),
-            (_RE_ONION_V3, "onion_v3"),
-            # Sprint 8SC V5
-            (_RE_XMR_ADDR, "xmr_address"),
-            (_RE_I2P_ADDR, "i2p_address"),
-            (_RE_PGP_FP, "pgp_fingerprint"),
-            (_RE_IPFS_CID, "ipfs_cid"),
-            # Sprint F160B — structured IOC hot-path wiring
-            (_RE_SHA256, "sha256_hash"),
-            (_RE_MD5, "md5_hash"),
-            (_RE_SHA1, "sha1_hash"),
-            (_RE_ETH_ADDR, "eth_address"),
-            # Sprint F165A — new structured IOC coverage
-            (_RE_USDT_TRC20, "usdt_trc20"),
-            (_RE_LTC_ADDR, "ltc_address"),
-            (_RE_DOGE_ADDR, "doge_address"),
-            (_RE_ETH_ADDR, "eth_contract"),
-            # P20 — API key / secret coverage
-            (_RE_AWS_KEY_ID, "aws_access_key_id"),
-            (_RE_GOOGLE_API_KEY, "google_api_key"),
-            (_RE_STRIPE_SK, "stripe_secret_key"),
-            (_RE_SLACK_TOKEN, "slack_token"),
-        ]:
-            for m in _pattern.finditer(text_lower):
-                matched_value = m.group()
-                hits.append(PatternHit(
-                    pattern=sys.intern(matched_value),
-                    start=m.start(),
-                    end=m.end(),
-                    # text[m.start():m.end()] preserves original case from un-lowered text,
-                    # matching the Rust ACO scan path behavior (issue #19)
-                    value=text[m.start():m.end()],
-                    label=sys.intern(_label),
-                ))
+        hits.extend(_extract_structured_entities_python(text, text_lower))
 
-    # Sort by start offset
     hits.sort(key=attrgetter("start"))
     return hits
 

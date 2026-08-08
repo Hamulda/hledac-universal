@@ -226,119 +226,304 @@ async def async_search_circl_pdns(domain: str, max_results: int=50, timeout_s: f
         logger.warning(f'[circl_pdns] unexpected error: {e}')
         return DiscoveryBatchResult(hits=(), error=str(e), error_type='provider_exception', provider_name='circl_pdns', provider_chain=('circl_pdns',), source_family='pdns', elapsed_s=elapsed)
 
+# ── CIRCL PDNS result handlers ──────────────────────────────────────────────────
+
+
+def _handle_pdns_network_error(
+    domain_norm: str,
+    err: str,
+    elapsed: float,
+    cooldown_now: float,
+) -> tuple[DiscoveryBatchResult, PDNSOutcome]:
+    """Handle network errors from PDNS lookup."""
+    err_tag, is_timeout = _classify_network_error(err)
+    _enter_cooldown(domain_norm, err, cooldown_now)
+    outcome = _make_pdns_outcome(domain_norm, 0, elapsed, error=err, timeout=is_timeout, cooldown_active=True, cooldown_remaining_s=_COOLDOWN_DEFAULT_S)
+    result = _make_pdns_result(None, err, err_tag, elapsed)
+    return (result, outcome)
+
+
+def _handle_pdns_http_error(
+    domain_norm: str,
+    status: int,
+    elapsed: float,
+) -> tuple[DiscoveryBatchResult, PDNSOutcome]:
+    """Handle HTTP error responses (400-499) from PDNS lookup."""
+    http_err = f'http_{status}'
+    err_type = 'provider_empty' if status == 404 else 'http_4xx'
+    outcome = _make_pdns_outcome(domain_norm, 0, elapsed, error=http_err if status >= 400 else None)
+    result = _make_pdns_result(None, http_err if status >= 400 else None, err_type, elapsed)
+    return (result, outcome)
+
+
+def _handle_pdns_success(
+    domain_norm: str,
+    text: str,
+    domain: str,
+    elapsed: float,
+    cooldown_now: float,
+) -> tuple[DiscoveryBatchResult, PDNSOutcome]:
+    """Handle successful PDNS lookup and return results."""
+    now_ts = time.time()
+    records = parse_circl_pdns_text(text, max_results=_MAX_HITS)
+    hits = _build_pdns_hits(records, domain, now_ts)
+    elapsed = time.monotonic() - start
+    if not hits:
+        _clear_cooldown(domain_norm)
+        outcome = _make_pdns_outcome(domain_norm, 0, elapsed)
+        result = _make_pdns_result(None, None, 'provider_empty', elapsed)
+        return (result, outcome)
+    _clear_cooldown(domain_norm)
+    if replay_enabled():
+        hits_data = [msgspec.json.decode(msgspec.json.encode(h)) for h in hits]
+        write_cassette('circl_pdns', domain_norm, {'hits': hits_data})
+    outcome = _make_pdns_outcome(domain_norm, len(hits), elapsed)
+    result = _make_pdns_result(tuple(hits), None, 'none', elapsed)
+    return (result, outcome)
+
+
+# ── CIRCL PDNS helper functions ─────────────────────────────────────────────────
+
+
+def _make_pdns_result(
+    hits: tuple[DiscoveryHit, ...] | None,
+    error: str | None,
+    error_type: str,
+    elapsed: float,
+) -> DiscoveryBatchResult:
+    """Create a standardized PDNS DiscoveryBatchResult."""
+    return DiscoveryBatchResult(
+        hits=hits or (),
+        error=error,
+        error_type=error_type,
+        provider_name='circl_pdns',
+        provider_chain=('circl_pdns',),
+        source_family='pdns',
+        elapsed_s=elapsed,
+    )
+
+
+def _make_pdns_outcome(
+    query: str,
+    result_count: int,
+    elapsed: float,
+    *,
+    error: str | None = None,
+    timeout: bool = False,
+    skip_reason: str | None = None,
+    cooldown_active: bool = False,
+    cooldown_remaining_s: float | None = None,
+) -> PDNSOutcome:
+    """Create a standardized PDNSOutcome."""
+    return PDNSOutcome(
+        attempted=True,
+        query=query,
+        result_count=result_count,
+        error=error,
+        timeout=timeout,
+        skip_reason=skip_reason,
+        cooldown_active=cooldown_active,
+        cooldown_remaining_s=cooldown_remaining_s,
+        duration_s=elapsed,
+    )
+
+
+def _classify_network_error(err: str) -> tuple[str, bool]:
+    """Classify network error and return (error_tag, is_timeout)."""
+    if err.startswith('circuit_breaker_open:'):
+        return ('circuit_breaker_open', False)
+    if err == 'timeout':
+        return ('timeout', True)
+    return ('network_error', False)
+
+
+def _build_pdns_hits(
+    records: list[Any],
+    domain: str,
+    now_ts: float,
+) -> list[DiscoveryHit]:
+    """Build PDNS DiscoveryHit list from parsed records."""
+    hits: list[DiscoveryHit] = []
+    for record in records:
+        if len(hits) >= _MAX_HITS:
+            break
+        reason = 'pdns_aaaa_record' if record.rrtype.upper() == 'AAAA' else 'pdns_a_record'
+        snippet = f'CIRCL PDNS: {record.rrname} → {record.ip} ({record.rrtype})'
+        hits.append(DiscoveryHit(
+            query=domain,
+            title=f'PDNS: {record.ip}',
+            url=f'https://{record.rrname}/',
+            snippet=snippet,
+            source='circl_pdns',
+            rank=len(hits),
+            retrieved_ts=now_ts,
+            score=1.0 - len(hits) / _MAX_HITS,
+            reason=reason,
+        ))
+    return hits
+
+
+def _result_for_invalid(domain: str, start: float, skip_reason: str) -> tuple[DiscoveryBatchResult, PDNSOutcome]:
+    """Return result for invalid/empty domain query."""
+    elapsed = time.monotonic() - start
+    outcome = _make_pdns_outcome(domain, 0, elapsed, skip_reason=skip_reason)
+    result = _make_pdns_result(None, skip_reason, 'invalid_query', elapsed)
+    return (result, outcome)
+
+
+def _result_for_cooldown(domain_norm: str, start: float) -> tuple[DiscoveryBatchResult, PDNSOutcome]:
+    """Return result when domain is in cooldown."""
+    elapsed = time.monotonic() - start
+    outcome = _make_pdns_outcome(domain_norm, 0, elapsed, cooldown_active=True, cooldown_remaining_s=_COOLDOWN_DEFAULT_S, skip_reason='cooldown_active')
+    result = _make_pdns_result(None, 'cooldown_active', 'cooldown_active', elapsed)
+    return (result, outcome)
+
+
+def _result_for_replay_hit(domain_norm: str, cached: dict, start: float) -> tuple[DiscoveryBatchResult, PDNSOutcome]:
+    """Return result from cached replay hit."""
+    cached_hits = cached.get('hits', ())
+    elapsed = time.monotonic() - start
+    outcome = _make_pdns_outcome(domain_norm, len(cached_hits), elapsed)
+    result = _make_pdns_result(tuple(cached_hits) if isinstance(cached_hits, list) else cached_hits, None, 'replay_hit', elapsed)
+    return (result, outcome)
+
+
+def _result_for_replay_miss(domain_norm: str, start: float) -> tuple[DiscoveryBatchResult, PDNSOutcome]:
+    """Return result when replay is strict and no cassette found."""
+    elapsed = time.monotonic() - start
+    outcome = _make_pdns_outcome(domain_norm, 0, elapsed, error='replay_miss')
+    result = _make_pdns_result(None, 'replay_miss', 'replay_miss', elapsed)
+    return (result, outcome)
+
+
+def _handle_pdns_network_error(domain_norm: str, err: str, elapsed: float, cooldown_now: float) -> tuple[DiscoveryBatchResult, PDNSOutcome]:
+    """Handle network errors from PDNS HTTP request."""
+    err_tag, is_timeout = _classify_network_error(err)
+    _enter_cooldown(domain_norm, err, cooldown_now)
+    outcome = _make_pdns_outcome(domain_norm, 0, elapsed, error=err, timeout=is_timeout, cooldown_active=True, cooldown_remaining_s=_COOLDOWN_DEFAULT_S)
+    result = _make_pdns_result(None, err, err_tag, elapsed)
+    return (result, outcome)
+
+
+def _handle_pdns_http_error(domain_norm: str, status: int, elapsed: float) -> tuple[DiscoveryBatchResult, PDNSOutcome]:
+    """Handle HTTP 4xx errors from PDNS lookup."""
+    http_err = f'http_{status}'
+    err_type = 'provider_empty' if status == 404 else 'http_4xx'
+    outcome = _make_pdns_outcome(domain_norm, 0, elapsed, error=http_err)
+    result = _make_pdns_result(None, http_err, err_type, elapsed)
+    return (result, outcome)
+
+
+def _handle_pdns_success(domain_norm: str, text: str, domain: str, start: float, cooldown_now: float) -> tuple[DiscoveryBatchResult, PDNSOutcome]:
+    """Handle successful PDNS HTTP response."""
+    now_ts = time.time()
+    records = parse_circl_pdns_text(text, max_results=_MAX_HITS)
+    hits = _build_pdns_hits(records, domain, now_ts)
+    elapsed = time.monotonic() - start
+    if not hits:
+        _clear_cooldown(domain_norm)
+        outcome = _make_pdns_outcome(domain_norm, 0, elapsed)
+        result = _make_pdns_result(None, None, 'provider_empty', elapsed)
+        return (result, outcome)
+    _clear_cooldown(domain_norm)
+    if replay_enabled():
+        import msgspec
+        hits_data = [msgspec.json.decode(msgspec.json.encode(h)) for h in hits]
+        write_cassette('circl_pdns', domain_norm, {'hits': hits_data})
+    outcome = _make_pdns_outcome(domain_norm, len(hits), elapsed)
+    result = _make_pdns_result(tuple(hits), None, 'none', elapsed)
+    return (result, outcome)
+
+
+async def _handle_pdns_http_response(
+    domain_norm: str,
+    text: str,
+    status: int,
+    domain: str,
+    start: float,
+    cooldown_now: float,
+) -> tuple[DiscoveryBatchResult, PDNSOutcome]:
+    """Process successful HTTP response from PDNS lookup."""
+    if status >= 500:
+        _enter_cooldown(domain_norm, f'http_{status}', cooldown_now)
+        elapsed = time.monotonic() - start
+        outcome = _make_pdns_outcome(domain_norm, 0, elapsed, error=f'http_{status}', cooldown_active=True, cooldown_remaining_s=_COOLDOWN_DEFAULT_S)
+        result = _make_pdns_result(None, f'http_{status}', 'http_5xx', elapsed)
+        return (result, outcome)
+    if status >= 400:
+        elapsed = time.monotonic() - start
+        return _handle_pdns_http_error(domain_norm, status, elapsed)
+    return _handle_pdns_success(domain_norm, str(text), domain, start, cooldown_now)
+
+
+def _handle_pdns_exception(domain_norm: str, start: float, exc: Exception) -> tuple[DiscoveryBatchResult, PDNSOutcome]:
+    """Handle exceptions from PDNS lookup."""
+    elapsed = time.monotonic() - start
+    if isinstance(exc, TimeoutError):
+        _enter_cooldown(domain_norm, 'timeout', start)
+        outcome = _make_pdns_outcome(domain_norm, 0, elapsed, error='timeout', timeout=True, cooldown_active=True, cooldown_remaining_s=_COOLDOWN_DEFAULT_S)
+        result = _make_pdns_result(None, 'timeout', 'timeout', elapsed)
+    else:
+        logger.warning(f'[circl_pdns] unexpected error: {exc}')
+        outcome = _make_pdns_outcome(domain_norm, 0, elapsed, error=str(exc))
+        result = _make_pdns_result(None, str(exc), 'provider_exception', elapsed)
+    return (result, outcome)
+
+
 async def call_circl_pdns(domain: str, timeout_s: float=5.0) -> tuple[DiscoveryBatchResult, PDNSOutcome]:
     """
     CIRCL PDNS lookup with normalized outcome — returns (DiscoveryBatchResult, PDNSOutcome).
-
-    Args:
-        domain:    Domain to query.
-        timeout_s: HTTP timeout in seconds (default 5.0).
-
-    Returns:
-        (DiscoveryBatchResult, PDNSOutcome) tuple.
-        outcome.attempted=True on every code path.
+    Uses helper functions to reduce branching complexity.
     """
+    start, domain_norm, cooldown_now = _prepare_pdns_request(domain)
+    # Early exit: invalid domain, cooldown, or replay cache
+    result = _check_early_exit(domain, domain_norm, cooldown_now, start)
+    if result is not None:
+        return result
+    # Execute HTTP request
+    return await _execute_pdns_request(domain_norm, domain, timeout_s, cooldown_now, start)
+
+
+def _prepare_pdns_request(domain: str) -> tuple[float, str, float]:
+    """Prepare common values for PDNS request."""
     start = time.monotonic()
     domain_norm = _normalize_domain(domain)
-    if not domain_norm:
-        elapsed = time.monotonic() - start
-        outcome = PDNSOutcome(attempted=True, query=domain, result_count=0, skip_reason='empty_query', duration_s=elapsed)
-        result = DiscoveryBatchResult(hits=(), error='empty_query', error_type='invalid_query', provider_name='circl_pdns', provider_chain=('circl_pdns',), source_family='pdns', elapsed_s=elapsed)
-        return (result, outcome)
     cooldown_now = time.monotonic()
+    return start, domain_norm, cooldown_now
+
+
+def _check_early_exit(domain: str, domain_norm: str, cooldown_now: float, start: float) -> tuple[DiscoveryBatchResult, PDNSOutcome] | None:
+    """Check early exit conditions. Returns result if should exit, None otherwise."""
+    if not domain_norm:
+        return _result_for_invalid(domain, start, 'empty_query')
     in_cooldown, _, _ = _check_cooldown(domain_norm, cooldown_now)
     if in_cooldown:
-        elapsed = time.monotonic() - start
-        outcome = PDNSOutcome(attempted=True, query=domain_norm, result_count=0, skip_reason='cooldown_active', cooldown_active=True, cooldown_remaining_s=_COOLDOWN_DEFAULT_S, duration_s=elapsed)
-        result = DiscoveryBatchResult(hits=(), error='cooldown_active', error_type='cooldown_active', provider_name='circl_pdns', provider_chain=('circl_pdns',), source_family='pdns', elapsed_s=elapsed)
-        return (result, outcome)
+        return _result_for_cooldown(domain_norm, start)
     if replay_enabled():
         cached = read_cassette('circl_pdns', domain_norm)
         if cached is not None:
-            cached_hits = cached.get('hits', ())
-            elapsed = time.monotonic() - start
-            outcome = PDNSOutcome(attempted=True, query=domain_norm, result_count=len(cached_hits), error=None, duration_s=elapsed)
-            result = DiscoveryBatchResult(hits=tuple(cached_hits) if isinstance(cached_hits, list) else cached_hits, error=None, error_type='replay_hit', provider_name='circl_pdns', provider_chain=('circl_pdns',), source_family='pdns', elapsed_s=elapsed)
-            return (result, outcome)
-        elif replay_strict_enabled():
-            elapsed = time.monotonic() - start
-            outcome = PDNSOutcome(attempted=True, query=domain_norm, result_count=0, error='replay_miss', duration_s=elapsed)
-            result = DiscoveryBatchResult(hits=(), error='replay_miss', error_type='replay_miss', provider_name='circl_pdns', provider_chain=('circl_pdns',), source_family='pdns', elapsed_s=elapsed)
-            return (result, outcome)
+            return _result_for_replay_hit(domain_norm, cached, start)
+        if replay_strict_enabled():
+            return _result_for_replay_miss(domain_norm, start)
+    return None
+
+
+async def _execute_pdns_request(domain_norm: str, domain: str, timeout_s: float, cooldown_now: float, start: float) -> tuple[DiscoveryBatchResult, PDNSOutcome]:
+    """Execute the actual PDNS HTTP request."""
     await _rate_limit_circl()
-    session: httpx.AsyncClient | None = None
-    raw_count = 0
+    session = await async_get_httpx_session()
+    timeout = httpx.Timeout(min(timeout_s, _HTTP_TIMEOUT_S))
+    url = f'{_CIRCL_PDNS_URL}/{domain_norm}'
     try:
-        session = await async_get_httpx_session()
-        timeout = httpx.Timeout(min(timeout_s, _HTTP_TIMEOUT_S))
-        url = f'{_CIRCL_PDNS_URL}/{domain_norm}'
-        try:
-            async with asyncio.timeout(timeout_s):
-                text, status, err = await checked_aiohttp_get(session, url, headers={'User-Agent': 'Hledac/1.0 (research bot)'}, timeout=timeout, failure_kind='circl_pdns')
-        except asyncio.CancelledError:
-            raise
-        elapsed = time.monotonic() - start
+        async with asyncio.timeout(timeout_s):
+            text, status, err = await checked_aiohttp_get(session, url, headers={'User-Agent': 'Hledac/1.0 (research bot)'}, timeout=timeout, failure_kind='circl_pdns')
         if err:
-            err_tag = 'network_error'
-            is_timeout = err == 'timeout'
-            if err.startswith('circuit_breaker_open:'):
-                err_tag = 'circuit_breaker_open'
-            elif is_timeout:
-                err_tag = 'timeout'
-            _enter_cooldown(domain_norm, err, cooldown_now)
-            outcome = PDNSOutcome(attempted=True, query=domain_norm, result_count=0, error=err, timeout=is_timeout, cooldown_active=True, cooldown_remaining_s=_COOLDOWN_DEFAULT_S, duration_s=elapsed)
-            result = DiscoveryBatchResult(hits=(), error=err, error_type=err_tag, provider_name='circl_pdns', provider_chain=('circl_pdns',), source_family='pdns', elapsed_s=elapsed)
-            return (result, outcome)
-        if status >= 500:
-            _enter_cooldown(domain_norm, f'http_{status}', cooldown_now)
-            outcome = PDNSOutcome(attempted=True, query=domain_norm, result_count=0, error=f'http_{status}', cooldown_active=True, cooldown_remaining_s=_COOLDOWN_DEFAULT_S, duration_s=elapsed)
-            result = DiscoveryBatchResult(hits=(), error=f'http_{status}', error_type='http_5xx', provider_name='circl_pdns', provider_chain=('circl_pdns',), source_family='pdns', elapsed_s=elapsed)
-            return (result, outcome)
-        if status == 404 or status >= 400:
-            elapsed = time.monotonic() - start
-            outcome = PDNSOutcome(attempted=True, query=domain_norm, result_count=0, error=f'http_{status}' if status >= 400 else None, duration_s=elapsed)
-            result = DiscoveryBatchResult(hits=(), error=f'http_{status}' if status >= 400 else None, error_type='provider_empty' if status == 404 else 'http_4xx', provider_name='circl_pdns', provider_chain=('circl_pdns',), source_family='pdns', elapsed_s=elapsed)
-            return (result, outcome)
-        now_ts = time.time()
-        records = parse_circl_pdns_text(str(text), max_results=_MAX_HITS)
-        hits: list[DiscoveryHit] = []
-        raw_count = 0
-        for record in records:
-            raw_count += 1
-            if len(hits) >= _MAX_HITS:
-                break
-            reason = 'pdns_aaaa_record' if record.rrtype.upper() == 'AAAA' else 'pdns_a_record'
-            snippet = f'CIRCL PDNS: {record.rrname} → {record.ip} ({record.rrtype})'
-            hits.append(DiscoveryHit(query=domain, title=f'PDNS: {record.ip}', url=f'https://{record.rrname}/', snippet=snippet, source='circl_pdns', rank=len(hits), retrieved_ts=now_ts, score=1.0 - len(hits) / _MAX_HITS, reason=reason))
-        elapsed = time.monotonic() - start
-        built_count = len(hits)
-        if not hits:
-            _clear_cooldown(domain_norm)
-            outcome = PDNSOutcome(attempted=True, query=domain_norm, result_count=0, duration_s=elapsed)
-            result = DiscoveryBatchResult(hits=(), error=None, error_type='provider_empty', provider_name='circl_pdns', provider_chain=('circl_pdns',), source_family='pdns', elapsed_s=elapsed)
-            return (result, outcome)
-        _clear_cooldown(domain_norm)
-        if replay_enabled():
-            import msgspec
-            hits_data = [msgspec.json.decode(msgspec.json.encode(h)) for h in hits]
-            write_cassette('circl_pdns', domain_norm, {'hits': hits_data})
-        outcome = PDNSOutcome(attempted=True, query=domain_norm, result_count=built_count, error=None, duration_s=elapsed)
-        result = DiscoveryBatchResult(hits=tuple(hits), error=None, error_type='none', provider_name='circl_pdns', provider_chain=('circl_pdns',), source_family='pdns', elapsed_s=elapsed)
-        return (result, outcome)
+            return _handle_pdns_network_error(domain_norm, err, time.monotonic() - start, cooldown_now)
+        return await _handle_pdns_http_response(domain_norm, str(text), status, domain, start, cooldown_now)
     except asyncio.CancelledError:
         raise
-    except TimeoutError:
-        elapsed = time.monotonic() - start
-        _enter_cooldown(domain_norm, 'timeout', start)
-        outcome = PDNSOutcome(attempted=True, query=domain_norm, result_count=0, error='timeout', timeout=True, cooldown_active=True, cooldown_remaining_s=_COOLDOWN_DEFAULT_S, duration_s=elapsed)
-        result = DiscoveryBatchResult(hits=(), error='timeout', error_type='timeout', provider_name='circl_pdns', provider_chain=('circl_pdns',), source_family='pdns', elapsed_s=elapsed)
-        return (result, outcome)
     except Exception as e:
-        elapsed = time.monotonic() - start
-        logger.warning(f'[circl_pdns] unexpected error: {e}')
-        outcome = PDNSOutcome(attempted=True, query=domain_norm, result_count=0, error=str(e), duration_s=elapsed)
-        result = DiscoveryBatchResult(hits=(), error=str(e), error_type='provider_exception', provider_name='circl_pdns', provider_chain=('circl_pdns',), source_family='pdns', elapsed_s=elapsed)
-        return (result, outcome)
+        return _handle_pdns_exception(domain_norm, start, e)
 
 class CirclPDNSAdapter(BaseDiscoveryMixin):
     """

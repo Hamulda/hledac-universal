@@ -421,6 +421,213 @@ def _build_infrastructure_object(name: str, infrastructure_type: str, created: s
     infra_id = _make_stix_id('infrastructure', name, infrastructure_type)
     return {'type': 'infrastructure', 'spec_version': _STIX_SPEC_VERSION, 'id': f'infrastructure--{infra_id}', 'created': created, 'modified': created, 'name': name, 'description': description or f'Infrastructure identified via OSINT: {name}', 'infrastructure_types': [infrastructure_type] if infrastructure_type else ['unknown']}
 
+def _build_attack_pattern_objects(
+    killchain_tags: dict[str, Any],
+    max_objects: int,
+    existing_count: int,
+    created: str,
+) -> tuple[list[dict[str, Any]], set[str]]:
+    """
+    Build attack-pattern objects from ATT&CK technique IDs in killchain_tags.
+    Returns (objects, technique_ids_seen).
+    """
+    objects: list[dict[str, Any]] = []
+    technique_ids_seen: set[str] = set()
+    for fid, tags in killchain_tags.items():
+        if isinstance(tags, list):
+            for tag in tags:
+                if isinstance(tag, dict):
+                    tech = _safe_str(tag.get('technique_id', ''))
+                    if tech and tech.startswith('T') and (len(objects) + existing_count < max_objects):
+                        if tech not in technique_ids_seen:
+                            technique_ids_seen.add(tech)
+                            obj = _build_attack_pattern_object(tech, created)
+                            objects.append(obj)
+    return objects, technique_ids_seen
+
+
+def _build_malware_and_tool_objects(
+    malware_samples: list[dict[str, Any]],
+    tool_samples: list[dict[str, Any]],
+    max_objects: int,
+    existing_count: int,
+    created: str,
+) -> tuple[list[dict[str, Any]], list[str], list[str]]:
+    """
+    Build malware and tool objects from samples.
+    Returns (objects, malware_refs, tool_refs).
+    """
+    objects: list[dict[str, Any]] = []
+    malware_refs: list[str] = []
+    tool_refs: list[str] = []
+
+    for mal in malware_samples:
+        if len(objects) + existing_count >= max_objects:
+            break
+        if not isinstance(mal, dict):
+            mal = dict(mal) if hasattr(mal, '__dict__') else {}
+        mal_obj = _build_malware_object(
+            name=_safe_str(mal.get('name', 'Unknown Malware')),
+            malware_type=_safe_str(mal.get('type', 'unknown')),
+            created=created,
+            technique_ids=mal.get('technique_ids'),
+        )
+        objects.append(mal_obj)
+        malware_refs.append(mal_obj['id'])
+
+    for tool in tool_samples:
+        if len(objects) + existing_count >= max_objects:
+            break
+        if not isinstance(tool, dict):
+            tool = dict(tool) if hasattr(tool, '__dict__') else {}
+        tool_obj = _build_tool_object(
+            name=_safe_str(tool.get('name', 'Unknown Tool')),
+            tool_type=_safe_str(tool.get('type', 'utility')),
+            created=created,
+        )
+        objects.append(tool_obj)
+        tool_refs.append(tool_obj['id'])
+
+    return objects, malware_refs, tool_refs
+
+
+def _build_campaign_and_intrusion_set_objects(
+    campaigns: list[dict[str, Any]],
+    intrusion_sets: list[dict[str, Any]],
+    max_objects: int,
+    existing_count: int,
+    created: str,
+) -> tuple[list[dict[str, Any]], list[str], list[str]]:
+    """
+    Build campaign and intrusion-set objects.
+    Returns (objects, campaign_refs, intrusion_set_refs).
+    """
+    objects: list[dict[str, Any]] = []
+    campaign_refs: list[str] = []
+    intrusion_set_refs: list[str] = []
+
+    for camp in campaigns:
+        if len(objects) + existing_count >= max_objects:
+            break
+        if not isinstance(camp, dict):
+            camp = dict(camp) if hasattr(camp, '__dict__') else {}
+        camp_obj = _build_campaign_object(
+            name=_safe_str(camp.get('name', 'Unknown Campaign')),
+            objective=_safe_str(camp.get('objective', '')),
+            created=created,
+            first_seen=_iso_timestamp(camp.get('first_seen', fmt='rfc3339')),
+            last_seen=_iso_timestamp(camp.get('last_seen', fmt='rfc3339')),
+        )
+        objects.append(camp_obj)
+        campaign_refs.append(camp_obj['id'])
+
+    for intr in intrusion_sets:
+        if len(objects) + existing_count >= max_objects:
+            break
+        if not isinstance(intr, dict):
+            intr = dict(intr) if hasattr(intr, '__dict__') else {}
+        intr_obj = _build_intrusion_set_object(
+            name=_safe_str(intr.get('name', 'Unknown Actor')),
+            aliases=intr.get('aliases', []) if isinstance(intr.get('aliases'), list) else [],
+            created=created,
+            description=_safe_str(intr.get('description', '')),
+        )
+        objects.append(intr_obj)
+        intrusion_set_refs.append(intr_obj['id'])
+
+    return objects, campaign_refs, intrusion_set_refs
+
+
+def _build_forensic_objects_and_relationships(
+    forensic_analyses: list[dict[str, Any]],
+    finding_to_stix_ref: dict[str, str],
+    max_objects: int,
+    existing_count: int,
+    created: str,
+) -> tuple[list[dict[str, Any]], list[tuple[str, str]]]:
+    """
+    Build forensic analysis objects and their relationships to parent findings.
+    Returns (objects, forensic_to_parent) where forensic_to_parent is list of (fr_ref, parent_ref).
+    """
+    objects: list[dict[str, Any]] = []
+    forensic_to_parent: list[tuple[str, str]] = []
+
+    for fr in forensic_analyses:
+        if len(objects) + existing_count >= max_objects:
+            break
+        if not isinstance(fr, dict):
+            fr = dict(fr) if hasattr(fr, '__dict__') else {}
+        parent_fid = _safe_str(fr.get('finding_id', ''))
+        parent_ref = finding_to_stix_ref.get(parent_fid, '')
+        fr_obj = _build_forensic_analysis_object(fr, created)
+        objects.append(fr_obj)
+        if parent_ref:
+            forensic_to_parent.append((fr_obj['id'], parent_ref))
+
+    # Build forensic relationships
+    for fr_ref, parent_ref in forensic_to_parent:
+        if len(objects) + existing_count >= max_objects:
+            break
+        rel = _build_forensic_relationship(fr_ref, parent_ref, created)
+        objects.append(rel)
+
+    return objects, forensic_to_parent
+
+
+def _build_indicator_identity_relationships(
+    indicator_refs: list[str],
+    identity_refs: list[str],
+    max_objects: int,
+    existing_objects: list[dict[str, Any]],
+) -> None:
+    """
+    Build relationship objects linking indicators to identities.
+    Appends to existing_objects.
+    """
+    for ind_id in indicator_refs:
+        if len(existing_objects) >= max_objects:
+            break
+        for ident_id in identity_refs[:3]:
+            rel_id = _make_stix_id('relationship', ind_id, ident_id)
+            existing_objects.append({
+                'type': 'relationship',
+                'spec_version': _STIX_SPEC_VERSION,
+                'id': f'relationship--{rel_id}',
+                'created': _utc_now(),
+                'modified': _utc_now(),
+                'source_ref': ind_id,
+                'target_ref': f'identity--{ident_id}',
+                'relationship_type': 'derived-from',
+            })
+
+
+def _build_technique_indicator_relationships(
+    technique_ids_seen: set[str],
+    indicator_refs: list[str],
+    max_objects: int,
+    existing_objects: list[dict[str, Any]],
+) -> None:
+    """
+    Build relationship objects linking intrusion-sets to attack-patterns via indicators.
+    Appends to existing_objects.
+    """
+    for ttp_id in technique_ids_seen:
+        if len(existing_objects) >= max_objects:
+            break
+        for ind_id in indicator_refs[:3]:
+            rel_id = _make_stix_id('relationship', ttp_id, ind_id)
+            existing_objects.append({
+                'type': 'relationship',
+                'spec_version': _STIX_SPEC_VERSION,
+                'id': f'relationship--{rel_id}',
+                'created': _utc_now(),
+                'modified': _utc_now(),
+                'source_ref': f"intrusion-set--{_make_stix_id('intrusion-set', 'ghost-prime')}",
+                'target_ref': f"attack-pattern--{_make_stix_id('attack-pattern', ttp_id)}",
+                'relationship_type': 'uses',
+            })
+
+
 def render_full_stix_bundle(findings: list[Any], identity_candidates: list[dict[str, Any]] | None=None, attribution_scores: dict[str, Any] | None=None, killchain_tags: dict[str, Any] | None=None, evidence_chains: list[dict[str, Any]] | None=None, forensic_analyses: list[dict[str, Any]] | None=None, campaigns: list[dict[str, Any]] | None=None, intrusion_sets: list[dict[str, Any]] | None=None, malware_samples: list[dict[str, Any]] | None=None, tool_samples: list[dict[str, Any]] | None=None, max_objects: int=MAX_STIX_OBJECTS) -> dict[str, Any]:
     """
     F234: Full STIX 2.1 bundle with all object types.
@@ -479,131 +686,60 @@ def render_full_stix_bundle(findings: list[Any], identity_candidates: list[dict[
     created = _utc_now()
     objects: list[dict[str, Any]] = []
     objects.append(_build_diagnostic_identity())
-    technique_ids_seen: set[str] = set()
-    for fid, tags in killchain_tags.items():
-        if isinstance(tags, list):
-            for tag in tags:
-                if isinstance(tag, dict):
-                    tech = _safe_str(tag.get('technique_id', ''))
-                    if tech and tech.startswith('T') and (len(objects) < max_objects):
-                        if tech not in technique_ids_seen:
-                            technique_ids_seen.add(tech)
-                            obj = _build_attack_pattern_object(tech, created)
-                            objects.append(obj)
-    finding_ids_seen: set[str] = set()
-    indicator_refs: list[str] = []
-    observed_refs: list[str] = []
-    finding_to_stix_ref: dict[str, str] = {}
-    for finding_raw in findings:
-        if len(objects) >= max_objects:
-            break
-        if not isinstance(finding_raw, dict):
-            finding_raw = dict(finding_raw) if hasattr(finding_raw, '__dict__') else {}
-        finding = finding_raw
-        fid = _safe_str(finding.get('finding_id', ''))
-        finding_ids_seen.add(fid)
-        finding_kc_tags = killchain_tags.get(fid) if fid else None
-        ind = _ioc_to_indicator(finding, created, finding_kc_tags)
-        if ind is not None:
-            objects.append(ind)
-            indicator_refs.append(ind['id'])
-            if fid:
-                finding_to_stix_ref[fid] = ind['id']
-        else:
-            obs = _finding_to_observed_data(finding, created)
-            if obs and obs.get('objects'):
-                objects.append(obs)
-                observed_refs.append(obs['id'])
-                if fid:
-                    finding_to_stix_ref[fid] = obs['id']
-        if finding_kc_tags:
-            note = _build_killchain_note(fid, finding_kc_tags, indicator_refs[-1] if indicator_refs else None, created)
-            if note and len(objects) < max_objects:
-                objects.append(note)
-    identity_refs: list[str] = []
-    for cand in identity_candidates:
-        if len(objects) >= max_objects:
-            break
-        if not isinstance(cand, dict):
-            cand = dict(cand) if hasattr(cand, '__dict__') else {}
-        identity_obj = _build_identity_object(cand, created)
-        objects.append(identity_obj)
-        identity_refs.append(identity_obj['id'])
-        cand_id = _safe_str(cand.get('candidate_id', ''))
-        if cand_id in attribution_scores and len(objects) < max_objects:
-            score = attribution_scores[cand_id]
-            if isinstance(score, dict):
-                note = _build_attribution_note(cand_id, score, _make_stix_id('identity', _safe_str(cand.get('primary_name', '')), cand_id), created)
-                objects.append(note)
-    chain_refs: list[str] = []
-    for chain in evidence_chains:
-        if len(objects) >= max_objects:
-            break
-        if not isinstance(chain, dict):
-            chain = dict(chain) if hasattr(chain, '__dict__') else {}
-        chain_obj = _build_evidence_chain_object(chain, created)
-        objects.append(chain_obj)
-        chain_refs.append(chain_obj['id'])
-    forensic_refs: list[str] = []
-    forensic_to_parent: list[tuple[str, str]] = []
-    for fr in forensic_analyses:
-        if len(objects) >= max_objects:
-            break
-        if not isinstance(fr, dict):
-            fr = dict(fr) if hasattr(fr, '__dict__') else {}
-        parent_fid = _safe_str(fr.get('finding_id', ''))
-        parent_ref = finding_to_stix_ref.get(parent_fid, '')
-        fr_obj = _build_forensic_analysis_object(fr, created)
-        objects.append(fr_obj)
-        forensic_refs.append(fr_obj['id'])
-        if parent_ref:
-            forensic_to_parent.append((fr_obj['id'], parent_ref))
-    for camp in campaigns:
-        if len(objects) >= max_objects:
-            break
-        if not isinstance(camp, dict):
-            camp = dict(camp) if hasattr(camp, '__dict__') else {}
-        camp_obj = _build_campaign_object(name=_safe_str(camp.get('name', 'Unknown Campaign')), objective=_safe_str(camp.get('objective', '')), created=created, first_seen=_iso_timestamp(camp.get('first_seen', fmt='rfc3339')), last_seen=_iso_timestamp(camp.get('last_seen', fmt='rfc3339')))
-        objects.append(camp_obj)
-    for intr in intrusion_sets:
-        if len(objects) >= max_objects:
-            break
-        if not isinstance(intr, dict):
-            intr = dict(intr) if hasattr(intr, '__dict__') else {}
-        intr_obj = _build_intrusion_set_object(name=_safe_str(intr.get('name', 'Unknown Actor')), aliases=intr.get('aliases', []) if isinstance(intr.get('aliases'), list) else [], created=created, description=_safe_str(intr.get('description', '')))
-        objects.append(intr_obj)
-    for mal in malware_samples:
-        if len(objects) >= max_objects:
-            break
-        if not isinstance(mal, dict):
-            mal = dict(mal) if hasattr(mal, '__dict__') else {}
-        mal_obj = _build_malware_object(name=_safe_str(mal.get('name', 'Unknown Malware')), malware_type=_safe_str(mal.get('type', 'unknown')), created=created, technique_ids=mal.get('technique_ids'))
-        objects.append(mal_obj)
-    for tool in tool_samples:
-        if len(objects) >= max_objects:
-            break
-        if not isinstance(tool, dict):
-            tool = dict(tool) if hasattr(tool, '__dict__') else {}
-        tool_obj = _build_tool_object(name=_safe_str(tool.get('name', 'Unknown Tool')), tool_type=_safe_str(tool.get('type', 'utility')), created=created)
-        objects.append(tool_obj)
-    for ind_id in indicator_refs:
-        if len(objects) >= max_objects:
-            break
-        for ident_id in identity_refs[:3]:
-            rel_id = _make_stix_id('relationship', ind_id, ident_id)
-            objects.append({'type': 'relationship', 'spec_version': _STIX_SPEC_VERSION, 'id': f'relationship--{rel_id}', 'created': created, 'modified': created, 'source_ref': ind_id, 'target_ref': f'identity--{ident_id}', 'relationship_type': 'derived-from'})
-    for ttp_id in technique_ids_seen:
-        if len(objects) >= max_objects:
-            break
-        for ind_id in indicator_refs[:3]:
-            rel_id = _make_stix_id('relationship', ttp_id, ind_id)
-            objects.append({'type': 'relationship', 'spec_version': _STIX_SPEC_VERSION, 'id': f'relationship--{rel_id}', 'created': created, 'modified': created, 'source_ref': f"intrusion-set--{_make_stix_id('intrusion-set', 'ghost-prime')}", 'target_ref': f"attack-pattern--{_make_stix_id('attack-pattern', ttp_id)}", 'relationship_type': 'uses'})
-    for fr_ref, parent_ref in forensic_to_parent:
-        if len(objects) >= max_objects:
-            break
-        objects.append(_build_forensic_relationship(fr_ref, parent_ref, created))
+
+    # Build attack patterns from ATT&CK technique mapping
+    attack_patterns, technique_ids_seen = _build_attack_pattern_objects(
+        killchain_tags, max_objects, len(objects), created
+    )
+    objects.extend(attack_patterns)
+
+    # Build findings objects (indicators, observed-data, killchain notes)
+    finding_objects, indicator_refs, observed_refs, finding_to_stix_ref = _build_findings_objects(
+        findings, killchain_tags, max_objects
+    )
+    objects.extend(finding_objects)
+    finding_ids_seen = set(finding_to_stix_ref.keys())
+
+    # Build identity objects and get their refs
+    identity_refs = _build_identity_objects(
+        identity_candidates, attribution_scores, max_objects, objects
+    )
+
+    # Build evidence chain objects
+    chain_refs = _build_chain_objects(evidence_chains, max_objects, objects)
+
+    # Build forensic analysis objects and relationships
+    forensic_objects, _ = _build_forensic_objects_and_relationships(
+        forensic_analyses, finding_to_stix_ref, max_objects, len(objects), created
+    )
+    objects.extend(forensic_objects)
+
+    # Build campaigns and intrusion sets
+    campaign_intrusion_objects, _, _ = _build_campaign_and_intrusion_set_objects(
+        campaigns, intrusion_sets, max_objects, len(objects), created
+    )
+    objects.extend(campaign_intrusion_objects)
+
+    # Build malware and tool objects
+    malware_tool_objects, _, _ = _build_malware_and_tool_objects(
+        malware_samples, tool_samples, max_objects, len(objects), created
+    )
+    objects.extend(malware_tool_objects)
+
+    # Build relationship objects
+    _build_indicator_identity_relationships(indicator_refs, identity_refs, max_objects, objects)
+    _build_technique_indicator_relationships(technique_ids_seen, indicator_refs, max_objects, objects)
+
+    # Build final report and bundle
     report_name = f"Ghost Prime Full CTI {datetime.now(UTC).strftime('%Y-%m-%d')}"
-    report = _build_cti_report(objects=objects, name=report_name, finding_count=len(finding_ids_seen), identity_count=len(identity_refs), chain_count=len(chain_refs), created=created)
+    report = _build_cti_report(
+        objects=objects,
+        name=report_name,
+        finding_count=len(finding_ids_seen),
+        identity_count=len(identity_refs),
+        chain_count=len(chain_refs),
+        created=created,
+    )
     if len(objects) < max_objects:
         objects.append(report)
     bundle: dict[str, Any] = {'type': _BUNDLE_TYPE, 'id': _cti_bundle_id(report_name), 'spec_version': _STIX_SPEC_VERSION, 'created': created, 'modified': created, 'objects': objects}

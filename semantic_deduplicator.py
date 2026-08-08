@@ -248,6 +248,84 @@ class SemanticDedupCache:
             logger.debug(f'[SEMDEDUP] check_and_cache failed: {e}')
             return False
 
+    def _deduplicate_texts(
+        self, texts: list[str]
+    ) -> tuple[list[str], list[int], dict[int, list[int]]]:
+        """
+        Phase 1: Deduplicate texts by exact match.
+
+        Returns:
+            Tuple of (unique_texts, index_map, unique_to_original).
+            index_map[i] = index in unique_texts for original text at position i
+            unique_to_original[unique_idx] = list of original indices with this text
+        """
+        unique_texts: list[str] = []
+        index_map: list[int] = []
+        unique_to_original: dict[int, list[int]] = {}
+        seen: dict[str, int] = {}
+
+        for orig_idx, t in enumerate(texts):
+            if t not in seen:
+                seen[t] = len(unique_texts)
+                unique_texts.append(t)
+                unique_to_original[seen[t]] = []
+            index_map.append(seen[t])
+            unique_to_original[seen[t]].append(orig_idx)
+
+        return unique_texts, index_map, unique_to_original
+
+    def _compute_normalized_embeddings(
+        self, unique_texts: list[str]
+    ) -> np.ndarray | None:
+        """
+        Phase 2: Generate and normalize embeddings for unique texts.
+
+        Returns:
+            Normalized embedding matrix or None on failure.
+        """
+        embeddings = generate_embeddings(unique_texts, batch_size=_BATCH_SIZE)
+        if embeddings.shape[0] == 0:
+            return None
+
+        emb_dict: dict[str, np.ndarray] = {}
+        for t, emb in zip(unique_texts, embeddings, strict=False):
+            if emb.shape[0] == _EMBEDDING_DIM:
+                emb_dict[t] = emb.astype(np.float32)
+                self._add_to_cache(t, emb_dict[t])
+
+        unique_embs = np.array([emb_dict[t] for t in unique_texts])
+        norm_embs = unique_embs / (np.linalg.norm(unique_embs, axis=1, keepdims=True) + 1e-08)
+        return norm_embs
+
+    def _compute_similarities(
+        self,
+        texts: list[str],
+        index_map: list[int],
+        norm_embs: np.ndarray,
+        canonical_of: dict[int, int],
+        threshold: float,
+    ) -> list[set[int]]:
+        """
+        Phase 3: Compute cosine similarities and find duplicates.
+
+        Returns:
+            List of sets, one per text. Each set contains indices of duplicates.
+        """
+        results: list[set[int]] = [set() for _ in texts]
+
+        for i, t in enumerate(texts):
+            ui = index_map[i]
+            query = norm_embs[ui].reshape(1, -1)
+            sims = (query @ norm_embs.T)[0]
+
+            for j, sim in enumerate(sims):
+                if sim >= threshold:
+                    canonical = canonical_of[j]
+                    if canonical != i:
+                        results[i].add(canonical)
+
+        return results
+
     def check_batch(self, texts: list[str], threshold: float=0.95) -> list[set[int]]:
         """
         Batch semantic dedup — find groups of duplicate texts.
@@ -268,45 +346,26 @@ class SemanticDedupCache:
         if not self._check_memory_guard():
             return [set() for _ in texts]
         try:
-            unique_texts: list[str] = []
-            index_map: list[int] = []
-            unique_to_original: dict[int, list[int]] = {}
-            seen: dict[str, int] = {}
-            for orig_idx, t in enumerate(texts):
-                if t not in seen:
-                    seen[t] = len(unique_texts)
-                    unique_texts.append(t)
-                    unique_to_original[seen[t]] = []
-                index_map.append(seen[t])
-                unique_to_original[seen[t]].append(orig_idx)
+            # Phase 1: Deduplicate by exact match
+            unique_texts, index_map, unique_to_original = self._deduplicate_texts(texts)
+
             if len(unique_texts) == 1:
                 result: list[set[int]] = [set() for _ in texts]
                 for i in range(1, len(texts)):
                     result[i].add(0)
                 return result
-            embeddings = generate_embeddings(unique_texts, batch_size=_BATCH_SIZE)
-            if embeddings.shape[0] == 0:
+
+            # Phase 2: Generate and normalize embeddings
+            norm_embs = self._compute_normalized_embeddings(unique_texts)
+            if norm_embs is None:
                 return [set() for _ in texts]
-            emb_dict: dict[str, np.ndarray] = {}
-            for t, emb in zip(unique_texts, embeddings, strict=False):
-                if emb.shape[0] == _EMBEDDING_DIM:
-                    emb_dict[t] = emb.astype(np.float32)
-            for t, emb in emb_dict.items():
-                self._add_to_cache(t, emb)
-            results: list[set[int]] = [set() for _ in texts]
-            unique_embs = np.array([emb_dict[t] for t in unique_texts])
-            norm_embs = unique_embs / (np.linalg.norm(unique_embs, axis=1, keepdims=True) + 1e-08)
+
+            # Build canonical mapping
             canonical_of: dict[int, int] = {j: unique_to_original[j][0] for j in unique_to_original}
-            for i, t in enumerate(texts):
-                ui = index_map[i]
-                query = norm_embs[ui].reshape(1, -1)
-                sims = (query @ norm_embs.T)[0]
-                for j, sim in enumerate(sims):
-                    if sim >= threshold:
-                        canonical = canonical_of[j]
-                        if canonical != i:
-                            results[i].add(canonical)
-            return results
+
+            # Phase 3: Compute similarities
+            return self._compute_similarities(
+                texts, index_map, norm_embs, canonical_of, threshold)
         except Exception as e:
             logger.debug(f'[SEMDEDUP] check_batch failed: {e}')
             return [set() for _ in texts]

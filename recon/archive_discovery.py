@@ -1224,3 +1224,65 @@ class WaybackCDX:
     _RATE_S = 2.0
     _CACHE_TTL = 86400
     __slots__ = tuple(('_cache_dir', '_last_req', '_session'))
+    async def _select_cdn_for_crawl(self, session: httpx.AsyncClient) -> list[dict]:
+        """Select CDN endpoints from Common Crawl index."""
+        CC_INDEX_API = 'https://index.commoncrawl.org/collinfo.json'
+        try:
+            async with session.get(CC_INDEX_API, timeout=httpx.Timeout(total=15)) as resp:
+                if resp.status == 200:
+                    return await resp.json()
+        except Exception:
+            pass
+        return []
+
+    async def _process_crawl_response(self, session: httpx.AsyncClient, cdo: str, domain: str, limit: int) -> list[CommonCrawlSnapshot]:
+        """Process a single Common Crawl response."""
+        results: list[CommonCrawlSnapshot] = []
+        params = {'url': f'*.{domain}', 'output': 'json', 'limit': limit, 'fl': 'url,timestamp,status,length,offset'}
+        try:
+            async with session.get(cdo, params=params, timeout=httpx.Timeout(total=30)) as resp:
+                if resp.status == 200:
+                    text = await resp.text()
+                    for line in text.strip().split('\n'):
+                        try:
+                            rec = _msgspec_loads(line)
+                            if len(rec) >= 5:
+                                results.append(CommonCrawlSnapshot(
+                                    url=rec[0], timestamp=rec[1], status_code=int(rec[2]) if rec[2] else 0,
+                                    html_length=int(rec[3]) if rec[3] else 0, offset=int(rec[4]) if rec[4] else 0
+                                ))
+                        except Exception:
+                            continue
+        except Exception:
+            pass
+        return results
+
+    async def query_common_crawl(self, domain: str, limit: int=10) -> list[CommonCrawlSnapshot]:
+        """
+        Query Common Crawl Index for URLs matching a domain.
+
+        Args:
+            domain: Domain to search (e.g., "example.com")
+            limit: Maximum number of results to return
+
+        Returns:
+            List of CommonCrawlSnapshot objects
+        """
+        results: list[CommonCrawlSnapshot] = []
+        try:
+            async with httpx.AsyncClient() as session:
+                col_info = await self._select_cdn_for_crawl(session)
+                if not col_info:
+                    return results
+
+                for col in col_info[:3]:
+                    cdo = col.get('cdx-api', '')
+                    if not cdo:
+                        continue
+                    cdo_results = await self._process_crawl_response(session, cdo, domain, limit)
+                    results.extend(cdo_results)
+                    if len(results) >= limit:
+                        break
+        except Exception as e:
+            logger.debug(f'query_common_crawl({domain}): {e}')
+        return results[:limit]

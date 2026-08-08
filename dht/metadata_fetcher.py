@@ -75,80 +75,100 @@ class TorrentMetadataFetcher(msgspec.Struct, frozen=True, gc=False):
                     continue
         return None
 
-    async def _try_peer(self, ip: str, port: int, infohash: bytes, timeout: float) -> TorrentInfo | None:
-        """Attempt to fetch metadata from a single peer."""
+    async def _connect_to_peer(self, ip: str, port: int, timeout: float) -> tuple | None:
+        """Establish TCP connection to peer."""
         try:
             async with asyncio.timeout(min(10.0, timeout)):
-                reader, writer = await asyncio.open_connection(ip, port)
+                return await asyncio.open_connection(ip, port)
         except Exception:
             return None
+
+    async def _send_handshake(self, writer, ip: str, infohash: bytes) -> bool:
+        """Send BitTorrent handshake and verify extension support."""
+        reserved = bytearray(8)
+        reserved[5] = BT_EXTENDED_FLAG
+        handshake = PROTOCOL_STRING + bytes(reserved) + infohash + b'\x00' * 20
+        writer.write(handshake)
         try:
-            reserved = bytearray(8)
-            reserved[5] = BT_EXTENDED_FLAG
-            handshake = PROTOCOL_STRING + bytes(reserved) + infohash + b'\x00' * 20
-            writer.write(handshake)
             async with asyncio.timeout(10.0):
-                response = await reader.readexactly(BT_HEADER_SIZE)
+                response = await writer.readexactly(BT_HEADER_SIZE)
             if len(response) < BT_HEADER_SIZE:
-                return None
+                return False
             if not response[25] & BT_EXTENDED_FLAG:
                 logger.debug(f'Peer {ip} does not support extension protocol')
-                return None
-            _peer_reserved = response[5:13]
-            ext_handshake = {b'm': {b'ut_metadata': UT_METADATA_ID}}
-            ext_msg = self._build_extended_message(20, ext_handshake)
-            writer.write(ext_msg)
-            metadata_size = None
-            ut_metadata_id = None
-            while True:
-                try:
-                    async with asyncio.timeout(10.0):
-                        msg = await reader.readexactly(6)
-                    if len(msg) < 4:
-                        break
-                    msg_len = struct.unpack('>I', msg[:4])[0]
-                    if msg_len > 1024 * 1024:
-                        break
-                    async with asyncio.timeout(5.0):
-                        msg_data = await reader.readexactly(msg_len)
-                    msg_id = msg_data[0] if msg_data else 0
-                    if msg_id == 20:
-                        metadata_size, ut_metadata_id = self._parse_extended_handshake(msg_data[1:])
-                        if metadata_size and ut_metadata_id:
-                            break
-                except TimeoutError:
+                return False
+            return True
+        except TimeoutError:
+            return False
+
+    async def _handshake_extended(self, reader, writer) -> tuple[int | None, int | None]:
+        """Send extended handshake and extract metadata info."""
+        ext_handshake = {b'm': {b'ut_metadata': UT_METADATA_ID}}
+        ext_msg = self._build_extended_message(20, ext_handshake)
+        writer.write(ext_msg)
+        while True:
+            try:
+                async with asyncio.timeout(10.0):
+                    msg = await reader.readexactly(6)
+                if len(msg) < 4:
                     break
+                msg_len = struct.unpack('>I', msg[:4])[0]
+                if msg_len > 1024 * 1024:
+                    break
+                async with asyncio.timeout(5.0):
+                    msg_data = await reader.readexactly(msg_len)
+                msg_id = msg_data[0] if msg_data else 0
+                if msg_id == 20:
+                    return self._parse_extended_handshake(msg_data[1:])
+            except TimeoutError:
+                break
+        return None, None
+
+    async def _request_all_pieces(self, reader, writer, num_pieces: int, ut_metadata_id: int) -> list[bytes]:
+        """Request all metadata pieces and collect responses."""
+        metadata_pieces: list[bytes] = [b''] * num_pieces
+        for piece_idx in range(num_pieces):
+            request = {b'msg_type': 0, b'piece': piece_idx}
+            req_msg = self._build_extended_message(ut_metadata_id, request)
+            writer.write(req_msg)
+
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + 30.0
+        remaining = num_pieces
+        while remaining > 0:
+            remaining_time = max(1.0, deadline - loop.time())
+            try:
+                async with asyncio.timeout(remaining_time):
+                    header = await reader.readexactly(6)
+                msg_len = struct.unpack('>I', header[:4])[0]
+                if msg_len > METADATA_PIECE_SIZE + 100:
+                    break
+                async with asyncio.timeout(5.0):
+                    msg_data = await reader.readexactly(msg_len)
+                msg_id = msg_data[0] if msg_data else 0
+                if msg_id == ut_metadata_id:
+                    piece_idx, piece_data = self._parse_metadata_piece(msg_data[1:])
+                    if 0 <= piece_idx < num_pieces and metadata_pieces[piece_idx] == b'':
+                        metadata_pieces[piece_idx] = piece_data
+                        remaining -= 1
+            except TimeoutError:
+                break
+        return metadata_pieces
+
+    async def _try_peer(self, ip: str, port: int, infohash: bytes, timeout: float) -> TorrentInfo | None:
+        """Attempt to fetch metadata from a single peer."""
+        conn = await self._connect_to_peer(ip, port, timeout)
+        if conn is None:
+            return None
+        reader, writer = conn
+        try:
+            if not await self._send_handshake(writer, ip, infohash):
+                return None
+            metadata_size, ut_metadata_id = await self._handshake_extended(reader, writer)
             if not metadata_size or not ut_metadata_id:
                 return None
             num_pieces = (metadata_size + METADATA_PIECE_SIZE - 1) // METADATA_PIECE_SIZE
-            metadata_pieces: list[bytes] = [b''] * num_pieces
-            received_count = 0
-            for piece_idx in range(num_pieces):
-                request = {b'msg_type': 0, b'piece': piece_idx}
-                req_msg = self._build_extended_message(ut_metadata_id, request)
-                writer.write(req_msg)
-            loop = asyncio.get_running_loop()
-            deadline = loop.time() + timeout
-            remaining = num_pieces
-            while remaining > 0:
-                remaining_time = max(1.0, deadline - loop.time())
-                try:
-                    async with asyncio.timeout(remaining_time):
-                        header = await reader.readexactly(6)
-                    msg_len = struct.unpack('>I', header[:4])[0]
-                    if msg_len > METADATA_PIECE_SIZE + 100:
-                        break
-                    async with asyncio.timeout(5.0):
-                        msg_data = await reader.readexactly(msg_len)
-                    msg_id = msg_data[0] if msg_data else 0
-                    if msg_id == ut_metadata_id:
-                        piece_idx, piece_data = self._parse_metadata_piece(msg_data[1:])
-                        if 0 <= piece_idx < num_pieces and metadata_pieces[piece_idx] == b'':
-                            metadata_pieces[piece_idx] = piece_data
-                            remaining -= 1
-                            received_count += 1
-                except TimeoutError:
-                    break
+            metadata_pieces = await self._request_all_pieces(reader, writer, num_pieces, ut_metadata_id)
             full_metadata = b''.join(metadata_pieces)
             if not full_metadata:
                 return None

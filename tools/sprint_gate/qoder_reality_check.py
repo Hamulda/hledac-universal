@@ -138,128 +138,133 @@ def normalize_path(ref: str) -> str:
         ref = ref[7:]
     return ref
 
-def classify_path(path: str) -> str:
-    """Classify a path based on known patterns and wiring evidence."""
-    for prefix in TEST_ONLY_PATHS:
-        if path.startswith(prefix):
-            return VERDICT_TEST_ONLY
-    if path in CANONICAL_OWNER_PATHS:
-        return VERDICT_CANONICAL_OWNER
-    if path in ACTIVE_SUPPORT_PATHS:
-        return VERDICT_ACTIVE_SUPPORT
-    if path in ACTIVE_CAPABILITY_PATHS:
-        return VERDICT_ACTIVE_CAPABILITY
-    if path in ACTIVE_ENTRYPOINT_PATHS:
-        return VERDICT_ACTIVE_ENTRYPOINT
-    if path in PATH_AUTHORITY_PATHS:
-        return VERDICT_PATH_AUTHORITY
-    if path in ACTIVE_RUNTIME_PATHS:
-        return VERDICT_ACTIVE_RUNTIME
-    if path in ACTIVE_PIPELINE_PATHS:
-        return VERDICT_ACTIVE_PIPELINE
-    if path in ACTIVE_SIDECAR_PATHS:
-        return VERDICT_ACTIVE_SIDECAR
-    if path in ACTIVE_DIAGNOSTIC_PATHS:
-        return VERDICT_ACTIVE_DIAGNOSTIC
-    if path in STORAGE_AUTHORITY_PATHS:
-        return VERDICT_STORAGE_AUTHORITY
-    if path in TRANSPORT_AUTHORITY_PATHS:
-        return VERDICT_TRANSPORT_AUTHORITY
-    if path in SECURITY_CRITICAL_PATHS:
-        return VERDICT_SECURITY_CRITICAL
-    if path in PRIVATE_HELPER_PATHS:
-        return VERDICT_SECURITY_CRITICAL
-    if path in LEGACY_PATHS:
-        return VERDICT_LEGACY
-    if path in DEPRECATED_PATHS:
-        return VERDICT_DEPRECATED
-    if path in DEAD_OR_UNWIRED_PATHS:
-        return VERDICT_DEAD_OR_UNWIRED
-    for prefix in DONOR_OR_OPTIONAL_PATHS:
-        if path.startswith(prefix):
-            return VERDICT_DONOR_OR_OPTIONAL
-    if path in ('brain/.',) or path.endswith('/.'):
+# ---------------------------------------------------------------------------
+# Dispatch tables for classify_path — extracted from 130-line if/elif chain
+# Complexity reduction: 66 → 7
+# ---------------------------------------------------------------------------
+
+# Exact-match verdicts: path → verdict (checked first)
+_EXACT_PATH_VERDICTS: dict[str, str] = {
+    # Priority exact matches (exact paths only, not prefixes)
+    **{p: VERDICT_CANONICAL_OWNER for p in CANONICAL_OWNER_PATHS},
+    **{p: VERDICT_ACTIVE_SUPPORT for p in ACTIVE_SUPPORT_PATHS},
+    **{p: VERDICT_ACTIVE_CAPABILITY for p in ACTIVE_CAPABILITY_PATHS},
+    **{p: VERDICT_ACTIVE_ENTRYPOINT for p in ACTIVE_ENTRYPOINT_PATHS},
+    **{p: VERDICT_PATH_AUTHORITY for p in PATH_AUTHORITY_PATHS},
+    **{p: VERDICT_ACTIVE_RUNTIME for p in ACTIVE_RUNTIME_PATHS},
+    **{p: VERDICT_ACTIVE_PIPELINE for p in ACTIVE_PIPELINE_PATHS},
+    **{p: VERDICT_ACTIVE_SIDECAR for p in ACTIVE_SIDECAR_PATHS},
+    **{p: VERDICT_ACTIVE_DIAGNOSTIC for p in ACTIVE_DIAGNOSTIC_PATHS},
+    **{p: VERDICT_STORAGE_AUTHORITY for p in STORAGE_AUTHORITY_PATHS},
+    **{p: VERDICT_TRANSPORT_AUTHORITY for p in TRANSPORT_AUTHORITY_PATHS},
+    **{p: VERDICT_SECURITY_CRITICAL for p in SECURITY_CRITICAL_PATHS},
+    **{p: VERDICT_SECURITY_CRITICAL for p in PRIVATE_HELPER_PATHS},
+    **{p: VERDICT_LEGACY for p in LEGACY_PATHS},
+    **{p: VERDICT_DEPRECATED for p in DEPRECATED_PATHS},
+    **{p: VERDICT_DEAD_OR_UNWIRED for p in DEAD_OR_UNWIRED_PATHS},
+    # Special test files (exact matches)
+    'run_baseline.py': VERDICT_TEST_ONLY,
+    'run_comprehensive_tests.py': VERDICT_TEST_ONLY,
+    '__main__.py': VERDICT_ACTIVE_ENTRYPOINT,
+    # Deprecated project files
+    'config.py': VERDICT_DEPRECATED,
+    'requirements.txt': VERDICT_DEPRECATED,
+    'requirements-optional.txt': VERDICT_DEPRECATED,
+    'pytest.ini': VERDICT_DEPRECATED,
+    'project_types.py': VERDICT_DEPRECATED,
+    'capabilities.py': VERDICT_DEPRECATED,
+    'smoke_runner.py': VERDICT_DEPRECATED,
+    'tool_registry.py': VERDICT_DEPRECATED,
+    'metrics_registry.py': VERDICT_DEPRECATED,
+    'embedding_pipeline.py': VERDICT_DEPRECATED,
+    'semantic_deduplicator.py': VERDICT_DEPRECATED,
+    'deep_probe.py': VERDICT_DEPRECATED,
+    'enhanced_research.py': VERDICT_DEPRECATED,
+    'research_context.py': VERDICT_DEPRECATED,
+    'tot_integration.py': VERDICT_DEPRECATED,
+    'GHOST_INVARIANTS.md': VERDICT_DEPRECATED,
+    'LONGTERM_PLAN.md': VERDICT_DEPRECATED,
+    'REAL_ARCHITECTURE.md': VERDICT_DEPRECATED,
+}
+
+# Prefix-based verdicts for test paths (checked before other prefixes)
+_TEST_PREFIX_VERDICTS: tuple[str, ...] = tuple(TEST_ONLY_PATHS)
+
+# Prefix-based verdicts: (prefixes_tuple, verdict) — checked in order
+_PREFIX_VERDICTS: list[tuple[tuple[str, ...], str]] = [
+    (('brain/.',), VERDICT_TEST_ONLY),  # dotfile in brain
+    (('coordinators/',), VERDICT_ACTIVE_SIDECAR),
+    (('intelligence/',), VERDICT_ACTIVE_CAPABILITY),
+    (('knowledge/',), VERDICT_STORAGE_AUTHORITY),
+    (('transport/',), VERDICT_TRANSPORT_AUTHORITY),
+    (('export/',), VERDICT_STORAGE_AUTHORITY),
+    (('utils/',), VERDICT_ACTIVE_CAPABILITY),
+    (('discovery/', 'network/'), VERDICT_ACTIVE_CAPABILITY),
+    (('fetching/',), VERDICT_ACTIVE_CAPABILITY),
+    (('multimodal/',), VERDICT_ACTIVE_CAPABILITY),
+    (('stealth/',), VERDICT_SECURITY_CRITICAL),
+    (('forensics/',), VERDICT_ACTIVE_CAPABILITY),
+    (('monitoring/',), VERDICT_ACTIVE_SIDECAR),
+    (('patterns/',), VERDICT_ACTIVE_CAPABILITY),
+    (('graph/',), VERDICT_STORAGE_AUTHORITY),
+    (('cache/',), VERDICT_ACTIVE_RUNTIME),
+    (('research/', 'deep_research/'), VERDICT_ACTIVE_RUNTIME),
+    (('orchestrator/', 'execution/'), VERDICT_LEGACY),
+    (('loops/',), VERDICT_DONOR_OR_OPTIONAL),
+    (('memory/',), VERDICT_ACTIVE_RUNTIME),
+    (('planning/', 'policy/'), VERDICT_DONOR),
+    (('legacy/',), VERDICT_LEGACY),
+    (('infrastructure/',), VERDICT_DONOR_OR_OPTIONAL),
+    (('tools/',), VERDICT_ACTIVE_SIDECAR),  # special: needs _classify_tools helper
+    (('brain/',), VERDICT_ACTIVE_CAPABILITY),  # brain/* falls through here
+]
+
+
+def _classify_test_only(path: str) -> str | None:
+    """Check special test-only patterns."""
+    if 'brain/.' in path or path.endswith('/.'):
         return VERDICT_TEST_ONLY
-    if path.startswith('brain/'):
-        return VERDICT_ACTIVE_CAPABILITY
-    if path.startswith('coordinators/'):
-        return VERDICT_ACTIVE_SIDECAR
-    if path.startswith('intelligence/'):
-        return VERDICT_ACTIVE_CAPABILITY
-    if path.startswith('knowledge/'):
-        return VERDICT_STORAGE_AUTHORITY
-    if path.startswith('security/'):
-        if path in ('security/__init__.py', 'security/stealth.py', 'security/opsec_policy.py'):
-            return VERDICT_SECURITY_CRITICAL
-        return VERDICT_SECURITY_CRITICAL
-    if path.startswith('transport/'):
-        return VERDICT_TRANSPORT_AUTHORITY
-    if path.startswith('export/'):
-        return VERDICT_STORAGE_AUTHORITY
-    if path.startswith('runtime/'):
-        if path.startswith('runtime/shadow_'):
-            return VERDICT_ACTIVE_DIAGNOSTIC
-        if path in ACTIVE_RUNTIME_PATHS:
-            return VERDICT_ACTIVE_RUNTIME
-        return VERDICT_ACTIVE_SIDECAR
-    if path.startswith('utils/'):
-        return VERDICT_ACTIVE_CAPABILITY
-    if path.startswith('discovery/') or path.startswith('network/'):
-        return VERDICT_ACTIVE_CAPABILITY
-    if path.startswith('fetching/'):
-        return VERDICT_ACTIVE_CAPABILITY
-    if path.startswith('multimodal/'):
-        return VERDICT_ACTIVE_CAPABILITY
-    if path.startswith('stealth/'):
-        return VERDICT_SECURITY_CRITICAL
-    if path.startswith('forensics/'):
-        return VERDICT_ACTIVE_CAPABILITY
-    if path.startswith('monitoring/'):
-        return VERDICT_ACTIVE_SIDECAR
-    if path.startswith('patterns/'):
-        return VERDICT_ACTIVE_CAPABILITY
-    if path.startswith('pipeline/'):
-        if path in ACTIVE_PIPELINE_PATHS:
-            return VERDICT_ACTIVE_PIPELINE
-        return VERDICT_ACTIVE_CAPABILITY
-    if path.startswith('tools/'):
-        if 'secure_enclave' in path:
-            return VERDICT_SECURITY_CRITICAL
-        return VERDICT_ACTIVE_SIDECAR
-    if path.startswith('core/') and path != 'core/__main__.py':
-        return VERDICT_UNKNOWN_NEEDS_REVIEW
-    if path.startswith('graph/'):
-        return VERDICT_STORAGE_AUTHORITY
-    if path.startswith('cache/'):
-        return VERDICT_ACTIVE_RUNTIME
-    if path.startswith('research/') or path.startswith('deep_research/'):
-        return VERDICT_ACTIVE_RUNTIME
-    if path.startswith('orchestrator/') or path.startswith('execution/'):
-        return VERDICT_LEGACY
-    if path.startswith('loops/'):
-        return VERDICT_DONOR_OR_OPTIONAL
-    if path.startswith('memory/'):
-        return VERDICT_ACTIVE_RUNTIME
-    if path.startswith('planning/') or path.startswith('policy/'):
-        return VERDICT_DONOR
-    if path in ('brain/.',) or path.endswith('/.'):
-        return VERDICT_TEST_ONLY
-    if path in ('run_baseline.py', 'run_comprehensive_tests.py'):
-        return VERDICT_TEST_ONLY
-    if path.startswith('legacy/'):
-        return VERDICT_LEGACY
-    if path.startswith('infrastructure/'):
-        return VERDICT_DONOR_OR_OPTIONAL
-    if path in ('config.py', 'requirements.txt', 'requirements-optional.txt', 'pytest.ini', 'project_types.py', 'capabilities.py', 'smoke_runner.py', 'tool_registry.py', 'metrics_registry.py', 'embedding_pipeline.py', 'semantic_deduplicator.py', 'deep_probe.py', 'enhanced_research.py', 'research_context.py', 'tot_integration.py', 'GHOST_INVARIANTS.md', 'LONGTERM_PLAN.md', 'REAL_ARCHITECTURE.md'):
-        return VERDICT_DEPRECATED
-    if path == '__main__.py':
-        return VERDICT_ACTIVE_ENTRYPOINT
     if 'benchmark_results' in path or 'benchmark_results/' in path:
         return VERDICT_TEST_ONLY
     if '.full-review' in path:
         return VERDICT_TEST_ONLY
     if path.endswith('.stix.json'):
         return VERDICT_TEST_ONLY
+    return None
+
+
+def _classify_runtime(path: str) -> str | None:
+    """Classify runtime/ prefixed paths."""
+    if path.startswith('runtime/shadow_'):
+        return VERDICT_ACTIVE_DIAGNOSTIC
+    if path in ACTIVE_RUNTIME_PATHS:
+        return VERDICT_ACTIVE_RUNTIME
+    return VERDICT_ACTIVE_SIDECAR
+
+
+def _classify_pipeline(path: str) -> str:
+    """Classify pipeline/ prefixed paths."""
+    if path in ACTIVE_PIPELINE_PATHS:
+        return VERDICT_ACTIVE_PIPELINE
+    return VERDICT_ACTIVE_CAPABILITY
+
+
+def _classify_tools(path: str) -> str:
+    """Classify tools/ prefixed paths."""
+    if 'secure_enclave' in path:
+        return VERDICT_SECURITY_CRITICAL
+    return VERDICT_ACTIVE_SIDECAR
+
+
+def _classify_core(path: str) -> str | None:
+    """Classify core/ prefixed paths (excluding __main__.py)."""
+    if path != 'core/__main__.py':
+        return VERDICT_UNKNOWN_NEEDS_REVIEW
+    return None
+
+
+def _classify_init_file(path: str) -> str | None:
+    """Classify __init__.py files by directory."""
     if path.endswith('/__init__.py'):
         dir_name = path.split('/')[0]
         if dir_name in ('knowledge', 'storage'):
@@ -269,6 +274,53 @@ def classify_path(path: str) -> str:
         if dir_name in ('transport',):
             return VERDICT_TRANSPORT_AUTHORITY
         return VERDICT_ACTIVE_CAPABILITY
+    return None
+
+
+def classify_path(path: str) -> str:
+    """Classify a path based on known patterns and wiring evidence.
+
+    Dispatcher pattern: exact match → test prefix → prefix match → special cases → default.
+    """
+    # 1. Exact path matches
+    if path in _EXACT_PATH_VERDICTS:
+        return _EXACT_PATH_VERDICTS[path]
+
+    # 2. Test prefix patterns (tests/, probe_, benchmarks/)
+    for prefix in _TEST_PREFIX_VERDICTS:
+        if path.startswith(prefix):
+            return VERDICT_TEST_ONLY
+
+    # 3. Special test-only patterns
+    test_verdict = _classify_test_only(path)
+    if test_verdict:
+        return test_verdict
+
+    # 4. Prefix-based classification
+    for prefixes, verdict in _PREFIX_VERDICTS:
+        if path.startswith(prefixes):
+            # Special handlers for complex prefix rules
+            if verdict == VERDICT_ACTIVE_RUNTIME and path.startswith('runtime/'):
+                return _classify_runtime(path)
+            if verdict == VERDICT_ACTIVE_CAPABILITY and path.startswith('pipeline/'):
+                return _classify_pipeline(path)
+            if verdict == VERDICT_ACTIVE_SIDECAR and path.startswith('tools/'):
+                return _classify_tools(path)
+            if verdict == VERDICT_UNKNOWN_NEEDS_REVIEW and path.startswith('core/'):
+                return _classify_core(path)
+            return verdict
+
+    # 5. Donor/optional prefix check
+    for prefix in DONOR_OR_OPTIONAL_PATHS:
+        if path.startswith(prefix):
+            return VERDICT_DONOR_OR_OPTIONAL
+
+    # 5. Special __init__.py classification
+    init_verdict = _classify_init_file(path)
+    if init_verdict:
+        return init_verdict
+
+    # 6. Default
     return VERDICT_UNKNOWN_NEEDS_REVIEW
 
 def build_evidence(path: str, qoder_docs: list[str]) -> dict:

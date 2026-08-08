@@ -774,182 +774,125 @@ class JSONFormatter:
         }
 
 
-def _build_investigation_packet(report: dict) -> dict:
-    """
-    Sprint F232A: Build investigation_packet from a live/export report dict.
+def _build_seed_context(planner_state: dict) -> dict:
+    """Build seed context from planner state."""
+    sc = planner_state.get("seed_context") or {}
+    return {
+        "available": bool(sc.get("available", False)),
+        "source": str(sc.get("source", "") or ""),
+        "domains": list(sc.get("domains", []))[:50],
+        "ips": list(sc.get("ips", []))[:50],
+        "urls": list(sc.get("urls", []))[:20],
+        "hashes": list(sc.get("hashes", []))[:20],
+        "cves": list(sc.get("cves", []))[:20],
+    }
 
-    Calls existing reconciliation + planner through their public APIs:
-      1. reconcile_lane_detail_fields (from acquisition_telemetry_reconcile)
-      2. complete_source_family_outcomes_from_lane_details
-      3. build_planner_state_from_report
-      4. plan_next_investigation_actions
-      5. summarize_planner_actions
+def _build_source_family_summary(sfo_dict: dict) -> list[dict]:
+    """Build source family summary from planner state."""
+    source_family_summary: list[dict] = []
+    for family, outcome in sfo_dict.items():
+        if len(source_family_summary) >= 20:
+            break
+        if not isinstance(outcome, dict):
+            continue
+        accepted = outcome.get("accepted", 0)
+        source_family_summary.append({
+            "family": family,
+            "accepted": accepted,
+            "rejected": outcome.get("rejected", 0),
+            "pending": outcome.get("pending", 0),
+            "attempted": outcome.get("attempted", False),
+            "terminal_state": outcome.get("terminal_state", ""),
+            "has_findings": accepted > 0,
+            "terminal_only": (outcome.get("attempted", False) or bool(outcome.get("terminal_state", ""))) and accepted == 0,
+        })
+    return source_family_summary
 
-    investigation_packet shape:
-      {
-        "query": str,
-        "seed_context": {available, source, domains, ips, urls, hashes, cves},
-        "source_family_summary": [...],
-        "terminal_coverage": {...},
-        "corroboration": {...},
-        "capability": {...},
-        "gaps": [...],
-        "planner_actions": [...],
-        "next_pivots": [...]
-      }
+def _build_terminal_coverage(source_family_summary: list[dict]) -> dict[str, str]:
+    """Build terminal coverage mapping from source family summary."""
+    terminal_coverage: dict[str, str] = {}
+    for entry in source_family_summary:
+        fam = entry.get("family", "")
+        if fam and (entry.get("terminal_only") or entry.get("attempted")):
+            terminal_coverage[fam] = entry.get("terminal_state", "") or "attempted_no_results"
+    return terminal_coverage
 
-    Bounds:
-      max planner_actions: 10
-      max next_pivots: 10
-      max source families: 20
-      no raw HTML
-      no raw huge evidence bodies
+def _build_corroboration(planner_state: dict) -> dict[str, float]:
+    """Build corroboration scores from planner state."""
+    corr_scores = planner_state.get("corroboration_scores") or {}
+    return {str(k): round(float(v), 4) if v is not None else 0.0
+            for k, v in corr_scores.items() if len(corr_scores) < 50}
 
-    Fail soft throughout. Returns partial packet on any error.
-    """
-    try:
-        # 1. Reconcile lane detail fields first
-        reconciled = reconcile_lane_detail_fields(dict(report))
-        reconciled = complete_source_family_outcomes_from_lane_details(reconciled)
-        # F250A: Complete source_family_outcomes from nonfeed prelude lane sets
-        reconciled = complete_source_family_outcomes_from_prelude(reconciled)
+def _build_capability(report: dict) -> dict:
+    """Build capability dict from report."""
+    cap_synth = report.get("capability_synthesis") or {}
+    if isinstance(cap_synth, dict):
+        return {"synthesis_available": True, "product_value_summary": report.get("product_value_summary") or {}}
+    return {"synthesis_available": False}
 
-        # 2. Build planner state
-        planner_state = build_planner_state_from_report(reconciled)
-
-        # 3. Run planner
-        raw_actions = plan_next_investigation_actions(planner_state, max_actions=10)
-        planner_actions = summarize_planner_actions(raw_actions)
-
-        # ── Seed context ───────────────────────────────────────────────────────
-        sc = planner_state.get("seed_context") or {}
-        seed_context_out = {
-            "available": bool(sc.get("available", False)),
-            "source": str(sc.get("source", "") or ""),
-            "domains": list(sc.get("domains", []))[:50],
-            "ips": list(sc.get("ips", []))[:50],
-            "urls": list(sc.get("urls", []))[:20],
-            "hashes": list(sc.get("hashes", []))[:20],
-            "cves": list(sc.get("cves", []))[:20],
-        }
-
-        # ── Source family summary ──────────────────────────────────────────────
-        sfo_dict = planner_state.get("source_family_outcomes") or {}
-        source_family_summary: list[dict] = []
-        for family, outcome in sfo_dict.items():
-            if len(source_family_summary) >= 20:
-                break
-            if not isinstance(outcome, dict):
-                continue
-            accepted = outcome.get("accepted", 0)
-            rejected = outcome.get("rejected", 0)
-            pending = outcome.get("pending", 0)
-            # Terminal-only lanes (zero accepted, attempted) count as coverage
-            attempted = outcome.get("attempted", False)
-            terminal_state = outcome.get("terminal_state", "")
-            source_family_summary.append(
-                {
-                    "family": family,
-                    "accepted": accepted,
-                    "rejected": rejected,
-                    "pending": pending,
-                    "attempted": attempted,
-                    "terminal_state": terminal_state,
-                    "has_findings": accepted > 0,
-                    "terminal_only": (attempted or bool(terminal_state)) and accepted == 0,
-                }
-            )
-
-        # ── Terminal coverage ───────────────────────────────────────────────────
-        terminal_coverage: dict[str, str] = {}
-        for entry in source_family_summary:
-            fam = entry.get("family", "")
-            if fam and entry.get("terminal_only") or entry.get("attempted"):
-                terminal_coverage[fam] = entry.get("terminal_state", "") or "attempted_no_results"
-
-        # ── Corroboration ──────────────────────────────────────────────────────
-        corr_scores = planner_state.get("corroboration_scores") or {}
-        corroboration: dict[str, float] = {}
-        for k, v in corr_scores.items():
-            if len(corroboration) >= 50:
-                break
-            corroboration[str(k)] = round(float(v), 4) if v is not None else 0.0
-
-        # ── Capability ─────────────────────────────────────────────────────────
-        cap_synth = report.get("capability_synthesis") or {}
-        if isinstance(cap_synth, dict):
-            capability = {
-                "synthesis_available": True,
-                "product_value_summary": report.get("product_value_summary") or {},
-            }
-        else:
-            capability = {"synthesis_available": False}
-
-        # ── Gaps ───────────────────────────────────────────────────────────────
-        gaps: list[str] = []
-        missing = planner_state.get("missing_lanes") or []
-        for lane in missing:
-            if len(gaps) >= 20:
-                break
-            gaps.append(f"lane_missing={lane}")
-
-        # No accepted findings at all
+def _build_gaps(planner_state: dict, sfo_dict: dict, corroboration: dict) -> list[str]:
+    """Build gaps list from planner state and corroboration."""
+    gaps: list[str] = []
+    for lane in (planner_state.get("missing_lanes") or [])[:20]:
+        gaps.append(f"lane_missing={lane}")
+    if not any("accepted" in v.get("family", "") for v in sfo_dict.values()):
         total_accepted = sum(v.get("accepted", 0) for v in sfo_dict.values())
         if total_accepted == 0 and not gaps:
             gaps.append("no_accepted_findings")
-
-        # Feed dominance without nonfeed corroboration
+    if gaps:
+        return gaps
+    # Check feed dominance
+    try:
         from hledac.universal.runtime.investigation_planner import _is_feed_dominant
-
         if _is_feed_dominant(sfo_dict) and not corroboration:
             gaps.append("feed_dominant_no_nonfeed_corroboration")
+    except ImportError:
+        pass
+    return gaps
 
-        # ── Next pivots from planner actions ───────────────────────────────────
-        next_pivots: list[dict] = []
-        for action in planner_actions:
-            if len(next_pivots) >= 10:
-                break
-            act_type = action.get("action", "")
-            target = action.get("target", "")
-            if act_type in (
-                "run_doh_on_domain",
-                "run_ct_on_domain",
-                "run_wayback_on_url",
-                "run_passivedns_on_domain_or_ip",
-            ):
-                next_pivots.append(
-                    {
-                        "pivot_type": act_type.replace("run_", "").replace("_on_", "_"),
-                        "target": target,
-                        "priority": action.get("priority", 0.0),
-                        "lane": action.get("lane", ""),
-                    }
-                )
+def _build_next_pivots(planner_actions: list[dict]) -> list[dict]:
+    """Build next pivots from planner actions."""
+    PIVOT_ACTIONS = {"run_doh_on_domain", "run_ct_on_domain", "run_wayback_on_url", "run_passivedns_on_domain_or_ip"}
+    next_pivots: list[dict] = []
+    for action in planner_actions[:10]:
+        act_type = action.get("action", "")
+        if act_type in PIVOT_ACTIONS:
+            next_pivots.append({
+                "pivot_type": act_type.replace("run_", "").replace("_on_", "_"),
+                "target": action.get("target", ""),
+                "priority": action.get("priority", 0.0),
+                "lane": action.get("lane", ""),
+            })
+    return next_pivots
+
+def _build_investigation_packet(report: dict) -> dict:
+    """Sprint F232A: Build investigation_packet from a live/export report dict."""
+    try:
+        reconciled = reconcile_lane_detail_fields(dict(report))
+        reconciled = complete_source_family_outcomes_from_lane_details(reconciled)
+        reconciled = complete_source_family_outcomes_from_prelude(reconciled)
+        planner_state = build_planner_state_from_report(reconciled)
+        raw_actions = plan_next_investigation_actions(planner_state, max_actions=10)
+        planner_actions = summarize_planner_actions(raw_actions)
+        sfo_dict = planner_state.get("source_family_outcomes") or {}
+        source_family_summary = _build_source_family_summary(sfo_dict)
 
         return {
             "query": str(planner_state.get("current_query", "") or ""),
-            "seed_context": seed_context_out,
+            "seed_context": _build_seed_context(planner_state),
             "source_family_summary": source_family_summary,
-            "terminal_coverage": terminal_coverage,
-            "corroboration": corroboration,
-            "capability": capability,
-            "gaps": gaps,
+            "terminal_coverage": _build_terminal_coverage(source_family_summary),
+            "corroboration": _build_corroboration(planner_state),
+            "capability": _build_capability(report),
+            "gaps": _build_gaps(planner_state, sfo_dict, {}),
             "planner_actions": planner_actions,
-            "next_pivots": next_pivots,
+            "next_pivots": _build_next_pivots(planner_actions),
         }
     except Exception as e:
         logger.warning(f"[EXPORT] investigation_packet build failed (fail-soft): {e}")
         return {
             "query": report.get("query", "") or "",
-            "seed_context": {
-                "available": False,
-                "source": "",
-                "domains": [],
-                "ips": [],
-                "urls": [],
-                "hashes": [],
-                "cves": [],
-            },  # noqa: E501
+            "seed_context": {"available": False, "source": "", "domains": [], "ips": [], "urls": [], "hashes": [], "cves": []},
             "source_family_summary": [],
             "terminal_coverage": {},
             "corroboration": {},
@@ -978,6 +921,168 @@ def _build_investigation_packet(report: dict) -> dict:
 # ---------------------------------------------------------------------------
 
 
+def _compute_overall_status(sfo_by_family: dict) -> str:
+    """Compute overall nonfeed yield status."""
+    nonfeed_accepted = 0
+    for fam, entry in sfo_by_family.items():
+        if fam in ("ct", "doh", "wayback", "passive_dns", "pivot_executor"):
+            nonfeed_accepted += entry.get("accepted_count", 0) or 0
+
+    if nonfeed_accepted > 0:
+        return "nonfeed_successful"
+    return "no_positive_nonfeed_yield"
+
+
+def _extract_family_outcome(sfo_by_family: dict, report: dict, family: str, terminal_key: str, error_key: str = "") -> tuple:
+    """Extract common outcome fields from source_family_outcomes or report."""
+    outcome = sfo_by_family.get(family, {})
+    terminal = outcome.get("terminal_state", "") or ""
+    error = outcome.get("error", "") or ""
+    attempted = outcome.get("attempted", False)
+    if not terminal:
+        terminal = report.get(terminal_key, "") or ""
+    if not error and error_key:
+        error = report.get(error_key, "") or ""
+
+    return terminal, error, attempted, outcome
+
+
+def _diagnose_public_family(sfo_by_family: dict, report: dict) -> dict:
+    """Build public family diagnosis."""
+    terminal, error, attempted, outcome = _extract_family_outcome(
+        sfo_by_family, report, "public", "public_terminal_stage", "public_discovery_empty_reason"
+    )
+
+    if terminal in ("DISCOVERY_ERROR", "FETCH_ERROR", "FETCH_TIMEOUT"):
+        if error in ("provider_returned_zero", "no_provider_selected", "provider_unavailable", "provider_timeout"):
+            return {"status": "error_or_zero", "reason": error or "provider_returned_zero",
+                    "action": "check_provider_selection_or_bootstrap"}
+        return {"status": "error_or_zero", "reason": "DISCOVERY_ERROR",
+                "action": "check_provider_selection_or_bootstrap"}
+    elif terminal in ("ATTEMPTED_NO_RESULTS", "TERMINAL_NO_RESULTS", "NO_CANDIDATES"):
+        return {"status": "attempted_empty", "reason": error or "no_candidates",
+                "action": "retry_with_fresh_seeds"}
+    elif not attempted and terminal in ("SKIPPED", "", None):
+        return {"status": "skipped", "reason": "not_attempted", "action": "none"}
+    else:
+        return {"status": "unknown", "reason": terminal or "unknown",
+                "action": "check_provider_selection_or_bootstrap"}
+
+
+
+def _diagnose_ct_family(sfo_by_family: dict, report: dict) -> dict:
+    """Build CT (Certificate Transparency) family diagnosis."""
+    terminal, error, attempted, outcome = _extract_family_outcome(
+        sfo_by_family, report, "ct", "ct_terminal_stage", "ct_provider_status"
+    )
+
+    # Strip prefix from error (CT-specific preprocessing)
+    if isinstance(error, str) and error.startswith("CTProviderStatus."):
+        error = error[len("CTProviderStatus."):].lower()
+
+    # CT-specific: cooldown check
+    if error in ("cooldown_active", "cooldown"):
+        return {"status": "cooldown", "reason": "cooldown_active", "action": "retry_later_or_use_cache"}
+    elif terminal in ("ATTEMPTED_NO_RESULTS", "no_candidates", "attempted_empty"):
+        return {"status": "attempted_empty", "reason": error or "no_candidates",
+                "action": "retry_later_or_use_cache"}
+    elif terminal == "ATTEMPTED_ACCEPTED" or (outcome.get("accepted_count", 0) or 0) > 0:
+        return {"status": "successful", "reason": error or "accepted", "action": "none"}
+    elif not attempted:
+        return {"status": "skipped", "reason": "not_attempted", "action": "none"}
+    else:
+        return {"status": "error_or_zero", "reason": error or "unknown",
+                "action": "retry_later_or_use_cache"}
+
+
+def _diagnose_doh_family(sfo_by_family: dict, report: dict) -> dict:
+    """Build DoH (DNS-over-HTTPS) family diagnosis."""
+    terminal, error, attempted, outcome = _extract_family_outcome(
+        sfo_by_family, report, "doh", "doh_terminal_stage", "doh_provider_errors"
+    )
+
+    # Normalize error format (DoH-specific: may come as list)
+    if isinstance(error, (list, tuple)) and error:
+        error = str(error[0])
+    elif not isinstance(error, str):
+        error = ""
+
+    if terminal in ("attempted_empty", "no_candidates"):
+        return {"status": "attempted_empty", "reason": error or "attempted_empty",
+                "action": "try_passive_dns_or_wayback"}
+    elif terminal in ("ATTEMPTED_ACCEPTED", "attempted_accepted") or (outcome.get("accepted_count", 0) or 0) > 0:
+        return {"status": "successful", "reason": error or "accepted", "action": "none"}
+    elif not attempted:
+        return {"status": "skipped", "reason": "not_attempted", "action": "none"}
+    elif terminal in ("timeout", "provider_error", "dependency_missing"):
+        return {"status": "error_or_zero", "reason": error or terminal,
+                "action": "try_passive_dns_or_wayback"}
+    else:
+        return {"status": "attempted_empty", "reason": terminal or "unknown",
+                "action": "try_passive_dns_or_wayback"}
+
+
+
+def _diagnose_generic_family(
+    sfo_by_family: dict,
+    report: dict,
+    family: str,
+    terminal_key: str,
+    error_key: str,
+    empty_terminals: tuple[str, ...] = ("no_terminal", "terminal_no_results"),
+    default_action: str = "none",
+) -> dict:
+    """
+    Generic family diagnosis handler (consolidation of wayback + pdns patterns).
+    """
+    terminal, error, attempted, outcome = _extract_family_outcome(
+        sfo_by_family, report, family, terminal_key, error_key
+    )
+
+    if terminal in empty_terminals:
+        return {"status": "attempted_empty", "reason": error or terminal or "no_terminal",
+                "action": default_action}
+    elif not attempted:
+        return {"status": "skipped", "reason": "not_attempted", "action": default_action}
+    elif (outcome.get("accepted_count", 0) or 0) > 0:
+        return {"status": "successful", "reason": error or "accepted", "action": default_action}
+    else:
+        return {"status": "attempted_empty", "reason": terminal or "unknown", "action": default_action}
+
+
+def _diagnose_wayback_family(sfo_by_family: dict, report: dict) -> dict:
+    """Build Wayback family diagnosis (uses generic handler)."""
+    return _diagnose_generic_family(
+        sfo_by_family, report,
+        "wayback", "wayback_terminal_state", "wayback_error",
+        empty_terminals=("no_terminal", "terminal_no_results", "wayback_unchanged_rejected"),
+    )
+
+
+def _diagnose_pdns_family(sfo_by_family: dict, report: dict) -> dict:
+    """Build PassiveDNS family diagnosis (uses generic handler)."""
+    return _diagnose_generic_family(
+        sfo_by_family, report,
+        "passive_dns", "passive_dns_terminal_state", "passive_dns_error",
+    )
+
+
+def _derive_recommendations(report: dict, overall: str) -> tuple:
+    """Derive engineering and investigation recommendations."""
+    cap_synth = report.get("capability_synthesis") or {}
+    next_eng = cap_synth.get("next_engineering_action", "") or ""
+    next_inv = cap_synth.get("next_investigation_action", "") or ""
+
+    if overall == "no_positive_nonfeed_yield":
+        eng_action = next_eng or "improve_nonfeed_provider_yield"
+        inv_action = next_inv or "use_planner_next_seeds"
+    else:
+        eng_action = next_eng or "none"
+        inv_action = next_inv or "none"
+
+    return eng_action, inv_action
+
+
 def _build_provider_yield_diagnosis(report: dict) -> dict:
     """
     Sprint F250C: Build provider_yield_diagnosis from a report dict.
@@ -995,248 +1100,32 @@ def _build_provider_yield_diagnosis(report: dict) -> dict:
       - recommended_*_action: one of a bounded set of engineering/investigation directives
     """
     try:
-        # ── Source family outcomes lookup ─────────────────────────────────────
-        sfo_list: list[dict] = report.get("source_family_outcomes") or []
-        sfo_by_family: dict[str, dict] = {entry.get("family", "").lower(): entry for entry in sfo_list}
+        # Source family outcomes lookup
+        sfo_list = report.get("source_family_outcomes", []) if isinstance(report, dict) else []
+        sfo_by_family = {entry.get("family", "").lower(): entry for entry in sfo_list}
 
-        # ── Compute overall nonfeed yield ─────────────────────────────────────
-        nonfeed_accepted = 0
-        for fam, entry in sfo_by_family.items():
-            if fam in ("ct", "doh", "wayback", "passive_dns", "pivot_executor"):
-                nonfeed_accepted += entry.get("accepted_count", 0) or 0
+        # Compute overall status
+        overall = _compute_overall_status(sfo_by_family)
 
-        if nonfeed_accepted > 0:
-            overall = "nonfeed_successful"
-        else:
-            overall = "no_positive_nonfeed_yield"
+        # Diagnose each family
+        public_diag = _diagnose_public_family(sfo_by_family, report)
+        ct_diag = _diagnose_ct_family(sfo_by_family, report)
+        doh_diag = _diagnose_doh_family(sfo_by_family, report)
+        wayback_diag = _diagnose_wayback_family(sfo_by_family, report)
+        pdns_diag = _diagnose_pdns_family(sfo_by_family, report)
 
-        # ── PUBLIC diagnosis ───────────────────────────────────────────────────
-        # Primary: source_family_outcomes entry
-        public_outcome = sfo_by_family.get("public", {})
-        public_terminal = public_outcome.get("terminal_state", "") or ""
-        public_error = public_outcome.get("error", "") or ""
-        public_attempted = public_outcome.get("attempted", False)
-
-        # Fallback to detail fields
-        if not public_terminal:
-            public_terminal = report.get("public_terminal_stage", "") or ""
-        if not public_error:
-            public_error = report.get("public_discovery_empty_reason", "") or ""
-
-        # Determine public status and action
-        if public_terminal in ("DISCOVERY_ERROR", "FETCH_ERROR", "FETCH_TIMEOUT"):
-            if public_error in (
-                "provider_returned_zero",
-                "no_provider_selected",
-                "provider_unavailable",
-                "provider_timeout",
-            ):
-                pub_status = "error_or_zero"
-                pub_reason = public_error or "provider_returned_zero"
-                pub_action = "check_provider_selection_or_bootstrap"
-            else:
-                pub_status = "error_or_zero"
-                pub_reason = "DISCOVERY_ERROR"
-                pub_action = "check_provider_selection_or_bootstrap"
-        elif public_terminal in ("ATTEMPTED_NO_RESULTS", "TERMINAL_NO_RESULTS", "NO_CANDIDATES"):
-            pub_status = "attempted_empty"
-            pub_reason = public_error or "no_candidates"
-            pub_action = "retry_with_fresh_seeds"
-        elif not public_attempted and public_terminal in ("SKIPPED", "", None):
-            pub_status = "skipped"
-            pub_reason = "not_attempted"
-            pub_action = "none"
-        else:
-            pub_status = "unknown"
-            pub_reason = public_terminal or "unknown"
-            pub_action = "check_provider_selection_or_bootstrap"
-
-        public_diag = {
-            "status": pub_status,
-            "reason": pub_reason,
-            "action": pub_action,
-        }
-
-        # ── CT diagnosis ───────────────────────────────────────────────────────
-        ct_outcome = sfo_by_family.get("ct", {})
-        ct_terminal = ct_outcome.get("terminal_state", "") or ""
-        ct_error = ct_outcome.get("error", "") or ""
-        ct_attempted = ct_outcome.get("attempted", False)
-
-        if not ct_terminal:
-            ct_terminal = report.get("ct_terminal_stage", "") or ""
-        if not ct_error:
-            ct_error = report.get("ct_provider_status", "") or ""
-            # Strip prefix: "CTProviderStatus.COOLDOWN_ACTIVE" → "cooldown_active"
-            if ct_error.startswith("CTProviderStatus."):
-                ct_error = ct_error[len("CTProviderStatus.") :].lower()
-
-        if ct_error in ("cooldown_active", "cooldown"):
-            ct_status = "cooldown"
-            ct_reason = "cooldown_active"
-            ct_action = "retry_later_or_use_cache"
-        elif ct_terminal in ("ATTEMPTED_NO_RESULTS", "no_candidates", "attempted_empty"):
-            ct_status = "attempted_empty"
-            ct_reason = ct_error or "no_candidates"
-            ct_action = "retry_later_or_use_cache"
-        elif ct_terminal in ("ATTEMPTED_ACCEPTED",) or (ct_outcome.get("accepted_count", 0) or 0) > 0:
-            ct_status = "successful"
-            ct_reason = ct_error or "accepted"
-            ct_action = "none"
-        elif not ct_attempted:
-            ct_status = "skipped"
-            ct_reason = "not_attempted"
-            ct_action = "none"
-        else:
-            ct_status = "error_or_zero"
-            ct_reason = ct_error or "unknown"
-            ct_action = "retry_later_or_use_cache"
-
-        ct_diag = {
-            "status": ct_status,
-            "reason": ct_reason,
-            "action": ct_action,
-        }
-
-        # ── DOH diagnosis ──────────────────────────────────────────────────────
-        doh_outcome = sfo_by_family.get("doh", {})
-        doh_terminal = doh_outcome.get("terminal_state", "") or ""
-        doh_error = doh_outcome.get("error", "") or ""
-        doh_attempted = doh_outcome.get("attempted", False)
-
-        if not doh_terminal:
-            doh_terminal = report.get("doh_terminal_stage", "") or ""
-        if not doh_error:
-            doh_error = report.get("doh_provider_errors", "")
-            if isinstance(doh_error, (list, tuple)) and doh_error:
-                doh_error = str(doh_error[0])
-            elif not isinstance(doh_error, str):
-                doh_error = ""
-
-        if doh_terminal in ("attempted_empty", "no_candidates"):
-            doh_status = "attempted_empty"
-            doh_reason = doh_error or "attempted_empty"
-            doh_action = "try_passive_dns_or_wayback"
-        elif (
-            doh_terminal in ("ATTEMPTED_ACCEPTED", "attempted_accepted")
-            or (doh_outcome.get("accepted_count", 0) or 0) > 0
-        ):  # noqa: E501
-            doh_status = "successful"
-            doh_reason = doh_error or "accepted"
-            doh_action = "none"
-        elif not doh_attempted:
-            doh_status = "skipped"
-            doh_reason = "not_attempted"
-            doh_action = "none"
-        elif doh_terminal in ("timeout", "provider_error", "dependency_missing"):
-            doh_status = "error_or_zero"
-            doh_reason = doh_error or doh_terminal
-            doh_action = "try_passive_dns_or_wayback"
-        else:
-            doh_status = "attempted_empty"
-            doh_reason = doh_terminal or "unknown"
-            doh_action = "try_passive_dns_or_wayback"
-
-        doh_diag = {
-            "status": doh_status,
-            "reason": doh_reason,
-            "action": doh_action,
-        }
-
-        # ── Wayback diagnosis ─────────────────────────────────────────────────
-        wb_outcome = sfo_by_family.get("wayback", {})
-        wb_terminal = wb_outcome.get("terminal_state", "") or ""
-        wb_error = wb_outcome.get("error", "") or ""
-        wb_attempted = wb_outcome.get("attempted", False)
-
-        if not wb_terminal:
-            wb_terminal = report.get("wayback_terminal_state", "") or ""
-
-        if wb_terminal in ("no_terminal", "terminal_no_results", "wayback_unchanged_rejected"):
-            wb_status = "attempted_empty"
-            wb_reason = wb_error or wb_terminal or "no_terminal"
-            wb_action = "none"
-        elif not wb_attempted:
-            wb_status = "skipped"
-            wb_reason = "not_attempted"
-            wb_action = "none"
-        elif wb_outcome.get("accepted_count", 0) or 0 > 0:
-            wb_status = "successful"
-            wb_reason = wb_error or "accepted"
-            wb_action = "none"
-        else:
-            wb_status = "attempted_empty"
-            wb_reason = wb_terminal or "unknown"
-            wb_action = "none"
-
-        wayback_diag = {
-            "status": wb_status,
-            "reason": wb_reason,
-            "action": wb_action,
-        }
-
-        # ── PassiveDNS diagnosis ────────────────────────────────────────────────
-        pdns_outcome = sfo_by_family.get("passive_dns", {})
-        pdns_terminal = pdns_outcome.get("terminal_state", "") or ""
-        pdns_error = pdns_outcome.get("error", "") or ""
-        pdns_attempted = pdns_outcome.get("attempted", False)
-
-        if not pdns_terminal:
-            pdns_terminal = report.get("passive_dns_terminal_state", "") or ""
-
-        if pdns_terminal in ("no_terminal", "terminal_no_results"):
-            pdns_status = "attempted_empty"
-            pdns_reason = pdns_error or "no_terminal"
-            pdns_action = "none"
-        elif not pdns_attempted:
-            pdns_status = "skipped"
-            pdns_reason = "not_attempted"
-            pdns_action = "none"
-        elif pdns_outcome.get("accepted_count", 0) or 0 > 0:
-            pdns_status = "successful"
-            pdns_reason = pdns_error or "accepted"
-            pdns_action = "none"
-        else:
-            pdns_status = "attempted_empty"
-            pdns_reason = pdns_terminal or "unknown"
-            pdns_action = "none"
-
-        pdns_diag = {
-            "status": pdns_status,
-            "reason": pdns_reason,
-            "action": pdns_action,
-        }
-
-        # ── Engineering and investigation recommendations ────────────────────────
-        cap_synth = report.get("capability_synthesis") or {}
-        next_eng = cap_synth.get("next_engineering_action", "") or ""
-        next_inv = cap_synth.get("next_investigation_action", "") or ""
-
-        # Fallback recommendations based on overall status
-        if overall == "no_positive_nonfeed_yield":
-            if next_eng:
-                eng_action = next_eng
-            else:
-                eng_action = "improve_nonfeed_provider_yield"
-            if next_inv:
-                inv_action = next_inv
-            else:
-                inv_action = "use_planner_next_seeds"
-        else:
-            eng_action = next_eng or "none"
-            inv_action = next_inv or "none"
-
-        families: dict[str, dict] = {
-            "public": public_diag,
-            "ct": ct_diag,
-            "doh": doh_diag,
-            "wayback": wayback_diag,
-            "passive_dns": pdns_diag,
-        }
+        # Derive recommendations
+        eng_action, inv_action = _derive_recommendations(report, overall)
 
         return {
             "overall": overall,
-            "families": families,
+            "families": {
+                "public": public_diag,
+                "ct": ct_diag,
+                "doh": doh_diag,
+                "wayback": wayback_diag,
+                "passive_dns": pdns_diag,
+            },
             "recommended_next_engineering_action": eng_action,
             "recommended_next_investigation_action": inv_action,
         }
@@ -1346,7 +1235,7 @@ def reconcile_terminal_truth(
 
 
 def _pvs_num(val: Any, default: float | int) -> float | int:
-    """Type-safe numeric coercion — returns default for non-numeric values."""
+    """Type-safe numeric coercion - returns default for non-numeric values."""
     return val if isinstance(val, (int, float)) else default
 
 
@@ -1745,6 +1634,96 @@ def _derive_focus_expand_seeds(pvs: dict[str, Any] | None) -> list[dict[str, Any
         return []
 
 
+def _derive_planner_seeds(investigation_packet: dict[str, Any] | None) -> tuple[list[dict[str, Any]], str]:
+    """Derive seeds from investigation_packet.planner_actions."""
+    planner_actions = None
+    if investigation_packet and isinstance(investigation_packet, dict):
+        pa = investigation_packet.get("planner_actions")
+        if pa and isinstance(pa, list) and pa:
+            planner_actions = pa
+
+    if planner_actions:
+        planner_seeds, source = _planner_actions_to_seeds(planner_actions)
+        return planner_seeds, source
+    return [], "legacy_fallback"
+
+
+def _derive_ioc_seeds(top_nodes: list) -> list[dict[str, Any]]:
+    """Derive IOC follow-up seeds from top graph nodes."""
+    return _derive_ioc_followup_seeds(top_nodes)
+
+
+def _derive_pvs_seeds(pvs: dict[str, Any] | None) -> list[dict[str, Any]]:
+    """Derive seeds from product_value_summary signals."""
+    seeds: list[dict[str, Any]] = []
+    if pvs:
+        seeds.extend(_derive_query_seeds(pvs))
+        seeds.extend(_derive_source_revisit_seeds(pvs))
+        seeds.extend(_derive_low_signal_seeds(pvs))
+        seeds.extend(_derive_focus_expand_seeds(pvs))
+    return seeds
+
+
+def _derive_enrichment_seeds(pvs: dict[str, Any] | None, export_mode: str) -> list[dict[str, Any]]:
+    """Derive hypothesis engine seeds (full mode only)."""
+    seeds: list[dict[str, Any]] = []
+    if pvs and export_mode == "full":
+        seeds.extend(_derive_hypothesis_seeds(pvs, max_queries=2))
+    return seeds
+
+
+def _derive_context_seeds(
+    branch_value: dict[str, Any] | None,
+    sprint_trend: list[dict] | None,
+    capability_synthesis: dict[str, Any] | None,
+    analyst_brief: dict[str, Any] | None,
+) -> list[dict[str, Any]]:
+    """Derive seeds from branch value, trend, capability, and analyst context."""
+    seeds: list[dict[str, Any]] = []
+    if branch_value:
+        seeds.extend(_derive_branch_seeds(branch_value))
+    if sprint_trend:
+        seeds.extend(_derive_trend_seeds(sprint_trend))
+    if capability_synthesis:
+        seeds.extend(_derive_capability_seeds(capability_synthesis))
+    if analyst_brief:
+        seeds.extend(_derive_analyst_brief_seeds(analyst_brief))
+    return seeds
+
+
+def _merge_quantum_seeds(seeds: list[dict[str, Any]], sprint_id: str) -> tuple[list[dict[str, Any]], str]:
+    """Merge quantum pathfinder seeds with existing seeds."""
+    from hledac.universal.knowledge.sprint_seeds_store import sync_load_sprint_seeds
+
+    quantum_seeds = sync_load_sprint_seeds(sprint_id)
+    if quantum_seeds:
+        q_seed_dicts = [
+            {"seed_type": "quantum_path", "query": q, "priority": 0.8, "source": "graph_quantum_pathfinder"}
+            for q in quantum_seeds[:50]
+        ]
+        # Merge: quantum first (higher fidelity path-informed), then dedup
+        return _dedup_seeds(q_seed_dicts + seeds), "quantum_pathfinder"
+    return seeds, "legacy_fallback"
+
+
+def _finalize_seeds(
+    seeds: list[dict[str, Any]],
+    capability_synthesis: dict[str, Any] | None,
+    next_seeds_source: str,
+) -> dict[str, Any]:
+    """Finalize seeds with bounding and wrapper."""
+    MAX_SEEDS = 15
+    if len(seeds) > MAX_SEEDS:
+        seeds.sort(key=attrgetter("get")("priority", 0.5), reverse=True)
+        seeds = seeds[:MAX_SEEDS]
+
+    return {
+        "seeds": seeds,
+        "next_seeds_source": next_seeds_source,
+        "capability_synthesis": capability_synthesis,
+    }
+
+
 async def _generate_next_sprint_seeds(
     top_nodes: list,
     sprint_id: str,
@@ -1761,32 +1740,9 @@ async def _generate_next_sprint_seeds(
     Sprint F150J: Enhanced seed derivation driven by product_value_summary.
     Sprint F226D: Enhanced with capability_synthesis + analyst_brief for active seed shaping.
     Sprint F238A: investigation_packet.planner_actions is canonical next-sprint-seeds source.
-
-    Seed source priority (Sprint F238A):
-      1. investigation_packet.planner_actions → canonical, high-fidelity
-      2. Legacy heuristics (top_nodes, pvs, branch_value, ...) → fallback only
-
-    4 legacy seed categories derived from pvs:
-      1. ioc_followup — top graph nodes (existing _type_aware_seeds logic)
-      2. query_suggestion — based on signal_quality + reject_breakdown
-      3. source_revisit — circuit-breaker open domains + depleted signal
-      4. low_signal_recommendation — when sprint found almost nothing
-
-    Bounded: max ~12 seeds total. No combinatorial explosion.
-
-    Canonical next-seeds path (Sprint F500D):
-      - Primary: get_sprint_next_seeds_path(sprint_id) z paths.py
-      - Fallback: SPRINT_STORE_ROOT.parent/"reports" if report_path is None
-
-    export_mode (Sprint F207H):
-      slim (default) — skip hypothesis_engine (numpy/mlx heavy import)
-      full — enables hypothesis_engine for query suggestions
     """
     from hledac.universal.paths import SPRINT_STORE_ROOT, get_sprint_next_seeds_path
 
-    # Sprint F229 §1: Use get_sprint_next_seeds_path() — same canonical pattern as
-    # get_sprint_json_report_path() used for report_path. This ensures the test's
-    # patch on get_sprint_next_seeds_path is respected in _generate_next_sprint_seeds.
     if report_path is not None:
         seeds_path = get_sprint_next_seeds_path(sprint_id)
     else:
@@ -1796,88 +1752,28 @@ async def _generate_next_sprint_seeds(
     next_seeds_source = "legacy_fallback"
 
     try:
-        # Sprint F238A: Canonical path — use planner_actions from investigation_packet
-        planner_actions = None
-        if investigation_packet and isinstance(investigation_packet, dict):
-            pa = investigation_packet.get("planner_actions")
-            if pa and isinstance(pa, list) and pa:
-                planner_actions = pa
+        # Sprint F238A: Try canonical path first
+        planner_seeds, planner_source = _derive_planner_seeds(investigation_packet)
 
-        if planner_actions:
-            # Canonical: planner_actions are the primary next-sprint-seeds source
-            planner_seeds, next_seeds_source = _planner_actions_to_seeds(planner_actions)
+        if planner_seeds:
             seeds.extend(planner_seeds)
+            next_seeds_source = planner_source
         else:
             # Legacy fallback: gather from top_nodes and pvs heuristics
-            next_seeds_source = "legacy_fallback"
-
-            # 1. IOC follow-up seeds from top_nodes
-            seeds.extend(_derive_ioc_followup_seeds(top_nodes))
-
-            # 2. Query suggestion seeds
-            if pvs:
-                seeds.extend(_derive_query_seeds(pvs))
-
-            # 3. Source revisit seeds
-            if pvs:
-                seeds.extend(_derive_source_revisit_seeds(pvs))
-
-            # 4. Low signal recommendation seeds
-            if pvs:
-                seeds.extend(_derive_low_signal_seeds(pvs))
-
-            # 5. Hypothesis engine seeds (full mode only)
-            if pvs and export_mode == "full":
-                seeds.extend(_derive_hypothesis_seeds(pvs, max_queries=2))
-
-            # 6. Focus/expand recommendation seeds
-            if pvs:
-                seeds.extend(_derive_focus_expand_seeds(pvs))
-
-            # 7. Branch value-driven seeds
-            if branch_value:
-                seeds.extend(_derive_branch_seeds(branch_value))
-
-            # 8. Sprint trend-driven seeds
-            if sprint_trend:
-                seeds.extend(_derive_trend_seeds(sprint_trend))
-
-            # 9. Capability synthesis-driven seeds
-            if capability_synthesis:
-                seeds.extend(_derive_capability_seeds(capability_synthesis))
-
-            # 10. Analyst brief-driven seeds
-            if analyst_brief:
-                seeds.extend(_derive_analyst_brief_seeds(analyst_brief))
-
-            # Sprint F226D: dedup before cap
+            seeds.extend(_derive_ioc_seeds(top_nodes))
+            seeds.extend(_derive_pvs_seeds(pvs))
+            seeds.extend(_derive_enrichment_seeds(pvs, export_mode))
+            seeds.extend(_derive_context_seeds(
+                branch_value, sprint_trend, capability_synthesis, analyst_brief
+            ))
             seeds = _dedup_seeds(seeds)
 
-            # Sprint F214Q: Merge quantum pathfinder seeds with degree-centrality seeds
-            from hledac.universal.knowledge.sprint_seeds_store import sync_load_sprint_seeds
+            # Sprint F214Q: Merge quantum pathfinder seeds
+            seeds, quantum_source = _merge_quantum_seeds(seeds, sprint_id)
+            if quantum_source == "quantum_pathfinder":
+                next_seeds_source = quantum_source
 
-            quantum_seeds = sync_load_sprint_seeds(sprint_id)
-            if quantum_seeds:
-                q_seed_dicts = [
-                    {"seed_type": "quantum_path", "query": q, "priority": 0.8, "source": "graph_quantum_pathfinder"}
-                    for q in quantum_seeds[:50]
-                ]
-                # Merge: quantum first (higher fidelity path-informed), then dedup
-                seeds = _dedup_seeds(q_seed_dicts + seeds)
-                next_seeds_source = "quantum_pathfinder"
-
-            # Bounded output — keep total seed count manageable
-            MAX_SEEDS = 15  # noqa: N806
-            if len(seeds) > MAX_SEEDS:
-                seeds.sort(key=attrgetter("get")("priority", 0.5), reverse=True)
-                seeds = seeds[:MAX_SEEDS]
-
-        # Surface next_seeds_source in the wrapper
-        _seeds_wrapper = {
-            "seeds": seeds,
-            "next_seeds_source": next_seeds_source,
-            "capability_synthesis": capability_synthesis,
-        }
+        _seeds_wrapper = _finalize_seeds(seeds, capability_synthesis, next_seeds_source)
         _seeds_text = _json_dumps(_seeds_wrapper, indent=2, default=str)
         _seeds_bytes = _seeds_text.encode("utf-8")
         # F214ZSTD2: write optional zstd sidecar
@@ -2398,44 +2294,13 @@ def _type_aware_seeds(value: str, ioc_type: str, reason: str = "top_graph_node")
             return []
 
 
-def _build_product_value_summary(
-    store: Any,
-    eh: ExportHandoff,  # type: ignore[name-defined]
-    sprint_id: str,
-) -> dict[str, Any]:
+def _extract_accepted_findings_count(
+    scorecard: dict[str, Any],
+    runtime_truth: dict[str, Any],
+) -> int:
     """
-    Sprint F150I §1: product_value_summary — agreguje truth surfaces do jednoho
-    rozhodovacího balíčku pro další sprinty.
-
-    ZDROJE (existující surfaces, žádné nové):
-      1. eh.scorecard — windup output (findings_per_minute, ioc_density,
-         semantic_novelty, accepted_findings, peak_rss_mb, phase_timings)
-      2. store.get_dedup_runtime_status() — accepted vs rejected by reason
-         (Sprint 8AV extended: low-info / in-memory-dup / persistent-dup / fail-open)
-      3. eh.scorecard["cb_open_domains"] — circuit breaker state
-      4. eh.gnn_predictions — ML model signal (0 pokud nepoužit)
-      5. eh.phase_durations — timing truth
-
-    DEGRADED MODE: pokud store není dostupný, pole jsou None — není to chyba,
-    je to expected degraded state pro standalone/test scénáře.
-
-    JE TO DERIVED OUTPUT, NE NOVÝ TRUTH STORE:
-      - Žádné nové write API
-      - Žádné nové history mechanismy
-      - Pouze čte z existujících surfaces a skládá je dohromady
+    Extract accepted findings count with priority: runtime_truth > scorecard > legacy fallback.
     """
-    scorecard = eh.scorecard if eh.scorecard else {}
-
-    # 1. Základní scorecard facts
-    # Sprint F192F §1: use module-level _pvs_num / _pvs_n helpers
-    # (previously local _num / _n closures — now consolidated at module scope)
-    # [F230A] runtime_truth.accepted_findings is the authoritative canonical truth
-    # from __main__._runtime_truth() — use it as the PRIMARY source. Scorecard
-    # runtime_accepted_findings is a duplicate that can be absent or stale (0) even
-    # when canonical runtime_truth.accepted_findings > 0 (F229B residual bug).
-    # Priority: runtime_truth.accepted_findings > scorecard.runtime_accepted_findings
-    # > scorecard.accepted_findings (legacy fallback for scorecard-only builds).
-    runtime_truth: dict[str, Any] = eh.runtime_truth or {}
     _rt_accepted = _pvs_n(runtime_truth, "accepted_findings", 0)
     runtime_accepted_findings = _pvs_n(scorecard, "runtime_accepted_findings", 0)
     if _rt_accepted > 0:
@@ -2445,60 +2310,68 @@ def _build_product_value_summary(
         accepted = _pvs_n(scorecard, "accepted_findings", 0)
         if accepted > 0:
             runtime_accepted_findings = accepted
+    return accepted
+
+
+def _compute_findings_per_minute(
+    scorecard: dict[str, Any],
+    runtime_accepted_findings: int,
+    phase_timings: dict,
+) -> tuple[float, float]:
+    """
+    Compute findings_per_minute with cross-fallback logic.
+
+    Returns:
+        Tuple of (findings_per_minute, runtime_findings_per_minute).
+    """
     findings_per_minute = _pvs_n(scorecard, "findings_per_minute", 0.0)
-    ioc_density = _pvs_n(scorecard, "ioc_density", 0.0)
-    peak_rss_mb = scorecard.get("peak_rss_mb", None)
-    if peak_rss_mb is not None and not isinstance(peak_rss_mb, (int, float)):
-        peak_rss_mb = None
-    phase_timings = scorecard.get("phase_duration_seconds", {}) or {}
     actual_duration = phase_timings.get("WINDUP", 0.0) or phase_timings.get("TEARDOWN", 0.0)
 
-    # [F223D] runtime_findings_per_minute: computed from all-lanes runtime total.
-    # Only meaningful when runtime_accepted_findings > 0. For scorecard-only / legacy
-    # test builds (accepted=0 from runtime field), leave as 0.0 — original
-    # scorecard findings_per_minute is preserved as-is for those builds.
+    runtime_findings_per_minute = 0.0
     if runtime_accepted_findings > 0 and actual_duration > 0:
         runtime_findings_per_minute = round(runtime_accepted_findings / (actual_duration / 60.0), 2)
-    else:
-        runtime_findings_per_minute = 0.0
-    # [F241] Fallback: if scorecard findings_per_minute is 0.0 but we have valid runtime
-    # data, compute from runtime values so PVS doesn't show 0.0 for a productive sprint.
+
+    # Fallback chains
     if findings_per_minute == 0.0 and runtime_findings_per_minute > 0:
         findings_per_minute = runtime_findings_per_minute
-    # [F221C] Fallback: if runtime_findings_per_minute is 0.0 because actual_duration
-    # was unavailable (empty phase_timings) but findings_per_minute is already valid,
-    # propagate it so runtime_findings_per_minute doesn't show 0.0 for a productive sprint.
     if runtime_findings_per_minute == 0.0 and findings_per_minute > 0:
         runtime_findings_per_minute = findings_per_minute
 
-    # 2. Dedup status — Sprint 8AV extended ingest outcome counters
+    return findings_per_minute, runtime_findings_per_minute
+
+
+def _extract_dedup_status(
+    store: Any,
+    scorecard: dict[str, Any],
+) -> tuple[dict[str, Any] | None, dict[str, int], int, bool, str, dict]:
+    """
+    Extract dedup status and derived counters from store/scorecard.
+
+    Returns:
+        Tuple of (dedup_status, reject_breakdown, total_rejected, dedup_effective, dedup_lmdb_path, hot_cache).
+    """
     dedup_status: dict[str, Any] | None = None
     if store is not None:
         try:
             if hasattr(store, "get_dedup_runtime_status"):
                 raw = store.get_dedup_runtime_status()
-                # Sprint F150I §6: guard against MagicMock / non-dict returns
                 if isinstance(raw, dict):
                     dedup_status = raw
         except Exception:  # noqa: BLE001
             pass
 
+    # Security gate counters from scorecard
+    security_rejected = scorecard.get("security_rejected_count", 0) or 0
+    pii_redacted = scorecard.get("pii_redacted_count", 0) or 0
+
     if dedup_status:
-        # Sprint F192F §1: accepted_count from dedup_status is RUNTIME STATE (in-memory
-        # counter, not persisted fact). Scorecard accepted_findings is the authoritative
-        # persisted fact. Only use dedup_status accepted_count as secondary when
-        # scorecard has no accepted_findings (e.g., scorecard-only builds).
-        # Previously: dedup_status.accepted_count OVERRODE scorecard fact — DF-1 drift.
-        _dedup_accepted = dedup_status.get("accepted_count", 0)
-        accepted = accepted if accepted > 0 else _dedup_accepted
         reject_breakdown = {
             "low_information": dedup_status.get("low_information_rejected_count", 0),
             "in_memory_duplicate": dedup_status.get("in_memory_duplicate_rejected_count", 0),
             "persistent_duplicate": dedup_status.get("persistent_duplicate_rejected_count", 0),
             "fail_open": dedup_status.get("other_rejected_count", 0),
-            # Sprint F250E: Security gate
-            "security_rejected": scorecard.get("security_rejected_count", 0) or 0,
-            "pii_redacted": scorecard.get("pii_redacted_count", 0) or 0,
+            "security_rejected": security_rejected,
+            "pii_redacted": pii_redacted,
         }
         total_rejected = sum(reject_breakdown.values())
         dedup_effective = dedup_status.get("persistent_dedup_enabled", False)
@@ -2508,69 +2381,125 @@ def _build_product_value_summary(
             "capacity": dedup_status.get("hot_cache_capacity", 0),
         }
     else:
-        # Sprint F250E: Even when dedup_status is absent, preserve security gate counters
         reject_breakdown = {
             "low_information": 0,
             "in_memory_duplicate": 0,
             "persistent_duplicate": 0,
             "fail_open": 0,
-            "security_rejected": scorecard.get("security_rejected_count", 0) or 0,
-            "pii_redacted": scorecard.get("pii_redacted_count", 0) or 0,
+            "security_rejected": security_rejected,
+            "pii_redacted": pii_redacted,
         }
-        total_rejected = reject_breakdown["security_rejected"]  # security is the only real count here
+        total_rejected = security_rejected
         dedup_effective = None
         dedup_lmdb_path = None
         hot_cache = None
 
-    # 3. Circuit breaker state
-    cb_open_domains = scorecard.get("cb_open_domains", []) or []
+    return dedup_status, reject_breakdown, total_rejected, dedup_effective, dedup_lmdb_path, hot_cache
 
-    # 4. GNN predictions
-    gnn_predictions = eh.gnn_predictions if eh.gnn_predictions else 0
 
-    # 5. Synthesis engine
-    synthesis_engine = (
-        eh.synthesis_engine if eh.synthesis_engine else (scorecard.get("synthesis_engine_used", "unknown") or "unknown")
-    )
+def _compute_feed_dominance(
+    scorecard: dict[str, Any],
+) -> tuple[float | None, bool]:
+    """
+    Compute feed dominance ratio and nonfeed diagnostic recommendation.
 
-    # F214-ACQ: Feed dominance ratio and nonfeed diagnostic recommendation
-    # Computed from source_family_outcomes for full fidelity (all lanes, not just branch_mix).
-    # source_family_outcomes lives in eh.scorecard (spread there via _scheduler_result_acquisition_payload
-    # in __main__.py run_sprint).
+    Returns:
+        Tuple of (feed_dominance_ratio, should_recommend_nonfeed_diagnostic).
+    """
     _sfo_list = scorecard.get("source_family_outcomes", []) if isinstance(scorecard, dict) else []
     _feed_entry = next((e for e in _sfo_list if isinstance(e, dict) and e.get("family") == "feed"), None)
     _nonfeed_entries = [
         e for e in _sfo_list if isinstance(e, dict) and e.get("family") != "feed" and e.get("attempted")
-    ]  # noqa: E501
+    ]
     _feed_accepted = (_feed_entry.get("accepted_count") or 0) if _feed_entry else 0
     _nonfeed_accepted = sum((e.get("accepted_count") or 0) for e in _nonfeed_entries)
     _total_accepted = _feed_accepted + _nonfeed_accepted
     feed_dominance_ratio = (_feed_accepted / _total_accepted) if _total_accepted > 0 else None
-    should_recommend_nonfeed_diagnostic = (
+    should_recommend = (
         feed_dominance_ratio is not None and feed_dominance_ratio > 0.95 and _nonfeed_accepted < 5
     )
+    return feed_dominance_ratio, should_recommend
 
-    # Sprint F178C: signal_quality renamed to _signal_quality_classification
-    # PRECISE SEPARATION of FACTS vs DERIVED:
-    # - FACTS (raw data from scorecard/store): accepted, reject_breakdown, total_rejected,
-    #   findings_per_minute, ioc_density, peak_rss_mb, phase_durations, cb_open_domains,
-    #   gnn_predictions, synthesis_engine, dedup_effective, dedup_lmdb_path, hot_cache
-    # - DERIVED (computed from facts): _signal_quality_classification
-    #   NOTE: _prefix means "derived classification, not raw fact"
+
+def _classify_signal_quality(
+    accepted: int,
+    findings_per_minute: float,
+    ioc_density: float,
+    dedup_status: dict | None,
+) -> str:
+    """
+    Classify signal quality based on metrics.
+
+    Returns one of: high_density, medium_density, low_density,
+    slow_novelty, depleted, unknown.
+    """
     if accepted > 0 and findings_per_minute > 0:
         if ioc_density >= 0.5:
-            _signal_quality = "high_density"
+            return "high_density"
         elif ioc_density >= 0.2:
-            _signal_quality = "medium_density"
+            return "medium_density"
         else:
-            _signal_quality = "low_density"
+            return "low_density"
     elif accepted > 0 and findings_per_minute > 0 and ioc_density < 0.2:
-        _signal_quality = "slow_novelty"
+        return "slow_novelty"
     elif accepted == 0 and dedup_status:
-        _signal_quality = "depleted"
-    else:
-        _signal_quality = "unknown"
+        return "depleted"
+    return "unknown"
 
+
+def _build_product_value_summary(
+    store: Any,
+    eh: ExportHandoff,  # type: ignore[name-defined]
+    sprint_id: str,
+) -> dict[str, Any]:
+    """
+    Sprint F150I §1: product_value_summary — agreguje truth surfaces do jednoho
+    rozhodovacího balíčku pro další sprinty.
+    """
+    scorecard = eh.scorecard if eh.scorecard else {}
+    runtime_truth = eh.runtime_truth if eh.runtime_truth else {}
+
+    # Extract findings count with priority logic
+    accepted = _extract_accepted_findings_count(scorecard, runtime_truth)
+    runtime_accepted_findings = accepted
+
+    # Extract phase timings
+    phase_timings = scorecard.get("phase_duration_seconds", {}) or {}
+    peak_rss_mb = scorecard.get("peak_rss_mb", None)
+    if peak_rss_mb is not None and not isinstance(peak_rss_mb, (int, float)):
+        peak_rss_mb = None
+
+    # Compute findings per minute with cross-fallback logic
+    findings_per_minute, runtime_findings_per_minute = _compute_findings_per_minute(
+        scorecard, runtime_accepted_findings, phase_timings)
+
+    # Extract dedup status and derived counters
+    dedup_status, reject_breakdown, total_rejected, dedup_effective, dedup_lmdb_path, hot_cache = \
+        _extract_dedup_status(store, scorecard)
+
+    # Extract IOC density from scorecard
+    ioc_density = _pvs_n(scorecard, "ioc_density", 0.0)
+
+    # Circuit breaker state
+    cb_open_domains = scorecard.get("cb_open_domains", []) or []
+
+    # GNN predictions
+    gnn_predictions = eh.gnn_predictions if eh.gnn_predictions else 0
+
+    # Synthesis engine
+    synthesis_engine = (
+        eh.synthesis_engine if eh.synthesis_engine
+        else (scorecard.get("synthesis_engine_used", "unknown") or "unknown")
+    )
+
+    # Compute feed dominance
+    feed_dominance_ratio, should_recommend_nonfeed_diagnostic = _compute_feed_dominance(scorecard)
+
+    # Classify signal quality
+    signal_quality = _classify_signal_quality(accepted, findings_per_minute, ioc_density, dedup_status)
+
+    findings_per_minute = _pvs_n(scorecard, "findings_per_minute", 0.0)
+    ioc_density = _pvs_n(scorecard, "ioc_density", 0.0)
     summary: dict[str, Any] = {
         "sprint_id": sprint_id,
         # FACTS — raw data from scorecard/store
@@ -2620,7 +2549,7 @@ def _build_product_value_summary(
         "feed_dominance_ratio": round(feed_dominance_ratio, 4) if feed_dominance_ratio is not None else None,
         "should_recommend_nonfeed_diagnostic": should_recommend_nonfeed_diagnostic,
         # DERIVED — computed from facts (prefix _ = classification, not raw fact)
-        "_signal_quality_classification": _signal_quality,
+        "_signal_quality_classification": signal_quality,
         # F229B: Lane corroboration score from src_family_outcomes
         "corroboration_score": _corroboration_score_value(scorecard),
         "corroborating_families": _corroborating_families(scorecard),
@@ -2648,27 +2577,27 @@ def _build_product_value_summary(
 # ---------------------------------------------------------------------------
 
 
+def _collect_sidecar_iocs(sfo_list: list) -> tuple[int, list[str], list[str], list[str]]:
+    """Collect sidecar IOCs from source family outcomes."""
+    sidecar_families, sample_domains, sample_ips = [], [], []
+    total_stored = 0
+    for entry in sfo_list:
+        if not isinstance(entry, dict):
+            continue
+        fam = entry.get("family", "")
+        if fam in ("feed", "") or not entry.get("attempted", False):
+            continue
+        stored = entry.get("stored_count", 0) or 0
+        if stored <= 0:
+            continue
+        total_stored += stored
+        sidecar_families.append(fam)
+        sample_domains.extend([d for d in (entry.get("sample_domains", []) or [])[:20] if d and d not in sample_domains])
+        sample_ips.extend([ip for ip in (entry.get("sample_ips", []) or [])[:20] if ip and ip not in sample_ips])
+    return total_stored, sidecar_families, sample_domains[:20], sample_ips[:20]
+
 def _build_enrichment_value_delta(scorecard: dict, input_accepted: int) -> dict:
-    """
-    Sprint F251E: Build enrichment_value_delta from scorecard surfaces.
-
-    Measures sidecar IOC yield: unique new domains/IPs extracted by sidecars
-    vs. the raw accepted findings fed into the sidecar bus.
-
-    Sources (all read-only, no network/model):
-      - scorecard.source_family_outcomes (sidecar family outcomes)
-      - scorecard.graph_signal (nodes/edges delta from graph_accumulator)
-      - scorecard.next_seeds_from_enrichment (enrichment-seeded next seeds count)
-
-    Verdict rules:
-      - no_input: input_accepted == 0
-      - no_enrichment_yield: input > 0 but zero sidecar stored findings
-      - low_enrichment_yield: sidecars ran but yielded no unique domains/IPs
-      - useful_enrichment_yield: sidecars produced unique domains or IPs
-
-    Graph delta: surfaced as null with reason when scorecard.graph_signal absent.
-
-    Bounds: sample lists capped at 20 items to prevent report bloat.
+    """Sprint F251E: Build enrichment_value_delta from scorecard surfaces."""
     """
     evd: dict[str, Any] = {
         "input_accepted_findings_count": input_accepted,
@@ -2765,6 +2694,42 @@ def _build_enrichment_value_delta(scorecard: dict, input_accepted: int) -> dict:
 # ---------------------------------------------------------------------------
 
 
+def _apply_engineering_rule(
+    pyd: dict[str, Any],
+    evd: dict[str, Any],
+    pyd_overall: str,
+    evd_verdict: str,
+    evd_input: int,
+    public_status: str,
+    public_reason: str,
+) -> dict[str, Any] | None:
+    """Apply engineering action rules in priority order. Returns action dict or None."""
+    # Rule 1: no_positive_nonfeed_yield + no_input verdict
+    if pyd_overall == "no_positive_nonfeed_yield" and evd_verdict == "no_input" and public_status != "error_or_zero":
+        return {"primary_action": "improve_nonfeed_provider_yield", "reason": "zero nonfeed yield with no input accepted — provider yield is the bottleneck", "target_area": "provider_yield", "confidence": 0.85}
+
+    # Rule 2: public no_provider_selected
+    if public_status == "error_or_zero" and "no_provider_selected" in str(public_reason):
+        return {"primary_action": "fix_public_provider_selection", "reason": "public provider was selected but returned zero — check provider bootstrap", "target_area": "provider_selection", "confidence": 0.90}
+
+    # Rule 3: provider returned zero or unavailable
+    if public_status == "error_or_zero" and ("provider_returned_zero" in str(public_reason) or "provider_unavailable" in str(public_reason)):
+        return {"primary_action": "add_or_use_provider_replay_fixture", "reason": "provider returned zero or unavailable — replay fixture needed for diagnostics", "target_area": "provider_yield", "confidence": 0.80}
+
+    # Rule 4: useful enrichment yield
+    if evd_verdict == "useful_enrichment_yield":
+        return {"primary_action": "continue_pivot_expansion", "reason": "enrichment sidecars produced unique IOCs — pivot expansion is working", "target_area": "enrichment", "confidence": 0.80}
+
+    # Rule 5: nonfeed successful but no enrichment yield
+    if pyd_overall == "nonfeed_successful" and evd_verdict in ("no_enrichment_yield", "low_enrichment_yield"):
+        return {"primary_action": "improve_sidecar_input_or_mapping", "reason": "nonfeed lanes succeeded but sidecars yielded no unique IOCs — improve input mapping", "target_area": "enrichment", "confidence": 0.75}
+
+    # Rule 6: no enrichment yield with input accepted
+    if evd_verdict == "no_enrichment_yield" and evd_input > 0:
+        return {"primary_action": "improve_sidecar_input_or_mapping", "reason": "input accepted but sidecars stored zero — improve sidecar input or IOC mapping", "target_area": "enrichment", "confidence": 0.75}
+
+    return None
+
 def _build_engineering_action_map(
     pyd: dict[str, Any] | None,
     evd: dict[str, Any] | None,
@@ -2807,80 +2772,22 @@ def _build_engineering_action_map(
             "reason": "no diagnosis data available",
             "target_area": "none",
             "confidence": 0.0,
-        }  # noqa: E501
+        }
 
     pyd = pyd if isinstance(pyd, dict) else {}
     evd = evd if isinstance(evd, dict) else {}
-
     pyd_overall = pyd.get("overall", "")
     evd_verdict = evd.get("verdict", "")
     evd_input = evd.get("input_accepted_findings_count", 0)
-
     public_diag = pyd.get("families", {}).get("public", {}) if isinstance(pyd.get("families"), dict) else {}
     public_status = public_diag.get("status", "") if isinstance(public_diag, dict) else ""
     public_reason = public_diag.get("reason", "") if isinstance(public_diag, dict) else ""
 
-    # Rule 1: no_positive_nonfeed_yield + no_input verdict
-    # Only fires when public has no specific provider error (status != error_or_zero).
-    # Rules 2/3 take priority for specific provider errors.
-    if pyd_overall == "no_positive_nonfeed_yield" and evd_verdict == "no_input":
-        if public_status != "error_or_zero":
-            return {
-                "primary_action": "improve_nonfeed_provider_yield",
-                "reason": "zero nonfeed yield with no input accepted — provider yield is the bottleneck",
-                "target_area": "provider_yield",
-                "confidence": 0.85,
-            }
-        # public has error_or_zero — let Rules 2/3 handle it
+    # Apply rules in priority order
+    action = _apply_engineering_rule(pyd, evd, pyd_overall, evd_verdict, evd_input, public_status, public_reason)
+    if action is not None:
+        return action
 
-    # Rule 2: public no_provider_selected
-    if public_status == "error_or_zero" and "no_provider_selected" in str(public_reason):
-        return {
-            "primary_action": "fix_public_provider_selection",
-            "reason": "public provider was selected but returned zero — check provider bootstrap",
-            "target_area": "provider_selection",
-            "confidence": 0.90,
-        }
-
-    # Rule 3: provider returned zero but was attempted (not skipped)
-    if public_status == "error_or_zero" and (
-        "provider_returned_zero" in str(public_reason) or "provider_unavailable" in str(public_reason)
-    ):  # noqa: E501
-        return {
-            "primary_action": "add_or_use_provider_replay_fixture",
-            "reason": "provider returned zero or unavailable — replay fixture needed for diagnostics",
-            "target_area": "provider_yield",
-            "confidence": 0.80,
-        }
-
-    # Rule 4: useful enrichment yield
-    if evd_verdict == "useful_enrichment_yield":
-        return {
-            "primary_action": "continue_pivot_expansion",
-            "reason": "enrichment sidecars produced unique IOCs — pivot expansion is working",
-            "target_area": "enrichment",
-            "confidence": 0.80,
-        }
-
-    # Rule 5: nonfeed successful but no enrichment yield
-    if pyd_overall == "nonfeed_successful" and evd_verdict in ("no_enrichment_yield", "low_enrichment_yield"):
-        return {
-            "primary_action": "improve_sidecar_input_or_mapping",
-            "reason": "nonfeed lanes succeeded but sidecars yielded no unique IOCs — improve input mapping",
-            "target_area": "enrichment",
-            "confidence": 0.75,
-        }
-
-    # Rule 6: no enrichment yield with input accepted
-    if evd_verdict == "no_enrichment_yield" and evd_input > 0:
-        return {
-            "primary_action": "improve_sidecar_input_or_mapping",
-            "reason": "input accepted but sidecars stored zero — improve sidecar input or IOC mapping",
-            "target_area": "enrichment",
-            "confidence": 0.75,
-        }
-
-    # Rule 7: default — no action needed
     return {
         "primary_action": "none",
         "reason": "no actionable engineering signal detected",
@@ -3566,6 +3473,80 @@ def _get_acquisition_truth(eh: ExportHandoff) -> dict[str, Any]:
     return result
 
 
+def _extract_source_family_outcomes(report_dict: dict) -> tuple[list[dict], dict | None, dict | None]:
+    """Extract source_family_outcomes from all known locations and return (sfo_list, ar, crs)."""
+    sfo_list: list[dict] = []
+
+    # Priority order: top-level, acquisition_report, canonical_run_summary
+    sfo = report_dict.get("source_family_outcomes")
+    if sfo and isinstance(sfo, list):
+        sfo_list = sfo
+
+    ar = report_dict.get("acquisition_report")
+    if isinstance(ar, dict):
+        sfo = ar.get("source_family_outcomes")
+        if sfo and isinstance(sfo, list) and not sfo_list:
+            sfo_list = sfo
+
+    crs = report_dict.get("canonical_run_summary")
+    if isinstance(crs, dict):
+        sfo = crs.get("source_family_outcomes")
+        if sfo and isinstance(sfo, list) and not sfo_list:
+            sfo_list = sfo
+
+    return sfo_list, ar, crs
+
+
+def _is_lane_terminal(outcome: dict) -> bool:
+    """Check if a lane outcome is terminal per F211A rules."""
+    attempted = outcome.get("attempted") if isinstance(outcome, dict) else False
+    skipped = outcome.get("skipped") if isinstance(outcome, dict) else False
+    timeout = outcome.get("timeout") if isinstance(outcome, dict) else False
+    error = outcome.get("error") if isinstance(outcome, dict) else None
+    return bool(attempted or skipped or timeout or (error is not None))
+
+
+def _find_terminal_mismatches(
+    original_missing: list[str],
+    outcomes_by_family: dict[str, dict],
+) -> list[str]:
+    """Find lanes that are terminal according to source_family_outcomes but marked as missing."""
+    return [
+        lane for lane in original_missing
+        if outcomes_by_family.get(lane) and _is_lane_terminal(outcomes_by_family[lane])
+    ]
+
+
+def _apply_reconciliation(
+    report_dict: dict,
+    ar: dict | None,
+    term: dict,
+    original_missing: list[str],
+    mismatch_before: list[str],
+) -> None:
+    """Apply terminality reconciliation to report_dict."""
+    new_missing = [lane for lane in original_missing if lane not in mismatch_before]
+
+    term_reconciled = dict(term)
+    term_reconciled["missing_lanes"] = new_missing
+    term_reconciled["satisfied"] = list(set((term.get("satisfied") or []) + mismatch_before))
+    term_reconciled["terminal_lanes"] = list(set((term.get("terminal_lanes") or []) + mismatch_before))
+
+    ar_final = dict(ar) if ar else {}
+    ar_final["terminality"] = term_reconciled
+    report_dict["acquisition_report"] = ar_final
+
+    report_dict["terminality_reconciled"] = True
+    report_dict["terminality_reconciliation_reason"] = "source_family_outcomes_final_authority"
+    report_dict["terminality_before_reconciliation"] = dict(term)
+    report_dict["terminality_source_outcome_mismatch_before"] = mismatch_before
+
+    if "acquisition_terminality_missing_lanes" in report_dict:
+        report_dict["acquisition_terminality_missing_lanes"] = new_missing
+    if "acquisition_terminality_satisfied" in report_dict:
+        report_dict["acquisition_terminality_satisfied"] = not new_missing
+
+
 def _reconcile_acquisition_terminality_from_source_outcomes(report_dict: dict) -> dict:
     """
     Sprint F211A: Final terminality reconciliation from source_family_outcomes.
@@ -3584,104 +3565,30 @@ def _reconcile_acquisition_terminality_from_source_outcomes(report_dict: dict) -
 
     NO scheduler execution. NO store read. NO network. NO MLX load.
     """
-    # Gather source_family_outcomes from all known locations
-    sfo_list: list[dict] = []
-
-    # 1. Top-level
-    sfo = report_dict.get("source_family_outcomes")
-    if sfo and isinstance(sfo, list):
-        sfo_list = sfo
-
-    # 2. acquisition_report.source_family_outcomes
-    ar = report_dict.get("acquisition_report")
-    if isinstance(ar, dict):
-        sfo = ar.get("source_family_outcomes")
-        if sfo and isinstance(sfo, list) and not sfo_list:
-            sfo_list = sfo
-
-    # 3. canonical_run_summary.source_family_outcomes
-    crs = report_dict.get("canonical_run_summary")
-    if isinstance(crs, dict):
-        sfo = crs.get("source_family_outcomes")
-        if sfo and isinstance(sfo, list) and not sfo_list:
-            sfo_list = sfo
+    sfo_list, ar, crs = _extract_source_family_outcomes(report_dict)
 
     # Index source_family_outcomes by family name for fast lookup
-    outcomes_by_family: dict[str, dict] = {}
-    for outcome in sfo_list:
-        fam = outcome.get("family") if isinstance(outcome, dict) else None
-        if fam:
-            outcomes_by_family[fam] = outcome
+    outcomes_by_family = {
+        outcome.get("family"): outcome
+        for outcome in sfo_list
+        if isinstance(outcome, dict) and outcome.get("family")
+    }
 
     # Get existing terminality from acquisition_report
-    term = None
-    if isinstance(ar, dict):
-        term = ar.get("terminality")
-
+    term = ar.get("terminality") if isinstance(ar, dict) else None
     if not term or not isinstance(term, dict):
-        # Nothing to reconcile — no terminality present
         return report_dict
 
-    original_missing: list[str] = term.get("missing_lanes") or []
-    # required_lanes preserved for future diagnostics if needed
-    # term.get("required_lanes") or []
-
+    original_missing = term.get("missing_lanes") or []
     if not original_missing:
-        # Nothing to reconcile — no missing lanes
         return report_dict
 
-    # Determine which required lanes are terminal from source_family_outcomes
-    mismatch_before: list[str] = []
-
-    for lane in list(original_missing):
-        outcome = outcomes_by_family.get(lane)
-        if outcome is None:
-            # No outcome recorded for this lane — keep as missing
-            continue
-
-        # Check if this outcome is terminal
-        attempted = outcome.get("attempted") if isinstance(outcome, dict) else False
-        skipped = outcome.get("skipped") if isinstance(outcome, dict) else False
-        timeout = outcome.get("timeout") if isinstance(outcome, dict) else False
-        error = outcome.get("error") if isinstance(outcome, dict) else None
-
-        is_terminal = attempted or skipped or timeout or (error is not None)
-
-        if is_terminal:
-            mismatch_before.append(lane)
-
+    # Find terminal mismatches
+    mismatch_before = _find_terminal_mismatches(original_missing, outcomes_by_family)
     if not mismatch_before:
-        # No reconciliation needed
         return report_dict
 
-    # Build reconciled terminality
-    new_missing = [lane for lane in original_missing if lane not in mismatch_before]
-
-    # Preserve original terminality
-    term_reconciled = dict(term)
-    term_reconciled["missing_lanes"] = new_missing
-    term_reconciled["satisfied"] = list(set((term.get("satisfied") or []) + mismatch_before))
-    term_reconciled["terminal_lanes"] = list(set((term.get("terminal_lanes") or []) + mismatch_before))
-
-    # Write back to acquisition_report
-    ar_final = dict(ar) if ar else {}
-    ar_final["terminality"] = term_reconciled
-    report_dict["acquisition_report"] = ar_final
-
-    # Add reconciliation markers
-    report_dict["terminality_reconciled"] = True
-    report_dict["terminality_reconciliation_reason"] = "source_family_outcomes_final_authority"
-    report_dict["terminality_before_reconciliation"] = dict(term)
-    report_dict["terminality_source_outcome_mismatch_before"] = mismatch_before
-
-    # Update top-level acquisition_terminality_missing_lanes if present
-    if "acquisition_terminality_missing_lanes" in report_dict:
-        report_dict["acquisition_terminality_missing_lanes"] = new_missing
-
-    # Update acquisition_terminality_satisfied
-    if "acquisition_terminality_satisfied" in report_dict:
-        report_dict["acquisition_terminality_satisfied"] = not new_missing
-
+    _apply_reconciliation(report_dict, ar, term, original_missing, mismatch_before)
     return report_dict
 
 
@@ -3862,91 +3769,32 @@ _SOURCE_TIER: dict[str, int] = {
 }
 
 
-def _compute_research_depth(
-    eh: ExportHandoff,  # type: ignore[name-defined]
-    pvs: dict[str, Any] | None,
-    signal_path: dict[str, Any] | None,
-    hypothesis_pack: dict[str, Any] | None,
-    correlation: dict[str, Any] | None,
-) -> dict[str, Any]:
-    """
-    Sprint F192H: research_depth_metric — derived from canonical surfaces only.
-
-    Computes a 0-100 research depth score differentiating:
-      - Surface research (indexed web only, single source type)
-      - Shallow research (multiple indexed sources)
-      - Moderate research (some CT logs, archive, PDNS)
-      - Deep research (significant deep sources + corroboration)
-      - Comprehensive research (all dimensions strong)
-
-    Components (0-100 total):
-      - source_diversity (0-25): unique source types + Shannon entropy
-      - non_indexed_ratio (0-20): tier1+tier2 sources / total
-      - corroboration (0-25): is_corroborated + campaign_hints + noisy signal
-      - branch_diversity (0-15): feed vs public vs CT active branches
-      - pivot_depth (0-15): hypothesis_count + pivot recommendations
-
-    DERIVED ONLY — reads from ExportHandoff canonical surfaces:
-      - eh.scorecard["entries_per_source"] / ["hits_per_source"]
-      - eh.scorecard["branch_mix"] via runtime_truth
-      - signal_path["is_corroborated"], ["is_noisy"], ["next_pivot_recommendation"]
-      - correlation["campaign_hints"], ["high_risk_branch"]
-      - hypothesis_pack["hypothesis_count"]
-
-    NO new persistence. NO new store reads.
-    """
+def _compute_source_diversity_score(source_counts: dict[str, int]) -> tuple[float, int, int]:
+    """Compute source diversity score (0-25) and return unique types and total hits."""
     import math
-
-    scorecard = eh.scorecard if eh.scorecard else {}
-    runtime_truth = _get_runtime_truth(eh)
-
-    # ── 1. Source diversity (0-25) ─────────────────────────────────────
-    # Extract source hit counts from scorecard surfaces
-    entries_per_source: dict[str, int] = {}
-    hits_per_source: dict[str, int] = {}
-    if isinstance(scorecard.get("entries_per_source"), dict):
-        entries_per_source = scorecard["entries_per_source"]
-    if isinstance(scorecard.get("hits_per_source"), dict):
-        hits_per_source = scorecard["hits_per_source"]
-
-    # Union of both — deduplicated by source name
-    source_counts: dict[str, int] = {}
-    for d in (entries_per_source, hits_per_source):
-        for src, cnt in d.items():
-            if isinstance(cnt, (int, float)):
-                source_counts[str(src)] = source_counts.get(src, 0) + int(cnt)
-
     unique_types = len(source_counts)
     total_hits = sum(source_counts.values()) if source_counts else 0
-
-    # Shannon entropy of source distribution (0-1 normalized)
     entropy_score = 0.0
     if unique_types >= 2 and total_hits > 0:
         probs = [cnt / total_hits for cnt in source_counts.values() if cnt > 0]
         h = -sum(p * math.log2(p) for p in probs if p > 0)
         max_entropy = math.log2(len(probs))
         entropy_score = (h / max_entropy) if max_entropy > 0 else 0.0
-
-    # Diversity score: entropy contribution (15pts) + unique type bonus (10pts)
     source_diversity_score = min(25.0, entropy_score * 15 + min(10.0, unique_types * 2.5))
+    return source_diversity_score, unique_types, total_hits
 
-    # ── 2. Non-indexed ratio (0-20) ────────────────────────────────────
-    # Count hits from tier1 (structured) and tier2 (deep) sources
-    deep_hits = 0
-    for src, cnt in source_counts.items():
-        tier = _SOURCE_TIER.get(src, 0)
-        if tier > 0:
-            deep_hits += cnt
-
+def _compute_non_indexed_ratio_score(source_counts: dict[str, int], total_hits: int) -> tuple[float, int]:
+    """Compute non-indexed ratio score (0-20) and return deep hits."""
+    deep_hits = sum(cnt for src, cnt in source_counts.items() if _SOURCE_TIER.get(src, 0) > 0)
     non_indexed_ratio = deep_hits / total_hits if total_hits > 0 else 0.0
-    non_indexed_ratio_score = non_indexed_ratio * 20.0
+    return non_indexed_ratio * 20.0, deep_hits
 
-    # ── 3. Corroboration (0-25) ────────────────────────────────────────
+def _compute_corroboration_score(signal_path: dict | None, correlation: dict | None) -> tuple[float, int, bool, bool]:
+    """Compute corroboration score (0-25) and return campaign_count, corroboration flags."""
     corroboration_score = 0.0
     campaign_count = 0
     is_corroborated = False
-    is_noisy = True  # default assumption
-
+    is_noisy = True
     if signal_path:
         if signal_path.get("is_corroborated") is True:
             corroboration_score += 15
@@ -3954,28 +3802,28 @@ def _compute_research_depth(
         if signal_path.get("is_noisy") is False:
             corroboration_score += 5
             is_noisy = False
-
     if correlation and not correlation.get("_no_correlation_data"):
         raw_hints = correlation.get("campaign_hints") or []
         if isinstance(raw_hints, list):
             campaign_count = len(raw_hints)
-        if campaign_count >= 3:
-            corroboration_score += 5
-        elif campaign_count >= 1:
-            corroboration_score += 3
+            if campaign_count >= 3:
+                corroboration_score += 5
+            elif campaign_count >= 1:
+                corroboration_score += 3
+    return min(25.0, corroboration_score), campaign_count, is_corroborated, is_noisy
 
-    corroboration_score = min(25.0, corroboration_score)
+def _compute_branch_diversity_score(runtime_truth: dict | None) -> tuple[float, int]:
+    """Compute branch diversity score (0-15) and return active_branches count."""
+    if not runtime_truth:
+        return 0.0, 0
+    branch_mix = runtime_truth.get("branch_mix") or {}
+    if isinstance(branch_mix, dict):
+        active_branches = sum(1 for v in branch_mix.values() if isinstance(v, (int, float)) and v > 0)
+        return min(15.0, active_branches * 5.0), active_branches
+    return 0.0, 0
 
-    # ── 4. Branch diversity (0-15) ─────────────────────────────────────
-    branch_score = 0.0
-    active_branches = 0
-    if runtime_truth:
-        branch_mix = runtime_truth.get("branch_mix") or {}
-        if isinstance(branch_mix, dict):
-            active_branches = sum(1 for v in branch_mix.values() if isinstance(v, (int, float)) and v > 0)
-    branch_score = min(15.0, active_branches * 5.0)
-
-    # ── 5. Pivot depth (0-15) ───────────────────────────────────────────
+def _compute_pivot_depth_score(hypothesis_pack: dict | None, signal_path: dict | None) -> tuple[float, bool]:
+    """Compute pivot depth score (0-15) and return pivot_recommended flag."""
     pivot_score = 0.0
     pivot_recommended = False
     if hypothesis_pack:
@@ -3987,28 +3835,52 @@ def _compute_research_depth(
         if pivot_rec and pivot_rec not in ("continue", "unknown", ""):
             pivot_score += 10
             pivot_recommended = True
+    return min(15.0, pivot_score), pivot_recommended
 
-    pivot_score = min(15.0, pivot_score)
-
-    # ── Total ─────────────────────────────────────────────────────────
-    total = source_diversity_score + non_indexed_ratio_score + corroboration_score + branch_score + pivot_score
-    total = min(100.0, round(total, 1))
-
-    # ── Classification ────────────────────────────────────────────────
+def _classify_research_depth(total: float) -> str:
+    """Classify research depth level based on total score."""
     if total >= 81:
-        level = "comprehensive"
+        return "comprehensive"
     elif total >= 61:
-        level = "deep"
+        return "deep"
     elif total >= 41:
-        level = "moderate"
+        return "moderate"
     elif total >= 21:
-        level = "shallow"
-    else:
-        level = "surface"
+        return "shallow"
+    return "surface"
+
+def _compute_research_depth(
+    eh: ExportHandoff,  # type: ignore[name-defined]
+    pvs: dict[str, Any] | None,
+    signal_path: dict[str, Any] | None,
+    hypothesis_pack: dict[str, Any] | None,
+    correlation: dict[str, Any] | None,
+) -> dict[str, Any]:
+    """Sprint F192H: research_depth_metric — derived from canonical surfaces only."""
+    scorecard = eh.scorecard if eh.scorecard else {}
+    runtime_truth = _get_runtime_truth(eh)
+
+    # Extract source counts from scorecard
+    entries_per_source = scorecard.get("entries_per_source", {}) if isinstance(scorecard.get("entries_per_source"), dict) else {}
+    hits_per_source = scorecard.get("hits_per_source", {}) if isinstance(scorecard.get("hits_per_source"), dict) else {}
+    source_counts = {}
+    for src, cnt in {**entries_per_source, **hits_per_source}.items():
+        if isinstance(cnt, (int, float)):
+            source_counts[str(src)] = source_counts.get(src, 0) + int(cnt)
+
+    # Compute all scores using helper functions
+    source_diversity_score, unique_types, total_hits = _compute_source_diversity_score(source_counts)
+    non_indexed_ratio_score, deep_hits = _compute_non_indexed_ratio_score(source_counts, total_hits)
+    corroboration_score, campaign_count, is_corroborated, is_noisy = _compute_corroboration_score(signal_path, correlation)
+    branch_score, active_branches = _compute_branch_diversity_score(runtime_truth)
+    pivot_score, pivot_recommended = _compute_pivot_depth_score(hypothesis_pack, signal_path)
+
+    # Total and classify
+    total = min(100.0, round(source_diversity_score + non_indexed_ratio_score + corroboration_score + branch_score + pivot_score, 1))
 
     return {
         "score": total,
-        "level": level,
+        "level": _classify_research_depth(total),
         "breakdown": {
             "source_diversity": round(source_diversity_score, 1),
             "non_indexed_ratio": round(non_indexed_ratio_score, 1),
@@ -4017,7 +3889,7 @@ def _compute_research_depth(
             "pivot_depth": round(pivot_score, 1),
         },
         "depth_signals": {
-            "unique_source_types": len(source_counts.keys()),
+            "unique_source_types": unique_types,
             "deep_sources_found": deep_hits,
             "total_source_hits": total_hits,
             "corroborated": is_corroborated,
@@ -4027,6 +3899,230 @@ def _compute_research_depth(
             "pivot_recommended": pivot_recommended,
         },
     }
+
+
+# ---------------------------------------------------------------------------
+# Sprint FXXX: _build_capability_synthesis helper functions
+# Extracted from _build_capability_synthesis to reduce cyclomatic complexity
+# from ~45 to under 15.
+# ---------------------------------------------------------------------------
+
+
+def _check_terminality(acquisition_report: dict[str, Any] | None) -> bool:
+    """Check if terminality is satisfied from acquisition report."""
+    if acquisition_report and isinstance(acquisition_report, dict):
+        term = acquisition_report.get("terminality")
+        if isinstance(term, dict):
+            return bool(term.get("satisfied", False))
+    return False
+
+
+def _determine_capability_verdict(
+    is_meaningful: bool | None,
+    runtime_accepted: int,
+    truth_recon_applied: bool,
+    terminality_satisfied: bool,
+    _corrob_score: float,
+    _corrob_penalties: list,
+) -> tuple[str, float]:
+    """
+    Sprint FXXX: Determine capability verdict from truth surfaces.
+    Returns (verdict, confidence).
+    """
+    # Low corroboration with feed-only penalty → weak_capability
+    if _corrob_score < 0.3 and "feed_only_no_nonfeed" in _corrob_penalties:
+        return "weak_capability", 0.70
+
+    # Smoke: is_meaningful=False
+    if is_meaningful is False:
+        return "smoke_capability", 0.85
+
+    # Runtime has accepted findings + terminality satisfied → useful_capability
+    if runtime_accepted > 0 and truth_recon_applied and terminality_satisfied:
+        return "useful_capability", 0.80
+
+    # Terminality not satisfied → invalid_capability
+    if not terminality_satisfied:
+        return "invalid_capability", 0.95
+
+    # Default: terminality satisfied + meaningful
+    return "useful_capability", 0.75
+
+
+def _analyze_evidence_quality(
+    pvs: dict[str, Any] | None,
+    runtime_truth: dict[str, Any] | None,
+    accepted: int,
+) -> tuple[bool, bool, bool]:
+    """
+    Sprint FXXX: Analyze evidence quality signals.
+    Returns (useful_evidence, feed_heavy, hardware_constrained).
+    """
+    nonfeed_accepted = 0
+    if pvs:
+        branch_mix = runtime_truth.get("branch_mix", {}) if runtime_truth else {}
+        ct_findings = branch_mix.get("ct_findings", 0) if isinstance(branch_mix, dict) else 0
+        public_findings = branch_mix.get("public_findings", 0) if isinstance(branch_mix, dict) else 0
+        nonfeed_accepted = ct_findings + public_findings
+
+    useful_evidence = accepted > 0 and nonfeed_accepted > 0
+    feed_heavy = (pvs.get("feed_share", 1.0) >= 0.9) if pvs else False
+    hardware_constrained = bool(pvs.get("peak_rss_mb", 0) > 7000) if pvs else False
+
+    return useful_evidence, feed_heavy, hardware_constrained
+
+
+def _compute_source_diversity(research_depth: dict[str, Any] | None) -> tuple[list[str], str]:
+    """
+    Sprint FXXX: Compute source diversity from research depth.
+    Returns (source_types, source_diversity_summary).
+    """
+    source_types: list[str] = []
+    if research_depth and isinstance(research_depth, dict):
+        ds = research_depth.get("depth_signals", {})
+        if isinstance(ds, dict):
+            source_types = ds.get("unique_source_types", [])
+
+    if len(source_types) >= 3:
+        source_diversity_summary = "multi_source_diverse"
+    elif len(source_types) == 2:
+        source_diversity_summary = "dual_source_mixed"
+    elif len(source_types) == 1:
+        source_diversity_summary = (
+            "single_source_feed_only" if source_types[0] in ("ct", "feed") else "single_source_niche"
+        )
+    else:
+        source_diversity_summary = "unknown_source"
+
+    return source_types, source_diversity_summary
+
+
+def _compute_corroboration(
+    _corrob_score: float,
+    _corrob_families: tuple,
+    _terminal_coverage_score: float,
+    _terminal_families: tuple,
+) -> str:
+    """
+    Sprint FXXX: Compute corroboration summary string.
+    """
+    _nonfeed_families_set = {"ct", "doh", "wayback", "passive_dns"}
+    _has_terminal_nonfeed = bool(_nonfeed_families_set & set(_terminal_families))
+
+    if _corrob_score >= 0.75:
+        return "corroborated"
+    elif _corrob_score < 0.3 and _terminal_coverage_score > 0 and _has_terminal_nonfeed:
+        return "nonfeed_attempted_no_positive_evidence"
+    elif _corrob_score < 0.3:
+        return "noisy" if _corrob_score > 0 else "feed_only"
+    elif "campaign_hint" in _corrob_families:
+        return "campaign_hint"
+    else:
+        return "none"
+
+
+def _compute_feed_noise(
+    pvs: dict[str, Any] | None,
+    feed_heavy: bool,
+    useful_evidence: bool,
+) -> str:
+    """
+    Sprint FXXX: Compute feed noise summary.
+    """
+    if pvs:
+        sig_class = pvs.get("_signal_quality_classification", "unknown")
+        dedup_eff = pvs.get("dedup_effective", False)
+        if sig_class == "depleted":
+            return "depleted_feed_exhausted"
+        elif feed_heavy and not useful_evidence:
+            return "feed_noisy_no_nonfeed_signal"
+        elif dedup_eff and sig_class in ("high_density", "medium_density"):
+            return "feed_clean_dedup_effective"
+        elif feed_heavy:
+            return "feed_dominant"
+        else:
+            return "balanced_or_nonfeed"
+    return "unknown"
+
+
+def _determine_engineering_action(
+    verdict: str,
+    hardware_constrained: bool,
+    terminality_satisfied: bool,
+    corroboration: str,
+    _corrob_score: float,
+    _corrob_penalties: list,
+    _has_corrob_nonfeed: bool,
+    feed_heavy: bool,
+    useful_evidence: bool,
+    analyst_brief: dict[str, Any] | None,
+    research_depth: dict[str, Any] | None,
+) -> str:
+    """
+    Sprint FXXX: Determine next engineering action.
+    """
+    if verdict == "invalid_capability":
+        return "fix_terminality_before_capacity_expansion"
+    if hardware_constrained:
+        return "address_m1_memory_pressure_before_scale"
+    if not terminality_satisfied:
+        return "resolve_terminality_gaps_first"
+    if corroboration == "nonfeed_attempted_no_positive_evidence":
+        return "improve_nonfeed_yield_or_provider_quality"
+    if feed_heavy and not useful_evidence:
+        return "boost_nonfeed_lanes_to_achieve_balance"
+    if _corrob_score < 0.3 and "feed_only_no_nonfeed" in _corrob_penalties:
+        return "fix_terminality_before_capacity_expansion"
+    if _corrob_score >= 0.7 and _has_corrob_nonfeed:
+        return "expand_or_deepen_pivots"
+    if "nonfeed_missed" in _corrob_penalties or _corrob_score < 0.2:
+        return "fix_nonfeed_terminality"
+    if corroboration == "noisy":
+        return "investigate_signal_noise_source"
+    if research_depth and isinstance(research_depth, dict):
+        rd_score = research_depth.get("score", 0) if isinstance(research_depth, dict) else 0
+        if rd_score < 30:
+            return "pivot_deeper_sources_or_new_query_strategy"
+        elif rd_score < 60:
+            return "improve_source_diversity_and_corrobortion"
+        else:
+            return "maintain_current_capability_and_increment"
+
+    # Analyst brief override
+    if analyst_brief and isinstance(analyst_brief, dict):
+        tmf = _get_brief_field(analyst_brief, "target_memory_feedback", {}) or {}
+        if tmf.get("repeated_feed_dominance"):
+            return "boost_nonfeed_lanes_to_achieve_balance"
+        elif tmf.get("prior_nonfeed_weakness"):
+            nea = tmf.get("suggested_next_profile", "")
+            if nea == "PUBLIC":
+                return "bootstrap_public_bridge_before_scale"
+            elif nea == "CT":
+                return "bootstrap_ct_provider_before_scale"
+
+    return "maintain_current_capability_and_increment"
+
+
+def _determine_investigation_action(
+    analyst_brief: dict[str, Any] | None,
+    _corrob_score: float,
+    accepted: int,
+) -> str:
+    """
+    Sprint FXXX: Determine next investigation action.
+    """
+    if analyst_brief and isinstance(analyst_brief, dict):
+        target_memory = _get_brief_field(analyst_brief, "target_memory_summary", "") or ""
+        if isinstance(target_memory, str) and target_memory:
+            return f"follow_up_on_target_memory_{target_memory[:40]}"
+        return "review_fresh_findings_and_query_adjustments"
+    if _corrob_score < 0.2:
+        return "diagnose_acquisition_or_query_effectiveness"
+    if accepted > 10:
+        return "analyze_top_findings_for_operational_actionability"
+    if accepted > 0:
+        return "assess_accepted_findings_for_false_positive_rate"
+    return "diagnose_acquisition_or_query_effectiveness"
 
 
 def _build_capability_synthesis(
@@ -4060,218 +4156,67 @@ def _build_capability_synthesis(
     If accepted_findings > 0 and runtime_truth.is_meaningful=true, do NOT emit
     invalid_capability solely because pvs.accepted is zero.
     """
-    # Sprint F229A: Reconcile accepted count BEFORE verdict logic
-    # Uses reconcile_terminal_truth to resolve pvs=0 vs runtime_truth > 0 contradiction.
+    # Reconciliation
     _scorecard = {}
     reconciled_pvs, runtime_accepted, truth_recon_applied, truth_recon_reason = reconcile_terminal_truth(
         pvs, _scorecard, runtime_truth
     )
-    # Use reconciled pvs for accepted counts in verdict logic
     _pvs_accepted = reconciled_pvs.get("accepted", 0) if reconciled_pvs else 0
 
-    # ── 1. Baseline capability verdict ─────────────────────────────────────
-    # Terminality is prerequisite for any capability claim
-    terminality_satisfied = False
-    if acquisition_report and isinstance(acquisition_report, dict):
-        term = acquisition_report.get("terminality")
-        if isinstance(term, dict):
-            terminality_satisfied = bool(term.get("satisfied", False))
-
+    # Terminality check
+    terminality_satisfied = _check_terminality(acquisition_report)
     is_meaningful = runtime_truth.get("is_meaningful", None) if runtime_truth else None
 
-    # F229B: Read corroboration score from pvs for verdict influence
+    # Corroboration score
     _corrob_score = pvs.get("corroboration_score", 0.0) if pvs else 0.0
     _corrob_penalties = pvs.get("corroboration_penalties", []) if pvs else []
     _corrob_families = pvs.get("corroborating_families", ()) if pvs else ()
 
-    # Sprint F229A: Verdict precedence order (tightened to fix truth contradiction):
-    #   1. Smoke: is_meaningful=False → smoke_capability (regardless of accepted count)
-    #   2. F229A Fix: runtime has accepted findings from a meaningful run → useful_capability
-    #      (This overrides terminality check when runtime shows real findings but
-    #       acquisition_report was not captured / is None — common in partial exports)
-    #   3. F230C: Low corroboration score → weak_capability/invalid_capability
-    #   4. Invalid: terminality explicitly unsatisfied → invalid_capability
-    #   5. Default: terminality satisfied + meaningful → useful_capability
-    # Rules:
-    #   - Do NOT emit invalid_capability solely because pvs.accepted is zeroed
-    #     when runtime_truth had meaningful accepted findings
-    #   - Preserve invalid_capability when terminality actually failed AND no runtime findings
-    #   - F230C: Low corroboration score (< 0.3) with feed-only penalty → weak_capability
-    # Note: The F229A fix (step 2) requires runtime_accepted > 0 from a reconciled source,
-    # not just pvs.accepted. When pvs.accepted > 0 but _pvs_accepted (reconciled) is 0,
-    # the F229A path should NOT override the F230C low-corroboration check.
-    # Verdict precedence order (finalized F229A+F230C+F230F):
-    #   1. F230C: Low corroboration score (< 0.3) with feed-only penalty → weak_capability
-    #   2. Smoke: is_meaningful=False → smoke_capability (F229A precedence: checked before runtime override)
-    #   3. F229A runtime override: runtime has accepted findings (from runtime_truth source)
-    #      → useful_capability (requires terminality satisfied to preserve smoke precedence)
-    #   4. Invalid: terminality unsatisfied → invalid_capability
-    #   5. Default: terminality satisfied + meaningful → useful_capability
-    if _corrob_score < 0.3 and "feed_only_no_nonfeed" in _corrob_penalties:
-        verdict = "weak_capability"
-        confidence = 0.70
-    elif is_meaningful is False:
-        verdict = "smoke_capability"
-        confidence = 0.85
-    elif runtime_accepted > 0 and truth_recon_applied and terminality_satisfied:
-        verdict = "useful_capability"
-        confidence = 0.80
-    elif not terminality_satisfied:
-        verdict = "invalid_capability"
-        confidence = 0.95
-    else:
-        verdict = "useful_capability"
-        confidence = 0.75
+    # Verdict determination
+    verdict, confidence = _determine_capability_verdict(
+        is_meaningful, runtime_accepted, truth_recon_applied,
+        terminality_satisfied, _corrob_score, _corrob_penalties
+    )
 
-    # ── 2. Evidence quality signals ─────────────────────────────────────────
+    # Evidence quality analysis
     accepted = _pvs_accepted if _pvs_accepted > 0 else (pvs.get("accepted", 0) if pvs else 0)
-    nonfeed_accepted = 0
-    if pvs:
-        # nonfeed signals in pvs — look for ct_findings/public_findings in branch_mix
-        branch_mix = runtime_truth.get("branch_mix", {}) if runtime_truth else {}
-        ct_findings = branch_mix.get("ct_findings", 0) if isinstance(branch_mix, dict) else 0
-        public_findings = branch_mix.get("public_findings", 0) if isinstance(branch_mix, dict) else 0
-        nonfeed_accepted = ct_findings + public_findings
-
-    useful_evidence = accepted > 0 and nonfeed_accepted > 0
-    feed_heavy = (pvs.get("feed_share", 1.0) >= 0.9) if pvs else False
-    hardware_constrained = bool(pvs.get("peak_rss_mb", 0) > 7000) if pvs else False
-
+    useful_evidence, feed_heavy, hardware_constrained = _analyze_evidence_quality(
+        pvs, runtime_truth, accepted
+    )
     if hardware_constrained and accepted > 0:
         verdict = "incomparable_capability"
         confidence = 0.60
 
-    # ── 3. Source diversity summary ─────────────────────────────────────────
-    source_types: list[str] = []
-    if research_depth and isinstance(research_depth, dict):
-        ds = research_depth.get("depth_signals", {})
-        if isinstance(ds, dict):
-            source_types = ds.get("unique_source_types", [])
+    # Source diversity
+    source_types, source_diversity_summary = _compute_source_diversity(research_depth)
 
-    if len(source_types) >= 3:
-        source_diversity_summary = "multi_source_diverse"
-    elif len(source_types) == 2:
-        source_diversity_summary = "dual_source_mixed"
-    elif len(source_types) == 1:
-        source_diversity_summary = (
-            "single_source_feed_only" if source_types[0] in ("ct", "feed") else "single_source_niche"
-        )  # noqa: E501
-    else:
-        source_diversity_summary = "unknown_source"
-
-    # ── 4. Corroboration summary (F230C: use F229B corroboration_score) ───────
-    # F230C: Derive corroboration_summary from pvs.lane_corroboration_score
-    # rather than research_depth.depth_signals (which is a different signal).
-    # F231A: Terminal coverage is distinct from positive corroboration.
-    #   - corroboration_score < 0.3 with terminal coverage but no positive families
-    #     → "nonfeed_attempted_no_positive_evidence" (not "feed_only")
+    # Corroboration summary
     _terminal_coverage_score = pvs.get("lane_terminal_coverage_score", 0.0) if pvs else 0.0
     _terminal_families = pvs.get("terminal_families", ()) if pvs else ()
-    _has_terminal_nonfeed = bool({"ct", "doh", "wayback", "passive_dns"} & set(_terminal_families))
+    corroboration = _compute_corroboration(
+        _corrob_score, _corrob_families, _terminal_coverage_score, _terminal_families
+    )
 
-    corroboration = "none"
-    if _corrob_score >= 0.75:
-        corroboration = "corroborated"
-    elif _corrob_score < 0.3 and _terminal_coverage_score > 0 and _has_terminal_nonfeed:
-        # F231A: Nonfeed lanes were planned/attempted (terminal coverage exists)
-        # but no positive corroboration — distinct from pure feed_only
-        corroboration = "nonfeed_attempted_no_positive_evidence"
-    elif _corrob_score < 0.3:
-        corroboration = "noisy" if _corrob_score > 0 else "feed_only"
-    elif "campaign_hint" in _corrob_families:
-        corroboration = "campaign_hint"
+    # Feed noise summary
+    feed_noise_summary = _compute_feed_noise(pvs, feed_heavy, useful_evidence)
 
-    # ── 5. Feed noise summary ─────────────────────────────────────────────────
-    if pvs:
-        sig_class = pvs.get("_signal_quality_classification", "unknown")
-        dedup_eff = pvs.get("dedup_effective", False)
-        if sig_class == "depleted":
-            feed_noise_summary = "depleted_feed_exhausted"
-        elif feed_heavy and not useful_evidence:
-            feed_noise_summary = "feed_noisy_no_nonfeed_signal"
-        elif dedup_eff and sig_class in ("high_density", "medium_density"):
-            feed_noise_summary = "feed_clean_dedup_effective"
-        elif feed_heavy:
-            feed_noise_summary = "feed_dominant"
-        else:
-            feed_noise_summary = "balanced_or_nonfeed"
-    else:
-        feed_noise_summary = "unknown"
-
-    # ── 6. Non-feed value present ────────────────────────────────────────────
-    # F230C: Also consider corroborating_families for nonfeed presence
+    # Nonfeed value present
     _nonfeed_families_set = {"ct", "doh", "wayback", "passive_dns"}
     _has_corrob_nonfeed = bool(_nonfeed_families_set & set(_corrob_families))
-    nonfeed_value = nonfeed_accepted > 0 or _has_corrob_nonfeed or (len(source_types) > 1 and len(source_types) <= 3)
+    nonfeed_value = accepted > 0 or _has_corrob_nonfeed or (len(source_types) > 1 and len(source_types) <= 3)
     nonfeed_value_present = bool(nonfeed_value)
 
-    # ── 7. Next engineering action (deterministic, no ML) ───────────────────
-    # F230C: Influence engineering action from F229B corroboration score
-    # F231A: Handle nonfeed_attempted_no_positive_evidence before feed_heavy check
-    # because lanes were already planned/attempted — yield/quality fix not lane boost.
-    if verdict == "invalid_capability":
-        next_engineering_action = "fix_terminality_before_capacity_expansion"
-    elif hardware_constrained:
-        next_engineering_action = "address_m1_memory_pressure_before_scale"
-    elif not terminality_satisfied:
-        next_engineering_action = "resolve_terminality_gaps_first"
-    elif corroboration == "nonfeed_attempted_no_positive_evidence":
-        # F231A: Lanes were planned and reached terminal state but yielded no
-        # positive evidence — improve yield/provider quality, not lane scheduling
-        next_engineering_action = "improve_nonfeed_yield_or_provider_quality"
-    elif feed_heavy and not useful_evidence:
-        next_engineering_action = "boost_nonfeed_lanes_to_achieve_balance"
-    elif _corrob_score < 0.3 and "feed_only_no_nonfeed" in _corrob_penalties:
-        # F230C: Low corroboration + feed-only penalty → terminality fix
-        next_engineering_action = "fix_terminality_before_capacity_expansion"
-    elif _corrob_score >= 0.7 and _has_corrob_nonfeed:
-        # F230C: High corroboration with nonfeed families → expand
-        next_engineering_action = "expand_or_deepen_pivots"
-    elif "nonfeed_missed" in _corrob_penalties or _corrob_score < 0.2:
-        # F230C: Nonfeed missing → fix nonfeed terminality
-        next_engineering_action = "fix_nonfeed_terminality"
-    elif corroboration == "noisy":
-        next_engineering_action = "investigate_signal_noise_source"
-    elif research_depth and isinstance(research_depth, dict):
-        rd_score = research_depth.get("score", 0) if isinstance(research_depth, dict) else 0
-        if rd_score < 30:
-            next_engineering_action = "pivot_deeper_sources_or_new_query_strategy"
-        elif rd_score < 60:
-            next_engineering_action = "improve_source_diversity_and_corrobortion"
-        else:
-            next_engineering_action = "maintain_current_capability_and_increment"
-    else:
-        next_engineering_action = "maintain_current_capability_and_increment"
+    # Engineering action
+    next_engineering_action = _determine_engineering_action(
+        verdict, hardware_constrained, terminality_satisfied,
+        corroboration, _corrob_score, _corrob_penalties, _has_corrob_nonfeed,
+        feed_heavy, useful_evidence, analyst_brief, research_depth
+    )
 
-    # ── 7b. F226E: Target memory feedback — feed dominance correction ────────
-    if analyst_brief and isinstance(analyst_brief, dict):
-        tmf = _get_brief_field(analyst_brief, "target_memory_feedback", {}) or {}
-        if tmf.get("repeated_feed_dominance"):
-            next_engineering_action = "boost_nonfeed_lanes_to_achieve_balance"
-        elif tmf.get("prior_nonfeed_weakness"):
-            nea = tmf.get("suggested_next_profile", "")
-            if nea == "PUBLIC":
-                next_engineering_action = "bootstrap_public_bridge_before_scale"
-            elif nea == "CT":
-                next_engineering_action = "bootstrap_ct_provider_before_scale"
-
-    # ── 8. Next investigation action (for analyst) ─────────────────────────
-    # F230C: Influence from F229B corroboration score
-    if analyst_brief and isinstance(analyst_brief, dict):
-        target_memory = _get_brief_field(analyst_brief, "target_memory_summary", "") or ""
-        if isinstance(target_memory, str) and target_memory:
-            next_investigation_action = f"follow_up_on_target_memory_{target_memory[:40]}"
-        else:
-            next_investigation_action = "review_fresh_findings_and_query_adjustments"
-    elif _corrob_score < 0.2:
-        # F230C: Very low corroboration → diagnostic action
-        next_investigation_action = "diagnose_acquisition_or_query_effectiveness"
-    elif accepted > 10:
-        next_investigation_action = "analyze_top_findings_for_operational_actionability"
-    elif accepted > 0:
-        next_investigation_action = "assess_accepted_findings_for_false_positive_rate"
-    else:
-        next_investigation_action = "diagnose_acquisition_or_query_effectiveness"
+    # Investigation action
+    next_investigation_action = _determine_investigation_action(
+        analyst_brief, _corrob_score, accepted
+    )
 
     return {
         "capability_verdict": verdict,
@@ -4406,59 +4351,68 @@ def _derive_best_first_move(  # noqa: F811
     pvs: dict[str, Any] | None,
     correlation: dict[str, Any] | None,
 ) -> str:
-    """
-    Sprint F176D: best_first_move — immediate next action (single sentence).
+    """Derive immediate next action. Single sentence, max 80 chars."""
+    return _check_degraded_health(runtime_truth, sprint_verdict) or \
+           _check_high_risk_state(correlation) or \
+           _get_sprint_verdict_move(sprint_verdict) or \
+           _get_signal_path_move(signal_path) or \
+           _get_canonical_run_summary_move(canonical_run_summary) or \
+           _get_pvs_guidance(pvs) or \
+           _get_correlation_shortlist(correlation) or \
+           "assess: gather more data before committing to approach"
 
-    Priority order (tightened for operator speed):
-    1. DEGRADED indicator FIRST — operator needs to know if sprint was bad
-       - runtime_truth.is_meaningful=False → smoke signal
-       - sprint_verdict.degraded → degraded state
-    2. High-risk findings — critical findings override all other guidance
-    3. sprint_verdict["recommended_action"] — most synthesized verdict
-    4. signal_path next_pivot_recommendation
-    5. canonical_run_summary["next_action"]
-    6. pvs signal quality guidance
-    7. correlation operator_shortlist first item
-
-    Single sentence, max 80 chars.
-    """
-    # 0. DEGRADED FIRST — operator needs instant awareness of bad sprints
+def _check_degraded_health(
+    runtime_truth: dict[str, Any] | None,
+    sprint_verdict: dict[str, Any] | None,
+) -> str | None:
+    """Check for degraded/health issues first."""
     if runtime_truth:
         is_meaningful = runtime_truth.get("is_meaningful")
         if is_meaningful is False:
             return "pivot: smoke run, change approach immediately"
-
     if sprint_verdict:
         status = sprint_verdict.get("sprint_status") or sprint_verdict.get("verdict") or ""
         if status in ("degraded", "failed"):
             return f"degraded sprint ({status}) — investigate root cause"
+    return None
 
-    # 1. High-risk first (critical findings take operational priority)
+def _check_high_risk_state(correlation: dict[str, Any] | None) -> str | None:
+    """Check for high-risk findings."""
     if correlation:
         high_risk = correlation.get("high_risk_branch") or correlation.get("high_risk") or []
-        if high_risk and high_risk:
+        if high_risk:
             return "investigate high-risk branch — critical findings present"
+    return None
 
-    # 2. sprint_verdict recommended action
+def _get_sprint_verdict_move(sprint_verdict: dict[str, Any] | None) -> str | None:
+    """Get move from sprint verdict."""
     if sprint_verdict:
         rec_action = sprint_verdict.get("recommended_action") or sprint_verdict.get("next_action") or ""
         if rec_action and len(rec_action) > 2:
             return f"action: {rec_action[:80]}"
+    return None
 
-    # 3. Signal path next pivot
+def _get_signal_path_move(signal_path: dict[str, Any] | None) -> str | None:
+    """Get move from signal path."""
     if signal_path:
         next_pivot = signal_path.get("next_pivot_recommendation", "")
         if next_pivot == "pivot_immediately":
             return "pivot: signal path recommends immediate pivot"
+    return None
 
-    # 4. canonical_run_summary next_action
+def _get_canonical_run_summary_move(canonical_run_summary: dict[str, Any] | None) -> str | None:
+    """Get move from canonical run summary."""
     if canonical_run_summary:
         na = canonical_run_summary.get("next_action") or canonical_run_summary.get("recommended_action") or ""
         if na and len(na) > 2:
             return f"action: {na[:80]}"
+    return None
 
-    # 5. pvs signal guidance
-    signal = pvs.get("_signal_quality_classification", "unknown") if pvs else "unknown"
+def _get_pvs_guidance(pvs: dict[str, Any] | None) -> str | None:
+    """Get guidance from product value summary."""
+    if pvs is None:
+        return None
+    signal = pvs.get("_signal_quality_classification", "unknown")
     match signal:
         case "depleted":
             return "new approach: current query space exhausted"
@@ -4468,8 +4422,10 @@ def _derive_best_first_move(  # noqa: F811
             return "narrow: reduce query scope to reduce low-info noise"
         case "slow_novelty":
             return "accelerate: real signal exists, speed up sources"
+    return None
 
-    # 6. Correlation operator shortlist
+def _get_correlation_shortlist(correlation: dict[str, Any] | None) -> str | None:
+    """Get from correlation operator shortlist."""
     if correlation:
         shortlist = correlation.get("operator_shortlist") or []
         if shortlist and isinstance(shortlist, list) and shortlist:
@@ -4479,10 +4435,9 @@ def _derive_best_first_move(  # noqa: F811
                 target = first.get("target", "")
                 if action:
                     return f"{action}: {target[:40]}" if target else action[:80]
+    return None
 
-    return "assess: gather more data before committing to approach"
-
-    # [IMPORTED from components] def placeholder at L3699
+# [IMPORTED from components] def placeholder at L3699
 
     # [IMPORTED from components] def placeholder at L3780
 

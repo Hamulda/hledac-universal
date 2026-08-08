@@ -1193,6 +1193,29 @@ class UniversalMetadataExtractor:
                 result[key] = converter(exif_ifd[ifd_tag]) if converter else exif_ifd[ifd_tag]
         return result
 
+    def _populate_image_metadata_from_zeroth(self, metadata: ImageMetadata, zeroth_data: dict) -> None:
+        """Populate image metadata from zeroth IFD data."""
+        metadata.camera_make = zeroth_data.get('camera_make')
+        metadata.camera_model = zeroth_data.get('camera_model')
+        metadata.software = zeroth_data.get('software')
+        metadata.orientation = zeroth_data.get('orientation')
+
+    def _populate_image_metadata_from_exif(self, metadata: ImageMetadata, exif_data: dict) -> None:
+        """Populate image metadata from Exif IFD data."""
+        metadata.focal_length = exif_data.get('focal_length')
+        metadata.exposure_time = exif_data.get('exposure_time')
+        metadata.f_number = exif_data.get('f_number')
+        metadata.iso = exif_data.get('iso')
+        metadata.flash = exif_data.get('flash')
+        metadata.lens = exif_data.get('lens')
+
+    def _serialize_exif_dict(self, exif_dict: dict) -> dict:
+        """Serialize EXIF dictionary to JSON-safe format."""
+        return {
+            k: {kk: vv for kk, vv in v.items() if isinstance(vv, (str, int, float, tuple, bytes))}
+            for k, v in exif_dict.items() if v
+        }
+
     async def _extract_image_piexif(self, file_path: str) -> ImageMetadata | None:
         """Extract EXIF metadata using piexif for enhanced accuracy."""
         from hledac.universal.core.capabilities import CAPS, PIEXIF
@@ -1204,22 +1227,20 @@ class UniversalMetadataExtractor:
             if not exif_dict or not any(exif_dict.get(ifd) for ifd in exif_dict):
                 return None
             metadata = ImageMetadata()
+
+            # Extract and populate zeroth IFD data
             zeroth_data = self._extract_zeroth_ifd(exif_dict, piexif_mod)
-            metadata.camera_make = zeroth_data.get('camera_make')
-            metadata.camera_model = zeroth_data.get('camera_model')
-            metadata.software = zeroth_data.get('software')
-            metadata.orientation = zeroth_data.get('orientation')
+            self._populate_image_metadata_from_zeroth(metadata, zeroth_data)
+
+            # Extract and populate Exif IFD data
             exif_data = self._extract_exif_ifd(exif_dict.get('Exif', {}), piexif_mod)
-            metadata.focal_length = exif_data.get('focal_length')
-            metadata.exposure_time = exif_data.get('exposure_time')
-            metadata.f_number = exif_data.get('f_number')
-            metadata.iso = exif_data.get('iso')
-            metadata.flash = exif_data.get('flash')
-            metadata.lens = exif_data.get('lens')
+            self._populate_image_metadata_from_exif(metadata, exif_data)
+
+            # GPS data
             if gps_ifd := exif_dict.get('GPS', {}):
                 metadata.gps = self._parse_piexif_gps(gps_ifd)
-            metadata.exif = {k: {kk: vv for kk, vv in v.items() if isinstance(vv, (str, int, float, tuple, bytes))}
-                          for k, v in exif_dict.items() if v}
+
+            metadata.exif = self._serialize_exif_dict(exif_dict)
             return metadata
         except Exception:
             return None
@@ -1827,12 +1848,12 @@ class UniversalMetadataExtractor:
         except ImportError:  # noqa: BLE001
             pass
 
-    def _add_timeline_event(self, events, timestamp, event_type, source):
+    def _add_timeline_event(self, events: list, timestamp, event_type: str, source: str) -> None:
         """Add a timeline event if timestamp is valid."""
         if timestamp:
             events.append(TimelineEvent(timestamp=timestamp, event_type=event_type, source=source))
 
-    def _parse_exif_datetime(self, exif, key, event_type):
+    def _parse_exif_datetime(self, exif: dict, key: str, event_type: str):
         """Parse EXIF datetime field and return TimelineEvent or None."""
         if key in exif:
             try:
@@ -1842,24 +1863,38 @@ class UniversalMetadataExtractor:
                 return None
         return None
 
+    def _extract_exif_timeline(self, exif: dict) -> list[TimelineEvent]:
+        """Extract timeline events from EXIF data."""
+        events = []
+        for key, event_type in [('DateTime', 'captured'), ('DateTimeOriginal', 'captured_original'), ('DateTimeDigitized', 'digitized')]:
+            if event := self._parse_exif_datetime(exif, key, event_type):
+                events.append(event)
+        return events
+
     def _build_timeline(self, result: MetadataResult) -> list[TimelineEvent]:
         """Build timeline from all extracted metadata."""
-        events = []
+        events: list[TimelineEvent] = []
+
+        # Generic filesystem events
         if result.generic:
             self._add_timeline_event(events, result.generic.created, 'created', 'filesystem')
             self._add_timeline_event(events, result.generic.modified, 'modified', 'filesystem')
             self._add_timeline_event(events, result.generic.accessed, 'accessed', 'filesystem')
+
+        # Image EXIF events
         if result.image and result.image.exif:
-            exif = result.image.exif
-            for key, event_type in [('DateTime', 'captured'), ('DateTimeOriginal', 'captured_original'), ('DateTimeDigitized', 'digitized')]:
-                if event := self._parse_exif_datetime(exif, key, event_type):
-                    events.append(event)
+            events.extend(self._extract_exif_timeline(result.image.exif))
+
+        # PDF events
         if result.pdf:
             self._add_timeline_event(events, result.pdf.creation_date, 'created', 'pdf_metadata')
             self._add_timeline_event(events, result.pdf.modification_date, 'modified', 'pdf_metadata')
+
+        # DOCX events
         if result.docx:
             self._add_timeline_event(events, result.docx.created, 'created', 'docx_core_properties')
             self._add_timeline_event(events, result.docx.modified, 'modified', 'docx_core_properties')
+
         events.sort(key=attrgetter("timestamp") or datetime.min)
         return events
 

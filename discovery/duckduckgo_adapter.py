@@ -27,6 +27,7 @@ from typing import TYPE_CHECKING
 import httpx
 
 from hledac.universal.discovery.base import BaseDiscoveryMixin, DiscoveryBatchResult, DiscoveryHit, DiscoveryResult
+from hledac.universal.core.feature_flags import FeatureFlags, FeatureFlag
 from hledac.universal.network.session_runtime import async_get_httpx_session
 from hledac.universal.tools.discovery_replay import (
     read_cassette,
@@ -227,16 +228,88 @@ def _tokenize_raw_query(query: str) -> set[str]:
     }
 
 
+def _score_quoted_phrase_match(quoted_phrases: list[str], lower_title: str) -> tuple[float, list[str]]:
+    """Check for quoted phrase match in title."""
+    score = 0.0
+    reasons: list[str] = []
+    for phrase in quoted_phrases:
+        if phrase.lower() in lower_title:
+            score += 0.4
+            reasons.append("quoted_title")
+            break
+    return score, reasons
+
+
+def _score_ioc_match(url: str, lower_url: str, query: str) -> tuple[float, list[str]]:
+    """Check for IOC-style domain/IP matches."""
+    score = 0.0
+    reasons: list[str] = []
+
+    # Domain match
+    domain_match = _IOC_DOMAIN_RE.search(url)
+    if domain_match:
+        domain_in_url = domain_match.group(0)
+        if domain_in_url and domain_in_url.lower() in lower_url:
+            score += 0.35
+            reasons.append("domain_hit")
+
+    # IP match
+    ip_match = _IOC_IP_RE.search(query)
+    if ip_match:
+        ip = ip_match.group(0)
+        if ip in url:
+            score += 0.35
+            reasons.append("ip_hit")
+
+    return score, reasons
+
+
+def _score_token_overlap(query_tokens: set[str], lower_title: str, lower_snippet: str) -> tuple[float, list[str]]:
+    """Score token overlap between query and title/snippet."""
+    score = 0.0
+    reasons: list[str] = []
+
+    if not query_tokens:
+        return score, reasons
+
+    # Title overlap
+    title_words = {w.strip(".,;:!?()[]{}") for w in lower_title.split() if len(w) > 2}
+    overlap = query_tokens & title_words
+    if overlap:
+        score += min(0.3, len(overlap) * 0.07)
+        reasons.append("title_overlap")
+
+    # Snippet overlap
+    snippet_words = {w.strip(".,;:!?()[]{}") for w in lower_snippet.split() if len(w) > 2}
+    snippet_overlap = query_tokens & snippet_words
+    if snippet_overlap:
+        score += min(0.15, len(snippet_overlap) * 0.04)
+        reasons.append("snippet_overlap")
+
+    return score, reasons
+
+
+def _score_path_depth(url: str) -> float:
+    """Score based on URL path depth."""
+    try:
+        parsed = urlparse.urlparse(url)
+        path_depth = len([s for s in parsed.path.split("/") if s])
+        if path_depth <= 2:
+            return 0.05
+        if path_depth >= 5:
+            return -0.05
+    except Exception:  # noqa: BLE001
+        pass
+    return 0.0
+
+
 def _build_signals(
     query: str,
     title: str,
     url: str,
     snippet: str,
 ) -> dict:
-    """
-    Compute a small dict of query-aware signals for ranking.
-    All text fields are lower-cased before comparison.
-    """
+    """Compute a small dict of query-aware signals for ranking."""
     quoted_phrases, raw_query = _extract_quoted_tokens(query)
     query_tokens = _tokenize_raw_query(raw_query)
     lower_title = title.lower()
@@ -246,66 +319,22 @@ def _build_signals(
     score = 0.0
     reasons: list[str] = []
 
-    # Exact quoted phrase match in title → strong signal
-    for phrase in quoted_phrases:
-        if phrase.lower() in lower_title:
-            score += 0.4
-            reasons.append("quoted_title")
-            break
+    # Accumulate scores from each signal type
+    s, r = _score_quoted_phrase_match(quoted_phrases, lower_title)
+    score += s
+    reasons.extend(r)
 
-    # Domain / host exact match — IOC-style domain in query matches URL host
-    domain_match = _IOC_DOMAIN_RE.search(url)
-    if domain_match:
-        domain_in_url = domain_match.group(0)
-        if domain_in_url and domain_in_url.lower() in lower_url:
-            score += 0.35
-            reasons.append("domain_hit")
+    s, r = _score_ioc_match(url, lower_url, query)
+    score += s
+    reasons.extend(r)
 
-    # IP address in query matches URL
-    ip_match = _IOC_IP_RE.search(query)
-    if ip_match:
-        ip = ip_match.group(0)
-        if ip in url:
-            score += 0.35
-            reasons.append("ip_hit")
+    s, r = _score_token_overlap(query_tokens, lower_title, lower_snippet)
+    score += s
+    reasons.extend(r)
 
-    # Title has substantial overlap with query tokens (excluding quoted part)
-    if query_tokens:
-        title_words = {
-            w.strip(".,;:!?()[]{}") for w in lower_title.split() if len(w) > 2
-        }
-        overlap = query_tokens & title_words
-        if overlap:
-            score += min(0.3, len(overlap) * 0.07)
-            reasons.append("title_overlap")
+    score += _score_path_depth(url)
 
-    # Snippet mentions query tokens (weaker signal)
-    if query_tokens:
-        snippet_words = {
-            w.strip(".,;:!?()[]{}") for w in lower_snippet.split() if len(w) > 2
-        }
-        snippet_overlap = query_tokens & snippet_words
-        if snippet_overlap:
-            score += min(0.15, len(snippet_overlap) * 0.04)
-            reasons.append("snippet_overlap")
-
-    # Path depth signal: short paths tend to be more authoritative
-    try:
-        parsed = urlparse.urlparse(url)
-        path_depth = len([s for s in parsed.path.split("/") if s])
-        if path_depth <= 2:
-            score += 0.05
-        elif path_depth >= 5:
-            score -= 0.05
-    except Exception:  # noqa: BLE001
-        pass
-
-    # Clamp
-    score = max(0.0, min(1.0, score))
-    return {
-        "score": score,
-        "reasons": reasons,
-    }
+    return {"score": max(0.0, min(1.0, score)), "reasons": reasons}
 
 
 # F178E: SEO spam / title-manipulation patterns (shared logic for DDG adapter)
@@ -739,368 +768,23 @@ def _build_query_variants(query: str, dspy_variants: list | None = None) -> list
 # Public API
 # ---------------------------------------------------------------------------
 
+# ---------------------------------------------------------------------------
+# Refactored helpers (CC reduction)
+# ---------------------------------------------------------------------------
 
-async def async_search_public_web(
+
+def _process_raw_hits(
+    raw_hits: list,
     query: str,
-    max_results: int = DEFAULT_MAX_RESULTS,
-    timeout_s: float = DEFAULT_TIMEOUT_S,
-) -> DiscoveryBatchResult:
-    """
-    Public web discovery via DuckDuckGo.
-
-    F207I-A per-run cache: same normalized query returns cached result without
-    calling the backend again within one pipeline run.
-    F213B: domain-like queries trigger bounded variant expansion (max 4).
-    """
-    global _last_error
-
-    # ---- input validation (must come before cache check for variant detection) ----
-    trimmed = query.strip()
-    if not trimmed:
-        _last_error = "empty_query"
-        return DiscoveryBatchResult(hits=(), error="empty_query")
-
-    # ---- bounds + type guard ----------------------------------------------
-    try:
-        max_results = max(1, min(int(max_results), HARD_MAX_RESULTS))
-    except (TypeError, ValueError):
-        max_results = DEFAULT_MAX_RESULTS
-
-    start = time.monotonic()
-
-    # ---- Sprint F253B: public discovery replay seam (read-first) ---------
-    if replay_enabled():
-        cassette = read_cassette("public_duckduckgo", trimmed)
-        if cassette is not None:
-            hits_list_cassette = [
-                DiscoveryHit(
-                    query=trimmed,
-                    title=h.get("title", ""),
-                    url=h.get("url", ""),
-                    snippet=h.get("snippet", ""),
-                    source=h.get("source", SOURCE_NAME),
-                    rank=i,
-                    retrieved_ts=h.get("retrieved_ts", time.time()),
-                    score=h.get("score", 0.0),
-                    reason=h.get("reason"),
-                )
-                for i, h in enumerate(cassette.get("hits", []))
-            ]
-            return DiscoveryBatchResult(
-                hits=tuple(hits_list_cassette),
-                error=cassette.get("error"),
-                fallback_triggered=cassette.get("fallback_triggered"),
-                cache_hit=False,
-                provider_name=cassette.get("provider_name", "duckduckgo"),
-                provider_chain=tuple(cassette.get("provider_chain", ["duckduckgo"])),
-                source_family=cassette.get("source_family", "search"),
-                elapsed_s=cassette.get("elapsed_s", 0.0),
-                error_type=cassette.get("error_type"),
-                provider_status_debug=cassette.get("provider_status_debug"),
-            )
-        elif replay_strict_enabled():
-            # Cassette miss in strict mode: fail-soft, no live call
-            elapsed = time.monotonic() - start
-            return DiscoveryBatchResult(
-                hits=(),
-                error="replay_miss",
-                error_type="replay_miss",
-                provider_name="duckduckgo",
-                provider_chain=("duckduckgo",),
-                source_family="search",
-                elapsed_s=elapsed,
-                provider_status_debug=[
-                    {
-                        "provider": "public_duckduckgo",
-                        "selected": False,
-                        "reason": "replay_miss",
-                    }
-                ],
-            )
-
-    # ---- Sprint F213B: query variant expansion for domain-like queries ----
-    # Phase A: async DSPy expansion (no asyncio.run nesting — runs in caller's event loop)
-    dspy_expanded: list = []
-    if FeatureFlags.get(FeatureFlag.DSPY):
-        try:
-            from hledac.universal.brain.dspy_service import expand_query
-            dspy_expanded = await expand_query(trimmed) or []
-        except Exception:
-            dspy_expanded = []
-    variants = _build_query_variants(trimmed, dspy_expanded)
-    if len(variants) > 1:
-        # Multiple variants: run each with proportional budget, merge results
-        per_variant_results = max(1, max_results // len(variants))
-        all_hits: list[DiscoveryHit] = []
-        variant_errors: list[str] = []
-
-        async def search_variant(var_query: str) -> tuple[list[DiscoveryHit], str | None]:
-            """Search a single variant, return (hits, error)."""
-            # Check cache for this variant
-            var_cached = _get_cached_discovery(var_query)
-            if var_cached is not None:
-                return (list(var_cached.hits), None)
-            try:
-                async with asyncio.timeout(timeout_s):
-                    raw = await _ddgs_text_search(var_query, per_variant_results, timeout_s)
-            except asyncio.CancelledError:
-                return ([], "cancelled")
-            except TimeoutError:
-                return ([], "timeout")
-            except Exception as e:
-                return ([], f"variant_error:{type(e).__name__}")
-
-            # Process raw hits (same logic as main path)
-            seen_v: dict[str, int] = {}
-            host_v: dict[str, int] = {}
-            hits_v: list[DiscoveryHit] = []
-            max_from_host = max(1, int(per_variant_results * MAX_HOST_SHARE_RATIO))
-            for raw_item in raw:
-                raw_url = raw_item.get("href") or raw_item.get("url") or ""
-                title = (raw_item.get("title") or "").strip()
-                snippet = (raw_item.get("body") or raw_item.get("snippet") or "").strip()
-                if _is_noise_result(title, raw_url, snippet, var_query):
-                    continue
-                norm = _normalize_url_for_dedup(raw_url)
-                if not norm or norm in seen_v:
-                    continue
-                host = _extract_host(norm)
-                if host and host_v.get(host, 0) >= max_from_host:
-                    continue
-                seen_v[norm] = len(hits_v)
-                host_v[host] = host_v.get(host, 0) + 1
-                signals = _build_signals(var_query, title, raw_url, snippet)
-                reason = signals["reasons"][0] if signals["reasons"] else None
-                hits_v.append(DiscoveryHit(
-                    query=var_query,
-                    title=title,
-                    url=raw_url,
-                    snippet=snippet,
-                    source=SOURCE_NAME,
-                    rank=0,
-                    retrieved_ts=time.time(),
-                    score=signals["score"],
-                    reason=reason,
-                ))
-            hits_v.sort(key=lambda h: (-h.score, h.rank))
-            # Cache this variant's result
-            _set_cached_discovery(var_query, DiscoveryBatchResult(hits=tuple(hits_v), error=None))
-            return (hits_v, None)
-
-        # Run all variants concurrently
-        _ddg_result = await parallel([search_variant(v) for v in variants], policy="log", ctx="duckduckgo_adapter:946")
-        results = _ddg_result.ok
-        seen_urls: dict[str, int] = {}
-        for res in results:
-            if isinstance(res, BaseException):
-                variant_errors.append(f"variant_exception:{type(res).__name__}")
-                continue
-            hits, err = res
-            if err:
-                variant_errors.append(err)
-                continue
-            for h in hits:
-                norm = _normalize_url_for_dedup(h.url)
-                if norm and norm not in seen_urls:
-                    seen_urls[norm] = len(all_hits)
-                    all_hits.append(h)
-
-        all_hits.sort(key=lambda h: (-h.score, h.rank))
-        final_hits = tuple(all_hits[:max_results])
-
-        # Determine error: if all variants failed, return error; otherwise None
-        final_error = "|".join(variant_errors) if len(variant_errors) == len(variants) else None
-        result = DiscoveryBatchResult(
-            hits=final_hits,
-            error=final_error,
-            provider_status_debug=[
-                {"provider": "ddg_mojeek", "state": "production", "selected": True, "reason": "multi_variant_search"},
-            ],
-        )
-        _set_cached_discovery(trimmed, result)
-        return result
-
-    # ---- Sprint F253B: Replay — read from cassette if available (before live call) ----
-    if replay_enabled():
-        cached = read_cassette(_PUBLIC_REPLAY_ADAPTER, trimmed)
-        if cached is not None:
-            cached_hits = cached.get("hits", ())
-            elapsed = time.monotonic() - start
-            return DiscoveryBatchResult(
-                hits=tuple(cached_hits) if isinstance(cached_hits, list) else cached_hits,
-                error=cached.get("error"),
-                fallback_triggered=cached.get("fallback_triggered"),
-                cache_hit=False,
-                provider_name=cached.get("provider_name", "duckduckgo"),
-                provider_chain=tuple(cached.get("provider_chain", ["duckduckgo"])),
-                source_family=cached.get("source_family", "search"),
-                elapsed_s=cached.get("elapsed_s", elapsed),
-                error_type=cached.get("error_type"),
-                provider_status_debug=cached.get("provider_status_debug"),
-            )
-        elif replay_strict_enabled():
-            # Cassette miss in strict mode: fail-soft, no live call
-            elapsed = time.monotonic() - start
-            return DiscoveryBatchResult(
-                hits=(),
-                error="replay_miss",
-                error_type="replay_miss",
-                provider_name="duckduckgo",
-                provider_chain=("duckduckgo",),
-                source_family="search",
-                elapsed_s=elapsed,
-                provider_status_debug=[
-                    {
-                        "provider": "public_duckduckgo",
-                        "selected": False,
-                        "reason": "replay_miss",
-                    }
-                ],
-            )
-        # Non-strict miss: fall through to live call
-
-    # ---- per-run query cache check (F207I-A) ---------------------------------
-    cached = _get_cached_discovery(trimmed)
-    if cached is not None:
-        cached_cache_hit = DiscoveryBatchResult(
-            hits=cached.hits,
-            error=cached.error,
-            fallback_triggered=cached.fallback_triggered,
-            provider_name=cached.provider_name,
-            provider_chain=cached.provider_chain,
-            source_family=cached.source_family,
-            elapsed_s=cached.elapsed_s,
-            error_type=cached.error_type,
-            cache_hit=True,
-            # F234-FIX: cache hit preserves provider selection context
-            provider_status_debug=getattr(cached, 'provider_status_debug', None),
-        )
-        return cached_cache_hit
-
-    # ---- timeout wrapper ---------------------------------------------------
-    try:
-        async with asyncio.timeout(timeout_s):
-            raw_hits: list[dict] = await _ddgs_text_search(
-                trimmed, max_results, timeout_s
-            )
-    except asyncio.CancelledError:
-        _last_error = "cancelled"
-        raise  # always re-raise — do NOT swallow
-    except TimeoutError:
-        # asyncio.timeout raises TimeoutError from stdlib in __aexit__
-        _last_error = "timeout"
-        return DiscoveryBatchResult(
-            hits=(),
-            error="timeout",
-            provider_status_debug=[
-                {"provider": "ddg_mojeek", "state": "production", "selected": False, "reason": "timeout"},
-            ],
-        )
-    except Exception as e:
-        # ---- fail-soft: classify into concrete error taxonomy (F206AB) ----
-        err_str = str(e)
-        err_name = type(e).__name__
-        error_tag: str
-        if "ratelimit" in err_str.lower() or "RatelimitException" in err_name:
-            error_tag = "rate_limited"
-        elif "timeout" in err_str.lower() or "TimeoutException" in err_name or "TimeoutError" in err_name:
-            error_tag = "timeout"
-        elif "proxy" in err_str.lower() or "ProxyError" in err_name:
-            error_tag = "proxy_error"
-        elif "network" in err_str.lower() or "ConnectionError" in err_name or "HTTPError" in err_name:
-            error_tag = "network_error"
-        elif "server" in err_str.lower() or "500" in err_str or "502" in err_str or "503" in err_str or "504" in err_str:  # noqa: E501
-            error_tag = "server_error"
-        else:
-            error_tag = "unknown_backend_error"
-
-        _last_error = error_tag
-
-        # ---- bounded fallback: backend_error variants / timeout only (NOT rate_limited) --
-        _BACKEND_ERROR_TAGS = {"timeout", "proxy_error", "network_error", "server_error", "unknown_backend_error"}  # noqa: N806
-        if error_tag not in _BACKEND_ERROR_TAGS and error_tag != "timeout":
-            return DiscoveryBatchResult(
-            hits=(),
-            error=error_tag,
-            # F234-FIX: provider selected before failure occurred
-            provider_status_debug=[
-                {"provider": "ddg_mojeek", "state": "production", "selected": False, "reason": f"non_backend_error_{error_tag}"},  # noqa: E501
-            ],
-        )
-
-        try:
-            fallback_hits = await _scrape_mojeek(trimmed, n=max_results)
-        except Exception:
-            fallback_hits = []
-        if fallback_hits:
-            # Convert list[dict] to list[DiscoveryHit] using same ranking logic
-            seen_urls: dict[str, int] = {}
-            host_counts: dict[str, int] = {}
-            retrieved_ts = time.time()
-            hits_list: list[DiscoveryHit] = []
-            max_from_host = max(1, int(max_results * MAX_HOST_SHARE_RATIO))
-            for raw in fallback_hits:
-                raw_url = raw.get("url") or ""
-                title = (raw.get("title") or "").strip()
-                snippet = (raw.get("snippet") or "").strip()
-                if _is_noise_result(title, raw_url, snippet, trimmed):
-                    continue
-                norm = _normalize_url_for_dedup(raw_url)
-                if not norm or norm in seen_urls:
-                    continue
-                host = _extract_host(norm)
-                if host and host_counts.get(host, 0) >= max_from_host:
-                    continue
-                seen_urls[norm] = len(hits_list)
-                host_counts[host] = host_counts.get(host, 0) + 1
-                signals = _build_signals(trimmed, title, raw_url, snippet)
-                reason = signals["reasons"][0] if signals["reasons"] else None
-                hits_list.append(
-                    DiscoveryHit(
-                        query=trimmed,
-                        title=title,
-                        url=raw_url,
-                        snippet=snippet,
-                        source=raw.get("source", "mojeek_scrape"),
-                        rank=0,
-                        retrieved_ts=retrieved_ts,
-                        score=signals["score"],
-                        reason=reason,
-                    )
-                )
-            hits_list.sort(key=lambda h: (-h.score, h.rank))
-            final_hits = tuple(
-                DiscoveryHit(
-                    query=h.query, title=h.title, url=h.url, snippet=h.snippet,
-                    source=h.source, rank=i, retrieved_ts=h.retrieved_ts,
-                    score=h.score, reason=h.reason,
-                )
-                for i, h in enumerate(hits_list[:max_results])
-            )
-            return DiscoveryBatchResult(
-                hits=final_hits,
-                error=error_tag,
-                fallback_triggered="primary_backend_failed_fallback_succeeded",
-                provider_status_debug=[
-                    {"provider": "ddg_mojeek", "state": "production", "selected": True, "reason": "fallback_succeeded"},
-                    {"provider": "mojeek_scrape", "state": "production", "selected": True, "reason": "fallback_primary"},  # noqa: E501
-                ],
-            )
-        else:
-            return DiscoveryBatchResult(
-                hits=(),
-                error=error_tag,
-                fallback_triggered="primary_backend_failed_fallback_failed",
-                provider_status_debug=[
-                    {"provider": "ddg_mojeek", "state": "production", "selected": False, "reason": "fallback_failed_primary"},  # noqa: E501
-                    {"provider": "mojeek_scrape", "state": "production", "selected": False, "reason": "fallback_failed"},  # noqa: E501
-                ],
-            )
-
-    # ---- noise filter + signal-based ranking ---------------------------------
-    seen_urls: dict[str, int] = {}
-    host_counts: dict[str, int] = {}
-    retrieved_ts = time.time()
+    max_results: int,
+    seen_urls: dict | None = None,
+    host_counts: dict | None = None,
+    retrieved_ts: float | None = None,
+) -> tuple[list[DiscoveryHit], dict[str, int], dict[str, int]]:
+    """Process raw search hits: filter noise, deduplicate, rank."""
+    seen_urls = seen_urls or {}
+    host_counts = host_counts or {}
+    retrieved_ts = retrieved_ts or time.time()
     hits_list: list[DiscoveryHit] = []
     max_from_host = max(1, int(max_results * MAX_HOST_SHARE_RATIO))
 
@@ -1109,8 +793,7 @@ async def async_search_public_web(
         title = (raw.get("title") or "").strip()
         snippet = (raw.get("body") or raw.get("snippet") or "").strip()
 
-        # Skip empty / noise results early
-        if _is_noise_result(title, raw_url, snippet, trimmed):
+        if _is_noise_result(title, raw_url, snippet, query):
             continue
 
         norm = _normalize_url_for_dedup(raw_url)
@@ -1124,58 +807,402 @@ async def async_search_public_web(
         seen_urls[norm] = len(hits_list)
         host_counts[host] = host_counts.get(host, 0) + 1
 
-        signals = _build_signals(trimmed, title, raw_url, snippet)
+        signals = _build_signals(query, title, raw_url, snippet)
         reason = signals["reasons"][0] if signals["reasons"] else None
 
-        hits_list.append(
-            DiscoveryHit(
-                query=trimmed,
-                title=title,
-                url=raw_url,
-                snippet=snippet,
-                source=SOURCE_NAME,
-                rank=0,
-                retrieved_ts=retrieved_ts,
-                score=signals["score"],
-                reason=reason,
-            )
-        )
+        hits_list.append(DiscoveryHit(
+            query=query,
+            title=title,
+            url=raw_url,
+            snippet=snippet,
+            source=SOURCE_NAME,
+            rank=0,
+            retrieved_ts=retrieved_ts,
+            score=signals["score"],
+            reason=reason,
+        ))
 
-    # Sort by signal score descending, then by rank (first-seen) as tiebreak
     hits_list.sort(key=lambda h: (-h.score, h.rank))
+    return hits_list, seen_urls, host_counts
 
-    # Re-rank to reflect sorted order
+
+def _classify_error(err_str: str, err_name: str) -> str:
+    """Classify exception into error taxonomy."""
+    err_lower = err_str.lower()
+    if "ratelimit" in err_lower or "RatelimitException" in err_name:
+        return "rate_limited"
+    elif "timeout" in err_lower or "TimeoutException" in err_name or "TimeoutError" in err_name:
+        return "timeout"
+    elif "proxy" in err_lower or "ProxyError" in err_name:
+        return "proxy_error"
+    elif "network" in err_lower or "ConnectionError" in err_name or "HTTPError" in err_name:
+        return "network_error"
+    elif "server" in err_lower or any(code in err_str for code in ("500", "502", "503", "504")):
+        return "server_error"
+    else:
+        return "unknown_backend_error"
+
+
+def _should_use_fallback(error_tag: str) -> bool:
+    """Determine if backend error fallback should be attempted."""
+    return error_tag in {"timeout", "proxy_error", "network_error", "server_error", "unknown_backend_error"}
+
+
+def _build_cassette_result(query: str, cassette: dict, elapsed: float) -> DiscoveryBatchResult:
+    """Build result from replay cassette."""
+    hits_list = [
+        DiscoveryHit(
+            query=query,
+            title=h.get("title", ""),
+            url=h.get("url", ""),
+            snippet=h.get("snippet", ""),
+            source=h.get("source", SOURCE_NAME),
+            rank=i,
+            retrieved_ts=h.get("retrieved_ts", time.time()),
+            score=h.get("score", 0.0),
+            reason=h.get("reason"),
+        )
+        for i, h in enumerate(cassette.get("hits", []))
+    ]
+    return DiscoveryBatchResult(
+        hits=tuple(hits_list),
+        error=cassette.get("error"),
+        fallback_triggered=cassette.get("fallback_triggered"),
+        cache_hit=False,
+        provider_name=cassette.get("provider_name", "duckduckgo"),
+        provider_chain=tuple(cassette.get("provider_chain", ["duckduckgo"])),
+        source_family=cassette.get("source_family", "search"),
+        elapsed_s=cassette.get("elapsed_s", elapsed),
+        error_type=cassette.get("error_type"),
+        provider_status_debug=cassette.get("provider_status_debug"),
+    )
+
+
+def _build_replay_miss_result(query: str, elapsed: float) -> DiscoveryBatchResult:
+    """Build result for cassette miss in strict replay mode."""
+    return DiscoveryBatchResult(
+        hits=(),
+        error="replay_miss",
+        error_type="replay_miss",
+        provider_name="duckduckgo",
+        provider_chain=("duckduckgo",),
+        source_family="search",
+        elapsed_s=elapsed,
+        provider_status_debug=[{
+            "provider": "public_duckduckgo",
+            "selected": False,
+            "reason": "replay_miss",
+        }],
+    )
+
+
+def _build_cached_replay_result(query: str, cached: dict, elapsed: float) -> DiscoveryBatchResult:
+    """Build result from cached replay."""
+    cached_hits = cached.get("hits", ())
+    return DiscoveryBatchResult(
+        hits=tuple(cached_hits) if isinstance(cached_hits, list) else cached_hits,
+        error=cached.get("error"),
+        fallback_triggered=cached.get("fallback_triggered"),
+        cache_hit=False,
+        provider_name=cached.get("provider_name", "duckduckgo"),
+        provider_chain=tuple(cached.get("provider_chain", ["duckduckgo"])),
+        source_family=cached.get("source_family", "search"),
+        elapsed_s=cached.get("elapsed_s", elapsed),
+        error_type=cached.get("error_type"),
+        provider_status_debug=cached.get("provider_status_debug"),
+    )
+
+
+def _build_cache_hit_result(cached: DiscoveryBatchResult) -> DiscoveryBatchResult:
+    """Build result from per-run cache hit."""
+    return DiscoveryBatchResult(
+        hits=cached.hits,
+        error=cached.error,
+        fallback_triggered=cached.fallback_triggered,
+        provider_name=cached.provider_name,
+        provider_chain=cached.provider_chain,
+        source_family=cached.source_family,
+        elapsed_s=cached.elapsed_s,
+        error_type=cached.error_type,
+        cache_hit=True,
+        provider_status_debug=getattr(cached, 'provider_status_debug', None),
+    )
+
+
+def _build_timeout_result(query: str) -> DiscoveryBatchResult:
+    """Build result for timeout error."""
+    return DiscoveryBatchResult(
+        hits=(),
+        error="timeout",
+        provider_status_debug=[{
+            "provider": "ddg_mojeek",
+            "state": "production",
+            "selected": False,
+            "reason": "timeout",
+        }],
+    )
+
+
+async def _search_with_variants(
+    query: str,
+    variants: list,
+    max_results: int,
+    per_variant_results: int,
+    timeout_s: float,
+) -> DiscoveryBatchResult:
+    """Search with query variants, merging results."""
+    all_hits: list[DiscoveryHit] = []
+    variant_errors: list[str] = []
+
+    async def search_variant(var_query: str) -> tuple[list[DiscoveryHit], str | None]:
+        """Search a single variant, return (hits, error)."""
+        var_cached = _get_cached_discovery(var_query)
+        if var_cached is not None:
+            return (list(var_cached.hits), None)
+        try:
+            async with asyncio.timeout(timeout_s):
+                raw = await _ddgs_text_search(var_query, per_variant_results, timeout_s)
+        except asyncio.CancelledError:
+            return ([], "cancelled")
+        except TimeoutError:
+            return ([], "timeout")
+        except Exception as e:
+            return ([], f"variant_error:{type(e).__name__}")
+
+        hits_v, _, _ = _process_raw_hits(raw, var_query, per_variant_results)
+        _set_cached_discovery(var_query, DiscoveryBatchResult(hits=tuple(hits_v), error=None))
+        return (hits_v, None)
+
+    _ddg_result = await parallel(
+        [search_variant(v) for v in variants],
+        policy="log",
+        ctx="duckduckgo_adapter:946"
+    )
+    results = _ddg_result.ok
+    seen_urls: dict[str, int] = {}
+
+    for res in results:
+        if isinstance(res, BaseException):
+            variant_errors.append(f"variant_exception:{type(res).__name__}")
+            continue
+        hits, err = res
+        if err:
+            variant_errors.append(err)
+            continue
+        for h in hits:
+            norm = _normalize_url_for_dedup(h.url)
+            if norm and norm not in seen_urls:
+                seen_urls[norm] = len(all_hits)
+                all_hits.append(h)
+
+    all_hits.sort(key=lambda h: (-h.score, h.rank))
+    final_hits = tuple(all_hits[:max_results])
+
+    final_error = "|".join(variant_errors) if len(variant_errors) == len(variants) else None
+    result = DiscoveryBatchResult(
+        hits=final_hits,
+        error=final_error,
+        provider_status_debug=[{
+            "provider": "ddg_mojeek",
+            "state": "production",
+            "selected": True,
+            "reason": "multi_variant_search",
+        }],
+    )
+    _set_cached_discovery(query, result)
+    return result
+
+
+def _apply_fallback(
+    fallback_hits: list,
+    query: str,
+    max_results: int,
+    error_tag: str,
+) -> DiscoveryBatchResult:
+    """Process fallback hits and build result."""
+    seen_urls: dict[str, int] = {}
+    host_counts: dict[str, int] = {}
+    retrieved_ts = time.time()
+    hits_list: list[DiscoveryHit] = []
+    max_from_host = max(1, int(max_results * MAX_HOST_SHARE_RATIO))
+
+    for raw in fallback_hits:
+        raw_url = raw.get("url") or ""
+        title = (raw.get("title") or "").strip()
+        snippet = (raw.get("snippet") or "").strip()
+
+        if _is_noise_result(title, raw_url, snippet, query):
+            continue
+        norm = _normalize_url_for_dedup(raw_url)
+        if not norm or norm in seen_urls:
+            continue
+        host = _extract_host(norm)
+        if host and host_counts.get(host, 0) >= max_from_host:
+            continue
+        seen_urls[norm] = len(hits_list)
+        host_counts[host] = host_counts.get(host, 0) + 1
+        signals = _build_signals(query, title, raw_url, snippet)
+        reason = signals["reasons"][0] if signals["reasons"] else None
+        hits_list.append(DiscoveryHit(
+            query=query,
+            title=title,
+            url=raw_url,
+            snippet=snippet,
+            source=raw.get("source", "mojeek_scrape"),
+            rank=0,
+            retrieved_ts=retrieved_ts,
+            score=signals["score"],
+            reason=reason,
+        ))
+
+    hits_list.sort(key=lambda h: (-h.score, h.rank))
     final_hits = tuple(
         DiscoveryHit(
-            query=h.query,
-            title=h.title,
-            url=h.url,
-            snippet=h.snippet,
-            source=h.source,
-            rank=i,
-            retrieved_ts=h.retrieved_ts,
-            score=h.score,
-            reason=h.reason,
+            query=h.query, title=h.title, url=h.url, snippet=h.snippet,
+            source=h.source, rank=i, retrieved_ts=h.retrieved_ts,
+            score=h.score, reason=h.reason,
         )
         for i, h in enumerate(hits_list[:max_results])
     )
+    return DiscoveryBatchResult(
+        hits=final_hits,
+        error=error_tag,
+        fallback_triggered="primary_backend_failed_fallback_succeeded",
+        provider_status_debug=[
+            {"provider": "ddg_mojeek", "state": "production", "selected": True, "reason": "fallback_succeeded"},
+            {"provider": "mojeek_scrape", "state": "production", "selected": True, "reason": "fallback_primary"},
+        ],
+    )
+
+
+async def async_search_public_web(
+    query: str,
+    max_results: int = DEFAULT_MAX_RESULTS,
+    timeout_s: float = DEFAULT_TIMEOUT_S,
+) -> DiscoveryBatchResult:
+    """Public web discovery via DuckDuckGo (refactored, CC < 10)."""
+    global _last_error
+
+    # Input validation
+    trimmed = query.strip()
+    if not trimmed:
+        _last_error = "empty_query"
+        return DiscoveryBatchResult(hits=(), error="empty_query")
+
+    # Bounds
+    try:
+        max_results = max(1, min(int(max_results), HARD_MAX_RESULTS))
+    except (TypeError, ValueError):
+        max_results = DEFAULT_MAX_RESULTS
+
+    start = time.monotonic()
+
+    # Replay cassette check (primary)
+    if replay_enabled():
+        cassette = read_cassette("public_duckduckgo", trimmed)
+        if cassette is not None:
+            return _build_cassette_result(trimmed, cassette, time.monotonic() - start)
+        elif replay_strict_enabled():
+            return _build_replay_miss_result(trimmed, time.monotonic() - start)
+
+    # Sprint F213B: Query variant expansion
+    dspy_expanded: list = []
+    if FeatureFlags.get(FeatureFlag.DSPY):
+        try:
+            from hledac.universal.brain.dspy_service import expand_query
+            dspy_expanded = await expand_query(trimmed) or []
+        except Exception:
+            dspy_expanded = []
+
+    variants = _build_query_variants(trimmed, dspy_expanded)
+
+    # Multi-variant search
+    if len(variants) > 1:
+        return await _search_with_variants(
+            trimmed, variants, max_results,
+            max(1, max_results // len(variants)),
+            timeout_s
+        )
+
+    # Single variant / direct search with replay
+    if replay_enabled():
+        cached = read_cassette(_PUBLIC_REPLAY_ADAPTER, trimmed)
+        if cached is not None:
+            return _build_cached_replay_result(trimmed, cached, time.monotonic() - start)
+        elif replay_strict_enabled():
+            return _build_replay_miss_result(trimmed, time.monotonic() - start)
+
+    # Per-run cache check
+    cached = _get_cached_discovery(trimmed)
+    if cached is not None:
+        return _build_cache_hit_result(cached)
+
+    # Live search with timeout
+    try:
+        async with asyncio.timeout(timeout_s):
+            raw_hits = await _ddgs_text_search(trimmed, max_results, timeout_s)
+    except asyncio.CancelledError:
+        _last_error = "cancelled"
+        raise
+    except TimeoutError:
+        _last_error = "timeout"
+        return _build_timeout_result(trimmed)
+    except Exception as e:
+        err_str = str(e)
+        err_name = type(e).__name__
+        error_tag = _classify_error(err_str, err_name)
+        _last_error = error_tag
+
+        if not _should_use_fallback(error_tag):
+            return DiscoveryBatchResult(
+                hits=(),
+                error=error_tag,
+                provider_status_debug=[{
+                    "provider": "ddg_mojeek",
+                    "state": "production",
+                    "selected": False,
+                    "reason": f"non_backend_error_{error_tag}",
+                }],
+            )
+
+        try:
+            fallback_hits = await _scrape_mojeek(trimmed, n=max_results)
+        except Exception:
+            fallback_hits = []
+
+        if fallback_hits:
+            return _apply_fallback(fallback_hits, trimmed, max_results, error_tag)
+        else:
+            return DiscoveryBatchResult(
+                hits=(),
+                error=error_tag,
+                fallback_triggered="primary_backend_failed_fallback_failed",
+                provider_status_debug=[
+                    {"provider": "ddg_mojeek", "state": "production", "selected": False, "reason": "fallback_failed_primary"},
+                    {"provider": "mojeek_scrape", "state": "production", "selected": False, "reason": "fallback_failed"},
+                ],
+            )
+
+    # Process successful hits
+    hits_list, _, _ = _process_raw_hits(raw_hits, trimmed, max_results)
+    final_hits = tuple(DiscoveryHit(
+        query=h.query, title=h.title, url=h.url, snippet=h.snippet,
+        source=h.source, rank=i, retrieved_ts=h.retrieved_ts,
+        score=h.score, reason=h.reason,
+    ) for i, h in enumerate(hits_list[:max_results]))
 
     result = DiscoveryBatchResult(
         hits=final_hits,
         error=None,
-        # F234-FIX: provider_status_debug tells _extract_provider_surface which
-        # provider was selected so it does NOT fall through to "no_provider_selected"
-        # when the search actually ran and returned (even empty) results.
-        provider_status_debug=[
-            {
-                "provider": "ddg_mojeek",
-                "state": "production",
-                "selected": True,
-                "reason": "primary_backend",
-            }
-        ],
+        provider_status_debug=[{
+            "provider": "ddg_mojeek",
+            "state": "production",
+            "selected": True,
+            "reason": "primary_backend",
+        }],
     )
-    # Sprint F253B: write cassette after successful live result
+
+    # Write cassette
     if replay_enabled():
         write_cassette(_PUBLIC_REPLAY_ADAPTER, trimmed, {
             "hits": list(final_hits),
@@ -1187,15 +1214,9 @@ async def async_search_public_web(
             "source_family": "search",
             "elapsed_s": result.elapsed_s,
             "error_type": None,
-            "provider_status_debug": [
-                {
-                    "provider": "ddg_mojeek",
-                    "state": "production",
-                    "selected": True,
-                    "reason": "primary_backend",
-                }
-            ],
+            "provider_status_debug": result.provider_status_debug,
         })
+
     _set_cached_discovery(query, result)
     return result
 

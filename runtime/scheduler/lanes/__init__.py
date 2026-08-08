@@ -1146,6 +1146,13 @@ def build_acquisition_plan(query: str, duration_s: float, aggressive_mode: bool,
 
 def _build_plan_impl(query: str, duration_s: float, aggressive_mode: bool, uma_state: str, swap_detected: bool, accepted_findings_so_far: int, branch_timeout_count: int, transport_authority_status: dict | None, stealth_phase: dict | None, acquisition_profile: str='default', feed_budget: FeedDominanceBudget=FeedDominanceBudget(), rl_lane_combo: frozenset[str] | None=None, feed_domain_seeds: tuple[str, ...]=(), synthetic_domains: tuple[str, ...]=()) -> AcquisitionStrategySnapshot:
     """Internal implementation — raises on error (caller catches)."""
+    ctx = _lanes_build_acquisition_context(query, duration_s, aggressive_mode, uma_state, swap_detected, accepted_findings_so_far, feed_domain_seeds, synthetic_domains, transport_authority_status, stealth_phase, acquisition_profile)
+    plans = _lanes_build_lane_plans(ctx, rl_lane_combo)
+    nonfeed_debug = _lanes_build_nonfeed_debug(ctx, plans, acquisition_profile)
+    return AcquisitionStrategySnapshot(query=query, duration_s=duration_s, aggressive_mode=aggressive_mode, uma_state=uma_state, swap_detected=swap_detected, accepted_findings_so_far=accepted_findings_so_far, branch_timeout_count=branch_timeout_count, stealth_ready=ctx.stealth_ready, transport_degraded=ctx.transport_degraded, plans=tuple(plans), nonfeed_plan_debug=nonfeed_debug, feed_dominance_budget=feed_budget, has_domain=ctx.has_domain)
+
+def _lanes_build_acquisition_context(query: str, duration_s: float, aggressive_mode: bool, uma_state: str, swap_detected: bool, accepted_findings_so_far: int, feed_domain_seeds: tuple, synthetic_domains: tuple, transport_authority_status: dict | None, stealth_phase: dict | None, acquisition_profile: str) -> AcquisitionContext:
+    """Build AcquisitionContext from query and parameters."""
     hardware_critical = uma_state in ('critical', 'emergency')
     has_domain = _has_domain_or_ip(query)
     has_ip = bool(_DOMAIN_OR_IP_RE.search(query) and re.search('\\b\\d{1,3}\\.\\d{1,3}\\.\\d{1,3}\\.\\d{1,3}\\b', query))
@@ -1154,82 +1161,86 @@ def _build_plan_impl(query: str, duration_s: float, aggressive_mode: bool, uma_s
     has_long_duration = duration_s >= 300.0
     is_nonfeed_diagnostic = acquisition_profile == AcquisitionProfile.NONFEED_DIAGNOSTIC
     is_deep_osint_m1 = is_deep_osint_m1_profile(acquisition_profile)
-    _feed_domain_candidates: tuple[str, ...] = ()
-    _feed_domain_candidates_count = 0
-    if not has_domain and (accepted_findings_so_far > 0 or feed_domain_seeds or synthetic_domains):
-        if feed_domain_seeds:
-            _feed_domain_candidates = feed_domain_seeds[:10]
-            _feed_domain_candidates_count = len(_feed_domain_candidates)
-            has_domain = True
-        elif synthetic_domains:
-            _feed_domain_candidates = synthetic_domains[:10]
-            _feed_domain_candidates_count = len(_feed_domain_candidates)
-            has_domain = True
-        elif accepted_findings_so_far > 0:
-            _candidates = extract_domain_candidates_from_text(query)
-            if _candidates:
-                _feed_domains = tuple((c.domain for c in _candidates[:10]))
-                _feed_domain_candidates = _feed_domains
-                _feed_domain_candidates_count = len(_feed_domains)
-                has_domain = True
-    elif not has_domain:
-        _has_explicit_ioc_intent = _has_threat_indicator(query) or _has_crypto_indicator(query)
-        if _has_explicit_ioc_intent:
-            _keyword_expansion = _expand_keyword_query(query)
-            if _keyword_expansion:
-                _feed_domain_candidates = tuple(_keyword_expansion[:5])
-                _feed_domain_candidates_count = len(_feed_domain_candidates)
-                has_domain = True
-    transport_degraded = False
-    stealth_phase_num = 0
-    stealth_breaker_ready = False
-    if transport_authority_status:
-        transport_degraded = bool(transport_authority_status.get('degraded', False))
-    if stealth_phase:
-        stealth_phase_num = int(stealth_phase.get('phase', 0))
-        stealth_breaker_ready = bool(stealth_phase.get('breaker_seam_ready', False))
-    stealth_ready = stealth_breaker_ready or stealth_phase_num >= 3
+    has_domain = _lanes_resolve_domain_indicator(has_domain, query, accepted_findings_so_far, feed_domain_seeds, synthetic_domains)
+    transport_degraded, stealth_ready = _lanes_parse_transport_and_stealth(transport_authority_status, stealth_phase)
     base_conc = _base_concurrency(uma_state, swap_detected)
-    if is_nonfeed_diagnostic:
-        _feed_max = 25
-        _feed_cap_r = 'nonfeed_diagnostic_profile_capped_25'
-    else:
-        _feed_max = 50
-        _feed_cap_r = None
-    ctx = AcquisitionContext(query=query, duration_s=duration_s, aggressive_mode=aggressive_mode, uma_state=uma_state, swap_detected=swap_detected, hardware_critical=hardware_critical, has_domain=has_domain, has_url=has_url, has_crypto=has_crypto, has_long_duration=has_long_duration, is_nonfeed_diagnostic=is_nonfeed_diagnostic, transport_degraded=transport_degraded, stealth_ready=stealth_ready, base_concurrency=base_conc, is_academic=is_academic_profile(acquisition_profile), is_deep_osint_m1=is_deep_osint_m1, has_ip=has_ip, cid_present=_has_explicit_ipfs_cid(query.strip()), _feed_max_items=_feed_max, _feed_cap_reason=_feed_cap_r)
+    _feed_max = 25 if is_nonfeed_diagnostic else 50
+    _feed_cap_r = 'nonfeed_diagnostic_profile_capped_25' if is_nonfeed_diagnostic else None
+    return AcquisitionContext(query=query, duration_s=duration_s, aggressive_mode=aggressive_mode, uma_state=uma_state, swap_detected=swap_detected, hardware_critical=hardware_critical, has_domain=has_domain, has_url=has_url, has_crypto=has_crypto, has_long_duration=has_long_duration, is_nonfeed_diagnostic=is_nonfeed_diagnostic, transport_degraded=transport_degraded, stealth_ready=stealth_ready, base_concurrency=base_conc, is_academic=is_academic_profile(acquisition_profile), is_deep_osint_m1=is_deep_osint_m1, has_ip=has_ip, cid_present=_has_explicit_ipfs_cid(query.strip()), _feed_max_items=_feed_max, _feed_cap_reason=_feed_cap_r)
+
+def _lanes_resolve_domain_indicator(has_domain: bool, query: str, accepted_findings_so_far: int, feed_domain_seeds: tuple, synthetic_domains: tuple) -> bool:
+    """Resolve domain indicator from various sources."""
+    if has_domain:
+        return True
+    if feed_domain_seeds:
+        return True
+    if synthetic_domains:
+        return True
+    if accepted_findings_so_far > 0:
+        candidates = extract_domain_candidates_from_text(query)
+        if candidates:
+            return True
+    if not has_domain:
+        if _has_threat_indicator(query) or _has_crypto_indicator(query):
+            expansions = _expand_keyword_query(query)
+            if expansions:
+                return True
+    return False
+
+def _lanes_parse_transport_and_stealth(transport_authority_status: dict | None, stealth_phase: dict | None) -> tuple[bool, bool]:
+    """Parse transport and stealth status."""
+    transport_degraded = bool(transport_authority_status.get('degraded', False)) if transport_authority_status else False
+    stealth_breaker_ready = bool(stealth_phase.get('breaker_seam_ready', False)) if stealth_phase else False
+    stealth_phase_num = int(stealth_phase.get('phase', 0)) if stealth_phase else 0
+    stealth_ready = stealth_breaker_ready or stealth_phase_num >= 3
+    return transport_degraded, stealth_ready
+
+def _lanes_build_lane_plans(ctx: AcquisitionContext, rl_lane_combo: frozenset | None) -> list[AcquisitionLanePlan]:
+    """Build lane plans from context."""
     plans: list[AcquisitionLanePlan] = []
     for rule in LANE_RULES:
         enabled = rule.enabled(ctx)
-        plans.append(AcquisitionLanePlan(lane=rule.lane, enabled=enabled, reason=rule.reason(ctx) if enabled else _disabled_reason(rule.lane, ctx), max_items=rule.spec.max_items if not (rule.lane == AcquisitionLane.FEED and is_nonfeed_diagnostic) else 25, timeout_s=rule.spec.timeout_s, concurrency=rule.concurrency(ctx), risk_level=rule.spec.risk_level))
+        plans.append(AcquisitionLanePlan(lane=rule.lane, enabled=enabled, reason=rule.reason(ctx) if enabled else _disabled_reason(rule.lane, ctx), max_items=rule.spec.max_items if not (rule.lane == AcquisitionLane.FEED and ctx.is_nonfeed_diagnostic) else 25, timeout_s=rule.spec.timeout_s, concurrency=rule.concurrency(ctx), risk_level=rule.spec.risk_level))
     if rl_lane_combo is not None:
-        _rl_lanes = frozenset(rl_lane_combo)
-        _protected = frozenset([AcquisitionLane.FEED, AcquisitionLane.PUBLIC, AcquisitionLane.STEALTH, AcquisitionLane.ACADEMIC])
-        plans = [AcquisitionLanePlan(lane=p.lane, enabled=p.lane in _rl_lanes, reason=f'rl_override:{p.lane}' if p.lane in _rl_lanes else f'rl_disabled:{p.lane}', max_items=p.max_items, timeout_s=p.timeout_s, concurrency=p.concurrency, risk_level=p.risk_level) if p.lane not in _protected else p for p in plans]
+        plans = _lanes_apply_rl_override(plans, rl_lane_combo)
+    return plans
+
+def _lanes_apply_rl_override(plans: list[AcquisitionLanePlan], rl_lane_combo: frozenset) -> list[AcquisitionLanePlan]:
+    """Apply RL lane combo override."""
+    _rl_lanes = frozenset(rl_lane_combo)
+    _protected = frozenset([AcquisitionLane.FEED, AcquisitionLane.PUBLIC, AcquisitionLane.STEALTH, AcquisitionLane.ACADEMIC])
+    return [AcquisitionLanePlan(lane=p.lane, enabled=p.lane in _rl_lanes, reason=f'rl_override:{p.lane}' if p.lane in _rl_lanes else f'rl_disabled:{p.lane}', max_items=p.max_items, timeout_s=p.timeout_s, concurrency=p.concurrency, risk_level=p.risk_level) if p.lane not in _protected else p for p in plans]
+
+def _lanes_build_nonfeed_debug(ctx: AcquisitionContext, plans: list[AcquisitionLanePlan], acquisition_profile: str) -> NonfeedPlanDebug:
+    """Build NonfeedPlanDebug from plans and context."""
     _NONFEED_LANES = (AcquisitionLane.CT, AcquisitionLane.WAYBACK, AcquisitionLane.PASSIVE_DNS, AcquisitionLane.DOH, AcquisitionLane.BLOCKCHAIN, AcquisitionLane.IPFS, AcquisitionLane.OPEN_SOURCE)
-    _hardware_blocked = {AcquisitionLane.WAYBACK, AcquisitionLane.BLOCKCHAIN} if hardware_critical else set()
-    _enabled_nonfeed = []
-    _disabled_nonfeed = []
-    _disabled_reasons = []
-    _scheduled_nonfeed = []
-    _hardware_skipped = []
-    _intent = infer_mission_intent(query)
-    _target_kind = _mission_target_kind(_intent)
-    _required_lanes, _optional_lanes = _mission_lanes(_intent)
-    _intent_reason = f'intent:{_intent}'
-    for _plan in plans:
-        if _plan.lane not in _NONFEED_LANES:
+    _hardware_blocked = {AcquisitionLane.WAYBACK, AcquisitionLane.BLOCKCHAIN} if ctx.hardware_critical else set()
+    enabled_nonfeed, disabled_nonfeed, disabled_reasons, scheduled_nonfeed, hardware_skipped = _lanes_categorize_nonfeed_lanes(plans, _NONFEED_LANES, _hardware_blocked)
+    intent = infer_mission_intent(ctx.query)
+    target_kind = _mission_target_kind(intent)
+    required_lanes, optional_lanes = _mission_lanes(intent)
+    intent_reason = f'intent:{intent}'
+    is_nonfeed_diagnostic = ctx.is_nonfeed_diagnostic
+    is_deep_osint_m1 = ctx.is_deep_osint_m1
+    expected = (AcquisitionLane.CT, AcquisitionLane.WAYBACK, AcquisitionLane.PASSIVE_DNS, AcquisitionLane.PIVOT_EXECUTOR, AcquisitionLane.DOH) if is_nonfeed_diagnostic or is_deep_osint_m1 else required_lanes if intent not in (MissionIntent.UNKNOWN, MissionIntent.ORG_RECON) else ()
+    return NonfeedPlanDebug(domain_detected=ctx.has_domain, wallet_detected=ctx.has_crypto, enabled_nonfeed_lanes=tuple(enabled_nonfeed), disabled_nonfeed_lanes=tuple(disabled_nonfeed), disabled_reasons=tuple(disabled_reasons), scheduled_nonfeed_lanes=tuple(scheduled_nonfeed), hardware_skipped_lanes=tuple(hardware_skipped), nonfeed_execution_scheduled=bool(scheduled_nonfeed), nonfeed_execution_skip_reason='hardware_critical' if ctx.hardware_critical and hardware_skipped else None, acquisition_profile=acquisition_profile, feed_cap_reason=ctx._feed_cap_reason, nonfeed_priority_enabled=is_nonfeed_diagnostic, nonfeed_profile_expected_lanes=expected, pivot_executor_enabled=False, pivot_candidates_count=0, pivot_candidate_types=(), pivot_scheduled_lanes=(), pivot_skip_reason=None, pivot_errors=(), mission_intent=intent, mission_target_kind=target_kind, mission_required_lanes=required_lanes, mission_optional_lanes=optional_lanes, mission_reason=intent_reason, mission_runtime_applied=intent not in (MissionIntent.UNKNOWN, MissionIntent.ORG_RECON), mission_lane_priority=required_lanes, mission_pivot_boost_applied=intent not in (MissionIntent.UNKNOWN, MissionIntent.ORG_RECON), mission_feed_cap_reason=None)
+
+def _lanes_categorize_nonfeed_lanes(plans: list[AcquisitionLanePlan], nonfeed_lanes: tuple, hardware_blocked: set) -> tuple[list, list, list, list, list]:
+    """Categorize nonfeed lanes into enabled/disabled/scheduled/hardware_skipped."""
+    enabled_nonfeed, disabled_nonfeed, disabled_reasons, scheduled_nonfeed, hardware_skipped = [], [], [], [], []
+    for plan in plans:
+        if plan.lane not in nonfeed_lanes:
             continue
-        if _plan.enabled:
-            _enabled_nonfeed.append(_plan.lane)
-            if _plan.lane not in _hardware_blocked:
-                _scheduled_nonfeed.append(_plan.lane)
+        if plan.enabled:
+            enabled_nonfeed.append(plan.lane)
+            if plan.lane not in hardware_blocked:
+                scheduled_nonfeed.append(plan.lane)
             else:
-                _hardware_skipped.append(_plan.lane)
+                hardware_skipped.append(plan.lane)
         else:
-            _disabled_nonfeed.append(_plan.lane)
-            _disabled_reasons.append(_plan.reason)
-    _nonfeed_debug = NonfeedPlanDebug(domain_detected=ctx.has_domain, wallet_detected=ctx.has_crypto, enabled_nonfeed_lanes=tuple(_enabled_nonfeed), disabled_nonfeed_lanes=tuple(_disabled_nonfeed), disabled_reasons=tuple(_disabled_reasons), scheduled_nonfeed_lanes=tuple(_scheduled_nonfeed), hardware_skipped_lanes=tuple(_hardware_skipped), nonfeed_execution_scheduled=bool(_scheduled_nonfeed), nonfeed_execution_skip_reason='hardware_critical' if ctx.hardware_critical and _hardware_skipped else None, acquisition_profile=acquisition_profile, feed_cap_reason=ctx._feed_cap_reason, nonfeed_priority_enabled=ctx.is_nonfeed_diagnostic, nonfeed_profile_expected_lanes=(AcquisitionLane.CT, AcquisitionLane.WAYBACK, AcquisitionLane.PASSIVE_DNS, AcquisitionLane.PIVOT_EXECUTOR, AcquisitionLane.DOH) if is_nonfeed_diagnostic or is_deep_osint_m1 else _required_lanes if _intent not in (MissionIntent.UNKNOWN, MissionIntent.ORG_RECON) else (), pivot_executor_enabled=False, pivot_candidates_count=0, pivot_candidate_types=(), pivot_scheduled_lanes=(), pivot_skip_reason=None, pivot_errors=(), mission_intent=_intent, mission_target_kind=_target_kind, mission_required_lanes=_required_lanes, mission_optional_lanes=_optional_lanes, mission_reason=_intent_reason, mission_runtime_applied=_intent not in (MissionIntent.UNKNOWN, MissionIntent.ORG_RECON), mission_lane_priority=_required_lanes, mission_pivot_boost_applied=_intent not in (MissionIntent.UNKNOWN, MissionIntent.ORG_RECON), mission_feed_cap_reason=None)
-    return AcquisitionStrategySnapshot(query=query, duration_s=duration_s, aggressive_mode=aggressive_mode, uma_state=uma_state, swap_detected=swap_detected, accepted_findings_so_far=accepted_findings_so_far, branch_timeout_count=branch_timeout_count, stealth_ready=stealth_ready, transport_degraded=transport_degraded, plans=tuple(plans), nonfeed_plan_debug=_nonfeed_debug, feed_dominance_budget=feed_budget, has_domain=has_domain)
+            disabled_nonfeed.append(plan.lane)
+            disabled_reasons.append(plan.reason)
+    return enabled_nonfeed, disabled_nonfeed, disabled_reasons, scheduled_nonfeed, hardware_skipped
 _ct_adapter: Any = None
 
 def _get_ct_adapter():
@@ -2013,6 +2024,80 @@ def _extract_crypto_from_query(query: str) -> list[str]:
     return wallets[:20]
 _NONFEED_SEED_EMPTY = NonfeedSeedContext()
 
+
+# Lane query handlers - each handles one lane type (reduces build_lane_query complexity)
+def _handle_ct_lane(base_query: str, seed_context: NonfeedSeedContext | None) -> str:
+    """Handle CT lane: extract domains from seed or query."""
+    if seed_context and seed_context.domains:
+        return seed_context.domains[0]
+    domains = _DOMAIN_OR_IP_RE.findall(base_query)
+    if domains:
+        unique = list(dict.fromkeys(domains))[:5]
+        return ' '.join(unique)
+    return ''
+
+
+def _handle_wayback_lane(base_query: str, seed_context: NonfeedSeedContext | None) -> str:
+    """Handle Wayback lane: prefer domains then urls."""
+    if seed_context and seed_context.domains:
+        return seed_context.domains[0]
+    if seed_context and seed_context.urls:
+        return seed_context.urls[0]
+    domains = _DOMAIN_OR_IP_RE.findall(base_query)
+    if domains:
+        return domains[0]
+    return ''
+
+
+def _handle_passive_dns_lane(base_query: str, seed_context: NonfeedSeedContext | None) -> str:
+    """Handle PassiveDNS lane."""
+    return normalize_passive_dns_query(base_query, seed_context)
+
+
+def _handle_blockchain_lane(base_query: str, seed_context: NonfeedSeedContext | None) -> dict:
+    """Handle Blockchain lane: requires crypto indicator."""
+    wallets = _extract_crypto_from_query(base_query)
+    if wallets:
+        return wallets[0]
+    return {'_disabled': True, 'reason': 'no_crypto_indicator'}
+
+
+def _handle_doh_lane(base_query: str, seed_context: NonfeedSeedContext | None) -> dict | str:
+    """Handle DoH lane: extract domain from seed or query."""
+    if seed_context and seed_context.domains:
+        return seed_context.domains[0]
+    ips = _extract_ips_from_query(base_query)
+    domains = [d for d in _DOMAIN_OR_IP_RE.findall(base_query) if not _looks_like_ip(d)]
+    if domains:
+        return domains[0]
+    if ips:
+        return {'_disabled': True, 'reason': 'ip_seed_reverse_doh_deferred'}
+    return {'_disabled': True, 'reason': 'no_domain_seed'}
+
+
+def _handle_public_lane(base_query: str, seed_context: NonfeedSeedContext | None) -> str:
+    """Handle PUBLIC lane: expand query if possible."""
+    try:
+        from hledac.universal.runtime.osint_query_expander import expand_osint_query
+        variants = expand_osint_query(base_query, max_variants=1)
+        if variants:
+            return variants[0][:200]
+    except Exception:  # noqa: BLE001
+        pass
+    return base_query[:200] if len(base_query) > 200 else base_query
+
+
+# Lane handler dispatch table
+_LANE_HANDLERS: dict = {
+    AcquisitionLane.CT: _handle_ct_lane,
+    AcquisitionLane.WAYBACK: _handle_wayback_lane,
+    AcquisitionLane.PASSIVE_DNS: _handle_passive_dns_lane,
+    AcquisitionLane.BLOCKCHAIN: _handle_blockchain_lane,
+    AcquisitionLane.DOH: _handle_doh_lane,
+    AcquisitionLane.PUBLIC: _handle_public_lane,
+}
+
+
 def build_lane_query(base_query: str, lane: str, seed_context: NonfeedSeedContext | None=None) -> str | dict:
     """
     Shape a source-specific query for an acquisition lane.
@@ -2041,50 +2126,9 @@ def build_lane_query(base_query: str, lane: str, seed_context: NonfeedSeedContex
         Shaped query string, or a dict with lane guidance (e.g. {"_disabled": True}).
         Returns {"_disabled": True} for BLOCKCHAIN when no crypto indicator present.
     """
-    if lane == AcquisitionLane.CT:
-        if seed_context and seed_context.domains:
-            return seed_context.domains[0]
-        domains = _DOMAIN_OR_IP_RE.findall(base_query)
-        if domains:
-            unique = list(dict.fromkeys(domains))[:5]
-            return ' '.join(unique)
-        return ''
-    elif lane == AcquisitionLane.WAYBACK:
-        if seed_context and seed_context.domains:
-            return seed_context.domains[0]
-        if seed_context and seed_context.urls:
-            return seed_context.urls[0]
-        domains = _DOMAIN_OR_IP_RE.findall(base_query)
-        if domains:
-            return domains[0]
-        return ''
-    elif lane == AcquisitionLane.PASSIVE_DNS:
-        return normalize_passive_dns_query(base_query, seed_context)
-    elif lane == AcquisitionLane.BLOCKCHAIN:
-        wallets = _extract_crypto_from_query(base_query)
-        if wallets:
-            return wallets[0]
-        return {'_disabled': True, 'reason': 'no_crypto_indicator'}
-    elif lane == AcquisitionLane.DOH:
-        if seed_context and seed_context.domains:
-            return seed_context.domains[0]
-        ips = _extract_ips_from_query(base_query)
-        domains = [d for d in _DOMAIN_OR_IP_RE.findall(base_query) if not _looks_like_ip(d)]
-        if domains:
-            return domains[0]
-        if ips:
-            return {'_disabled': True, 'reason': 'ip_seed_reverse_doh_deferred'}
-        return {'_disabled': True, 'reason': 'no_domain_seed'}
-    elif lane == AcquisitionLane.PUBLIC:
-        try:
-            from hledac.universal.runtime.osint_query_expander import expand_osint_query
-            variants = expand_osint_query(base_query, max_variants=1)
-            if variants:
-                return variants[0][:200]
-        except Exception:  # noqa: BLE001
-            pass
-        trimmed = base_query[:200] if len(base_query) > 200 else base_query
-        return trimmed
+    handler = _LANE_HANDLERS.get(lane)
+    if handler:
+        return handler(base_query, seed_context)
     return base_query
 
 def _extract_ips_from_query(query: str) -> list[str]:

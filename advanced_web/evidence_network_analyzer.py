@@ -217,6 +217,62 @@ def _compute_relationships(entities: list[dict[str, Any]], threshold: float) -> 
                 return edges
     return edges
 
+def _check_mutual_exclusion(a: dict, b: dict, shared: set) -> dict[str, Any] | None:
+    """Check for mutual exclusion contradictions on shared keys."""
+    for k in shared:
+        av = _safe_value(a.get(k))
+        bv = _safe_value(b.get(k))
+        if not av or not bv:
+            continue
+        for x, y in _EXCLUSIVE_PAIRS:
+            if (x in av and y in bv) or (y in av and x in bv):
+                return {'contradicts': True, 'confidence': 0.85, 'reason': f'mutual_exclusion:{x}/{y} on key={k}', 'key': k}
+    return None
+
+
+def _check_negation_contradiction(a_text: str, b_text: str) -> dict[str, Any] | None:
+    """Check for negation cue contradictions between related texts."""
+    if len(a_text) <= 5 or len(b_text) <= 5:
+        return None
+    a_neg = any(cue in a_text.split() for cue in _NEGATION_CUES)
+    b_neg = any(cue in b_text.split() for cue in _NEGATION_CUES)
+    if a_neg != b_neg:
+        jac = _jaccard(_tokenize(a_text), _tokenize(b_text))
+        if jac >= DEFAULT_CONTRADICTION_THRESHOLD:
+            return {'contradicts': True, 'confidence': round(0.5 + 0.5 * jac, 4), 'reason': 'negation_cue_on_related_text'}
+    return None
+
+
+def _check_numeric_conflict(a: dict, b: dict, shared: set) -> dict[str, Any] | None:
+    """Check for numeric conflicts on shared numeric keys."""
+    for k in shared:
+        av = str(a.get(k, ''))
+        bv = str(b.get(k, ''))
+        am = _RE_NUMERIC.search(av)
+        bm = _RE_NUMERIC.search(bv)
+        if am and bm:
+            try:
+                an = float(am.group(1))
+                bn = float(bm.group(1))
+            except (TypeError, ValueError):
+                continue
+            if an != bn and abs(an - bn) / max(abs(an), abs(bn), 1.0) > 0.5:
+                return {'contradicts': True, 'confidence': 0.7, 'reason': f'numeric_conflict_on:{k} ({an} vs {bn})', 'key': k}
+    return None
+
+
+def _check_date_conflict(a: dict, b: dict, shared: set) -> dict[str, Any] | None:
+    """Check for date conflicts on shared date keys."""
+    for k in shared:
+        av = str(a.get(k, ''))
+        bv = str(b.get(k, ''))
+        am = _RE_DATE.search(av)
+        bm = _RE_DATE.search(bv)
+        if am and bm and am.group(1) != bm.group(1):
+            return {'contradicts': True, 'confidence': 0.6, 'reason': f'date_conflict_on:{k} ({am.group(0)} vs {bm.group(0)})', 'key': k}
+    return None
+
+
 def _detect_contradiction_impl(a: Any, b: Any) -> dict[str, Any] | None:
     """Core contradiction heuristic — see detect_contradictions() docstring."""
     if not isinstance(a, dict) or not isinstance(b, dict):
@@ -224,46 +280,26 @@ def _detect_contradiction_impl(a: Any, b: Any) -> dict[str, Any] | None:
     a_keys = {_safe_value(k) for k in a.keys()}
     b_keys = {_safe_value(k) for k in b.keys()}
     shared = a_keys & b_keys
-    if shared:
-        for k in shared:
-            av = _safe_value(a.get(k))
-            bv = _safe_value(b.get(k))
-            if not av or not bv:
-                continue
-            for x, y in _EXCLUSIVE_PAIRS:
-                if x in av and y in bv or (y in av and x in bv):
-                    return {'contradicts': True, 'confidence': 0.85, 'reason': f'mutual_exclusion:{x}/{y} on key={k}', 'key': k}
+
+    # Check mutual exclusion
+    result = _check_mutual_exclusion(a, b, shared)
+    if result:
+        return result
+
+    # Check negation contradiction
     a_text = _safe_value(a)
     b_text = _safe_value(b)
-    a_neg = any((cue in a_text.split() for cue in _NEGATION_CUES))
-    b_neg = any((cue in b_text.split() for cue in _NEGATION_CUES))
-    if a_neg != b_neg and len(a_text) > 5 and (len(b_text) > 5):
-        jac = _jaccard(_tokenize(a_text), _tokenize(b_text))
-        if jac >= DEFAULT_CONTRADICTION_THRESHOLD:
-            return {'contradicts': True, 'confidence': round(0.5 + 0.5 * jac, 4), 'reason': 'negation_cue_on_related_text'}
-    if shared:
-        for k in shared:
-            av = str(a.get(k, ''))
-            bv = str(b.get(k, ''))
-            am = _RE_NUMERIC.search(av)
-            bm = _RE_NUMERIC.search(bv)
-            if am and bm:
-                try:
-                    an = float(am.group(1))
-                    bn = float(bm.group(1))
-                except (TypeError, ValueError):
-                    continue
-                if an != bn and abs(an - bn) / max(abs(an), abs(bn), 1.0) > 0.5:
-                    return {'contradicts': True, 'confidence': 0.7, 'reason': f'numeric_conflict_on:{k} ({an} vs {bn})', 'key': k}
-    if shared:
-        for k in shared:
-            av = str(a.get(k, ''))
-            bv = str(b.get(k, ''))
-            am = _RE_DATE.search(av)
-            bm = _RE_DATE.search(bv)
-            if am and bm and (am.group(1) != bm.group(1)):
-                return {'contradicts': True, 'confidence': 0.6, 'reason': f'date_conflict_on:{k} ({am.group(0)} vs {bm.group(0)})', 'key': k}
-    return None
+    result = _check_negation_contradiction(a_text, b_text)
+    if result:
+        return result
+
+    # Check numeric conflict
+    result = _check_numeric_conflict(a, b, shared)
+    if result:
+        return result
+
+    # Check date conflict
+    return _check_date_conflict(a, b, shared)
 
 def _centrality_impl(ig_mod: Any, network: Any) -> dict[str, float]:
     """Compute bounded centrality over the supplied network dict using igraph C-core.

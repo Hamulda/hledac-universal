@@ -536,6 +536,59 @@ async def certstream_monitor(keyword: str, duration_s: int=60, max_certs: int=20
     return results
 
 
+def _build_certstream_matcher(patterns: list[str], use_rust: bool) -> tuple[Any | None, list[str]]:
+    """Build matcher for certstream scanning (Rust Aho-Corasick or Python fallback)."""
+    patterns_lower = [p.lower() for p in patterns]
+    matcher = None
+
+    if use_rust:
+        from hledac.universal.core.rust_backend import rust
+        AhoCorasickMatcher = rust.raw.AhoCorasickMatcher
+        if AhoCorasickMatcher is not None:
+            try:
+                matcher = AhoCorasickMatcher(patterns_lower)
+                logger.info(f'[Certstream] Rust Aho-Corasick built with {len(patterns)} patterns')
+                return matcher, patterns_lower
+            except Exception as e:
+                logger.warning(f'[Certstream] Rust Aho-Corasick unavailable: {e}, using Python fallback')
+
+    logger.info(f'[Certstream] Python fallback with {len(patterns)} patterns')
+    return None, patterns_lower
+
+
+def _scan_domains_rust(domains: list[str], matcher: Any) -> list[tuple[str, str]]:
+    """Scan domains using Rust Aho-Corasick matcher."""
+    matches: list[tuple[str, str]] = []
+    for domain in domains:
+        hits = matcher.scan(domain.lower())
+        if hits:
+            matches.append((domain, hits[0].pattern))
+    return matches
+
+
+def _scan_domains_python(domains: list[str], patterns: list[str]) -> list[tuple[str, str]]:
+    """Scan domains using Python substring matching (O(n*m) fallback)."""
+    matches: list[tuple[str, str]] = []
+    for domain in domains:
+        domain_lower = domain.lower()
+        for pattern in patterns:
+            if pattern in domain_lower:
+                matches.append((domain, pattern))
+                break  # One match per domain
+    return matches
+
+
+def _build_cert_result(domain: str, matched_pattern: str) -> dict:
+    """Build result dict for a matched certificate domain."""
+    return {
+        'ioc': domain,
+        'ioc_type': 'domain',
+        'title': f'Certstream: {domain}',
+        'source': 'certstream_live',
+        'matched_pattern': matched_pattern,
+    }
+
+
 async def certstream_monitor_multi(
     patterns: list[str],
     duration_s: int = 60,
@@ -573,29 +626,9 @@ async def certstream_monitor_multi(
         logger.warning('[Certstream] no patterns provided')
         return []
 
-    # Build Aho-Corasick automaton
-    matcher = None
-    if use_rust:
-        # R6: Centralized Rust access via core.rust_backend
-        from hledac.universal.core.rust_backend import rust
-        AhoCorasickMatcher = rust.raw.AhoCorasickMatcher
-        if AhoCorasickMatcher is None:
-            logger.warning('[Certstream] Rust Aho-Corasick not available, falling back to Python')
-        else:
-            try:
-                # Lowercase patterns for case-insensitive matching
-                patterns_lower = [p.lower() for p in patterns]
-                matcher = AhoCorasickMatcher(patterns_lower)
-                logger.info(f'[Certstream] Rust Aho-Corasick built with {len(patterns)} patterns')
-            except Exception as e:
-                logger.warning(f'[Certstream] Rust Aho-Corasick unavailable: {e}, using Python fallback')
-
-    # Python fallback: simple substring matching
-    if matcher is None:
-        patterns_lower = [p.lower() for p in patterns]
-        logger.info(f'[Certstream] Python fallback with {len(patterns)} patterns')
-
+    matcher, patterns_lower = _build_certstream_matcher(patterns, use_rust)
     results: list[dict] = []
+
     try:
         loop = asyncio.get_running_loop()
         deadline = loop.time() + duration_s
@@ -610,38 +643,14 @@ async def certstream_monitor_multi(
                     if data.get('message_type') != 'certificate_update':
                         continue
 
-                    # Extract all domains from certificate
-                    all_domains = data['data']['leaf_cert']['all_domains']
+                    domains = data['data']['leaf_cert']['all_domains']
+                    if matcher is not None:
+                        matches = _scan_domains_rust(domains, matcher)
+                    else:
+                        matches = _scan_domains_python(domains, patterns_lower)
 
-                    # Scan each domain against patterns
-                    for domain in all_domains:
-                        domain_lower = domain.lower()
-
-                        # Use Rust Aho-Corasick or Python fallback
-                        if matcher is not None:
-                            # Rust path: O(n) scan
-                            hits = matcher.scan(domain_lower)
-                            if hits:
-                                matched_pattern = hits[0].pattern
-                                results.append({
-                                    'ioc': domain,
-                                    'ioc_type': 'domain',
-                                    'title': f'Certstream: {domain}',
-                                    'source': 'certstream_live',
-                                    'matched_pattern': matched_pattern,
-                                })
-                        else:
-                            # Python fallback: O(n*m) substring search
-                            for pattern in patterns_lower:
-                                if pattern in domain_lower:
-                                    results.append({
-                                        'ioc': domain,
-                                        'ioc_type': 'domain',
-                                        'title': f'Certstream: {domain}',
-                                        'source': 'certstream_live',
-                                        'matched_pattern': pattern,
-                                    })
-                                    break  # One match per domain
+                    for domain, pattern in matches:
+                        results.append(_build_cert_result(domain, pattern))
 
                 except TimeoutError:
                     continue
@@ -721,13 +730,58 @@ async def enrich_findings_greynoise_community(session: httpx.AsyncClient, findin
     logger.info(f'[GreyNoise/community] enriched {enriched}/{len(ip_findings)} IPs')
     return findings
 
+def _parse_pastebin_urls(html_text: str, max_pastes: int = 10) -> list[str]:
+    """Extract paste URLs from Pastebin archive HTML using available parser."""
+    paste_urls: list[str] = []
+
+    # Try selectolax first (fast, C-based)
+    if SELECTOLAX_AVAILABLE:
+        try:
+            tree = _SelectolaxHTMLParser(html_text)
+            for tr in tree.css('table.maintable tr')[1:21]:
+                for a in tr.css('td a')[:1]:
+                    href = a.attributes.get('href', '')
+                    if href:
+                        paste_urls.append(f'https://pastebin.com/raw{href}')
+            return paste_urls[:max_pastes]
+        except Exception as e:
+            logger.debug('[Pastebin] selectolax parse failed, falling back to bs4: %s', e)
+
+    # Fallback to BeautifulSoup
+    from bs4 import BeautifulSoup
+    soup = BeautifulSoup(html_text, 'html.parser')
+    paste_urls = [
+        f"https://pastebin.com/raw{a['href']}"
+        for tr in soup.select('table.maintable tr')[1:21]
+        for a in tr.select('td a')[:1]
+        if a.get('href')
+    ]
+    return paste_urls[:max_pastes]
+
+
+def _process_paste_result(raw_url: str, fetch_result, keyword: str) -> dict | None:
+    """Process a single paste fetch result for keyword match."""
+    if fetch_result.error or fetch_result.text is None:
+        logger.debug(f'[Pastebin] Paste fetch error for {raw_url}: {fetch_result.error}')
+        return None
+    content_str = fetch_result.text
+    if keyword.lower() in content_str.lower():
+        return {
+            'url': raw_url,
+            'content': content_str[:2000],
+            'content_hash': hashlib.sha256(content_str.encode()).hexdigest()[:16],
+            'title': f'Pastebin hit: {keyword}',
+            'source': 'pastebin_scrape'
+        }
+    return None
+
+
 async def scrape_pastebin_for_keyword(keyword: str, max_pastes: int=10) -> list[dict]:
     """
     Pastebin archive scraping — public, no key required.
     FIXED: await asyncio.sleep() (previous bug was sync sleep).
     """
     results: list[dict] = []
-    _UA = 'Mozilla/5.0 (Macintosh; ARM Mac OS X 14_0) AppleWebKit/605.1.15'
     try:
         s = await async_get_httpx_session()
         text, status, err = await checked_httpx_get(s, 'https://pastebin.com/archive', timeout=httpx.Timeout(10), failure_kind='pastebin_archive')
@@ -736,36 +790,19 @@ async def scrape_pastebin_for_keyword(keyword: str, max_pastes: int=10) -> list[
             return []
         if status != 200:
             return []
-        html_text = str(text)
-        paste_urls: list[str] = []
-        if SELECTOLAX_AVAILABLE:
-            try:
-                tree = _SelectolaxHTMLParser(html_text)
-                for tr in tree.css('table.maintable tr')[1:21]:
-                    for a in tr.css('td a')[:1]:
-                        href = a.attributes.get('href', '')
-                        if href:
-                            paste_urls.append(f'https://pastebin.com/raw{href}')
-            except Exception as e:
-                logger.debug('[Pastebin] selectolax parse failed, falling back to bs4: %s', e)
-                from bs4 import BeautifulSoup
-                soup = BeautifulSoup(html_text, 'html.parser')
-                paste_urls = [f"https://pastebin.com/raw{a['href']}" for tr in soup.select('table.maintable tr')[1:21] for a in tr.select('td a')[:1] if a.get('href')]
-        else:
-            from bs4 import BeautifulSoup
-            soup = BeautifulSoup(html_text, 'html.parser')
-            paste_urls = [f"https://pastebin.com/raw{a['href']}" for tr in soup.select('table.maintable tr')[1:21] for a in tr.select('td a')[:1] if a.get('href')]
-        paste_urls = paste_urls[:max_pastes]
+
+        paste_urls = _parse_pastebin_urls(str(text), max_pastes)
+        if not paste_urls:
+            return []
+
         from hledac.universal.fetching.public_fetcher import async_fetch_public_text_batch
         batch_results = await async_fetch_public_text_batch(paste_urls, timeout_s=8.0, max_bytes=200000, use_stealth=False, use_js=False, use_doh=False, js_confidence=0.0, priority=5, concurrency=None)
+
         for raw_url, fetch_result in zip(paste_urls, batch_results):
             try:
-                if fetch_result.error or fetch_result.text is None:
-                    logger.debug(f'[Pastebin] Paste fetch error for {raw_url}: {fetch_result.error}')
-                    continue
-                content_str = fetch_result.text
-                if keyword.lower() in content_str.lower():
-                    results.append({'url': raw_url, 'content': content_str[:2000], 'content_hash': hashlib.sha256(content_str.encode()).hexdigest()[:16], 'title': f'Pastebin hit: {keyword}', 'source': 'pastebin_scrape'})
+                result = _process_paste_result(raw_url, fetch_result, keyword)
+                if result:
+                    results.append(result)
             except Exception as e:
                 logger.debug(f'[Pastebin] Paste processing error for {raw_url}: {e}')
     except Exception as e:

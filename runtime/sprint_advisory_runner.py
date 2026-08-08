@@ -258,57 +258,10 @@ class SprintAdvisoryRunner:
         if not findings:
             return outcome
         try:
-            graph_stats: dict[str, Any] = {}
-            try:
-                from hledac.universal.knowledge import graph_service
-                stats = graph_service.graph_stats()
-                if stats:
-                    node_degrees: dict[str, int] = {}
-                    domains: list[str] = []
-                    if ENV.get_bool('HLEDAC_ENABLE_GRAPH_ANALYSIS'):
-                        try:
-                            summary = graph_service.graph_analytics_summary(top_k=500)
-                            if summary.get('analytics_available'):
-                                for entity in summary.get('top_central_entities', [])[:500]:
-                                    val = entity.get('value', '')
-                                    deg = entity.get('degree', 0)
-                                    if val and deg > 0:
-                                        domains.append(val)
-                                        node_degrees[val] = deg
-                        except Exception:  # noqa: BLE001
-                            pass
-                    graph_stats = {'nodes': stats.get('nodes', 0), 'edges': stats.get('edges', 0), 'domains': domains, 'connected_iocs': set(), 'node_degrees': node_degrees}
-            except Exception:  # noqa: BLE001
-                pass
-            feedback_summary: Any = None
-            store = self._duckdb_store
-            if store is not None:
-                try:
-                    from hledac.universal.runtime.hypothesis_feedback import HypothesisFeedbackAdapter
-                    adapter = HypothesisFeedbackAdapter(duckdb_store=store, target_id=getattr(self._scheduler, 'sprint_id', '') or 'default')
-                    feedback_summary = await adapter.async_get_summary()
-                except Exception:
-                    feedback_summary = None
-            hermes_outputs: list = []
-            store = self._duckdb_store
-            if store is not None:
-                try:
-                    from hledac.universal.runtime.hermes_pivot_contract import HermesInferenceOutput
-                    rows = await store._conn.execute('SELECT payload_text FROM findings WHERE source_type = ? AND query = ? LIMIT 50', [SourceType.HERMES_INFERENCE.value, getattr(self._scheduler, '_query', '') or ''])
-                    hermes_outputs = []
-                    for row in rows:
-                        try:
-                            import orjson
-                            payload = orjson.loads(row[0])
-                            hermes_outputs.append(HermesInferenceOutput.from_dict(payload))
-                        except Exception:  # noqa: BLE001
-                            pass
-                except Exception:
-                    hermes_outputs = []
-            if hermes_outputs:
-                pivots = planner.score_with_hermes_output(findings, hermes_outputs, graph_stats=graph_stats)
-            else:
-                pivots = planner.plan_pivots(findings, graph_stats=graph_stats, feedback_summary=feedback_summary)
+            graph_stats = await self._collect_graph_stats()
+            feedback_summary = await self._collect_feedback_summary()
+            hermes_outputs = await self._collect_hermes_outputs()
+            pivots = self._compute_pivots(planner, findings, hermes_outputs, graph_stats, feedback_summary)
             self._scheduler._planned_pivots = pivots
             log.debug(f'[F202G] Planned {len(pivots)} pivots from {len(findings)} findings')
             return AdvisoryRunOutcome(planned_pivots=len(pivots), executed_pivots=outcome.executed_pivots, governor_recorded=outcome.governor_recorded, brief_generated=outcome.brief_generated, local_search_attempted=outcome.local_search_attempted, local_search_hits=outcome.local_search_hits, local_search_source=outcome.local_search_source, local_search_indexed=outcome.local_search_indexed, local_search_elapsed_ms=outcome.local_search_elapsed_ms, local_search_top_results=outcome.local_search_top_results, local_search_error=outcome.local_search_error, error=None)
@@ -317,6 +270,67 @@ class SprintAdvisoryRunner:
         except Exception:  # noqa: BLE001
             pass
         return outcome
+
+    async def _collect_graph_stats(self) -> dict[str, Any]:
+        """Collect graph statistics for pivot planning."""
+        try:
+            from hledac.universal.knowledge import graph_service
+            stats = graph_service.graph_stats()
+            if not stats:
+                return {}
+            node_degrees, domains = {}, []
+            if ENV.get_bool('HLEDAC_ENABLE_GRAPH_ANALYSIS'):
+                try:
+                    summary = graph_service.graph_analytics_summary(top_k=500)
+                    if summary.get('analytics_available'):
+                        for entity in summary.get('top_central_entities', [])[:500]:
+                            val, deg = entity.get('value', ''), entity.get('degree', 0)
+                            if val and deg > 0:
+                                domains.append(val)
+                                node_degrees[val] = deg
+                except Exception:  # noqa: BLE001
+                    pass
+            return {'nodes': stats.get('nodes', 0), 'edges': stats.get('edges', 0), 'domains': domains, 'connected_iocs': set(), 'node_degrees': node_degrees}
+        except Exception:  # noqa: BLE001
+            return {}
+
+    async def _collect_feedback_summary(self) -> Any:
+        """Collect hypothesis feedback summary."""
+        store = self._duckdb_store
+        if store is None:
+            return None
+        try:
+            from hledac.universal.runtime.hypothesis_feedback import HypothesisFeedbackAdapter
+            adapter = HypothesisFeedbackAdapter(duckdb_store=store, target_id=getattr(self._scheduler, 'sprint_id', '') or 'default')
+            return await adapter.async_get_summary()
+        except Exception:
+            return None
+
+    async def _collect_hermes_outputs(self) -> list:
+        """Collect Hermes inference outputs from findings."""
+        store = self._duckdb_store
+        if store is None:
+            return []
+        try:
+            from hledac.universal.runtime.hermes_pivot_contract import HermesInferenceOutput
+            rows = await store._conn.execute('SELECT payload_text FROM findings WHERE source_type = ? AND query = ? LIMIT 50', [SourceType.HERMES_INFERENCE.value, getattr(self._scheduler, '_query', '') or ''])
+            outputs = []
+            for row in rows:
+                try:
+                    import orjson
+                    payload = orjson.loads(row[0])
+                    outputs.append(HermesInferenceOutput.from_dict(payload))
+                except Exception:  # noqa: BLE001
+                    pass
+            return outputs
+        except Exception:
+            return []
+
+    def _compute_pivots(self, planner: Any, findings: list, hermes_outputs: list, graph_stats: dict, feedback_summary: Any) -> list:
+        """Compute pivots using planner with Hermes outputs or fallback."""
+        if hermes_outputs:
+            return planner.score_with_hermes_output(findings, hermes_outputs, graph_stats=graph_stats)
+        return planner.plan_pivots(findings, graph_stats=graph_stats, feedback_summary=feedback_summary)
 
     async def _run_pivot_executor_advisory(self, outcome: AdvisoryRunOutcome) -> AdvisoryRunOutcome:
         """

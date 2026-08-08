@@ -405,6 +405,73 @@ class BatchDNSResolver:
 
     # -- public API --------------------------------------------------------
 
+    async def _check_cached_results(
+        self, unique_hosts: list[str], now: float
+    ) -> tuple[dict[str, list[str]], list[str]]:
+        """Check cache for already-resolved hosts. Returns (results, misses)."""
+        result: dict[str, list[str]] = {}
+        misses: list[str] = []
+        async with self._lock:
+            for host in unique_hosts:
+                neg_ts = self._neg_cache.get(host)
+                if neg_ts is not None and (now - neg_ts) < self._neg_ttl_s:
+                    result[host] = []
+                    continue
+                cached = self._cache.get(host)
+                if cached is not None:
+                    ips, ts = cached
+                    if self._ttl_s <= 0.0 or (now - ts) < self._ttl_s:
+                        self._cache.move_to_end(host)
+                        result[host] = list(ips)
+                        continue
+                misses.append(host)
+        return result, misses
+
+    async def _resolve_unresolved(
+        self, misses: list[str], timeout: float, use_aiodns: bool
+    ) -> list[tuple[str, list[str] | None]]:
+        """Resolve unresolved hosts. Returns list of (host, ips|None)."""
+        async def _bounded_resolve(host: str) -> tuple[str, list[str] | None]:
+            async with self._semaphore:
+                try:
+                    if use_aiodns and self._aiodns_resolver is not None:
+                        ips = await self._aiodns_resolver.resolve(host, timeout)
+                    else:
+                        raw = await async_getaddrinfo(host, 0, proto=socket.IPPROTO_TCP, timeout=timeout)
+                        ips = sorted({str(r[4][0]) for r in raw})
+                    return host, ips
+                except Exception as exc:
+                    if _is_dns_negative_error(exc):
+                        return host, None
+                    return host, []
+        return await safe_gather(
+            *(_bounded_resolve(h) for h in misses),
+            label="batch_dns_resolve_many"
+        ).ok
+
+    async def _update_cache_entries(
+        self, ok_results: list[tuple], now: float
+    ) -> dict[str, list[str]]:
+        """Update caches with resolved results. Returns final results."""
+        result: dict[str, list[str]] = {}
+        async with self._lock:
+            for item in ok_results:
+                if not isinstance(item, tuple) or len(item) != 2:
+                    continue
+                host, raw_ips = item
+                if raw_ips is None:
+                    self._neg_cache[host] = now
+                    result[host] = []
+                    continue
+                if not isinstance(raw_ips, list) or not raw_ips:
+                    continue
+                ips = [str(ip) for ip in raw_ips]
+                if host not in self._cache and len(self._cache) >= self._cache_max > 0:
+                    self._cache.popitem(last=False)
+                self._cache[host] = (ips, now)
+                result[host] = ips
+        return result
+
     async def resolve_many(
         self,
         hosts: list[str],
@@ -465,138 +532,29 @@ class BatchDNSResolver:
         misses: list[str] = []
         use_aiodns = self._ensure_aiodns()
 
-        # Cache lookup under lock to avoid race with eviction.
-        async with self._lock:
-            for host in unique_hosts:
-                # Check negative cache first.
-                neg_ts = self._neg_cache.get(host)
-                if neg_ts is not None:
-                    if (now - neg_ts) < self._neg_ttl_s:
-                        # Negative cache hit — return empty (cached failure).
-                        self._stats.neg_cache_hits += 1
-                        result[host] = []  # empty list = known-failed host
-                        continue
-                    # Expired negative entry — drop and re-resolve.
-                    del self._neg_cache[host]
+        # Use helper to check cache (excludes IPv4 literals)
+        result, misses = await self._check_cached_results(unique_hosts, now)
 
-                cached = self._cache.get(host)
-                if cached is not None:
-                    ips, ts = cached
-                    if self._ttl_s <= 0.0 or (now - ts) < self._ttl_s:
-                        # Cache hit — promote to most-recently-used.
-                        self._cache.move_to_end(host)
-                        result[host] = list(ips)  # defensive copy
-                        self._stats.cache_hits += 1
-                        continue
-                    # Expired — drop and re-resolve.
-                    del self._cache[host]
-
-                # IPv4/IPv6 literal — short-circuit, no DNS needed.
-                try:
-                    import ipaddress
-                    ipaddress.ip_address(host)
-                    result[host] = [host]
-                    self._stats.cache_hits += 1
-                    continue
-                except ValueError:  # noqa: BLE001
-                    pass
-
-                misses.append(host)
-                self._stats.cache_misses += 1
+        # IPv4/IPv6 literal short-circuit
+        for host in list(misses):
+            try:
+                import ipaddress
+                ipaddress.ip_address(host)
+                result[host] = [host]
+                self._stats.cache_hits += 1
+                misses.remove(host)
+            except ValueError:  # noqa: BLE001
+                pass
 
         if not misses:
             return result
 
-        # Parallel resolve for misses, bounded by semaphore.
-        # Each host wrapped in a semaphore-guarded coroutine so the
-        # gather doesn't fan out unbounded.
-        async def _bounded_resolve(host: str) -> tuple[str, list[str] | None]:
-            sem = self._semaphore
-            assert sem is not None
-            async with sem:
-                try:
-                    if use_aiodns and self._aiodns_resolver is not None:
-                        ips = await self._aiodns_resolver.resolve(host, timeout)
-                        self._stats.aiodns_used += 1
-                    else:
-                        raw = await async_getaddrinfo(
-                            host,
-                            0,
-                            proto=socket.IPPROTO_TCP,
-                            timeout=timeout,
-                        )
-                        ips = sorted({str(r[4][0]) for r in raw})
-                    return host, ips
-                except Exception as exc:
-                    self._stats.errors += 1
-                    # Cache negative result if it's a definitive failure
-                    if _is_dns_negative_error(exc):
-                        logger.debug(
-                            "[BATCH_DNS] negative result for %s: %s",
-                            host, type(exc).__name__,
-                        )
-                        # Return None to signal negative cache
-                        return host, None
-                    logger.debug(
-                        "[BATCH_DNS] resolve failed for %s: %s: %s",
-                        host, type(exc).__name__, exc,
-                    )
-                    return host, []
+        # Use helper to resolve misses
+        ok_results = await self._resolve_unresolved(misses, timeout, use_aiodns)
 
-        # I1 invariant: gather with return_exceptions=True, classified
-        # via safe_gather (cancels / BaseException re-raised automatically;
-        # Exception routed to .errors).
-        gather_result = await safe_gather(
-            *(_bounded_resolve(h) for h in misses),
-            label="batch_dns_resolve_many",
-            logger_instance=logger,
-        )
-        ok_results = gather_result.ok
-
-        # Update caches with new entries (under lock).
-        now = time.monotonic()
-        lock = self._lock
-        async with lock:
-            for item in ok_results:
-                if not isinstance(item, tuple) or len(item) != 2:
-                    continue
-                raw_host, raw_ips = item
-                if not isinstance(raw_host, str):
-                    continue
-                host: str = raw_host
-
-                if raw_ips is None:
-                    # Negative result — cache in negative cache.
-                    self._stats.neg_cache_misses += 1
-                    # Evict if over capacity.
-                    if (
-                        self._neg_cache_max > 0
-                        and host not in self._neg_cache
-                        and len(self._neg_cache) >= self._neg_cache_max
-                    ):
-                        self._evict_neg_cache_oldest()
-                    self._neg_cache[host] = now
-                    self._stats.neg_cached_total += 1
-                    result[host] = []  # empty = known failure
-                    continue
-
-                if not isinstance(raw_ips, list) or not raw_ips:
-                    continue
-
-                # Narrow type: raw_ips is list[Any] from gather_result.ok
-                ips: list[str] = [str(ip) for ip in raw_ips]  # type: ignore[assignment]
-                # Positive result — cache in positive cache.
-                if (
-                    self._cache_max > 0
-                    and host not in self._cache
-                    and len(self._cache) >= self._cache_max
-                ):
-                    self._cache.popitem(last=False)
-                    self._stats.evictions += 1
-                cache_entry: tuple[list[str], float] = (ips, now)
-                self._cache[host] = cache_entry
-                result[host] = ips
-                self._stats.resolved_total += 1
+        # Update caches and build result using helper
+        new_results = await self._update_cache_entries(ok_results, now)
+        result.update(new_results)
 
         return result
 

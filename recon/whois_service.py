@@ -409,42 +409,108 @@ def _extract_whois_email(text: str, field: str) -> str | None:
             return None
     return email
 
+# API name → request config (params, headers, url_path)
+_HISTORICAL_API_CONFIG: dict[str, dict] = {
+    'whoisxmlapi': {
+        'params': {'username': '{key}', 'password': '{key}', 'format': 'json'},
+        'path': 'domain',
+    },
+    'whoiswhoisxmlapi': {
+        'params': {'apiKey': '{key}', 'format': 'json'},
+        'path': 'whois',
+    },
+    'domainiq': {
+        'params': {'key': '{key}', 'format': 'json'},
+        'path': 'domain',
+    },
+    'whoisology': {
+        'params': {},
+        'headers': {'Authorization': 'Bearer {key}'},
+        'path': '{domain}',
+    },
+}
+
+
+def _parse_whoisxml_record(result: WhoisResult, data: dict) -> None:
+    """Parse WHOIS XML API response."""
+    whois_record = data.get('WhoisRecord', {}) or {}
+    result.registrar = whois_record.get('registrarName')
+    result.creation_date = whois_record.get('createdDate', '')[:10] if whois_record.get('createdDate') else None
+    result.expiration_date = whois_record.get('expiresDate', '')[:10] if whois_record.get('expiresDate') else None
+    result.updated_date = whois_record.get('updatedDate', '')[:10] if whois_record.get('updatedDate') else None
+    result.name_servers = whois_record.get('nameServers', {}).get('hostNames', []) or []
+    result.status = [whois_record.get('status', '')] if whois_record.get('status') else []
+    result.dnssec = whois_record.get('dnssec', {}).get('securityDNS', False) if isinstance(whois_record.get('dnssec'), dict) else False
+    result.registrant_name = whois_record.get('registrant', {}).get('name')
+    result.registrant_org = whois_record.get('registrant', {}).get('organization')
+    result.registrant_email = whois_record.get('registrant', {}).get('email')
+    result.raw = str(whois_record)[:2000]
+    history = whois_record.get('historicalData', []) or []
+    if isinstance(history, list) and history:
+        events = []
+        for h in history[:10]:
+            events.append({'date': h.get('createdDate', '')[:10], 'action': 'created'})
+        if events:
+            result.creation_date = events[0].get('date')
+            result.updated_date = events[-1].get('date')
+
+
+def _parse_domainiq_record(result: WhoisResult, data: dict) -> None:
+    """Parse DomainIQ API response."""
+    record = data.get('domain', {}) or {}
+    result.registrar = record.get('registrar')
+    result.creation_date = record.get('create_date', '')[:10] if record.get('create_date') else None
+    result.expiration_date = record.get('expiry_date', '')[:10] if record.get('expiry_date') else None
+    result.name_servers = record.get('nameservers', []) or []
+    result.raw = str(record)[:2000]
+
+
+# API name → response parser
+_HISTORICAL_API_PARSERS: dict[str, callable] = {
+    'whoisxmlapi': _parse_whoisxml_record,
+    'whoiswhoisxmlapi': _parse_whoisxml_record,
+    'domainiq': _parse_domainiq_record,
+}
+
+
 async def _historical_whois_lookup(domain: str, api_name: str, api_key: str) -> WhoisResult | None:
     """
     Query historical WHOIS API.
     Returns WhoisResult with historical=True, or None on failure.
     """
     import httpx
+
     if not api_key:
         return None
+
     result = WhoisResult(domain=domain, source='historical', historical=True)
     api_base = HISTORICAL_APIS.get(api_name)
     if not api_base:
         return None
+
     breaker = _get_breaker(api_base.split('/')[2])
     if breaker and (not breaker.check_circuit().allowed):
         return None
+
+    # Get API config from dispatch table
+    api_config = _HISTORICAL_API_CONFIG.get(api_name)
+    if not api_config:
+        return None
+
     session, is_own = await _get_session()
     params: dict[str, Any] = {'domain': domain, 'format': 'json'}
     headers: dict[str, str] = {}
-    if 'whoisxmlapi' in api_base:
-        params['username'] = api_key
-        params['password'] = api_key
-        url = f'{api_base}domain'
-    elif 'whoiswhoisxmlapi' in api_base:
-        params['apiKey'] = api_key
-        url = f'{api_base}whois'
-    elif 'domainiq' in api_base:
-        params['key'] = api_key
-        url = f'{api_base}domain'
-    elif 'whoisology' in api_base:
-        headers['Authorization'] = f'Bearer {api_key}'
-        url = f'{api_base}{domain}'
-        params = {}
-    else:
-        if is_own:
-            await session.close()
-        return None
+
+    # Build params from config template
+    for k, v in api_config.get('params', {}).items():
+        params[k] = v.replace('{key}', api_key)
+
+    # Build headers from config template
+    for k, v in api_config.get('headers', {}).items():
+        headers[k] = v.replace('{key}', api_key)
+
+    url = f"{api_base}{api_config['path'].replace('{domain}', domain)}"
+
     data = None
     try:
         resp = await session.get(url, params=params, headers=headers, timeout=httpx.Timeout(15.0))
@@ -464,38 +530,17 @@ async def _historical_whois_lookup(domain: str, api_name: str, api_key: str) -> 
     finally:
         if is_own:
             await session.close()
+
     if data is None:
         return result
-    if 'whoisxmlapi' in api_base or 'whoiswhoisxmlapi' in api_base:
-        whois_record = data.get('WhoisRecord', {}) or {}
-        result.registrar = whois_record.get('registrarName')
-        result.creation_date = whois_record.get('createdDate', '')[:10] if whois_record.get('createdDate') else None
-        result.expiration_date = whois_record.get('expiresDate', '')[:10] if whois_record.get('expiresDate') else None
-        result.updated_date = whois_record.get('updatedDate', '')[:10] if whois_record.get('updatedDate') else None
-        result.name_servers = whois_record.get('nameServers', {}).get('hostNames', []) or []
-        result.status = [whois_record.get('status', '')] if whois_record.get('status') else []
-        result.dnssec = whois_record.get('dnssec', {}).get('securityDNS', False) if isinstance(whois_record.get('dnssec'), dict) else False
-        result.registrant_name = whois_record.get('registrant', {}).get('name')
-        result.registrant_org = whois_record.get('registrant', {}).get('organization')
-        result.registrant_email = whois_record.get('registrant', {}).get('email')
-        result.raw = str(whois_record)[:2000]
-        history = whois_record.get('historicalData', []) or []
-        if isinstance(history, list) and history:
-            events = []
-            for h in history[:10]:
-                events.append({'date': h.get('createdDate', '')[:10], 'action': 'created'})
-            if events:
-                result.creation_date = events[0].get('date')
-                result.updated_date = events[-1].get('date')
-    elif 'domainiq' in api_base:
-        record = data.get('domain', {}) or {}
-        result.registrar = record.get('registrar')
-        result.creation_date = record.get('create_date', '')[:10] if record.get('create_date') else None
-        result.expiration_date = record.get('expiry_date', '')[:10] if record.get('expiry_date') else None
-        result.name_servers = record.get('nameservers', []) or []
-        result.raw = str(record)[:2000]
+
+    # Parse response using dispatch table
+    parser = _HISTORICAL_API_PARSERS.get(api_name)
+    if parser:
+        parser(result, data)
     else:
         result.raw = str(data)[:2000]
+
     return result if result.registrar or result.creation_date else None
 
 async def _ipwhois_rdap_lookup(domain: str) -> WhoisResult:

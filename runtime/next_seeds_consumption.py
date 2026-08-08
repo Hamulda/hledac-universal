@@ -375,6 +375,45 @@ _ACTION_LANE_HINTS: dict[str, str] = {
     "stop_enough_evidence": "STOP",
 }
 
+# IOC target type for each action
+_IOC_TARGET_TYPE: dict[str, str] = {
+    "run_wayback_on_url": "url",
+    "run_passivedns_on_domain_or_ip": "domain_or_ip",
+    "run_doh_on_domain": "domain",
+    "run_ct_on_domain": "domain",
+}
+
+
+def _add_unique(lst: list[str], val: str) -> None:
+    """Add value to list only if not already present."""
+    if val not in lst:
+        lst.append(val)
+
+
+def _process_action_ioc(
+    action_type: str,
+    target: str,
+    domains: list[str],
+    ips: list[str],
+    urls: list[str],
+) -> None:
+    """Process IOC extraction based on action type using dispatch table."""
+    ioc_type = _IOC_TARGET_TYPE.get(action_type)
+    if not ioc_type or not target:
+        return
+
+    if ioc_type == "url":
+        if target.startswith(("http://", "https://")):
+            _add_unique(urls, target)
+    elif ioc_type == "domain_or_ip":
+        if _re.match(r'^(\d{1,3}\.){3}\d{1,3}$', target):
+            _add_unique(ips, target)
+        elif _re.match(r'\b(?:[a-zA-Z0-9](?:[a-zA-Z0-9\-]{0,61}[a-zA-Z0-9])?\.)+[a-zA-Z]{2,}\b', target):
+            _add_unique(domains, target)
+    elif ioc_type == "domain":
+        if _re.match(r'\b(?:[a-zA-Z0-9](?:[a-zA-Z0-9\-]{0,61}[a-zA-Z0-9])?\.)+[a-zA-Z]{2,}\b', target):
+            _add_unique(domains, target)
+
 
 def consume_planner_actions(
     planner_actions: list[dict],
@@ -419,12 +458,6 @@ def consume_planner_actions(
     lanes: list[str] = []
     seen_lanes: set[str] = set()
 
-    # Regex once (compiled module-level for efficiency)
-    domain_re = _re.compile(
-        r'\b(?:[a-zA-Z0-9](?:[a-zA-Z0-9\-]{0,61}[a-zA-Z0-9])?\.)+[a-zA-Z]{2,}\b'
-    )
-    ip_re = _re.compile(r'^(\d{1,3}\.){3}\d{1,3}$')
-
     for action in planner_actions[:20]:  # bound: max 20 actions
         if not isinstance(action, dict):
             continue
@@ -433,46 +466,18 @@ def consume_planner_actions(
         target = (action.get("target") or "").strip()
         lane_hint = _ACTION_LANE_HINTS.get(action_type, "")
 
-        # Track unique lanes
+        # Track unique lanes (skip special flags)
         if lane_hint and lane_hint not in ("STOP", "REPORT_ONLY", "DIAGNOSTIC"):
-            if lane_hint not in seen_lanes:
-                seen_lanes.add(lane_hint)
-                lanes.append(lane_hint)
+            _add_unique(lanes, lane_hint)
 
-        # Extract IOCs from target string
-        if not target:
-            continue
-
-        # run_wayback_on_url — URL goes to urls
-        if action_type == "run_wayback_on_url":
-            if target.startswith(("http://", "https://")):
-                if target not in urls:
-                    urls.append(target)
-            continue
-
-        # run_passivedns_on_domain_or_ip — could be domain or IP
-        if action_type == "run_passivedns_on_domain_or_ip":
-            if ip_re.match(target):
-                if target not in ips:
-                    ips.append(target)
-            elif domain_re.match(target):
-                if target not in domains:
-                    domains.append(target)
-            continue
-
-        # run_doh_on_domain / run_ct_on_domain — domain only
-        if action_type in ("run_doh_on_domain", "run_ct_on_domain"):
-            if domain_re.match(target):
-                if target not in domains:
-                    domains.append(target)
-            continue
+        # Extract IOCs using dispatch
+        _process_action_ioc(action_type, target, domains, ips, urls)
 
     # Enforce caps
-    MAX_PER_TYPE = 10  # noqa: N806
     seed_iocs = {
-        "domains": tuple(domains[:MAX_PER_TYPE]),
-        "ips": tuple(ips[:MAX_PER_TYPE]),
-        "urls": tuple(urls[:MAX_PER_TYPE]),
+        "domains": tuple(domains[:10]),
+        "ips": tuple(ips[:10]),
+        "urls": tuple(urls[:10]),
     }
     lanes = lanes[:8]  # MAX_LANES
 

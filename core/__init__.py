@@ -53,162 +53,182 @@ _concurrency_cache: dict[str, object] | None = None
 _ff_cache: dict[str, object] | None = None
 
 
-def __getattr__(name: str):
-    global _lock_cache, _embed_cache, _rgov_cache, _sysdet_cache, _uma_cache, _rb, _main_cache, _rlm_cache, _concurrency_cache, _ff_cache
+# ── Loader functions for __getattr__ dispatch table ─────────────────────────
 
-    # ── rust_backend (already lazy, keep existing pattern) ───────────────────
-    if name == "rust_backend":
-        if _rb is None:
-            from hledac.universal.core.rust_backend import rust as _r
-            _rb = _r
-        return _rb
+def _load_rust_backend() -> object:
+    global _rb
+    if _rb is None:
+        from hledac.universal.core.rust_backend import rust as _r
+        _rb = _r
+    return _rb
 
-    # ── locks ────────────────────────────────────────────────────────────────
-    if name in (
-        "LockCategory",
-        "LockInfo",
-        "register_lock",
-        "acquire_in_order",
-        "get_registered_locks",
-        "get_locks_by_category",
-        "AsyncLockDCLP",
-        "make_counter",
-    ):
-        if _lock_cache is None:
-            from hledac.universal.core.locks import (
-                LockCategory,
-                LockInfo,
-                register_lock,
-                acquire_in_order,
-                get_registered_locks,
-                get_locks_by_category,
-                AsyncLockDCLP,
-                make_counter,
-            )
-            # Build cache dict explicitly (locals() won't capture imports)
-            _lock_cache = {
-                "LockCategory": LockCategory,
-                "LockInfo": LockInfo,
-                "register_lock": register_lock,
-                "acquire_in_order": acquire_in_order,
-                "get_registered_locks": get_registered_locks,
-                "get_locks_by_category": get_locks_by_category,
-                "AsyncLockDCLP": AsyncLockDCLP,
-                "make_counter": make_counter,
-            }
-        return _lock_cache[name]  # type: ignore[return-value]
 
-    # ── embeddings.legacy (CONTAINS import mlx.core — the cold-start culprit) ─
-    if name in ("MLXEmbeddingManager", "EmbeddingTask", "apply_task_prefix", "should_normalize"):
-        if _embed_cache is None:
-            from hledac.universal.core.embeddings.legacy import (
-                MLXEmbeddingManager,
-                EmbeddingTask,
-                apply_task_prefix,
-                should_normalize,
-            )
-            _embed_cache = {
-                "MLXEmbeddingManager": MLXEmbeddingManager,
-                "EmbeddingTask": EmbeddingTask,
-                "apply_task_prefix": apply_task_prefix,
-                "should_normalize": should_normalize,
-            }
-        return _embed_cache[name]  # type: ignore[return-value]
+def _load_locks() -> dict[str, object]:
+    global _lock_cache
+    if _lock_cache is None:
+        from hledac.universal.core.locks import (
+            LockCategory,
+            LockInfo,
+            register_lock,
+            acquire_in_order,
+            get_registered_locks,
+            get_locks_by_category,
+            AsyncLockDCLP,
+            make_counter,
+        )
+        _lock_cache = {
+            "LockCategory": LockCategory,
+            "LockInfo": LockInfo,
+            "register_lock": register_lock,
+            "acquire_in_order": acquire_in_order,
+            "get_registered_locks": get_registered_locks,
+            "get_locks_by_category": get_locks_by_category,
+            "AsyncLockDCLP": AsyncLockDCLP,
+            "make_counter": make_counter,
+        }
+    return _lock_cache
 
-    # ── resource_governor ────────────────────────────────────────────────────
-    if name == "Priority":
-        if _rgov_cache is None:
-            from hledac.universal.core.resource_governor import Priority
-            _rgov_cache = {"Priority": Priority}
-        return _rgov_cache[name]  # type: ignore[return-value]
 
-    # ── resource_lifecycle (R1) ──────────────────────────────────────────────
-    if name in ("ResourceLifecycleManager", "require_rlm", "get_current_rlm"):
-        if _rlm_cache is None:
-            from hledac.universal.core.resource_lifecycle import (
-                ResourceLifecycleManager,
-                require_rlm,
-                get_current_rlm,
-            )
-            _rlm_cache = {
-                "ResourceLifecycleManager": ResourceLifecycleManager,
-                "require_rlm": require_rlm,
-                "get_current_rlm": get_current_rlm,
-            }
-        return _rlm_cache[name]  # type: ignore[return-value]
+def _load_embeddings() -> dict[str, object]:
+    global _embed_cache
+    if _embed_cache is None:
+        from hledac.universal.core.embeddings.legacy import (
+            MLXEmbeddingManager,
+            EmbeddingTask,
+            apply_task_prefix,
+            should_normalize,
+        )
+        _embed_cache = {
+            "MLXEmbeddingManager": MLXEmbeddingManager,
+            "EmbeddingTask": EmbeddingTask,
+            "apply_task_prefix": apply_task_prefix,
+            "should_normalize": should_normalize,
+        }
+    return _embed_cache
 
-    # ── system_detector ───────────────────────────────────────────────────────
-    if name in ("SystemDetector", "get_system_detector", "get_hardware_capabilities", "HardwareCapabilities"):
-        if _sysdet_cache is None:
-            from hledac.universal.core.system_detector import (
-                SystemDetector,
-                get_system_detector,
-                get_hardware_capabilities,
-                HardwareCapabilities,
-            )
-            _sysdet_cache = {
-                "SystemDetector": SystemDetector,
-                "get_system_detector": get_system_detector,
-                "get_hardware_capabilities": get_hardware_capabilities,
-                "HardwareCapabilities": HardwareCapabilities,
-            }
-        return _sysdet_cache[name]  # type: ignore[return-value]
 
-    # ── uma_budget ────────────────────────────────────────────────────────────
-    if name == "Watchdog":
-        if _uma_cache is None:
-            from hledac.universal.utils.uma_budget import Watchdog
-            _uma_cache = {"Watchdog": Watchdog}
-        return _uma_cache[name]  # type: ignore[return-value]
+def _load_resource_governor() -> dict[str, object]:
+    global _rgov_cache
+    if _rgov_cache is None:
+        from hledac.universal.core.resource_governor import Priority
+        _rgov_cache = {"Priority": Priority}
+    return _rgov_cache
 
-    # ── __main__ (deprecated shim — re-exported from runtime/sprint_entrypoint) ──
-    if name == "__main__":
-        # core/__main__.py was removed; redirect to the canonical sprint_entrypoint.
+
+def _load_resource_lifecycle() -> dict[str, object]:
+    global _rlm_cache
+    if _rlm_cache is None:
+        from hledac.universal.core.resource_lifecycle import (
+            ResourceLifecycleManager,
+            require_rlm,
+            get_current_rlm,
+        )
+        _rlm_cache = {
+            "ResourceLifecycleManager": ResourceLifecycleManager,
+            "require_rlm": require_rlm,
+            "get_current_rlm": get_current_rlm,
+        }
+    return _rlm_cache
+
+
+def _load_system_detector() -> dict[str, object]:
+    global _sysdet_cache
+    if _sysdet_cache is None:
+        from hledac.universal.core.system_detector import (
+            SystemDetector,
+            get_system_detector,
+            get_hardware_capabilities,
+            HardwareCapabilities,
+        )
+        _sysdet_cache = {
+            "SystemDetector": SystemDetector,
+            "get_system_detector": get_system_detector,
+            "get_hardware_capabilities": get_hardware_capabilities,
+            "HardwareCapabilities": HardwareCapabilities,
+        }
+    return _sysdet_cache
+
+
+def _load_uma_budget() -> dict[str, object]:
+    global _uma_cache
+    if _uma_cache is None:
+        from hledac.universal.utils.uma_budget import Watchdog
+        _uma_cache = {"Watchdog": Watchdog}
+    return _uma_cache
+
+
+def _load_main() -> object:
+    global _main_cache
+    if _main_cache is None:
         import importlib
         import sys
-        if _main_cache is None:
-            # Import the actual module (runtime/sprint_entrypoint) and cache it.
-            _main_cache = importlib.import_module("hledac.universal.runtime.sprint_entrypoint")
-        # Also register under the legacy sys.modules path so that
-        #   from hledac.universal.core import __main__
-        # and
-        #   import hledac.universal.core.__main__
-        # both resolve to the same cached object.
+        _main_cache = importlib.import_module("hledac.universal.runtime.sprint_entrypoint")
         sys.modules["hledac.universal.core.__main__"] = _main_cache
-        return _main_cache
+    return _main_cache
 
-    # ── concurrency (R12) ───────────────────────────────────────────────────
-    if name in ("ConcurrencyCategory", "get_semaphore"):
-        if _concurrency_cache is None:
-            from hledac.universal.core.concurrency import (
-                ConcurrencyCategory,
-                get_semaphore,
-            )
-            _concurrency_cache = {
-                "ConcurrencyCategory": ConcurrencyCategory,
-                "get_semaphore": get_semaphore,
-            }
-        return _concurrency_cache[name]  # type: ignore[return-value]
 
-    # ── SWARM-010: feature flags ───────────────────────────────────────────
-    if name in ("FeatureFlags", "FeatureFlag", "FlagCategory", "FlagInfo", "FlagValidationError", "validate_sprint_flags"):
-        if _ff_cache is None:
-            from hledac.universal.core.feature_flags import (
-                FeatureFlags,
-                FeatureFlag,
-                FlagCategory,
-                FlagInfo,
-                FlagValidationError,
-                validate_sprint_flags,
-            )
-            _ff_cache = {
-                "FeatureFlags": FeatureFlags,
-                "FeatureFlag": FeatureFlag,
-                "FlagCategory": FlagCategory,
-                "FlagInfo": FlagInfo,
-                "FlagValidationError": FlagValidationError,
-                "validate_sprint_flags": validate_sprint_flags,
-            }
-        return _ff_cache[name]  # type: ignore[return-value]
+def _load_concurrency() -> dict[str, object]:
+    global _concurrency_cache
+    if _concurrency_cache is None:
+        from hledac.universal.core.concurrency import (
+            ConcurrencyCategory,
+            get_semaphore,
+        )
+        _concurrency_cache = {
+            "ConcurrencyCategory": ConcurrencyCategory,
+            "get_semaphore": get_semaphore,
+        }
+    return _concurrency_cache
+
+
+def _load_feature_flags() -> dict[str, object]:
+    global _ff_cache
+    if _ff_cache is None:
+        from hledac.universal.core.feature_flags import (
+            FeatureFlags,
+            FeatureFlag,
+            FlagCategory,
+            FlagInfo,
+            FlagValidationError,
+            validate_sprint_flags,
+        )
+        _ff_cache = {
+            "FeatureFlags": FeatureFlags,
+            "FeatureFlag": FeatureFlag,
+            "FlagCategory": FlagCategory,
+            "FlagInfo": FlagInfo,
+            "FlagValidationError": FlagValidationError,
+            "validate_sprint_flags": validate_sprint_flags,
+        }
+    return _ff_cache
+
+
+# ── Dispatch table: name → loader ───────────────────────────────────────────
+
+_LOADER_DISPATCH: tuple[tuple[frozenset[str], _load_locks | _load_embeddings | _load_resource_governor | _load_resource_lifecycle | _load_system_detector | _load_uma_budget | _load_concurrency | _load_feature_flags], ...] = (
+    (frozenset(("LockCategory", "LockInfo", "register_lock", "acquire_in_order", "get_registered_locks", "get_locks_by_category", "AsyncLockDCLP", "make_counter")), _load_locks),
+    (frozenset(("MLXEmbeddingManager", "EmbeddingTask", "apply_task_prefix", "should_normalize")), _load_embeddings),
+    (frozenset(("Priority",)), _load_resource_governor),
+    (frozenset(("ResourceLifecycleManager", "require_rlm", "get_current_rlm")), _load_resource_lifecycle),
+    (frozenset(("SystemDetector", "get_system_detector", "get_hardware_capabilities", "HardwareCapabilities")), _load_system_detector),
+    (frozenset(("Watchdog",)), _load_uma_budget),
+    (frozenset(("ConcurrencyCategory", "get_semaphore")), _load_concurrency),
+    (frozenset(("FeatureFlags", "FeatureFlag", "FlagCategory", "FlagInfo", "FlagValidationError", "validate_sprint_flags")), _load_feature_flags),
+)
+
+
+def __getattr__(name: str):
+    # ── rust_backend (special case, returns module directly) ─────────────────
+    if name == "rust_backend":
+        return _load_rust_backend()
+
+    # ── __main__ (special case, returns module directly) ─────────────────────
+    if name == "__main__":
+        return _load_main()
+
+    # ── dispatch to loader based on name membership ───────────────────────────
+    for names, loader in _LOADER_DISPATCH:
+        if name in names:
+            return loader()[name]  # type: ignore[return-value]
 
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

@@ -380,6 +380,83 @@ class V2Init:
 
     # ── Declarative injections ──────────────────────────────────────────────────
 
+    def _build_injection_kwargs(
+        self,
+        inj,
+        *,
+        duckdb_store: Any,
+        rl_train_mode: bool,
+        sprint_id: str,
+        resume_from: dict | None,
+        resume_step: int,
+        query_hash: str,
+    ) -> dict[str, Any]:
+        """Build factory kwargs based on injection type."""
+        kwargs: dict[str, Any] = {}
+        name = inj.name
+
+        if name == "policy_manager":
+            kwargs["rl_train_mode"] = rl_train_mode
+        elif name in ("duckdb_store", "prefetch_pipeline"):
+            kwargs["duckdb_store"] = duckdb_store
+        elif name == "meta_reasoning_coordinator":
+            kwargs["duckdb_store"] = duckdb_store
+            kwargs["sprint_id"] = sprint_id
+            kwargs["resume_from"] = resume_from
+            kwargs["resume_step"] = resume_step
+            kwargs["query_hash"] = query_hash
+            # SILICON-05: wire semantic gravity field
+            self._inject_gravity_field()
+        return kwargs
+
+    def _inject_gravity_field(self) -> None:
+        """Create and inject semantic gravity field into scheduler."""
+        try:
+            from hledac.universal.knowledge.semantic_gravity import SemanticGravityField
+            _gravity_field = SemanticGravityField()
+            gravity_inject = getattr(self._scheduler, "inject_gravity_field", None)
+            if gravity_inject:
+                gravity_inject(_gravity_field)
+        except Exception:
+            pass
+
+    def _inject_object(self, inj, obj: Any) -> None:
+        """Inject object into scheduler using standard inject pattern."""
+        inj_method = getattr(self._scheduler, f"inject_{inj.name}", None)
+        if inj_method and obj is not None:
+            inj_method(obj)
+
+    def _inject_prefetch_pipeline(self, obj: tuple[Any, Any]) -> None:
+        """Inject prefetch pipeline with its temporal predictor."""
+        if obj is None:
+            return
+        prefetch_pipeline, temporal_predictor = obj
+        inj_method = getattr(self._scheduler, "inject_prefetch_pipeline", None)
+        if inj_method:
+            inj_method(prefetch_pipeline)
+        tp_inject = getattr(self._scheduler, "inject_temporal_predictor", None)
+        if tp_inject and temporal_predictor is not None:
+            tp_inject(temporal_predictor)
+
+    def _warmup_evidence_log(
+        self,
+        sprint_id: str,
+        query: str,
+        sprint_duration_s: float,
+        windup_lead_s: float,
+    ) -> None:
+        """WARMUP event on EvidenceLog created in _bootstrap."""
+        _elog_raw = getattr(self._scheduler, "_evidence_log", None)
+        if _elog_raw is None:
+            return
+        _elog = _elog_raw.value if hasattr(_elog_raw, "value") else _elog_raw
+        if _elog is None:
+            return
+        try:
+            _evidence_log_init(_elog, sprint_id, query, sprint_duration_s, windup_lead_s)
+        except Exception:  # noqa: BLE001
+            pass
+
     async def _apply_injections(
         self,
         *,
@@ -406,67 +483,29 @@ class V2Init:
                 logger.debug("V2Init: %s skipped (gate: %s)", inj.name, inj.gate_attr)
                 continue
 
-            factory_kwargs: dict[str, Any] = {}
-            if inj.name == "policy_manager":
-                factory_kwargs["rl_train_mode"] = rl_train_mode
-            elif inj.name in ("duckdb_store", "prefetch_pipeline"):
-                factory_kwargs["duckdb_store"] = duckdb_store
-            elif inj.name == "meta_reasoning_coordinator":  # UNIFIED-006
-                factory_kwargs["duckdb_store"] = duckdb_store
-                factory_kwargs["sprint_id"] = sprint_id
-                factory_kwargs["resume_from"] = resume_from
-                factory_kwargs["resume_step"] = resume_step
-                factory_kwargs["query_hash"] = query_hash
-                # SILICON-05: Create and wire semantic gravity field
-                try:
-                    from hledac.universal.knowledge.semantic_gravity import (
-                        SemanticGravityField,
-                    )
-                    _gravity_field = SemanticGravityField()
-                    factory_kwargs["gravity_field"] = _gravity_field
-                    # Also inject into scheduler so the pipeline can push embeddings
-                    gravity_inject = getattr(
-                        self._scheduler, "inject_gravity_field", None
-                    )
-                    if gravity_inject:
-                        gravity_inject(_gravity_field)
-                except Exception:
-                    logger.debug(
-                        'V2Init: SemanticGravityField init failed — '
-                        'continuing without gravity field'
-                    )
+            factory_kwargs = self._build_injection_kwargs(
+                inj,
+                duckdb_store=duckdb_store,
+                rl_train_mode=rl_train_mode,
+                sprint_id=sprint_id,
+                resume_from=resume_from,
+                resume_step=resume_step,
+                query_hash=query_hash,
+            )
 
             try:
                 obj = inj.factory(**factory_kwargs)
-
-                if inj.name == "prefetch_pipeline" and obj is not None:
-                    prefetch_pipeline, temporal_predictor = obj
-                    inj_method = getattr(self._scheduler, f"inject_{inj.name}", None)
-                    if inj_method:
-                        inj_method(prefetch_pipeline)
-                    tp_inject = getattr(self._scheduler, "inject_temporal_predictor", None)
-                    if tp_inject and temporal_predictor is not None:
-                        tp_inject(temporal_predictor)
+                if inj.name == "prefetch_pipeline":
+                    self._inject_prefetch_pipeline(obj)
                 else:
-                    inj_method = getattr(self._scheduler, f"inject_{inj.name}", None)
-                    if inj_method and obj is not None:
-                        inj_method(obj)
-
+                    self._inject_object(inj, obj)
             except Exception as e:
                 if inj.fail_soft:
                     logger.debug("V2Init: %s injection failed (fail-soft): %s", inj.name, e)
                 else:
                     raise
 
-        # WARMUP event on EvidenceLog created in _bootstrap
-        _elog_raw = getattr(self._scheduler, "_evidence_log", None)
-        if _elog_raw is not None:
-            _elog = _elog_raw.value if hasattr(_elog_raw, "value") else _elog_raw
-            if _elog is not None:
-                try:
-                    _evidence_log_init(_elog, sprint_id, query, sprint_duration_s, windup_lead_s)
-                except Exception:  # noqa: BLE001
-                    pass
+        self._warmup_evidence_log(sprint_id, query, sprint_duration_s, windup_lead_s)
 
     # ── Acquisition plan ───────────────────────────────────────────────────────
 

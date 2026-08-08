@@ -119,56 +119,97 @@ class IdentityStitchingAdapter:
         if not profiles:
             return []
         try:
-            for esp in profiles[:500]:
-                try:
-                    ip = self._to_identity_profile(esp)
-                    self._engine.add_profile(ip)
-                except Exception:  # noqa: BLE001
-                    pass
-            self._stats['profiles_added'] = len(profiles)
-            start = time.monotonic()
-            all_matches = self._engine.find_all_matches(min_score=self._match_threshold)
-            elapsed_ms = (time.monotonic() - start) * 1000
-            if len(all_matches) > MAX_COMPARISONS:
-                logger.debug(f'IdentityStitchingAdapter: capping {len(all_matches)} matches to MAX_COMPARISONS={MAX_COMPARISONS}')
-                all_matches = all_matches[:MAX_COMPARISONS]
-            self._stats['comparisons_run'] = len(all_matches)
-            logger.debug(f'IdentityStitchingAdapter: {len(all_matches)} matches in {elapsed_ms:.1f}ms')
-            stitched = []
-            try:
-                stitched = self._engine.stitch_identities(match_threshold=self._stitch_threshold, transitive_threshold=self._match_threshold)
-            except Exception as e:
-                logger.debug(f'IdentityStitchingAdapter: stitch_identities error: {e}')
-            candidates: list[IdentityCandidate] = []
-            for stitch in stitched:
-                platforms = set()
-                finding_ids = []
-                for pid in stitch.profile_ids:
-                    p = self._engine.get_profile(pid)
-                    if p:
-                        platforms.update(p.get_platforms())
-                        for ev in p.evidence or []:
-                            if ev.startswith('esp:'):
-                                finding_ids.append(ev[4:])
-                            elif ev.startswith('source:'):
-                                finding_ids.append(ev[7:])
-                candidates.append(IdentityCandidate(candidate_id=stitch.id, profile_ids=stitch.profile_ids, primary_name=stitch.merged_names[0] if stitch.merged_names else stitch.id, emails=stitch.merged_emails[:10], usernames=[u.username for u in stitch.merged_usernames[:10]], platforms=list(platforms)[:10], confidence=stitch.stitch_confidence, signals={'stitch_confidence': stitch.stitch_confidence}, evidence=stitch.match_evidence[:5], finding_ids=finding_ids[:20]))
-            if len(candidates) < MAX_COMPARISONS:
-                matched_pids = {pid for c in candidates for pid in c.profile_ids}
-                for esp in profiles:
-                    if esp.id in matched_pids:
-                        continue
-                    if len(candidates) >= 200:
-                        break
-                    p = self._engine.get_profile(esp.id)
-                    if p:
-                        candidates.append(IdentityCandidate(candidate_id=esp.id, profile_ids=[esp.id], primary_name=esp.primary_name, emails=esp.emails[:5], usernames=esp.usernames[:5], platforms=list(esp.platforms)[:5], confidence=esp.confidence * 0.5, signals={}, evidence=[f'single profile from {esp.finding_ids}'], finding_ids=esp.finding_ids[:5]))
+            self._add_profiles_to_engine(profiles)
+            all_matches = self._get_matches()
+            stitched = self._get_stitched(all_matches)
+            candidates = self._build_candidates_from_stitched(stitched)
+            candidates = self._add_unmatched_singles(profiles, candidates)
             self._stats['candidates_found'] = len(candidates)
             self._engine.optimize_memory()
             return candidates
         except Exception as e:
             logger.warning(f'IdentityStitchingAdapter.extract_and_stitch error: {e}')
             return []
+
+    def _add_profiles_to_engine(self, profiles: list[Any]) -> None:
+        """Add profiles to the stitching engine."""
+        for esp in profiles[:500]:
+            try:
+                ip = self._to_identity_profile(esp)
+                self._engine.add_profile(ip)
+            except Exception:  # noqa: BLE001
+                pass
+        self._stats['profiles_added'] = len(profiles)
+
+    def _get_matches(self) -> list:
+        """Get and cap matches from engine."""
+        start = time.monotonic()
+        all_matches = self._engine.find_all_matches(min_score=self._match_threshold)
+        elapsed_ms = (time.monotonic() - start) * 1000
+        if len(all_matches) > MAX_COMPARISONS:
+            logger.debug(f'IdentityStitchingAdapter: capping {len(all_matches)} matches to MAX_COMPARISONS={MAX_COMPARISONS}')
+            all_matches = all_matches[:MAX_COMPARISONS]
+        self._stats['comparisons_run'] = len(all_matches)
+        logger.debug(f'IdentityStitchingAdapter: {len(all_matches)} matches in {elapsed_ms:.1f}ms')
+        return all_matches
+
+    def _get_stitched(self, all_matches: list) -> list:
+        """Get stitched identities from matches."""
+        try:
+            return self._engine.stitch_identities(match_threshold=self._stitch_threshold, transitive_threshold=self._match_threshold)
+        except Exception as e:
+            logger.debug(f'IdentityStitchingAdapter: stitch_identities error: {e}')
+            return []
+
+    def _build_candidates_from_stitched(self, stitched: list) -> list[IdentityCandidate]:
+        """Build IdentityCandidates from stitched results."""
+        candidates: list[IdentityCandidate] = []
+        for stitch in stitched:
+            platforms, finding_ids = self._collect_profile_data(stitch.profile_ids)
+            candidates.append(IdentityCandidate(
+                candidate_id=stitch.id, profile_ids=stitch.profile_ids,
+                primary_name=stitch.merged_names[0] if stitch.merged_names else stitch.id,
+                emails=stitch.merged_emails[:10], usernames=[u.username for u in stitch.merged_usernames[:10]],
+                platforms=list(platforms)[:10], confidence=stitch.stitch_confidence,
+                signals={'stitch_confidence': stitch.stitch_confidence},
+                evidence=stitch.match_evidence[:5], finding_ids=finding_ids[:20],
+            ))
+        return candidates
+
+    def _collect_profile_data(self, profile_ids: list) -> tuple[set, list]:
+        """Collect platforms and finding IDs from profiles."""
+        platforms = set()
+        finding_ids = []
+        for pid in profile_ids:
+            p = self._engine.get_profile(pid)
+            if p:
+                platforms.update(p.get_platforms())
+                for ev in p.evidence or []:
+                    if ev.startswith('esp:'):
+                        finding_ids.append(ev[4:])
+                    elif ev.startswith('source:'):
+                        finding_ids.append(ev[7:])
+        return platforms, finding_ids
+
+    def _add_unmatched_singles(self, profiles: list[Any], candidates: list[IdentityCandidate]) -> list[IdentityCandidate]:
+        """Add unmatched profiles as single-identity candidates."""
+        if len(candidates) >= MAX_COMPARISONS:
+            return candidates
+        matched_pids = {pid for c in candidates for pid in c.profile_ids}
+        for esp in profiles:
+            if esp.id in matched_pids:
+                continue
+            if len(candidates) >= 200:
+                break
+            if self._engine.get_profile(esp.id):
+                candidates.append(IdentityCandidate(
+                    candidate_id=esp.id, profile_ids=[esp.id], primary_name=esp.primary_name,
+                    emails=esp.emails[:5], usernames=esp.usernames[:5],
+                    platforms=list(esp.platforms)[:5], confidence=esp.confidence * 0.5,
+                    signals={}, evidence=[f'single profile from {esp.finding_ids}'],
+                    finding_ids=esp.finding_ids[:5],
+                ))
+        return candidates
 
     def score_and_enrich_candidates(self, candidates: list[IdentityCandidate], scorer: AttributionConfidenceScorer) -> list[IdentityCandidate]:
         """

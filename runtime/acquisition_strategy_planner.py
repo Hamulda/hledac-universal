@@ -790,6 +790,91 @@ def terminality_report(required_lanes: tuple[MandatoryLaneTerminality, ...], obs
             missing_lanes.append(mlt.lane)
     return {'checked': checked, 'satisfied': satisfied, 'required_lanes': [mlt.lane for mlt in required_lanes if mlt.required], 'terminal_lanes': terminal_lanes, 'missing_lanes': missing_lanes, 'skipped_lanes': skipped_lanes, 'errors': errors, 'reasons': reasons}
 
+
+def _nonfeed_debug_to_dict(nd) -> dict:
+    """Convert NonfeedPlanDebug object to dict."""
+    return {
+        'domain_detected': nd.domain_detected, 'wallet_detected': nd.wallet_detected,
+        'enabled_nonfeed_lanes': list(nd.enabled_nonfeed_lanes),
+        'disabled_nonfeed_lanes': list(nd.disabled_nonfeed_lanes),
+        'disabled_reasons': list(nd.disabled_reasons),
+        'scheduled_nonfeed_lanes': list(nd.scheduled_nonfeed_lanes),
+        'hardware_skipped_lanes': list(nd.hardware_skipped_lanes),
+        'nonfeed_execution_scheduled': nd.nonfeed_execution_scheduled,
+        'nonfeed_execution_skip_reason': nd.nonfeed_execution_skip_reason,
+        'acquisition_profile': getattr(nd, 'acquisition_profile', 'default'),
+        'feed_cap_reason': getattr(nd, 'feed_cap_reason', None),
+        'nonfeed_priority_enabled': getattr(nd, 'nonfeed_priority_enabled', False),
+        'nonfeed_profile_expected_lanes': list(getattr(nd, 'nonfeed_profile_expected_lanes', ()) or ()),
+        'pivot_executor_enabled': getattr(nd, 'pivot_executor_enabled', False),
+        'pivot_candidates_count': getattr(nd, 'pivot_candidates_count', 0),
+        'pivot_candidate_types': list(getattr(nd, 'pivot_candidate_types', ()) or ()),
+        'pivot_scheduled_lanes': list(getattr(nd, 'pivot_scheduled_lanes', ()) or ()),
+        'pivot_skip_reason': getattr(nd, 'pivot_skip_reason', None),
+        'pivot_errors': list(getattr(nd, 'pivot_errors', ()) or ()),
+        'mission_intent': getattr(nd, 'mission_intent', 'unknown'),
+        'mission_target_kind': getattr(nd, 'mission_target_kind', 'unknown'),
+        'mission_required_lanes': list(getattr(nd, 'mission_required_lanes', ()) or ()),
+        'mission_optional_lanes': list(getattr(nd, 'mission_optional_lanes', ()) or ()),
+        'mission_reason': getattr(nd, 'mission_reason', ''),
+        'mission_runtime_applied': getattr(nd, 'mission_runtime_applied', False),
+        'mission_lane_priority': list(getattr(nd, 'mission_lane_priority', ()) or ()),
+        'mission_pivot_boost_applied': getattr(nd, 'mission_pivot_boost_applied', False),
+        'mission_feed_cap_reason': getattr(nd, 'mission_feed_cap_reason', None),
+        'feed_cap_applied_by_mission': getattr(nd, 'feed_cap_applied_by_mission', False),
+        'feed_cap_mission_intent': getattr(nd, 'feed_cap_mission_intent', None),
+    }
+
+
+def _convert_sfo_list(source_family_outcomes) -> tuple[list[dict], list[str]]:
+    """Convert SourceFamilyOutcome list to dicts, return (dicts, attempted_lanes)."""
+    if not source_family_outcomes:
+        return [], []
+    sfo_dicts: list[dict] = []
+    runtime_lanes: list[str] = []
+    for outcome in source_family_outcomes:
+        if hasattr(outcome, 'family'):
+            sfo_dicts.append(outcome.to_dict() if hasattr(outcome, 'to_dict') else {
+                'family': outcome.family, 'attempted': outcome.attempted,
+                'skipped': outcome.skipped, 'skip_reason': outcome.skip_reason,
+                'raw_count': outcome.raw_count, 'built_count': outcome.built_count,
+                'accepted_count': outcome.accepted_count, 'error': outcome.error,
+                'timeout': outcome.timeout, 'duration_s': outcome.duration_s,
+                'terminal_state': outcome.terminal_state})
+            if outcome.attempted and outcome.family:
+                runtime_lanes.append(outcome.family)
+        elif isinstance(outcome, dict):
+            sfo_dicts.append(outcome)
+            if outcome.get('attempted') and outcome.get('family'):
+                runtime_lanes.append(outcome.get('family', ''))
+    return sfo_dicts, runtime_lanes
+
+
+def _build_effective_plan(required_lane_plan: list[str], runtime_lanes: list[str]) -> tuple[list[str], str]:
+    """Build effective acquisition plan and determine semantics."""
+    seen: set[str] = set()
+    effective: list[str] = []
+    for lane in required_lane_plan:
+        if lane and lane not in seen:
+            seen.add(lane)
+            effective.append(lane)
+    for lane in runtime_lanes:
+        if lane and lane not in seen:
+            seen.add(lane)
+            effective.append(lane)
+    semantics = 'effective_runtime' if runtime_lanes else 'prelude_only'
+    return effective, semantics
+
+
+def _sum_errors(errors: dict | None) -> int:
+    """Sum error counts from dict or return 0."""
+    if errors is None:
+        return 0
+    if isinstance(errors, dict):
+        return sum(errors.values())
+    return int(errors)
+
+
 def _build_nonfeed_lane_eligibility(query: str, acquisition_profile: str, plan: AcquisitionStrategySnapshot | None) -> dict:
     """
     F214: Build the nonfeed lane eligibility matrix for acquisition reporting.
@@ -947,17 +1032,21 @@ def build_acquisition_report(query: str='', plan: AcquisitionStrategySnapshot | 
     Returns:
         Canonical acquisition report dict with schema_version="f208.v1".
     """
-    plan_dicts: list[dict] = []
-    if plan is not None:
-        for p in plan.plans:
-            plan_dicts.append({'lane': p.lane, 'enabled': p.enabled, 'reason': p.reason, 'max_items': p.max_items, 'timeout_s': p.timeout_s, 'concurrency': p.concurrency, 'risk_level': p.risk_level})
+    plan_dicts = [
+        {'lane': p.lane, 'enabled': p.enabled, 'reason': p.reason,
+         'max_items': p.max_items, 'timeout_s': p.timeout_s,
+         'concurrency': p.concurrency, 'risk_level': p.risk_level}
+        for p in (plan.plans if plan else [])
+    ]
+
     nonfeed_debug_dict: dict | None = None
     if nonfeed_plan_debug is not None:
         nd = nonfeed_plan_debug
         if isinstance(nd, dict):
             nonfeed_debug_dict = nd
         else:
-            nonfeed_debug_dict = {'domain_detected': nd.domain_detected, 'wallet_detected': nd.wallet_detected, 'enabled_nonfeed_lanes': list(nd.enabled_nonfeed_lanes), 'disabled_nonfeed_lanes': list(nd.disabled_nonfeed_lanes), 'disabled_reasons': list(nd.disabled_reasons), 'scheduled_nonfeed_lanes': list(nd.scheduled_nonfeed_lanes), 'hardware_skipped_lanes': list(nd.hardware_skipped_lanes), 'nonfeed_execution_scheduled': nd.nonfeed_execution_scheduled, 'nonfeed_execution_skip_reason': nd.nonfeed_execution_skip_reason, 'acquisition_profile': getattr(nd, 'acquisition_profile', 'default'), 'feed_cap_reason': getattr(nd, 'feed_cap_reason', None), 'nonfeed_priority_enabled': getattr(nd, 'nonfeed_priority_enabled', False), 'nonfeed_profile_expected_lanes': list(getattr(nd, 'nonfeed_profile_expected_lanes', ()) or ()), 'pivot_executor_enabled': getattr(nd, 'pivot_executor_enabled', False), 'pivot_candidates_count': getattr(nd, 'pivot_candidates_count', 0), 'pivot_candidate_types': list(getattr(nd, 'pivot_candidate_types', ()) or ()), 'pivot_scheduled_lanes': list(getattr(nd, 'pivot_scheduled_lanes', ()) or ()), 'pivot_skip_reason': getattr(nd, 'pivot_skip_reason', None), 'pivot_errors': list(getattr(nd, 'pivot_errors', ()) or ()), 'mission_intent': getattr(nd, 'mission_intent', 'unknown'), 'mission_target_kind': getattr(nd, 'mission_target_kind', 'unknown'), 'mission_required_lanes': list(getattr(nd, 'mission_required_lanes', ()) or ()), 'mission_optional_lanes': list(getattr(nd, 'mission_optional_lanes', ()) or ()), 'mission_reason': getattr(nd, 'mission_reason', ''), 'mission_runtime_applied': getattr(nd, 'mission_runtime_applied', False), 'mission_lane_priority': list(getattr(nd, 'mission_lane_priority', ()) or ()), 'mission_pivot_boost_applied': getattr(nd, 'mission_pivot_boost_applied', False), 'mission_feed_cap_reason': getattr(nd, 'mission_feed_cap_reason', None), 'feed_cap_applied_by_mission': getattr(nd, 'feed_cap_applied_by_mission', False), 'feed_cap_mission_intent': getattr(nd, 'feed_cap_mission_intent', None)}
+            nonfeed_debug_dict = _nonfeed_debug_to_dict(nd)
+
     _effective_profile = acquisition_profile if acquisition_profile is not None else 'default'
     import os as _os
     if _effective_profile == 'default':
@@ -965,47 +1054,119 @@ def build_acquisition_report(query: str='', plan: AcquisitionStrategySnapshot | 
         if _env_override is not None:
             logger.debug("[build_acquisition_report] acquisition_profile='default' resolved to %r from HLEDAC_ACQUISITION_PROFILE env var. This is expected only when called directly without normalization.", _env_override)
             _effective_profile = _env_override
-    runtime_attempted_lanes: list[str] = []
-    # ISSUE 23: Accept list[SourceFamilyOutcome] — convert to list[dict] for result
-    _sfo_dicts: list[dict] = []
-    if source_family_outcomes:
-        for outcome in source_family_outcomes:
-            # Support both SourceFamilyOutcome (attribute access) and dict (get)
-            if hasattr(outcome, 'family'):
-                _sfo_dicts.append(outcome.to_dict() if hasattr(outcome, 'to_dict') else {
-                    'family': outcome.family, 'attempted': outcome.attempted,
-                    'skipped': outcome.skipped, 'skip_reason': outcome.skip_reason,
-                    'raw_count': outcome.raw_count, 'built_count': outcome.built_count,
-                    'accepted_count': outcome.accepted_count, 'error': outcome.error,
-                    'timeout': outcome.timeout, 'duration_s': outcome.duration_s,
-                    'terminal_state': outcome.terminal_state})
-                if outcome.attempted and outcome.family:
-                    runtime_attempted_lanes.append(outcome.family)
-            elif isinstance(outcome, dict):
-                _sfo_dicts.append(outcome)
-                if outcome.get('attempted') and outcome.get('family'):
-                    runtime_attempted_lanes.append(outcome.get('family', ''))
-    else:
-        _sfo_dicts = []
-    required_lane_plan: list[str] = []
-    if terminality:
-        required_lane_plan = list(terminality.get('required_lanes', []) or [])
-    _effective_seen: set[str] = set()
-    effective_acquisition_plan: list[str] = []
-    for lane in required_lane_plan:
-        if lane and lane not in _effective_seen:
-            _effective_seen.add(lane)
-            effective_acquisition_plan.append(lane)
-    for lane in runtime_attempted_lanes:
-        if lane and lane not in _effective_seen:
-            _effective_seen.add(lane)
-            effective_acquisition_plan.append(lane)
-    if runtime_attempted_lanes:
-        plan_semantics: str = 'effective_runtime'
-    else:
-        plan_semantics = 'prelude_only'
+
+    _sfo_dicts, runtime_attempted_lanes = _convert_sfo_list(source_family_outcomes)
+
+    required_lane_plan = list(terminality.get('required_lanes', []) or []) if terminality else []
+    effective_acquisition_plan, plan_semantics = _build_effective_plan(required_lane_plan, runtime_attempted_lanes)
     prelude_plan: list[dict] = plan_dicts
-    return {'schema_version': ACQUISITION_REPORT_SCHEMA_VERSION, 'acquisition_report_fallback_used': False, 'plan': plan_dicts, 'prelude_plan': prelude_plan, 'required_lane_plan': required_lane_plan, 'runtime_attempted_lanes': runtime_attempted_lanes, 'effective_acquisition_plan': effective_acquisition_plan, 'plan_semantics': plan_semantics, 'terminality': terminality, 'nonfeed_plan_debug': nonfeed_debug_dict, 'source_family_outcomes': _sfo_dicts or [], 'return_guard': return_guard, 'prewindup_barrier': prewindup_barrier, 'scheduler_exit': scheduler_exit, 'windup_guard_observation': windup_guard_observation, 'acquisition_profile': _effective_profile, 'feed_cap_reason': feed_cap_reason, 'nonfeed_priority_enabled': nonfeed_priority_enabled, 'nonfeed_profile_expected_lanes': nonfeed_profile_expected_lanes or [], 'public_terminal_stage': public_terminal_stage, 'public_stage_counters': public_stage_counters or {}, 'public_discovery_empty_reason': public_discovery_empty_reason, 'public_discovery_debug_reason': public_discovery_debug_reason or '', 'public_provider_selection_debug': public_provider_selection_debug or {}, 'public_bootstrap_order': public_bootstrap_order, 'public_bootstrap_prevented_discovery_timeout': public_bootstrap_prevented_discovery_timeout, 'public_bootstrap_first_fetch_attempted': public_bootstrap_first_fetch_attempted, 'keyword_seed_fallback_triggered': keyword_seed_fallback_triggered, 'ct_provider_status': ct_provider_status, 'ct_cache_used': ct_cache_used, 'ct_cache_stale': ct_cache_stale, 'ct_cache_age_s': ct_cache_age_s, 'ct_quarantine_count': ct_quarantine_count, 'ct_quarantine_samples': ct_quarantine_samples or [], 'ct_planned': ct_planned, 'ct_scheduled': ct_scheduled, 'ct_provider_selected': ct_provider_selected, 'ct_request_attempted': ct_request_attempted, 'ct_request_timeout': ct_request_timeout, 'ct_raw_count': ct_raw_count, 'ct_bridge_invoked': ct_bridge_invoked, 'ct_candidates_built': ct_candidates_built, 'ct_storage_attempted': ct_storage_attempted, 'ct_storage_accepted': ct_storage_accepted, 'ct_terminal_stage': ct_terminal_stage, 'ct_prelude_missing_but_final_attempted': ct_prelude_missing_but_final_attempted, 'ct_bridge_rejections_count': ct_bridge_rejections_count, 'ct_storage_rejected': ct_storage_rejected, 'arrow_last_flush_error': arrow_last_flush_error or '', 'arrow_batch_dropped': arrow_batch_dropped, 'arrow_flush_failure_count': arrow_flush_failure_count, 'prewindup_barrier_errors': sum(prewindup_barrier_errors.values()) if isinstance(prewindup_barrier_errors, dict) else int(prewindup_barrier_errors or 0), 'return_guard_errors': sum(return_guard_errors.values()) if isinstance(return_guard_errors, dict) else int(return_guard_errors or 0), 'wayback_unchanged_rejected': wayback_unchanged_rejected, 'nonfeed_provider_failures': nonfeed_provider_failures or [], 'quality_rejection_summary_by_family': quality_rejection_summary_by_family or {}, 'duplicate_rejection_summary_by_family': duplicate_rejection_summary_by_family or {}, 'low_information_by_family': low_information_by_family or {}, 'nonfeed_candidate_ledger_summary': nonfeed_candidate_ledger_summary or {}, 'feed_dominance_budget': _feed_budget_to_dict(feed_dominance_budget), 'nonfeed_expected_lanes': nonfeed_expected_lanes or [], 'nonfeed_missing_expected_lanes': nonfeed_missing_expected_lanes or [], 'wayback_terminal_state': wayback_terminal_state, 'passive_dns_terminal_state': passive_dns_terminal_state, 'nonfeed_surface_complete': nonfeed_surface_complete, 'doh_planned': doh_planned, 'doh_scheduled': doh_scheduled, 'doh_request_attempted': doh_request_attempted, 'doh_domains_attempted': doh_domains_attempted, 'doh_raw_count': doh_raw_count, 'doh_accepted_findings': doh_accepted_findings, 'doh_terminal_stage': doh_terminal_stage, 'doh_provider_errors': list(doh_provider_errors) if doh_provider_errors else [], 'doh_cache_used': doh_cache_used, 'pivot_seed_domains': list(pivot_seed_domains) if pivot_seed_domains else [], 'pivot_seed_ips': list(pivot_seed_ips) if pivot_seed_ips else [], 'pivot_seed_urls': list(pivot_seed_urls) if pivot_seed_urls else [], 'pivot_seed_hashes': list(pivot_seed_hashes) if pivot_seed_hashes else [], 'pivot_seed_cves': list(pivot_seed_cves) if pivot_seed_cves else [], 'seed_context_available': seed_context_available, 'seed_context_propagated': seed_context_propagated, 'seed_context_skip_reason': seed_context_skip_reason, 'seed_context_source': seed_context_source, 'lanes_unlocked_by_seed_context': lanes_unlocked_by_seed_context or [], 'nonfeed_lane_eligibility': _build_nonfeed_lane_eligibility(query=query, acquisition_profile=_effective_profile, plan=plan), 'acquisition_plan_build_failed': acquisition_plan_build_failed, 'acquisition_plan_build_error_type': acquisition_plan_build_error_type, 'acquisition_plan_build_error': acquisition_plan_build_error, 'acquisition_plan_present_for_prelude': acquisition_plan_present_for_prelude, 'acquisition_plan_lanes_for_prelude': list(acquisition_plan_lanes_for_prelude) if acquisition_plan_lanes_for_prelude else [], 'acquisition_plan_enabled_lanes_for_prelude': list(acquisition_plan_enabled_lanes_for_prelude) if acquisition_plan_enabled_lanes_for_prelude else [], 'acquisition_plan_profile_for_prelude': acquisition_plan_profile_for_prelude, 'acquisition_plan_build_error_for_prelude': acquisition_plan_build_error_for_prelude, 'nonfeed_prelude_enabled': nonfeed_prelude_enabled, 'nonfeed_prelude_expected_lanes': list(nonfeed_prelude_expected_lanes) if nonfeed_prelude_expected_lanes else [], 'nonfeed_prelude_attempted_lanes': list(nonfeed_prelude_attempted_lanes) if nonfeed_prelude_attempted_lanes else [], 'nonfeed_prelude_terminal_lanes': list(nonfeed_prelude_terminal_lanes) if nonfeed_prelude_terminal_lanes else [], 'nonfeed_prelude_missing_lanes': list(nonfeed_prelude_missing_lanes) if nonfeed_prelude_missing_lanes else [], 'nonfeed_prelude_error_by_lane': nonfeed_prelude_error_by_lane or {}, 'nonfeed_prelude_accepted_by_lane': nonfeed_prelude_accepted_by_lane or {}, 'nonfeed_prelude_duration_s': nonfeed_prelude_duration_s, 'nonfeed_prelude_feed_blocked_until_complete': nonfeed_prelude_feed_blocked_until_complete, 'circuit_breakers': circuit_breakers_state or {}}
+
+    # Build result dict with helper functions for cleaner code
+    return {
+        'schema_version': ACQUISITION_REPORT_SCHEMA_VERSION,
+        'acquisition_report_fallback_used': False,
+        'plan': plan_dicts,
+        'prelude_plan': prelude_plan,
+        'required_lane_plan': required_lane_plan,
+        'runtime_attempted_lanes': runtime_attempted_lanes,
+        'effective_acquisition_plan': effective_acquisition_plan,
+        'plan_semantics': plan_semantics,
+        'terminality': terminality,
+        'nonfeed_plan_debug': nonfeed_debug_dict,
+        'source_family_outcomes': _sfo_dicts or [],
+        'return_guard': return_guard,
+        'prewindup_barrier': prewindup_barrier,
+        'scheduler_exit': scheduler_exit,
+        'windup_guard_observation': windup_guard_observation,
+        'acquisition_profile': _effective_profile,
+        'feed_cap_reason': feed_cap_reason,
+        'nonfeed_priority_enabled': nonfeed_priority_enabled,
+        'nonfeed_profile_expected_lanes': nonfeed_profile_expected_lanes or [],
+        'public_terminal_stage': public_terminal_stage,
+        'public_stage_counters': public_stage_counters or {},
+        'public_discovery_empty_reason': public_discovery_empty_reason,
+        'public_discovery_debug_reason': public_discovery_debug_reason or '',
+        'public_provider_selection_debug': public_provider_selection_debug or {},
+        'public_bootstrap_order': public_bootstrap_order,
+        'public_bootstrap_prevented_discovery_timeout': public_bootstrap_prevented_discovery_timeout,
+        'public_bootstrap_first_fetch_attempted': public_bootstrap_first_fetch_attempted,
+        'keyword_seed_fallback_triggered': keyword_seed_fallback_triggered,
+        'ct_provider_status': ct_provider_status,
+        'ct_cache_used': ct_cache_used,
+        'ct_cache_stale': ct_cache_stale,
+        'ct_cache_age_s': ct_cache_age_s,
+        'ct_quarantine_count': ct_quarantine_count,
+        'ct_quarantine_samples': ct_quarantine_samples or [],
+        'ct_planned': ct_planned,
+        'ct_scheduled': ct_scheduled,
+        'ct_provider_selected': ct_provider_selected,
+        'ct_request_attempted': ct_request_attempted,
+        'ct_request_timeout': ct_request_timeout,
+        'ct_raw_count': ct_raw_count,
+        'ct_bridge_invoked': ct_bridge_invoked,
+        'ct_candidates_built': ct_candidates_built,
+        'ct_storage_attempted': ct_storage_attempted,
+        'ct_storage_accepted': ct_storage_accepted,
+        'ct_terminal_stage': ct_terminal_stage,
+        'ct_prelude_missing_but_final_attempted': ct_prelude_missing_but_final_attempted,
+        'ct_bridge_rejections_count': ct_bridge_rejections_count,
+        'ct_storage_rejected': ct_storage_rejected,
+        'arrow_last_flush_error': arrow_last_flush_error or '',
+        'arrow_batch_dropped': arrow_batch_dropped,
+        'arrow_flush_failure_count': arrow_flush_failure_count,
+        'prewindup_barrier_errors': _sum_errors(prewindup_barrier_errors),
+        'return_guard_errors': _sum_errors(return_guard_errors),
+        'wayback_unchanged_rejected': wayback_unchanged_rejected,
+        'nonfeed_provider_failures': nonfeed_provider_failures or [],
+        'quality_rejection_summary_by_family': quality_rejection_summary_by_family or {},
+        'duplicate_rejection_summary_by_family': duplicate_rejection_summary_by_family or {},
+        'low_information_by_family': low_information_by_family or {},
+        'nonfeed_candidate_ledger_summary': nonfeed_candidate_ledger_summary or {},
+        'feed_dominance_budget': _feed_budget_to_dict(feed_dominance_budget),
+        'nonfeed_expected_lanes': nonfeed_expected_lanes or [],
+        'nonfeed_missing_expected_lanes': nonfeed_missing_expected_lanes or [],
+        'wayback_terminal_state': wayback_terminal_state,
+        'passive_dns_terminal_state': passive_dns_terminal_state,
+        'nonfeed_surface_complete': nonfeed_surface_complete,
+        'doh_planned': doh_planned,
+        'doh_scheduled': doh_scheduled,
+        'doh_request_attempted': doh_request_attempted,
+        'doh_domains_attempted': doh_domains_attempted,
+        'doh_raw_count': doh_raw_count,
+        'doh_accepted_findings': doh_accepted_findings,
+        'doh_terminal_stage': doh_terminal_stage,
+        'doh_provider_errors': list(doh_provider_errors) if doh_provider_errors else [],
+        'doh_cache_used': doh_cache_used,
+        'pivot_seed_domains': list(pivot_seed_domains) if pivot_seed_domains else [],
+        'pivot_seed_ips': list(pivot_seed_ips) if pivot_seed_ips else [],
+        'pivot_seed_urls': list(pivot_seed_urls) if pivot_seed_urls else [],
+        'pivot_seed_hashes': list(pivot_seed_hashes) if pivot_seed_hashes else [],
+        'pivot_seed_cves': list(pivot_seed_cves) if pivot_seed_cves else [],
+        'seed_context_available': seed_context_available,
+        'seed_context_propagated': seed_context_propagated,
+        'seed_context_skip_reason': seed_context_skip_reason,
+        'seed_context_source': seed_context_source,
+        'lanes_unlocked_by_seed_context': lanes_unlocked_by_seed_context or [],
+        'nonfeed_lane_eligibility': _build_nonfeed_lane_eligibility(query=query, acquisition_profile=_effective_profile, plan=plan),
+        'acquisition_plan_build_failed': acquisition_plan_build_failed,
+        'acquisition_plan_build_error_type': acquisition_plan_build_error_type,
+        'acquisition_plan_build_error': acquisition_plan_build_error,
+        'acquisition_plan_present_for_prelude': acquisition_plan_present_for_prelude,
+        'acquisition_plan_lanes_for_prelude': list(acquisition_plan_lanes_for_prelude) if acquisition_plan_lanes_for_prelude else [],
+        'acquisition_plan_enabled_lanes_for_prelude': list(acquisition_plan_enabled_lanes_for_prelude) if acquisition_plan_enabled_lanes_for_prelude else [],
+        'acquisition_plan_profile_for_prelude': acquisition_plan_profile_for_prelude,
+        'acquisition_plan_build_error_for_prelude': acquisition_plan_build_error_for_prelude,
+        'nonfeed_prelude_enabled': nonfeed_prelude_enabled,
+        'nonfeed_prelude_expected_lanes': list(nonfeed_prelude_expected_lanes) if nonfeed_prelude_expected_lanes else [],
+        'nonfeed_prelude_attempted_lanes': list(nonfeed_prelude_attempted_lanes) if nonfeed_prelude_attempted_lanes else [],
+        'nonfeed_prelude_terminal_lanes': list(nonfeed_prelude_terminal_lanes) if nonfeed_prelude_terminal_lanes else [],
+        'nonfeed_prelude_missing_lanes': list(nonfeed_prelude_missing_lanes) if nonfeed_prelude_missing_lanes else [],
+        'nonfeed_prelude_error_by_lane': nonfeed_prelude_error_by_lane or {},
+        'nonfeed_prelude_accepted_by_lane': nonfeed_prelude_accepted_by_lane or {},
+        'nonfeed_prelude_duration_s': nonfeed_prelude_duration_s,
+        'nonfeed_prelude_feed_blocked_until_complete': nonfeed_prelude_feed_blocked_until_complete,
+        'circuit_breakers': circuit_breakers_state or {},
+    }
 
 def is_lane_enabled(snapshot: AcquisitionStrategySnapshot, lane_name: str) -> bool:
     """
@@ -1696,6 +1857,13 @@ def build_acquisition_plan(query: str, duration_s: float, aggressive_mode: bool,
 
 def _build_plan_impl(query: str, duration_s: float, aggressive_mode: bool, uma_state: str, swap_detected: bool, accepted_findings_so_far: int, branch_timeout_count: int, transport_authority_status: dict | None, stealth_phase: dict | None, acquisition_profile: str='default', feed_budget: FeedDominanceBudget=FeedDominanceBudget(), rl_lane_combo: frozenset[str] | None=None, feed_domain_seeds: tuple[str, ...]=(), synthetic_domains: tuple[str, ...]=(), bootstrap_enabled: bool=False) -> AcquisitionStrategySnapshot:
     """Internal implementation — raises on error (caller catches)."""
+    ctx = _build_acquisition_context(query, duration_s, aggressive_mode, uma_state, swap_detected, accepted_findings_so_far, feed_domain_seeds, synthetic_domains, transport_authority_status, stealth_phase, acquisition_profile)
+    plans = _build_lane_plans(ctx, rl_lane_combo)
+    nonfeed_debug = _build_nonfeed_debug(ctx, plans, acquisition_profile)
+    return AcquisitionStrategySnapshot(query=query, duration_s=duration_s, aggressive_mode=aggressive_mode, uma_state=uma_state, swap_detected=swap_detected, accepted_findings_so_far=accepted_findings_so_far, branch_timeout_count=branch_timeout_count, stealth_ready=ctx.stealth_ready, transport_degraded=ctx.transport_degraded, plans=tuple(plans), nonfeed_plan_debug=nonfeed_debug, feed_dominance_budget=feed_budget, has_domain=ctx.has_domain)
+
+def _build_acquisition_context(query: str, duration_s: float, aggressive_mode: bool, uma_state: str, swap_detected: bool, accepted_findings_so_far: int, feed_domain_seeds: tuple, synthetic_domains: tuple, transport_authority_status: dict | None, stealth_phase: dict | None, acquisition_profile: str) -> AcquisitionContext:
+    """Build AcquisitionContext from query and parameters."""
     hardware_critical = uma_state in ('critical', 'emergency')
     has_domain = _has_domain_or_ip(query)
     has_ip = bool(_DOMAIN_OR_IP_RE.search(query) and re.search('\\b\\d{1,3}\\.\\d{1,3}\\.\\d{1,3}\\.\\d{1,3}\\b', query))
@@ -1704,82 +1872,86 @@ def _build_plan_impl(query: str, duration_s: float, aggressive_mode: bool, uma_s
     has_long_duration = duration_s >= 300.0
     is_nonfeed_diagnostic = acquisition_profile == AcquisitionProfile.NONFEED_DIAGNOSTIC
     is_deep_osint_m1 = is_deep_osint_m1_profile(acquisition_profile)
-    _feed_domain_candidates: tuple[str, ...] = ()
-    _feed_domain_candidates_count = 0
-    if not has_domain and (accepted_findings_so_far > 0 or feed_domain_seeds or synthetic_domains):
-        if feed_domain_seeds:
-            _feed_domain_candidates = feed_domain_seeds[:10]
-            _feed_domain_candidates_count = len(_feed_domain_candidates)
-            has_domain = True
-        elif synthetic_domains:
-            _feed_domain_candidates = synthetic_domains[:10]
-            _feed_domain_candidates_count = len(_feed_domain_candidates)
-            has_domain = True
-        elif accepted_findings_so_far > 0:
-            _candidates = extract_domain_candidates_from_text(query)
-            if _candidates:
-                _feed_domains = tuple((c.domain for c in _candidates[:10]))
-                _feed_domain_candidates = _feed_domains
-                _feed_domain_candidates_count = len(_feed_domains)
-                has_domain = True
-    elif not has_domain:
-        _has_explicit_ioc_intent = _has_threat_indicator(query) or _has_crypto_indicator(query)
-        if _has_explicit_ioc_intent:
-            _keyword_expansion = _expand_keyword_query(query)
-            if _keyword_expansion:
-                _feed_domain_candidates = tuple(_keyword_expansion[:5])
-                _feed_domain_candidates_count = len(_feed_domain_candidates)
-                has_domain = True
-    transport_degraded = False
-    stealth_phase_num = 0
-    stealth_breaker_ready = False
-    if transport_authority_status:
-        transport_degraded = bool(transport_authority_status.get('degraded', False))
-    if stealth_phase:
-        stealth_phase_num = int(stealth_phase.get('phase', 0))
-        stealth_breaker_ready = bool(stealth_phase.get('breaker_seam_ready', False))
-    stealth_ready = stealth_breaker_ready or stealth_phase_num >= 3
+    has_domain = _resolve_domain_indicator(has_domain, query, accepted_findings_so_far, feed_domain_seeds, synthetic_domains)
+    transport_degraded, stealth_ready = _parse_transport_and_stealth(transport_authority_status, stealth_phase)
     base_conc = _base_concurrency(uma_state, swap_detected)
-    if is_nonfeed_diagnostic:
-        _feed_max = 25
-        _feed_cap_r = 'nonfeed_diagnostic_profile_capped_25'
-    else:
-        _feed_max = 50
-        _feed_cap_r = None
-    ctx = AcquisitionContext(query=query, duration_s=duration_s, aggressive_mode=aggressive_mode, uma_state=uma_state, swap_detected=swap_detected, hardware_critical=hardware_critical, has_domain=has_domain, has_url=has_url, has_crypto=has_crypto, has_long_duration=has_long_duration, is_nonfeed_diagnostic=is_nonfeed_diagnostic, transport_degraded=transport_degraded, stealth_ready=stealth_ready, base_concurrency=base_conc, is_academic=is_academic_profile(acquisition_profile), is_deep_osint_m1=is_deep_osint_m1, has_ip=has_ip, cid_present=_has_explicit_ipfs_cid(query.strip()), _feed_max_items=_feed_max, _feed_cap_reason=_feed_cap_r)
+    _feed_max = 25 if is_nonfeed_diagnostic else 50
+    _feed_cap_r = 'nonfeed_diagnostic_profile_capped_25' if is_nonfeed_diagnostic else None
+    return AcquisitionContext(query=query, duration_s=duration_s, aggressive_mode=aggressive_mode, uma_state=uma_state, swap_detected=swap_detected, hardware_critical=hardware_critical, has_domain=has_domain, has_url=has_url, has_crypto=has_crypto, has_long_duration=has_long_duration, is_nonfeed_diagnostic=is_nonfeed_diagnostic, transport_degraded=transport_degraded, stealth_ready=stealth_ready, base_concurrency=base_conc, is_academic=is_academic_profile(acquisition_profile), is_deep_osint_m1=is_deep_osint_m1, has_ip=has_ip, cid_present=_has_explicit_ipfs_cid(query.strip()), _feed_max_items=_feed_max, _feed_cap_reason=_feed_cap_r)
+
+def _resolve_domain_indicator(has_domain: bool, query: str, accepted_findings_so_far: int, feed_domain_seeds: tuple, synthetic_domains: tuple) -> bool:
+    """Resolve domain indicator from various sources."""
+    if has_domain:
+        return True
+    if feed_domain_seeds:
+        return True
+    if synthetic_domains:
+        return True
+    if accepted_findings_so_far > 0:
+        candidates = extract_domain_candidates_from_text(query)
+        if candidates:
+            return True
+    if not has_domain:
+        if _has_threat_indicator(query) or _has_crypto_indicator(query):
+            expansions = _expand_keyword_query(query)
+            if expansions:
+                return True
+    return False
+
+def _parse_transport_and_stealth(transport_authority_status: dict | None, stealth_phase: dict | None) -> tuple[bool, bool]:
+    """Parse transport and stealth status."""
+    transport_degraded = bool(transport_authority_status.get('degraded', False)) if transport_authority_status else False
+    stealth_breaker_ready = bool(stealth_phase.get('breaker_seam_ready', False)) if stealth_phase else False
+    stealth_phase_num = int(stealth_phase.get('phase', 0)) if stealth_phase else 0
+    stealth_ready = stealth_breaker_ready or stealth_phase_num >= 3
+    return transport_degraded, stealth_ready
+
+def _build_lane_plans(ctx: AcquisitionContext, rl_lane_combo: frozenset | None) -> list[AcquisitionLanePlan]:
+    """Build lane plans from context."""
     plans: list[AcquisitionLanePlan] = []
     for rule in LANE_RULES:
         enabled = rule.enabled(ctx)
-        plans.append(AcquisitionLanePlan(lane=rule.lane, enabled=enabled, reason=rule.reason(ctx) if enabled else _disabled_reason(rule.lane, ctx), max_items=rule.spec.max_items if not (rule.lane == AcquisitionLane.FEED and is_nonfeed_diagnostic) else 25, timeout_s=rule.spec.timeout_s, concurrency=rule.concurrency(ctx), risk_level=rule.spec.risk_level))
+        plans.append(AcquisitionLanePlan(lane=rule.lane, enabled=enabled, reason=rule.reason(ctx) if enabled else _disabled_reason(rule.lane, ctx), max_items=rule.spec.max_items if not (rule.lane == AcquisitionLane.FEED and ctx.is_nonfeed_diagnostic) else 25, timeout_s=rule.spec.timeout_s, concurrency=rule.concurrency(ctx), risk_level=rule.spec.risk_level))
     if rl_lane_combo is not None:
-        _rl_lanes = frozenset(rl_lane_combo)
-        _protected = frozenset([AcquisitionLane.FEED, AcquisitionLane.PUBLIC, AcquisitionLane.STEALTH, AcquisitionLane.ACADEMIC])
-        plans = [AcquisitionLanePlan(lane=p.lane, enabled=p.lane in _rl_lanes, reason=f'rl_override:{p.lane}' if p.lane in _rl_lanes else f'rl_disabled:{p.lane}', max_items=p.max_items, timeout_s=p.timeout_s, concurrency=p.concurrency, risk_level=p.risk_level) if p.lane not in _protected else p for p in plans]
+        plans = _apply_rl_override(plans, rl_lane_combo)
+    return plans
+
+def _apply_rl_override(plans: list[AcquisitionLanePlan], rl_lane_combo: frozenset) -> list[AcquisitionLanePlan]:
+    """Apply RL lane combo override."""
+    _rl_lanes = frozenset(rl_lane_combo)
+    _protected = frozenset([AcquisitionLane.FEED, AcquisitionLane.PUBLIC, AcquisitionLane.STEALTH, AcquisitionLane.ACADEMIC])
+    return [AcquisitionLanePlan(lane=p.lane, enabled=p.lane in _rl_lanes, reason=f'rl_override:{p.lane}' if p.lane in _rl_lanes else f'rl_disabled:{p.lane}', max_items=p.max_items, timeout_s=p.timeout_s, concurrency=p.concurrency, risk_level=p.risk_level) if p.lane not in _protected else p for p in plans]
+
+def _build_nonfeed_debug(ctx: AcquisitionContext, plans: list[AcquisitionLanePlan], acquisition_profile: str) -> NonfeedPlanDebug:
+    """Build NonfeedPlanDebug from plans and context."""
     _NONFEED_LANES = (AcquisitionLane.CT, AcquisitionLane.WAYBACK, AcquisitionLane.PASSIVE_DNS, AcquisitionLane.DOH, AcquisitionLane.BLOCKCHAIN, AcquisitionLane.IPFS, AcquisitionLane.OPEN_SOURCE)
-    _hardware_blocked = {AcquisitionLane.WAYBACK, AcquisitionLane.BLOCKCHAIN} if hardware_critical else set()
-    _enabled_nonfeed = []
-    _disabled_nonfeed = []
-    _disabled_reasons = []
-    _scheduled_nonfeed = []
-    _hardware_skipped = []
-    _intent = infer_mission_intent(query)
-    _target_kind = _mission_target_kind(_intent)
-    _required_lanes, _optional_lanes = _mission_lanes(_intent)
-    _intent_reason = f'intent:{_intent}'
-    for _plan in plans:
-        if _plan.lane not in _NONFEED_LANES:
+    _hardware_blocked = {AcquisitionLane.WAYBACK, AcquisitionLane.BLOCKCHAIN} if ctx.hardware_critical else set()
+    enabled_nonfeed, disabled_nonfeed, disabled_reasons, scheduled_nonfeed, hardware_skipped = _categorize_nonfeed_lanes(plans, _NONFEED_LANES, _hardware_blocked)
+    intent = infer_mission_intent(ctx.query)
+    target_kind = _mission_target_kind(intent)
+    required_lanes, optional_lanes = _mission_lanes(intent)
+    intent_reason = f'intent:{intent}'
+    is_nonfeed_diagnostic = ctx.is_nonfeed_diagnostic
+    is_deep_osint_m1 = ctx.is_deep_osint_m1
+    expected = (AcquisitionLane.CT, AcquisitionLane.WAYBACK, AcquisitionLane.PASSIVE_DNS, AcquisitionLane.PIVOT_EXECUTOR, AcquisitionLane.DOH) if is_nonfeed_diagnostic or is_deep_osint_m1 else required_lanes if intent not in (MissionIntent.UNKNOWN, MissionIntent.ORG_RECON) else ()
+    return NonfeedPlanDebug(domain_detected=ctx.has_domain, wallet_detected=ctx.has_crypto, enabled_nonfeed_lanes=tuple(enabled_nonfeed), disabled_nonfeed_lanes=tuple(disabled_nonfeed), disabled_reasons=tuple(disabled_reasons), scheduled_nonfeed_lanes=tuple(scheduled_nonfeed), hardware_skipped_lanes=tuple(hardware_skipped), nonfeed_execution_scheduled=bool(scheduled_nonfeed), nonfeed_execution_skip_reason='hardware_critical' if ctx.hardware_critical and hardware_skipped else None, acquisition_profile=acquisition_profile, feed_cap_reason=ctx._feed_cap_reason, nonfeed_priority_enabled=is_nonfeed_diagnostic, nonfeed_profile_expected_lanes=expected, pivot_executor_enabled=False, pivot_candidates_count=0, pivot_candidate_types=(), pivot_scheduled_lanes=(), pivot_skip_reason=None, pivot_errors=(), mission_intent=intent, mission_target_kind=target_kind, mission_required_lanes=required_lanes, mission_optional_lanes=optional_lanes, mission_reason=intent_reason, mission_runtime_applied=intent not in (MissionIntent.UNKNOWN, MissionIntent.ORG_RECON), mission_lane_priority=required_lanes, mission_pivot_boost_applied=intent not in (MissionIntent.UNKNOWN, MissionIntent.ORG_RECON), mission_feed_cap_reason=None)
+
+def _categorize_nonfeed_lanes(plans: list[AcquisitionLanePlan], nonfeed_lanes: tuple, hardware_blocked: set) -> tuple[list, list, list, list, list]:
+    """Categorize nonfeed lanes into enabled/disabled/scheduled/hardware_skipped."""
+    enabled_nonfeed, disabled_nonfeed, disabled_reasons, scheduled_nonfeed, hardware_skipped = [], [], [], [], []
+    for plan in plans:
+        if plan.lane not in nonfeed_lanes:
             continue
-        if _plan.enabled:
-            _enabled_nonfeed.append(_plan.lane)
-            if _plan.lane not in _hardware_blocked:
-                _scheduled_nonfeed.append(_plan.lane)
+        if plan.enabled:
+            enabled_nonfeed.append(plan.lane)
+            if plan.lane not in hardware_blocked:
+                scheduled_nonfeed.append(plan.lane)
             else:
-                _hardware_skipped.append(_plan.lane)
+                hardware_skipped.append(plan.lane)
         else:
-            _disabled_nonfeed.append(_plan.lane)
-            _disabled_reasons.append(_plan.reason)
-    _nonfeed_debug = NonfeedPlanDebug(domain_detected=ctx.has_domain, wallet_detected=ctx.has_crypto, enabled_nonfeed_lanes=tuple(_enabled_nonfeed), disabled_nonfeed_lanes=tuple(_disabled_nonfeed), disabled_reasons=tuple(_disabled_reasons), scheduled_nonfeed_lanes=tuple(_scheduled_nonfeed), hardware_skipped_lanes=tuple(_hardware_skipped), nonfeed_execution_scheduled=bool(_scheduled_nonfeed), nonfeed_execution_skip_reason='hardware_critical' if ctx.hardware_critical and _hardware_skipped else None, acquisition_profile=acquisition_profile, feed_cap_reason=ctx._feed_cap_reason, nonfeed_priority_enabled=ctx.is_nonfeed_diagnostic, nonfeed_profile_expected_lanes=(AcquisitionLane.CT, AcquisitionLane.WAYBACK, AcquisitionLane.PASSIVE_DNS, AcquisitionLane.PIVOT_EXECUTOR, AcquisitionLane.DOH) if is_nonfeed_diagnostic or is_deep_osint_m1 else _required_lanes if _intent not in (MissionIntent.UNKNOWN, MissionIntent.ORG_RECON) else (), pivot_executor_enabled=False, pivot_candidates_count=0, pivot_candidate_types=(), pivot_scheduled_lanes=(), pivot_skip_reason=None, pivot_errors=(), mission_intent=_intent, mission_target_kind=_target_kind, mission_required_lanes=_required_lanes, mission_optional_lanes=_optional_lanes, mission_reason=_intent_reason, mission_runtime_applied=_intent not in (MissionIntent.UNKNOWN, MissionIntent.ORG_RECON), mission_lane_priority=_required_lanes, mission_pivot_boost_applied=_intent not in (MissionIntent.UNKNOWN, MissionIntent.ORG_RECON), mission_feed_cap_reason=None)
-    return AcquisitionStrategySnapshot(query=query, duration_s=duration_s, aggressive_mode=aggressive_mode, uma_state=uma_state, swap_detected=swap_detected, accepted_findings_so_far=accepted_findings_so_far, branch_timeout_count=branch_timeout_count, stealth_ready=stealth_ready, transport_degraded=transport_degraded, plans=tuple(plans), nonfeed_plan_debug=_nonfeed_debug, feed_dominance_budget=feed_budget, has_domain=has_domain)
+            disabled_nonfeed.append(plan.lane)
+            disabled_reasons.append(plan.reason)
+    return enabled_nonfeed, disabled_nonfeed, disabled_reasons, scheduled_nonfeed, hardware_skipped
 
 
 
@@ -1812,7 +1984,73 @@ def _extract_crypto_from_query(query: str) -> list[str]:
     return wallets[:20]
 _NONFEED_SEED_EMPTY = NonfeedSeedContext()
 
-def build_lane_query(base_query: str, lane: str, seed_context: NonfeedSeedContext | None=None) -> str | dict:
+def _build_ct_query(base_query: str, seed_context: NonfeedSeedContext | None) -> str:
+    """Build query for CT lane."""
+    if seed_context and seed_context.domains:
+        return seed_context.domains[0]
+    domains = _DOMAIN_OR_IP_RE.findall(base_query)
+    if domains:
+        unique = list(dict.fromkeys(domains))[:5]
+        return ' '.join(unique)
+    expansions = _get_keyword_domain_expansion(base_query)
+    return expansions[0] if expansions else ''
+
+def _build_wayback_query(base_query: str, seed_context: NonfeedSeedContext | None) -> str:
+    """Build query for WAYBACK lane."""
+    if seed_context and seed_context.domains:
+        return seed_context.domains[0]
+    if seed_context and seed_context.urls:
+        return seed_context.urls[0]
+    domains = _DOMAIN_OR_IP_RE.findall(base_query)
+    if domains:
+        return domains[0]
+    expansions = _get_keyword_domain_expansion(base_query)
+    return expansions[0] if expansions else ''
+
+def _build_passive_dns_query(base_query: str, seed_context: NonfeedSeedContext | None) -> str:
+    """Build query for PASSIVE_DNS lane."""
+    return normalize_passive_dns_query(base_query, seed_context)
+
+def _build_blockchain_query(base_query: str, seed_context: NonfeedSeedContext | None) -> str | dict:
+    """Build query for BLOCKCHAIN lane."""
+    wallets = _extract_crypto_from_query(base_query)
+    if wallets:
+        return wallets[0]
+    return {'_disabled': True, 'reason': 'no_crypto_indicator'}
+
+def _build_doh_query(base_query: str, seed_context: NonfeedSeedContext | None) -> str | dict:
+    """Build query for DOH lane."""
+    if seed_context and seed_context.domains:
+        return seed_context.domains[0]
+    ips = _extract_ips_from_query(base_query)
+    domains = [d for d in _DOMAIN_OR_IP_RE.findall(base_query) if not _looks_like_ip(d)]
+    if domains:
+        return domains[0]
+    if ips:
+        return {'_disabled': True, 'reason': 'ip_seed_reverse_doh_deferred'}
+    return {'_disabled': True, 'reason': 'no_domain_seed'}
+
+def _build_public_query(base_query: str, seed_context: NonfeedSeedContext | None) -> str:
+    """Build query for PUBLIC lane."""
+    try:
+        from hledac.universal.runtime.osint_query_expander import expand_osint_query
+        variants = expand_osint_query(base_query, max_variants=1)
+        if variants:
+            return variants[0][:200]
+    except Exception:  # noqa: BLE001
+        pass
+    return base_query[:200] if len(base_query) > 200 else base_query
+
+_LANE_QUERY_BUILDERS: dict[str, tuple[Callable, bool]] = {
+    AcquisitionLane.CT: (_build_ct_query, True),
+    AcquisitionLane.WAYBACK: (_build_wayback_query, True),
+    AcquisitionLane.PASSIVE_DNS: (_build_passive_dns_query, True),
+    AcquisitionLane.BLOCKCHAIN: (_build_blockchain_query, False),
+    AcquisitionLane.DOH: (_build_doh_query, False),
+    AcquisitionLane.PUBLIC: (_build_public_query, True),
+}
+
+def build_lane_query(base_query: str, lane: str, seed_context: NonfeedSeedContext | None = None) -> str | dict:
     """
     Shape a source-specific query for an acquisition lane.
 
@@ -1840,57 +2078,11 @@ def build_lane_query(base_query: str, lane: str, seed_context: NonfeedSeedContex
         Shaped query string, or a dict with lane guidance (e.g. {"_disabled": True}).
         Returns {"_disabled": True} for BLOCKCHAIN when no crypto indicator present.
     """
-    if lane == AcquisitionLane.CT:
-        if seed_context and seed_context.domains:
-            return seed_context.domains[0]
-        domains = _DOMAIN_OR_IP_RE.findall(base_query)
-        if domains:
-            unique = list(dict.fromkeys(domains))[:5]
-            return ' '.join(unique)
-        expansions = _get_keyword_domain_expansion(base_query)
-        if expansions:
-            return expansions[0]
-        return ''
-    elif lane == AcquisitionLane.WAYBACK:
-        if seed_context and seed_context.domains:
-            return seed_context.domains[0]
-        if seed_context and seed_context.urls:
-            return seed_context.urls[0]
-        domains = _DOMAIN_OR_IP_RE.findall(base_query)
-        if domains:
-            return domains[0]
-        expansions = _get_keyword_domain_expansion(base_query)
-        if expansions:
-            return expansions[0]
-        return ''
-    elif lane == AcquisitionLane.PASSIVE_DNS:
-        return normalize_passive_dns_query(base_query, seed_context)
-    elif lane == AcquisitionLane.BLOCKCHAIN:
-        wallets = _extract_crypto_from_query(base_query)
-        if wallets:
-            return wallets[0]
-        return {'_disabled': True, 'reason': 'no_crypto_indicator'}
-    elif lane == AcquisitionLane.DOH:
-        if seed_context and seed_context.domains:
-            return seed_context.domains[0]
-        ips = _extract_ips_from_query(base_query)
-        domains = [d for d in _DOMAIN_OR_IP_RE.findall(base_query) if not _looks_like_ip(d)]
-        if domains:
-            return domains[0]
-        if ips:
-            return {'_disabled': True, 'reason': 'ip_seed_reverse_doh_deferred'}
-        return {'_disabled': True, 'reason': 'no_domain_seed'}
-    elif lane == AcquisitionLane.PUBLIC:
-        try:
-            from hledac.universal.runtime.osint_query_expander import expand_osint_query
-            variants = expand_osint_query(base_query, max_variants=1)
-            if variants:
-                return variants[0][:200]
-        except Exception:  # noqa: BLE001
-            pass
-        trimmed = base_query[:200] if len(base_query) > 200 else base_query
-        return trimmed
-    return base_query
+    builder = _LANE_QUERY_BUILDERS.get(lane)
+    if builder is None:
+        return base_query
+    query_builder, _ = builder
+    return query_builder(base_query, seed_context)
 
 def _extract_ips_from_query(query: str) -> list[str]:
     """Extract IP address strings from query."""

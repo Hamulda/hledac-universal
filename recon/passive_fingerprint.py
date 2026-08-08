@@ -278,6 +278,74 @@ def extract_ct_signals(payload_text: str | None) -> CtSignals:
         signals['all_names'].append(str(data['name']))
     return signals
 
+def _extract_title_and_generator(html: str) -> tuple[list[str], list[str]]:
+    """Extract title and generator meta tags from HTML."""
+    titles, generators = [], []
+    title_match = re.search('<title[^>]*>([^<]+)</title>', html, re.I)
+    if title_match:
+        titles.append(title_match.group(1).strip())
+    gen_match = re.search('<meta[^>]+generator[^>]+content=["\\\']([^"\\\']+)["\\\']', html, re.I)
+    if gen_match:
+        generators.append(gen_match.group(1).strip())
+    if not generators:
+        gen_match2 = re.search('<meta[^>]+content=["\\\']([^"\\\']+)["\\\'][^>]+generator', html, re.I)
+        if gen_match2:
+            generators.append(gen_match2.group(1).strip())
+    return titles, generators
+
+
+def _extract_scripts_and_domains(html: str) -> tuple[list[str], list[str]]:
+    """Extract script src URLs and domains from HTML."""
+    scripts, domains = [], []
+    script_matches = re.findall('<script[^>]+src=["\\\']([^"\\\']+)["\\\']', html, re.I)
+    for src in script_matches[:20]:
+        scripts.append(src)
+        domain_match = re.search('https?://([^/]+)', src)
+        if domain_match:
+            domains.append(domain_match.group(1))
+    return scripts, domains
+
+
+def _extract_link_domains(html: str) -> list[str]:
+    """Extract domains from link hrefs in HTML."""
+    domains = []
+    link_matches = re.findall('<link[^>]+href=["\\\']([^"\\\']+)["\\\']', html, re.I)
+    for href in link_matches[:20]:
+        domain_match = re.search('https?://([^/]+)', href)
+        if domain_match:
+            domains.append(domain_match.group(1))
+    return domains
+
+
+def _extract_favicon_signals(html: str) -> tuple[str | None, list[str]]:
+    """Extract favicon URL and any associated signals."""
+    favicon_url = None
+    signals: list[str] = []
+    favicon_match = _FAVICON_LINK_RE.search(html)
+    if not favicon_match:
+        favicon_match = _FAVICON_LINK_REV_RE.search(html)
+    if favicon_match:
+        favicon_url = favicon_match.group(1)
+        signals.append(f'favicon:{favicon_url}')
+        if favicon_url in _favicon_mmh3_cache:
+            signals.append(f'favicon_mmh3:{_favicon_mmh3_cache[favicon_url]}')
+    return favicon_url, signals
+
+
+def _extract_tracking_signals(tracking_ids: dict[str, list[str]]) -> list[str]:
+    """Convert tracking IDs to text signals."""
+    signals = []
+    for ga_id in tracking_ids.get('ua_ids', []):
+        signals.append(f'ga:{ga_id}')
+    for ga4_id in tracking_ids.get('ga4_ids', []):
+        signals.append(f'ga4:{ga4_id}')
+    for gtm_id in tracking_ids.get('gtm_ids', []):
+        signals.append(f'gtm:{gtm_id}')
+    for aw_id in tracking_ids.get('aw_ids', []):
+        signals.append(f'aw:{aw_id}')
+    return signals
+
+
 def extract_html_signals(payload_text: str | None) -> HtmlSignals:
     """
     Extract HTML content signals for service fingerprinting.
@@ -301,48 +369,26 @@ def extract_html_signals(payload_text: str | None) -> HtmlSignals:
     if not isinstance(html, str):
         return signals
     html = html[:MAX_PATTERN_BYTES]
-    title_match = re.search('<title[^>]*>([^<]+)</title>', html, re.I)
-    if title_match:
-        signals['title'].append(title_match.group(1).strip())
-    gen_match = re.search('<meta[^>]+generator[^>]+content=["\\\']([^"\\\']+)["\\\']', html, re.I)
-    if gen_match:
-        signals['generator'].append(gen_match.group(1).strip())
-    if not signals['generator']:
-        gen_match2 = re.search('<meta[^>]+content=["\\\']([^"\\\']+)["\\\'][^>]+generator', html, re.I)
-        if gen_match2:
-            signals['generator'].append(gen_match2.group(1).strip())
-    script_matches = re.findall('<script[^>]+src=["\\\']([^"\\\']+)["\\\']', html, re.I)
-    for src in script_matches[:20]:
-        signals['scripts'].append(src)
-        domain_match = re.search('https?://([^/]+)', src)
-        if domain_match:
-            signals['all_text'].append(domain_match.group(1))
-    link_matches = re.findall('<link[^>]+href=["\\\']([^"\\\']+)["\\\']', html, re.I)
-    for href in link_matches[:20]:
-        domain_match = re.search('https?://([^/]+)', href)
-        if domain_match:
-            signals['all_text'].append(domain_match.group(1))
-    # P8-007: Enhanced favicon URL extraction (two regex orderings)
-    favicon_match = _FAVICON_LINK_RE.search(html)
-    if not favicon_match:
-        favicon_match = _FAVICON_LINK_REV_RE.search(html)
-    if favicon_match:
-        favicon_url = favicon_match.group(1)
-        signals['favicon_url'] = favicon_url
-        signals['all_text'].append(f'favicon:{favicon_url}')
-        # Also cache hash if available
-        if favicon_url in _favicon_mmh3_cache:
-            signals['all_text'].append(f'favicon_mmh3:{_favicon_mmh3_cache[favicon_url]}')
-    # P8-007: Tracking ID extraction (GA, GTM, GA4, Google Ads)
+
+    # Extract title and generator
+    signals['title'], signals['generator'] = _extract_title_and_generator(html)
+
+    # Extract scripts and domains
+    signals['scripts'], script_domains = _extract_scripts_and_domains(html)
+    signals['all_text'].extend(script_domains)
+
+    # Extract link domains
+    signals['all_text'].extend(_extract_link_domains(html))
+
+    # Extract favicon
+    signals['favicon_url'], favicon_signals = _extract_favicon_signals(html)
+    signals['all_text'].extend(favicon_signals)
+
+    # Extract tracking IDs and signals
     signals['tracking_ids'] = _extract_tracking_ids(html)
-    for ga_id in signals['tracking_ids'].get('ua_ids', []):
-        signals['all_text'].append(f'ga:{ga_id}')
-    for ga4_id in signals['tracking_ids'].get('ga4_ids', []):
-        signals['all_text'].append(f'ga4:{ga4_id}')
-    for gtm_id in signals['tracking_ids'].get('gtm_ids', []):
-        signals['all_text'].append(f'gtm:{gtm_id}')
-    for aw_id in signals['tracking_ids'].get('aw_ids', []):
-        signals['all_text'].append(f'aw:{aw_id}')
+    signals['all_text'].extend(_extract_tracking_signals(signals['tracking_ids']))
+
+    # Final consolidation
     signals['all_text'].extend(signals['title'])
     signals['all_text'].extend(signals['generator'])
     return signals
@@ -1056,60 +1102,75 @@ def _extract_tech_stack_findings(findings: list[CanonicalFinding], query: str) -
         if len(candidates) >= _MAX_TECH_STACK_FINDINGS:
             break
         try:
-            payload = getattr(finding, 'payload_text', None) or ''
-            source_url = ''
-            for prov in getattr(finding, 'provenance', ()):
-                if prov.startswith('url:'):
-                    source_url = prov[4:300]
-                    break
-            text_for_scan = ''
-            try:
-                if isinstance(payload, str) and payload.strip():
-                    if payload.startswith('{') or '\n' not in payload[:20]:
-                        data = _msgspec_decode(payload)
-                        text_parts = []
-                        for key in ('title', 'snippet', 'body', 'html', 'status'):
-                            val = data.get(key, '')
-                            if val:
-                                text_parts.append(str(val)[:500])
-                        text_for_scan = ' '.join(text_parts)
-                    else:
-                        text_for_scan = payload[:2000]
-                else:
-                    text_for_scan = str(payload)[:2000]
-            except Exception:
-                text_for_scan = str(payload)[:2000]
-            url_for_scan = source_url or ''
-            for tech_name, category, evidence_kind, pattern in _TECH_STACK_PATTERNS:
-                if len(candidates) >= _MAX_TECH_STACK_FINDINGS:
-                    break
-                dedup_key = (tech_name, source_url)
-                if dedup_key in seen:
-                    continue
-                if evidence_kind in ('html_marker', 'payload_marker'):
-                    match = pattern.search(text_for_scan)
-                    if match:
-                        sample = match.group(0)[:_MAX_EVIDENCE_SAMPLE]
-                        seen.add(dedup_key)
-                        fid = f"pts_{hashlib.sha256(f'{tech_name}:{source_url}:{int(ts)}'.encode()).hexdigest()[:20]}"
-                        payload_out = {'technology': tech_name, 'category': category, 'evidence_kind': evidence_kind, 'evidence_sample': sample, 'source_finding_id': getattr(finding, 'finding_id', '') or '', 'source_url': source_url, 'confidence': 0.75}
-                        candidates.append(CanonicalFinding(finding_id=fid, query=query[:500], source_type='passive_tech_stack', confidence=0.75, ts=ts, provenance=('passive_tech_stack', tech_name, evidence_kind), payload_text=_msgspec_encode(payload_out).decode()))
-                if evidence_kind == 'url_marker' and url_for_scan:
-                    match = pattern.search(url_for_scan)
-                    if match:
-                        dedup_key = (tech_name, source_url)
-                        if dedup_key in seen:
-                            continue
-                        sample = match.group(0)[:_MAX_EVIDENCE_SAMPLE]
-                        seen.add(dedup_key)
-                        fid = f"pts_{hashlib.sha256(f'{tech_name}:{source_url}:{int(ts)}'.encode()).hexdigest()[:20]}"
-                        payload_out = {'technology': tech_name, 'category': category, 'evidence_kind': evidence_kind, 'evidence_sample': sample, 'source_finding_id': getattr(finding, 'finding_id', '') or '', 'source_url': source_url, 'confidence': 0.8}
-                        candidates.append(CanonicalFinding(finding_id=fid, query=query[:500], source_type='passive_tech_stack', confidence=0.8, ts=ts, provenance=('passive_tech_stack', tech_name, evidence_kind), payload_text=_msgspec_encode(payload_out).decode()))
+            source_url = _extract_source_url(finding)
+            text_for_scan = _extract_text_from_payload(finding.payload_text)
+            candidates.extend(_scan_patterns_for_technology(
+                finding, source_url, text_for_scan, seen, candidates, ts, query,
+            ))
         except Exception:
             continue
-    loop_elapsed = time.monotonic() - loop_start
-    _GLOBAL_STATS['extract_tech_stack_loop_ms'] = loop_elapsed * 1000
+    _GLOBAL_STATS['extract_tech_stack_loop_ms'] = (time.monotonic() - loop_start) * 1000
     return candidates[:_MAX_TECH_STACK_FINDINGS]
+
+
+def _extract_source_url(finding: CanonicalFinding) -> str:
+    """Extract source URL from finding provenance."""
+    for prov in getattr(finding, 'provenance', ()):
+        if prov.startswith('url:'):
+            return prov[4:300]
+    return ''
+
+
+def _extract_text_from_payload(payload) -> str:
+    """Extract text from payload for scanning."""
+    payload = getattr(payload, 'payload_text', None) or ''
+    try:
+        if isinstance(payload, str) and payload.strip():
+            if payload.startswith('{') or '\n' not in payload[:20]:
+                data = _msgspec_decode(payload)
+                text_parts = [str(data.get(key, ''))[:500] for key in ('title', 'snippet', 'body', 'html', 'status') if data.get(key)]
+                return ' '.join(text_parts)
+            return payload[:2000]
+        return str(payload)[:2000]
+    except Exception:
+        return str(payload)[:2000]
+
+
+def _scan_patterns_for_technology(finding, source_url: str, text_for_scan: str, seen: set, candidates: list, ts: float, query: str) -> list:
+    """Scan text against tech stack patterns."""
+    from hledac.universal.knowledge.duckdb_store import CanonicalFinding
+    results: list[CanonicalFinding] = []
+    url_for_scan = source_url or ''
+    for tech_name, category, evidence_kind, pattern in _TECH_STACK_PATTERNS:
+        if len(results) >= _MAX_TECH_STACK_FINDINGS:
+            break
+        dedup_key = (tech_name, source_url)
+        if dedup_key in seen:
+            continue
+        if evidence_kind in ('html_marker', 'payload_marker'):
+            result = _try_match_and_create(finding, source_url, text_for_scan, dedup_key, seen, tech_name, category, evidence_kind, pattern, 0.75, ts, query)
+            if result:
+                results.append(result)
+        elif evidence_kind == 'url_marker' and url_for_scan:
+            result = _try_match_and_create(finding, source_url, url_for_scan, dedup_key, seen, tech_name, category, evidence_kind, pattern, 0.8, ts, query)
+            if result:
+                results.append(result)
+    return results
+
+
+def _try_match_and_create(finding, source_url: str, text: str, dedup_key: tuple, seen: set, tech_name: str, category: str, evidence_kind: str, pattern: re.Pattern, confidence: float, ts: float, query: str):
+    """Try to match pattern and create finding if successful."""
+    from hledac.universal.knowledge.duckdb_store import CanonicalFinding
+    match = pattern.search(text)
+    if not match:
+        return None
+    if dedup_key in seen:
+        return None
+    sample = match.group(0)[:_MAX_EVIDENCE_SAMPLE]
+    seen.add(dedup_key)
+    fid = f"pts_{hashlib.sha256(f'{tech_name}:{source_url}:{int(ts)}'.encode()).hexdigest()[:20]}"
+    payload_out = {'technology': tech_name, 'category': category, 'evidence_kind': evidence_kind, 'evidence_sample': sample, 'source_finding_id': getattr(finding, 'finding_id', '') or '', 'source_url': source_url, 'confidence': confidence}
+    return CanonicalFinding(finding_id=fid, query=query[:500], source_type='passive_tech_stack', confidence=confidence, ts=ts, provenance=('passive_tech_stack', tech_name, evidence_kind), payload_text=_msgspec_encode(payload_out).decode())
 
 async def run_passive_tech_stack_sidecar(findings: list[CanonicalFinding], store: Any, query: str) -> int:
     """

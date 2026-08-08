@@ -1555,50 +1555,87 @@ class ImageAnalyzer:
             logger.error(f'Image analysis error: {e}')
             return self._basic_image_analysis(file_path)
 
+    # EXIF tag → handler dispatch table (reduces 15+ elif branches to O(1) lookup)
+    _EXIF_TAG_HANDLERS: dict[str, callable] = {}
+
+    def _init_exif_handlers(self) -> None:
+        """Initialize EXIF tag handlers lazily (avoids circular import issues)."""
+        if ImageAnalyzer._EXIF_TAG_HANDLERS:
+            return  # Already initialized
+
+        def _make_str_handler(attr: str) -> callable:
+            return lambda data, val: setattr(data, attr, val)
+
+        def _make_datetime_handler(attr: str) -> callable:
+            return lambda data, val: setattr(data, attr, self._parse_exif_datetime(val))
+
+        def _make_int_handler(attr: str) -> callable:
+            return lambda data, val: setattr(data, attr, int(val) if val else None)
+
+        def _make_bool_bit_handler(attr: str, bit: int = 0) -> callable:
+            return lambda data, val: setattr(data, attr, bool(val & bit) if val else None)
+
+        def _make_float_handler(attr: str, num_type: type = float) -> callable:
+            return lambda data, val: setattr(data, attr, float(val) if isinstance(val, (int, float, IFDRational)) else None)
+
+        def _handle_aperture(data, val):
+            data.aperture = f'f/{val}'
+
+        def _handle_shutter_speed(data, val):
+            if isinstance(val, (int, float)):
+                data.shutter_speed = f'1/{1 / val:.0f}s' if val < 1 else f'{val}s'
+
+        def _handle_iso(data, val):
+            data.iso_speed = val[0] if isinstance(val, tuple) else val
+
+        def _handle_gps(data, val):
+            data.gps_location = self._extract_gps(self._current_exif_for_gps)
+
+        ImageAnalyzer._EXIF_TAG_HANDLERS = {
+            'Make': _make_str_handler('camera_make'),
+            'Model': _make_str_handler('camera_model'),
+            'Software': _make_str_handler('software'),
+            'DateTimeOriginal': _make_datetime_handler('date_time_original'),
+            'DateTimeDigitized': _make_datetime_handler('date_time_digitized'),
+            'ExifImageWidth': _make_int_handler('image_width'),
+            'ExifImageHeight': _make_int_handler('image_height'),
+            'Orientation': _make_str_handler('orientation'),  # stored as-is
+            'Flash': _make_bool_bit_handler('flash', 1),
+            'FocalLength': _make_float_handler('focal_length'),
+            'ISOSpeedRatings': _handle_iso,
+            'FNumber': _handle_aperture,
+            'ExposureTime': _handle_shutter_speed,
+            'GPSInfo': _handle_gps,
+        }
+
     def _extract_exif(self, img: Image.Image) -> EXIFData | None:
-        """Extract EXIF data from image."""
+        """Extract EXIF data from image using dictionary dispatch."""
         try:
             exif = img._getexif()
             if not exif:
                 return None
+
+            # Initialize handlers on first use
+            self._init_exif_handlers()
+
             data = EXIFData()
             raw_exif = {}
+            # Store exif reference for GPS handler (needs full dict)
+            self._current_exif_for_gps = exif
+
             for tag_id, value in exif.items():
                 tag = ExifTags.TAGS.get(tag_id, tag_id)
                 raw_exif[tag] = value
-                if tag == 'Make':
-                    data.camera_make = value
-                elif tag == 'Model':
-                    data.camera_model = value
-                elif tag == 'Software':
-                    data.software = value
-                elif tag == 'DateTimeOriginal':
-                    data.date_time_original = self._parse_exif_datetime(value)
-                elif tag == 'DateTimeDigitized':
-                    data.date_time_digitized = self._parse_exif_datetime(value)
-                elif tag == 'ExifImageWidth':
-                    data.image_width = value
-                elif tag == 'ExifImageHeight':
-                    data.image_height = value
-                elif tag == 'Orientation':
-                    data.orientation = value
-                elif tag == 'Flash':
-                    data.flash = bool(value & 1) if value else None
-                elif tag == 'FocalLength':
-                    data.focal_length = float(value) if isinstance(value, (int, float, IFDRational)) else None
-                elif tag == 'ISOSpeedRatings':
-                    data.iso_speed = value[0] if isinstance(value, tuple) else value
-                elif tag == 'FNumber':
-                    data.aperture = f'f/{value}'
-                elif tag == 'ExposureTime':
-                    if isinstance(value, (int, float)):
-                        data.shutter_speed = f'1/{1 / value:.0f}s' if value < 1 else f'{value}s'
-                elif tag == 'GPSInfo':
-                    data.gps_location = self._extract_gps(exif)
+                handler = ImageAnalyzer._EXIF_TAG_HANDLERS.get(tag)
+                if handler:
+                    handler(data, value)
+
+            self._current_exif_for_gps = None  # Clear reference
             data.raw_exif = raw_exif
             return data
         except Exception as e:
             logger.error(f'EXIF extraction error: {e}')
+            self._current_exif_for_gps = None
             return None
 
     def _parse_exif_datetime(self, value) -> datetime | None:

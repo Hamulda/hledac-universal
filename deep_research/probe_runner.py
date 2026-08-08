@@ -16,6 +16,108 @@ LOCAL_SEARCH_CACHE_THRESHOLD: float = 0.7
 _DHT_LGS_CACHE: dict[int, LocalGraphStore | None] = {}
 MAX_PROBE_DURATION_S: float = 120.0
 MAX_CRAWL_DEPTH: int = 3
+
+async def _try_cache_lookup(
+    query: str,
+    local_seam: LocalSearchSeam,
+    store: Any,
+) -> tuple[dict, bool]:
+    """Try local search cache first. Returns (result, cache_hit)."""
+    result = {'cache_hit': False, 'findings_ingested': 0}
+    try:
+        local_results = local_seam.search(query, top_k=5)
+        if local_results.results and local_results.results[0].score > LOCAL_SEARCH_CACHE_THRESHOLD:
+            cache_findings = _convert_search_results_to_findings(local_results.results, query)
+            result['cache_hit'] = True
+            result['findings_ingested'] = len(cache_findings)
+            if cache_findings and store is not None:
+                try:
+                    ingest_results = await store.async_ingest_findings_batch(cache_findings)
+                    accepted = sum(1 for r in ingest_results if r.accepted)
+                    result['findings_ingested'] = accepted
+                except Exception as e:
+                    logger.warning(f'[DEEP_PROBE] cache hit ingest failed: {e}')
+    except Exception as e:
+        logger.debug(f'[DEEP_PROBE] local search failed: {e}')
+    return result, result['cache_hit']
+
+async def _run_parallel_probes(scanner: Any, domain: str, store: Any, max_buckets: int, query: str, local_seam: Any) -> list:
+    """Run all probe tasks in parallel."""
+    async def _run_discovery():
+        if scanner is None:
+            return ('discovery', 0, [], [])
+        try:
+            urls = await scanner.scan(domain)
+            discovery_findings = _make_discovery_findings(urls, query)
+            return ('discovery', len(urls), discovery_findings, urls)
+        except Exception as e:
+            logger.debug(f'Discovery scan failed: {e}')
+            return ('discovery', 0, [], [])
+
+    async def _run_bucket_scan():
+        if scanner is None:
+            return ('bucket', 0, [])
+        try:
+            _, bucket_findings = await scanner.scan_s3_buckets(domain, store=store, max_buckets=max_buckets)
+            if bucket_findings:
+                _index_probe_results_to_seam(local_seam, bucket_findings, query)
+            return ('bucket', len(bucket_findings), bucket_findings)
+        except Exception as e:
+            logger.debug(f'Bucket scan failed: {e}')
+            return ('bucket', 0, [])
+
+    async def _run_ipfs():
+        if scan_ipfs is None:
+            return ('ipfs', 0, [])
+        try:
+            ipfs_findings = await scan_ipfs(query, store=store)
+            if ipfs_findings:
+                _index_probe_results_to_seam(local_seam, ipfs_findings, query)
+            return ('ipfs', len(ipfs_findings), ipfs_findings)
+        except Exception as e:
+            logger.debug(f'IPFS scan failed: {e}')
+            return ('ipfs', 0, [])
+
+    async def _run_dht():
+        try:
+            dht_findings = await _scan_dht(query)
+            if dht_findings:
+                _index_probe_results_to_seam(local_seam, dht_findings, query)
+            return ('dht', len(dht_findings), dht_findings)
+        except Exception as e:
+            logger.debug(f'DHT scan failed: {e}')
+            return ('dht', 0, [])
+
+    return await parallel_ok(
+        _run_discovery(), _run_bucket_scan(), _run_ipfs(), _run_dht(),
+        label='probe_runner:208'
+    )
+
+def _merge_probe_results(
+    all_results: list,
+    all_findings: list[CanonicalFinding],
+    result: dict,
+    local_seam: LocalSearchSeam,
+    query: str,
+) -> dict:
+    """Merge probe results into result dict."""
+    for res in all_results:
+        if isinstance(res, tuple):
+            tag, count, findings = res[0], res[1], res[2]
+            if tag == 'discovery':
+                result['urls_discovered'] = count
+                all_findings.extend(findings)
+                if len(res) > 3 and res[3]:
+                    _index_urls_to_seam(local_seam, res[3], query)
+            elif tag == 'bucket':
+                result['buckets_scanned'] = count
+                all_findings.extend(findings)
+            elif tag == 'ipfs':
+                result['ipfs_results'] = count
+                all_findings.extend(findings)
+            elif tag == 'dht':
+                result['dht_peers'] = count
+    return result
 MAX_BUCKET_SCAN: int = 50
 IPFS_RESULT_CAP: int = 100
 
@@ -63,6 +165,14 @@ async def run_deep_probe(query: str, store, timeout_s: float=MAX_PROBE_DURATION_
         except Exception:
             logger.debug('[DEEP_PROBE] DeepProbeScanner init failed')
     local_seam = LocalSearchSeam()
+
+    # Try cache lookup first
+    cache_result, cache_hit = await _try_cache_lookup(query, local_seam, store)
+    if cache_hit:
+        result.update(cache_result)
+        result['probe_duration_s'] = round(time.monotonic() - start_time, 2)
+        return result
+
     try:
         local_results = local_seam.search(query, top_k=5)
         if local_results.results and local_results.results[0].score > LOCAL_SEARCH_CACHE_THRESHOLD:
@@ -87,76 +197,11 @@ async def run_deep_probe(query: str, store, timeout_s: float=MAX_PROBE_DURATION_
         if not domain:
             domain = query.strip().lower().replace(' ', '_')[:50]
 
-        async def _run_discovery():
-            if scanner is None:
-                return ('discovery', 0, [], [])
-            try:
-                urls = await scanner.scan(domain)
-                discovery_findings = _make_discovery_findings(urls, query)
-                return ('discovery', len(urls), discovery_findings, urls)
-            except Exception as e:
-                logger.debug(f'Discovery scan failed: {e}')
-                return ('discovery', 0, [], [])
-
-        async def _run_bucket_scan():
-            if scanner is None:
-                return ('bucket', 0, [])
-            try:
-                _, bucket_findings = await scanner.scan_s3_buckets(domain, store=store, max_buckets=max_buckets)
-                if bucket_findings:
-                    _index_probe_results_to_seam(local_seam, bucket_findings, query)
-                return ('bucket', len(bucket_findings), bucket_findings)
-            except Exception as e:
-                logger.debug(f'Bucket scan failed: {e}')
-                return ('bucket', 0, [])
-
-        async def _run_ipfs():
-            if scan_ipfs is None:
-                return ('ipfs', 0, [])
-            try:
-                ipfs_findings = await scan_ipfs(query, store=store)
-                if ipfs_findings:
-                    _index_probe_results_to_seam(local_seam, ipfs_findings, query)
-                return ('ipfs', len(ipfs_findings), ipfs_findings)
-            except Exception as e:
-                logger.debug(f'IPFS scan failed: {e}')
-                return ('ipfs', 0, [])
-
-        async def _run_dht():
-            """F214Q: Find peers for query via real BitTorrent DHT."""
-            try:
-                dht_findings = await _scan_dht(query)
-                if dht_findings:
-                    _index_probe_results_to_seam(local_seam, dht_findings, query)
-                return ('dht', len(dht_findings), dht_findings)
-            except Exception as e:
-                logger.debug(f'DHT scan failed: {e}')
-                return ('dht', 0, [])
-        all_results = await parallel_ok(_run_discovery(), _run_bucket_scan(), _run_ipfs(), _run_dht(), label='probe_runner:208')
+        all_results = await _run_parallel_probes(scanner, domain, store, max_buckets, query, local_seam)
         elapsed = time.monotonic() - start_time
         if elapsed > timeout_s:
             logger.debug(f'Probe exceeded timeout: {elapsed:.1f}s > {timeout_s}s')
-        for res in all_results:
-            if isinstance(res, tuple):
-                tag = res[0]
-                count = res[1]
-                findings = res[2]
-                if tag == 'discovery':
-                    result['urls_discovered'] = count
-                    all_findings.extend(findings)
-                    if len(res) > 3 and res[3]:
-                        _index_urls_to_seam(local_seam, res[3], query)
-                elif tag == 'bucket':
-                    result['buckets_scanned'] = count
-                    all_findings.extend(findings)
-                elif tag == 'ipfs':
-                    result['ipfs_results'] = count
-                    all_findings.extend(findings)
-                elif tag == 'dht':
-                    result['dht_peers'] = count
-            elif isinstance(res, Exception):
-                logger.debug(f'Probe task raised exception: {res}')
-                result['errors'].append(str(res))
+        result = _merge_probe_results(all_results, all_findings, result, local_seam, query)
         if all_findings and store is not None:
             try:
                 ingest_results = await store.async_ingest_findings_batch(all_findings)

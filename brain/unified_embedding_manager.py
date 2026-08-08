@@ -156,79 +156,66 @@ class UnifiedEmbeddingManager:
                 self._mlx_manager = None
                 self._is_loaded = False
 
-    def embed(self, texts: list[str]) -> list[list[float]]:
-        """
-        Embed multiple texts (FastEmbed-compatible API).
-
-        Args:
-            texts: List of text strings.
-
-        Returns:
-            List of embedding vectors (each dim=self._dim).
-        """
-        if not texts:
-            return []
-        cache = self._embed_cache
-        cached_results: list[tuple[int, list[float]]] = []
-        uncached: list[tuple[int, str]] = []
+    def _cache_lookup(self, texts: list[str]) -> tuple[list[tuple[int, list[float]]], list[tuple[int, str]]]:
+        """Split texts into cached and uncached based on hash lookup."""
+        cached_results, uncached = [], []
         for i, text in enumerate(texts):
-            # FLOW-02: M1 8GB OOM protection — truncate before embed.
-            # Use truncated for BOTH cache key and encode input so they stay in sync.
             truncated = text[:MAX_TEXT_LENGTH] if len(text) > MAX_TEXT_LENGTH else text
             key = hashlib.sha256(truncated.encode()).hexdigest()[:32]
-            cached = cache.get(key)
+            cached = self._embed_cache.get(key)
             if cached is not None:
                 cached_results.append((i, cached))
             else:
-                uncached.append((i, truncated))  # truncated, not original
+                uncached.append((i, truncated))
+        return cached_results, uncached
+
+    def _fill_results_from_cache(self, texts: list[str], cached: list[tuple[int, list[float]]]) -> list[list[float]]:
+        """Build result array and populate with cached embeddings."""
+        results = [[0.0] * self._dim for _ in texts]
+        for idx, emb in cached:
+            results[idx] = emb
+        return results
+
+    def _parallel_encode(self, texts: list[str]) -> np.ndarray:
+        """Execute parallel encoding with M1 optimization."""
+        from hledac.universal.utils.domain_executors import get_or_create
+        n = len(texts)
+        if n > 4:
+            mid = (n + 1) // 2
+            chunk_a, chunk_b = texts[:mid], texts[mid:]
+            pool = get_or_create("embed")
+            fut_a = pool.submit(self._mlx_manager.encode, chunk_a, self._dim, True)
+            fut_b = pool.submit(self._mlx_manager.encode, chunk_b, self._dim, True)
+            chunks = [f.result(timeout=30) for f in concurrent.futures.as_completed([fut_a, fut_b], timeout=30)]
+            return np.concatenate(chunks, axis=0) if chunks else np.zeros((0, self._dim), dtype=np.float32)
+        pool = get_or_create("embed")
+        fut = pool.submit(self._mlx_manager.encode, texts, self._dim, True)
+        return fut.result(timeout=30)
+
+    def embed(self, texts: list[str]) -> list[list[float]]:
+        """Embed multiple texts (FastEmbed-compatible API)."""
+        if not texts:
+            return []
+        cached, uncached = self._cache_lookup(texts)
         if not uncached:
-            results = [[0.0] * self._dim for _ in texts]
-            for idx, emb in cached_results:
-                results[idx] = emb
-            return results
+            return self._fill_results_from_cache(texts, cached)
         self._ensure_loaded()
         if self._mlx_manager is None:
-            results = [[0.0] * self._dim for _ in texts]
-            for idx, emb in cached_results:
-                results[idx] = emb
-            return results
+            return self._fill_results_from_cache(texts, cached)
         try:
-            from hledac.universal.utils.domain_executors import get_or_create
             uncached_texts = [t for _, t in uncached]
-            n = len(uncached_texts)
-            if n > 4:
-                mid = (n + 1) // 2
-                chunk_a = uncached_texts[:mid]
-                chunk_b = uncached_texts[mid:]
-                # M1-OPT: Use shared 'embed' domain executor (1 worker, CPU-bound MLX encode)
-                pool = get_or_create("embed")
-                fut_a = pool.submit(self._mlx_manager.encode, chunk_a, self._dim, True)
-                fut_b = pool.submit(self._mlx_manager.encode, chunk_b, self._dim, True)
-                chunks: list[np.ndarray] = []
-                for fut in concurrent.futures.as_completed([fut_a, fut_b], timeout=30):
-                    chunks.append(fut.result(timeout=0))
-                arr = np.concatenate(chunks, axis=0) if chunks else np.zeros((0, self._dim), dtype=np.float32)
-            else:
-                pool = get_or_create("embed")
-                fut = pool.submit(self._mlx_manager.encode, uncached_texts, self._dim, True)
-                arr = fut.result(timeout=30)
-            results = [[0.0] * self._dim for _ in texts]
-            for idx, emb in cached_results:
-                results[idx] = emb
+            arr = self._parallel_encode(uncached_texts)
+            results = self._fill_results_from_cache(texts, cached)
             for j, (i, text) in enumerate(uncached):
                 emb = arr[j].tolist()
                 results[i] = emb
-                # FLOW-02: Use truncated text for cache key (matches lookup key above)
                 truncated = text[:MAX_TEXT_LENGTH] if len(text) > MAX_TEXT_LENGTH else text
                 key = hashlib.sha256(truncated.encode()).hexdigest()[:32]
-                cache[key] = emb
+                self._embed_cache[key] = emb
             return results
         except Exception as e:
             logger.warning(f'[UnifiedEmbedder] embed failed: {e}')
-            results = [[0.0] * self._dim for _ in texts]
-            for idx, emb in cached_results:
-                results[idx] = emb
-            return results
+            return self._fill_results_from_cache(texts, cached)
 
     def embed_one(self, text: str) -> list[float]:
         """
@@ -242,6 +229,28 @@ class UnifiedEmbeddingManager:
         """
         results = self.embed([text])
         return results[0] if results else [0.0] * self._dim
+
+    def _encode_chunk_sync(self, chunk_texts: list[str]) -> list[list[float]]:
+        """Encode a single chunk synchronously."""
+        mgr = self._mlx_manager
+        if mgr is None:
+            return [[0.0] * self._dim for _ in chunk_texts]
+        arr = mgr.encode(chunk_texts, truncate_dim=self._dim, normalize=True)
+        if arr.shape[0] != len(chunk_texts) or (len(arr.shape) > 1 and arr.shape[1] != self._dim):
+            logger.warning(f'[UnifiedEmbedder] encode shape mismatch: {arr.shape}')
+            return [[0.0] * self._dim for _ in chunk_texts]
+        return [arr[i].tolist() for i in range(arr.shape[0])]
+
+    def _split_into_chunks(self, texts: list[str]) -> tuple[list[list[str]], str]:
+        """Split texts into chunks based on size and return context label."""
+        n = len(texts)
+        if n <= 4:
+            return [texts], "embed_single"
+        elif n <= 16:
+            mid = (n + 1) // 2
+            return [texts[:mid], texts[mid:]], "embed_two_chunk"
+        chunk_size = (n + 3) // 4
+        return [texts[i:i + chunk_size] for i in range(0, n, chunk_size)], "embed_multi_chunk"
 
     async def embed_async(self, texts: list[str]) -> list[list[float]]:
         """
@@ -261,46 +270,18 @@ class UnifiedEmbeddingManager:
         if self._mlx_manager is None:
             return [[0.0] * self._dim for _ in texts]
         try:
-            n = len(texts)
-
-            def encode_chunk(chunk_texts: list[str]) -> list[list[float]]:
-                """Encode a single chunk — runs in thread pool."""
-                mgr = self._mlx_manager
-                if mgr is None:
-                    return [[0.0] * self._dim for _ in chunk_texts]
-                arr = mgr.encode(chunk_texts, truncate_dim=self._dim, normalize=True)
-                if arr.shape[0] != len(chunk_texts) or (len(arr.shape) > 1 and arr.shape[1] != self._dim):
-                    logger.warning(f'[UnifiedEmbedder] encode shape mismatch: {arr.shape}')
-                    return [[0.0] * self._dim for _ in chunk_texts]
-                return [arr[i].tolist() for i in range(arr.shape[0])]
+            chunks, ctx = self._split_into_chunks(texts)
             from hledac.universal.utils.async_helpers import parallel
-            if n <= 4:
-                embeddings = await asyncio.to_thread(encode_chunk, texts)
-                return [list(e) for e in embeddings]
-            elif n <= 16:
-                mid = (n + 1) // 2
-                chunk_a = texts[:mid]
-                chunk_b = texts[mid:]
-                p_result = await parallel(
-                    [
-                        asyncio.to_thread(encode_chunk, chunk_a),
-                        asyncio.to_thread(encode_chunk, chunk_b),
-                    ],
-                    policy="raise",
-                    ctx="embed_two_chunk",
-                )
-                return list(p_result.ok[0]) + list(p_result.ok[1])
-            else:
-                chunk_size = (n + 3) // 4
-                chunks = [texts[i:i + chunk_size] for i in range(0, n, chunk_size)]
-                p_result = await parallel(
-                    [asyncio.to_thread(encode_chunk, chunk) for chunk in chunks],
-                    policy="raise",
-                    ctx="embed_multi_chunk",
-                )
-                embeddings: list[list[float]] = []
-                for result in p_result.ok:
-                    embeddings.extend(result)
+            if len(chunks) == 1:
+                return await asyncio.to_thread(self._encode_chunk_sync, texts)
+            p_result = await parallel(
+                [asyncio.to_thread(self._encode_chunk_sync, chunk) for chunk in chunks],
+                policy="raise",
+                ctx=ctx,
+            )
+            embeddings: list[list[float]] = []
+            for result in p_result.ok:
+                embeddings.extend(result)
                 return embeddings
         except Exception as e:
             logger.warning(f'[UnifiedEmbedder] embed_async failed: {e}')

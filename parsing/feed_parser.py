@@ -113,6 +113,73 @@ def _is_xml_dangerous(text: str) -> bool:
     return bool(_XML_ENTITY_RE.search(text))
 
 
+def _skip_doctype_block(raw: str, i: int) -> int:
+    """Skip DOCTYPE block including internal subsets.
+
+    Returns new position after the closing '>'.
+    """
+    # raw[i] == "<", raw[i:i+9].lower() == "<!doctype"
+    i += 9
+    n = len(raw)
+    depth = 0
+    in_quote = False
+    quote_char: str | None = None
+
+    while i < n:
+        ch = raw[i]
+        if not in_quote:
+            if ch in ('"', "'"):
+                in_quote = True
+                quote_char = ch
+            elif ch == "[":
+                depth += 1
+            elif ch == "]":
+                if depth > 0:
+                    depth -= 1
+                    if depth == 0 and i + 1 < n and raw[i + 1] == ">":
+                        i += 2
+                        break
+            elif ch == ">" and depth == 0:
+                i += 1
+                break
+        else:
+            if ch == quote_char:
+                in_quote = False
+                quote_char = None
+        i += 1
+
+    return i
+
+
+def _skip_entity_block(raw: str, i: int) -> int:
+    """Skip ENTITY block.
+
+    Returns new position after the closing '>'.
+    """
+    # raw[i] == "<", raw[i:i+9].lower() == "<!entity"
+    i += 9
+    n = len(raw)
+    in_quote = False
+    quote_char: str | None = None
+
+    while i < n:
+        ch = raw[i]
+        if not in_quote:
+            if ch in ('"', "'"):
+                in_quote = True
+                quote_char = ch
+            elif ch == ">":
+                i += 1
+                break
+        else:
+            if ch == quote_char:
+                in_quote = False
+                quote_char = None
+        i += 1
+
+    return i
+
+
 def _sanitize_xml(raw: str) -> str:
     """Remove DOCTYPE/ENTITY declarations from XML text.
 
@@ -141,59 +208,15 @@ def _sanitize_xml(raw: str) -> str:
     result: list[str] = []
     i = 0
     n = len(raw)
+    prefix_len_doctype = 9
+    prefix_len_entity = 9
 
     while i < n:
         c = raw[i]
-
-        # Handle <!DOCTYPE ...>
-        if c == "<" and raw[i:i+9].lower() == "<!doctype":
-            i += 9
-            depth = 0
-            in_quote = False
-            quote_char: str | None = None
-            while i < n:
-                ch = raw[i]
-                if not in_quote:
-                    if ch in ('"', "'"):
-                        in_quote = True
-                        quote_char = ch
-                    elif ch == "[":
-                        depth += 1
-                    elif ch == "]":
-                        if depth > 0:
-                            depth -= 1
-                            if depth == 0 and i + 1 < n and raw[i + 1] == ">":
-                                i += 2
-                                break
-                    elif ch == ">" and depth == 0:
-                        i += 1
-                        break
-                else:
-                    if ch == quote_char:
-                        in_quote = False
-                        quote_char = None
-                i += 1
-
-        # Handle <!ENTITY ...>
-        elif c == "<" and raw[i:i+9].lower() == "<!entity":
-            i += 9
-            in_quote = False
-            quote_char = None
-            while i < n:
-                ch = raw[i]
-                if not in_quote:
-                    if ch in ('"', "'"):
-                        in_quote = True
-                        quote_char = ch
-                    elif ch == ">" and not in_quote:
-                        i += 1
-                        break
-                else:
-                    if ch == quote_char:
-                        in_quote = False
-                        quote_char = None
-                i += 1
-
+        if c == "<" and raw[i:i+prefix_len_doctype].lower() == "<!doctype":
+            i = _skip_doctype_block(raw, i)
+        elif c == "<" and raw[i:i+prefix_len_entity].lower() == "<!entity":
+            i = _skip_entity_block(raw, i)
         else:
             result.append(c)
             i += 1
@@ -350,9 +373,32 @@ def _selectolax_atom_feed(text: str, feed_url: str) -> list[FeedEntry]:
 # HTMLParser fallback (stdlib, no selectolax needed)
 # ---------------------------------------------------------------------------
 
+# Tag → field extractor for RSS channel metadata
+_RSS_CHANNEL_HANDLERS: dict[str, callable] = {}
+
+
+def _init_rss_channel_handlers() -> None:
+    """Initialize RSS channel tag handlers lazily."""
+    if _RSS_CHANNEL_HANDLERS:
+        return
+
+    def make_text_handler(field_name: str) -> callable:
+        def handler(state: dict, tag: str, elem) -> None:
+            if not state.get(field_name):
+                state[field_name] = (elem.text or "").strip()
+        return handler
+
+    _RSS_CHANNEL_HANDLERS.update({
+        "title": make_text_handler("channel_title"),
+        "language": make_text_handler("channel_language"),
+    })
+
+
 def _stdlib_rss_feed(text: str, feed_url: str = "") -> list[FeedEntry]:
-    """Parse RSS 2.0 using stdlib html.parser — fallback when selectolax unavailable."""
+    """Parse RSS 2.0 using stdlib xml.etree.ElementTree — fallback when selectolax unavailable."""
     import xml.etree.ElementTree as ET
+
+    _init_rss_channel_handlers()
 
     try:
         root = ET.fromstring(text)
@@ -370,56 +416,139 @@ def _stdlib_rss_feed(text: str, feed_url: str = "") -> list[FeedEntry]:
     if channel is None:
         return []
 
+    # Extract channel metadata using dispatch
+    channel_state: dict[str, str] = {"channel_title": "", "channel_language": ""}
     entries: list[FeedEntry] = []
-    channel_title = ""
-    channel_language = ""
 
     for ch in channel:
         ln = ch.tag.split("}")[-1] if "}" in ch.tag else ch.tag
-        if ln == "title" and not channel_title:
-            channel_title = (ch.text or "").strip()
-        elif ln == "language" and not channel_language:
-            channel_language = (ch.text or "").strip()
+        handler = _RSS_CHANNEL_HANDLERS.get(ln)
+        if handler:
+            handler(channel_state, ln, ch)
         elif ln == "item":
-            title = link = description = pub_date = guid = author = content = ""
-            for item_child in ch:
-                ic_ln = item_child.tag.split("}")[-1] if "}" in item_child.tag else item_child.tag
-                if ic_ln == "title":
-                    title = (item_child.text or "").strip()
-                elif ic_ln == "link":
-                    link = (item_child.text or "").strip()
-                elif ic_ln == "description":
-                    description = (item_child.text or "").strip()
-                elif ic_ln == "pubDate":
-                    pub_date = (item_child.text or "").strip()
-                elif ic_ln == "guid":
-                    guid = (item_child.text or "").strip()
-                elif ic_ln == "author":
-                    author = (item_child.text or "").strip()
-                elif ic_ln == "creator":
-                    author = (item_child.text or "").strip()
-                elif ic_ln == "encoded":
-                    content = (item_child.text or "").strip()
-
-            entry_url = guid if guid else link
-            entry_url = _normalize_url(entry_url) if entry_url else ""
-
-            entries.append(FeedEntry(
-                feed_url=feed_url,
-                entry_url=entry_url,
-                title=title or "",
-                link=link or "",
-                description=description or "",
-                published_raw=pub_date or "",
-                published_ts=_parse_timestamp(pub_date),
-                author=author or "",
-                content=content,
-                language=channel_language or "",
-                feed_title=channel_title or "",
-                entry_hash=_entry_hash(title or "", pub_date or ""),
-            ))
+            entry = _parse_stdlib_rss_entry(ch, feed_url, channel_state["channel_title"], channel_state["channel_language"])
+            if entry:
+                entries.append(entry)
 
     return entries
+
+
+def _find_entry_link(child) -> str:
+    """Find the alternate link URL from an entry element."""
+    for ec in child:
+        ecln = ec.tag.split("}")[-1] if "}" in ec.tag else ec.tag
+        if ecln == "link":
+            rel = ec.attrib.get("rel")
+            href = ec.attrib.get("href", "")
+            if (rel is None or rel == "alternate") and href:
+                return href
+    # Fallback: return first link href found
+    for ec in child:
+        ecln = ec.tag.split("}")[-1] if "}" in ec.tag else ec.tag
+        if ecln == "link":
+            href = ec.attrib.get("href", "")
+            if href:
+                return href
+    return ""
+
+
+def _find_entry_author(child) -> str:
+    """Find the author name from an entry element."""
+    for ec in child:
+        ecln = ec.tag.split("}")[-1] if "}" in ec.tag else ec.tag
+        if ecln == "author":
+            for name_el in ec:
+                if name_el.tag.split("}")[-1] == "name":
+                    return (name_el.text or "").strip()
+    return ""
+
+
+def _parse_stdlib_entry(
+    child, feed_url: str, feed_title: str, feed_language: str
+) -> FeedEntry | None:
+    """Parse a single Atom entry element into a FeedEntry."""
+    title = summary = content = published = updated = ""
+    for ec in child:
+        ecln = ec.tag.split("}")[-1] if "}" in ec.tag else ec.tag
+        if ecln == "title":
+            title = (ec.text or "").strip()
+        elif ecln == "summary":
+            summary = (ec.text or "").strip()
+        elif ecln == "content":
+            content = (ec.text or "").strip()
+        elif ecln == "published":
+            published = (ec.text or "").strip()
+        elif ecln == "updated":
+            updated = (ec.text or "").strip()
+
+    entry_url = _normalize_url(_find_entry_link(child))
+    author = _find_entry_author(child)
+    published_raw = published or updated
+    return FeedEntry(
+        feed_url=feed_url,
+        entry_url=entry_url,
+        title=title,
+        link=entry_url,
+        description=summary,
+        published_raw=published_raw,
+        published_ts=_parse_timestamp(published_raw),
+        author=author,
+        content=content,
+        language=feed_language,
+        feed_title=feed_title,
+        entry_hash=_entry_hash(title, published_raw),
+    )
+
+
+# Tag → (target_field, priority) for RSS item parsing
+# Priority: 0=author (overwrite), 1=content, 2=others (first wins)
+_RSS_ITEM_TAG_HANDLERS: dict[str, tuple[str, int]] = {
+    "title": ("title", 0),
+    "link": ("link", 0),
+    "description": ("description", 0),
+    "pubDate": ("pub_date", 0),
+    "guid": ("guid", 0),
+    "author": ("author", 0),
+    "creator": ("author", 1),  # Overwrite author if present
+    "encoded": ("content", 0),  # content:encoded
+}
+
+
+def _parse_stdlib_rss_entry(
+    ch, feed_url: str, channel_title: str, channel_language: str
+) -> FeedEntry | None:
+    """Parse a single RSS item element into a FeedEntry using dispatch table."""
+    # Collect fields via dispatch
+    fields: dict[str, str] = {}
+
+    for item_child in ch:
+        ic_ln = item_child.tag.split("}")[-1] if "}" in item_child.tag else item_child.tag
+        handler = _RSS_ITEM_TAG_HANDLERS.get(ic_ln)
+        if handler:
+            field_name, priority = handler
+            current_val = fields.get(field_name, "")
+            # Author uses priority to overwrite (creator > author)
+            if field_name == "author" and priority == 1 and current_val:
+                continue
+            fields[field_name] = (item_child.text or "").strip()
+
+    entry_url = fields.get("guid") or fields.get("link", "")
+    entry_url = _normalize_url(entry_url) if entry_url else ""
+
+    return FeedEntry(
+        feed_url=feed_url,
+        entry_url=entry_url,
+        title=fields.get("title", ""),
+        link=fields.get("link", ""),
+        description=fields.get("description", ""),
+        published_raw=fields.get("pub_date", ""),
+        published_ts=_parse_timestamp(fields.get("pub_date", "")),
+        author=fields.get("author", ""),
+        content=fields.get("content", ""),
+        language=channel_language,
+        feed_title=channel_title,
+        entry_hash=_entry_hash(fields.get("title", ""), fields.get("pub_date", "")),
+    )
 
 
 def _stdlib_atom_feed(text: str, feed_url: str) -> list[FeedEntry]:
@@ -442,55 +571,8 @@ def _stdlib_atom_feed(text: str, feed_url: str) -> list[FeedEntry]:
         elif ln == "language":
             feed_language = (child.text or "").strip()
         elif ln == "entry":
-            title = summary = content = published = updated = author = ""
-            entry_url = ""
-            for ec in child:
-                ecln = ec.tag.split("}")[-1] if "}" in ec.tag else ec.tag
-                if ecln == "title":
-                    title = (ec.text or "").strip()
-                elif ecln == "summary":
-                    summary = (ec.text or "").strip()
-                elif ecln == "content":
-                    content = (ec.text or "").strip()
-                elif ecln == "published":
-                    published = (ec.text or "").strip()
-                elif ecln == "updated":
-                    updated = (ec.text or "").strip()
-                elif ecln == "author":
-                    for name_el in ec:
-                        if name_el.tag.split("}")[-1] == "name":
-                            author = (name_el.text or "").strip()
-                            break
-                elif ecln == "link":
-                    rel = ec.attrib.get("rel")
-                    href = ec.attrib.get("href", "")
-                    if (rel is None or rel == "alternate") and href:
-                        entry_url = _normalize_url(href)
-                        break
-            if not entry_url:
-                for ec in child:
-                    ecln = ec.tag.split("}")[-1] if "}" in ec.tag else ec.tag
-                    if ecln == "link":
-                        href = ec.attrib.get("href", "")
-                        if href:
-                            entry_url = _normalize_url(href)
-                            break
-
-            published_raw = published or updated or ""
-            entries.append(FeedEntry(
-                feed_url=feed_url,
-                entry_url=entry_url or "",
-                title=title or "",
-                link=entry_url or "",
-                description=summary or "",
-                published_raw=published_raw,
-                published_ts=_parse_timestamp(published_raw),
-                author=author or "",
-                content=content,
-                language=feed_language or "",
-                feed_title=feed_title or "",
-                entry_hash=_entry_hash(title or "", published_raw),
-            ))
+            entry = _parse_stdlib_entry(child, feed_url, feed_title, feed_language)
+            entries.append(entry)
 
     return entries
 

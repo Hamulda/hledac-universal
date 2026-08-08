@@ -51,6 +51,17 @@ def _strip_ns(tag: str) -> str:
         return ''
     return tag.split('}', 1)[-1] if '}' in tag else tag
 
+def _find_sitemap_locs(root) -> list[str]:
+    """Find sitemap <loc> elements in sitemapindex XML."""
+    locs: list[str] = []
+    for elem in root.iter():
+        tag = _strip_ns(elem.tag)
+        if tag in ('sitemap', 'Sitemap'):
+            loc = _find_child_text(elem, ('loc', 'Loc', 'URL', 'url'))
+            if loc:
+                locs.append(loc)
+    return locs
+
 def _parse_sitemapindex_xml(xml_bytes: bytes) -> list[str]:
     """
     Parse sitemapindex XML and return list of sitemap <loc> URLs.
@@ -64,22 +75,19 @@ def _parse_sitemapindex_xml(xml_bytes: bytes) -> list[str]:
         root = _DET.fromstring(xml_bytes)
     except Exception:
         return sitemap_locs
-    for elem in root.iter():
-        tag = _strip_ns(elem.tag)
-        if tag in ('sitemap', 'Sitemap'):
-            loc = _find_child_text(elem, ('loc', 'Loc', 'URL', 'url'))
-            if loc:
-                sitemap_locs.append(loc)
+
+    sitemap_locs = _find_sitemap_locs(root)
+
     if not sitemap_locs:
+        # Atom fallback: look for <entry><link href="/.../sitemap...">
         for elem in root.iter():
             tag = _strip_ns(elem.tag)
             if tag in ('entry', 'Entry'):
                 for child in elem:
                     child_tag = _strip_ns(child.tag)
-                    if child_tag in ('link', 'Link'):
-                        href = child.attrib.get('href', '')
-                        if href and '/sitemap' in href.lower():
-                            sitemap_locs.append(href)
+                    if child_tag in ('link', 'Link') and '/sitemap' in child.attrib.get('href', '').lower():
+                        sitemap_locs.append(child.attrib['href'])
+
     return sitemap_locs
 
 def _parse_sitemap_xml(xml_bytes: bytes) -> list[str]:
@@ -122,14 +130,161 @@ def _build_hit(query: str, url: str, snippet: str, retrieved_ts: float, rank: in
     """Build a DiscoveryHit from an archived URL."""
     return DiscoveryHit(query=query, title=f'Archived: {url[:80]}', url=url, snippet=snippet[:500] if snippet else 'Archived page from Wayback Machine', source=_SOURCE_NAME, rank=rank, retrieved_ts=retrieved_ts, score=0.55, reason='wayback_sitemap')
 
+async def _validate_and_prepare(domain_or_url: str, max_results: int, timeout_s: float) -> tuple[DiscoveryBatchResult | None, str | None, float | None, float | None]:
+    """Phase 1: Validate input and prepare parameters."""
+
+    """
+    Krok 1: Fetch https://web.archive.org/list/google-sitemaps/{domain}
+    Krok 2: Parse sitemapindex XML -> seznam sitemap URLs
+    Krok 3: Pro kazdy sitemap fetch + parse -> URL entries
+    Krok 4: Vratit DiscoveryBatchResult s archivovanymi URL
+
+    Args:
+        domain_or_url: Input domain or URL.
+        max_results: Requested max results.
+        timeout_s: Requested timeout.
+
+    Returns:
+        Tuple of (error_result, domain, max_results, remaining_timeout) or
+        (None, domain, clamped_max_results, remaining_timeout) on success.
+    """
+    try:
+        max_results = max(1, min(int(max_results), _HARD_MAX_HITS))
+    except (TypeError, ValueError):
+        max_results = 50
+
+    raw_input = domain_or_url.strip() if domain_or_url else ''
+    if not raw_input:
+        return (DiscoveryBatchResult(hits=(), error='empty_query', error_type='validation'), None, None, None)
+
+    domain = _extract_domain(raw_input)
+    if not domain:
+        return (DiscoveryBatchResult(hits=(), error='invalid_domain', error_type='validation', provider_name=_SOURCE_NAME, provider_chain=(_SOURCE_NAME,), source_family='archive'), None, None, None)
+
+    return (None, domain, max_results, timeout_s)
+
+
+async def _fetch_sitemapindex(domain: str, timeout_s: float) -> tuple[list[str] | None, float, DiscoveryBatchResult | None]:
+    """Phase 2: Fetch and parse the sitemapindex."""
+    start = time.monotonic()
+    sitemapindex_url = _WAYBACK_LIST_URL.format(domain=urllib.parse.quote(domain))
+    fetch_timeout = min(timeout_s, 10.0)
+
+    try:
+        result = await safe_wait_for(
+            async_fetch_public_text(sitemapindex_url, timeout_s=fetch_timeout, max_bytes=2 * 1024 * 1024),
+            timeout=fetch_timeout + 2.0,
+            label='wayback_sitemapindex_fetch',
+        )
+    except TimeoutError:
+        elapsed = time.monotonic() - start
+        return (None, elapsed, _make_empty_result(elapsed, 'sitemapindex_timeout'))
+    except Exception as e:
+        elapsed = time.monotonic() - start
+        logger.debug(f'[wayback_sitemap] Failed to fetch sitemapindex: {e}')
+        return (None, elapsed, _make_empty_result(elapsed, f'sitemapindex_fetch_error:{e}'))
+
+    if result.status_code != 200 or not result.text:
+        elapsed = time.monotonic() - start
+        err_msg = result.error or f'http_{result.status_code}'
+        return (None, elapsed, _make_empty_result(elapsed, err_msg))
+
+    try:
+        sitemap_bytes = result.text.encode('utf-8')
+    except Exception:
+        elapsed = time.monotonic() - start
+        return (None, elapsed, _make_empty_result(elapsed, 'sitemapindex_encoding_error'))
+
+    sitemap_urls = _parse_sitemapindex_xml(sitemap_bytes)
+    elapsed = time.monotonic() - start
+
+    if not sitemap_urls:
+        return (None, elapsed, DiscoveryBatchResult(hits=(), provider_name=_SOURCE_NAME, provider_chain=(_SOURCE_NAME,), source_family='archive', elapsed_s=elapsed, error_type='provider_empty'))
+
+    return (sitemap_urls[:_MAX_SITEMAPS], elapsed, None)
+
+
+async def _fetch_sitemaps(sitemap_urls: list[str], per_sitemap_timeout: float, remaining_timeout: float) -> tuple[list[tuple[str, list[str]]], float]:
+    """Phase 3: Fetch and parse individual sitemaps with semaphore."""
+    from hledac.universal.core.concurrency import ConcurrencyCategory, get_semaphore
+
+    semaphore = get_semaphore(ConcurrencyCategory.SCRAPE_GENERAL)
+
+    async def fetch_sitemap(url: str) -> tuple[str, list[str]]:
+        """Fetch and parse a single sitemap."""
+        async with semaphore:
+            try:
+                sm_result = await safe_wait_for(
+                    async_fetch_public_text(url, timeout_s=per_sitemap_timeout, max_bytes=2 * 1024 * 1024),
+                    timeout=per_sitemap_timeout + 2.0,
+                    label='wayback_sitemap_fetch',
+                )
+                if sm_result.status_code == 200 and sm_result.text:
+                    sm_bytes = sm_result.text.encode('utf-8')
+                    return (url, _parse_sitemap_xml(sm_bytes)[:_MAX_URLS_PER_SITEMAP])
+            except Exception:  # noqa: BLE001
+                pass
+            return (url, [])
+
+    fetch_tasks = [fetch_sitemap(sm_url) for sm_url in sitemap_urls]
+    start = time.monotonic()
+
+    try:
+        sitemap_results = await safe_wait_for(
+            parallel_ok(*fetch_tasks, label='wayback_sitemap'),
+            timeout=remaining_timeout,
+            label='wayback_sitemap_gather',
+        )
+    except TimeoutError:
+        elapsed = time.monotonic() - start
+        return ([], elapsed)
+    except Exception as e:
+        logger.debug(f'[wayback_sitemap] Sitemap gather error: {e}')
+        elapsed = time.monotonic() - start
+        return ([], elapsed)
+
+    return (sitemap_results, time.monotonic() - start)
+
+
+def _aggregate_hits(sitemap_results: list[tuple[str, list[str]]], raw_input: str, max_results: int, now_ts: float) -> list[DiscoveryHit]:
+    """Phase 4: Aggregate sitemap results into DiscoveryHit list."""
+    seen_urls: set[str] = set()
+    hits_list: list[DiscoveryHit] = []
+
+    for task_result in sitemap_results:
+        if isinstance(task_result, Exception):
+            continue
+        if not isinstance(task_result, tuple):
+            continue
+        try:
+            _, urls = task_result
+        except ValueError:
+            continue
+
+        for url in urls:
+            if url in seen_urls or not url:
+                continue
+
+            snapshot_url = _build_wayback_url(url)
+            snippet = f'Sitemap archived: {url}'
+            hit = _build_hit(query=raw_input, url=snapshot_url, snippet=snippet, retrieved_ts=now_ts, rank=len(hits_list))
+            hits_list.append(hit)
+            seen_urls.add(url)
+
+            if len(hits_list) >= max_results:
+                return hits_list
+
+    return hits_list
+
+
 async def async_search_wayback_sitemap(domain_or_url: str, max_results: int=50, timeout_s: float=_DEFAULT_TIMEOUT_S) -> DiscoveryBatchResult:
     """
     Search Wayback Machine Sitemap archive for a domain/URL.
 
     Krok 1: Fetch https://web.archive.org/list/google-sitemaps/{domain}
-    Krok 2: Parse sitemapindex XML → seznam sitemap URLs
-    Krok 3: Pro každý sitemap fetch + parse → URL entries
-    Krok 4: Vrátí DiscoveryBatchResult s archivovanými URL
+    Krok 2: Parse sitemapindex XML -> seznam sitemap URLs
+    Krok 3: Pro kazdy sitemap fetch + parse -> URL entries
+    Krok 4: Vratit DiscoveryBatchResult s archivovanymi URL
 
     Args:
         domain_or_url: Domain name (example.com) or URL to query.
@@ -142,98 +297,43 @@ async def async_search_wayback_sitemap(domain_or_url: str, max_results: int=50, 
 
     Fail-soft: returns empty hits on any error.
     """
-    try:
-        max_results = max(1, min(int(max_results), _HARD_MAX_HITS))
-    except (TypeError, ValueError):
-        max_results = 50
+    # Phase 1: validate input
+    error_result, domain, max_results, remaining_timeout = await _validate_and_prepare(domain_or_url, max_results, timeout_s)
+    if error_result:
+        return error_result
+    if domain is None or remaining_timeout is None:
+        return DiscoveryBatchResult(hits=(), error='validation_failed', error_type='validation')
+
     raw_input = domain_or_url.strip() if domain_or_url else ''
-    if not raw_input:
-        return DiscoveryBatchResult(hits=(), error='empty_query', error_type='validation')
-    domain = _extract_domain(raw_input)
-    if not domain:
-        return DiscoveryBatchResult(hits=(), error='invalid_domain', error_type='validation', provider_name=_SOURCE_NAME, provider_chain=(_SOURCE_NAME,), source_family='archive')
-    start = time.monotonic()
-    sitemapindex_url = _WAYBACK_LIST_URL.format(domain=urllib.parse.quote(domain))
-    fetch_timeout = min(timeout_s, 10.0)
-    try:
-        result = await safe_wait_for(async_fetch_public_text(sitemapindex_url, timeout_s=fetch_timeout, max_bytes=2 * 1024 * 1024), timeout=fetch_timeout + 2.0, label='wayback_sitemapindex_fetch')
-    except TimeoutError:
-        elapsed = time.monotonic() - start
-        return _make_empty_result(elapsed, 'sitemapindex_timeout')
-    except Exception as e:
-        elapsed = time.monotonic() - start
-        logger.debug(f'[wayback_sitemap] Failed to fetch sitemapindex: {e}')
-        return _make_empty_result(elapsed, f'sitemapindex_fetch_error:{e}')
-    if result.status_code != 200 or not result.text:
-        elapsed = time.monotonic() - start
-        err_msg = result.error or f'http_{result.status_code}'
-        return _make_empty_result(elapsed, err_msg)
-    try:
-        sitemap_bytes = result.text.encode('utf-8')
-    except Exception:
-        elapsed = time.monotonic() - start
-        return _make_empty_result(elapsed, 'sitemapindex_encoding_error')
-    sitemap_urls = _parse_sitemapindex_xml(sitemap_bytes)
-    if not sitemap_urls:
-        elapsed = time.monotonic() - start
-        return DiscoveryBatchResult(hits=(), provider_name=_SOURCE_NAME, provider_chain=(_SOURCE_NAME,), source_family='archive', elapsed_s=elapsed, error_type='provider_empty')
-    sitemap_urls = sitemap_urls[:_MAX_SITEMAPS]
-    remaining_timeout = timeout_s - (time.monotonic() - start)
+
+    # Phase 2: fetch sitemapindex
+    sitemap_urls, elapsed, error_result = await _fetch_sitemapindex(domain, remaining_timeout)
+    if error_result:
+        return error_result
+
+    # Phase 3: fetch sitemaps
     per_sitemap_timeout = min(_PER_SITEMAP_TIMEOUT_S, remaining_timeout / len(sitemap_urls))
     per_sitemap_timeout = max(1.0, per_sitemap_timeout)
-    from hledac.universal.core.concurrency import ConcurrencyCategory, get_semaphore
-    semaphore = get_semaphore(ConcurrencyCategory.SCRAPE_GENERAL)
+    sitemap_results, fetch_elapsed = await _fetch_sitemaps(sitemap_urls, per_sitemap_timeout, remaining_timeout - elapsed)
+    elapsed += fetch_elapsed
 
-    async def fetch_sitemap(url: str) -> tuple[str, list[str]]:
-        """Fetch and parse a single sitemap."""
-        async with semaphore:
-            try:
-                sm_result = await safe_wait_for(async_fetch_public_text(url, timeout_s=per_sitemap_timeout, max_bytes=2 * 1024 * 1024), timeout=per_sitemap_timeout + 2.0, label='wayback_sitemap_fetch')
-                if sm_result.status_code == 200 and sm_result.text:
-                    sm_bytes = sm_result.text.encode('utf-8')
-                    return (url, _parse_sitemap_xml(sm_bytes)[:_MAX_URLS_PER_SITEMAP])
-            except Exception:  # noqa: BLE001
-                pass
-            return (url, [])
-    fetch_tasks = [fetch_sitemap(sm_url) for sm_url in sitemap_urls]
-    try:
-        sitemap_results = await safe_wait_for(parallel_ok(*fetch_tasks, label='wayback_sitemap'), timeout=timeout_s, label='wayback_sitemap_gather')
-    except TimeoutError:
-        elapsed = time.monotonic() - start
-        return _make_empty_result(elapsed, 'sitemap_fetch_timeout')
-    except Exception as e:
-        elapsed = time.monotonic() - start
-        logger.debug(f'[wayback_sitemap] Sitemap gather error: {e}')
-        return _make_empty_result(elapsed, f'sitemap_gather_error:{e}')
-    elapsed = time.monotonic() - start
-    seen_urls: set[str] = set()
-    hits_list: list[DiscoveryHit] = []
-    now_ts = time.time()
-    for task_result in sitemap_results:
-        if isinstance(task_result, Exception):
-            continue
-        if not isinstance(task_result, tuple):
-            continue
-        try:
-            _, urls = task_result
-        except ValueError:
-            continue
-        for url in urls:
-            if url in seen_urls:
-                continue
-            if not url:
-                continue
-            snapshot_url = _build_wayback_url(url)
-            snippet = f'Sitemap archived: {url}'
-            hit = _build_hit(query=raw_input, url=snapshot_url, snippet=snippet, retrieved_ts=now_ts, rank=len(hits_list))
-            hits_list.append(hit)
-            seen_urls.add(url)
-            if len(hits_list) >= max_results:
-                break
-        if len(hits_list) >= max_results:
-            break
-    elapsed = time.monotonic() - start
-    return DiscoveryBatchResult(hits=tuple(hits_list), provider_name=_SOURCE_NAME, provider_chain=(_SOURCE_NAME,), source_family='archive', elapsed_s=elapsed, error_type='none' if hits_list else 'provider_empty')
+    # Phase 4: aggregate hits
+    hits_list = _aggregate_hits(sitemap_results, raw_input, max_results, time.time())
+    elapsed = time.monotonic() - elapsed
+
+    return DiscoveryBatchResult(
+        hits=tuple(hits_list),
+        provider_name=_SOURCE_NAME,
+        provider_chain=(_SOURCE_NAME,),
+        source_family='archive',
+        elapsed_s=elapsed,
+        error_type='none' if hits_list else 'provider_empty',
+    )
+
+
+def _make_empty_result(elapsed_s: float, err: str) -> DiscoveryBatchResult:
+    """Factory for empty error results."""
+    return DiscoveryBatchResult(hits=(), provider_name=_SOURCE_NAME, provider_chain=(_SOURCE_NAME,), source_family='archive', elapsed_s=elapsed_s, error_type='provider_error', error=err)
 
 def _extract_domain(raw: str) -> str | None:
     """Extract domain from URL or return the string if it looks like a domain."""
@@ -261,7 +361,3 @@ def _build_wayback_url(original_url: str) -> str:
     """
     encoded_url = urllib.parse.quote(original_url, safe='')
     return f'https://web.archive.org/web/1/{encoded_url}'
-
-def _make_empty_result(elapsed_s: float, err: str) -> DiscoveryBatchResult:
-    """Factory for empty error results."""
-    return DiscoveryBatchResult(hits=(), provider_name=_SOURCE_NAME, provider_chain=(_SOURCE_NAME,), source_family='archive', elapsed_s=elapsed_s, error_type='provider_error', error=err)

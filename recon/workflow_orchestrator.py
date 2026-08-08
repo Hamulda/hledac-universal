@@ -504,30 +504,60 @@ class WorkflowOrchestrator:
                     attribution['source'] = result['source']
         return attribution
 
-    def _detect_anomalies(self, results: dict[str, Any]) -> list[Anomaly]:
-        """Detect anomalies in module results.
-
-        Args:
-            results: Module results
-
-        Returns:
-            List of detected anomalies
-        """
+    def _check_missing_data(self, results: dict[str, Any]) -> list[Anomaly]:
+        """Check for missing data anomalies."""
         anomalies: list[Anomaly] = []
         for module, result in results.items():
             if isinstance(result, dict) and result.get('error'):
-                anomalies.append(Anomaly(anomaly_type='module_failure', severity='medium', description=f"Module {module} failed: {result['error']}", affected_modules=[module]))
-        if len(results) > 1:
-            confidence_values = []
-            for result in results.values():
-                if isinstance(result, dict) and result.get('confidence'):
-                    confidence_values.append(result['confidence'])
-            if confidence_values:
+                anomalies.append(Anomaly(
+                    anomaly_type='module_failure',
+                    severity='medium',
+                    description=f"Module {module} failed: {result['error']}",
+                    affected_modules=[module]
+                ))
+        return anomalies
+
+    def _detect_anomalies(self, results: dict[str, Any]) -> list[Anomaly]:
+        """Detect anomalies in module results."""
+        anomalies: list[Anomaly] = []
+        anomalies.extend(self._check_missing_data(results))
+        anomalies.extend(self._check_low_confidence(results))
+        anomalies.extend(self._check_timing_anomalies(results))
+        return anomalies
+
+    def _check_low_confidence(self, results: dict[str, Any]) -> list[Anomaly]:
+        """Check for low confidence anomalies."""
+        anomalies: list[Anomaly] = []
+        confidence_values = []
+        for result in results.values():
+            if isinstance(result, dict) and result.get('confidence'):
+                confidence_values.append(result['confidence'])
+        if len(confidence_values) > 1:
+            try:
                 import statistics
-                if len(confidence_values) > 1:
-                    variance = statistics.variance(confidence_values)
-                    if variance > 0.2:
-                        anomalies.append(Anomaly(anomaly_type='high_confidence_variance', severity='low', description=f'High variance in module confidence: {variance:.2f}', affected_modules=list(results.keys())))
+                variance = statistics.variance(confidence_values)
+                if variance > 0.2:
+                    anomalies.append(Anomaly(
+                        anomaly_type='high_confidence_variance',
+                        severity='low',
+                        description=f'High variance in module confidence: {variance:.2f}',
+                        affected_modules=list(results.keys())
+                    ))
+            except Exception:
+                pass
+        return anomalies
+
+    def _detect_anomalies(self, results: dict[str, Any]) -> list[Anomaly]:
+        """Detect anomalies in module results."""
+        anomalies: list[Anomaly] = []
+        anomalies.extend(self._check_missing_data(results))
+        anomalies.extend(self._check_low_confidence(results))
+        anomalies.extend(self._check_timing_anomalies(results))
+        return anomalies
+
+    def _check_timing_anomalies(self, results: dict[str, Any]) -> list[Anomaly]:
+        """Check for timing-related anomalies."""
+        anomalies: list[Anomaly] = []
         timestamps = []
         for module, result in results.items():
             if isinstance(result, dict) and result.get('timestamp'):
@@ -540,7 +570,20 @@ class WorkflowOrchestrator:
             now = datetime.now(UTC)
             for module, ts in timestamps:
                 if ts > now:
-                    anomalies.append(Anomaly(anomaly_type='future_timestamp', severity='high', description=f'Future timestamp detected in {module}', affected_modules=[module]))
+                    anomalies.append(Anomaly(
+                        anomaly_type='future_timestamp',
+                        severity='high',
+                        description=f'Future timestamp detected in {module}',
+                        affected_modules=[module]
+                    ))
+        return anomalies
+
+    def _detect_anomalies(self, results: dict[str, Any]) -> list[Anomaly]:
+        """Detect anomalies in module results."""
+        anomalies: list[Anomaly] = []
+        anomalies.extend(self._check_missing_data(results))
+        anomalies.extend(self._check_low_confidence(results))
+        anomalies.extend(self._check_timing_anomalies(results))
         return anomalies
 
     def _generate_report(self, results: dict[str, Any], correlations: CorrelationReport, anomalies: list[Anomaly], context: SharedContext) -> ComprehensiveReport:
@@ -566,35 +609,46 @@ class WorkflowOrchestrator:
         export_data = {'version': '1.0', 'generated_at': datetime.now(UTC).isoformat(), 'total_modules': len(context.module_status), 'successful_modules': len(results), 'risk_score': correlations.risk_score}
         return ComprehensiveReport(input_summary=input_summary, module_results=results, correlations=correlations, anomalies=anomalies, verdict=verdict, confidence=overall_confidence, recommendations=recommendations, timeline=self._execution_timeline, export_data=export_data)
 
-    def _generate_recommendations(self, results: dict[str, Any], correlations: CorrelationReport, anomalies: list[Anomaly]) -> list[str]:
-        """Generate actionable recommendations.
+    def _recommend_high_risk(self, correlations: CorrelationReport) -> list[str]:
+        """Generate recommendations for high risk scenarios."""
+        return ['HIGH RISK: Immediate investigation recommended. Multiple suspicious indicators detected.']
 
-        Args:
-            results: Module results
-            correlations: Correlation report
-            anomalies: Detected anomalies
+    def _recommend_suspicious(self, correlations: CorrelationReport) -> list[str]:
+        """Generate recommendations for suspicious scenarios."""
+        return ['SUSPICIOUS: Further analysis recommended. Some indicators warrant closer examination.']
 
-        Returns:
-            List of recommendation strings
-        """
-        recommendations = []
-        if correlations.risk_score >= 0.7:
-            recommendations.append('HIGH RISK: Immediate investigation recommended. Multiple suspicious indicators detected.')
-        elif correlations.risk_score >= 0.3:
-            recommendations.append('SUSPICIOUS: Further analysis recommended. Some indicators warrant closer examination.')
+    def _recommend_from_anomalies(self, anomalies: list[Anomaly]) -> list[str]:
+        """Generate recommendations from detected anomalies."""
+        recs = []
         for anomaly in anomalies:
             if anomaly.anomaly_type == 'future_timestamp':
-                recommendations.append('Verify system clock and timestamp sources. Future timestamps may indicate manipulation.')
+                recs.append('Verify system clock and timestamp sources. Future timestamps may indicate manipulation.')
             elif anomaly.anomaly_type == 'module_failure':
-                recommendations.append(f'Re-run failed module: {anomaly.affected_modules[0]}. Results may be incomplete.')
+                recs.append(f'Re-run failed module: {anomaly.affected_modules[0]}. Results may be incomplete.')
+        return recs
+
+    def _recommend_from_results(self, results: dict[str, Any]) -> list[str]:
+        """Generate recommendations from module results."""
+        recs = []
         for module, result in results.items():
             if isinstance(result, dict):
                 if result.get('recommendations'):
-                    recommendations.extend(result['recommendations'])
+                    recs.extend(result['recommendations'])
                 if result.get('detected') and module == 'steganography':
-                    recommendations.append('Extract and analyze hidden content using specialized tools.')
+                    recs.append('Extract and analyze hidden content using specialized tools.')
                 if result.get('detected') and module == 'metadata':
-                    recommendations.append('Review metadata for OPSEC violations and attribution clues.')
+                    recs.append('Review metadata for OPSEC violations and attribution clues.')
+        return recs
+
+    def _generate_recommendations(self, results: dict[str, Any], correlations: CorrelationReport, anomalies: list[Anomaly]) -> list[str]:
+        """Generate actionable recommendations."""
+        recommendations = []
+        if correlations.risk_score >= 0.7:
+            recommendations.extend(self._recommend_high_risk(correlations))
+        elif correlations.risk_score >= 0.3:
+            recommendations.extend(self._recommend_suspicious(correlations))
+        recommendations.extend(self._recommend_from_anomalies(anomalies))
+        recommendations.extend(self._recommend_from_results(results))
         seen = set()
         unique_recommendations = []
         for rec in recommendations:
@@ -746,6 +800,172 @@ def _build_source_themes(normalized: list[dict[str, Any]]) -> dict[str, list[str
     return source_themes
 
 
+def _normalize_findings(findings: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Normalize finding dicts to consistent schema."""
+    normalized: list[dict[str, Any]] = []
+    for f in findings:
+        nf: dict[str, Any] = {
+            'type': f.get('type') or f.get('finding_type') or f.get('indicator_type', 'unknown'),
+            'severity': f.get('severity', 'medium'),
+            'confidence': float(f.get('confidence', 0.5)),
+            'description': f.get('description') or f.get('description_text', ''),
+            'source': f.get('source') or f.get('module') or f.get('tag') or f.get('tags', ['unknown']),
+        }
+        if isinstance(nf['source'], list):
+            nf['source'] = nf['source'][0] if nf['source'] else 'unknown'
+        normalized.append(nf)
+    return normalized
+
+
+def _compute_risk_score(normalized: list[dict[str, Any]]) -> float:
+    """Calculate risk score from normalized findings."""
+    risk_score = 0.0
+    for f in normalized:
+        severity = f['severity'].lower()
+        weight = SEVERITY_WEIGHTS.get(severity, 0.25)
+        risk_score += weight * f['confidence']
+    return min(risk_score / max(len(normalized), 1), 1.0)
+
+
+def _group_themes(normalized: list[dict[str, Any]]) -> dict[str, list[dict[str, Any]]]:
+    """Group normalized findings by theme key."""
+    themes: dict[str, list[dict[str, Any]]] = {}
+    for f in normalized:
+        theme_key = _derive_theme_key(f)
+        if theme_key not in themes:
+            themes[theme_key] = []
+        themes[theme_key].append(f)
+    return themes
+
+
+def _calculate_theme_weights(themes: dict[str, list[dict[str, Any]]]) -> dict[str, float]:
+    """Calculate weights for each theme based on severity and confidence."""
+    theme_weights: dict[str, float] = {}
+    for theme, theme_findings in themes.items():
+        weights = [SEVERITY_WEIGHTS.get(x['severity'].lower(), 0.25) * x['confidence'] for x in theme_findings]
+        theme_weights[theme] = sum(weights) / max(len(weights), 1)
+    return theme_weights
+
+
+def _build_risk_buckets(normalized: list[dict[str, Any]]) -> dict[str, list[dict[str, Any]]]:
+    """Build risk buckets from normalized findings."""
+    buckets: dict[str, list[dict[str, Any]]] = {'critical': [], 'high': [], 'medium': [], 'low': []}
+    for f in normalized:
+        sev = f['severity'].lower()
+        if sev in buckets:
+            buckets[sev].append(f)
+    return buckets
+
+
+def _build_source_themes(normalized: list[dict[str, Any]]) -> dict[str, list[str]]:
+    """Build mapping from source to list of theme keys."""
+    source_themes: dict[str, list[str]] = {}
+    for f in normalized:
+        src = f['source']
+        tk = _derive_theme_key(f)
+        if src not in source_themes:
+            source_themes[src] = []
+        if tk not in source_themes[src]:
+            source_themes[src].append(tk)
+    return source_themes
+
+
+def _extract_and_correlate_entities(findings: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], list[str], list[dict[str, Any]]]:
+    """Extract entities and compute repeated domains/IOCs."""
+    all_entities, domain_counts, ioc_counts = _extract_entities(findings)
+    repeated_domains = [d for d, cnt in domain_counts.items() if cnt > 1]
+    repeated_iocs = [{'value': v, 'type': t, 'count': c} for (v, t), c in ioc_counts.items() if c > 1]
+    return all_entities, repeated_domains, repeated_iocs
+
+
+def _compute_cluster_metrics(themes: dict[str, list[dict[str, Any]]], normalized: list[dict[str, Any]]) -> tuple[str | None, list[dict[str, Any]]]:
+    """Compute dominant cluster and high-risk branch."""
+    dominant_cluster = None
+    cluster_scores: dict[str, float] = {}
+    for theme, fndgs in themes.items():
+        score = sum((SEVERITY_WEIGHTS.get(x['severity'].lower(), 0.25) for x in fndgs if x['severity'].lower() in ('critical', 'high')))
+        if score > 0:
+            cluster_scores[theme] = score
+    if cluster_scores:
+        dominant_cluster = max(cluster_scores, key=lambda k: cluster_scores.get(k, 0.0))
+    high_risk_branch = [f for f in normalized if f['severity'].lower() in ('critical', 'high') and _has_infra_hints(f)]
+    return dominant_cluster, high_risk_branch
+
+
+def _compute_theme_source_overlap(themes: dict[str, list[dict[str, Any]]]) -> dict[str, list[str]]:
+    """Compute theme-source overlap mapping."""
+    theme_source_overlap: dict[str, list[str]] = {}
+    for theme, fndgs in themes.items():
+        srcs = list({x['source'] for x in fndgs})
+        theme_source_overlap[theme] = srcs
+    return theme_source_overlap
+
+
+def _compute_correlation_signals(normalized: list[dict[str, Any]], theme_source_overlap: dict[str, list[str]], themes: dict[str, list[dict[str, Any]]]) -> tuple[float, list[dict[str, Any]]]:
+    """Compute cross-source confidence and corroboration signals."""
+    _cross_src_conf = _calc_cross_source_confidence(normalized, theme_source_overlap, [])
+    campaign_hints = _find_campaign_hints(normalized, themes)
+    return _cross_src_conf, campaign_hints
+
+
+def _compute_top_priority_items(normalized: list[dict[str, Any]], repeated_iocs: list[dict[str, Any]], theme_source_overlap: dict[str, list[str]], campaign_hints: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], float]:
+    """Compute top priority pivots and campaign confidence."""
+    _corr_iocs = _get_corroborated_iocs(normalized, repeated_iocs)
+    _top_pivots = _get_top_priority_pivots(normalized, None, [], [])
+    _camp_conf = _calc_campaign_confidence(campaign_hints, theme_source_overlap)
+    return _corr_iocs, _camp_conf
+
+
+def _build_final_signals(normalized: list[dict[str, Any]], _corr_iocs: list[dict[str, Any]], _camp_conf: float, campaign_hints: list[dict[str, Any]], theme_source_overlap: dict[str, list[str]]) -> tuple[str, list[dict[str, Any]], str, str]:
+    """Build final signal quality and confidence metrics."""
+    what_matters = _get_what_matters_first('SUSPICIOUS', None, [], _corr_iocs)
+    operator_list = _build_operator_shortlist(None, [], _corr_iocs, 0.0)
+    confidence_note = _build_confidence_note(0.0, 0.0, _camp_conf)
+    signal_quality = _classify_signal_quality(0.0, 0.0, _camp_conf, _corr_iocs)
+    return what_matters, operator_list, confidence_note, signal_quality
+
+
+def _build_correlation_result(
+    normalized: list[dict[str, Any]],
+    themes: dict[str, list[dict[str, Any]]],
+    theme_weights: dict[str, float],
+    buckets: dict[str, list[dict[str, Any]]],
+    max_themes: int,
+    verdict: str,
+    source_themes: dict[str, list[str]],
+    all_entities: list[dict[str, Any]],
+    repeated_domains: list[str],
+    repeated_iocs: list[dict[str, Any]],
+    dominant_cluster: str | None,
+    high_risk_branch: list[dict[str, Any]],
+    theme_source_overlap: dict[str, list[str]],
+    campaign_hints: list[dict[str, Any]],
+    _corr_iocs: list[dict[str, Any]],
+    _top_pivots: list[dict[str, Any]],
+    _camp_conf: float,
+) -> CorrelationResult:
+    """Build the final CorrelationResult with all computed data."""
+    sorted_themes = sorted(theme_weights.items(), key=lambda x: -x[1])
+    top_themes = sorted_themes[:max_themes]
+    coupling_pairs = _find_coupling_pairs(all_entities)
+    so_what = _build_so_what(verdict, 0.0, top_themes, dominant_cluster, len(high_risk_branch), 0, repeated_domains)
+    _cross_src_conf = _calc_cross_source_confidence(normalized, theme_source_overlap, campaign_hints)
+    what_matters, operator_list, confidence_note, signal_quality = _build_final_signals(
+        normalized, _corr_iocs, _camp_conf, campaign_hints, theme_source_overlap
+    )
+    return CorrelationResult(
+        themes=themes, risk_score=0.0, risk_buckets=buckets, top_themes=top_themes,
+        anomaly_count=_count_anomalies(normalized), verdict=verdict, source_themes=source_themes,
+        top_entities=[], repeated_domains=repeated_domains, repeated_iocs=repeated_iocs,
+        dominant_cluster=dominant_cluster, high_risk_branch=high_risk_branch,
+        theme_source_overlap=theme_source_overlap, campaign_hints=campaign_hints,
+        coupling_pairs=coupling_pairs, so_what=so_what, cross_source_confidence=_cross_src_conf,
+        corroborated_iocs=_corr_iocs, top_priority_pivots=_top_pivots, campaign_confidence=_camp_conf,
+        what_matters_first=what_matters, operator_shortlist=operator_list,
+        confidence_note=confidence_note, signal_quality=signal_quality
+    )
+
+
 def correlate_findings(findings: list[dict[str, Any]], *, risk_thresholds: dict[str, float] | None=None, max_themes: int=10) -> CorrelationResult:
     """Correlate findings and produce grouped themes with risk scoring.
 
@@ -779,49 +999,40 @@ def correlate_findings(findings: list[dict[str, Any]], *, risk_thresholds: dict[
         return CorrelationResult()
     thresholds = risk_thresholds or {'clean': 0.3, 'suspicious': 0.7}
 
-    # Extract and orchestrate helper functions
+    # Normalize and compute basic metrics
     normalized = _normalize_findings(findings)
-    risk_score = _calculate_risk_score(normalized)
+    risk_score = _compute_risk_score(normalized)
     themes = _group_themes(normalized)
     theme_weights = _calculate_theme_weights(themes)
-
-    buckets: dict[str, list[dict[str, Any]]] = {'critical': [], 'high': [], 'medium': [], 'low': []}
-    for f in normalized:
-        sev = f['severity'].lower()
-        if sev in buckets:
-            buckets[sev].append(f)
-    anomaly_count = _count_anomalies(normalized)
-    sorted_themes = sorted(theme_weights.items(), key=lambda x: -x[1])
-    top_themes = sorted_themes[:max_themes]
-
+    buckets = _build_risk_buckets(normalized)
     verdict = _determine_verdict(risk_score, thresholds)
     source_themes = _build_source_themes(normalized)
 
-    all_entities, domain_counts, ioc_counts = _extract_entities(normalized)
-    top_entities = sorted(all_entities, key=attrgetter("get")('_weight', 0), reverse=True)[:20]
-    repeated_domains = [d for d, cnt in domain_counts.items() if cnt > 1]
-    repeated_iocs = [{'value': v, 'type': t, 'count': c} for (v, t), c in ioc_counts.items() if c > 1]
-    dominant_cluster = None
-    cluster_scores: dict[str, float] = {}
-    for theme, fndgs in themes.items():
-        score = sum((SEVERITY_WEIGHTS.get(x['severity'].lower(), 0.25) for x in fndgs if x['severity'].lower() in ('critical', 'high')))
-        if score > 0:
-            cluster_scores[theme] = score
-    if cluster_scores:
-        dominant_cluster = max(cluster_scores, key=lambda k: cluster_scores.get(k, 0.0))
-    high_risk_branch = [f for f in normalized if f['severity'].lower() in ('critical', 'high') and _has_infra_hints(f)]
-    theme_source_overlap: dict[str, list[str]] = {}
-    for theme, fndgs in themes.items():
-        srcs = list({x['source'] for x in fndgs})
-        theme_source_overlap[theme] = srcs
+    # Extract entities and compute correlations
+    all_entities, repeated_domains, repeated_iocs = _extract_and_correlate_entities(findings)
+    dominant_cluster, high_risk_branch = _compute_cluster_metrics(themes, normalized)
+    theme_source_overlap = _compute_theme_source_overlap(themes)
     campaign_hints = _find_campaign_hints(normalized, themes)
-    coupling_pairs = _find_coupling_pairs(all_entities)
-    so_what = _build_so_what(verdict, risk_score, top_themes, dominant_cluster, len(high_risk_branch), anomaly_count, repeated_domains)
-    _cross_src_conf = _calc_cross_source_confidence(normalized, theme_source_overlap, campaign_hints)
-    _corr_iocs = _get_corroborated_iocs(normalized, repeated_iocs)
-    _top_pivots = _get_top_priority_pivots(normalized, dominant_cluster, high_risk_branch, repeated_domains)
-    _camp_conf = _calc_campaign_confidence(campaign_hints, theme_source_overlap)
-    return CorrelationResult(themes=themes, risk_score=risk_score, risk_buckets=buckets, top_themes=top_themes, anomaly_count=anomaly_count, verdict=verdict, source_themes=source_themes, top_entities=top_entities, repeated_domains=repeated_domains, repeated_iocs=repeated_iocs, dominant_cluster=dominant_cluster, high_risk_branch=high_risk_branch, theme_source_overlap=theme_source_overlap, campaign_hints=campaign_hints, coupling_pairs=coupling_pairs, so_what=so_what, cross_source_confidence=_cross_src_conf, corroborated_iocs=_corr_iocs, top_priority_pivots=_top_pivots, campaign_confidence=_camp_conf, what_matters_first=_get_what_matters_first(verdict, dominant_cluster, high_risk_branch, _corr_iocs), operator_shortlist=_build_operator_shortlist(dominant_cluster, high_risk_branch, _corr_iocs, risk_score), confidence_note=_build_confidence_note(risk_score, _cross_src_conf, _camp_conf), signal_quality=_classify_signal_quality(risk_score, _cross_src_conf, _camp_conf, _corr_iocs))
+    _corr_iocs, _camp_conf = _compute_top_priority_items(normalized, repeated_iocs, theme_source_overlap, campaign_hints)
+
+    return CorrelationResult(
+        themes=themes, risk_score=risk_score, risk_buckets=buckets,
+        top_themes=sorted(theme_weights.items(), key=lambda x: -x[1])[:max_themes],
+        anomaly_count=_count_anomalies(normalized), verdict=verdict, source_themes=source_themes,
+        top_entities=sorted(all_entities, key=attrgetter("get")('_weight', 0), reverse=True)[:20],
+        repeated_domains=repeated_domains, repeated_iocs=repeated_iocs,
+        dominant_cluster=dominant_cluster, high_risk_branch=high_risk_branch,
+        theme_source_overlap=theme_source_overlap, campaign_hints=campaign_hints,
+        coupling_pairs=_find_coupling_pairs(all_entities),
+        so_what=_build_so_what(verdict, risk_score, [], dominant_cluster, len(high_risk_branch), 0, repeated_domains),
+        cross_source_confidence=_calc_cross_source_confidence(normalized, theme_source_overlap, campaign_hints),
+        corroborated_iocs=_corr_iocs, top_priority_pivots=_get_top_priority_pivots(normalized, dominant_cluster, high_risk_branch, repeated_domains),
+        campaign_confidence=_camp_conf,
+        what_matters_first=_get_what_matters_first(verdict, dominant_cluster, high_risk_branch, _corr_iocs),
+        operator_shortlist=_build_operator_shortlist(dominant_cluster, high_risk_branch, _corr_iocs, risk_score),
+        confidence_note=_build_confidence_note(risk_score, 0.0, _camp_conf),
+        signal_quality=_classify_signal_quality(risk_score, 0.0, _camp_conf, _corr_iocs)
+    )
 
 def _extract_entities(findings: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], dict[str, int], dict[tuple[str, str], int]]:
     """Extract IOCs (domains, IPs, hashes, URLs) from findings descriptions.

@@ -533,59 +533,43 @@ class UniversalResearchCoordinator(UniversalCoordinator):
     # ----------------------------------------------------------------------
 
 
-    def _check_graph_paths_enabled(self, entities: list[dict[str, Any]]) -> bool:
-        """Check if graph paths are enabled and prerequisites are met."""
-        if _os.environ.get('HLEDAC_ENABLE_GRAPH_PATHS', '0') != '1':
-            return False
-        if not entities or not self._evidence_analyzer:
-            return False
-        return True
+    def _extract_centrality_scores(self, net_result: dict[str, Any]) -> tuple[list[str] | None, list[dict[str, Any]], dict[str, float]]:
+        """
+        Extract and validate centrality scores from network result.
 
-    def _get_centrality_scores(self, net_result: dict[str, Any]) -> list[str] | None:
-        """Extract and rank centrality scores, returning top 10 node keys."""
+        Returns:
+            Tuple of (top_nodes, edges, centrality) or (None, [], {}) on failure.
+        """
         if not isinstance(net_result, dict):
-            return None
-        centrality: dict[str, float] = net_result.get('centrality') or {}
+            return None, [], {}
+        top_nodes = self._get_centrality_scores(net_result)
+        if not top_nodes:
+            return None, [], {}
         edges: list[dict[str, Any]] = net_result.get('edges') or []
-        if not centrality or not edges or len(centrality) < 2:
-            return None
-        ranked = sorted(centrality.items(), key=lambda kv: float(kv[1] or 0.0), reverse=True)[:10]
-        if len(ranked) < 2:
-            return None
-        return [str(n) for n, _ in ranked]
+        centrality: dict[str, float] = net_result.get('centrality') or {}
+        return top_nodes, edges, centrality
 
-    def _build_adjacency_list(self, top_nodes: list[str], edges: list[dict[str, Any]]) -> dict[str, list[str]]:
-        """Build undirected adjacency list from top nodes and edges."""
-        adj: dict[str, list[str]] = {n: [] for n in top_nodes}
-        for e in edges:
-            try:
-                src = str(e.get('src', ''))
-                dst = str(e.get('dst', ''))
-                if not src or not dst or src == dst:
-                    continue
-                if src in adj and dst not in adj[src]:
-                    adj[src].append(dst)
-                if dst in adj and src not in adj[dst]:
-                    adj[dst].append(src)
-            except Exception:
-                continue
-        return adj
 
-    async def _find_paths_for_targets(self, pathfinder: Any, start: str, targets: list[str], per_target_timeout: float) -> list[list[str]]:
-        """Find paths from start to each target with bounded timeout."""
-        paths: list[list[str]] = []
-        for tgt in targets:
-            try:
-                result = await safe_wait_for(
-                    pathfinder.find_paths(start_nodes=[start], target_nodes=[tgt], max_steps=50),
-                    timeout=per_target_timeout,
-                    label='research_coord_paths'
-                )
-                if result:
-                    paths.append(result)
-            except (TimeoutError, Exception) as e:
-                logger.debug(f'ResearchCoordinator: path find {start}→{tgt} failed: {e}')
-        return paths
+    def _build_graph_adjacency(self, top_nodes: list[str], edges: list[dict[str, Any]]) -> dict[str, list[str]]:
+        """Build adjacency list from top nodes and edges."""
+        return self._build_adjacency_list(top_nodes, edges)
+
+
+    async def _find_quantum_paths(
+        self,
+        pathfinder: Any,
+        start_node: str,
+        targets: list[str],
+        timeout: float,
+    ) -> list[list[str]]:
+        """Find quantum paths from start to all targets with bounded timeout."""
+        return await self._find_paths_for_targets(pathfinder, start_node, targets, timeout)
+
+
+    # ----------------------------------------------------------------------
+    # Graph path analysis helpers (extracted to reduce cyclomatic complexity)
+    # ----------------------------------------------------------------------
+
 
     def _create_path_findings(self, paths: list[list[str]], start: str, targets: list[str], ts_now: float, query: str, sprint_id: str, centrality: dict[str, float]) -> list[Any]:
         """Create CanonicalFinding objects from paths."""
@@ -627,38 +611,80 @@ class UniversalResearchCoordinator(UniversalCoordinator):
         if not self._check_graph_paths_enabled(entities):
             return []
 
+        # Phase 1: Extract centrality scores
+        net_result = await self._evidence_analyzer.analyze_network(entities)
+        top_nodes, edges, centrality = self._extract_centrality_scores(net_result)
+        if not top_nodes:
+            return []
+
+        # Phase 2: Build adjacency list
+        adj = self._build_graph_adjacency(top_nodes, edges)
+
+        # Phase 3: Find quantum paths
+        paths, findings = await self._find_quantum_paths_and_create_findings(
+            adj, top_nodes, centrality, query, sprint_id
+        )
+        if findings:
+            self._ingest_findings(findings)
+
+        return self._format_path_findings(findings)
+
+
+    async def _find_quantum_paths_and_create_findings(
+        self,
+        adj: dict[str, list[str]],
+        top_nodes: list[str],
+        centrality: dict[str, float],
+        query: str,
+        sprint_id: str,
+    ) -> tuple[list[list[str]], list[Any]]:
+        """Initialize pathfinder, find paths, and create findings."""
         pathfinder: Any = None
         try:
-            net_result = await self._evidence_analyzer.analyze_network(entities)
-            top_nodes = self._get_centrality_scores(net_result)
-            if not top_nodes:
-                return []
-            edges: list[dict[str, Any]] = net_result.get('edges') or []
-            adj = self._build_adjacency_list(top_nodes, edges)
             from hledac.universal.graph.quantum_pathfinder import create_quantum_pathfinder
             pathfinder = create_quantum_pathfinder()
             if pathfinder is None:
-                return []
+                return [], []
+
             await pathfinder.initialize(adj)
-            ts_now = time.time()
+
             start = top_nodes[0]
             targets = top_nodes[1:]
-            per_target_timeout = max(1.0, 60.0 / max(1, len(targets)))
-            centrality: dict[str, float] = net_result.get('centrality') or {}
-            paths = await self._find_paths_for_targets(pathfinder, start, targets, per_target_timeout)
+            timeout = max(1.0, 60.0 / max(1, len(targets)))
+            ts_now = time.time()
+
+            paths = await self._find_quantum_paths(pathfinder, start, targets, timeout)
             findings = self._create_path_findings(paths, start, targets, ts_now, query, sprint_id, centrality)
-            if findings:
-                self._ingest_findings(findings)
-            return [{'agent': 'graph_path_analysis', 'start': f.provenance[2] if len(f.provenance) > 2 else '', 'target': f.provenance[3] if len(f.provenance) > 3 else '', 'path': _payload_data.get('path', []), 'length': _payload_data.get('length', 0), 'finding_id': f.finding_id} for f in findings for _payload_data in [msgspec.json.decode(f.payload_text.encode()) if f.payload_text else {}]]
+
+            return paths, findings
         except Exception as e:
             logger.warning(f'ResearchCoordinator: graph path analysis failed: {e}')
-            return []
+            return [], []
         finally:
             try:
                 if pathfinder is not None and getattr(pathfinder, 'initialized', False):
                     await pathfinder.cleanup()
             except Exception:  # noqa: BLE001
                 pass
+
+
+    def _format_path_findings(self, findings: list[Any]) -> list[dict[str, Any]]:
+        """Format findings into serializable dicts."""
+        result: list[dict[str, Any]] = []
+        for f in findings:
+            try:
+                payload = msgspec.json.decode(f.payload_text.encode()) if f.payload_text else {}
+            except Exception:
+                payload = {}
+            result.append({
+                'agent': 'graph_path_analysis',
+                'start': f.provenance[2] if len(f.provenance) > 2 else '',
+                'target': f.provenance[3] if len(f.provenance) > 3 else '',
+                'path': payload.get('path', []),
+                'length': payload.get('length', 0),
+                'finding_id': f.finding_id,
+            })
+        return result
 
     async def execute_research_plan(self, plan: dict[str, Any], context: dict[str, Any] | None=None, graph_analysis: bool=False) -> list[dict[str, Any]]:
         """

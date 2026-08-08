@@ -142,6 +142,64 @@ def _tech_cpe_prefix(tech: str) -> str:
 
 # ── CVE Record Parser ──────────────────────────────────────────────────────────
 
+def _parse_cvss_metrics(metrics: dict) -> tuple[float | None, str]:
+    """Extract CVSS score and version from metrics (prefers 3.x)."""
+    if cvss_v31 := metrics.get("cvssMetricV31"):
+        cvss_data = cvss_v31[0].get("cvssData", {})
+        return cvss_data.get("baseScore"), "3.1"
+    if cvss_v30 := metrics.get("cvssMetricV30"):
+        cvss_data = cvss_v30[0].get("cvssData", {})
+        return cvss_data.get("baseScore"), "3.0"
+    if cvss_v2 := metrics.get("cvssMetricV2"):
+        cvss_data = cvss_v2[0].get("cvssData", {})
+        return cvss_data.get("baseScore"), "2.0"
+    return None, "3.1"
+
+
+def _parse_description(descriptions: list[dict]) -> str:
+    """Extract English description from descriptions list."""
+    for desc in descriptions:
+        if desc.get("lang") == "en":
+            return desc.get("value", "")
+    return descriptions[0].get("value", "") if descriptions else ""
+
+
+def _parse_cwe_id(weaknesses: list[dict]) -> str | None:
+    """Extract CWE ID from weakness list."""
+    for weakness in weaknesses:
+        for desc in weakness.get("description", []):
+            cwe_value = desc.get("value", "")
+            if cwe_value.startswith("CWE-"):
+                return cwe_value
+    return None
+
+
+def _parse_version_patterns(configs: list[dict]) -> dict[str, str]:
+    """Extract version patterns from CPE configurations."""
+    version_patterns: dict[str, str] = {}
+    for config in configs:
+        for node in config.get("nodes", []):
+            for cpe_match in node.get("cpeMatches", []):
+                if not cpe_match.get("vulnerable", False):
+                    continue
+                cpe = cpe_match.get("criteria", "")
+                parts = cpe.split(":")
+                if len(parts) >= 5:
+                    vendor, product = parts[3], parts[4]
+                    version = parts[5] if len(parts) > 5 else "*"
+                    update = parts[6] if len(parts) > 6 else "*"
+                    tech_key = f"{vendor}:{product}"
+                    if tech_key in version_patterns:
+                        continue
+                    # Build version pattern
+                    if update == "*":
+                        pattern = ".*" if version == "*" else f"^{re_escape(version)}.*"
+                    else:
+                        pattern = ".*" if version == "*" else f"^{re_escape(version)}.{re_escape(update)}"
+                    version_patterns[tech_key] = pattern
+    return version_patterns
+
+
 def _parse_nvd_cve(cve_item: dict[str, Any]) -> dict[str, Any] | None:
     """Parse NVD CVE 2.0 JSON item into normalized record."""
     try:
@@ -150,79 +208,11 @@ def _parse_nvd_cve(cve_item: dict[str, Any]) -> dict[str, Any] | None:
         if not cve_id:
             return None
 
-        # Published date
-        published = cve.get("published", "")[:10]  # YYYY-MM-DD
-
-        # CVSS score (prefer 3.x)
-        metrics = cve.get("metrics", {})
-        cvss_score = None
-        cvss_version = "3.1"
-        if metrics.get("cvssMetricV31"):
-            cvss_data = metrics["cvssMetricV31"][0].get("cvssData", {})
-            cvss_score = cvss_data.get("baseScore")
-            cvss_version = "3.1"
-        elif metrics.get("cvssMetricV30"):
-            cvss_data = metrics["cvssMetricV30"][0].get("cvssData", {})
-            cvss_score = cvss_data.get("baseScore")
-            cvss_version = "3.0"
-        elif metrics.get("cvssMetricV2"):
-            cvss_data = metrics["cvssMetricV2"][0].get("cvssData", {})
-            cvss_score = cvss_data.get("baseScore")
-            cvss_version = "2.0"
-
-        # CWE
-        cwe_id = None
-        descriptions = cve.get("descriptions", [])
-        for desc in descriptions:
-            if desc.get("lang") == "en":
-                description = desc.get("value", "")
-                break
-        else:
-            description = descriptions[0].get("value", "") if descriptions else ""
-
-        # Extract CWE from weakness list
-        weaknesses = cve.get("weaknesses", [])
-        for weakness in weaknesses:
-            for desc in weakness.get("description", []):
-                cwe_value = desc.get("value", "")
-                if cwe_value.startswith("CWE-"):
-                    cwe_id = cwe_value
-                    break
-            if cwe_id:
-                break
-
-        # Extract affected configurations (CPE matches)
-        configs = cve.get("configurations", [])
-        version_patterns: dict[str, str] = {}  # tech -> version_pattern
-
-        for config in configs:
-            for node in config.get("nodes", []):
-                for cpe_match in node.get("cpeMatches", []):
-                    if not cpe_match.get("vulnerable", False):
-                        continue
-                    cpe = cpe_match.get("criteria", "")
-                    parts = cpe.split(":")
-                    if len(parts) >= 5:
-                        vendor, product = parts[3], parts[4]
-                        version = parts[5] if len(parts) > 5 else "*"
-                        update = parts[6] if len(parts) > 6 else "*"
-                        edition = parts[7] if len(parts) > 7 else "*"
-
-                        tech_key = f"{vendor}:{product}"
-                        # Build version pattern
-                        if update == "*":
-                            if version == "*":
-                                pattern = ".*"
-                            else:
-                                pattern = f"^{re_escape(version)}.*"
-                        else:
-                            if version == "*":
-                                pattern = ".*"
-                            else:
-                                pattern = f"^{re_escape(version)}.{re_escape(update)}"
-
-                        if tech_key not in version_patterns:
-                            version_patterns[tech_key] = pattern
+        published = cve.get("published", "")[:10]
+        cvss_score, cvss_version = _parse_cvss_metrics(cve.get("metrics", {}))
+        description = _parse_description(cve.get("descriptions", []))
+        cwe_id = _parse_cwe_id(cve.get("weaknesses", []))
+        version_patterns = _parse_version_patterns(cve.get("configurations", []))
 
         return {
             "cve_id": cve_id,

@@ -238,93 +238,71 @@ class DiscoveryPlanner:
         self._cost_multiplier = cost_multiplier
         self._include_stub_providers = include_stub_providers
 
+    def _determine_provider_state(self, name: str, pipeline_context_available: bool) -> tuple[ProviderCapabilityState, str]:
+        """Determine provider capability state and reason."""
+        cap = PROVIDER_CAPABILITIES.get(name, {})
+        is_stub = cap.get('is_stub', False)
+        requires_context = cap.get('requires_context', False)
+        production_enabled = cap.get('production_enabled', False)
+        if is_stub and not requires_context:
+            return ProviderCapabilityState.ADVISORY_STUB, 'advisory_stub_no_real_endpoint'
+        if requires_context:
+            if pipeline_context_available:
+                return ProviderCapabilityState.PRODUCTION, 'production_wired_pipeline_context_available'
+            return ProviderCapabilityState.NOT_WIRED, 'pipeline_context_not_available'
+        if not production_enabled:
+            return ProviderCapabilityState.DISABLED, f"disabled_reason={cap.get('disabled_reason', 'unknown')}"
+        return ProviderCapabilityState.PRODUCTION, 'production_wired'
+
+    def _filter_providers(self, pipeline_context_available: bool) -> list[tuple[float, str, float, ProviderCapabilityState, str]]:
+        """Filter and score all providers, returning eligible ones."""
+        scored = []
+        for stats in (self._registry.get(name) for name in PROVIDER_NAMES):
+            if stats is None:
+                continue
+            state, reason = self._determine_provider_state(stats.name, pipeline_context_available)
+            if not stats.is_healthy:
+                continue
+            if state == ProviderCapabilityState.NOT_WIRED and not (self._include_stub_providers and pipeline_context_available):
+                continue
+            if state in (ProviderCapabilityState.ADVISORY_STUB, ProviderCapabilityState.DISABLED) and not self._include_stub_providers:
+                continue
+            if state in (ProviderCapabilityState.ADVISORY_STUB, ProviderCapabilityState.DISABLED):
+                reason = f"advisory_stub_included_reason={PROVIDER_CAPABILITIES.get(stats.name, {}).get('disabled_reason', 'unknown')}"
+            if state == ProviderCapabilityState.ADVISORY_STUB and self._include_stub_providers:
+                reason = f"stub_selected_include_stub=True_reason={PROVIDER_CAPABILITIES.get(stats.name, {}).get('disabled_reason', 'unknown')}"
+            est_cost = PROVIDER_COST_ESTIMATE.get(stats.name, 1000.0) * self._cost_multiplier
+            scored.append((stats.score(), stats.name, est_cost, state, reason))
+        scored.sort(key=lambda x: x[0], reverse=True)
+        return scored
+
     def plan(self, query: str, remaining_time_budget_s: float, target_results: int=20, pipeline_context_available: bool=False) -> DiscoveryPlan:
-        """
-        Build a DiscoveryPlan for the given query and remaining budget.
-
-        Parameters
-        ----------
-        query:
-            Search / pivot query string.
-        remaining_time_budget_s:
-            Remaining wall-clock seconds in the sprint.
-        target_results:
-            Target number of discovery hits (used for result-size hints).
-        pipeline_context_available:
-            True when feed adapters are wired (enables feed_pivots).
-
-        Returns
-        -------
-        DiscoveryPlan with 0-N provider plans and per-provider status debug.
-        """
+        """Build a DiscoveryPlan for the given query and remaining budget."""
         remaining_ms = remaining_time_budget_s * 1000.0
         plans: list[ProviderPlan] = []
         estimated_total_ms = 0.0
         debug: list[ProviderStatusDebug] = []
-        all_providers = [(self._registry.get(name), PROVIDER_COST_ESTIMATE.get(name, 1000.0)) for name in PROVIDER_NAMES]
-        scored = []
-        for stats, cost_est in all_providers:
-            if stats is None:
-                continue
-            name = stats.name
-            cap = PROVIDER_CAPABILITIES.get(name, {})
-            is_stub = cap.get('is_stub', False)
-            requires_context = cap.get('requires_context', False)
-            production_enabled = cap.get('production_enabled', False)
-            if is_stub and (not requires_context):
-                state = ProviderCapabilityState.ADVISORY_STUB
-                reason = 'advisory_stub_no_real_endpoint'
-            elif requires_context:
-                if pipeline_context_available:
-                    state = ProviderCapabilityState.PRODUCTION
-                    reason = 'production_wired_pipeline_context_available'
-                else:
-                    state = ProviderCapabilityState.NOT_WIRED
-                    reason = 'pipeline_context_not_available'
-            elif not production_enabled:
-                state = ProviderCapabilityState.DISABLED
-                reason = f"disabled_reason={cap.get('disabled_reason', 'unknown')}"
-            else:
-                state = ProviderCapabilityState.PRODUCTION
-                reason = 'production_wired'
-            if not stats.is_healthy:
-                debug.append(ProviderStatusDebug(provider=name, state=state, selected=False, reason=f'unhealthy_reliability={stats.reliability_ewma:.3f}'))
-                continue
-            if state == ProviderCapabilityState.NOT_WIRED:
-                if not self._include_stub_providers or not pipeline_context_available:
-                    debug.append(ProviderStatusDebug(provider=name, state=state, selected=False, reason=reason))
-                    continue
-            if state in (ProviderCapabilityState.ADVISORY_STUB, ProviderCapabilityState.DISABLED):
-                if not self._include_stub_providers:
-                    debug.append(ProviderStatusDebug(provider=name, state=state, selected=False, reason=f'stub_advisory_excluded_include_stub={self._include_stub_providers}'))
-                    continue
-                reason = f"advisory_stub_included_reason={cap.get('disabled_reason', 'unknown')}"
-            if is_stub and self._include_stub_providers:
-                reason = f"stub_selected_include_stub=True_reason={cap.get('disabled_reason', 'unknown')}"
-            est_cost = cost_est * self._cost_multiplier
-            score = stats.score()
-            scored.append((score, stats.name, est_cost, state, reason))
-        scored.sort(key=lambda x: x[0], reverse=True)
+        scored = self._filter_providers(pipeline_context_available)
+        budget_limit = remaining_ms * 0.85
         for score, name, est_cost, state, reason in scored:
             if len(plans) >= self._max_providers:
                 debug.append(ProviderStatusDebug(provider=name, state=state, selected=False, reason='max_providers_reached'))
                 continue
-            if estimated_total_ms + est_cost > remaining_ms * 0.85:
+            if estimated_total_ms + est_cost > budget_limit:
                 debug.append(ProviderStatusDebug(provider=name, state=state, selected=False, reason=f'budget_exceeded_remaining={remaining_ms - estimated_total_ms:.0f}ms'))
                 continue
             if self._rng.random() < self._exploration_prob and len(scored) > 2:
+                debug.append(ProviderStatusDebug(provider=name, state=state, selected=False, reason=f'exploration_skipped_original_score={score:.4f}'))
                 mid = len(scored) // 2
                 pick_idx = self._rng.randint(mid, len(scored) - 1)
                 _, picked_name, picked_est_cost, picked_state, _ = scored[pick_idx]
-                debug.append(ProviderStatusDebug(provider=name, state=state, selected=False, reason=f'exploration_skipped_original_score={score:.4f}'))
-                if estimated_total_ms + picked_est_cost <= remaining_ms * 0.85:
+                if estimated_total_ms + picked_est_cost <= budget_limit:
                     plans.append(ProviderPlan(provider=picked_name, max_results=max(5, min(target_results, 50)), timeout_s=max(1.0, min(picked_est_cost / 1000.0 * 0.9, 30.0)), estimated_cost_ms=picked_est_cost))
                     estimated_total_ms += picked_est_cost
                     debug.append(ProviderStatusDebug(provider=picked_name, state=picked_state, selected=True, reason=f'exploration_selected_score={scored[pick_idx][0]:.4f}'))
                 continue
             timeout_s = max(1.0, min(est_cost / 1000.0 * 0.9, 30.0))
-            max_res = max(5, min(target_results, 50))
-            plans.append(ProviderPlan(provider=name, max_results=max_res, timeout_s=timeout_s, estimated_cost_ms=est_cost))
+            plans.append(ProviderPlan(provider=name, max_results=max(5, min(target_results, 50)), timeout_s=timeout_s, estimated_cost_ms=est_cost))
             estimated_total_ms += est_cost
             debug.append(ProviderStatusDebug(provider=name, state=state, selected=True, reason=reason))
         return DiscoveryPlan(plans=plans, estimated_total_ms=estimated_total_ms, remaining_budget_ms=remaining_ms - estimated_total_ms, provider_status_debug=debug)

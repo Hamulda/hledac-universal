@@ -1209,66 +1209,69 @@ class IdentityStitchingEngine:
         threshold = min_score if min_score is not None else self.similarity_threshold
         profile_ids = list(self._profiles.keys())
         n = len(profile_ids)
-
-        # --- Phase 1: Build candidate pair set ---
-        # LSH pre-filter: O(n * k) where k = num_bands (typ. 16)
-        # Without LSH: fall back to exact-index candidates
-        candidate_pairs: set[tuple[str, str]] = set()
-
-        if self.enable_lsh and self._lsh_index is not None and n >= 4:
-            # LSH query per profile — O(n) LSH queries místo O(n²)
-            for pid in profile_ids:
-                fp = self._lsh_fingerprint_cache.get(pid)
-                if fp is None:
-                    continue
-                # query returns (doc_id, similarity) sorted desc
-                lsh_hits = self._lsh_index.query(fp, max_results=50)
-                for hit_id, _sim in lsh_hits:
-                    if hit_id != pid:
-                        candidate_pairs.add(tuple(sorted([pid, hit_id])))
-
-        # Exact-index candidates (username/email/alias) — O(n * avg_candidates)
-        for pid in profile_ids:
-            profile = self._profiles[pid]
-            for username in profile.get_all_usernames():
-                normalized = self._normalize_username_translingual(username)
-                for other_pid in self._username_index.get(normalized, set()):
-                    if other_pid != pid:
-                        candidate_pairs.add(tuple(sorted([pid, other_pid])))
-            for email in profile.emails:
-                normalized = self._normalize_email(email)
-                for other_pid in self._email_index.get(normalized, set()):
-                    if other_pid != pid:
-                        candidate_pairs.add(tuple(sorted([pid, other_pid])))
-            for alias in profile.aliases + [profile.primary_name]:
-                normalized = self._normalize_text_translingual(alias)
-                for other_pid in self._alias_index.get(normalized, set()):
-                    if other_pid != pid:
-                        candidate_pairs.add(tuple(sorted([pid, other_pid])))
-
+        candidate_pairs = self._build_candidate_pairs(profile_ids, n)
         if not candidate_pairs:
             return []
-
-        # --- Phase 2: Parallel pairwise matching ---
         pairs = list(candidate_pairs)
         if n < 20:
-            # Sync fallback for small N
-            matches: list[IdentityMatch] = []
-            for id_a, id_b in pairs:
-                match = self.compute_match(self._profiles[id_a], self._profiles[id_b])
-                if match.match_score >= threshold:
-                    matches.append(match)
+            matches = self._sync_match_pairs(pairs, threshold)
         else:
-            # F1 FIX: concurrency=None → UMA-aware via ConcurrencyBudgetRegistry
-            # (SOCIAL_MINE: OK=4, WARN=2, CRITICAL=1, EMERGENCY=1)
             matches = await _bounded_gather_pairs(
-                pairs,
-                threshold,
+                pairs, threshold,
                 lambda a, b: self.compute_match(self._profiles[a], self._profiles[b]),
                 concurrency=None,  # F1 FIX: dynamic UMA-aware limit
             )
-
         matches.sort(key=attrgetter("match_score"), reverse=True)
+        return matches
+
+    def _build_candidate_pairs(self, profile_ids: list[str], n: int) -> set[tuple[str, str]]:
+        """Build candidate pairs from LSH and exact index."""
+        candidate_pairs: set[tuple[str, str]] = set()
+        if self.enable_lsh and self._lsh_index is not None and n >= 4:
+            candidate_pairs.update(self._build_lsh_candidate_pairs(profile_ids))
+        candidate_pairs.update(self._build_exact_candidate_pairs(profile_ids))
+        return candidate_pairs
+
+    def _build_lsh_candidate_pairs(self, profile_ids: list[str]) -> set[tuple[str, str]]:
+        """Build candidate pairs from LSH index."""
+        pairs: set[tuple[str, str]] = set()
+        for pid in profile_ids:
+            fp = self._lsh_fingerprint_cache.get(pid)
+            if fp is None:
+                continue
+            lsh_hits = self._lsh_index.query(fp, max_results=50)
+            for hit_id, _sim in lsh_hits:
+                if hit_id != pid:
+                    pairs.add(tuple(sorted([pid, hit_id])))
+        return pairs
+
+    def _build_exact_candidate_pairs(self, profile_ids: list[str]) -> set[tuple[str, str]]:
+        """Build candidate pairs from exact indexes (username/email/alias)."""
+        pairs: set[tuple[str, str]] = set()
+        for pid in profile_ids:
+            profile = self._profiles[pid]
+            pairs.update(self._index_candidates_for_field(pid, profile.get_all_usernames(), self._username_index, self._normalize_username_translingual))
+            pairs.update(self._index_candidates_for_field(pid, profile.emails, self._email_index, self._normalize_email))
+            pairs.update(self._index_candidates_for_field(pid, profile.aliases + [profile.primary_name], self._alias_index, self._normalize_text_translingual))
+        return pairs
+
+    def _index_candidates_for_field(self, pid: str, values: list, index: dict, normalizer) -> set[tuple[str, str]]:
+        """Get candidate pairs for a field using an index."""
+        pairs: set[tuple[str, str]] = set()
+        for val in values:
+            normalized = normalizer(val)
+            for other_pid in index.get(normalized, set()):
+                if other_pid != pid:
+                    pairs.add(tuple(sorted([pid, other_pid])))
+        return pairs
+
+    def _sync_match_pairs(self, pairs: list[tuple[str, str]], threshold: float) -> list[IdentityMatch]:
+        """Synchronously match pairs for small N."""
+        matches: list[IdentityMatch] = []
+        for id_a, id_b in pairs:
+            match = self.compute_match(self._profiles[id_a], self._profiles[id_b])
+            if match.match_score >= threshold:
+                matches.append(match)
         return matches
 
     def find_all_matches(self, min_score: float | None=None) -> list[IdentityMatch]:

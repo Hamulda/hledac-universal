@@ -43,6 +43,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import enum
 import ctypes
 import inspect
 import logging
@@ -1544,10 +1545,10 @@ class M1ResourceGovernor:
         # Tracks lifecycle-driven degradation separately from CRITICAL/EMERGENCY UMA.
         self._sprint_degraded_mode: bool = False
         # HW-02: Lazy power monitor initialization
-        self._power_monitor: "PowerStatusMonitor | None" = None
+        self._power_monitor: "PowerStatusMonitor | None" = None  # noqa: F821
 
     @property
-    def _pw_monitor(self) -> "PowerStatusMonitor":
+    def _pw_monitor(self) -> "PowerStatusMonitor":  # noqa: F821
         """Lazy accessor for power monitor (avoids import at module load)."""
         if self._power_monitor is None:
             from hledac.universal.utils.uma_budget import PowerStatusMonitor
@@ -2027,6 +2028,12 @@ class M1ResourceGovernor:
             power_factor = 0.8
 
         adjusted_fetch = max(1, int(base_decision.fetch_limit * power_factor))
+        power_status = {
+            "on_battery": uma.on_battery,
+            "battery_level": uma.battery_level,
+            "ac_attached": uma.ac_attached,
+            "power_factor": power_factor,
+        }
 
         # [FINAL]-019: Compute canonical QoS level from all active constraints.
         # This is done here (after power adjustment) because battery status
@@ -2692,52 +2699,50 @@ class ResourceGovernor:
         """Nastaví cost model pro predikci rizika překročení budgetu."""
         self._cost_model = cost_model
 
-    def can_afford_sync(self, cost_estimate: dict[str, Any], priority: Priority = Priority.NORMAL) -> bool:
+    def _check_peak_coordinator(self, priority: Priority) -> tuple[bool, bool]:
         """
-        Synchronní kontrola zdrojů bez rezervace.
+        Check peak load coordinator for cross-subsystem admission.
 
-        UNIFIED-001: Now also checks GlobalPeakLoadCoordinator for cross-subsystem
-        admission control. If the coordinator indicates high memory pressure,
-        this returns False even if local checks pass.
+        Returns:
+            Tuple of (can_proceed, reason_exists).
+            If can_proceed is False, reason is logged.
         """
-        # UNIFIED-001: Check peak load coordinator first (fast path)
         try:
             from hledac.universal.core.peak_load_coordinator import (
                 get_peak_coordinator,
                 TaskPriority as PeakTaskPriority,
             )
             coordinator = get_peak_coordinator()
-            if coordinator is not None:
-                # Map Priority to TaskPriority
-                priority_map = {
-                    Priority.CRITICAL: PeakTaskPriority.CRITICAL,
-                    Priority.HIGH: PeakTaskPriority.HIGH,
-                    Priority.NORMAL: PeakTaskPriority.NORMAL,
-                    Priority.LOW: PeakTaskPriority.LOW,
-                }
-                peak_priority = priority_map.get(priority, PeakTaskPriority.NORMAL)
+            if coordinator is None:
+                return True, False
 
-                # Check if coordinator is under high pressure
-                snapshot = coordinator.snapshot()
-                if snapshot.emergency_active:
-                    # Emergency mode - only CRITICAL tasks proceed
-                    if priority != Priority.CRITICAL:
-                        logger.debug(
-                            f"[UNIFIED-001] can_afford_sync: emergency mode, "
-                            f"rejecting {priority} priority"
-                        )
-                        return False
-                elif snapshot.high_water_active and priority == Priority.LOW:
-                    # High water mode - reject LOW priority
-                    logger.debug(
-                        f"[UNIFIED-001] can_afford_sync: high water mode, "
-                        f"rejecting LOW priority (utilization: {snapshot.utilization_fraction:.1%})"
-                    )
-                    return False
-        except (ImportError, AttributeError):  # noqa: BLE001
-            # Coordinator not available - continue with local checks
-            pass
+            priority_map = {
+                Priority.CRITICAL: PeakTaskPriority.CRITICAL,
+                Priority.HIGH: PeakTaskPriority.HIGH,
+                Priority.NORMAL: PeakTaskPriority.NORMAL,
+                Priority.LOW: PeakTaskPriority.LOW,
+            }
+            peak_priority = priority_map.get(priority, PeakTaskPriority.NORMAL)
+            snapshot = coordinator.snapshot()
 
+            if snapshot.emergency_active and priority != Priority.CRITICAL:
+                logger.debug(
+                    f"[UNIFIED-001] can_afford_sync: emergency mode, "
+                    f"rejecting {priority} priority"
+                )
+                return False, True
+            if snapshot.high_water_active and priority == Priority.LOW:
+                logger.debug(
+                    f"[UNIFIED-001] can_afford_sync: high water mode, "
+                    f"rejecting LOW priority (utilization: {snapshot.utilization_fraction:.1%})"
+                )
+                return False, True
+            return True, False
+        except (ImportError, AttributeError):
+            return True, False
+
+    def _check_ram(self, cost_estimate: dict[str, Any], priority: Priority) -> bool:
+        """Check if RAM is available for the cost estimate."""
         ram_used = 0.0
         if psutil is not None:
             try:
@@ -2750,22 +2755,32 @@ class ResourceGovernor:
         factor = self._priority_factor[priority]
         if ram_used + ram_needed > self.high_water * factor:
             return False
-        if cost_estimate.get("gpu", False):
-            try:
-                if hasattr(_get_mx(), "get_active_memory"):
-                    gpu_used = _get_mx().get_active_memory() / (1024 * 1024)
-                elif hasattr(_get_mx().metal, "get_active_memory"):
-                    gpu_used = _get_mx().metal.get_active_memory() / (1024 * 1024)
-                else:
-                    gpu_used = 0
-                gpu_total = float("inf")
-                if hasattr(_get_mx().metal, "get_recommended_max_memory"):
-                    gpu_total = _get_mx().metal.get_recommended_max_memory() / (1024 * 1024)
-                if gpu_used + ram_needed > gpu_total * factor:
-                    return False
-            except Exception:  # noqa: BLE001
-                pass
-        # HW-01: GPU thermal check přes M1ThermalMonitor — sjednocená cesta
+        return True
+
+    def _check_gpu(self, cost_estimate: dict[str, Any], priority: Priority) -> bool:
+        """Check if GPU memory is available for the cost estimate."""
+        if not cost_estimate.get("gpu", False):
+            return True
+        try:
+            if hasattr(_get_mx(), "get_active_memory"):
+                gpu_used = _get_mx().get_active_memory() / (1024 * 1024)
+            elif hasattr(_get_mx().metal, "get_active_memory"):
+                gpu_used = _get_mx().metal.get_active_memory() / (1024 * 1024)
+            else:
+                return True
+            gpu_total = float("inf")
+            if hasattr(_get_mx().metal, "get_recommended_max_memory"):
+                gpu_total = _get_mx().metal.get_recommended_max_memory() / (1024 * 1024)
+            factor = self._priority_factor[priority]
+            ram_needed = cost_estimate.get("ram_mb", 0)
+            if gpu_used + ram_needed > gpu_total * factor:
+                return False
+        except Exception:
+            pass
+        return True
+
+    def _check_thermal(self, priority: Priority) -> bool:
+        """Check thermal status - fail for non-CRITICAL priority when throttled."""
         thermal_status = self._thermal_monitor.read_thermal_status()
         if thermal_status.is_throttled and priority != Priority.CRITICAL:
             logger.warning(
@@ -2773,17 +2788,48 @@ class ResourceGovernor:
                 f"gpu={thermal_status.gpu_temperature_c}°C, headroom={thermal_status.thermal_headroom:.2f}"
             )
             return False
+        return True
+
+    def _check_ane(self, priority: Priority) -> bool:
+        """Check ANE utilization - reject LOW priority when ANE is heavily used."""
         try:
             if hasattr(_get_mx().metal, "get_ane_utilization"):
                 ane = _get_mx().metal.get_ane_utilization()
                 if ane > 0.9 and priority == Priority.LOW:
                     return False
-        except AttributeError:  # noqa: BLE001
+        except AttributeError:
             pass
-        if self._cost_model is not None:
-            risk = self._cost_model.predict_overrun_risk(cost_estimate)
-            if risk > 0.3:
-                return False
+        return True
+
+    def _check_cost_model(self, cost_estimate: dict[str, Any]) -> bool:
+        """Check cost model prediction for overrun risk."""
+        if self._cost_model is None:
+            return True
+        risk = self._cost_model.predict_overrun_risk(cost_estimate)
+        if risk > 0.3:
+            return False
+        return True
+
+    def can_afford_sync(self, cost_estimate: dict[str, Any], priority: Priority = Priority.NORMAL) -> bool:
+        """
+        Synchronní kontrola zdrojů bez rezervace.
+
+        UNIFIED-001: Now also checks GlobalPeakLoadCoordinator for cross-subsystem
+        admission control. If the coordinator indicates high memory pressure,
+        this returns False even if local checks pass.
+        """
+        if not self._check_peak_coordinator(priority)[0]:
+            return False
+        if not self._check_ram(cost_estimate, priority):
+            return False
+        if not self._check_gpu(cost_estimate, priority):
+            return False
+        if not self._check_thermal(priority):
+            return False
+        if not self._check_ane(priority):
+            return False
+        if not self._check_cost_model(cost_estimate):
+            return False
         return True
 
     def reserve(self, cost_estimate: dict[str, Any], priority: Priority = Priority.NORMAL):
@@ -3526,7 +3572,7 @@ def get_lane_ram_budget(lane_id: str) -> int:
 # [FINAL]-019: Context variable carrying the latest GovernorDecision QoS snapshot.
 # Any subsystem can read get_qos_signal() to check if its operation is permitted.
 # Set once per evaluation cycle in apply_decision().
-_qos_signal: contextvars.ContextVar[QoSProfile] = contextvars.ContextVar(
+_qos_signal: _contextvars.ContextVar[QoSProfile] = _contextvars.ContextVar(
     "_qos_signal", default=QoSProfile()
 )
 

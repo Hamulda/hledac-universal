@@ -1975,23 +1975,8 @@ def _rdap_extract_entities(
     return findings, count
 
 
-def _rdap_extract_domain_payload(
-    rdap_data: dict[str, Any],
-    domain_name: str,
-    now: float,
-    confidence: float,
-    sprint_id: str,
-) -> tuple[Any, str, int, int, int] | None:
-    """
-    Extract domain payload data for the RDAP domain finding.
-
-    Returns (finding, registrar_name, ns_count, status_count, event_count) or None.
-    Branch-once pattern: type detection done once, then uniform extraction.
-    """
-    if not domain_name:
-        return None
-
-    # Registrar — branch once on type, handle all with getitem/ getattr uniformly
+def _extract_registrar(rdap_data: dict[str, Any]) -> str:
+    """Extract registrar name from RDAP data with type branching."""
     registrar_name = ""
     try:
         registrar_raw = rdap_data["registrar"]
@@ -2002,10 +1987,13 @@ def _rdap_extract_domain_payload(
             registrar_name = registrar_raw.get("name", "") or registrar_raw.get("fullName", "")
         elif registrar_raw:
             registrar_name = str(registrar_raw)
-    except Exception:  # noqa: BLE001
-        pass  # fail-safe: registrar is optional
+    except Exception:
+        pass
+    return registrar_name
 
-    # Nameserver list (used only in domain payload)
+
+def _extract_nameservers(rdap_data: dict[str, Any]) -> list[str]:
+    """Extract nameserver names from RDAP data."""
     ns_list: list[str] = []
     ns_wrapper = rdap_data.get("nameservers", [])
     if isinstance(ns_wrapper, list):
@@ -2015,16 +2003,22 @@ def _rdap_extract_domain_payload(
                 ns_list.append(ns_name)
             elif (ns_str := str(ns)) and ns_str != "None":
                 ns_list.append(ns_str)
+    return ns_list
 
-    # Status list (used only in domain payload)
+
+def _extract_status_list(rdap_data: dict[str, Any]) -> list[str]:
+    """Extract status list from RDAP data."""
     status_list: list[str] = []
     status_raw = rdap_data.get("status", [])
     if isinstance(status_raw, list):
         status_list = [str(s) for s in status_raw if s and str(s) != "None"]
     elif status_raw:
         status_list = [str(status_raw)]
+    return status_list
 
-    # Event list (used only in domain payload) — branch once on type
+
+def _extract_events(rdap_data: dict[str, Any]) -> list[str]:
+    """Extract events from RDAP data with type branching."""
     event_list: list[str] = []
     events_raw = rdap_data.get("events", [])
     if isinstance(events_raw, list) and events_raw:
@@ -2043,6 +2037,30 @@ def _rdap_extract_domain_payload(
                     ev_a = _safe_getattr(ev, "action") or ""
                     ev_a_r = _safe_getattr(ev, "actor") or ""
                     event_list.append(f"{ev_a}:{ev_d}" + (f":{ev_a_r}" if ev_a_r else ""))
+    return event_list
+
+
+def _rdap_extract_domain_payload(
+    rdap_data: dict[str, Any],
+    domain_name: str,
+    now: float,
+    confidence: float,
+    sprint_id: str,
+) -> tuple[Any, str, int, int, int] | None:
+    """
+    Extract domain payload data for the RDAP domain finding.
+
+    Returns (finding, registrar_name, ns_count, status_count, event_count) or None.
+    Branch-once pattern: type detection done once, then uniform extraction.
+    """
+    if not domain_name:
+        return None
+
+    # Extract components using helpers
+    registrar_name = _extract_registrar(rdap_data)
+    ns_list = _extract_nameservers(rdap_data)
+    status_list = _extract_status_list(rdap_data)
+    event_list = _extract_events(rdap_data)
 
     # Build payload
     provenance: tuple[str, ...] = (

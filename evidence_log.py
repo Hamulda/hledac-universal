@@ -2392,16 +2392,7 @@ class EvidenceLog:
 
     def append(self, event: EvidenceEvent) -> None:
         """Přidá událost do logu - M1 8GB optimized s ring bufferem."""
-        if self._silent_failure or self._frozen or self._closed or self._closing:
-            if self._frozen:
-                raise RuntimeError('Cannot append to frozen EvidenceLog')
-            if self._closed:
-                raise RuntimeError('Cannot append to closed EvidenceLog')
-            if self._closing:
-                raise RuntimeError('Cannot append while EvidenceLog is closing')
-            return
-        if event.run_id != self._run_id:
-            raise ValueError(f"Event run_id mismatch")
+        self._validate_event(event)
         self._seq += 1
         event.seq_no = self._seq
         event.prev_chain_hash = self._chain_head
@@ -2418,6 +2409,18 @@ class EvidenceLog:
         self._update_indexes(event)
         self._record_analytics(event)
 
+    def _validate_event(self, event: EvidenceEvent) -> None:
+        """Validate event before appending. Raises on validation failure."""
+        if self._silent_failure:
+            return
+        if self._frozen:
+            raise RuntimeError('Cannot append to frozen EvidenceLog')
+        if self._closed:
+            raise RuntimeError('Cannot append to closed EvidenceLog')
+        if self._closing:
+            raise RuntimeError('Cannot append while EvidenceLog is closing')
+        if event.run_id != self._run_id:
+            raise ValueError(f"Event run_id mismatch")
     def _rebuild_indexes(self) -> None:
         """Přebuduj indexy po vyřazení z ring bufferu."""
         self._index_by_type = {'tool_call': deque(maxlen=self.MAX_RAM_EVENTS), 'observation': deque(maxlen=self.MAX_RAM_EVENTS), 'synthesis': deque(maxlen=self.MAX_RAM_EVENTS), 'error': deque(maxlen=self.MAX_RAM_EVENTS), 'decision': deque(maxlen=self.MAX_RAM_EVENTS), 'evidence_packet': deque(maxlen=self.MAX_RAM_EVENTS)}
@@ -2460,7 +2463,14 @@ class EvidenceLog:
         self.append(event)
         return event
 
-    def _create_single_event_batch(self, event_type, payload, source_ids, confidence, chain_head):
+    def _create_single_event_batch(
+        self,
+        event_type: str,
+        payload: dict[str, Any],
+        source_ids: list[str] | None,
+        confidence: float,
+        chain_head: str | None,
+    ) -> tuple[EvidenceEvent | None, str | None]:
         """Create a single event for batch processing."""
         import random as _random
         if event_type != "error" and self._sample_rate < 1.0:
@@ -2511,48 +2521,67 @@ class EvidenceLog:
                     self._index_by_source[sid] = deque(maxlen=self.MAX_RAM_EVENTS)
                 self._index_by_source[sid].append(index)
 
-    def _send_to_mpsc_channels(self, created, _mpsc_cap=2048, _mpsc2_cap=2048, _MPSC_BACKPRESSURE_THRESHOLD=0.85):
+    def _encrypt_event_line(self, line: str) -> bytes:
+        """Encrypt a single event line for persistence."""
+        if not (self._encrypt_at_rest and self._cipher and self._encryption_key):
+            return line.encode('utf-8') + b'\n'
+        try:
+            from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
+            bytes_to_write = line.encode('utf-8') + b'\n'
+            nonce = secrets.token_bytes(12)
+            cipher = Cipher(algorithms.AES(self._encryption_key), modes.GCM(nonce))
+            encryptor = cipher.encryptor()
+            encrypted = encryptor.update(bytes_to_write) + encryptor.finalize()
+            return nonce + encryptor.tag + encrypted
+        except Exception:
+            logger.warning("encrypt_batch_failed")
+            return line.encode('utf-8') + b'\n'
+
+    def _check_backpressure(self, mpsc_pressure: float, mpsc2_pressure: float, threshold: float = 0.85) -> bool:
+        """Check if channels are in backpressure state."""
+        return mpsc_pressure >= threshold or (self._enable_persist and mpsc2_pressure >= threshold)
+
+    def _send_to_mpsc_channels(
+        self,
+        created: list[EvidenceEvent],
+        _mpsc_cap: int = 2048,
+        _mpsc2_cap: int = 2048,
+        _MPSC_BACKPRESSURE_THRESHOLD: float = 0.85,
+    ) -> None:
         """Send events to MPSC channels with backpressure coordination."""
         if not (self._initialized and self._flush_task and not self._flush_task.done()) or self._closing:
             return
         _mpsc_payloads = [e.to_bytes() for e in created]
         _mpsc_pressure_pct = self._mpsc.len() / max(_mpsc_cap, 1)
         _mpsc2_pressure_pct = self._mpsc2.len() / max(_mpsc2_cap, 1)
+
+        # Prepare JSONL payloads with optional encryption
         _jsonl_payloads = []
         if self._enable_persist:
-            if self._encrypt_at_rest and self._cipher and self._encryption_key:
-                from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
-            for e in created:
-                line = e.to_jsonl_line()
-                bytes_to_write = line.encode('utf-8') + b'\n'
-                if self._encrypt_at_rest and self._cipher and self._encryption_key:
-                    try:
-                        nonce = secrets.token_bytes(12)
-                        cipher = Cipher(algorithms.AES(self._encryption_key), modes.GCM(nonce))
-                        encryptor = cipher.encryptor()
-                        encrypted = encryptor.update(bytes_to_write) + encryptor.finalize()
-                        bytes_to_write = nonce + encryptor.tag + encrypted
-                    except Exception:
-                        logger.warning("encrypt_batch_failed")
-                _jsonl_payloads.append(bytes_to_write)
-        if _mpsc_pressure_pct >= _MPSC_BACKPRESSURE_THRESHOLD or \
-           (self._enable_persist and _mpsc2_pressure_pct >= _MPSC_BACKPRESSURE_THRESHOLD):
+            _jsonl_payloads = [self._encrypt_event_line(e.to_jsonl_line()) for e in created]
+
+        # Check backpressure before sending
+        if self._check_backpressure(_mpsc_pressure_pct, _mpsc2_pressure_pct, _MPSC_BACKPRESSURE_THRESHOLD):
             self._dropped_count += 1
             logger.warning("m1_02_backpressure_dropped_batch", mpsc_pressure=f"{_mpsc_pressure_pct:.0%}")
             trace_queue_drop('dual_channel_backpressure', len(created))
             return
+
+        # Send to primary MPSC
         _sent = self._mpsc.send_batch(_mpsc_payloads)
         for e in created:
             trace_evidence_append(e.event_type, self._mpsc.len(), 'queued')
         if _sent < len(created):
             logger.warning("issue007_mpsc_pool_full", sent=_sent, total=len(created))
+
+        # Send to persist MPSC with fallback
         if self._enable_persist:
             try:
                 _sent2 = self._mpsc2.send_batch(_jsonl_payloads)
                 if _sent2 < len(created):
                     for e in created[_sent2:]:
                         line = e.to_jsonl_line()
-                        bytes_to_write = line.encode('utf-8') + b'\n'
+                        bytes_to_write = self._encrypt_event_line(line)
                         self._sync_write_fallback(line, bytes_to_write)
             except Exception:
                 logger.critical("f286_swal_batch_send_failed")
@@ -2693,34 +2722,9 @@ class EvidenceLog:
         else:
             prov = self._warc_writer.write_raw(url, _ts, http_response, content_type)
 
-        # ISSUE [FINAL]-019-04: Store provenance for later extraction by sprint_exporter
-        # ISSUE [FINAL]-019-10: Only store successful writes — success=False (e.g. payload
-        # too small) is not an error but is not worth recording in the provenance chain.
+        # Store provenance for later extraction by sprint_exporter
         if prov is not None and prov.success:
-            # Thread-safe list access: archive_http_response() can be called from
-            # thread pool via run_in_executor (async fetch path). _warc_data_lock
-            # protects _warc_provenance, _warc_snippets, and _warc_paths from races.
-            with self._warc_data_lock:
-                self._warc_provenance.append(prov)
-                # ISSUE [FINAL]-019-05: Track WARC file paths for warc_paths property
-                if prov.warc_path and prov.warc_path not in self._warc_paths:
-                    self._warc_paths.append(prov.warc_path)
-                    # ISSUE [FINAL]-019-05: Register in global singleton
-                    _register_warc_path(prov.warc_path)
-                # Bound _warc_provenance at 500 — same as snippets for M1 8GB safety
-                if len(self._warc_provenance) > 500:
-                    self._warc_provenance.pop(0)
-                # ISSUE [FINAL]-019-05: Build dashboard-ready snippet — bounded FIFO at 500
-                _snippet = self._build_warc_snippet(prov, http_response)
-                if _snippet is not None:
-                    self._warc_snippets.append(_snippet)
-                    # Evict oldest if over limit (FIFO)
-                    if len(self._warc_snippets) > 500:
-                        self._warc_snippets.pop(0)
-            # Also append to global singleton for sprint_exporter access
-            # (globals use their own _warc_paths_lock — no deadlock with _warc_data_lock)
-            if _snippet is not None:
-                _append_warc_snippet(_snippet)
+            self._update_warc_provenance(prov, http_response)
 
         return prov
 
@@ -2744,6 +2748,25 @@ class EvidenceLog:
         """
         with self._warc_data_lock:
             return self._warc_provenance.copy()
+
+    def _update_warc_provenance(self, prov: WarcWriteResult, http_response: bytes) -> None:
+        """Update WARC provenance tracking with thread-safe access."""
+        with self._warc_data_lock:
+            self._warc_provenance.append(prov)
+            if prov.warc_path and prov.warc_path not in self._warc_paths:
+                self._warc_paths.append(prov.warc_path)
+                _register_warc_path(prov.warc_path)
+            # Bound provenance list at 500 for M1 8GB safety
+            if len(self._warc_provenance) > 500:
+                self._warc_provenance.pop(0)
+            # Build dashboard-ready snippet
+            _snippet = self._build_warc_snippet(prov, http_response)
+            if _snippet is not None:
+                self._warc_snippets.append(_snippet)
+                if len(self._warc_snippets) > 500:
+                    self._warc_snippets.pop(0)
+        if _snippet is not None:
+            _append_warc_snippet(_snippet)
 
     def _register_warc_paths_global(self) -> None:
         """ISSUE [FINAL]-019-05: Register all WARC paths in the global singleton.
@@ -2860,40 +2883,37 @@ class EvidenceLog:
     _FORENSIC_MAX_DEPTH = 3
 
     def _bound_forensic_value(self, value: Any, depth: int=0) -> Any:
-        """Bound forensic result values to prevent payload blowup.
-
-        F261 invariant: bounded payloads only — never trust caller sizes.
-        Trims strings, caps list lengths, recurses into dicts up to
-        _FORENSIC_MAX_DEPTH.
-        """
+        """Bound forensic result values to prevent payload blowup."""
         if depth > self._FORENSIC_MAX_DEPTH:
             return '[depth_truncated]'
-        if value is None or isinstance(value, bool):
-            return value
-        if isinstance(value, int):
-            return value
-        if isinstance(value, float):
+        if value is None or isinstance(value, bool) or isinstance(value, (int, float)):
             return value
         if isinstance(value, str):
-            if len(value) > self._FORENSIC_MAX_VALUE_LEN:
-                return value[:self._FORENSIC_MAX_VALUE_LEN] + '...'
-            return value
+            return value[:self._FORENSIC_MAX_VALUE_LEN] + ('...' if len(value) > self._FORENSIC_MAX_VALUE_LEN else '')
         if isinstance(value, (list, tuple)):
-            cap = self._FORENSIC_MAX_LIST_ITEMS
-            items = [self._bound_forensic_value(v, depth + 1) for v in value[:cap]]
-            truncated = len(value) - len(items)
-            if truncated > 0:
-                items.append(f'[...{truncated}_more_items_truncated]')
-            return items
+            return self._bound_forensic_list(value, depth)
         if isinstance(value, dict):
-            out: dict[str, Any] = {}
-            for i, (k, v) in enumerate(value.items()):
-                if i >= self._FORENSIC_MAX_KEYS:
-                    out['_truncated_keys'] = list(value.keys())[i:][:5]
-                    break
-                out[str(k)[:80]] = self._bound_forensic_value(v, depth + 1)
-            return out
+            return self._bound_forensic_dict(value, depth)
         return str(value)[:self._FORENSIC_MAX_VALUE_LEN]
+
+    def _bound_forensic_list(self, value: list | tuple, depth: int) -> list:
+        """Bound forensic list/tuple values."""
+        cap = self._FORENSIC_MAX_LIST_ITEMS
+        items = [self._bound_forensic_value(v, depth + 1) for v in value[:cap]]
+        truncated = len(value) - len(items)
+        if truncated > 0:
+            items.append(f'[...{truncated}_more_items_truncated]')
+        return items
+
+    def _bound_forensic_dict(self, value: dict, depth: int) -> dict:
+        """Bound forensic dict values."""
+        out: dict[str, Any] = {}
+        for i, (k, v) in enumerate(value.items()):
+            if i >= self._FORENSIC_MAX_KEYS:
+                out['_truncated_keys'] = list(value.keys())[i:][:5]
+                break
+            out[str(k)[:80]] = self._bound_forensic_value(v, depth + 1)
+        return out
 
     def attach_forensic_analysis(self, finding_id: str, forensic_result: Any, source_id: str | None=None, confidence: float=0.95) -> EvidenceEvent | None:
         """
@@ -2981,50 +3001,47 @@ class EvidenceLog:
     MAX_DECISION_REF_CLUSTERS = 10
     MAX_DECISION_REF_URLS = 10
 
-    def create_decision_event(self, kind: str, summary: dict[str, Any], reasons: list[str], refs: dict[str, list[str]], confidence: float=1.0) -> EvidenceEvent | None:
-        """
-        Vytvoří decision event pro Decision Ledger.
-
-        Decision events zaznamenávají důležitá rozhodnutí orchestrátoru
-        s full audit trail - why + inputs + outputs.
-
-        Args:
-            kind: Typ rozhodnutí - "bandit"|"playbook"|"backpressure"|"delta"|"alignment"|"primary_chase"|"drift"
-            summary: Malé dict (max 20 keys, každé value max ~200 chars)
-            reasons: Max 8 stringů (max 120 chars každý)
-            refs: {evidence_ids:[], cluster_ids:[], url_hashes:[]}
-            confidence: Spolehlivost 0-1
-
-        Returns:
-            EvidenceEvent s trimmovaným payloadem, nebo None pokud je silent_failure=True
-        """
-        valid_kinds = {'bandit', 'playbook', 'backpressure', 'delta', 'alignment', 'primary_chase', 'drift'}
-        if kind not in valid_kinds:
-            logger.warning("decision_invalid_kind_using_drift", kind=kind)
-            kind = 'drift'
-        trimmed_summary = {}
+    def _trim_summary(self, summary: dict) -> dict:
+        """Trim decision summary to max keys and value length."""
+        trimmed = {}
         for i, (k, v) in enumerate(summary.items()):
             if i >= self.MAX_DECISION_SUMMARY_KEYS:
                 break
             v_str = str(v)
             if len(v_str) > self.MAX_DECISION_SUMMARY_VALUE_LEN:
                 v_str = v_str[:self.MAX_DECISION_SUMMARY_VALUE_LEN] + '...'
-            trimmed_summary[k] = v_str
-        trimmed_reasons = []
+            trimmed[k] = v_str
+        return trimmed
+
+    def _trim_reasons(self, reasons: list) -> list:
+        """Trim decision reasons to max count and length."""
+        trimmed = []
         for i, r in enumerate(reasons):
             if i >= self.MAX_DECISION_REASONS:
                 break
-            if len(r) > self.MAX_DECISION_REASON_LEN:
-                r = r[:self.MAX_DECISION_REASON_LEN] + '...'
-            trimmed_reasons.append(r)
-        trimmed_refs = {}
-        if 'evidence_ids' in refs:
-            trimmed_refs['evidence_ids'] = refs['evidence_ids'][:self.MAX_DECISION_REF_EVIDENCE]
-        if 'cluster_ids' in refs:
-            trimmed_refs['cluster_ids'] = refs['cluster_ids'][:self.MAX_DECISION_REF_CLUSTERS]
-        if 'url_hashes' in refs:
-            trimmed_refs['url_hashes'] = refs['url_hashes'][:self.MAX_DECISION_REF_URLS]
-        payload = {'kind': kind, 'summary': trimmed_summary, 'reasons': trimmed_reasons, 'refs': trimmed_refs}
+            trimmed.append(r[:self.MAX_DECISION_REASON_LEN] + ('...' if len(r) > self.MAX_DECISION_REASON_LEN else ''))
+        return trimmed
+
+    def _trim_refs(self, refs: dict) -> dict:
+        """Trim decision refs to max counts."""
+        return {
+            'evidence_ids': refs.get('evidence_ids', [])[:self.MAX_DECISION_REF_EVIDENCE],
+            'cluster_ids': refs.get('cluster_ids', [])[:self.MAX_DECISION_REF_CLUSTERS],
+            'url_hashes': refs.get('url_hashes', [])[:self.MAX_DECISION_REF_URLS],
+        }
+
+    def create_decision_event(self, kind: str, summary: dict[str, Any], reasons: list[str], refs: dict[str, list[str]], confidence: float=1.0) -> EvidenceEvent | None:
+        """Vytvoří decision event pro Decision Ledger."""
+        valid_kinds = {'bandit', 'playbook', 'backpressure', 'delta', 'alignment', 'primary_chase', 'drift'}
+        if kind not in valid_kinds:
+            logger.warning("decision_invalid_kind_using_drift", kind=kind)
+            kind = 'drift'
+        payload = {
+            'kind': kind,
+            'summary': self._trim_summary(summary),
+            'reasons': self._trim_reasons(reasons),
+            'refs': self._trim_refs(refs),
+        }
         return self.create_event(event_type='decision', payload=payload, source_ids=[], confidence=confidence)
 
     def get(self, index: int) -> EvidenceEvent | None:
@@ -3350,6 +3367,16 @@ class EvidenceLog:
                 os.close(fd)
 
     @classmethod
+    def _parse_jsonl_line(cls, current_line: bytearray) -> EvidenceEvent | None:
+        """Parse a JSONL line into EvidenceEvent."""
+        try:
+            if line_str := current_line.decode('utf-8').strip():
+                return EvidenceEvent.from_dict(orjson.loads(line_str))
+        except Exception:
+            pass
+        return None
+
+    @classmethod
     def _read_jsonl_tail_backward(cls, fd: int, file_size: int, max_events: int) -> list[EvidenceEvent]:
         """Read last events from JSONL using backward seek."""
         events, pos, buf_size, current_line = [], file_size, 8192, bytearray()
@@ -3359,22 +3386,16 @@ class EvidenceLog:
             for byte in reversed(os.read(fd, read_size)):
                 if byte == ord('\n'):
                     if current_line:
-                        try:
-                            if line_str := current_line.decode('utf-8').strip():
-                                events.append(EvidenceEvent.from_dict(orjson.loads(line_str)))
-                        except Exception:  # noqa: BLE001
-                            pass
+                        if event := cls._parse_jsonl_line(current_line):
+                            events.append(event)
                         current_line = bytearray()
                         if len(events) > max_events:
                             break
                 else:
                     current_line.append(byte)
             if pos == 0 and current_line:
-                try:
-                    if line_str := current_line.decode('utf-8').strip():
-                        events.append(EvidenceEvent.from_dict(orjson.loads(line_str)))
-                except Exception:  # noqa: BLE001
-                    pass
+                if event := cls._parse_jsonl_line(current_line):
+                    events.append(event)
         return events
 
     @classmethod
@@ -3679,8 +3700,6 @@ class EvidenceLog:
                 await safe_wait_for(task, timeout=timeout2, label=label)
             except (TimeoutError, asyncio.CancelledError):
                 pass
-        finally:
-            return None
 
     async def _cancel_watcher(self) -> None:
         """Cancel the lifecycle watcher task."""
@@ -3752,6 +3771,18 @@ class EvidenceLog:
             except Exception as e: logger.warning("failed_to_close_warc", error=str(e))
             finally: self._warc_writer = None
 
+    def _do_shutdown_sync(self) -> None:
+        """Synchronous shutdown using Runner when no loop is running."""
+        with asyncio.Runner() as runner:
+            runner.run(self.aclose())
+
+    def _do_shutdown_with_running_loop(self, stored_loop: asyncio.AbstractEventLoop) -> None:
+        """Shutdown when an event loop is already running."""
+        async def _coro():
+            await self.aclose()
+        future = asyncio.run_coroutine_threadsafe(_coro(), stored_loop)
+        future.result()
+
     async def _do_shutdown(self) -> None:
         """Inner cleanup — called by aclose() via shutdown_aclose()."""
         self._closing = True
@@ -3791,31 +3822,17 @@ class EvidenceLog:
         Idempotent: safe to call multiple times.
         Works from both sync and async (pytest-asyncio) contexts.
 
-        M1-SAFE / Python 3.14+: Uses sync_bridge.to_thread() which:
+        M1-SAFE / Python 3.14+: Uses asyncio.Runner() which:
           - Schedules aclose() on the stored event loop via run_coroutine_threadsafe
-          - Runs the wait in a bounded thread pool, not the event loop
+          - Manages event loop lifecycle properly
           - Never calls run_until_complete() on a running loop
-
-        Refactored from temporary ThreadPoolExecutor pattern (F350M-R P1-05):
-          - Previously created a temporary ThreadPoolExecutor(max_workers=1) per close()
-          - Now uses sync_bridge.to_thread() which reuses the cached dedicated pool
         """
-        # P1-05 FIX: Use asyncio.Runner() instead of temporary ThreadPoolExecutor.
-        # Runner manages event loop lifecycle and schedules aclose() on the stored loop.
-        # This is the Python 3.11+ (PEP 654) safe pattern for running coroutines
-        # from a sync method when a loop may or may not be running.
         try:
             stored_loop = self._loop
             if stored_loop is not None and stored_loop.is_running():
-                # There's a running loop — schedule aclose() on it and wait.
-                async def _coro():
-                    await self.aclose()
-                future = asyncio.run_coroutine_threadsafe(_coro(), stored_loop)
-                future.result()
+                self._do_shutdown_with_running_loop(stored_loop)
             else:
-                # No running loop — use Runner for clean loop lifecycle management.
-                with asyncio.Runner() as runner:
-                    runner.run(self.aclose())
+                self._do_shutdown_sync()
         except Exception:  # noqa: BLE001
             # Best-effort cleanup — never raise from close()
             pass
@@ -4199,28 +4216,59 @@ class EvidenceLog:
             case _ if low_conf_pressure == 'high': return 'moderate confidence: high low-conf decision pressure'
             case _: return 'confident verdict: sufficient data and low noise'
 
-    def get_retrospective_bundle(self) -> dict[str, Any]:
-        """Single-call retrospective seam for private sprint retro."""
-        health = self.get_sprint_health_summary()
-        total, health_status, posture = health.get('total_events', 0), health.get('health', 'unknown'), health.get('posture', 'unknown')
-        error_rate, decision_count = health.get('error_rate_pct', 0.0), health.get('decision_count', 0)
-        low_conf_pressure = health.get('low_conf_pressure', 'none')
-        what_worked, breakdown = self._derive_what_worked(health), self._derive_breakdown(health)
+    def _assemble_retrospective_bundle(
+        self,
+        health: dict,
+        total: int,
+        health_status: str,
+        posture: str,
+        error_rate: float,
+        decision_count: int,
+        low_conf_pressure: str,
+    ) -> dict[str, Any]:
+        """Assemble the retrospective bundle from health data."""
+        what_worked = self._derive_what_worked(health)
+        breakdown = self._derive_breakdown(health)
         biggest_weakness = self._derive_biggest_weakness(health, breakdown)
         verdict = self._derive_verdict(total, health_status, posture, decision_count, error_rate)
         continue_or_pivot = self._derive_continue_or_pivot(total, health_status, error_rate, low_conf_pressure)
         operator_takeaway = self._derive_operator_takeaway(total, health_status, biggest_weakness, verdict, decision_count)
         top_retro_actions = self._derive_top_actions(continue_or_pivot, biggest_weakness, error_rate, health, what_worked)
         health_confidence_note = self._derive_health_confidence_note(total, health_status, low_conf_pressure)
-        return {'run_id': self._run_id, 'total_events': total, 'verdict': verdict, 'posture': posture,
-            'health': health_status, 'breakdown': breakdown, 'what_worked': what_worked, 'biggest_weakness': biggest_weakness,
-            'continue_or_pivot': continue_or_pivot, 'operator_takeaway': operator_takeaway,
-            'top_retro_actions': top_retro_actions, 'health_confidence_note': health_confidence_note,
+        return {
+            'run_id': self._run_id,
+            'total_events': total,
+            'verdict': verdict,
+            'posture': posture,
+            'health': health_status,
+            'breakdown': breakdown,
+            'what_worked': what_worked,
+            'biggest_weakness': biggest_weakness,
+            'continue_or_pivot': continue_or_pivot,
+            'operator_takeaway': operator_takeaway,
+            'top_retro_actions': top_retro_actions,
+            'health_confidence_note': health_confidence_note,
             'operator_retro_brief': operator_takeaway,
             'continue_reason': self._derive_continue_reason(continue_or_pivot, health_status, decision_count, biggest_weakness),
             'trust_level': self._derive_trust_level(total, health_status, low_conf_pressure, error_rate),
-            'biggest_win': what_worked[0] if what_worked else '', 'retro_priority': top_retro_actions[0] if top_retro_actions else '',
-            '_health': health}
+            'biggest_win': what_worked[0] if what_worked else '',
+            'retro_priority': top_retro_actions[0] if top_retro_actions else '',
+            '_health': health,
+        }
+
+    def get_retrospective_bundle(self) -> dict[str, Any]:
+        """Single-call retrospective seam for private sprint retro."""
+        health = self.get_sprint_health_summary()
+        total = health.get('total_events', 0)
+        health_status = health.get('health', 'unknown')
+        posture = health.get('posture', 'unknown')
+        error_rate = health.get('error_rate_pct', 0.0)
+        decision_count = health.get('decision_count', 0)
+        low_conf_pressure = health.get('low_conf_pressure', 'none')
+        return self._assemble_retrospective_bundle(
+            health, total, health_status, posture,
+            error_rate, decision_count, low_conf_pressure
+        )
 
     def get_chain(self, event_id: str) -> list[EvidenceEvent]:
         """

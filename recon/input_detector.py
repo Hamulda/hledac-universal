@@ -360,53 +360,73 @@ class IntelligentInputDetector:
         return patterns
 
     def _calculate_pattern_confidence(self, pattern_type: str, match: str) -> float:
-        """Calculate confidence score for a pattern match.
+        """Calculate confidence score for a pattern match."""
+        calculators = {
+            'hash': self._hash_confidence,
+            'base64': self._base64_confidence,
+            'ip': self._ip_confidence,
+            'email': self._email_confidence,
+            'url': self._url_confidence,
+            'uuid': lambda _: 0.95,
+            'mac_address': self._mac_confidence,
+        }
+        calculator = calculators.get(pattern_type, lambda _: 0.7)
+        return min(max(calculator(match), 0.0), 1.0)
 
-        Args:
-            pattern_type: Type of pattern
-            match: Matched text
+    def _hash_confidence(self, match: str) -> float:
+        """Calculate confidence for hash patterns."""
+        base = 0.7
+        if len(match) in [32, 40, 64, 128]:
+            base += 0.2
+        if re.match('^[0-9a-fA-F]+$', match):
+            base += 0.1
+        return base
 
-        Returns:
-            Confidence score (0.0-1.0)
-        """
-        base_confidence = 0.7
-        match pattern_type:
-            case 'hash':
-                valid_lengths = [32, 40, 64, 128]
-                if len(match) in valid_lengths:
-                    base_confidence += 0.2
-                if re.match('^[0-9a-fA-F]+$', match):
-                    base_confidence += 0.1
-            case 'base64':
-                if len(match) % 4 == 0:
-                    base_confidence += 0.15
-                if len(match) >= 40:
-                    base_confidence += 0.1
-            case 'ip':
-                try:
-                    octets = match.split('.')
-                    if all((0 <= int(o) <= 255 for o in octets)):
-                        base_confidence += 0.25
-                    else:
-                        base_confidence -= 0.3
-                except ValueError:
-                    base_confidence -= 0.3
-            case 'email':
-                if '@' in match:
-                    parts = match.split('@')
-                    if len(parts) == 2 and '.' in parts[1]:
-                        base_confidence += 0.2
-            case 'url':
-                if '://' in match:
-                    base_confidence += 0.2
-                if match.startswith(('http://', 'https://')):
-                    base_confidence += 0.1
-            case 'uuid':
-                base_confidence = 0.95
-            case 'mac_address':
-                if re.match('^([0-9A-Fa-f]{2}[:-]){5}[0-9A-Fa-f]{2}$', match):
-                    base_confidence = 0.9
-        return min(max(base_confidence, 0.0), 1.0)
+    def _base64_confidence(self, match: str) -> float:
+        """Calculate confidence for base64 patterns."""
+        base = 0.7
+        if len(match) % 4 == 0:
+            base += 0.15
+        if len(match) >= 40:
+            base += 0.1
+        return base
+
+    def _ip_confidence(self, match: str) -> float:
+        """Calculate confidence for IP address patterns."""
+        base = 0.7
+        try:
+            octets = match.split('.')
+            if all((0 <= int(o) <= 255 for o in octets)):
+                base += 0.25
+            else:
+                base -= 0.3
+        except ValueError:
+            base -= 0.3
+        return base
+
+    def _email_confidence(self, match: str) -> float:
+        """Calculate confidence for email patterns."""
+        base = 0.7
+        if '@' in match:
+            parts = match.split('@')
+            if len(parts) == 2 and '.' in parts[1]:
+                base += 0.2
+        return base
+
+    def _url_confidence(self, match: str) -> float:
+        """Calculate confidence for URL patterns."""
+        base = 0.7
+        if '://' in match:
+            base += 0.2
+        if match.startswith(('http://', 'https://')):
+            base += 0.1
+        return base
+
+    def _mac_confidence(self, match: str) -> float:
+        """Calculate confidence for MAC address patterns."""
+        if re.match('^([0-9A-Fa-f]{2}[:-]){5}[0-9A-Fa-f]{2}$', match):
+            return 0.9
+        return 0.7
 
     def _detect_encoding(self, content: bytes) -> str | None:
         """Detect text encoding.
@@ -443,73 +463,74 @@ class IntelligentInputDetector:
         """
         return ComplexityScore(level='medium', factors={}, estimated_analysis_time=1.0)
 
-    def _estimate_complexity_from_content(self, content: bytes, text_content: str, patterns: list[Pattern], entropy: float) -> ComplexityScore:
-        """Estimate complexity from content analysis.
-
-        Args:
-            content: Raw byte content
-            text_content: Decoded text content
-            patterns: Detected patterns
-            entropy: Shannon entropy
-
-        Returns:
-            ComplexityScore
-        """
-        factors: dict[str, float] = {}
-        total_score = 0.0
-        size = len(content)
+    def _score_size_factor(self, size: int) -> float:
+        """Score file size complexity factor."""
         if size < 1024:
-            factors['size'] = 0.1
+            return 0.1
         elif size < 10240:
-            factors['size'] = 0.3
+            return 0.3
         elif size < 102400:
-            factors['size'] = 0.5
+            return 0.5
         elif size < 1048576:
-            factors['size'] = 0.7
-        else:
-            factors['size'] = 1.0
-        total_score += factors['size']
+            return 0.7
+        return 1.0
+
+    def _score_entropy_factor(self, entropy: float) -> float:
+        """Score entropy complexity factor."""
         if entropy < 3.0:
-            factors['entropy'] = 0.1
+            return 0.1
         elif entropy < 5.0:
-            factors['entropy'] = 0.3
+            return 0.3
         elif entropy < 7.0:
-            factors['entropy'] = 0.6
-        else:
-            factors['entropy'] = 1.0
-        total_score += factors['entropy']
+            return 0.6
+        return 1.0
+
+    def _score_pattern_factor(self, pattern_count: int) -> float:
+        """Score pattern count complexity factor."""
+        if pattern_count == 0:
+            return 0.0
+        elif pattern_count < 5:
+            return 0.2
+        elif pattern_count < 20:
+            return 0.5
+        return 0.8
+
+    def _score_binary_content(self, content: bytes) -> float:
+        """Check for binary content presence."""
+        return 0.4 if b'\x00' in content[:1024] else 0.0
+
+    def _estimate_complexity_from_content(self, content: bytes, text_content: str, patterns: list[Pattern], entropy: float) -> ComplexityScore:
+        """Estimate complexity from content analysis."""
+        size = len(content)
         pattern_count = len(patterns)
         unique_types = len({p.pattern_type for p in patterns})
-        if pattern_count == 0:
-            factors['patterns'] = 0.0
-        elif pattern_count < 5:
-            factors['patterns'] = 0.2
-        elif pattern_count < 20:
-            factors['patterns'] = 0.5
-        else:
-            factors['patterns'] = 0.8
-        total_score += factors['patterns']
-        factors['pattern_diversity'] = min(unique_types * 0.15, 0.6)
-        total_score += factors['pattern_diversity']
-        if b'\x00' in content[:1024]:
-            factors['binary_content'] = 0.4
-            total_score += 0.4
+
+        factors: dict[str, float] = {
+            'size': self._score_size_factor(size),
+            'entropy': self._score_entropy_factor(entropy),
+            'patterns': self._score_pattern_factor(pattern_count),
+            'pattern_diversity': min(unique_types * 0.15, 0.6),
+            'binary_content': self._score_binary_content(content),
+        }
+
+        total_score = sum(factors.values())
         avg_score = total_score / len(factors) if factors else 0.0
-        if avg_score < 0.25:
-            level = 'low'
-            base_time = 0.5
-        elif avg_score < 0.5:
-            level = 'medium'
-            base_time = 1.0
-        elif avg_score < 0.75:
-            level = 'high'
-            base_time = 3.0
-        else:
-            level = 'critical'
-            base_time = 10.0
+
+        level, base_time = self._get_complexity_level(avg_score)
         size_multiplier = 1.0 + size / 1048576 * 0.1
         estimated_time = base_time * size_multiplier
+
         return ComplexityScore(level=level, factors=factors, estimated_analysis_time=estimated_time)
+
+    def _get_complexity_level(self, avg_score: float) -> tuple[str, float]:
+        """Map average score to complexity level and base time."""
+        if avg_score < 0.25:
+            return 'low', 0.5
+        elif avg_score < 0.5:
+            return 'medium', 1.0
+        elif avg_score < 0.75:
+            return 'high', 3.0
+        return 'critical', 10.0
 
     def _calculate_entropy(self, data: bytes) -> float:
         """Calculate Shannon entropy of data.
@@ -547,43 +568,11 @@ class IntelligentInputDetector:
             List of recommendations
         """
         recommendations: list[str] = []
-        if file_type:
-            if file_type in ['jpeg', 'png', 'gif', 'bmp', 'tiff', 'webp']:
-                recommendations.append('Image file detected - consider EXIF metadata extraction')
-            elif file_type == 'pdf':
-                recommendations.append('PDF document detected - consider document metadata extraction')
-            elif file_type == 'zip':
-                recommendations.append('Archive file detected - consider content extraction and analysis')
-            elif file_type == 'pcap':
-                recommendations.append('Network capture detected - use packet analysis tools')
-            elif file_type in ['elf', 'macho']:
-                recommendations.append('Executable file detected - consider reverse engineering analysis')
-        if entropy > 7.5:
-            recommendations.append('High entropy detected - content may be encrypted or compressed')
-        elif entropy < 2.0:
-            recommendations.append('Low entropy detected - content may be structured or repetitive')
-        pattern_types = [p.pattern_type for p in patterns]
-        if 'hash' in pattern_types:
-            recommendations.append('Hash values detected - consider hash identification and cracking')
-        if 'url' in pattern_types:
-            recommendations.append('URLs detected - consider web scraping and OSINT analysis')
-        if 'ip' in pattern_types:
-            recommendations.append('IP addresses detected - consider geolocation and threat intel lookup')
-        if 'email' in pattern_types:
-            recommendations.append('Email addresses detected - consider email OSINT and validation')
-        if 'base64' in pattern_types:
-            recommendations.append('Base64 encoded data detected - consider decoding and analysis')
-        if 'zero_width' in pattern_types:
-            recommendations.append('Zero-width characters detected - possible steganography')
-        if complexity:
-            if complexity.level == 'critical':
-                recommendations.append('Critical complexity - consider chunked processing')
-            elif complexity.level == 'high':
-                recommendations.append('High complexity analysis recommended')
-        if content_type == 'binary':
-            recommendations.append('Binary content detected - use binary analysis tools')
-        elif content_type == 'encoded_text':
-            recommendations.append('Encoded text detected - decode before further analysis')
+        recommendations.extend(self._recommend_by_type(file_type))
+        recommendations.extend(self._recommend_by_entropy(entropy))
+        recommendations.extend(self._recommend_by_pattern(patterns))
+        recommendations.extend(self._recommend_by_complexity(complexity))
+        recommendations.extend(self._recommend_by_content_type(content_type))
         return recommendations
 
     def get_stats(self) -> dict[str, int]:

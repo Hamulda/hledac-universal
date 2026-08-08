@@ -184,7 +184,7 @@ class ConsistencyVerifier:
             return []
 
     # ------------------------------------------------------------------
-    # Phase 1: Tri-source voting
+    # Phase 1: Tri-source voting - helper methods
     # ------------------------------------------------------------------
 
     def _tri_source_voting(
@@ -207,21 +207,21 @@ class ConsistencyVerifier:
         if len(findings) < TRI_SOURCE_MIN_SOURCES:
             return []
 
-        # Group findings by entity (using 'ioc_value' or 'entity_value' key)
+        entity_groups = self._group_findings_by_entity(findings, signals)
+        source_votes = self._process_entity_groups(entity_groups, signals)
+        return self._build_retraction_decisions(source_votes)
+
+    def _group_findings_by_entity(
+        self,
+        findings: list[dict[str, Any]],
+        signals: list[Any],
+    ) -> dict[str, list[dict[str, Any]]]:
+        """Group findings by entity key, also extracting from signals."""
         entity_groups: dict[str, list[dict[str, Any]]] = {}
         for f in findings:
-            entity_key = (
-                f.get("entity_value")
-                or f.get("ioc_value")
-                or f.get("value")
-                or ""
-            )
+            entity_key = f.get("entity_value") or f.get("ioc_value") or f.get("value") or ""
             if entity_key:
-                if entity_key not in entity_groups:
-                    entity_groups[entity_key] = []
-                entity_groups[entity_key].append(f)
-
-        # Also extract entities from contradiction signals
+                entity_groups.setdefault(entity_key, []).append(f)
         for signal in signals:
             try:
                 entity_key = getattr(signal, "entity_value", "") or ""
@@ -229,58 +229,86 @@ class ConsistencyVerifier:
                     entity_groups[entity_key] = []
             except Exception:
                 continue
+        return entity_groups
 
-        # Per-source voting record
+    def _process_entity_groups(
+        self,
+        entity_groups: dict[str, list[dict[str, Any]]],
+        signals: list[Any],
+    ) -> dict[str, SourceVote]:
+        """Process all entity groups and return per-source voting records."""
         source_votes: dict[str, SourceVote] = {}
-
-        # For each entity with ≥3 distinct sources
         for entity_key, entity_findings in entity_groups.items():
-            # Get distinct sources for this entity
-            entity_sources: dict[str, list[dict[str, Any]]] = {}
-            for f in entity_findings:
-                source = (
-                    f.get("source_type")
-                    or f.get("source_id")
-                    or f.get("source", "unknown")
-                )
-                if source not in entity_sources:
-                    entity_sources[source] = []
-                entity_sources[source].append(f)
+            self._vote_on_entity(entity_key, entity_findings, signals, source_votes)
+        return source_votes
 
-            distinct_sources = list(entity_sources.keys())
-            if len(distinct_sources) < TRI_SOURCE_MIN_SOURCES:
-                continue
+    def _vote_on_entity(
+        self,
+        entity_key: str,
+        entity_findings: list[dict[str, Any]],
+        signals: list[Any],
+        source_votes: dict[str, SourceVote],
+    ) -> None:
+        """Vote on a single entity and update source_votes in-place."""
+        entity_sources = self._group_sources_for_entity(entity_findings)
+        if len(entity_sources) < TRI_SOURCE_MIN_SOURCES:
+            return
+        majority_source = self._find_majority_source(entity_sources)
+        for source_id, findings_list in entity_sources.items():
+            if source_id == majority_source:
+                self._record_agreement(source_id, entity_key, source_votes)
+            elif self._check_entity_contradiction(
+                entity_sources[majority_source], findings_list, signals, entity_key,
+            ):
+                self._record_dissent(source_id, entity_key, source_votes)
 
-            # Determine majority consensus
-            # Strategy: source with most findings for this entity = majority
-            source_counts = {
-                s: len(fs) for s, fs in entity_sources.items()
-            }
-            majority_source = max(source_counts, key=source_counts.get)
+    def _group_sources_for_entity(
+        self,
+        entity_findings: list[dict[str, Any]],
+    ) -> dict[str, list[dict[str, Any]]]:
+        """Group findings by source within an entity."""
+        sources: dict[str, list[dict[str, Any]]] = {}
+        for f in entity_findings:
+            source = f.get("source_type") or f.get("source_id") or f.get("source", "unknown")
+            sources.setdefault(source, []).append(f)
+        return sources
 
-            # Any other source with different claim value = dissenter
-            for source_id, fs in entity_sources.items():
-                if source_id == majority_source:
-                    # Track agreement
-                    if source_id not in source_votes:
-                        source_votes[source_id] = SourceVote(source_id=source_id)
-                    source_votes[source_id].agreement_count += 1
-                    source_votes[source_id].entities_involved.append(entity_key)
-                else:
-                    # Check if this source actually contradicts the majority
-                    has_contradiction = self._check_entity_contradiction(
-                        entity_sources[majority_source],
-                        fs,
-                        signals,
-                        entity_key,
-                    )
-                    if has_contradiction:
-                        if source_id not in source_votes:
-                            source_votes[source_id] = SourceVote(source_id=source_id)
-                        source_votes[source_id].dissent_count += 1
-                        source_votes[source_id].entities_involved.append(entity_key)
+    def _find_majority_source(
+        self,
+        entity_sources: dict[str, list[dict[str, Any]]],
+    ) -> str:
+        """Find source with most findings for an entity."""
+        return max(entity_sources, key=lambda s: len(entity_sources[s]))
 
-        # Sources with ≥3 dissents → auto-retract
+    def _record_agreement(
+        self,
+        source_id: str,
+        entity_key: str,
+        source_votes: dict[str, SourceVote],
+    ) -> None:
+        """Record an agreement vote for a source."""
+        if source_id not in source_votes:
+            source_votes[source_id] = SourceVote(source_id=source_id)
+        source_votes[source_id].agreement_count += 1
+        source_votes[source_id].entities_involved.append(entity_key)
+
+    def _record_dissent(
+        self,
+        source_id: str,
+        entity_key: str,
+        source_votes: dict[str, SourceVote],
+    ) -> None:
+        """Record a dissent vote for a source."""
+        if source_id not in source_votes:
+            source_votes[source_id] = SourceVote(source_id=source_id)
+        source_votes[source_id].dissent_count += 1
+        source_votes[source_id].entities_involved.append(entity_key)
+
+    def _build_retraction_decisions(
+        self,
+        source_votes: dict[str, SourceVote],
+    ) -> list[RetractionDecision]:
+        """Build retraction decisions from source voting records."""
         decisions: list[RetractionDecision] = []
         for source_id, vote in source_votes.items():
             if vote.dissent_count >= TRI_SOURCE_MIN_VOTES:
@@ -292,9 +320,8 @@ class ConsistencyVerifier:
                     dissent_count=vote.dissent_count,
                     total_claims=total,
                     ratio=round(ratio, 3),
-                    entities_affected=vote.entities_involved[:20],  # cap
+                    entities_affected=vote.entities_involved[:20],
                 ))
-
         return decisions
 
     # ------------------------------------------------------------------

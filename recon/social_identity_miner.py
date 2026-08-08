@@ -29,6 +29,7 @@ import msgspec
 from typing import TYPE_CHECKING, Any
 from urllib.parse import urlparse
 from hledac.universal.utils.async_helpers import parallel_ok
+from hledac.universal.utils.uma_budget import get_uma_snapshot
 from .confidence_policy import compute_confidence as _compute_confidence
 _AC_MATCHER: Any = None
 
@@ -135,59 +136,34 @@ class SocialIdentityMiner:
         self._bloom_seen = False
         self._stats = {'scanned': 0, 'skipped': 0, 'facets_found': 0}
 
-    async def mine(self, findings: list[Any], store: Any, query: str) -> SocialIdentityResult:
-        """
-        Scan accepted findings for social identity facets.
-
-        Args:
-            findings: Accepted CanonicalFinding list from sprint
-            store: DuckDBShadowStore for canonical write
-            query: Sprint query (used for context)
-
-        Returns:
-            SocialIdentityResult with extracted facets and stats
-        """
-        start_ms = _time.monotonic() * 1000
-        facets: list[SocialIdentityFacet] = []
-        try:
-            from ..utils.uma_budget import get_uma_snapshot
-            snap = get_uma_snapshot()
-            if snap.get('high_water') and snap.get('rss_mb', 0) > snap['high_water'] * 0.85:
-                return SocialIdentityResult(facets=(), scanned_count=0, skipped_count=len(findings), elapsed_ms=_time.monotonic() * 1000 - start_ms)
-        except Exception:  # noqa: BLE001
-            pass
+    def _collect_urls_from_findings(self, findings: list[Any]) -> list[tuple[str, str, str, str]]:
+        """Extract URLs from findings up to MAX_SOCIAL_PROFILES limit."""
         all_urls: list[tuple[str, str, str, str]] = []
         for finding in findings:
             if len(all_urls) >= MAX_SOCIAL_PROFILES:
                 break
             self._stats['scanned'] += 1
+            finding_id = getattr(finding, 'finding_id', 'unknown')
+            # URLs from payload
             urls_from_payload = self._extract_urls_from_payload(finding)
             for url in urls_from_payload[:MAX_LINKS_PER_PROFILE]:
-                all_urls.append((url, getattr(finding, 'finding_id', 'unknown'), '', 'url_in_payload'))
+                all_urls.append((url, finding_id, '', 'url_in_payload'))
+            # IOC value as URL
             ioc_val = getattr(finding, 'ioc_value', '')
             if ioc_val and isinstance(ioc_val, str) and (len(ioc_val) < 2048):
                 if _is_url(ioc_val):
-                    all_urls.append((ioc_val, getattr(finding, 'finding_id', 'unknown'), '', 'ioc_value'))
+                    all_urls.append((ioc_val, finding_id, '', 'ioc_value'))
+            # Certificate transparency domains
             source_type = getattr(finding, 'source_type', '')
             if source_type in ('ct', 'certificate_transparency'):
                 domains = self._extract_domains_from_cert_text(getattr(finding, 'payload_text', '') or '')
                 for domain in domains[:5]:
-                    all_urls.append((f'https://{domain}', getattr(finding, 'finding_id', 'unknown'), '', 'provenance'))
-        self._stats['scanned'] = len(findings)
-        if not all_urls:
-            return SocialIdentityResult(facets=(), scanned_count=self._stats['scanned'], skipped_count=self._stats['skipped'], elapsed_ms=_time.monotonic() * 1000 - start_ms)
-        tasks = [self._process_url(url, finding_id, text_sample, evidence_kind) for url, finding_id, text_sample, evidence_kind in all_urls]
-        gathered: list[Any] = []
-        try:
-            async with asyncio.timeout(30.0):
-                gathered = await parallel_ok(*tasks, label='social_identity_miner:331')
-        except TimeoutError:
-            for t in tasks:
-                try:
-                    t.close()
-                except Exception:  # noqa: BLE001
-                    pass
-            gathered = []
+                    all_urls.append((f'https://{domain}', finding_id, '', 'provenance'))
+        return all_urls
+
+    def _aggregate_results(self, gathered: list[Any]) -> list[SocialIdentityFacet]:
+        """Process gathered results, update stats, return facets list."""
+        facets: list[SocialIdentityFacet] = []
         for result in gathered:
             if isinstance(result, asyncio.CancelledError):
                 raise result
@@ -197,6 +173,46 @@ class SocialIdentityMiner:
             if isinstance(result, SocialIdentityFacet):
                 facets.append(result)
                 self._stats['facets_found'] += 1
+        return facets
+
+    def _check_memory_guard(self, findings: list[Any]) -> bool:
+        """Check memory pressure. Returns True if should skip processing."""
+        try:
+            snap = get_uma_snapshot()
+            if snap.get('high_water') and snap.get('rss_mb', 0) > snap['high_water'] * 0.85:
+                return True
+        except Exception:  # noqa: BLE001
+            pass
+        return False
+
+    async def _run_parallel_processing(self, tasks: list, start_ms: float) -> list[Any]:
+        """Run parallel URL processing with 30s timeout. Returns gathered results."""
+        try:
+            async with asyncio.timeout(30.0):
+                return await parallel_ok(*tasks, label='social_identity_miner:331')
+        except TimeoutError:
+            for t in tasks:
+                try:
+                    t.close()
+                except Exception:  # noqa: BLE001
+                    pass
+            return []
+
+    async def mine(self, findings: list[Any], store: Any, query: str) -> SocialIdentityResult:
+        """
+        Scan accepted findings for social identity facets.
+        Orchestrates URL collection, parallel processing, and result aggregation.
+        """
+        start_ms = _time.monotonic() * 1000
+        if self._check_memory_guard(findings):
+            return SocialIdentityResult(facets=(), scanned_count=0, skipped_count=len(findings), elapsed_ms=_time.monotonic() * 1000 - start_ms)
+        self._stats['scanned'] = len(findings)
+        all_urls = self._collect_urls_from_findings(findings)
+        if not all_urls:
+            return SocialIdentityResult(facets=(), scanned_count=self._stats['scanned'], skipped_count=self._stats['skipped'], elapsed_ms=_time.monotonic() * 1000 - start_ms)
+        tasks = [self._process_url(url, fid, sample, kind) for url, fid, sample, kind in all_urls]
+        gathered = await self._run_parallel_processing(tasks, start_ms)
+        facets = self._aggregate_results(gathered)
         unique_facets = self._deduplicate_facets(facets)
         if unique_facets:
             await self._write_findings(unique_facets, store, query)
@@ -212,60 +228,121 @@ class SocialIdentityMiner:
             try:
                 parsed = urlparse(url)
                 path = parsed.path.strip('/')
+                # Try fast path with Aho-Corasick
                 ac = _get_ac_matcher()
                 if ac is not None:
-                    matches = ac.scan(url)
-                    if matches:
-                        _, _, pattern_str = matches[0]
-                        matched_idx = None
-                        for idx, (_plat, url_re, _, _) in enumerate(_PLATFORM_PATTERNS):
-                            if url_re.pattern == pattern_str:
-                                matched_idx = idx
-                                break
-                        if matched_idx is None:
-                            return None
-                        platform, _url_re, _username_re, is_invite_only = _PLATFORM_PATTERNS[matched_idx]
-                        if is_invite_only:
-                            return None
-                        username = _extract_platform_username(url, matched_idx)
-                        if not username or len(username) < 2:
-                            return None
-                        profile_url = self._build_profile_url(platform, username, parsed.netloc)
-                        linked_domains = self._extract_linked_domains(text_sample)
-                        linked_emails = self._extract_linked_emails(text_sample)
-                        confidence = self._compute_confidence(platform, username, linked_domains, linked_emails)
-                        if confidence < SOCIAL_MIN_CONFIDENCE:
-                            return None
-                        return SocialIdentityFacet(finding_id=finding_id, platform=platform, username=username, display_name=username, profile_url=profile_url, linked_domains=tuple(linked_domains), linked_emails=tuple(linked_emails), confidence=confidence, evidence_kind=source)
-                for platform, url_re, username_re, is_invite_only in _PLATFORM_PATTERNS:
-                    url_match = url_re.match(url)
-                    if not url_match:
-                        host_match = re.match('https?://(?:www\\.)?' + re.escape(parsed.netloc) + '/?', url)
-                        if host_match and platform in parsed.netloc:
-                            url_match = True
-                    if not url_match and platform not in parsed.netloc:
-                        continue
-                    if is_invite_only:
-                        return None
-                    username = ''
-                    if path:
-                        username = path.split('/')[0]
-                        if username_re.search(url):
-                            m = username_re.search(url)
-                            if m and m.group(1):
-                                username = m.group(1)
-                    if not username or len(username) < 2:
-                        continue
-                    profile_url = self._build_profile_url(platform, username, parsed.netloc)
-                    linked_domains = self._extract_linked_domains(text_sample)
-                    linked_emails = self._extract_linked_emails(text_sample)
-                    confidence = self._compute_confidence(platform, username, linked_domains, linked_emails)
-                    if confidence < SOCIAL_MIN_CONFIDENCE:
-                        continue
-                    return SocialIdentityFacet(finding_id=finding_id, platform=platform, username=username, display_name=username, profile_url=profile_url, linked_domains=tuple(linked_domains), linked_emails=tuple(linked_emails), confidence=confidence, evidence_kind=source)
-                return None
+                    result = self._process_url_fast_path(ac, url, parsed, path, text_sample, finding_id, source)
+                    if result is not None:
+                        return result
+                # Fallback: sequential pattern matching
+                return self._process_url_fallback(url, parsed, path, text_sample, finding_id, source)
             except Exception:
                 return None
+
+    def _process_url_fast_path(
+        self,
+        ac: object,
+        url: str,
+        parsed,
+        path: str,
+        text_sample: str,
+        finding_id: str,
+        source: str,
+    ) -> SocialIdentityFacet | None:
+        """Fast path using Aho-Corasick matcher."""
+        matches = ac.scan(url)
+        if not matches:
+            return None
+        _, _, pattern_str = matches[0]
+        matched_idx = None
+        for idx, (_plat, url_re, _, _) in enumerate(_PLATFORM_PATTERNS):
+            if url_re.pattern == pattern_str:
+                matched_idx = idx
+                break
+        if matched_idx is None:
+            return None
+        platform, _, _, is_invite_only = _PLATFORM_PATTERNS[matched_idx]
+        if is_invite_only:
+            return None
+        username = _extract_platform_username(url, matched_idx)
+        if not username or len(username) < 2:
+            return None
+        return self._build_facet(finding_id, platform, username, parsed.netloc, text_sample, source)
+
+    def _process_url_fallback(
+        self,
+        url: str,
+        parsed,
+        path: str,
+        text_sample: str,
+        finding_id: str,
+        source: str,
+    ) -> SocialIdentityFacet | None:
+        """Fallback: sequential pattern matching across all platforms."""
+        for platform, url_re, username_re, is_invite_only in _PLATFORM_PATTERNS:
+            facet = self._try_platform_match(
+                url, parsed, path, platform, url_re, username_re, is_invite_only,
+                text_sample, finding_id, source,
+            )
+            if facet is not None:
+                return facet
+        return None
+
+    def _try_platform_match(
+        self,
+        url: str,
+        parsed,
+        path: str,
+        platform: str,
+        url_re,
+        username_re,
+        is_invite_only: bool,
+        text_sample: str,
+        finding_id: str,
+        source: str,
+    ) -> SocialIdentityFacet | None:
+        """Try to match a URL against a single platform pattern."""
+        url_match = url_re.match(url)
+        if not url_match:
+            host_match = re.match('https?://(?:www\\.)?' + re.escape(parsed.netloc) + '/?', url)
+            if host_match and platform in parsed.netloc:
+                url_match = True
+        if not url_match and platform not in parsed.netloc:
+            return None
+        if is_invite_only:
+            return None
+        username = ''
+        if path:
+            username = path.split('/')[0]
+            if username_re.search(url):
+                m = username_re.search(url)
+                if m and m.group(1):
+                    username = m.group(1)
+        if not username or len(username) < 2:
+            return None
+        return self._build_facet(finding_id, platform, username, parsed.netloc, text_sample, source)
+
+    def _build_facet(
+        self,
+        finding_id: str,
+        platform: str,
+        username: str,
+        netloc: str,
+        text_sample: str,
+        source: str,
+    ) -> SocialIdentityFacet | None:
+        """Build a SocialIdentityFacet from extracted data."""
+        profile_url = self._build_profile_url(platform, username, netloc)
+        linked_domains = self._extract_linked_domains(text_sample)
+        linked_emails = self._extract_linked_emails(text_sample)
+        confidence = self._compute_confidence(platform, username, linked_domains, linked_emails)
+        if confidence < SOCIAL_MIN_CONFIDENCE:
+            return None
+        return SocialIdentityFacet(
+            finding_id=finding_id, platform=platform, username=username, display_name=username,
+            profile_url=profile_url, linked_domains=tuple(linked_domains),
+            linked_emails=tuple(linked_emails), confidence=confidence, evidence_kind=source,
+        )
 
     def _extract_urls_from_payload(self, finding: Any) -> list[str]:
         """Extract URLs from finding payload_text."""

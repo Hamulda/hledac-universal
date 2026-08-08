@@ -224,6 +224,95 @@ def extract_entities_from_findings(findings: list[Any], max_profiles: int=MAX_PR
     logger.debug(f'EntitySignalExtractor: {len(profile_map)} profiles from {len(findings)} findings')
     return list(profile_map.values())
 
+async def _extract_entities_parallel(
+    findings: list[Any],
+    max_concurrency: int,
+) -> list[tuple[str, Any, ExtractedEntity]]:
+    """Extract entities from findings in parallel chunks."""
+    if not findings:
+        return []
+    chunks: list[list[Any]] = [findings[i:i + _CHUNK_SIZE] for i in range(0, len(findings), _CHUNK_SIZE)]
+    semaphore = asyncio.Semaphore(max_concurrency)
+
+    async def _run_chunk_with_sem(chunk: list[Any]) -> list[tuple[str, Any, ExtractedEntity]]:
+        async with semaphore:
+            return await asyncio.to_thread(_extract_chunk, chunk)
+
+    tasks = [_run_chunk_with_sem(chunk) for chunk in chunks]
+    gathered = await parallel(tasks, taskgroup=True, policy='collect', ctx='entity_extraction', logger_instance=logger)
+    all_results: list[tuple[str, Any, ExtractedEntity]] = []
+    for chunk_results in gathered.ok:
+        all_results.extend(chunk_results)
+    for exc in gathered.errors:
+        logger.warning(f'Entity extraction chunk failed: {exc}')
+    if gathered.re_raised is not None:
+        raise gathered.re_raised
+    return all_results
+
+
+def _build_email_profile(fid: str, ent: ExtractedEntity) -> EntitySignalProfile:
+    """Build a new email entity profile."""
+    return EntitySignalProfile(
+        id=f'email:{ent.value}',
+        primary_name=ent.value.split('@')[0],
+        emails=[ent.raw_value],
+        finding_ids=[fid],
+        confidence=ent.confidence,
+    )
+
+
+def _build_handle_profile(fid: str, ent: ExtractedEntity) -> EntitySignalProfile:
+    """Build a new username/domain_handle entity profile."""
+    return EntitySignalProfile(
+        id=f'handle:{ent.value}',
+        primary_name=ent.raw_value,
+        usernames=[ent.raw_value],
+        domain_handles=[ent.raw_value] if ent.entity_type == 'domain_handle' else [],
+        finding_ids=[fid],
+        confidence=ent.confidence,
+    )
+
+
+def _update_email_profile(prof: EntitySignalProfile, fid: str, ent: ExtractedEntity) -> None:
+    """Update an existing email profile with new entity data."""
+    if ent.raw_value not in prof.emails:
+        prof.emails.append(ent.raw_value)
+    if fid not in prof.finding_ids:
+        prof.finding_ids.append(fid)
+    prof.platforms.add(ent.platform)
+
+
+def _update_handle_profile(prof: EntitySignalProfile, fid: str, ent: ExtractedEntity) -> None:
+    """Update an existing username/domain_handle profile with new entity data."""
+    if ent.raw_value not in prof.usernames:
+        prof.usernames.append(ent.raw_value)
+    if ent.entity_type == 'domain_handle' and ent.raw_value not in prof.domain_handles:
+        prof.domain_handles.append(ent.raw_value)
+    if fid not in prof.finding_ids:
+        prof.finding_ids.append(fid)
+    prof.platforms.add(ent.platform)
+    prof.confidence = max(prof.confidence, ent.confidence)
+
+
+def _merge_entity_into_profile(profile_map: dict[str, EntitySignalProfile], fid: str, ent: ExtractedEntity, max_profiles: int) -> None:
+    """Merge extracted entity into profile map."""
+    if len(profile_map) >= max_profiles:
+        return
+
+    if ent.entity_type == 'email':
+        key = f'email:{ent.value}'
+        if key not in profile_map:
+            profile_map[key] = _build_email_profile(fid, ent)
+        else:
+            _update_email_profile(profile_map[key], fid, ent)
+    elif ent.entity_type in ('username', 'domain_handle'):
+        key = f'handle:{ent.value}'
+        if key not in profile_map:
+            profile_map[key] = _build_handle_profile(fid, ent)
+        else:
+            _update_handle_profile(profile_map[key], fid, ent)
+
+
 async def extract_entities_from_findings_async(findings: list[Any], max_profiles: int=MAX_PROFILES, max_concurrency: int=4) -> list[EntitySignalProfile]:
     """
     P1-2: Async batch entity signal extraction via asyncio.gather.
@@ -254,50 +343,13 @@ async def extract_entities_from_findings_async(findings: list[Any], max_profiles
     """
     if not findings:
         return []
-    chunks: list[list[Any]] = [findings[i:i + _CHUNK_SIZE] for i in range(0, len(findings), _CHUNK_SIZE)]
-    semaphore = asyncio.Semaphore(max_concurrency)
 
-    async def _run_chunk_with_sem(chunk: list[Any]) -> list[tuple[str, Any, ExtractedEntity]]:
-        async with semaphore:
-            return await asyncio.to_thread(_extract_chunk, chunk)
-    tasks = [_run_chunk_with_sem(chunk) for chunk in chunks]
-    gathered = await parallel(tasks, taskgroup=True, policy='collect', ctx='entity_extraction', logger_instance=logger)
-    all_results: list[tuple[str, Any, ExtractedEntity]] = []
-    for chunk_results in gathered.ok:
-        all_results.extend(chunk_results)
-    for exc in gathered.errors:
-        logger.warning(f'Entity extraction chunk failed: {exc}')
-    if gathered.re_raised is not None:
-        raise gathered.re_raised
+    all_results = await _extract_entities_parallel(findings, max_concurrency)
     profile_map: dict[str, EntitySignalProfile] = {}
+
     for fid, _finding, ent in all_results:
-        if len(profile_map) >= max_profiles:
-            break
-        if ent.entity_type == 'email':
-            key = f'email:{ent.value}'
-            if key not in profile_map:
-                profile_map[key] = EntitySignalProfile(id=key, primary_name=ent.value.split('@')[0], emails=[ent.raw_value], finding_ids=[fid], confidence=ent.confidence)
-            else:
-                prof = profile_map[key]
-                if ent.raw_value not in prof.emails:
-                    prof.emails.append(ent.raw_value)
-                if fid not in prof.finding_ids:
-                    prof.finding_ids.append(fid)
-                prof.platforms.add(ent.platform)
-        elif ent.entity_type in ('username', 'domain_handle'):
-            key = f'handle:{ent.value}'
-            if key not in profile_map:
-                profile_map[key] = EntitySignalProfile(id=key, primary_name=ent.raw_value, usernames=[ent.raw_value], domain_handles=[ent.raw_value] if ent.entity_type == 'domain_handle' else [], finding_ids=[fid], confidence=ent.confidence)
-            else:
-                prof = profile_map[key]
-                if ent.raw_value not in prof.usernames:
-                    prof.usernames.append(ent.raw_value)
-                if ent.entity_type == 'domain_handle' and ent.raw_value not in prof.domain_handles:
-                    prof.domain_handles.append(ent.raw_value)
-                if fid not in prof.finding_ids:
-                    prof.finding_ids.append(fid)
-                prof.platforms.add(ent.platform)
-                prof.confidence = max(prof.confidence, ent.confidence)
+        _merge_entity_into_profile(profile_map, fid, ent, max_profiles)
+
     logger.debug(f'EntitySignalExtractor: {len(profile_map)} profiles from {len(findings)} findings')
     return list(profile_map.values())
 _extracted_profiles_total: int = 0

@@ -386,8 +386,78 @@ class SemanticStore:
         self._pending_languages.append(lang_result)
 
     # -------------------------------------------------------------------------
-    # Flush — batch embed + LanceDB append
+    # Flush — batch embed + LanceDB append (split into helpers)
     # -------------------------------------------------------------------------
+
+    def _split_by_language(
+        self,
+        texts: list[str],
+        meta: list[dict],
+        languages: list,
+    ) -> tuple[list[int], list[int], list[str], list[str], list[str]]:
+        """Split texts by language into English and multilingual groups."""
+        english_indices, multilingual_indices = [], []
+        english_texts, multilingual_texts = [], []
+        multilingual_langs = []
+
+        for i, lang_result in enumerate(languages):
+            if lang_result is not None and lang_result.is_english:
+                english_indices.append(i)
+                english_texts.append(texts[i])
+            else:
+                multilingual_indices.append(i)
+                multilingual_texts.append(texts[i])
+                multilingual_langs.append(lang_result.language if lang_result else "unknown")
+
+        return english_indices, multilingual_indices, english_texts, multilingual_texts, multilingual_langs
+
+    def _build_lance_english_record(self, emb: np.ndarray, idx: int, texts: list[str], meta: list[dict]) -> dict:
+        """Build a LanceDB record for English embedding."""
+        return {
+            "vector": emb.tolist(),
+            "text": texts[idx][: _MAX_TEXT_LEN],
+            "source_type": meta[idx]["source_type"],
+            "finding_id": meta[idx]["finding_id"],
+            "ts": meta[idx]["ts"],
+            "ioc_types": meta[idx]["ioc_types"],
+        }
+
+    def _build_lance_multilingual_record(self, emb: np.ndarray, idx: int, texts: list[str], meta: list[dict], lang: str) -> dict:
+        """Build a LanceDB record for multilingual embedding."""
+        return {
+            "vector": emb.tolist(),
+            "text": texts[idx][: _MAX_TEXT_LEN],
+            "source_type": meta[idx]["source_type"],
+            "finding_id": meta[idx]["finding_id"],
+            "ts": meta[idx]["ts"],
+            "ioc_types": meta[idx]["ioc_types"],
+            "language": lang,
+        }
+
+    def _build_sqlite_vec_row(self, emb_idx: int, texts: list[str], meta: list[dict], emb: np.ndarray) -> tuple:
+        """Build a sqlite-vec row tuple for English embedding."""
+        return (
+            meta[emb_idx]["finding_id"],
+            texts[emb_idx][: _MAX_TEXT_LEN],
+            meta[emb_idx]["source_type"],
+            meta[emb_idx]["finding_id"],
+            meta[emb_idx]["ts"],
+            meta[emb_idx]["ioc_types"],
+            emb.tolist(),
+        )
+
+    def _build_sqlite_vec_multilingual_row(self, emb_idx: int, texts: list[str], meta: list[dict], emb: np.ndarray, lang: str) -> tuple:
+        """Build a sqlite-vec row tuple for multilingual embedding."""
+        return (
+            meta[emb_idx]["finding_id"],
+            texts[emb_idx][: _MAX_TEXT_LEN],
+            meta[emb_idx]["source_type"],
+            meta[emb_idx]["finding_id"],
+            meta[emb_idx]["ts"],
+            meta[emb_idx]["ioc_types"],
+            lang,
+            emb.tolist(),
+        )
 
     async def flush(self) -> int:
         """
@@ -412,78 +482,60 @@ class SemanticStore:
         self._pending_meta.clear()
         self._pending_languages.clear()
 
-        # SWARM-002: Separate English and non-English texts
-        english_indices = []
-        multilingual_indices = []
-        english_texts = []
-        multilingual_texts = []
-        multilingual_langs = []
-
-        for i, lang_result in enumerate(languages):
-            if lang_result is not None and lang_result.is_english:
-                english_indices.append(i)
-                english_texts.append(texts[i])
-            else:
-                multilingual_indices.append(i)
-                multilingual_texts.append(texts[i])
-                multilingual_langs.append(lang_result.language if lang_result else "unknown")
+        english_indices, multilingual_indices, english_texts, multilingual_texts, multilingual_langs = \
+            self._split_by_language(texts, meta, languages)
 
         logger.debug(
             f"[SEMSTORE] Language split: {len(english_texts)} English, "
             f"{len(multilingual_texts)} multilingual"
         )
 
-        # Initialize embeddings arrays
-        embeddings_english = None
-        embeddings_multilingual = None
+        # Embed texts
+        embeddings_english = await self._embed_english(english_texts) if english_texts else None
+        embeddings_multilingual = await self._embed_multilingual(multilingual_texts) if multilingual_texts else None
 
-        # Embed English texts via ModernBERT/MLX
-        if english_texts:
-            embeddings_english = await self._embed_english(english_texts)
-
-        # Embed multilingual texts via BGE-M3
-        if multilingual_texts:
-            embeddings_multilingual = await self._embed_multilingual(multilingual_texts)
-
-        # Write to respective indexes
+        # Write English embeddings
         total_records = 0
+        total_records += self._write_english_embeddings(
+            embeddings_english, english_indices, texts, meta,
+        )
 
-        # Write English embeddings to primary index
-        if embeddings_english is not None and self._table is not None:
-            english_records = []
-            for i, emb_idx in enumerate(english_indices):
-                rec: dict[str, Any] = {
-                    "vector": embeddings_english[i].tolist(),
-                    "text": texts[emb_idx][: _MAX_TEXT_LEN],
-                    "source_type": meta[emb_idx]["source_type"],
-                    "finding_id": meta[emb_idx]["finding_id"],
-                    "ts": meta[emb_idx]["ts"],
-                    "ioc_types": meta[emb_idx]["ioc_types"],
-                }
-                english_records.append(rec)
+        # Write multilingual embeddings
+        total_records += self._write_multilingual_embeddings(
+            embeddings_multilingual, multilingual_indices, multilingual_langs, texts, meta,
+        )
 
+        return total_records
+
+    def _write_english_embeddings(
+        self,
+        embeddings_english: np.ndarray | None,
+        english_indices: list[int],
+        texts: list[str],
+        meta: list[dict],
+    ) -> int:
+        """Write English embeddings to LanceDB or sqlite-vec."""
+        if embeddings_english is None or not english_indices:
+            return 0
+
+        if self._table is not None:
+            records = [
+                self._build_lance_english_record(embeddings_english[i], english_indices[i], texts, meta)
+                for i in range(len(english_indices))
+            ]
             try:
-                self._table.add(english_records)
-                total_records += len(english_records)
-                logger.debug("[SEMSTORE] English LanceDB upserted %d records", len(english_records))
+                self._table.add(records)
+                logger.debug("[SEMSTORE] English LanceDB upserted %d records", len(records))
+                return len(records)
             except Exception as e:
                 logger.warning("[SEMSTORE] English LanceDB add failed: %s", e)
 
-        elif embeddings_english is not None and self._vec_db is not None:
-            # sqlite-vec fallback for English
+        elif self._vec_db is not None:
+            rows = [
+                self._build_sqlite_vec_row(english_indices[i], texts, meta, embeddings_english[i])
+                for i in range(len(english_indices))
+            ]
             try:
-                rows = [
-                    (
-                        meta[english_indices[i]]["finding_id"],
-                        texts[english_indices[i]][: _MAX_TEXT_LEN],
-                        meta[english_indices[i]]["source_type"],
-                        meta[english_indices[i]]["finding_id"],
-                        meta[english_indices[i]]["ts"],
-                        meta[english_indices[i]]["ioc_types"],
-                        embeddings_english[i].tolist(),
-                    )
-                    for i in range(len(english_indices))
-                ]
                 self._vec_db.executemany(
                     f"INSERT OR REPLACE INTO {_TABLE_NAME} "
                     f"(finding_id, text, source_type, finding_id_idx, ts, ioc_types, embedding) "
@@ -491,61 +543,60 @@ class SemanticStore:
                     rows,
                 )
                 self._vec_db.commit()
-                total_records += len(rows)
+                logger.debug("[SEMSTORE] English sqlite-vec upserted %d records", len(rows))
+                return len(rows)
             except Exception as e:
                 logger.warning("[SEMSTORE] English sqlite-vec upsert failed: %s", e)
 
-        # SWARM-002: Write multilingual embeddings to multilingual index
-        if embeddings_multilingual is not None:
-            if self._table_multilingual is not None:
-                multilingual_records = []
-                for i, emb_idx in enumerate(multilingual_indices):
-                    rec: dict[str, Any] = {
-                        "vector": embeddings_multilingual[i].tolist(),
-                        "text": texts[emb_idx][: _MAX_TEXT_LEN],
-                        "source_type": meta[emb_idx]["source_type"],
-                        "finding_id": meta[emb_idx]["finding_id"],
-                        "ts": meta[emb_idx]["ts"],
-                        "ioc_types": meta[emb_idx]["ioc_types"],
-                        "language": multilingual_langs[i],
-                    }
-                    multilingual_records.append(rec)
+        return 0
 
-                try:
-                    self._table_multilingual.add(multilingual_records)
-                    total_records += len(multilingual_records)
-                    logger.debug("[SEMSTORE] Multilingual LanceDB upserted %d records", len(multilingual_records))
-                except Exception as e:
-                    logger.warning("[SEMSTORE] Multilingual LanceDB add failed: %s", e)
+    def _write_multilingual_embeddings(
+        self,
+        embeddings_multilingual: np.ndarray | None,
+        multilingual_indices: list[int],
+        multilingual_langs: list[str],
+        texts: list[str],
+        meta: list[dict],
+    ) -> int:
+        """Write multilingual embeddings to LanceDB or sqlite-vec."""
+        if embeddings_multilingual is None or not multilingual_indices:
+            return 0
 
-            elif self._vec_db_multilingual is not None:
-                # sqlite-vec fallback for multilingual
-                try:
-                    rows = [
-                        (
-                            meta[multilingual_indices[i]]["finding_id"],
-                            texts[multilingual_indices[i]][: _MAX_TEXT_LEN],
-                            meta[multilingual_indices[i]]["source_type"],
-                            meta[multilingual_indices[i]]["finding_id"],
-                            meta[multilingual_indices[i]]["ts"],
-                            meta[multilingual_indices[i]]["ioc_types"],
-                            multilingual_langs[i],
-                            embeddings_multilingual[i].tolist(),
-                        )
-                        for i in range(len(multilingual_indices))
-                    ]
-                    self._vec_db_multilingual.executemany(
-                        f"INSERT OR REPLACE INTO {_TABLE_NAME_MULTILINGUAL} "
-                        f"(finding_id, text, source_type, finding_id_idx, ts, ioc_types, language, embedding) "
-                        f"VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-                        rows,
-                    )
-                    self._vec_db_multilingual.commit()
-                    total_records += len(rows)
-                except Exception as e:
-                    logger.warning("[SEMSTORE] Multilingual sqlite-vec upsert failed: %s", e)
+        if self._table_multilingual is not None:
+            records = [
+                self._build_lance_multilingual_record(
+                    embeddings_multilingual[i], multilingual_indices[i], texts, meta, multilingual_langs[i],
+                )
+                for i in range(len(multilingual_indices))
+            ]
+            try:
+                self._table_multilingual.add(records)
+                logger.debug("[SEMSTORE] Multilingual LanceDB upserted %d records", len(records))
+                return len(records)
+            except Exception as e:
+                logger.warning("[SEMSTORE] Multilingual LanceDB add failed: %s", e)
 
-        return total_records
+        elif self._vec_db_multilingual is not None:
+            rows = [
+                self._build_sqlite_vec_multilingual_row(
+                    multilingual_indices[i], texts, meta, embeddings_multilingual[i], multilingual_langs[i],
+                )
+                for i in range(len(multilingual_indices))
+            ]
+            try:
+                self._vec_db_multilingual.executemany(
+                    f"INSERT OR REPLACE INTO {_TABLE_NAME_MULTILINGUAL} "
+                    f"(finding_id, text, source_type, finding_id_idx, ts, ioc_types, language, embedding) "
+                    f"VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                    rows,
+                )
+                self._vec_db_multilingual.commit()
+                logger.debug("[SEMSTORE] Multilingual sqlite-vec upserted %d records", len(rows))
+                return len(rows)
+            except Exception as e:
+                logger.warning("[SEMSTORE] Multilingual sqlite-vec upsert failed: %s", e)
+
+        return 0
 
     async def _embed_english(self, texts: list[str]) -> np.ndarray | None:
         """SWARM-002: Embed English texts via ModernBERT/MLX."""

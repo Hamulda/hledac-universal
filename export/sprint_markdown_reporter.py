@@ -239,19 +239,6 @@ def _render_arrow_metrics(arrow_m: dict[str, int]) -> str:
 
 # Sprint F240A: Optional sections configuration (data-driven pattern)
 # Maps scorecard keys to their renderer functions
-_OPTIONAL_SECTIONS: tuple[tuple[str, callable, str], ...] = (
-    ("arrow_metrics", _render_arrow_metrics, "arrow_metrics"),
-    ("envelope_findings", _render_envelope_findings, "envelope_findings"),
-    ("identity_candidates", _render_identity_candidates, "identity_candidates"),
-    ("timeline_findings", _render_timeline_section, "timeline_findings"),
-    ("sprint_diff_findings", _render_sprint_diff_section, "sprint_diff_findings"),
-    ("kill_chain_findings", _render_kill_chain_section, "kill_chain_findings"),
-    ("evidence_chains", _render_evidence_chains_section, "evidence_chains"),
-    ("analyst_brief", _render_analyst_brief_section, "analyst_brief"),
-    ("investigation_packet", lambda pkt: _render_f232_analyst_brief(pkt, None), "investigation_packet"),
-)
-
-
 def _render_optional_sections(scorecard: dict[str, Any]) -> list[str]:
     """Render all optional sections from scorecard using data-driven dispatch."""
     sections = []
@@ -489,25 +476,14 @@ def _render_envelope_findings(envelope_findings: list) -> str:
     if not envelope_findings:
         return ""
 
-    lines = ["", "## Evidence Envelope Findings", ""]
-
-    count = 0
-    for f in envelope_findings:
-        env = f.get("envelope") if isinstance(f, dict) else None
-        if env is None:
-            continue
-        if not hasattr(env, "audit_reason") or not env.audit_reason:
-            continue
-
-        fid = f.get("finding_id", f.get("id", "unknown")) if isinstance(f, dict) else "unknown"
-        lines.append(f"### Finding: `{fid[:16]}`")
-        lines.append(f"**Audit Reason:** {env.audit_reason}")
-        lines.append("")
+    def _render_envelope(fid: str, env) -> list[str]:
+        """Render a single envelope as markdown lines."""
+        lines = [f"### Finding: `{fid[:16]}`", f"**Audit Reason:** {env.audit_reason}", ""]
 
         # Evidence pointers
         if hasattr(env, "evidence_pointers") and env.evidence_pointers:
             lines.append("**Evidence Pointers:**")
-            for ptr in env.evidence_pointers[:10]:  # bounded display
+            for ptr in env.evidence_pointers[:10]:
                 lines.append(f"  - {ptr}")
             lines.append("")
 
@@ -522,23 +498,33 @@ def _render_envelope_findings(envelope_findings: list) -> str:
         # Suggested pivots
         if hasattr(env, "suggested_pivots") and env.suggested_pivots:
             lines.append("**Suggested Next Pivots:**")
-            for pivot in env.suggested_pivots[:5]:  # bounded display
+            for pivot in env.suggested_pivots[:5]:
                 if isinstance(pivot, dict):
                     direction = pivot.get("direction", "")
                     query_hint = pivot.get("query_hint", "")
                     priority = pivot.get("priority", "")
-                    lines.append(f"- [{escape_markdown_text(priority)}] {escape_markdown_text(direction)}: {escape_markdown_text(query_hint)}")  # noqa: E501
+                    lines.append(f"- [{escape_markdown_text(priority)}] {escape_markdown_text(direction)}: {escape_markdown_text(query_hint)}")
                 elif isinstance(pivot, str):
                     lines.append(f"- {escape_markdown_text(pivot)}")
             lines.append("")
+        return lines
 
+    lines = ["", "## Evidence Envelope Findings", ""]
+    count = 0
+    for f in envelope_findings:
+        env = f.get("envelope") if isinstance(f, dict) else None
+        if env is None:
+            continue
+        if not hasattr(env, "audit_reason") or not env.audit_reason:
+            continue
+        fid = f.get("finding_id", f.get("id", "unknown")) if isinstance(f, dict) else "unknown"
+        lines.extend(_render_envelope(fid, env))
         count += 1
-        if count >= 10:  # max 10 envelope findings displayed
+        if count >= 10:
             break
 
     if count == 0:
         return ""
-
     lines.append(f"_{count} finding(s) with evidence envelope_")
     return "\n".join(lines)
 
@@ -546,6 +532,76 @@ def _render_envelope_findings(envelope_findings: list) -> str:
 # ---------------------------------------------------------------------------
 # Sprint F202B: Identity Candidate rendering
 # ---------------------------------------------------------------------------
+
+def _format_confidence_label(confidence: float) -> str:
+    """Return confidence label string."""
+    if confidence >= 0.8:
+        return "high"
+    elif confidence >= 0.6:
+        return "medium"
+    else:
+        return "low"
+
+
+def _render_single_identity_candidate(cand: dict) -> list[str]:
+    """Render a single identity candidate and return list of markdown lines."""
+    cand_id = cand.get("candidate_id", "unknown")
+    primary = cand.get("primary_name", "")
+    confidence = cand.get("confidence", 0.0)
+    signals = cand.get("signals", {})
+    emails = cand.get("emails", [])
+    usernames = cand.get("usernames", [])
+    platforms = cand.get("platforms", [])
+    evidence = cand.get("evidence", [])
+    finding_ids = cand.get("finding_ids", [])
+
+    lines: list[str] = [
+        f"### `{cand_id[:32]}`",
+        f"**Name:** {primary}",
+        f"**Confidence:** {confidence:.2f} ({_format_confidence_label(confidence)})",
+        ""
+    ]
+
+    # Attribution confidence
+    attribution_conf = signals.get("attribution_confidence")
+    if attribution_conf is not None:
+        lines.append(f"**Attribution Confidence:** {attribution_conf:.2f}")
+        attribution_factors = signals.get("attribution_factor_types", [])
+        if attribution_factors:
+            lines.append(f"**Attribution Factors:** {', '.join(f'`{ft}`' for ft in attribution_factors)}")
+        if attribution_conf != confidence:
+            lines.append(f"**Base Confidence:** {confidence:.2f}")
+        lines.append("")
+
+    # Helper to append bounded list field
+    def _append_field(label: str, items: list, limit: int, fmt: callable) -> None:
+        if items:
+            lines.append(f"**{label}:** {', '.join(fmt(i) for i in items[:limit])}")
+            lines.append("")
+
+    _append_field("Platforms", platforms, 8, lambda p: f"`{p}`")
+    _append_field("Emails", emails, 5, lambda e: f"`{e}`")
+    _append_field("Usernames", usernames, 8, lambda u: f"`{u}`")
+
+    # Signals
+    if signals:
+        signal_parts = [f"{k}={v:.2f}" if isinstance(v, float) else f"{k}={v}"
+                       for k, v in list(signals.items())[:5]]
+        lines.append(f"**Signals:** {', '.join(signal_parts)}")
+        lines.append("")
+
+    if evidence:
+        lines.append("**Evidence:**")
+        lines.extend(f"  - {ev}" for ev in evidence[:5])
+        lines.append("")
+
+    if finding_ids:
+        lines.append(f"**Source Findings:** {', '.join(f'`{fid[:12]}`' for fid in finding_ids[:5])}")
+        lines.append("")
+
+    lines.extend(["---", ""])
+    return lines
+
 
 def _render_identity_candidates(identity_candidates: list) -> str:
     """
@@ -563,86 +619,12 @@ def _render_identity_candidates(identity_candidates: list) -> str:
 
     lines = ["", "## Identity Candidates", ""]
 
-    count = 0
     for cand in identity_candidates[:10]:  # bounded display
         if not isinstance(cand, dict):
             continue
+        candidate_lines = _render_single_identity_candidate(cand)
+        lines.extend(candidate_lines)
 
-        cand_id = cand.get("candidate_id", "unknown")
-        primary = cand.get("primary_name", "")
-        confidence = cand.get("confidence", 0.0)
-        signals = cand.get("signals", {})
-        emails = cand.get("emails", [])
-        usernames = cand.get("usernames", [])
-        platforms = cand.get("platforms", [])
-        evidence = cand.get("evidence", [])
-        finding_ids = cand.get("finding_ids", [])
-
-        conf_label = "high" if confidence >= 0.8 else "medium" if confidence >= 0.6 else "low"
-        lines.append(f"### `{cand_id[:32]}`")
-        lines.append(f"**Name:** {primary}")
-        lines.append(f"**Confidence:** {confidence:.2f} ({conf_label})")
-
-        # F203B: Attribution confidence breakdown
-        attribution_conf = signals.get("attribution_confidence")
-        attribution_factors = signals.get("attribution_factor_types", [])
-        if attribution_conf is not None:
-            lines.append(f"**Attribution Confidence:** {attribution_conf:.2f}")
-            if attribution_factors:
-                factor_str = ", ".join(f"`{ft}`" for ft in attribution_factors)
-                lines.append(f"**Attribution Factors:** {factor_str}")
-            # Show stitch confidence if different from attribution
-            if attribution_conf != confidence:
-                lines.append(f"**Base Confidence:** {confidence:.2f}")
-            lines.append("")
-
-        lines.append("")
-
-        # Platforms
-        if platforms:
-            plat_str = ", ".join(f"`{p}`" for p in platforms[:8])
-            lines.append(f"**Platforms:** {plat_str}")
-            lines.append("")
-
-        # Emails
-        if emails:
-            email_str = ", ".join(f"`{e}`" for e in emails[:5])
-            lines.append(f"**Emails:** {email_str}")
-            lines.append("")
-
-        # Usernames
-        if usernames:
-            uname_str = ", ".join(f"`{u}`" for u in usernames[:8])
-            lines.append(f"**Usernames:** {uname_str}")
-            lines.append("")
-
-        # Signals
-        if signals:
-            signal_parts = []
-            for k, v in list(signals.items())[:5]:
-                sv = f"{v:.2f}" if isinstance(v, float) else str(v)
-                signal_parts.append(f"{k}={sv}")
-            lines.append(f"**Signals:** {', '.join(signal_parts)}")
-            lines.append("")
-
-        # Evidence pointers
-        if evidence:
-            lines.append("**Evidence:**")
-            for ev in evidence[:5]:
-                lines.append(f"  - {ev}")
-            lines.append("")
-
-        # Source finding IDs (bounded)
-        if finding_ids:
-            fid_str = ", ".join(f"`{fid[:12]}`" for fid in finding_ids[:5])
-            lines.append(f"**Source Findings:** {fid_str}")
-            lines.append("")
-
-        count += 1
-        lines.append("---")
-        lines.append("")
-
-    lines.append(f"_{count} identity candidate(s)_")
     return "\n".join(lines)
 
 
@@ -819,48 +801,45 @@ def _render_kill_chain_section(kill_chain_findings: list) -> str:
     if not kill_chain_findings:
         return ""
 
-    lines = ["", "## Kill Chain Heat Map", ""]
-
-    # Aggregate by tactic and technique
-    tactic_counts: dict[str, int] = {}
-    technique_counts: dict[str, tuple[int, float]] = {}  # tech_id -> (count, avg_conf)
-
-    for f in kill_chain_findings[:100]:  # bounded
-        if not isinstance(f, dict):
-            continue
-        tags = f.get("kill_chain_tags", [])
-        if not isinstance(tags, list):
-            tags = []
-        for tag in tags:
-            if not isinstance(tag, dict):
+    def _aggregate_tags() -> tuple[dict[str, int], dict[str, tuple[int, float]]]:
+        """Aggregate kill chain tags by tactic and technique."""
+        tactic_counts: dict[str, int] = {}
+        technique_counts: dict[str, tuple[int, float]] = {}
+        for f in kill_chain_findings[:100]:
+            if not isinstance(f, dict):
                 continue
-            tactic = tag.get("tactic", "Unknown")
-            tech_id = tag.get("technique_id", "?")
-            conf = tag.get("confidence", 0.0)
+            tags = f.get("kill_chain_tags", [])
+            if not isinstance(tags, list):
+                continue
+            for tag in tags:
+                if not isinstance(tag, dict):
+                    continue
+                tactic = tag.get("tactic", "Unknown")
+                tech_id = tag.get("technique_id", "?")
+                conf = tag.get("confidence", 0.0)
+                tactic_counts[tactic] = tactic_counts.get(tactic, 0) + 1
+                if tech_id in technique_counts:
+                    cnt, avg_conf = technique_counts[tech_id]
+                    technique_counts[tech_id] = (cnt + 1, (avg_conf * cnt + conf) / (cnt + 1))
+                else:
+                    technique_counts[tech_id] = (1, conf)
+        return tactic_counts, technique_counts
 
-            tactic_counts[tactic] = tactic_counts.get(tactic, 0) + 1
-            if tech_id in technique_counts:
-                cnt, avg_conf = technique_counts[tech_id]
-                technique_counts[tech_id] = (cnt + 1, (avg_conf * cnt + conf) / (cnt + 1))
-            else:
-                technique_counts[tech_id] = (1, conf)
-
+    tactic_counts, technique_counts = _aggregate_tags()
     if not tactic_counts:
         return ""
 
-    # Sort tactics by count
+    lines = ["", "## Kill Chain Heat Map", ""]
     sorted_tactics = sorted(tactic_counts.items(), key=lambda x: -x[1])
     for tactic, count in sorted_tactics:
         lines.append(f"### {tactic} ({count} finding(s))")
         lines.append("")
-        # Show top techniques by count
         tactic_techs_sorted = sorted(
             [(tid, cnt, avg_conf) for tid, (cnt, avg_conf) in technique_counts.items()],
             key=lambda x: -x[1],
         )[:10]
         for tid, cnt, avg_conf in tactic_techs_sorted:
-            conf_str = f"{avg_conf:.0%}"
-            lines.append(f"- `{tid}` — {cnt} finding(s) (avg conf {conf_str})")
+            lines.append(f"- `{tid}` — {cnt} finding(s) (avg conf {avg_conf:.0%})")
         lines.append("")
 
     total_tags = sum(tactic_counts.values())
@@ -1174,6 +1153,22 @@ def _render_f232_constraints(lines: list, investigation_packet: dict, cap_synth:
         if term_fams := list(tc.keys()):
             lines.append(f"- Terminal-only lanes: **{', '.join(term_fams[:5])}**")
     lines.append("")
+
+
+# Sprint F240A: Optional sections configuration (data-driven pattern)
+# Maps scorecard keys to their renderer functions
+# NOTE: This tuple MUST be defined after all renderer functions.
+_OPTIONAL_SECTIONS: tuple[tuple[str, callable, str], ...] = (
+    ("arrow_metrics", _render_arrow_metrics, "arrow_metrics"),
+    ("envelope_findings", _render_envelope_findings, "envelope_findings"),
+    ("identity_candidates", _render_identity_candidates, "identity_candidates"),
+    ("timeline_findings", _render_timeline_section, "timeline_findings"),
+    ("sprint_diff_findings", _render_sprint_diff_section, "sprint_diff_findings"),
+    ("kill_chain_findings", _render_kill_chain_section, "kill_chain_findings"),
+    ("evidence_chains", _render_evidence_chains_section, "evidence_chains"),
+    ("analyst_brief", _render_analyst_brief_section, "analyst_brief"),
+    ("investigation_packet", lambda pkt: _render_f232_analyst_brief(pkt, None), "investigation_packet"),
+)
 
 
 def _render_f232_analyst_brief(investigation_packet: dict, scorecard: dict) -> str:

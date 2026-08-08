@@ -395,13 +395,12 @@ async def _evict_stale_sessions() -> None:
     now = time.monotonic()
 
     async with _curl_cffi_lock:
-        # ── Profile sessions: evict idle > _PROFILE_SESSION_IDLE_TTL_S ──
+        # Profile sessions: evict idle > _PROFILE_SESSION_IDLE_TTL_S
         stale_profiles: list[str] = []
         for profile in list(_curl_cffi_sessions):
             last_access = _profile_session_access.get(profile, now)
             if now - last_access >= _PROFILE_SESSION_IDLE_TTL_S:
                 stale_profiles.append(profile)
-
         for profile in stale_profiles:
             try:
                 session = _curl_cffi_sessions.pop(profile, None)
@@ -409,52 +408,37 @@ async def _evict_stale_sessions() -> None:
                     _curl_cffi_profiles_order.remove(profile)
                 _profile_session_access.pop(profile, None)
                 if session is not None and hasattr(session, "aclose"):
-                    safe_create_task(
-                        session.aclose(),
-                        name=f"curl_cffi:evict:idle:{profile}",
-                    )
+                    safe_create_task(session.aclose(), name=f"curl_cffi:evict:idle:{profile}")
             except Exception:  # noqa: BLE001
                 pass
 
-        # ── Host sessions: evict expired TTL ──
+        # Host sessions: evict expired TTL
         stale_hosts: list[tuple[str, str]] = []
         for cache_key, (_session, last_access) in list(_host_sessions.items()):
             if now - last_access >= _HOST_SESSION_TTL_S:
                 stale_hosts.append(cache_key)
-
         for cache_key in stale_hosts:
             try:
                 old = _host_sessions.pop(cache_key, None)
                 if cache_key in _host_access_order:
                     _host_access_order.remove(cache_key)
-                if old is not None:
-                    old_session, _ = old
-                    if hasattr(old_session, "aclose"):
-                        safe_create_task(
-                            old_session.aclose(),
-                            name=f"curl_cffi:evict:host:{cache_key[0]}",
-                        )
+                if old is not None and hasattr(old[0], "aclose"):
+                    safe_create_task(old[0].aclose(), name=f"curl_cffi:evict:host:{cache_key[0]}")
             except Exception:  # noqa: BLE001
                 pass
 
-        # ── Resolved sessions: evict expired TTL ──
+        # Resolved sessions: evict expired TTL
         stale_resolved: list = []
         for cache_key, (_session, last_access) in list(_resolved_sessions.items()):
             if now - last_access >= _RESOLVED_SESSION_TTL_S:
                 stale_resolved.append(cache_key)
-
         for cache_key in stale_resolved:
             try:
                 old = _resolved_sessions.pop(cache_key, None)
                 if cache_key in _resolved_sessions_order:
                     _resolved_sessions_order.remove(cache_key)
-                if old is not None:
-                    old_session, _ = old
-                    if hasattr(old_session, "aclose"):
-                        safe_create_task(
-                            old_session.aclose(),
-                            name=f"curl_cffi:evict:resolved",
-                        )
+                if old is not None and hasattr(old[0], "aclose"):
+                    safe_create_task(old[0].aclose(), name=f"curl_cffi:evict:resolved")
             except Exception:  # noqa: BLE001
                 pass
 

@@ -71,6 +71,72 @@ class EnrichStage:
     def aimd_window(self) -> float:
         return self._aimd.window
 
+    async def _drain_batch(
+        self,
+        input_queue: BoundedStageQueue[Any] | None,
+        metrics: Any,
+    ) -> list[tuple[Any, Any]]:
+        """Drain items from input queue up to effective worker count."""
+        batch: list[tuple[Any, Any]] = []
+        max_batch = self._effective_workers
+        while len(batch) < max_batch:
+            try:
+                if input_queue is None:
+                    break
+                async with asyncio.timeout(0.1):
+                    item = await input_queue.get()
+                batch.append(item)
+            except asyncio.TimeoutError:
+                break
+            except asyncio.CancelledError:
+                return batch
+        return batch
+
+    async def _process_batch_results(
+        self,
+        gather_result: Any,
+        output_queue: BoundedStageQueue[Any],
+        metrics: Any,
+    ) -> tuple[int, int]:
+        """Process batch results and enqueue findings. Returns (success, fail) counts."""
+        batch_success = 0
+        batch_fail = len(gather_result.errors)
+        pending_puts: list[asyncio.Task[bool]] = []
+
+        for _exc in gather_result.errors:
+            metrics.record_error()
+        for item in gather_result.ok:
+            if isinstance(item, Exception):
+                batch_fail += 1
+                metrics.record_error()
+                continue
+            findings: list[Any] = item
+            if findings:
+                batch_success += 1
+                for finding in findings:
+                    pending_puts.append(safe_create_task(output_queue.put(finding)))
+            metrics.record_processed()
+
+        if pending_puts:
+            await parallel(pending_puts, policy="log")
+        return batch_success, batch_fail
+
+    async def _update_aimd(
+        self,
+        batch_success: int,
+        metrics: Any,
+    ) -> None:
+        """Update AIMD window based on batch success/failure."""
+        if batch_success > 0:
+            new_window = await self._aimd.on_success()
+        else:
+            new_window = await self._aimd.on_failure()
+        new_workers = max(1, min(int(new_window), 16))
+        if new_workers != self._effective_workers:
+            self._effective_workers = new_workers
+            self._sem = asyncio.Semaphore(new_workers)
+            metrics.update_aimd_window(new_window)
+
     async def run(
         self,
         input_queue: BoundedStageQueue[Any] | None,
@@ -90,83 +156,29 @@ class EnrichStage:
         self._running = True
         metrics = ctx.get_metrics(self.name)
         start_time = time.monotonic()
-
         success_count = 0
         fail_count = 0
 
         try:
             while self._running:
-                # Drain available items up to effective worker count
-                batch: list[tuple[Any, Any]] = []
-                max_batch = self._effective_workers
-
-                while len(batch) < max_batch:
-                    try:
-                        if input_queue is None:
-                            break
-                        async with asyncio.timeout(0.1):
-                            item = await input_queue.get()
-                        batch.append(item)
-                    except asyncio.TimeoutError:
-                        break
-                    except asyncio.CancelledError:
-                        return
-
+                batch = await self._drain_batch(input_queue, metrics)
                 if not batch:
-                    # No items available — check if upstream is done
                     if input_queue is not None and input_queue.is_empty():
                         break
                     continue
 
                 # Process batch concurrently with AIMD-gated semaphore
                 async with self._sem:
-                    tasks = [
-                        self._enrich_one(pr, hits, ctx)
-                        for pr, hits in batch
-                    ]
+                    tasks = [self._enrich_one(pr, hits, ctx) for pr, hits in batch]
                     gather_result = await parallel(tasks, policy="collect")
 
-                # AIMD feedback + output — ISSUE-2: concurrent queue.put() with gather
-                # BoundedStageQueue.put() is now serialized via asyncio.Lock (fix applied
-                # in _stage_protocol.py), so gather is safe and eliminates N yield-points.
-                batch_success = 0
-                batch_fail = len(gather_result.errors)
-                pending_puts: list[asyncio.Task[bool]] = []
-                for _exc in gather_result.errors:
-                    metrics.record_error()
-                for item in gather_result.ok:
-                    if isinstance(item, Exception):
-                        batch_fail += 1
-                        metrics.record_error()
-                        continue
-                    findings: list[Any] = item
-                    if findings:
-                        batch_success += 1
-                        # Fire all puts concurrently — BoundedStageQueue.put() is
-                        # now serialized, so concurrent gather is safe.
-                        for finding in findings:
-                            pending_puts.append(safe_create_task(output_queue.put(finding)))
-                    metrics.record_processed()
-
-                if pending_puts:
-                    await parallel(pending_puts, policy="log")
-
+                # Process results and AIMD feedback
+                batch_success, batch_fail = await self._process_batch_results(
+                    gather_result, output_queue, metrics
+                )
                 success_count += batch_success
                 fail_count += batch_fail
-
-                # AIMD feedback per batch (not per item — smoother)
-                # on_failure() takes no args; uma_state context comes from ctx
-                if batch_success > 0:
-                    new_window = await self._aimd.on_success()
-                else:
-                    new_window = await self._aimd.on_failure()
-
-                # Update semaphore if worker count changed
-                new_workers = max(1, min(int(new_window), 16))
-                if new_workers != self._effective_workers:
-                    self._effective_workers = new_workers
-                    self._sem = asyncio.Semaphore(new_workers)
-                    metrics.update_aimd_window(new_window)
+                await self._update_aimd(batch_success, metrics)
 
         except asyncio.CancelledError:  # noqa: BLE001
             pass

@@ -26,3 +26,8 @@ build/
 # Environment files
 .env
 .env.*
+
+# Root-level Python package (causes haft detector to reject "." as invalid module path)
+__init__.py
+__main__.py
+.pyproject.toml

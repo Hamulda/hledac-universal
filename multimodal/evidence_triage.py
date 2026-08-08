@@ -278,98 +278,112 @@ class EvidenceTriageCoordinator:
         except Exception as e:
             logger.debug('[EvidenceTriage] PDF OCR failed: %s', e)
             return ''
+        except Exception as e:
+            logger.debug('[EvidenceTriage] Failed to apply OCR: %s', e)
+
+    def _apply_generic_metadata(self, facets: TriageFacets, gm) -> None:
+        """Apply generic file metadata (hashes)."""
+        hashes = {}
+        if gm.md5_hash:
+            hashes['md5'] = gm.md5_hash
+        if gm.sha256_hash:
+            hashes['sha256'] = gm.sha256_hash
+        if gm.sha1_hash:
+            hashes['sha1'] = gm.sha1_hash
+        facets.file_hashes = hashes
+
+    def _apply_pdf_metadata(self, facets: TriageFacets, pm) -> None:
+        """Apply PDF metadata (title, author)."""
+        facets.title = pm.title or None
+        facets.author = pm.author or None
+
+    def _apply_image_metadata(self, facets: TriageFacets, im) -> None:
+        """Apply image EXIF and GPS metadata."""
+        exif_dict = {}
+        # EXIF fields
+        if im.camera_make:
+            exif_dict['camera_make'] = im.camera_make
+        if im.camera_model:
+            exif_dict['camera_model'] = im.camera_model
+        if im.lens:
+            exif_dict['lens'] = im.lens
+        if im.focal_length:
+            exif_dict['focal_length'] = im.focal_length
+        if im.f_number:
+            exif_dict['f_number'] = im.f_number
+        if im.iso:
+            exif_dict['iso'] = im.iso
+        if im.exposure_time:
+            exif_dict['exposure_time'] = im.exposure_time
+        facets.exif = exif_dict
+
+        # GPS coordinates
+        if im.gps:
+            lat = getattr(im.gps, 'latitude', None)
+            lon = getattr(im.gps, 'longitude', None)
+            alt = getattr(im.gps, 'altitude', None)
+            facets.gps = {'latitude': lat, 'longitude': lon, 'altitude': alt}
+
+    def _apply_pptx_metadata(self, facets: TriageFacets, pm) -> None:
+        """Apply PowerPoint metadata."""
+        if pm.author and (not facets.author):
+            facets.author = pm.author
+        if pm.company:
+            facets.metadata['company'] = pm.company
+        if pm.template_path:
+            facets.metadata['template_path'] = pm.template_path
+        if pm.slide_count is not None:
+            facets.metadata['slide_count'] = pm.slide_count
+        if pm.speaker_notes:
+            facets.metadata['speaker_notes'] = pm.speaker_notes[:3]
+        if pm.hidden_slides:
+            facets.metadata['hidden_slides_count'] = len(pm.hidden_slides)
+        if pm.has_macros is not None:
+            facets.metadata['has_macros'] = pm.has_macros
+
+    def _apply_email_metadata(self, facets: TriageFacets, em) -> None:
+        """Apply email metadata."""
+        if em.from_addr:
+            facets.metadata['from_addr'] = em.from_addr
+        if em.reply_to:
+            facets.metadata['reply_to'] = em.reply_to
+        if em.message_id_domain:
+            facets.metadata['message_id_domain'] = em.message_id_domain
+        if em.originating_ip:
+            facets.metadata['originating_ip'] = em.originating_ip
+        if em.received_chain:
+            facets.metadata['received_chain'] = em.received_chain[:3]
+        if em.has_attachments:
+            facets.metadata['attachment_count'] = em.attachment_count
+
+    def _apply_cad_metadata(self, facets: TriageFacets, cm) -> None:
+        """Apply CAD metadata."""
+        if cm.author and (not facets.author):
+            facets.author = cm.author
+        if cm.title:
+            facets.title = cm.title
+        if cm.autocad_version:
+            facets.metadata['cad_version'] = cm.autocad_version
+        if cm.viewBox:
+            facets.metadata['viewbox'] = cm.viewBox
+        if cm.width and cm.height:
+            facets.metadata['dimensions'] = f'{cm.width}x{cm.height}'
 
     def _apply_metadata_to_facets(self, metadata_result: Any, path: Path, facets: TriageFacets) -> None:
         """Apply metadata extraction results to facets."""
         try:
             if metadata_result.generic:
-                gm = metadata_result.generic
-                hashes = {}
-                if gm.md5_hash:
-                    hashes['md5'] = gm.md5_hash
-                if gm.sha256_hash:
-                    hashes['sha256'] = gm.sha256_hash
-                if gm.sha1_hash:
-                    hashes['sha1'] = gm.sha1_hash
-                facets.file_hashes = hashes
+                self._apply_generic_metadata(facets, metadata_result.generic)
             if metadata_result.pdf:
-                pm = metadata_result.pdf
-                facets.title = pm.title or None
-                facets.author = pm.author or None
+                self._apply_pdf_metadata(facets, metadata_result.pdf)
             if metadata_result.image:
-                im = metadata_result.image
-                exif_dict = {}
-                if im.camera_make:
-                    exif_dict['camera_make'] = im.camera_make
-                if im.camera_model:
-                    exif_dict['camera_model'] = im.camera_model
-                if im.lens:
-                    exif_dict['lens'] = im.lens
-                if im.focal_length:
-                    exif_dict['focal_length'] = im.focal_length
-                if im.f_number:
-                    exif_dict['f_number'] = im.f_number
-                if im.iso:
-                    exif_dict['iso'] = im.iso
-                if im.exposure_time:
-                    exif_dict['exposure_time'] = im.exposure_time
-                facets.exif = exif_dict
-                if im.gps:
-                    try:
-                        lat = im.gps.latitude
-                    except AttributeError:
-                        lat = None
-                    try:
-                        lon = im.gps.longitude
-                    except AttributeError:
-                        lon = None
-                    try:
-                        alt = im.gps.altitude
-                    except AttributeError:
-                        alt = None
-                    facets.gps = {'latitude': lat, 'longitude': lon, 'altitude': alt}
+                self._apply_image_metadata(facets, metadata_result.image)
             if metadata_result.pptx:
-                pm = metadata_result.pptx
-                if pm.author and (not facets.author):
-                    facets.author = pm.author
-                if pm.company:
-                    facets.metadata['company'] = pm.company
-                if pm.template_path:
-                    facets.metadata['template_path'] = pm.template_path
-                if pm.slide_count is not None:
-                    facets.metadata['slide_count'] = pm.slide_count
-                if pm.speaker_notes:
-                    facets.metadata['speaker_notes'] = pm.speaker_notes[:3]
-                if pm.hidden_slides:
-                    facets.metadata['hidden_slides_count'] = len(pm.hidden_slides)
-                if pm.has_macros is not None:
-                    facets.metadata['has_macros'] = pm.has_macros
+                self._apply_pptx_metadata(facets, metadata_result.pptx)
             if metadata_result.email:
-                em = metadata_result.email
-                if em.from_addr:
-                    facets.metadata['from_addr'] = em.from_addr
-                if em.reply_to:
-                    facets.metadata['reply_to'] = em.reply_to
-                if em.message_id_domain:
-                    facets.metadata['message_id_domain'] = em.message_id_domain
-                if em.originating_ip:
-                    facets.metadata['originating_ip'] = em.originating_ip
-                if em.received_chain:
-                    facets.metadata['received_chain'] = em.received_chain[:3]
-                if em.has_attachments:
-                    facets.metadata['attachment_count'] = em.attachment_count
+                self._apply_email_metadata(facets, metadata_result.email)
             if metadata_result.cad:
-                cm = metadata_result.cad
-                if cm.author and (not facets.author):
-                    facets.author = cm.author
-                if cm.title:
-                    facets.title = cm.title
-                if cm.autocad_version:
-                    facets.metadata['cad_version'] = cm.autocad_version
-                if cm.viewBox:
-                    facets.metadata['viewbox'] = cm.viewBox
-                if cm.width and cm.height:
-                    facets.metadata['dimensions'] = f'{cm.width}x{cm.height}'
+                self._apply_cad_metadata(facets, metadata_result.cad)
             if facets.title is None:
                 facets.title = path.name
         except Exception as e:

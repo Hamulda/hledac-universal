@@ -177,6 +177,57 @@ async def _ensure_write_workers() -> None:
     logger.info(f'[LANCEDB:QW] {_NUM_WRITERS} write workers started')
 
 
+async def _collect_queue_items() -> list[tuple[asyncio.Queue, list[dict[str, Any]], float, str]]:
+    """Collect up to 10 items across all table queues (round-robin)."""
+    items: list[tuple[asyncio.Queue, list[dict[str, Any]], float, str]] = []
+    async with _queues_lock:
+        queue_names = list(_queues.keys())
+
+    for qname in queue_names:
+        if len(items) >= 10:
+            break
+        async with _queues_lock:
+            q = _queues.get(qname)
+            if q is None:
+                continue
+
+        if q.empty():
+            continue
+        try:
+            batch, deadline = q.get_nowait()
+            if batch is None:
+                q.task_done()
+                continue
+            if time.monotonic() > deadline + 30:
+                logger.debug('[LANCEDB:QW] Skipping stale batch (deadline expired)')
+                q.task_done()
+                continue
+            items.append((q, batch, deadline, qname))
+        except asyncio.QueueEmpty:  # noqa: BLE001
+            pass
+    return items
+
+
+async def _write_batch_to_table(writer_id: int, qname: str, batches: list) -> None:
+    """Write all records from batches to a single table."""
+    all_records = []
+    for batch, _ in batches:
+        all_records.extend(batch)
+    table = _get_table_for_queue_name(qname)
+    if table is not None:
+        try:
+            await safe_wait_for(
+                asyncio.to_thread(table.add, all_records),
+                timeout=30.0,
+                label=f'lancedb_table_add:{qname}'
+            )
+            logger.debug(f'[LANCEDB:QW] writer={writer_id} wrote {len(all_records)} records to {qname}')
+        except asyncio.TimeoutError:
+            logger.warning(f'[LANCEDB:QW] writer={writer_id} add timed out after 30s')
+        except Exception as e:
+            logger.warning(f'[LANCEDB:QW] writer={writer_id} add failed: {e}')
+
+
 async def _writer_loop(writer_id: int) -> None:
     """Background worker that drains write queues round-robin.
 
@@ -188,72 +239,29 @@ async def _writer_loop(writer_id: int) -> None:
     """
     while True:
         try:
-            items: list[tuple[asyncio.Queue, list[dict[str, Any]], float, str]] = []
-            async with _queues_lock:
-                queue_names = list(_queues.keys())
-
-            # Round-robin collect from all table queues (batch of up to 10)
-            for qname in queue_names:
-                if len(items) >= 10:
-                    break
-                async with _queues_lock:
-                    q = _queues.get(qname)
-                    if q is None:
-                        continue
-
-                if q.empty():
-                    continue
-                try:
-                    batch, deadline = q.get_nowait()
-                    if batch is None:
-                        q.task_done()
-                        continue
-                    if time.monotonic() > deadline + 30:
-                        logger.debug('[LANCEDB:QW] Skipping stale batch (deadline expired)')
-                        q.task_done()
-                        continue
-                    items.append((q, batch, deadline, qname))
-                except asyncio.QueueEmpty:  # noqa: BLE001
-                    pass
-
+            items = await _collect_queue_items()
             if not items:
-                await asyncio.sleep(0.01)  # Brief yield before re-scanning
+                await asyncio.sleep(0.01)
                 continue
 
-            # Process collected items (grouped by table for efficiency)
-            by_table: dict[str, list[tuple[list[dict[str, Any]], float]]] = {}
+            # Group by table
+            by_table: dict[str, list] = {}
             for q, batch, deadline, qname in items:
                 if qname not in by_table:
                     by_table[qname] = []
                 by_table[qname].append((batch, deadline))
 
-            for qname, batches in by_table.items():
-                if not batches:
-                    continue
-                try:
-                    # Flatten batches for same table
-                    all_records = []
-                    for batch, deadline in batches:
-                        all_records.extend(batch)
-
-                    # Get table reference from first batch to determine table
-                    # We store the batch with its queue, so we get table from caller
-                    # For multi-table safety: use a shared registry
-                    table = _get_table_for_queue_name(qname)
-                    if table is not None:
-                        await safe_wait_for(
-                            asyncio.to_thread(table.add, all_records),
-                            timeout=30.0,
-                            label=f'lancedb_table_add:{qname}'
-                        )
-                        logger.debug(f'[LANCEDB:QW] writer={writer_id} wrote {len(all_records)} records to {qname}')
-                except asyncio.TimeoutError:
-                    logger.warning(f'[LANCEDB:QW] writer={writer_id} add timed out after 30s')
-                except Exception as e:
-                    logger.warning(f'[LANCEDB:QW] writer={writer_id} add failed: {e}')
+            # Write to each table
+            await bounded_parallel_map(
+                by_table.items(),
+                lambda x: _write_batch_to_table(writer_id, x[0], x[1]),
+                concurrency=2,
+                ordered=False,
+                ctx="lancedb_writer",
+            )
 
             # Mark all queues done
-            for q, batch, deadline, qname in items:
+            for q, _, _, _ in items:
                 q.task_done()
 
         except asyncio.CancelledError:

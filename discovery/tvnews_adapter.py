@@ -90,6 +90,13 @@ def _make_hit(
 # ---------------------------------------------------------------------------
 
 
+# Status code error mapping
+_STATUS_ERRORS: dict[int | str, tuple[str, str]] = {
+    403: ("http_403", "tvnews_forbidden"),
+    429: ("http_429", "tvnews_rate_limited"),
+}
+
+
 async def async_search_tvnews(
     query: str,
     max_results: int = 10,
@@ -133,142 +140,90 @@ async def async_search_tvnews(
         )
 
     # Build search params — TV News collection
-    # Query syntax: collection:tvnews AND (search terms)
-    # collection:tv is wrong; tvnews is the correct Archive.org TV News collection
     params = {
         "q": f"collection:tvnews AND ({query})",
         "output": "json",
         "rows": str(max_results),
         "fl": "identifier,title,date,description,station,show_name,subject",
-        # NOTE: sort=date desc + utc_offset returns 0 results for tvnews collection
-        # Results are already returned in relevance order by Archive.org
     }
 
+    data, elapsed = await _fetch_tvnews_data(session_pool, params, timeout_s, start)
+    if data is None:
+        return _make_error_result("provider_exception", elapsed, "tvnews_error")
+    if isinstance(data, DiscoveryBatchResult):
+        return data
+
+    return _process_tvnews_response(data, query, max_results, elapsed)
+
+
+async def _fetch_tvnews_data(session_pool, params: dict, timeout_s: float, start: float):
+    """Fetch JSON data from TV News API with error handling."""
     try:
         async with asyncio.timeout(timeout_s):
-            # F-01: session_pool.httpx() is async — await the client from canonical pool
             session = await session_pool.httpx()
             headers = {
                 "User-Agent": "Hledac/1.0 (research bot; OSINT orchestrator)",
                 "Accept": "application/json",
             }
-            async with session.get(
-                _SEARCH_URL,
-                params=params,
-                headers=headers,
-            ) as response:
-                    elapsed = time.monotonic() - start
-                    status = response.status
-
-                    if status == 403:
-                        return DiscoveryBatchResult(
-                            hits=(),
-                            error_type="http_403",
-                            elapsed_s=elapsed,
-                            provider_name=_SOURCE_NAME,
-                            provider_chain=(_SOURCE_NAME,),
-                            source_family="archive",
-                            error="tvnews_forbidden",
-                        )
-
-                    if status == 429:
-                        return DiscoveryBatchResult(
-                            hits=(),
-                            error_type="http_429",
-                            elapsed_s=elapsed,
-                            provider_name=_SOURCE_NAME,
-                            provider_chain=(_SOURCE_NAME,),
-                            source_family="archive",
-                            error="tvnews_rate_limited",
-                        )
-
-                    if status >= 500:
-                        return DiscoveryBatchResult(
-                            hits=(),
-                            error_type="http_5xx",
-                            elapsed_s=elapsed,
-                            provider_name=_SOURCE_NAME,
-                            provider_chain=(_SOURCE_NAME,),
-                            source_family="archive",
-                            error=f"tvnews_server_error_{status}",
-                        )
-
-                    if status != 200:
-                        return DiscoveryBatchResult(
-                            hits=(),
-                            error_type="server_error",
-                            elapsed_s=elapsed,
-                            provider_name=_SOURCE_NAME,
-                            provider_chain=(_SOURCE_NAME,),
-                            source_family="archive",
-                            error=f"tvnews_http_{status}",
-                        )
-
-                    # Parse JSON response
-                    try:
-                        data = await response.json()
-                    except Exception as e:
-                        return DiscoveryBatchResult(
-                            hits=(),
-                            error_type="parse_error",
-                            elapsed_s=elapsed,
-                            provider_name=_SOURCE_NAME,
-                            provider_chain=(_SOURCE_NAME,),
-                            source_family="archive",
-                            error=f"tvnews_parse_error:{e}",
-                        )
-
+            async with session.get(_SEARCH_URL, params=params, headers=headers) as response:
+                elapsed = time.monotonic() - start
+                return await _handle_tvnews_response(response, elapsed, start)
     except TimeoutError:
-        elapsed = time.monotonic() - start
-        return DiscoveryBatchResult(
-            hits=(),
-            error_type="timeout",
-            elapsed_s=elapsed,
-            provider_name=_SOURCE_NAME,
-            provider_chain=(_SOURCE_NAME,),
-            source_family="archive",
-            error="tvnews_timeout",
-        )
+        return _make_error_result("timeout", time.monotonic() - start, "tvnews_timeout"), time.monotonic() - start
     except asyncio.CancelledError:
-        raise  # Re-raise CancelledError — do not swallow
+        raise
     except Exception:
-        elapsed = time.monotonic() - start
-        return DiscoveryBatchResult(
-            hits=(),
-            error_type="provider_exception",
-            elapsed_s=elapsed,
-            provider_name=_SOURCE_NAME,
-            provider_chain=(_SOURCE_NAME,),
-            source_family="archive",
-            error="tvnews_error",
-        )
+        return _make_error_result("provider_exception", time.monotonic() - start, "tvnews_error"), time.monotonic() - start
 
-    elapsed = time.monotonic() - start
 
-    # Validate response structure
+async def _handle_tvnews_response(response, elapsed: float, start: float):
+    """Handle TV News HTTP response and return parsed data."""
+    status = response.status
+
+    # Check status-specific errors
+    if status in _STATUS_ERRORS:
+        error_type, error_msg = _STATUS_ERRORS[status]
+        return _make_error_result(error_type, elapsed, error_msg), elapsed
+    if status >= 500:
+        return _make_error_result("http_5xx", elapsed, f"tvnews_server_error_{status}"), elapsed
+    if status != 200:
+        return _make_error_result("server_error", elapsed, f"tvnews_http_{status}"), elapsed
+
+    # Parse JSON response
+    try:
+        return await response.json(), elapsed
+    except Exception as e:
+        return _make_error_result("parse_error", elapsed, f"tvnews_parse_error:{e}"), elapsed
+
+
+def _make_error_result(error_type: str, elapsed: float, error: str) -> DiscoveryBatchResult:
+    """Create a DiscoveryBatchResult for error cases."""
+    return DiscoveryBatchResult(
+        hits=(),
+        error_type=error_type,
+        elapsed_s=elapsed,
+        provider_name=_SOURCE_NAME,
+        provider_chain=(_SOURCE_NAME,),
+        source_family="archive",
+        error=error,
+    )
+
+
+def _process_tvnews_response(data: dict, query: str, max_results: int, elapsed: float) -> DiscoveryBatchResult:
+    """Process TV News API response and extract hits."""
     if not isinstance(data, dict):
         return DiscoveryBatchResult(
-            hits=(),
-            error_type="provider_empty",
-            elapsed_s=elapsed,
-            provider_name=_SOURCE_NAME,
-            provider_chain=(_SOURCE_NAME,),
-            source_family="archive",
+            hits=(), error_type="provider_empty", elapsed_s=elapsed,
+            provider_name=_SOURCE_NAME, provider_chain=(_SOURCE_NAME,), source_family="archive",
         )
 
-    # Extract docs from response
     docs = data.get("response", {}).get("docs", [])
     if not docs:
         return DiscoveryBatchResult(
-            hits=(),
-            error_type="provider_empty",
-            elapsed_s=elapsed,
-            provider_name=_SOURCE_NAME,
-            provider_chain=(_SOURCE_NAME,),
-            source_family="archive",
+            hits=(), error_type="provider_empty", elapsed_s=elapsed,
+            provider_name=_SOURCE_NAME, provider_chain=(_SOURCE_NAME,), source_family="archive",
         )
 
-    # Process results
     seen_ids: set[str] = set()
     hits_list: list[DiscoveryHit] = []
     now_ts = time.time()
@@ -276,43 +231,9 @@ async def async_search_tvnews(
     for doc in docs:
         if len(hits_list) >= max_results:
             break
-
-        identifier = doc.get("identifier", "")
-        if not identifier or identifier in seen_ids:
-            continue
-
-        title = doc.get("title", "")
-        date = doc.get("date", "")
-        description = doc.get("description", "")
-        # description can be a list or string
-        if isinstance(description, list):
-            description = " ".join(str(d) for d in description[:3])
-        station = doc.get("station", "")
-        show_name = doc.get("show_name", "")
-        subject = doc.get("subject", "")
-        if isinstance(subject, list):
-            subject = "; ".join(str(s) for s in subject[:5])
-
-        # Build snippet with extra context
-        extra_snippet = ""
-        if subject:
-            extra_snippet = f" Topics: {subject[:80]}"
-
-        full_description = f"{description}{extra_snippet}" if description else extra_snippet
-
-        hit = _make_hit(
-            query=query,
-            identifier=identifier,
-            title=title,
-            date=date,
-            description=full_description,
-            station=station,
-            show_name=show_name,
-            now_ts=now_ts,
-            rank=len(hits_list),
-        )
-        hits_list.append(hit)
-        seen_ids.add(identifier)
+        hit = _process_tvnews_doc(doc, query, now_ts, len(hits_list), seen_ids)
+        if hit is not None:
+            hits_list.append(hit)
 
     return DiscoveryBatchResult(
         hits=tuple(hits_list),
@@ -321,6 +242,37 @@ async def async_search_tvnews(
         source_family="archive",
         elapsed_s=elapsed,
         error_type="none" if hits_list else "provider_empty",
+    )
+
+
+def _process_tvnews_doc(doc: dict, query: str, now_ts: float, rank: int, seen_ids: set[str]) -> DiscoveryHit | None:
+    """Process a single TV News document into a DiscoveryHit."""
+    identifier = doc.get("identifier", "")
+    if not identifier or identifier in seen_ids:
+        return None
+    seen_ids.add(identifier)
+
+    description = doc.get("description", "")
+    if isinstance(description, list):
+        description = " ".join(str(d) for d in description[:3])
+
+    subject = doc.get("subject", "")
+    if isinstance(subject, list):
+        subject = "; ".join(str(s) for s in subject[:5])
+
+    extra_snippet = f" Topics: {subject[:80]}" if subject else ""
+    full_description = f"{description}{extra_snippet}" if description else extra_snippet
+
+    return _make_hit(
+        query=query,
+        identifier=identifier,
+        title=doc.get("title", ""),
+        date=doc.get("date", ""),
+        description=full_description,
+        station=doc.get("station", ""),
+        show_name=doc.get("show_name", ""),
+        now_ts=now_ts,
+        rank=rank,
     )
 
 

@@ -1895,6 +1895,343 @@ class SynthesisRunner:
             gc.collect()
 
         return raw_dict, used_engine, token_logprobs
+    async def _run_absence_mining(
+        self, report: OSINTReport,
+    ) -> tuple[OSINTReport, Any]:
+        """
+        Phase A: Absence Mining Engine — detect structural absences and adjust confidence.
+
+        Detects: CT-virgin domains, orphan IPs, etc.
+        Returns (updated_report, absence_report).
+        Fail-soft: returns original report on any error.
+        """
+        try:
+            from .absence_mining import get_absence_engine, AbsenceReport as _AbsenceReport
+            absence_enabled = os.environ.get(
+                'HLEDAC_ENABLE_ABSENCE_MINING', '1',
+            ).lower() in ('1', 'true', 'yes', 'on')
+            if not absence_enabled or self._duckdb_store is None:
+                return report, None
+            absence_engine = await get_absence_engine(self._duckdb_store)
+            absence_report: _AbsenceReport = await absence_engine.run(
+                report, self._duckdb_store,
+            )
+            if not absence_report.absences:
+                return report, absence_report
+            logger.info(
+                "[SYNTHESIS] [FINAL]-019: Absence mining found %d absences "
+                "(checked=%d, refetch=%s)",
+                len(absence_report.absences),
+                absence_report.total_checked,
+                absence_report.should_trigger_refetch,
+            )
+            adjusted_conf = absence_engine.apply_confidence_adjustment(
+                report, absence_report,
+            )
+            if adjusted_conf != report.confidence:
+                logger.debug(
+                    "[SYNTHESIS] [FINAL]-019: Confidence adjusted %.3f → %.3f "
+                    "due to %d absence findings",
+                    report.confidence,
+                    adjusted_conf,
+                    len(absence_report.confidence_adjustments),
+                )
+                report = msgspec.replace(report, confidence=adjusted_conf)
+            return report, absence_report
+        except ImportError:
+            logger.debug(
+                "[SYNTHESIS] [FINAL]-019: AbsenceMiningEngine unavailable "
+                "(dependency missing) — skipping",
+            )
+        except Exception as e:
+            logger.debug("[SYNTHESIS] [FINAL]-019: Absence mining exception (fail-soft): %s", e)
+        return report, None
+
+    async def _process_uncertainty_gate(
+        self, report: OSINTReport, token_logprobs: list[float] | None,
+    ) -> OSINTReport:
+        """
+        Phase B: APEX-1009 uncertainty gate — compare self-reported confidence with measured entropy.
+
+        Emits EntropyAlert via EntropyFetchBridge on hallucination risk or high entropy.
+        Updates report.uncertainty_flags.
+        Fail-soft: returns original report on any error.
+        """
+        if not token_logprobs:
+            report.uncertainty_flags = UncertaintyFlags()
+            logger.debug("[SYNTHESIS] APEX-1009: no token_logprobs — uncertainty gate skipped")
+            return report
+        uncertainty_flags = uncertainty_gate(report.confidence, token_logprobs)
+        report.uncertainty_flags = uncertainty_flags
+
+        _ENTROPY_THRESHOLD_BITS = 1.5
+        should_emit = (
+            uncertainty_flags.hallucination_risk
+            or uncertainty_flags.measured_entropy > _ENTROPY_THRESHOLD_BITS
+        )
+        if not should_emit:
+            logger.debug(
+                "[SYNTHESIS] APEX-1009 uncertainty_gate passed: "
+                "divergence=%.3f, risk=%s, tokens=%d",
+                uncertainty_flags.confidence_divergence,
+                uncertainty_flags.risk_level,
+                uncertainty_flags.token_count,
+            )
+            return report
+
+        _entropy_feedback_enabled = os.environ.get(
+            'HLEDAC_ENABLE_ENTROPY_FEEDBACK', '1',
+        ).lower() in ('1', 'true', 'yes', 'on')
+        if not _entropy_feedback_enabled:
+            logger.debug(
+                "[SYNTHESIS] UNIFIED-003: Entropy feedback disabled "
+                "(HLEDAC_ENABLE_ENTROPY_FEEDBACK=0) — alert suppressed",
+            )
+            return report
+
+        if uncertainty_flags.hallucination_risk:
+            logger.warning(
+                "[SYNTHESIS] APEX-1009 hallucination_risk: "
+                "self_reported=%.3f, measured_entropy=%.3f bits, "
+                "divergence=%.3f, risk=%s",
+                report.confidence,
+                uncertainty_flags.measured_entropy,
+                uncertainty_flags.confidence_divergence,
+                uncertainty_flags.risk_level,
+            )
+        else:
+            logger.info(
+                "[SYNTHESIS] UNIFIED-003 high-entropy threshold "
+                "exceeded: measured_entropy=%.3f bits > %.1f, "
+                "confidence=%.3f",
+                uncertainty_flags.measured_entropy,
+                _ENTROPY_THRESHOLD_BITS,
+                report.confidence,
+            )
+
+        try:
+            from .uncertainty_quant import EntropyAlert, get_entropy_bridge
+            bridge = get_entropy_bridge()
+            if bridge is None:
+                return report
+            for ioc_entity in (report.ioc_entities or [])[:5]:
+                entity_value = getattr(ioc_entity, 'value', str(ioc_entity))
+                ioc_type = getattr(ioc_entity, 'ioc_type', 'unknown')
+                alt_protocols = _resolve_alternative_protocols(
+                    ioc_type=ioc_type, entity_value=entity_value,
+                )
+                alert = EntropyAlert(
+                    entity_id=entity_value[:100],
+                    entropy=round(1.0 - uncertainty_flags.implied_confidence, 3),
+                    threshold_exceeded=_ENTROPY_THRESHOLD_BITS,
+                    confidence=report.confidence,
+                    risk_level=uncertainty_flags.risk_level,
+                    metadata={
+                        "token_count": uncertainty_flags.token_count,
+                        "stability": uncertainty_flags.entropy_stability,
+                        "divergence": uncertainty_flags.confidence_divergence,
+                        "ioc_type": ioc_type,
+                        "alternative_protocols": alt_protocols,
+                        "trigger_path": (
+                            "hallucination_risk"
+                            if uncertainty_flags.hallucination_risk
+                            else "high_entropy"
+                        ),
+                    },
+                )
+                await bridge.emit(alert)
+            logger.debug(
+                "[SYNTHESIS] UNIFIED-003: Emitted %d EntropyAlert(s) to bridge (trigger=%s)",
+                min(len(report.ioc_entities or []), 5),
+                alert.metadata.get("trigger_path", "unknown"),
+            )
+        except Exception as e:
+            logger.debug("[SYNTHESIS] UNIFIED-003: EntropyAlert emit failed (fail-soft): %s", e)
+        return report
+
+    async def _process_contradictions(
+        self, report: OSINTReport, findings: list[dict],
+    ) -> None:
+        """
+        Phase C: [META]-011 ContradictionBridge — detect and emit alerts for propositional contradictions.
+
+        Builds Evidence objects from findings, runs AdversarialVerifier.detect_contradictions,
+        emits EntropyAlert via EntropyFetchBridge, triggers auto-retraction.
+        Fail-soft: logs and returns on any error.
+        """
+        try:
+            from .contradiction_bridge import get_contradiction_bridge
+            _cb_enabled = os.environ.get(
+                "HLEDAC_ENABLE_CONTRADICTION_FEEDBACK", "1",
+            ).lower() in ("1", "true", "yes", "on")
+            if not _cb_enabled or self._hypothesis_engine is None:
+                return
+            cb = get_contradiction_bridge()
+            from hledac_hypothesis.types.evidence import Evidence
+            from datetime import UTC as _utc, datetime as _dt
+            _evidence_list: list[Evidence] = [
+                Evidence(
+                    evidence_id=f"ev_{f.get('id', str(i))[:12]}",
+                    source=str(f.get("source_type", "unknown")),
+                    content=(f.get("payload_text", "") or "")[:500],
+                    timestamp=_dt.now(_utc),
+                    reliability=float(f.get("confidence", 0.5)),
+                )
+                for i, f in enumerate(findings[:100])
+                if f.get("payload_text")
+            ]
+            if not _evidence_list:
+                return
+            from hledac_hypothesis.adversarial import AdversarialVerifier
+            _verifier = AdversarialVerifier(hypothesis_engine=self._hypothesis_engine)
+            _contradictions = _verifier.detect_contradictions(_evidence_list)
+            if not _contradictions:
+                return
+            _alerts = cb.build_alerts(
+                contradictions=_contradictions,
+                ioc_entities=report.ioc_entities or [],
+                findings=findings,
+                sprint_id="",
+            )
+            if not _alerts:
+                return
+            from .uncertainty_quant import get_entropy_bridge
+            _entropy_bridge = get_entropy_bridge()
+            for _alert in _alerts:
+                await _entropy_bridge.emit(_alert)
+            logger.info(
+                "[SYNTHESIS] [META]-011: Emitted %d contradiction EntropyAlert(s) (severity > 0.7)",
+                len(_alerts),
+            )
+            await cb._auto_retract_systematic_dissenters()
+        except Exception as e:
+            logger.debug("[SYNTHESIS] [META]-011: ContradictionBridge failed (fail-soft): %s", e)
+
+    async def _update_bandit_reward(
+        self, bandit: Any, arm_used: str, report: OSINTReport,
+    ) -> None:
+        """
+        Phase E: Sprint F234 — update bandit UCB1 reward.
+
+        reward = response_length_normalized × confidence.
+        Fail-soft: logs and returns on any error.
+        """
+        if bandit is None or not arm_used:
+            return
+        try:
+            response_text = (
+                report.threat_summary + " " +
+                " ".join(str(e) for e in report.ioc_entities) +
+                " ".join(report.threat_actors)
+            )
+            response_len_norm = min(1.0, len(response_text) / 2000.0)
+            reward = response_len_norm * report.confidence
+            bandit.update_reward(arm_used, reward, reward)
+            logger.info(f"[SYNTHESIS] Bandit reward: arm={arm_used} reward={reward:.3f}")
+        except Exception as e:
+            logger.debug(f"[SYNTHESIS] Bandit update failed: {e}")
+
+    async def _extract_hypotheses(
+        self, query: str, report: OSINTReport,
+    ) -> None:
+        """
+        Phase F: F214 — extract testable hypotheses from synthesis output.
+
+        Uses hypothesis_engine.generate_hypotheses_async() with Hermes3 routing.
+        Fail-soft: logs and returns on any error.
+        """
+        if self._hypothesis_engine is None:
+            return
+        try:
+            ctx = {
+                "query": query,
+                "report_summary": report.threat_summary[:500] if report.threat_summary else "",
+                "iocs": [i.ioc_value for i in (report.ioc_entities or [])[:10]],
+                "source": "synthesis_runner",
+            }
+            hermes = getattr(self._hypothesis_engine, "_inference_engine", None)
+            hyp_strings = await self._hypothesis_engine.generate_hypotheses_async(
+                context=ctx, hermes_engine=hermes,
+            )
+            if hyp_strings:
+                logger.debug(f"[SYNTHESIS] Extracted {len(hyp_strings[:10])} hypotheses from report")
+        except Exception as e:
+            logger.debug(f"[SYNTHESIS] Hypothesis extraction skipped: {e}")
+
+    async def _filter_cognitive_tarpits(
+        self, report: OSINTReport, findings: list[dict],
+    ) -> OSINTReport:
+        """
+        Phase G: ISSUE [ADVERSARY]-002 — filter IOCs from cognitive tarpit domains.
+
+        Drops findings from domains with cognitive_tarpit_score >= 1.0.
+        Returns updated report with filtered ioc_entities.
+        Fail-soft: returns original report on any error.
+        """
+        _ct_filter_enabled = os.environ.get(
+            'HLEDAC_ENABLE_COGNITIVE_TARPIT', '1',
+        ).lower() in ('1', 'true', 'yes', 'on')
+        if not _ct_filter_enabled or not report.ioc_entities or not findings:
+            return report
+        try:
+            from hledac.universal.knowledge.domain_reputation import (
+                get_domain_reputation_service as _get_rep_svc,
+            )
+            _rep_svc = _get_rep_svc()
+            if _rep_svc is None:
+                return report
+            _domains_to_check: list[str] = []
+            _seen: set[str] = set()
+            for f in findings:
+                _src_url = f.get('url') or f.get('source_url') or ''
+                if not _src_url:
+                    continue
+                try:
+                    from urllib.parse import urlparse
+                    _parsed = urlparse(_src_url)
+                    _fdomain = _parsed.netloc.removeprefix('www.')
+                    if _fdomain and _fdomain not in _seen:
+                        _seen.add(_fdomain)
+                        _domains_to_check.append(_fdomain)
+                except Exception:  # noqa: BLE001
+                    pass
+            if not _domains_to_check:
+                return report
+            try:
+                _reps = await asyncio.gather(
+                    *[_rep_svc.get(d) for d in _domains_to_check],
+                    return_exceptions=True,
+                )
+                _tarpit_domains: set[str] = set()
+                for _d, _rep in zip(_domains_to_check, _reps):
+                    if isinstance(_rep, Exception) or _rep is None:
+                        continue
+                    if _rep.cognitive_tarpit_score >= 1.0:
+                        _tarpit_domains.add(_d)
+            except Exception:  # noqa: BLE001
+                _tarpit_domains = set()
+            if not _tarpit_domains:
+                return report
+            _before_count = len(report.ioc_entities)
+            _filtered_iocs = [
+                ioc for ioc in report.ioc_entities
+                if getattr(ioc, 'source_url', None) not in _tarpit_domains
+                and getattr(ioc, 'source_domain', None) not in _tarpit_domains
+            ]
+            _after_count = len(_filtered_iocs)
+            if _after_count < _before_count:
+                _dropped = _before_count - _after_count
+                report = msgspec.replace(report, ioc_entities=_filtered_iocs)
+                logger.warning(
+                    "[SYNTHESIS] [ADVERSARY]-002: Dropped %d/%d IOCs "
+                    "from cognitive tarpit domains: %s",
+                    _dropped, _before_count, sorted(_tarpit_domains),
+                )
+        except Exception as e:
+            logger.debug(
+                "[SYNTHESIS] [ADVERSARY]-002: tarpit domain filter failed (fail-soft): %s", e,
+            )
+        return report
 
     async def _synth_phase7_parse_and_validate(
         self,
@@ -1908,13 +2245,19 @@ class SynthesisRunner:
         token_logprobs: list[float] | None = None,
     ) -> OSINTReport | None:
         """
-        Phase 7: Parse raw_dict → OSINTReport → validate → confidence → bandit reward → hypothesis.
+        Phase 7: Parse raw_dict → OSINTReport → sequential post-processing phases.
+
+        Phases:
+          A: Absence mining + confidence adjustment
+          B: Uncertainty gate + entropy alerts
+          C: Contradiction bridge + auto-retraction
+          D: Evidence grounding + semantic validation
+          E: Bandit reward update
+          F: Hypothesis extraction
+          G: Cognitive tarpit IOC filtering
 
         Returns OSINTReport on success, None on parse failure.
-        All validations are fail-soft — never block report production.
-
-        APEX-1008: token_logprobs propagated to _parse_raw_to_osintreport for
-        per-entity uncertainty measurement.
+        All phases are fail-soft — never block report production.
         """
         used_outlines = used_engine in ("streaming", "constrained")
         report = self._parse_raw_to_osintreport(raw_dict, token_logprobs=token_logprobs)
@@ -1923,222 +2266,16 @@ class SynthesisRunner:
 
         report.confidence = self._compute_confidence(report, used_outlines)
 
-        # [FINAL]-019: Absence Mining Engine — run AFTER confidence computation
-        # Detects structural absences (CT-virgin domains, orphan IPs, etc.)
-        # and adjusts the computed confidence scores accordingly.
-        _absence_report = None
-        try:
-            from .absence_mining import get_absence_engine, AbsenceReport as _AbsenceReport
-            absence_enabled = os.environ.get(
-                'HLEDAC_ENABLE_ABSENCE_MINING', '1',
-            ).lower() in ('1', 'true', 'yes', 'on')
-            if absence_enabled and self._duckdb_store is not None:
-                absence_engine = await get_absence_engine(self._duckdb_store)
-                _absence_report: _AbsenceReport = await absence_engine.run(
-                    report, self._duckdb_store,
-                )
-                if _absence_report.absences:
-                    logger.info(
-                        "[SYNTHESIS] [FINAL]-019: Absence mining found %d absences "
-                        "(checked=%d, refetch=%s)",
-                        len(_absence_report.absences),
-                        _absence_report.total_checked,
-                        _absence_report.should_trigger_refetch,
-                    )
-                    # Apply absence-based confidence adjustment to computed confidence
-                    adjusted_conf = absence_engine.apply_confidence_adjustment(
-                        report, _absence_report,
-                    )
-                    if adjusted_conf != report.confidence:
-                        logger.debug(
-                            "[SYNTHESIS] [FINAL]-019: Confidence adjusted %.3f → %.3f "
-                            "due to %d absence findings",
-                            report.confidence,
-                            adjusted_conf,
-                            len(_absence_report.confidence_adjustments),
-                        )
-                        report.confidence = adjusted_conf
-        except ImportError:
-            logger.debug(
-                "[SYNTHESIS] [FINAL]-019: AbsenceMiningEngine unavailable "
-                "(dependency missing) — skipping",
-            )
-        except Exception as e:
-            logger.debug(
-                "[SYNTHESIS] [FINAL]-019: Absence mining exception (fail-soft): %s",
-                e,
-            )
+        # ── Phase A: Absence mining ───────────────────────────────────────
+        report, _ = await self._run_absence_mining(report)
 
-        # APEX-1009: Run uncertainty gate — compare self-reported confidence with measured entropy
-        if token_logprobs:
-            uncertainty_flags = uncertainty_gate(report.confidence, token_logprobs)
-            report.uncertainty_flags = uncertainty_flags
+        # ── Phase B: Uncertainty gate ─────────────────────────────────────
+        report = await self._process_uncertainty_gate(report, token_logprobs)
 
-            # UNIFIED-003 / UNIFIED-004: Two-path entropy alert emission:
-            #   Path A: hallucination_risk (divergence > 0.3) — confidence mismatch
-            #   Path B: measured_entropy > ENTROPY_THRESHOLD_BITS (1.5) — absolute uncertainty
-            # Both paths emit EntropyAlerts with alternative protocol suggestions.
-            _ENTROPY_THRESHOLD_BITS = 1.5
+        # ── Phase C: Contradiction bridge ──────────────────────────────────
+        await self._process_contradictions(report, findings)
 
-            should_emit_alerts = (
-                uncertainty_flags.hallucination_risk
-                or uncertainty_flags.measured_entropy > _ENTROPY_THRESHOLD_BITS
-            )
-
-            if should_emit_alerts:
-                # UNIFIED-003: Gate entropy alert emission on feature flag.
-                # HLEDAC_ENABLE_ENTROPY_FEEDBACK=1 (default ON) enables the
-                # closed-loop auto-remediation pipeline. Set to 0 to opt out.
-                _entropy_feedback_enabled = os.environ.get(
-                    'HLEDAC_ENABLE_ENTROPY_FEEDBACK', '1',
-                ).lower() in ('1', 'true', 'yes', 'on')
-
-                if _entropy_feedback_enabled:
-                    if uncertainty_flags.hallucination_risk:
-                        logger.warning(
-                            "[SYNTHESIS] APEX-1009 hallucination_risk: "
-                            "self_reported=%.3f, measured_entropy=%.3f bits, "
-                            "divergence=%.3f, risk=%s",
-                            report.confidence,
-                            uncertainty_flags.measured_entropy,
-                            uncertainty_flags.confidence_divergence,
-                            uncertainty_flags.risk_level,
-                        )
-                    else:
-                        logger.info(
-                            "[SYNTHESIS] UNIFIED-003 high-entropy threshold "
-                            "exceeded: measured_entropy=%.3f bits > %.1f, "
-                            "confidence=%.3f",
-                            uncertainty_flags.measured_entropy,
-                            _ENTROPY_THRESHOLD_BITS,
-                            report.confidence,
-                        )
-
-                    # UNIFIED-003: Emit EntropyAlert to trigger re-fetch
-                    # via EntropyFetchBridge
-                    try:
-                        from .uncertainty_quant import (
-                            EntropyAlert, get_entropy_bridge,
-                        )
-                        bridge = get_entropy_bridge()
-                        if bridge is not None:
-                            # Emit alert for each high-uncertainty IOC entity
-                            for ioc_entity in (report.ioc_entities or [])[:5]:
-                                entity_value = getattr(
-                                    ioc_entity, 'value', str(ioc_entity),
-                                )
-                                ioc_type = getattr(
-                                    ioc_entity, 'ioc_type', 'unknown',
-                                )
-                                # UNIFIED-004: IoC-type-aware protocol selection
-                                alt_protocols = _resolve_alternative_protocols(
-                                    ioc_type=ioc_type,
-                                    entity_value=entity_value,
-                                )
-                                alert = EntropyAlert(
-                                    entity_id=entity_value[:100],
-                                    entropy=round(1.0 - uncertainty_flags.implied_confidence, 3),  # UNIFIED-003: normalized 0-1
-                                    threshold_exceeded=_ENTROPY_THRESHOLD_BITS,
-                                    confidence=report.confidence,
-                                    risk_level=uncertainty_flags.risk_level,
-                                    metadata={
-                                        "token_count": uncertainty_flags.token_count,
-                                        "stability": uncertainty_flags.entropy_stability,
-                                        "divergence": uncertainty_flags.confidence_divergence,
-                                        "ioc_type": ioc_type,
-                                        "alternative_protocols": alt_protocols,
-                                        "trigger_path": (
-                                            "hallucination_risk"
-                                            if uncertainty_flags.hallucination_risk
-                                            else "high_entropy"
-                                        ),
-                                    },
-                                )
-                                await bridge.emit(alert)
-                            logger.debug(
-                                "[SYNTHESIS] UNIFIED-003: Emitted %d "
-                                "EntropyAlert(s) to bridge (trigger=%s)",
-                                min(len(report.ioc_entities or []), 5),
-                                alert.metadata.get("trigger_path", "unknown"),
-                            )
-                    except Exception as e:
-                        logger.debug(
-                            "[SYNTHESIS] UNIFIED-003: EntropyAlert emit "
-                            "failed (fail-soft): %s", e,
-                        )
-                else:
-                    logger.debug(
-                        "[SYNTHESIS] UNIFIED-003: Entropy feedback disabled "
-                        "(HLEDAC_ENABLE_ENTROPY_FEEDBACK=0) — alert suppressed",
-                    )
-            else:
-                logger.debug(
-                    "[SYNTHESIS] APEX-1009 uncertainty_gate passed: "
-                    "divergence=%.3f, risk=%s, tokens=%d",
-                    uncertainty_flags.confidence_divergence,
-                    uncertainty_flags.risk_level,
-                    uncertainty_flags.token_count,
-                )
-        else:
-            # No logprobs available (xgrammar/structured engines) — default flags
-            report.uncertainty_flags = UncertaintyFlags()
-            logger.debug("[SYNTHESIS] APEX-1009: no token_logprobs — uncertainty gate skipped")
-
-        # [META]-011: ContradictionBridge — emit EntropyAlert for propositional
-        # contradictions detected by AdversarialVerifier.
-        # Bridges: AdversarialVerifier → EntropyAlert → EntropyFetchBridge → FetchCoordinator.
-        try:
-            from .contradiction_bridge import get_contradiction_bridge
-            _cb_enabled = os.environ.get(
-                "HLEDAC_ENABLE_CONTRADICTION_FEEDBACK", "1",
-            ).lower() in ("1", "true", "yes", "on")
-            if _cb_enabled and self._hypothesis_engine is not None:
-                cb = get_contradiction_bridge()
-                # Build Evidence objects from findings for AdversarialVerifier
-                from hledac_hypothesis.types.evidence import Evidence
-                from datetime import UTC as _utc, datetime as _dt
-                _evidence_list: list[Evidence] = [
-                    Evidence(
-                        evidence_id=f"ev_{f.get('id', str(i))[:12]}",
-                        source=str(f.get("source_type", "unknown")),
-                        content=(f.get("payload_text", "") or "")[:500],
-                        timestamp=_dt.now(_utc),
-                        reliability=float(f.get("confidence", 0.5)),
-                    )
-                    for i, f in enumerate(findings[:100])
-                    if f.get("payload_text")
-                ]
-                if _evidence_list:
-                    from hledac_hypothesis.adversarial import AdversarialVerifier
-                    _verifier = AdversarialVerifier(
-                        hypothesis_engine=self._hypothesis_engine,
-                    )
-                    _contradictions = _verifier.detect_contradictions(_evidence_list)
-                    if _contradictions:
-                        _alerts = cb.build_alerts(
-                            contradictions=_contradictions,
-                            ioc_entities=report.ioc_entities or [],
-                            findings=findings,
-                            sprint_id="",
-                        )
-                        if _alerts:
-                            _entropy_bridge = get_entropy_bridge()
-                            for _alert in _alerts:
-                                await _entropy_bridge.emit(_alert)
-                            logger.info(
-                                "[SYNTHESIS] [META]-011: Emitted %d "
-                                "contradiction EntropyAlert(s) (severity > 0.7)",
-                                len(_alerts),
-                            )
-                            # [META-008] Trigger async auto-retraction of systematic dissenters
-                            await cb._auto_retract_systematic_dissenters()
-        except Exception as _e:
-            logger.debug(
-                "[SYNTHESIS] [META]-011: ContradictionBridge failed "
-                "(fail-soft): %s", _e,
-            )
-
-        # GAP-8: Evidence grounding validation (fail-soft)
+        # ── Phase D: Evidence validation ──────────────────────────────────
         _, grounding_warnings = validate_evidence_grounding(report, findings)
         if grounding_warnings:
             logger.warning(
@@ -2146,132 +2283,18 @@ class SynthesisRunner:
                 f"{len(grounding_warnings)} unverified IOCs"
             )
 
-        # GAP-7: Semantic constraint validation (fail-soft — log only, never block)
         sem_ok, sem_errors = validate_report_semantics(report)
         if not sem_ok:
             logger.warning(f"[SYNTHESIS] GAP-7 semantic errors: {sem_errors}")
 
-        # Sprint F234: Update bandit UCB1 reward — reward = response_length_normalized × confidence
-        if bandit is not None and arm_used:
-            try:
-                response_text = (
-                    report.threat_summary + " " +
-                    " ".join(str(e) for e in report.ioc_entities) +
-                    " ".join(report.threat_actors)
-                )
-                response_len_norm = min(1.0, len(response_text) / 2000.0)
-                reward = response_len_norm * report.confidence
-                bandit.update_reward(arm_used, reward, reward)
-                logger.info(f"[SYNTHESIS] Bandit reward: arm={arm_used} reward={reward:.3f}")
-            except Exception as e:
-                logger.debug(f"[SYNTHESIS] Bandit update failed: {e}")
+        # ── Phase E: Bandit reward ─────────────────────────────────────────
+        await self._update_bandit_reward(bandit, arm_used, report)
 
-        # F214: Extract testable hypotheses from synthesis output
-        if self._hypothesis_engine is not None:
-            try:
-                ctx = {
-                    "query": query,
-                    "report_summary": report.threat_summary[:500] if report.threat_summary else "",
-                    "iocs": [i.ioc_value for i in (report.ioc_entities or [])[:10]],
-                    "source": "synthesis_runner",
-                }
-                hyp_strings = await self._hypothesis_engine.generate_hypotheses_async(
-                    context=ctx,
-                    hermes_engine=getattr(self._hypothesis_engine, "_inference_engine", None),
-                )
-                if hyp_strings:
-                    logger.debug(
-                        f"[SYNTHESIS] Extracted {len(hyp_strings[:10])} hypotheses from report"
-                    )
-            except Exception as e:
-                logger.debug(f"[SYNTHESIS] Hypothesis extraction skipped: {e}")
+        # ── Phase F: Hypothesis extraction ────────────────────────────────
+        await self._extract_hypotheses(query, report)
 
-        # ISSUE [ADVERSARY]-002: Drop findings sourced from cognitive tarpit domains
-        # before they reach the LLM context window. Prevents:
-        #   1. IOC poisoning (fake C2 IPs, decoy BTC addresses from honeypot forums)
-        #   2. Token waste on LLM-generated content in synthesis context
-        #   3. Cross-contamination of pivot operations with honeypot IOCs
-        #
-        # Check: any finding whose source URL domain has cognitive_tarpit_score >= 1.0
-        # is excluded from the report's ioc_entities list.
-        # Note: cognitive_tarpit_score is monotonically non-decreasing (once set, stays).
-        _ct_filter_enabled = os.environ.get(
-            'HLEDAC_ENABLE_COGNITIVE_TARPIT', '1',
-        ).lower() in ('1', 'true', 'yes', 'on')
-
-        if _ct_filter_enabled and report.ioc_entities and findings:
-            try:
-                from hledac.universal.knowledge.domain_reputation import (
-                    get_domain_reputation_service as _get_rep_svc,
-                )
-                _rep_svc = _get_rep_svc()
-                if _rep_svc is not None:
-                    # ISSUE [ADVERSARY]-002: Batch domain reputation lookups with asyncio.gather
-                    # Avoids N sequential awaits (N× latency). N=10 findings → ~50ms sequential
-                    # vs ~15ms parallel with gather.
-                    #
-                    # Step 1: extract + deduplicate domains from findings sources
-                    _domains_to_check: list[str] = []
-                    _seen: set[str] = set()
-                    for f in findings:
-                        _src_url = f.get('url') or f.get('source_url') or ''
-                        if _src_url:
-                            try:
-                                from urllib.parse import urlparse
-                                _parsed = urlparse(_src_url)
-                                _fdomain = _parsed.netloc.removeprefix('www.')
-                                if _fdomain and _fdomain not in _seen:
-                                    _seen.add(_fdomain)
-                                    _domains_to_check.append(_fdomain)
-                            except Exception:  # noqa: BLE001 — fail-soft
-                                pass
-
-                    # Step 2: parallel reputation lookup — single round-trip per domain
-                    if _domains_to_check:
-                        try:
-                            _reps = await asyncio.gather(
-                                *[_rep_svc.get(d) for d in _domains_to_check],
-                                return_exceptions=True,
-                            )
-                            _tarpit_domains: set[str] = set()
-                            for _d, _rep in zip(_domains_to_check, _reps):
-                                if (
-                                    isinstance(_rep, Exception)
-                                    or _rep is None
-                                ):
-                                    continue
-                                if _rep.cognitive_tarpit_score >= 1.0:
-                                    _tarpit_domains.add(_d)
-                        except Exception:  # noqa: BLE001 — fail-soft; gather failed
-                            _tarpit_domains = set()
-                    else:
-                        _tarpit_domains = set()
-
-                    if _tarpit_domains:
-                        _before_count = len(report.ioc_entities)
-                        # Filter ioc_entities whose source domain is in tarpit set
-                        _filtered_iocs = [
-                            ioc for ioc in report.ioc_entities
-                            if getattr(ioc, 'source_url', None) not in _tarpit_domains
-                            and getattr(ioc, 'source_domain', None) not in _tarpit_domains
-                        ]
-                        _after_count = len(_filtered_iocs)
-                        if _after_count < _before_count:
-                            _dropped = _before_count - _after_count
-                            report = msgspec.replace(
-                                report, ioc_entities=_filtered_iocs,
-                            )
-                            logger.warning(
-                                "[SYNTHESIS] [ADVERSARY]-002: Dropped %d/%d IOCs "
-                                "from cognitive tarpit domains: %s",
-                                _dropped, _before_count,
-                                sorted(_tarpit_domains),
-                            )
-            except Exception as e:
-                logger.debug(
-                    "[SYNTHESIS] [ADVERSARY]-002: tarpit domain filter failed "
-                    "(fail-soft): %s", e,
-                )
+        # ── Phase G: Cognitive tarpit filter ─────────────────────────────
+        report = await self._filter_cognitive_tarpits(report, findings)
 
         return report
 

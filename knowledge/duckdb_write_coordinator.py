@@ -242,6 +242,34 @@ class DuckDBWriteCoordinator:
     # Arrow batch ingest (hlavní hot-path metoda)
     # -------------------------------------------------------------------------
 
+    async def _try_arrow_direct(self, findings: list[CanonicalFinding]) -> bool:
+        """Try direct arrow ingest. Returns True if successful."""
+        try:
+            import pyarrow as _pa  # noqa: F401
+        except ImportError:
+            return False
+        return True
+
+    async def _try_wal_fallback(self, findings: list[CanonicalFinding]) -> bool:
+        """Try WAL first. Returns True if WAL write succeeded."""
+        try:
+            return await self._wal_put_many(findings)
+        except Exception:
+            return False
+
+    async def _try_duckdb_basic(self, findings: list[CanonicalFinding]) -> tuple[int, str | None]:
+        """Try basic DuckDB insert. Returns (count, error)."""
+        try:
+            loop = asyncio.get_running_loop()
+            result: tuple[int, str | None] = await loop.run_in_executor(
+                self._duckdb_arrow_executor,
+                self._duckdb_arrow_sync,
+                findings,
+            )
+            return result
+        except Exception as e:
+            return (0, str(e))
+
     async def ingest_batch_arrow(
         self, findings: list[CanonicalFinding]
     ) -> list[ActivationResult]:
@@ -264,7 +292,6 @@ class DuckDBWriteCoordinator:
         """
         # Lazy imports pro M1 RAM úsporu
         import os as _os
-        import time as _time
 
         _ARROW_INGEST_ENABLED = _os.getenv("HLEDAC_ARROW_INGEST", "1") != "0"
         _ARROW_MIN_BATCH = 5
@@ -279,6 +306,9 @@ class DuckDBWriteCoordinator:
             )
             return await self.ingest_batch_legacy(findings)
         if len(findings) < _ARROW_MIN_BATCH:
+            self._arrow_metrics["arrow_fallback_batch"] += len(findings)
+            return await self.ingest_batch_legacy(findings)
+        if not await self._try_arrow_direct(findings):
             self._arrow_metrics["arrow_fallback_batch"] += len(findings)
             logger.debug(
                 f"[WriteCoordinator-arrow-fallback] batch size {len(findings)} < "
@@ -312,19 +342,8 @@ class DuckDBWriteCoordinator:
             return await self.ingest_batch_legacy(findings)
 
         # WAL first (parallel s DuckDB)
-        wal_ok = False
-        try:
-            wal_ok = await self._wal_put_many(findings)
-        except Exception as e:
-            logger.warning(
-                f"[WriteCoordinator-arrow-fallback] WAL error ({e}), "
-                f"using legacy path for {len(findings)} findings"
-            )
-            self._arrow_metrics["arrow_fallback_executor"] += len(findings)
-            return await self.ingest_batch_legacy(findings)
-
+        wal_ok = await self._try_wal_fallback(findings)
         if not wal_ok:
-            self._arrow_metrics["arrow_fallback_empty"] += len(findings)
             logger.error(
                 "[D7] Arrow WAL phase failed for %d findings - falling back to legacy executemany.",
                 len(findings),
@@ -334,21 +353,7 @@ class DuckDBWriteCoordinator:
         # DuckDB Arrow insert (parallel s WAL, ale čekáme na WAL first)
         duckdb_count = 0
         duckdb_err: str | None = None
-        try:
-            loop = asyncio.get_running_loop()
-            duckdb_result: tuple[int, str | None] = await loop.run_in_executor(
-                self._duckdb_arrow_executor,
-                self._duckdb_arrow_sync,
-                findings,
-            )
-            duckdb_count, duckdb_err = duckdb_result
-        except asyncio.CancelledError:
-            duckdb_err = "cancelled"
-            duckdb_count = 0
-        except Exception as e:
-            logger.error(f"[WriteCoordinator] DuckDB Arrow executor error: {e}")
-            duckdb_err = str(e)
-            duckdb_count = 0
+        duckdb_count, duckdb_err = await self._try_duckdb_basic(findings)
 
         if duckdb_err is not None:
             logger.error(f"[WriteCoordinator] DuckDB Arrow bulk failed: {duckdb_err}")

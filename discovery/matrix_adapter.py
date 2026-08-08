@@ -16,6 +16,8 @@ from dataclasses import dataclass, field
 import msgspec
 from typing import Any
 import httpx
+from utils._patterns import lazy_resource_property  # F320: Clone elimination
+
 logger = logging.getLogger(__name__)
 MATRIX_HOMESERVER = 'https://matrix-client.matrix.org'
 MATRIX_TIMEOUT = 10.0
@@ -47,12 +49,12 @@ class MatrixPublicAdapter(msgspec.Struct, frozen=True, gc=False):
     _token_acquired_at: float = field(default=0.0, repr=False)
     _session: httpx.AsyncClient | None = field(default=None, repr=False)
 
-    @property
-    def session(self) -> httpx.AsyncClient:
-        """Lazy session getter."""
-        if self._session is None or self._session.is_closed:
-            self._session = httpx.AsyncClient()
-        return self._session
+    # F320: lazy_resource_property eliminates clone with fediverse_adapter.py
+    session = lazy_resource_property(
+        "_session",
+        factory=lambda: httpx.AsyncClient(),
+        is_closed_attr="is_closed",
+    )
 
     async def close(self) -> None:
         """Close HTTP session."""

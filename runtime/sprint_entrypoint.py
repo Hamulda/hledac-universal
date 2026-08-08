@@ -1560,6 +1560,120 @@ def _get_live_feed_urls() -> list[str]:
 # Pre-sprint checks
 # =============================================================================
 
+
+def _run_sprint_preflight_guards(
+    logger: logging.Logger,
+    duration_s: float,
+    windup_lead_s: float | None,
+    flags: "SprintFlags | None",
+    force: bool,
+    early_config: "SprintSchedulerConfig",
+) -> tuple[float, "UMAStatus"]:
+    """
+    F360: Extracted pre-flight guard checks from run_sprint().
+
+    Performs all config validation that MUST run before DuckDB init to avoid
+    orphaned lock files. Uses sys.exit(2) for config errors.
+
+    Returns:
+        tuple of (effective_windup_s, uma_pre_sprint)
+    """
+    from hledac.universal.core.resource_governor import sample_uma_status
+
+    # F221-ABORT: Pre-flight guard — enforce minimum active-window budget.
+    # MUST run BEFORE DuckDB init to avoid orphaned lock files when the config
+    # is rejected up front. Uses SprintSchedulerConfig internally to compute
+    # effective_windup_lead_s so the guard and the scheduler are always in sync.
+    # sys.exit(2) = config error, distinguishable from exit(1) runtime failure.
+    _force_override = (flags.force if flags else False) or force
+    _effective_windup_s = early_config.effective_windup_lead_s
+    _active_window_s = float(duration_s) - _effective_windup_s
+
+    # Sprint F271C: fail-loud invariant — if we somehow compute a negative
+    # active window, the guard is broken; surface it as a config error
+    # (exit 2) instead of proceeding with a bogus budget that hides bugs.
+    if _active_window_s < 0.0:
+        logger.error(
+            "[F271C-INVARIANT] computed negative active_window_s=%s "
+            "(duration_s=%s, effective_windup_s=%s). F221 guard is broken.",
+            _active_window_s,
+            duration_s,
+            _effective_windup_s,
+        )
+        sys.exit(2)
+
+    # F289-WINDUP: Sanity check — abort if windup consumes >= 80% of active window.
+    if _effective_windup_s >= _active_window_s * 0.80:
+        _pct = (_effective_windup_s / _active_window_s * 100) if _active_window_s > 0 else 100.0
+        if _force_override:
+            logger.warning(
+                "[F289-FORCED] Windup %.0fs would consume %.0f%% of active window %.0fs. Proceeding due to --force.",
+                _effective_windup_s,
+                _pct,
+                _active_window_s,
+            )
+        else:
+            logger.error(
+                "[F289-ABORT] Windup %.0fs would consume %.0f%% of active window %.0fs. "
+                "Reduce windup (--windup-lead) or increase duration.",
+                _effective_windup_s,
+                _pct,
+                _active_window_s,
+            )
+            sys.exit(2)
+
+    if _active_window_s < float(MIN_ACTIVE_WINDOW_S):
+        _required_duration_s = int(_effective_windup_s + float(MIN_ACTIVE_WINDOW_S))
+        if _force_override:
+            logger.warning(
+                "[F221-FORCED] duration=%ds gives only %ds active window "
+                "(windup_lead_effective=%ds). Proceeding due to --force.",
+                int(duration_s),
+                max(0, int(_active_window_s)),
+                int(_effective_windup_s),
+            )
+        else:
+            logger.error(
+                "[F221-ABORT] Sprint duration %ds gives only %ds active window "
+                "(windup_lead_effective=%ds). "
+                "Minimum recommended: --duration %d. "
+                "Use --force to override.",
+                int(duration_s),
+                max(0, int(_active_window_s)),
+                int(_effective_windup_s),
+                _required_duration_s,
+            )
+            sys.exit(2)  # exit(2) = config error, distinguishable from exit(1) runtime
+
+    # F289: windup_lead_s sanity check — warn if it would consume >90% of sprint
+    if windup_lead_s is not None:
+        _windup_fraction = float(windup_lead_s) / float(duration_s)
+        if _windup_fraction > 0.90:
+            logger.warning(
+                "[F289-WINDUP-FRACTION] windup_lead_s=%.0fs is %.0f%% of duration=%ds. "
+                "This may cause the sprint to enter WINDUP immediately, leaving "
+                "almost no time for active acquisition. Consider reducing windup_lead_s "
+                "or increasing sprint duration.",
+                int(windup_lead_s),
+                _windup_fraction * 100,
+                int(duration_s),
+            )
+
+    # F214Q: Remote debug OPSEC guard — strict exit if HLEDAC_REQUIRE_REMOTE_DEBUG_DISABLED=1
+    # and PYTHON_DISABLE_REMOTE_DEBUG is not set. Python 3.14 activates safe-external-debugger by default.
+    if FeatureFlags.get(FeatureFlag.REMOTE_DEBUG_DISABLE):
+        if os.environ.get("PYTHON_DISABLE_REMOTE_DEBUG") != "1":
+            sys.exit(
+                "HLEDAC_REQUIRE_REMOTE_DEBUG_DISABLED=1 but PYTHON_DISABLE_REMOTE_DEBUG not set — "
+                "OSINT runtime requires external debugger disabled"
+            )
+
+    # F176A: Pre-sprint UMA state capture — hardware pressure before scheduler runs.
+    _uma_pre_sprint = sample_uma_status()
+
+    return (_effective_windup_s, _uma_pre_sprint)
+
+
 # Sprint M218A: GC startup tuning for M1 UMA stability.
 # PHYSICS-06/07: Now delegates to BlitzGCStrategy (canonical GC lifecycle).
 # _configure_gc_for_sprint() is a thin compatibility wrapper — the real work
@@ -1806,73 +1920,55 @@ async def write_sprint_delta(
 # =============================================================================
 
 
-async def dry_run_sprint(query: str, duration_s: float = 300.0) -> None:
-    """
-    Dry-run mode: validate config, check Hermes/UMA/sources, show timing plan.
-    Read-only — no DuckDB writes, no real discovery, no data downloads.
+# ── Dry-run helper functions ────────────────────────────────────────────────────
 
-    Invariant: --dry-run is read-only. Minimal side effects (writes DRY_RUN_REPORT.json only).
-    """
-    import socket
-    # Note: Path already imported at module level (line 53)
 
-    report: dict[str, Any] = {
-        "target": query,
-        "duration": duration_s,
-        "windup_lead": 0.0,
-        "active_budget": 0.0,
-        "hermes_available": False,
-        "uma_available_gib": 0.0,
-        "sources_online": {},
-        "issues": [],
-        "verdict": "OK",
-        "sprint_timing_plan": None,
-    }
+def _validate_timing_config(duration_s: float) -> tuple[float, float, list[str], str]:
+    """Validate timing config and return (effective_windup, active_budget, issues, verdict)."""
     issues: list[str] = []
     verdict = "OK"
-
-    # ── 1. Config validation ─────────────────────────────────────────────────
-    _WINDUP_MIN = 30.0  # noqa: N806
-    _WINDUP_MAX = 180.0  # noqa: N806
-    _WINDUP_RATIO = 0.30  # noqa: N806
+    _WINDUP_MIN = 30.0
+    _WINDUP_MAX = 180.0
+    _WINDUP_RATIO = 0.30
     effective_windup = max(_WINDUP_MIN, min(_WINDUP_MAX, duration_s * _WINDUP_RATIO))
-    # Synthesis budget handled separately by scheduler via hermes_budget_s (35%
-    # of active window). Guard uses pure active_budget = duration - windup.
     active_budget = max(0.0, duration_s - effective_windup)
-
-    report["windup_lead"] = effective_windup
-    report["active_budget"] = active_budget
-
     if effective_windup >= duration_s:
         issues.append(f"windup_lead ({effective_windup:.0f}s) >= duration ({duration_s:.0f}s) — windup would never end")
         verdict = "ABORT_RECOMMENDED"
     elif active_budget <= 0:
         issues.append(f"active_budget ({active_budget:.0f}s) <= 0 for {duration_s:.0f}s sprint — no room for fetch")
         verdict = "ABORT_RECOMMENDED"
-
     try:
         if float(duration_s) <= 0:
             raise ValueError("duration must be positive")
     except (TypeError, ValueError):
         issues.append(f"duration ({duration_s}) is not a valid positive float")
         verdict = "ABORT_RECOMMENDED"
+    return effective_windup, active_budget, issues, verdict
 
-    # ── 2. Hermes3 availability check (no full load) ───────────────────────
+
+def _check_hermes_availability() -> tuple[bool, list[str], str]:
+    """Check Hermes3 model availability. Returns (ok, issues, verdict)."""
+    issues: list[str] = []
+    verdict = "OK"
     hermes_ok = False
     try:
         from hledac.universal.brain.model_lifecycle import get_model_lifecycle_status
-
         status_dict = get_model_lifecycle_status()
-        hermes_ok = status_dict.get("loaded", False)  # "loaded" key from get_model_lifecycle_status()
+        hermes_ok = status_dict.get("loaded", False)
     except Exception as e:
         issues.append(f"Hermes3 model_lifecycle check failed: {e}")
-    report["hermes_available"] = hermes_ok
     if not hermes_ok:
         issues.append("Hermes3 model not loaded — synthesis will be skipped")
         if verdict == "OK":
             verdict = "OK_WITH_WARNINGS"
+    return hermes_ok, issues, verdict
 
-    # ── 3. UMA snapshot ────────────────────────────────────────────────────
+
+def _check_uma_snapshot() -> tuple[float, str, list[str], str]:
+    """Check UMA memory snapshot. Returns (uma_gib, uma_state, issues, verdict)."""
+    issues: list[str] = []
+    verdict = "OK"
     uma_gib = 0.0
     uma_state = "unknown"
     try:
@@ -1882,8 +1978,6 @@ async def dry_run_sprint(query: str, duration_s: float = 300.0) -> None:
     except Exception as e:
         issues.append(f"UMA snapshot failed: {e}")
         verdict = "ABORT_RECOMMENDED"
-    report["uma_available_gib"] = round(uma_gib, 2)
-    report["uma_state"] = uma_state
     if uma_gib < 1.0:
         issues.append(f"UMA available < 1 GiB ({uma_gib:.1f}) — Hermes3 load may OOM on M1 8GB")
         if verdict == "OK":
@@ -1891,39 +1985,41 @@ async def dry_run_sprint(query: str, duration_s: float = 300.0) -> None:
     if uma_state == "emergency":
         issues.append("UMA state=emergency — abort recommended")
         verdict = "ABORT_RECOMMENDED"
+    return round(uma_gib, 2), uma_state, issues, verdict
 
-    # ── 4. Network probe: DNS resolve on target ─────────────────────────────
-    # F267: Fixed — was blocking the event loop. Now runs in thread pool.
+
+async def _probe_dns(target_host: str) -> tuple[dict | None, list[str], str]:
+    """Probe DNS for target host. Returns (dns_result, issues, verdict)."""
+    import socket
+    issues: list[str] = []
+    verdict = "OK"
+    dns_result: dict | None = None
     try:
-        target_host = query.replace("https://", "").replace("http://", "").split("/")[0].split()[0]
         await safe_wait_for(
             asyncio.to_thread(socket.gethostbyname, target_host),
             timeout=5.0,
             label="dns_resolve",
         )
-        report["dns_resolve"] = {"target": target_host, "status": "ok"}
+        dns_result = {"target": target_host, "status": "ok"}
     except (TimeoutError, socket.gaierror) as e:
         issues.append(f"DNS resolve failed for '{target_host}': {e}")
         if verdict == "OK":
             verdict = "OK_WITH_WARNINGS"
     except Exception as e:
         issues.append(f"Network probe failed: {e}")
+    return dns_result, issues, verdict
 
-    # ── 5. Source availability check: crt.sh, CIRCL PDNS ───────────────────
-    # F267: Fixed — was using blocking urllib.request in async context.
-    # F4XX: Migrated from aiohttp to httpx.
-    # Issue-010: Replaced nested _OnlineCheckSession class (32 LOC, class-attr singleton)
-    # with httpx.AsyncClient context manager (12 LOC, automatic cleanup, no singleton state).
-    # Issue-010 + Performance: Parallel source availability checks via safe_gather.
-    # Sequential: 2×5s timeout = up to 10s worst-case.
-    # Parallel: 1×5s timeout = up to 5s worst-case.
+
+async def _check_source_availability() -> tuple[dict[str, bool], list[str], str]:
+    """Check source availability (crt.sh, CIRCL PDNS). Returns (online_sources, issues, verdict)."""
+    issues: list[str] = []
+    verdict = "OK"
     online_sources: dict[str, bool] = {"crt.sh": False, "circl_pdns": False}
     src_checks = [
         ("crt.sh", "https://crt.sh/?q=%.example.com"),
         ("circl_pdns", "https://cirolve.circl.lu/api/pdns?q=example.com"),
     ]
     try:
-        # F-01: session_pool.httpx() returns shared singleton
         from hledac.universal.transport.session_pool import session_pool
         session = await session_pool.httpx()
 
@@ -1938,51 +2034,82 @@ async def dry_run_sprint(query: str, duration_s: float = 300.0) -> None:
         )
         for name, ok in result.ok:
             online_sources[name] = ok
-        # errors are logged by safe_gather at DEBUG; treat as offline
     except Exception:  # noqa: BLE001
-        pass  # network check is best-effort
-    report["sources_online"] = online_sources
+        pass
     for src, ok in online_sources.items():
         if not ok:
             issues.append(f"{src} unreachable — may be skipped at runtime")
             if verdict == "OK":
                 verdict = "OK_WITH_WARNINGS"
+    return online_sources, issues, verdict
 
-    # ── 6. Timing projection ───────────────────────────────────────────────
-    report["sprint_timing_plan"] = {
+
+def _build_timing_plan(duration_s: float, effective_windup: float, active_budget: float) -> dict:
+    """Build sprint timing plan structure."""
+    return {
         "duration": duration_s,
         "windup_lead": effective_windup,
         "active_budget": active_budget,
         "phases": [
-            {
-                "phase": "WINDUP",
-                "t_start": 0.0,
-                "t_end": effective_windup,
-                "description": "seed, bootstrap",
-            },
-            {
-                "phase": "ACTIVE",
-                "t_start": effective_windup,
-                "t_end": effective_windup + active_budget,
-                "description": f"{active_budget:.0f}s available for fetch",
-            },
-            {
-                "phase": "SYNTHESIS",
-                "t_start": effective_windup + active_budget,
-                "t_end": duration_s,
-                "description": "synthesis + export budget",
-            },
+            {"phase": "WINDUP", "t_start": 0.0, "t_end": effective_windup, "description": "seed, bootstrap"},
+            {"phase": "ACTIVE", "t_start": effective_windup, "t_end": effective_windup + active_budget, "description": f"{active_budget:.0f}s available for fetch"},
+            {"phase": "SYNTHESIS", "t_start": effective_windup + active_budget, "t_end": duration_s, "description": "synthesis + export budget"},
         ],
     }
 
-    # ── Final verdict ────────────────────────────────────────────────────────
-    report["issues"] = issues
+
+async def dry_run_sprint(query: str, duration_s: float = 300.0) -> None:
+    """
+    Dry-run mode: validate config, check Hermes/UMA/sources, show timing plan.
+    Read-only — no DuckDB writes, no real discovery, no data downloads.
+    """
+    report: dict[str, Any] = {
+        "target": query,
+        "duration": duration_s,
+        "windup_lead": 0.0,
+        "active_budget": 0.0,
+        "hermes_available": False,
+        "uma_available_gib": 0.0,
+        "sources_online": {},
+        "issues": [],
+        "verdict": "OK",
+        "sprint_timing_plan": None,
+    }
+    # Collect all issues and track final verdict
+    all_issues: list[str] = []
+    verdict = "OK"
+    # Merge helper results
+    eff_windup, act_budget, timing_issues, timing_verdict = _validate_timing_config(duration_s)
+    all_issues.extend(timing_issues)
+    verdict = timing_verdict if timing_verdict != "OK" else verdict
+    report["windup_lead"] = eff_windup
+    report["active_budget"] = act_budget
+    hermes_ok, hermes_issues, hermes_verdict = _check_hermes_availability()
+    all_issues.extend(hermes_issues)
+    report["hermes_available"] = hermes_ok
+    if hermes_verdict != "OK":
+        verdict = hermes_verdict
+    uma_gib, uma_state, uma_issues, uma_verdict = _check_uma_snapshot()
+    all_issues.extend(uma_issues)
+    report["uma_available_gib"] = uma_gib
+    report["uma_state"] = uma_state
+    if uma_verdict != "OK":
+        verdict = uma_verdict
+    target_host = query.replace("https://", "").replace("http://", "").split("/")[0].split()[0]
+    dns_result, dns_issues, dns_verdict = await _probe_dns(target_host)
+    all_issues.extend(dns_issues)
+    report["dns_resolve"] = dns_result
+    if dns_verdict != "OK":
+        verdict = dns_verdict
+    online_sources, src_issues, src_verdict = await _check_source_availability()
+    all_issues.extend(src_issues)
+    report["sources_online"] = online_sources
+    if src_verdict != "OK":
+        verdict = src_verdict
+    report["sprint_timing_plan"] = _build_timing_plan(duration_s, eff_windup, act_budget)
+    report["issues"] = all_issues
     report["verdict"] = verdict
-
-    # ── Console summary ────────────────────────────────────────────────────
     _print_dry_run_summary(report)
-
-    # ── Write JSON report ─────────────────────────────────────────────────
     try:
         report_dir = Path.home() / ".hledac" / "reports"
         report_dir.mkdir(parents=True, exist_ok=True)
@@ -2079,6 +2206,77 @@ def _cleanup_stale_locks(lock_dir: Path, logger: logging.Logger) -> int:
     return removed_count
 
 
+# ── Verdict/Hint decision tables ────────────────────────────────────────────────
+
+
+def _get_aborted_base_verdict(dup_rate: float, public_pct: float, feed_fnd: int) -> str:
+    """Get verdict base for aborted sprint with partial results."""
+    if dup_rate > 85:
+        return "📦  NOISE-HEAVY: duplicated heavily"
+    if public_pct > 60:
+        return "🌐  PUBLIC-LED: public discovery dominated"
+    if public_pct > 25:
+        return "⚖️  MIXED: public contributed meaningfully"
+    if feed_fnd > 0:
+        return "✅  FEED-LED: feed sources strong"
+    return "✅  SIGNAL: good feed performance"
+
+
+# Decision table: (condition_fn, verdict_str) — first match wins
+_VERDICT_TABLE: list[tuple[tuple, str]] = [
+    # Aborted with findings
+    (("aborted", True, "accepted_findings", lambda v: v > 0), "ABORTED_PARTIAL"),
+    # Aborted without findings
+    (("aborted", True), "ABORTED_HARD"),
+    # Hardware/public issues
+    (("hardware_limited", True), "HARDWARE_LIMITED"),
+    (("public_backend_degraded", True), "DEGRADED"),
+    # No findings cases
+    (("accepted_findings", 0, "public_discovered", lambda v: v > 0), "NOVELTY"),
+    (("accepted_findings", 0, "total_pattern_hits", 0), "DEPLETED"),
+    (("accepted_findings", 0), "SILENT"),
+    # Quality-based verdicts
+    (("dup_rate", lambda v: v > 85), "NOISE_HEAVY"),
+    (("public_pct", lambda v: v > 60), "PUBLIC_LED"),
+    (("public_pct", lambda v: v > 25), "MIXED"),
+    (("feed_fnd", lambda v: v > 0), "FEED_LED"),
+]
+
+_VERDICT_TEMPLATES: dict[str, str] = {
+    "ABORTED_PARTIAL": "⚠️  ABORTED (partial) — {base}",
+    "ABORTED_HARD": "⚠️  ABORTED: hard stop, no signal collected",
+    "HARDWARE_LIMITED": "💾  HARDWARE-LIMITED: swap/memory pressure blocked entry",
+    "DEGRADED": "🌐  DEGRADED: public backend/network error — check TOR/proxy/config",
+    "NOVELTY": "🔍  NOVELTY: public found hits, feed accepted nothing",
+    "DEPLETED": "🗿  DEPLETED: no pattern hits anywhere",
+    "SILENT": "🤷  SILENT: pattern hits but no accepted findings",
+    "NOISE_HEAVY": "📦  NOISE-HEAVY: duplicated heavily",
+    "PUBLIC_LED": "🌐  PUBLIC-LED: public discovery dominated",
+    "MIXED": "⚖️  MIXED: public contributed meaningfully",
+    "FEED_LED": "✅  FEED-LED: feed sources strong",
+    "SIGNAL": "✅  SIGNAL: good feed performance",
+}
+
+# Decision table for hints
+_HINT_TABLE: list[tuple[tuple, str]] = [
+    (("hardware_limited", True), "hardware memory pressure — free RAM or restart before next run"),
+    (("accepted_findings", 0, "total_pattern_hits", 0), "query may be too narrow — broaden terms or switch seed"),
+    (("dup_rate", lambda v: v > 80), "high dup rate — consider narrowing query scope"),
+    (("public_pct", lambda v: v > 60), "public discovery effective — let it run longer next time"),
+    (("public_pct", lambda v: v < 10, "feed_fnd", 0), "feed yield low — check if sources still alive (urlhaus, threatfox)"),
+    (("public_pct", lambda v: v < 10, "feed_fnd", lambda v: v > 0), "feed performing — rely on feed-first, use public as supplemental"),
+    (("public_discovered", lambda v: v > 0, "public_fetched", 0), "public discovered but not fetched — check network/TOR"),
+    (("stop_requested", True), "early stop triggered — lower threshold or widen query"),
+]
+
+
+def _match_condition(value: Any, expected: Any) -> bool:
+    """Match a condition value against expected (supports lambdas)."""
+    if callable(expected):
+        return expected(value)
+    return value == expected
+
+
 def _compute_verdict_and_hint(
     aborted: bool,
     accepted_findings: int,
@@ -2093,71 +2291,59 @@ def _compute_verdict_and_hint(
     stop_requested: bool,
 ) -> tuple[str, str]:
     """
-    Sprint F350M-R: Extracted verdict + next_hint heuristics.
+    Sprint F350M-R: Extracted verdict + next_hint heuristics using decision tables.
 
     Reduces run_sprint cyclomatic complexity by ~25 points.
     Pure function — no side effects, no external dependencies.
-
-    Returns (verdict: str, next_hint: str)
     """
-    # Verdict chain (F176A+F169F+F178B)
-    if aborted:
-        if accepted_findings > 0:
-            _base = (
-                "📦  NOISE-HEAVY: duplicated heavily"
-                if dup_rate > 85
-                else "🌐  PUBLIC-LED: public discovery dominated"
-                if public_pct > 60
-                else "⚖️  MIXED: public contributed meaningfully"
-                if public_pct > 25
-                else "✅  FEED-LED: feed sources strong"
-                if feed_fnd > 0
-                else "✅  SIGNAL: good feed performance"
-            )
-            verdict = f"⚠️  ABORTED (partial) — {_base}"
-        else:
-            verdict = "⚠️  ABORTED: hard stop, no signal collected"
-    elif hardware_limited:
-        verdict = "💾  HARDWARE-LIMITED: swap/memory pressure blocked entry"
-    elif public_backend_degraded:
-        verdict = "🌐  DEGRADED: public backend/network error — check TOR/proxy/config"
-    elif accepted_findings == 0:
-        if public_discovered > 0:
-            verdict = "🔍  NOVELTY: public found hits, feed accepted nothing"
-        elif total_pattern_hits == 0:
-            verdict = "🗿  DEPLETED: no pattern hits anywhere"
-        else:
-            verdict = "🤷  SILENT: pattern hits but no accepted findings"
-    elif dup_rate > 85:
-        verdict = "📦  NOISE-HEAVY: duplicated heavily"
-    elif public_pct > 60:
-        verdict = "🌐  PUBLIC-LED: public discovery dominated"
-    elif public_pct > 25:
-        verdict = "⚖️  MIXED: public contributed meaningfully"
-    elif feed_fnd > 0:
-        verdict = "✅  FEED-LED: feed sources strong"
-    else:
-        verdict = "✅  SIGNAL: good feed performance"
+    ctx = {
+        "aborted": aborted,
+        "accepted_findings": accepted_findings,
+        "dup_rate": dup_rate,
+        "public_pct": public_pct,
+        "feed_fnd": feed_fnd,
+        "hardware_limited": hardware_limited,
+        "public_backend_degraded": public_backend_degraded,
+        "public_discovered": public_discovered,
+        "total_pattern_hits": total_pattern_hits,
+        "public_fetched": public_fetched,
+        "stop_requested": stop_requested,
+    }
 
-    # Next-step hint chain
-    if hardware_limited:
-        next_hint = "hardware memory pressure — free RAM or restart before next run"
-    elif accepted_findings == 0 and total_pattern_hits == 0:
-        next_hint = "query may be too narrow — broaden terms or switch seed"
-    elif dup_rate > 80:
-        next_hint = "high dup rate — consider narrowing query scope"
-    elif public_pct > 60:
-        next_hint = "public discovery effective — let it run longer next time"
-    elif public_pct < 10 and feed_fnd == 0:
-        next_hint = "feed yield low — check if sources still alive (urlhaus, threatfox)"
-    elif public_pct < 10 and feed_fnd > 0:
-        next_hint = "feed performing — rely on feed-first, use public as supplemental"
-    elif public_discovered > 0 and public_fetched == 0:
-        next_hint = "public discovered but not fetched — check network/TOR"
-    elif stop_requested:
-        next_hint = "early stop triggered — lower threshold or widen query"
+    # Compute verdict using decision table
+    verdict_key = "SIGNAL"  # default
+    for conditions, key in _VERDICT_TABLE:
+        matched = True
+        for i in range(0, len(conditions), 2):
+            field = conditions[i]
+            expected = conditions[i + 1]
+            if not _match_condition(ctx[field], expected):
+                matched = False
+                break
+        if matched:
+            verdict_key = key
+            break
+
+    # Build verdict string
+    if verdict_key == "ABORTED_PARTIAL":
+        base = _get_aborted_base_verdict(dup_rate, public_pct, feed_fnd)
+        verdict = _VERDICT_TEMPLATES["ABORTED_PARTIAL"].format(base=base)
     else:
-        next_hint = "current query and source mix working — continue as-is"
+        verdict = _VERDICT_TEMPLATES.get(verdict_key, "✅  SIGNAL: good feed performance")
+
+    # Compute hint using decision table
+    next_hint = "current query and source mix working — continue as-is"
+    for conditions, hint in _HINT_TABLE:
+        matched = True
+        for i in range(0, len(conditions), 2):
+            field = conditions[i]
+            expected = conditions[i + 1]
+            if not _match_condition(ctx[field], expected):
+                matched = False
+                break
+        if matched:
+            next_hint = hint
+            break
 
     return verdict, next_hint
 
@@ -2537,100 +2723,18 @@ async def run_sprint(
         aggressive_mode=aggressive_mode,
     )
 
-    # F221-ABORT: Pre-flight guard — enforce minimum active-window budget.
-    # MUST run BEFORE DuckDB init to avoid orphaned lock files when the config
-    # is rejected up front. Uses SprintSchedulerConfig internally to compute
-    # effective_windup_lead_s so the guard and the scheduler are always in sync.
-    # sys.exit(2) = config error, distinguishable from exit(1) runtime failure.
-    #
-    # A2-4: config created early so effective_windup_lead_s is available here.
-    _force_override = (flags.force if flags else False) or force
-    _effective_windup_s = _early_config.effective_windup_lead_s
-    _active_window_s = float(duration_s) - _effective_windup_s
-    # Sprint F271C: fail-loud invariant — if we somehow compute a negative
-    # active window, the guard is broken; surface it as a config error
-    # (exit 2) instead of proceeding with a bogus budget that hides bugs.
-    if _active_window_s < 0.0:
-        logger.error(
-            "[F271C-INVARIANT] computed negative active_window_s=%s "
-            "(duration_s=%s, effective_windup_s=%s). F221 guard is broken.",
-            _active_window_s,
-            duration_s,
-            _effective_windup_s,
-        )
-        sys.exit(2)
-    # F289-WINDUP: Sanity check — abort if windup consumes >= 80% of active window.
-    if _effective_windup_s >= _active_window_s * 0.80:
-        _pct = (_effective_windup_s / _active_window_s * 100) if _active_window_s > 0 else 100.0
-        if _force_override:
-            logger.warning(
-                "[F289-FORCED] Windup %.0fs would consume %.0f%% of active window %.0fs. Proceeding due to --force.",
-                _effective_windup_s,
-                _pct,
-                _active_window_s,
-            )
-        else:
-            logger.error(
-                "[F289-ABORT] Windup %.0fs would consume %.0f%% of active window %.0fs. "
-                "Reduce windup (--windup-lead) or increase duration.",
-                _effective_windup_s,
-                _pct,
-                _active_window_s,
-            )
-            sys.exit(2)
-    if _active_window_s < float(MIN_ACTIVE_WINDOW_S):
-        _required_duration_s = int(_effective_windup_s + float(MIN_ACTIVE_WINDOW_S))
-        if _force_override:
-            logger.warning(
-                "[F221-FORCED] duration=%ds gives only %ds active window "
-                "(windup_lead_effective=%ds). Proceeding due to --force.",
-                int(duration_s),
-                max(0, int(_active_window_s)),
-                int(_effective_windup_s),
-            )
-        else:
-            logger.error(
-                "[F221-ABORT] Sprint duration %ds gives only %ds active window "
-                "(windup_lead_effective=%ds). "
-                "Minimum recommended: --duration %d. "
-                "Use --force to override.",
-                int(duration_s),
-                max(0, int(_active_window_s)),
-                int(_effective_windup_s),
-                _required_duration_s,
-            )
-            sys.exit(2)  # exit(2) = config error, distinguishable from exit(1) runtime
-
-    # F289: windup_lead_s sanity check — warn if it would consume >90% of sprint
-    if windup_lead_s is not None:
-        _windup_fraction = float(windup_lead_s) / float(duration_s)
-        if _windup_fraction > 0.90:
-            logger.warning(
-                "[F289-WINDUP-FRACTION] windup_lead_s=%.0fs is %.0f%% of duration=%ds. "
-                "This may cause the sprint to enter WINDUP immediately, leaving "
-                "almost no time for active acquisition. Consider reducing windup_lead_s "
-                "or increasing sprint duration.",
-                int(windup_lead_s),
-                _windup_fraction * 100,
-                int(duration_s),
-            )
-
-    # F214Q: Remote debug OPSEC guard — strict exit if HLEDAC_REQUIRE_REMOTE_DEBUG_DISABLED=1
-    # and PYTHON_DISABLE_REMOTE_DEBUG is not set. Python 3.14 activates safe-external-debugger by default.
-    if FeatureFlags.get(FeatureFlag.REMOTE_DEBUG_DISABLE):
-        if os.environ.get("PYTHON_DISABLE_REMOTE_DEBUG") != "1":
-            sys.exit(
-                "HLEDAC_REQUIRE_REMOTE_DEBUG_DISABLED=1 but PYTHON_DISABLE_REMOTE_DEBUG not set — "
-                "OSINT runtime requires external debugger disabled"
-            )
-
-    # F176A: Pre-sprint UMA state capture — hardware pressure before scheduler runs.
-    # This is used to classify hardware-limited smoke vs depleted query.
-    _uma_pre_sprint = sample_uma_status()
+    # F360: Pre-flight guards extracted to module-level function
+    # Returns (effective_windup_s, uma_pre_sprint) tuple for caller
+    _effective_windup_s, _uma_pre_sprint = _run_sprint_preflight_guards(
+        logger=logger,
+        duration_s=duration_s,
+        windup_lead_s=windup_lead_s,
+        flags=flags,
+        force=force,
+        early_config=_early_config,
+    )
     _swap_detected_pre = _uma_pre_sprint.swap_detected
     _uma_state_pre = _uma_pre_sprint.state
-
-    # UMA baseline
     uma_baseline_gib = _uma_pre_sprint.system_used_gib
 
     # Sprint ID

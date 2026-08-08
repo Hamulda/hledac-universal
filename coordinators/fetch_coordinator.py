@@ -84,7 +84,7 @@ from hledac.universal.utils.locks import LazyAsyncioLock  # ISSUE-011: asyncio-s
 
 from ..tools.url_dedup import DeduplicationStrategy, dedupe_url_list
 from ..knowledge.cross_sprint_gate import get_cross_sprint_gate
-from ..knowledge.entity_confirmation import get_entity_confirmation_service
+from ..knowledge.entity_confirmation import get_entity_confirmation_service, get_entity_confirmation_service_sync
 from .base import UniversalCoordinator
 
 # ── Cognitive Saturation Detection ─────────────────────────────────────────────
@@ -95,7 +95,7 @@ _COGNITIVE_SATURATION_DETECTOR: Any = None
 
 def set_cognitive_saturation_detector(detector: Any) -> None:
     """Set the global CognitiveSaturationDetector instance.
-    
+
     Called by SprintLifecycleManager on initialization to wire the detector.
     """
     global _COGNITIVE_SATURATION_DETECTOR
@@ -108,6 +108,9 @@ def get_cognitive_saturation_detector() -> Any:
 
 # R6: Centralized Rust access — all hledac_rust_extensions symbols route through
 # core.rust_backend, ensuring ABI checking, capability scoring, and graceful fallback.
+from ..utils.robots_parser import RobotsDocument
+
+# R6: Centralized Rust access
 from hledac.universal.core.rust_backend import rust
 
 PyAIMDController = rust.raw.PyAIMDController  # type: ignore[assignment]  # None if N/A
@@ -1045,75 +1048,84 @@ class FetchCoordinator(UniversalCoordinator):
                 return True
         return False
 
-    async def _aimd_acquire(self) -> tuple[float, None]:  # noqa: C901
-        """
-        Acquire AIMD slot, returns (concurrency_window, None).
+    def _resolve_backpressure_state(self) -> tuple[float | None, str]:
+        """Resolve backpressure clearing and UMA state from various sources."""
+        bp_clearing: float | None = None
+        bp_uma_state = 'ok'
 
-        ISSUE 2.2: Uses unified PyAIMDController (Rust) with lock-free atomic state.
-        Falls back to Python AIMDWindow for backpressure clamping + semaphore acquire.
-        """
-        _bp_clearing: float | None = None
-        _bp_uma_state = 'ok'
         if self._batch_cp_result is _CP_RETURNED_NONE:
             pass
         elif self._batch_cp_result is not _CP_NOT_CALLED:
-            _bp_clearing, _bp_stealth, _bp_uma_state, _ = self._batch_cp_result
+            bp_clearing, _, bp_uma_state, _ = self._batch_cp_result
         elif self._concurrency_provider is not None:
             try:
-                _bp_result = self._concurrency_provider()
-                if _bp_result is not None:
-                    _bp_clearing, _bp_stealth, _bp_uma_state, _ = _bp_result
-            except (TypeError, ValueError, KeyError):  # noqa: BLE001 — best-effort; concurrency_provider result parsing failure; non-critical
+                bp_result = self._concurrency_provider()
+                if bp_result is not None:
+                    bp_clearing, _, bp_uma_state, _ = bp_result
+            except (TypeError, ValueError, KeyError):  # noqa: BLE001
                 pass
-        # U2-05 FIX: Direct governor fetch_limit — bypasses concurrency_provider cache.
-        # At 7.2+ GiB (io_only=True) we arrive here even when batch_cp_result is
-        # _CP_NOT_CALLED. The governor.evaluate() call is fast (0.5s TTL on io_only)
-        # and gives the authoritative fetch_limit for this precise moment.
-        _governor_fetch_limit: int | None = None
+        return bp_clearing, bp_uma_state
+
+    async def _apply_governor_backpressure(self, bp_clearing: float | None, bp_uma_state: str) -> tuple[float | None, str]:
+        """Apply governor-based backpressure if available."""
         try:
             from hledac.universal.core.protocols import get_governor
-            _gov = get_governor()
-            if _gov is not None:
-                _gov_decision = await _gov.evaluate()
-                _governor_fetch_limit = _gov_decision.fetch_limit
-                if _bp_clearing is None or _governor_fetch_limit < _bp_clearing:
-                    _bp_clearing = float(_governor_fetch_limit)
-                if _gov_decision.io_only:
-                    _bp_uma_state = _gov_decision.uma_state
-        except Exception:  # noqa: BLE001 — best-effort; governor evaluate failure; continue with cached path
+            gov = get_governor()
+            if gov is not None:
+                gov_decision = await gov.evaluate()
+                if bp_clearing is None or gov_decision.fetch_limit < bp_clearing:
+                    bp_clearing = float(gov_decision.fetch_limit)
+                if gov_decision.io_only:
+                    bp_uma_state = gov_decision.uma_state
+        except Exception:  # noqa: BLE001
             pass
-        self._telemetry['uma_state'] = _bp_uma_state
+        return bp_clearing, bp_uma_state
+
+    async def _acquire_rust_slot(self, bp_clearing: float | None) -> float:
+        """Acquire slot using Rust PyAIMDController."""
+        current_window, _ = self._aimd.acquire()
+        if bp_clearing is not None and bp_clearing < current_window:
+            self._aimd.set_window(bp_clearing)
+            current_window = bp_clearing
+            self._telemetry['backpressure_clamp_events'] += 1
+        return current_window
+
+    def _sync_semaphore_to_window(self, current_window: float) -> None:
+        """Sync semaphore permits to match current window."""
+        if current_window == self._aimd_semaphore._value:
+            return
+        diff = int(current_window) - self._aimd_semaphore._value
+        if diff > 0:
+            for _ in range(diff):
+                self._aimd_semaphore.release()
+        elif diff < 0:
+            for _ in range(-diff):
+                self._aimd_semaphore.release()
+
+    async def _acquire_python_slot(self, bp_clearing: float | None) -> float:
+        """Acquire slot using Python AIMDWindow + semaphore."""
+        if bp_clearing is not None and bp_clearing < self._aimd.window:
+            await self._aimd.set_window(bp_clearing)
+            self._telemetry['backpressure_clamp_events'] += 1
+        current_window = self._aimd.window
+        self._sync_semaphore_to_window(current_window)
+        await self._aimd_semaphore.acquire()
+        return current_window
+
+    async def _aimd_acquire(self) -> tuple[float, None]:
+        """Acquire AIMD slot, returns (concurrency_window, None)."""
+        # Resolve backpressure state
+        bp_clearing, bp_uma_state = self._resolve_backpressure_state()
+
+        # Apply governor backpressure
+        bp_clearing, bp_uma_state = await self._apply_governor_backpressure(bp_clearing, bp_uma_state)
+        self._telemetry['uma_state'] = bp_uma_state
 
         # Acquire slot (Rust: lock-free; Python fallback: semaphore)
         if isinstance(self._aimd, PyAIMDController):
-            # Rust path: lock-free atomic acquire
-            current_window, _ = self._aimd.acquire()
-            # Backpressure clamping if needed
-            if _bp_clearing is not None and _bp_clearing < current_window:
-                self._aimd.set_window(_bp_clearing)
-                current_window = _bp_clearing
-                self._telemetry['backpressure_clamp_events'] += 1
+            current_window = await self._acquire_rust_slot(bp_clearing)
         else:
-            # Python fallback: use existing AIMDWindow + semaphore pattern
-            if _bp_clearing is not None and _bp_clearing < self._aimd.window:
-                await self._aimd.set_window(_bp_clearing)
-                self._telemetry['backpressure_clamp_events'] += 1
-            current_window = self._aimd.window
-            # Sync window to semaphore if needed
-            if current_window != self._aimd_semaphore._value:
-                # Adjust semaphore to match window
-                diff = int(current_window) - self._aimd_semaphore._value
-                if diff > 0:
-                    for _ in range(diff):
-                        self._aimd_semaphore.release()
-                elif diff < 0:
-                    # Shrinking: release excess permits directly without blocking acquire.
-                    # When active==window the semaphore is already near-zero, so we
-                    # may temporarily hold more permits than the new window — this
-                    # is safe as active slots drain naturally on release().
-                    for _ in range(-diff):
-                        self._aimd_semaphore.release()
-            await self._aimd_semaphore.acquire()
+            current_window = await self._acquire_python_slot(bp_clearing)
 
         self._telemetry['aimd_concurrency'] = current_window
         self._telemetry['active_fetches'] += 1
@@ -1473,7 +1485,7 @@ class FetchCoordinator(UniversalCoordinator):
                 'content': bytes(quic_response.body) if quic_response.body else b'',
                 'status_code': quic_response.status,
                 'headers': dict(quic_response.headers) if quic_response.headers else {},
-                'content_type': _extract_content_type(dict(quic_response.headers) if quic_response.headers else {}),
+                'content_type': self._extract_content_type(dict(quic_response.headers) if quic_response.headers else {}),
                 'final_url': url,
                 'success': True,
                 'error': None,
@@ -1745,7 +1757,7 @@ class FetchCoordinator(UniversalCoordinator):
     async def _robots_check_fast(
         self,
         url: str,
-        domain_robots: dict[str, RobotsDocument | None],
+        domain_robots: dict[str, Any],
         user_agent: str,
     ) -> tuple[bool, str | None, float]:
         """
@@ -1772,52 +1784,44 @@ class FetchCoordinator(UniversalCoordinator):
         _delay = _rp.get_crawl_delay(user_agent, _doc)
         return (True, None, _delay)
 
-    async def _do_step(self, ctx: dict[str, Any]) -> dict[str, Any]:  # noqa: C901
-        """
-        Execute one fetch step with batch parallel fetch.
+    # -------------------------------------------------------------------------
+    # _do_step helper methods (complexity reduction: extract phases)
+    # -------------------------------------------------------------------------
 
-        Sprint 5B: Process up to max_urls_per_step from frontier using
-        controlled parallel batch fetch that respects:
-        - timeout matrix
-        - concurrency matrix
-        - AIMD window
-        """
-        self._ctx.update(ctx)
-        budget_mgr = ctx.get('budget_manager')
-        if budget_mgr:
-            allowed, reason = budget_mgr.check_network_allowed()
-            if not allowed:
-                self._stop_reason = reason
-                return self._get_step_result()
-        candidates = []
+    def _collect_frontier_batch(self) -> list[str]:
+        """Phase 1: Collect URLs from frontier."""
         raw_batch: list[str] = []
         for _ in range(self._config.max_urls_per_step * 2):
             if not self._frontier:
                 break
             url = self._frontier.popleft()
             raw_batch.append(url)
+        return raw_batch
+
+    async def _resolve_dns_and_dedup(self, raw_batch: list[str]) -> tuple[set[str], list[str]]:
+        """Phase 2: Extract hosts, resolve DNS, dedup URLs."""
+        self._host_ips_cache = {}
+        self._host_ips_inflight = {}
+        self._batch_cp_result = _CP_NOT_CALLED
+        if self._concurrency_provider is not None:
+            try:
+                _result = self._concurrency_provider()
+                self._batch_cp_result = _result if _result is not None else _CP_RETURNED_NONE
+            except (TypeError, ValueError):  # noqa: BLE001
+                pass
 
         def _extract_raw_hosts() -> set[str]:
-            """Extract unique hosts from raw batch (sync, fast — runs in thread pool).
-
-            P1-3 OPT: Uses fast string slicing instead of httpx.URL() parsing.
-            URL format: scheme://host[:port][/path]. host is between "://" and ":" or "/".
-            This is 10-50× faster than httpx.URL() for pure host extraction.
-            """
+            """Extract unique hosts from raw batch (sync, fast — runs in thread pool)."""
             hosts: set[str] = set()
             for url in raw_batch:
-                # SEC-03 FIX: case-insensitive darknet TLD check — uppercase .ONION
-                # would otherwise bypass this guard and hit the OS DNS resolver.
                 _url_lower = url.lower()
                 if _url_lower.endswith('.onion') or _url_lower.endswith('.i2p'):
                     continue
                 try:
-                    # Fast path: find host between :// and : or / or end
                     at_slashes = url.find('://')
                     if at_slashes < 0:
                         continue
                     host_start = at_slashes + 3
-                    # Find end of host: first : / ? # or end
                     host_end = len(url)
                     for i in range(host_start, len(url)):
                         c = url[i]
@@ -1827,7 +1831,7 @@ class FetchCoordinator(UniversalCoordinator):
                     hostname = url[host_start:host_end]
                     if hostname:
                         hosts.add(hostname.lower())
-                except (ValueError, TypeError):  # noqa: BLE001 — best-effort; URL parse failure; skip this URL
+                except (ValueError, TypeError):  # noqa: BLE001
                     continue
             return hosts
 
@@ -1837,111 +1841,106 @@ class FetchCoordinator(UniversalCoordinator):
             for url in raw_batch:
                 trace_dedup_decision(url, url not in unique)
             return (unique, dropped)
-        self._host_ips_cache = {}
-        self._host_ips_inflight = {}
-        self._batch_cp_result = _CP_NOT_CALLED
-        if self._concurrency_provider is not None:
-            try:
-                _result = self._concurrency_provider()
-                self._batch_cp_result = _result if _result is not None else _CP_RETURNED_NONE
-            except (TypeError, ValueError):  # noqa: BLE001 — best-effort; concurrency_provider result parsing; non-critical
-                pass
+
         resolver = get_batch_dns_resolver()
         raw_hosts_task = asyncio.to_thread(_extract_raw_hosts)
         dedup_task = asyncio.to_thread(_dedup_and_trace)
         raw_hosts = await raw_hosts_task
+
         dns_coro: asyncio.Task[dict[str, list[str]]] | None = None
         if raw_hosts:
-            # F350M-R: Prefer rust.dns.prefetch() over batch_dns.py
-            # hickory-dns async pipeline is 20-30% faster than aiodns/c-ares
-            # Respects HLEDAC_ENABLE_DNS runtime flag
             if _RUST_DNS is not None and _RUST_DNS_ENABLED:
                 dns_coro = safe_create_task(
                     asyncio.to_thread(_rust_dns_prefetch, list(raw_hosts))
                 )
             else:
                 dns_coro = safe_create_task(resolver.resolve_many(list(raw_hosts), timeout=5.0))
+
         unique_batch, dropped = await dedup_task
+
         if dns_coro is not None:
             try:
                 resolved = await dns_coro
                 self._host_ips_cache = {h: list(ips) for h, ips in resolved.items()}
-            except (TimeoutError, asyncio.CancelledError, OSError) as exc:  # noqa: BLE001 — best-effort; batch DNS pre-resolve failure; non-critical
+            except (TimeoutError, asyncio.CancelledError, OSError) as exc:  # noqa: BLE001
                 logger.debug('[F-A4] batch DNS pre-resolve failed: %s: %s', type(exc).__name__, exc)
-        candidates: list[tuple[float, str]] = []
-        # META-001: Cross-sprint pre-fetch gate — skip domains confirmed by
-        # >=2 distinct sources across >=1 sprints with avg confidence >=75%.
-        _skip_set: set[str] = set()
-        _freshness_list: list[Any] = []
+
+        return (raw_hosts, unique_batch)
+
+    async def _apply_gate_filters(self, unique_batch: list[str]) -> tuple[set[str], set[str], list[Any]]:
+        """Phase 3: Apply cross-sprint gate and entity confirmation filters."""
+        skip_set: set[str] = set()
+        freshness_list: list[Any] = []
+        confirmed_set: set[str] = set()
+
+        # META-001: Cross-sprint pre-fetch gate
         try:
             if self._cross_sprint_gate is not None and self._cross_sprint_gate.enabled:
-                # Extract entity_values (hosts) from unique URLs
-                _gate_entities: list[dict[str, str]] = []
+                gate_entities: list[dict[str, str]] = []
                 for url in unique_batch:
                     _host = _fast_url_host(url)
                     if _host:
-                        _gate_entities.append({"entity_value": _host.lower(), "entity_type": "domain"})
-                if _gate_entities:
-                    _skip_set, _freshness_list = await self._cross_sprint_gate.should_skip_batch(
-                        _gate_entities
-                    )
-        except Exception:  # noqa: BLE001 — best-effort; cross-sprint gating failure; continue
+                        gate_entities.append({"entity_value": _host.lower(), "entity_type": "domain"})
+                if gate_entities:
+                    skip_set, freshness_list = await self._cross_sprint_gate.should_skip_batch(gate_entities)
+        except Exception:  # noqa: BLE001
             pass
 
-        # [META]-014: Entity confirmation check — skip entities confirmed by
-        # >=3 distinct source types with MAX(confidence) > 0.7
-        _confirmed_set: set[str] = set()
+        # [META]-014: Entity confirmation check
         if self._entity_confirmation_service is not None and self._entity_confirmation_service.enabled:
             try:
-                _conf_tuples = [
+                conf_tuples = [
                     (_fast_url_host(url).lower(), "domain")
                     for url in unique_batch
                     if _fast_url_host(url)
                 ]
-                if _conf_tuples:
-                    _conf_results = await self._entity_confirmation_service.is_confirmed_batch(
-                        _conf_tuples
-                    )
-                    for _key, _conf in _conf_results.items():
+                if conf_tuples:
+                    conf_results = await self._entity_confirmation_service.is_confirmed_batch(conf_tuples)
+                    for _key, _conf in conf_results.items():
                         if _conf.is_confirmed:
-                            _confirmed_set.add(_conf.entity_value)
-            except Exception:  # noqa: BLE001 — best-effort; entity confirmation failure; continue
+                            confirmed_set.add(_conf.entity_value)
+            except Exception:  # noqa: BLE001
                 pass
 
+        return (skip_set, confirmed_set, freshness_list)
+
+    def _build_priority_candidates(
+        self,
+        unique_batch: list[str],
+        skip_set: set[str],
+        confirmed_set: set[str],
+        freshness_list: list[Any],
+    ) -> list[tuple[float, str]]:
+        """Phase 4: Build prioritized candidate list from URLs."""
+        candidates: list[tuple[float, str]] = []
         for url in unique_batch:
             _host = _fast_url_host(url).lower()
-            # META-001: Skip known-good domains (CrossSprintGate)
-            if _host and _host in _skip_set:
+            if _host and _host in skip_set:
                 self._telemetry["cross_sprint_skipped"] += 1
                 continue
-            # [META]-014: Skip confirmed entities (EntityConfirmationService)
-            # Entity is confirmed if >=3 distinct sources with MAX(confidence) > 0.7
-            if _host and _host in _confirmed_set:
+            if _host and _host in confirmed_set:
                 self._telemetry["entity_confirmation_skipped"] += 1
                 continue
-            # META-001: Boost priority for novel domains (never seen in any sprint)
             _priority = self._url_priority(url)
             if _host:
-                for _f in _freshness_list:
+                for _f in freshness_list:
                     if _f.entity_value == _host and _f.freshness == "novel":
-                        _priority = max(_priority - 5, _PRIORITY_API)  # boost to near-API priority
+                        _priority = max(_priority - 5, _PRIORITY_API)
                         break
             candidates.append((_priority, url))
-        del unique_batch
-        if not candidates:
-            self._stop_reason = 'frontier_empty'
-            return self._get_step_result()
-        candidates.sort(key=lambda x: x[0])
-        urls_to_fetch = [url for _, url in candidates[:self._config.max_urls_per_step]]
-        # F-05: robots.txt enforcement — filter blocked URLs before fetch
-        # Pre-fetch robots.txt for all unique domains in parallel (one HTTP per domain,
-        # not one HTTP per URL), then check can_fetch from cached docs.
-        _domain_robots: dict[str, RobotsDocument | None] = {}
+        return candidates
+
+    async def _prefetch_and_filter_robots(
+        self,
+        urls_to_fetch: list[str],
+        user_agent: str,
+    ) -> list[str]:
+        """Phase 5: Prefetch robots.txt and filter URLs."""
+        domain_robots: dict[str, Any] = {}
         if self._robots_parser is not None:
-            _unique_domains: set[str] = set()
+            unique_domains: set[str] = set()
             for _url in urls_to_fetch:
                 try:
-                    # P1-3 OPT: fast string slicing for host extraction (10-50× faster than httpx.URL)
                     at_slashes = _url.find('://')
                     if at_slashes < 0:
                         continue
@@ -1956,110 +1955,100 @@ class FetchCoordinator(UniversalCoordinator):
                 except (ValueError, TypeError):
                     continue
                 if _domain:
-                    _unique_domains.add(_domain.lower())
-            if _unique_domains:
-                async def _prefetch_domain(domain: str) -> tuple[str, RobotsDocument | None]:
+                    unique_domains.add(_domain.lower())
+            if unique_domains:
+                async def _prefetch_domain(domain: str) -> tuple[str, Any]:
                     try:
                         _doc = await self._robots_parser.fetch_robots(f'https://{domain}/')
                     except Exception:
                         return (domain, None)
                     return (domain, _doc)
-                _domain_docs = await parallel(
-                    [_prefetch_domain(d) for d in _unique_domains],
+                domain_docs = await parallel(
+                    [_prefetch_domain(d) for d in unique_domains],
                     policy="collect",
                     concurrency=10,
                     ctx="robots_prefetch",
                 )
-                for _item in _domain_docs:
+                for _item in domain_docs:
                     if isinstance(_item, Exception):
                         continue
                     _domain, _doc = _item
-                    _domain_robots[_domain] = _doc
-        _robots_filtered: list[str] = []
-        _ua = getattr(self, '_effective_ua', None) or 'Hledac-Bot/1.0'
-        # B20 FIX: parallelize robots checks across all URLs (concurrency=20).
-        # Each _robots_check_fast is a sync in-memory check (no I/O), so high
-        # concurrency is cheap. Aggregates crawl_delay and filters allowed URLs.
-        _robots_results = await parallel(
-            [self._robots_check_fast(_url, _domain_robots, _ua) for _url in urls_to_fetch],
+                    domain_robots[_domain] = _doc
+
+        # Filter URLs based on robots.txt
+        robots_results = await parallel(
+            [self._robots_check_fast(_url, domain_robots, user_agent) for _url in urls_to_fetch],
             policy="collect",
             concurrency=20,
             ctx="robots_check",
         )
-        _total_crawl_delay: float = 0.0
-        # B20 FIX (rev2): zip is safe against index mismatch when some results
-        # are absent from ok[]. parallel() preserves original coroutine order, so
-        # zip naturally skips any trailing (url, result) pair when a coroutine
-        # raises — no enumerate index corruption possible.
-        for _url, _result in zip(urls_to_fetch, _robots_results.ok, strict=True):
+        filtered: list[str] = []
+        total_delay: float = 0.0
+        for _url, _result in zip(urls_to_fetch, robots_results.ok, strict=True):
             _allowed, _reason, _delay = _result
-            _total_crawl_delay += _delay
+            total_delay += _delay
             if not _allowed:
                 logger.debug('[ROBOTS] blocked by robots.txt: %s (%s)', _url, _reason)
                 trace_fetch_end(_url, 'robots', 'blocked', 0.0, {'reason': _reason})
                 continue
-            _robots_filtered.append(_url)
-        if _total_crawl_delay > 0:
-            with contextlib.suppress(asyncio.CancelledError, asyncio.TimeoutError):
-                await asyncio.sleep(_total_crawl_delay)
-        urls_to_fetch = _robots_filtered
-        if not urls_to_fetch:
-            return self._get_step_result()
-        raw_batch_size = len(urls_to_fetch)
-        effective_batch_size = min(raw_batch_size, int(self._aimd_concurrency))
-        urls_to_fetch = urls_to_fetch[:effective_batch_size]
-        batch_size = len(urls_to_fetch)
-        if is_enabled():
-            trace_counter('fetch.aimd.window', self._aimd_concurrency)
-            trace_counter('fetch.active', self._telemetry['active_fetches'])
-            trace_counter('fetch.batch_size', batch_size)
+            filtered.append(_url)
 
-        # B1-FIX: Separate TOR/I2P URLs from clearnet and run with dedicated
-        # concurrency (2 for TOR circuit reuse, 2 for I2P). Prevents 4× onion URLs
-        # blocking each other at concurrency=1 while waiting for 2-5s TOR circuits.
-        # TOR circuit establishment is slow but pipelining multiple requests over the
-        # same circuit is cheap — concurrency=2 maximizes throughput without
-        # overwhelming the circuit pool.
+        if total_delay > 0:
+            with contextlib.suppress(asyncio.CancelledError, asyncio.TimeoutError):
+                await asyncio.sleep(total_delay)
+
+        return filtered
+
+    async def _execute_batch_fetch(self, urls_to_fetch: list[str]) -> tuple[list[dict[str, Any] | None], float]:
+        """Phase 6: Execute parallel fetch with TOR/I2P vs clearnet separation."""
         from ..transport.transport_resolver import Transport, get_transport_for_url
-        _tor_i2p_urls: list[str] = []
-        _clearnet_urls: list[str] = []
+
+        tor_i2p_urls: list[str] = []
+        clearnet_urls: list[str] = []
         for _url in urls_to_fetch:
             _transport = get_transport_for_url(_url)
             if _transport in (Transport.TOR, Transport.I2P):
-                _tor_i2p_urls.append(_url)
+                tor_i2p_urls.append(_url)
             else:
-                _clearnet_urls.append(_url)
+                clearnet_urls.append(_url)
 
         batch_start = time.time()
-        # B1-FIX: Build url->result mapping then reconstruct aligned results list.
-        # Running TOR/I2P first (concurrency=2) allows circuit warmup before
-        # clearnet batch saturates the AIMD window.
         url_to_result: dict[str, dict[str, Any] | None] = {}
-        if _tor_i2p_urls:
-            _tor_i2p_result = await parallel(
-                [self._fetch_url(url) for url in _tor_i2p_urls],
-                concurrency=min(len(_tor_i2p_urls), 2),  # B1: 2 for circuit reuse
+
+        if tor_i2p_urls:
+            tor_i2p_result = await parallel(
+                [self._fetch_url(url) for url in tor_i2p_urls],
+                concurrency=min(len(tor_i2p_urls), 2),
                 policy="log",
                 ctx="fetch_coordinator.batch.tor_i2p",
             )
-            for _url, _res in zip(_tor_i2p_urls, _tor_i2p_result.ok, strict=False):
+            for _url, _res in zip(tor_i2p_urls, tor_i2p_result.ok, strict=False):
                 url_to_result[_url] = _res
-        if _clearnet_urls:
-            _clearnet_result = await parallel(
-                [self._fetch_url(url) for url in _clearnet_urls],
-                concurrency=batch_size,
+
+        if clearnet_urls:
+            clearnet_result = await parallel(
+                [self._fetch_url(url) for url in clearnet_urls],
+                concurrency=len(urls_to_fetch),
                 policy="log",
                 ctx="fetch_coordinator.batch",
             )
-            for _url, _res in zip(_clearnet_urls, _clearnet_result.ok, strict=False):
+            for _url, _res in zip(clearnet_urls, clearnet_result.ok, strict=False):
                 url_to_result[_url] = _res
-        # Preserve original urls_to_fetch order for downstream zip pairing
+
         results = [url_to_result.get(_url) for _url in urls_to_fetch]
         batch_elapsed = time.time() - batch_start
-        evidence_ids = []
+        return (results, batch_elapsed)
+
+    def _process_fetch_results(
+        self,
+        urls_to_fetch: list[str],
+        results: list[dict[str, Any] | None],
+        budget_mgr: Any,
+    ) -> list[str]:
+        """Phase 7: Process fetch results and extract evidence IDs."""
+        evidence_ids: list[str] = []
         for url, result in zip(urls_to_fetch, results, strict=False):
             if isinstance(result, Exception):
-                _ev0 = type(result).__name__
                 logger.debug('[BATCH] fetch exception for %s: %s: %s', url, type(result).__name__, result)
                 continue
             if result and result.get('success'):
@@ -2068,12 +2057,9 @@ class FetchCoordinator(UniversalCoordinator):
                 if evidence_id:
                     evidence_ids.append(evidence_id)
                     self._evidence_ids.append(evidence_id)
-                    # A5-02: Write to injected evidence_sink if available (Dependency Inversion)
                     if self._evidence_sink is not None:
                         with contextlib.suppress(Exception):
-                            await self._evidence_sink.append_evidence(evidence_id)
-                    # [ULTIMATE]-002: Report entity discovery for cognitive saturation tracking.
-                    # Extract entity value from URL for domain-level tracking.
+                            self._evidence_sink.append_evidence(evidence_id)
                     _entity_host = _fast_url_host(url)
                     if _entity_host:
                         self.report_entity_discovery(_entity_host, "domain")
@@ -2082,8 +2068,81 @@ class FetchCoordinator(UniversalCoordinator):
                     if not allowed:
                         self._stop_reason = reason
                         break
+        return evidence_ids
+
+
+    async def _do_step(self, ctx: dict[str, Any]) -> dict[str, Any]:
+        """
+        Execute one fetch step with batch parallel fetch.
+
+        Sprint 5B: Process up to max_urls_per_step from frontier using
+        controlled parallel batch fetch that respects:
+        - timeout matrix
+        - concurrency matrix
+        - AIMD window
+
+        Complexity reduction: delegates to helper methods for each phase.
+        """
+        self._ctx.update(ctx)
+        budget_mgr = ctx.get('budget_manager')
+        if budget_mgr:
+            allowed, reason = budget_mgr.check_network_allowed()
+            if not allowed:
+                self._stop_reason = reason
+                return self._get_step_result()
+
+        # Phase 1: Collect URLs from frontier
+        raw_batch = self._collect_frontier_batch()
+        if not raw_batch:
+            self._stop_reason = 'frontier_empty'
+            return self._get_step_result()
+
+        # Phase 2: Resolve DNS and dedup
+        _, unique_batch = await self._resolve_dns_and_dedup(raw_batch)
+        del raw_batch
+
+        # Phase 3: Apply gate filters
+        skip_set, confirmed_set, freshness_list = await self._apply_gate_filters(unique_batch)
+
+        # Phase 4: Build priority candidates
+        candidates = self._build_priority_candidates(unique_batch, skip_set, confirmed_set, freshness_list)
+        del unique_batch
+        if not candidates:
+            self._stop_reason = 'frontier_empty'
+            return self._get_step_result()
+
+        candidates.sort(key=lambda x: x[0])
+        urls_to_fetch = [url for _, url in candidates[:self._config.max_urls_per_step]]
+        del candidates
+
+        # Phase 5: Robots.txt prefetch and filtering
+        user_agent = getattr(self, '_effective_ua', None) or 'Hledac-Bot/1.0'
+        urls_to_fetch = await self._prefetch_and_filter_robots(urls_to_fetch, user_agent)
+        if not urls_to_fetch:
+            return self._get_step_result()
+
+        # Phase 6: Batch fetch
+        effective_batch_size = min(len(urls_to_fetch), int(self._aimd_concurrency))
+        urls_to_fetch = urls_to_fetch[:effective_batch_size]
+        batch_size = len(urls_to_fetch)
+
+        if is_enabled():
+            trace_counter('fetch.aimd.window', self._aimd_concurrency)
+            trace_counter('fetch.active', self._telemetry['active_fetches'])
+            trace_counter('fetch.batch_size', batch_size)
+
+        results, batch_elapsed = await self._execute_batch_fetch(urls_to_fetch)
+
+        # Phase 7: Process results
+        evidence_ids = self._process_fetch_results(urls_to_fetch, results, budget_mgr)
         effective_parallelism = min(len(urls_to_fetch), int(self._aimd_concurrency))
-        return self._get_step_result(evidence_ids, batch_size=batch_size, effective_parallelism=effective_parallelism, batch_elapsed_ms=round(batch_elapsed * 1000, 2))
+
+        return self._get_step_result(
+            evidence_ids,
+            batch_size=batch_size,
+            effective_parallelism=effective_parallelism,
+            batch_elapsed_ms=round(batch_elapsed * 1000, 2),
+        )
 
     async def _check_dns_and_circuit(self, url: str, domain: str) -> tuple[bool, dict[str, Any], bool, str, float]:
         """Parallel DNS + circuit-breaker check (used in validation + retry loop).
@@ -2124,50 +2183,54 @@ class FetchCoordinator(UniversalCoordinator):
     @_otel_instrumented('fetch.url', component='network')
     async def _fetch_url(self, url: str, attempt: int=0) -> dict[str, Any] | None:  # noqa: C901
         """
-        Fetch a single URL with AIMD concurrency control and timeout matrix.
+        F360: Refactored to delegate to _fetch_url_impl().
 
-        Uses Lightpanda for JS-heavy pages, falls back to curl_cffi.
-        Supports session injection, paywall bypass, and credential rotation.
-        Implements exponential backoff retry on failure.
-
-        AUTHORITY SEAM (audit/8SF):
-          This method is the CURRENT SOURCE-INGRESS OWNER.
-          It directly handles:
-            - .onion via _fetch_with_tor() / _darknet_connector.fetch_onion()
-            - .i2p via _darknet_connector.fetch_i2p()
-            - clearnet via curl_cffi/StealthCrawler
-            - JS-heavy via Lightpanda pool
-          TransportResolver.resolve() is DORMANT — not called here.
-          To wire it in future: replace the above with resolver.resolve(ctx).
+        See _fetch_url_impl() for full documentation.
         """
+        return await self._fetch_url_impl(url, attempt)
+
+    async def _fetch_url_impl(self, url: str, attempt: int) -> dict[str, Any] | None:  # noqa: C901
+        """
+        F360: Extracted implementation of _fetch_url() to reduce cyclomatic complexity.
+
+        This method handles the full fetch lifecycle:
+        - Pre-flight: offline check, rate limiting, privacy acquisition, AIMD check
+        - DNS/circuit validation
+        - Retry loop with transport dispatch
+        - Post-processing: paywall bypass, content-type validation, clearance cookies, CAPTCHA detection
+
+        Returns:
+            Fetch result dict or None on skip/failure.
+        """
+        from urllib.parse import urlparse
         from ..project_types import OfflineModeError, is_offline_mode
         if is_offline_mode():
             raise OfflineModeError(f'Offline mode enabled, skipping fetch: {url}')
-        # B2-FIX: _processed_urls.add() moved AFTER _check_dns_and_circuit()
-        # to prevent race condition where two parallel calls both pass .add()
-        # before DNS check completes for either (issue B2).
+
+        # ---- URL parsing for later use ----
+        _parsed = urlparse(url)
+
+        # ---- Pre-flight: rate limiting & semaphore acquisition ----
         _host_sem: asyncio.Semaphore | None = None
         _host_name = ''
         with contextlib.suppress(ValueError, TypeError):
             _host_name = _fast_url_host(url) or ''
         if _host_name and (not url.lower().endswith(('.onion', '.i2p'))):
-            # CB-02: Per-domain rate limiting — wait for token bucket before acquiring concurrency slot
             _rate_wait = await self._domain_rate_limiter.acquire(_host_name)
             if _rate_wait > 0:
                 logger.debug('[RATE_LIMIT] Waited %.2fs for rate limit on %s', _rate_wait, _host_name)
             _host_sem, _ = await self._per_host_gate.acquire(_host_name)
+
         _privacy_lane = 'clearnet'
         _privacy_acquired = False
         try:
             _privacy_lane, _privacy_acquired = await self._privacy_acquire_for_url(url)
-        except (TimeoutError, asyncio.CancelledError):  # noqa: BLE001 — best-effort; privacy_acquire cancellation/timeout; fail-open to clearnet
+        except (TimeoutError, asyncio.CancelledError):  # noqa: BLE001
             _privacy_lane = 'clearnet'
             _privacy_acquired = True
+
         _aimd_sem: asyncio.Semaphore | None = None
-        # U2-05 FIX: Check io_only BEFORE acquiring AIMD slot, REGARDLESS of privacy lane.
-        # GovernorDecision.io_only means CPU-intensive work must be skipped,
-        # only passive I/O (disk, network passive) should continue.
-        # io_only is cached with 0.5s TTL so this is fast (no blocking eval).
+        # U2-05 FIX: Check io_only BEFORE acquiring AIMD slot
         try:
             from hledac.universal.core.protocols import get_governor
             gov = get_governor()
@@ -2179,29 +2242,31 @@ class FetchCoordinator(UniversalCoordinator):
                             self._processed_urls.discard(url)
                         self._telemetry['io_only_skipped'] += 1
                         return None
-                except Exception:  # noqa: BLE001 — best-effort; governor evaluate failure; continue
+                except Exception:  # noqa: BLE001
                     pass
                 from ..core.resource_governor import Priority
                 if not gov.can_afford_sync({'ram_mb': 15}, Priority.CRITICAL):
                     async with self._dedup_lock:
                         self._processed_urls.discard(url)
                     return None
-        except (TypeError, ValueError, KeyError):  # noqa: BLE001 — best-effort; resource_governor availability check; non-critical
+        except (TypeError, ValueError, KeyError):  # noqa: BLE001
             pass
+
         if _privacy_acquired:
             _concurrency, _aimd_sem = await self._aimd_acquire()
 
-        # F350M-R: Check if quinn HTTP/3 fallback is viable (H3-capable host)
+        # F350M-R: QUINN viability check
         _quinn_viable: bool = False
         try:
             from hledac.universal.transport.http3_lane import http_version_for_curl_cffi
             _quinn_http_version = http_version_for_curl_cffi(url)
             _quinn_viable = _quinn_http_version is not None
-        except (ImportError, Exception):  # noqa: BLE001 — best-effort; http3_lane unavailable
+        except (ImportError, Exception):  # noqa: BLE001
             _quinn_viable = False
+
+        # ---- DNS & circuit breaker validation ----
         dns_safe, dns_meta, canonical_allowed, canonical_reason, canonical_retry_after = await self._check_dns_and_circuit(url, _host_name)
         if not dns_safe:
-            _ev0 = dns_meta.get('blocked_reason')
             logger.warning("DNS rebinding defense blocked: %s for %s", dns_meta.get('blocked_reason'), _host_name)
             trace_fetch_end(url, 'dns_rebind_defense', 'blocked', 0.0, {'reason': dns_meta.get('blocked_reason')})
             self._aimd_semaphore.release()
@@ -2212,15 +2277,12 @@ class FetchCoordinator(UniversalCoordinator):
             async with self._dedup_lock:
                 self._processed_urls.discard(url)
             return {'error': 'blocked', 'blocked_reason': dns_meta.get('blocked_reason'), 'meta': dns_meta}
-        # B2-FIX: add() AFTER successful DNS check — prevents race where two parallel
-        # calls both .add() before either completes DNS validation (issue B2).
+
         async with self._dedup_lock:
             self._processed_urls.add(url)
-        # Resolve transport ONCE before the retry loop so session pre-acquisition
-        # (lines 1445-1448) has valid values — was previously inside the while loop
-        # causing NameError on first attempt for TOR/I2P URLs (url_transport used at
-        # line 1411 before being assigned at line 1438).
-        from ..transport.transport_resolver import RouteDecision, Transport, async_get_route_decision
+
+        # ---- Transport & session pre-acquisition ----
+        from ..transport.transport_resolver import RouteDecision, Transport, get_transport_for_url, async_get_route_decision
         url_transport = get_transport_for_url(url)
         route_decision = await async_get_route_decision(url)
         _pre_acquired_tor_session: Any | None = None
@@ -2229,28 +2291,24 @@ class FetchCoordinator(UniversalCoordinator):
             _pre_acquired_tor_session = await self._get_tor_session(_host_name)
         elif url_transport is Transport.I2P and route_decision is not RouteDecision.I2P_UNAVAILABLE:
             _pre_acquired_i2p_session = await self._get_i2p_session(_host_name)
+
         max_retries = getattr(self, '_max_retries', 3)
         base_delay = getattr(self, '_base_retry_delay', 1.0)
         trace_fetch_start(url, 'pending', {'attempt': attempt, 'aimd_window': self._aimd_concurrency})
         result = None
-        # ISSUE-8.1 / SEC-02: DNS Rebinding Protection — mandatory IP binding.
-        # Computed ONCE before retry loop; dns_meta and resolved_ips are immutable during retries.
-        # SEC-02 FIX: If _resolved_ips is empty (cache miss), perform synchronous DNS
-        # resolution inline so curl_cffi never does its own DNS resolution (TOCTOU close).
+
+        # ---- DNS rebinding protection — compute resolve binding once ----
         _resolve: dict[str, str] | None = None
         _resolved_ips = dns_meta.get('resolved_ips', [])
         _is_darknet_url = url.lower().endswith(('.onion', '.i2p'))
         if _resolved_ips and not _is_darknet_url:
-            # Warm path: use pre-validated IPs from batch DNS cache.
             try:
                 _hostname = _parsed.host
                 if _hostname:
                     _resolve = {_hostname: _resolved_ips[0]}
-            except (ValueError, TypeError):  # noqa: BLE001 — best-effort; URL parse failure; skip resolve binding
+            except (ValueError, TypeError):  # noqa: BLE001
                 pass
         elif not _is_darknet_url and not _resolved_ips:
-            # SEC-02: Cold path — mandatory DNS binding to close TOCTOU window.
-            # Retry resolution inline so curl_cffi never resolves independently.
             _retry_host = _host_name or (_parsed.host if _parsed else None)
             if _retry_host:
                 try:
@@ -2263,291 +2321,118 @@ class FetchCoordinator(UniversalCoordinator):
                                 break
                         else:
                             _resolve = {_retry_host: _retry_ips[0]}
-                except (TimeoutError, OSError):  # noqa: BLE001 — best-effort; inline DNS retry failed; fetch will use curl_cffi native resolve
+                except (TimeoutError, OSError):  # noqa: BLE001
                     pass
+
+        # ---- Main retry loop ----
+        result = await self._fetch_with_retry_loop(
+            url=url,
+            attempt=attempt,
+            max_retries=max_retries,
+            base_delay=base_delay,
+            url_transport=url_transport,
+            route_decision=route_decision,
+            canonical_allowed=canonical_allowed,
+            canonical_reason=canonical_reason,
+            _host_name=_host_name,
+            _resolve=_resolve,
+            _quinn_viable=_quinn_viable,
+            _pre_acquired_tor_session=_pre_acquired_tor_session,
+            _pre_acquired_i2p_session=_pre_acquired_i2p_session,
+            proxy=None if not (self._current_geo_context and self._current_geo_context in self._geo_proxies) else self._geo_proxies.get(self._current_geo_context),
+        )
+
+        # ---- Cleanup: release semaphores ----
+        try:
+            self._aimd_semaphore.release()
+            if _privacy_lane != 'clearnet':
+                self._privacy_release(_privacy_lane)
+            if _host_sem is not None:
+                self._per_host_gate.release(_host_sem)
+        except Exception:  # noqa: BLE001
+            pass
+
+        # ---- Post-processing ----
+        result = self._fetch_url_postprocess(result, url, _host_name)
+        return result
+
+    async def _fetch_with_retry_loop(
+        self,
+        url: str,
+        attempt: int,
+        max_retries: int,
+        base_delay: float,
+        url_transport: Any,
+        route_decision: Any,
+        canonical_allowed: bool,
+        canonical_reason: str,
+        _host_name: str,
+        _resolve: dict[str, str] | None,
+        _quinn_viable: bool,
+        _pre_acquired_tor_session: Any,
+        _pre_acquired_i2p_session: Any,
+        proxy: str | None,
+    ) -> dict[str, Any] | None:
+        from ..transport.transport_resolver import Transport
+        """
+        F360: Extracted retry loop from _fetch_url().
+
+        Handles the transport dispatch and retry logic for a single URL.
+        """
+        _aimd_sem: asyncio.Semaphore | None = None
+        result = None
         try:
             while attempt <= max_retries:
                 if not canonical_allowed:
                     self._telemetry['circuit_breaker_blocks'] = self._telemetry.get('circuit_breaker_blocks', 0) + 1
-                    logger.debug('[CircuitBreaker] Open for %s: %s (retry in %.1fs)', _host_name, canonical_reason, canonical_retry_after)
+                    logger.debug('[CircuitBreaker] Open for %s: %s', _host_name, canonical_reason)
                     trace_fetch_end(url, 'circuit_breaker', 'circuit_open', 0.0)
                     result = None
                     break
+
                 if url_transport is Transport.TOR:
-                    if route_decision is RouteDecision.TOR_UNAVAILABLE:
-                        logger.debug('[TOR] Tor unavailable, dropping %s', url)
-                        trace_fetch_end(url, 'tor', 'unavailable', 0.0)
-                        return None
-                    # CB-03: Check transport-level circuit breaker BEFORE attempting Tor fetch
-                    transport_allowed, transport_reason, transport_retry_after = self._check_transport_circuit("tor")
-                    if not transport_allowed:
-                        logger.debug('[TOR] Transport circuit breaker open: %s (retry in %.1fs)', transport_reason, transport_retry_after)
-                        self._telemetry['circuit_breaker_blocks'] = self._telemetry.get('circuit_breaker_blocks', 0) + 1
-                        trace_fetch_end(url, 'tor', 'transport_circuit_open', 0.0)
-                        self._record_transport_failure("tor")
-                        return None
-                    trace_fetch_start(url, 'tor', {'attempt': attempt, 'timeout': TIMEOUT_TOR})
-                    if self._tor_transport_enabled and self._tor_transport:
-                        from ..transport.base import TransportConfig
-                        tor_config = TransportConfig(url=url, timeout_s=TIMEOUT_TOR, max_bytes=10 * 1024 * 1024)
-                        result = await self._tor_transport.fetch(tor_config)
-                        if not result.error:
-                            result = {'success': True, 'status': result.status_code, 'content': b'', 'url': url, 'final_url': result.final_url or url, 'content_type': result.content_type or 'text/html'}
-                            trace_fetch_end(url, 'tor_transport', 'ok', 0.0)
-                            break
-                        logger.debug('TorTransport fetch failed: %s', result.error)
-                    result = await self._fetch_with_tor(url, session=_pre_acquired_tor_session)
-                    if result:
-                        result['success'] = True
-                        result['status_code'] = result.pop('status', 0)
-                        result['url'] = url
-                        result['final_url'] = url
-                        result.setdefault('content_type', 'text/html')
-                        trace_fetch_end(url, 'tor', 'ok', 0.0)
-                        break
-                    trace_fetch_end(url, 'tor', 'failed', 0.0)
+                    result = await self._fetch_tor(url, attempt, route_decision, _host_name, _pre_acquired_tor_session)
                 elif url_transport is Transport.I2P:
-                    if route_decision is RouteDecision.I2P_UNAVAILABLE:
-                        logger.debug('[I2P] I2P router unavailable, dropping %s', url)
-                        trace_fetch_end(url, 'i2p', 'unavailable', 0.0)
-                        return None
-                    # CB-03: Check transport-level circuit breaker BEFORE attempting I2P fetch
-                    transport_allowed, transport_reason, transport_retry_after = self._check_transport_circuit("i2p")
-                    if not transport_allowed:
-                        logger.debug('[I2P] Transport circuit breaker open: %s (retry in %.1fs)', transport_reason, transport_retry_after)
-                        self._telemetry['circuit_breaker_blocks'] = self._telemetry.get('circuit_breaker_blocks', 0) + 1
-                        trace_fetch_end(url, 'i2p', 'transport_circuit_open', 0.0)
-                        self._record_transport_failure("i2p")
-                        return None
-                    trace_fetch_start(url, 'i2p', {'attempt': attempt, 'timeout': TIMEOUT_I2P})
-                    result = await self._fetch_with_i2p(url, session=_pre_acquired_i2p_session)
-                    if result:
-                        result['success'] = True
-                        result['status_code'] = result.pop('status', 0)
-                        result['url'] = url
-                        result['final_url'] = url
-                        result.setdefault('content_type', 'text/html')
-                        trace_fetch_end(url, 'i2p', 'ok', 0.0)
-                        break
-                    logger.debug('[I2P] Fetch failed and no fallback, dropping %s', url)
-                    trace_fetch_end(url, 'i2p', 'failed', 0.0)
+                    result = await self._fetch_i2p(url, attempt, route_decision, _host_name, _pre_acquired_i2p_session)
                 elif url_transport is Transport.GOPHER:
-                    if self._gopher_transport_enabled and self._gopher_transport:
-                        trace_fetch_start(url, 'gopher', {'attempt': attempt, 'timeout': TIMEOUT_GOPHER})
-                        try:
-                            gopher_res = await self._gopher_transport.fetch(url, timeout_s=TIMEOUT_GOPHER)
-                            if not gopher_res.error:
-                                result = {'success': True, 'status': 200, 'content': gopher_res.content, 'url': url, 'final_url': url, 'content_type': 'text/plain'}
-                                trace_fetch_end(url, 'gopher_transport', 'ok', 0.0)
-                                break
-                            logger.debug('GopherTransport fetch failed: %s', gopher_res.error)
-                        except Exception as e:  # noqa: BLE001 — best-effort; telemetry flush failure; non-critical
-                            logger.debug('GopherTransport error: %s', e)
-                            trace_fetch_end(url, 'gopher_transport', 'error', 0.0)
-                # B3-FIX: Parallel curl + HEAD-based JS heuristic via asyncio.gather.
-                # Previously: sequential curl(1s) → js_detect(50ms) → lightpanda(3-5s) = ~5s total.
-                # Now: curl + HEAD probe run in parallel (~1s), lightpanda only if JS-heavy.
-                # Speedup: ~3-4s for JS-heavy pages, ~0ms overhead for static pages.
-                #
-                # HEAD-based JS heuristic: send HEAD with Accept: text/html + JS-friendly UA.
-                # If HEAD returns 200 + Content-Length > 50KB → JS-heavy candidate.
-                # Falls back to URL heuristic + HTML inspection if HEAD fails.
-                # NOTE: session_cookies was loaded here but _fetch_with_curl has no cookies
-                # parameter — it was dead code. Removed in B3 fix.
-                proxy = None
-                if self._current_geo_context and self._current_geo_context in self._geo_proxies:
-                    proxy = self._geo_proxies.get(self._current_geo_context)
-
-                # ISSUE-8.1 FIX: DNS Rebinding Protection — bind to pre-validated IPs.
-                _curl_result: dict[str, Any] | None = None
-                _js_probe_result: dict[str, Any] | None = None
-
-                # F-07: Get clearance cookies for domain (Cloudflare/DataDome bypass)
-                _clearance_headers: dict[str, str] = {}
-                if self._clearance_jar is not None:
-                    try:
-                        _clearance = self._clearance_jar.get(_host_name)
-                        if _clearance:
-                            from ..security.turnstile_solver import inject_clearance_cookies
-                            _clearance_headers = inject_clearance_cookies(_clearance)
-                            logger.debug('[CLEARANCE] Injecting %d cookies for %s', len(_clearance), _host_name)
-                    except Exception:  # noqa: BLE001 — best-effort; clearance cookie injection failure
-                        pass
-
-                async def _curl_task(*, _attempt: int = attempt, _proxy: str | None = proxy, _extra_headers: dict[str, str] | None = None) -> dict[str, Any] | None:
-                    """Single curl fetch — same semantics as original _fetch_with_curl."""
-                    trace_fetch_start(url, 'curl', {'attempt': _attempt, 'timeout': TIMEOUT_CLEARNET_HTML, 'resolve': _resolve})
-                    # F-07: Merge clearance headers with existing headers
-                    _req_headers = dict(_extra_headers) if _extra_headers else None
-                    if _clearance_headers:
-                        if _req_headers is None:
-                            _req_headers = {}
-                        _req_headers.update(_clearance_headers)
-                    r: dict[str, Any] | None = await self._fetch_with_curl(url, _proxy, resolve=_resolve, _extra_headers=_req_headers)
-                    if r and (not r.get('error')):
-                        trace_fetch_end(url, 'curl', 'ok', 0.0)
-                    else:
-                        trace_fetch_end(url, 'curl', r.get('error', 'failed') if r else 'none', 0.0)
-                    return r
-
-                async def _js_probe_task() -> dict[str, Any] | None:
-                    """
-                    Fast HEAD probe for JS-heavy detection.
-                    Returns {'is_js': bool, 'payload_bytes': int} or None on network error.
-
-                    Uses plain httpx — no curl_cffi needed for a lightweight HEAD probe.
-                    High confidence signal: 200 + Content-Length > 50 KB → JS-heavy SPA candidate.
-
-                    SEC-04 FIX: Skip darknet URLs — plain httpx has no Tor/I2P proxy,
-                    a HEAD probe would leak the URL to clearnet DNS/IP.
-                    """
-                    # SEC-04: Guard — skip darknet URLs to prevent clearnet DNS/IP leak
-                    _url_lower = url.lower()
-                    if _url_lower.endswith(('.onion', '.i2p', '.b32.i2p')):
-                        return None
-                    try:
-                        import httpx
-                        _ua = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36'
-                        async with httpx.AsyncClient(
-                            timeout=5.0,
-                            follow_redirects=True,
-                            limits=httpx.Limits(max_connections=25, max_keepalive_connections=10),
-                            http2=True,
-                        ) as client:
-                            resp = await client.head(
-                                url,  # B3-FIX: was _js_probe_url (undefined)
-                                headers={'Accept': 'text/html', 'User-Agent': _ua},
-                            )
-                            _status = resp.status_code
-                            _cl_hdr = resp.headers.get('content-length', '')
-                            _payload = int(_cl_hdr) if _cl_hdr.isdigit() else 0
-                            # High confidence: 200 + large payload → JS-heavy
-                            _is_js = (_status == 200 and _payload > 50 * 1024)
-                            return {'is_js': _is_js, 'payload_bytes': _payload}
-                    except ImportError:
-                        return None
-                    except Exception:  # noqa: BLE001 — best-effort; HEAD probe failure; non-critical
-                        return None
-
-                # SILICON-03: Network.framework user-space TCP lane
-                # Race with curl_cffi — if NW finishes first with success, use it.
-                # NW is ~30-40% lower latency on M1 due to eliminated kernel transitions.
-                async def _nw_connection_task() -> dict[str, Any] | None:
-                    """Preferred lane: Apple Network.framework (user-space TCP + hw TLS)."""
-                    # Skip for stealth/JA3 required scenarios — NW has no fingerprint rotation
-                    # Skip for dark web — NW is clearnet only (no SOCKS proxy support)
-                    _url_lower = url.lower()
-                    if _url_lower.endswith(('.onion', '.i2p', '.b32.i2p')):
-                        return None
-                    # Only use NW for simple GET requests (no stealth, no JS, no dark web)
-                    if not _host_name:
-                        return None
-                    try:
-                        nw_result = await self._fetch_with_nw_connection(url)
-                        if nw_result and not nw_result.get('error') and nw_result.get('status_code', 0) < 400:
-                            logger.debug('[NW] Network.framework succeeded for %s (status=%s, %.0fms)',
-                                        url, nw_result.get('status_code'), nw_result.get('elapsed_ms', 0))
-                            return nw_result
-                        return None
-                    except Exception:
-                        return None
-
-                # B3-FIX (F350M-R): parallel() with taskgroup backend replaces asyncio.gather.
-                # Race: curl vs JS probe vs NW connection — all run concurrently.
-                # parallel(policy="collect") collects results without raising.
-                # NW result is preferred when it succeeds (lower latency, user-space TCP).
-                _parallel_tasks = [_curl_task(_extra_headers=_clearance_headers), _js_probe_task()]
-                if not url.lower().endswith(('.onion', '.i2p', '.b32.i2p')):
-                    _parallel_tasks.append(_nw_connection_task())
-                results = await parallel(
-                    _parallel_tasks,
-                    policy="collect",
-                    concurrency=len(_parallel_tasks),
-                    ctx="curl_nw_js_probe",
-                )
-                _curl_result = results.ok[0] if len(results.ok) > 0 else None
-                _js_probe_result = results.ok[1] if len(results.ok) > 1 else None
-                _nw_result = results.ok[2] if len(results.ok) > 2 else None
-
-                # SILICON-03: Prefer Network.framework result when successful
-                if isinstance(_nw_result, dict) and not _nw_result.get('error') and _nw_result.get('status_code', 0) < 400:
-                    result = _nw_result
-                    logger.debug('[NW] Using Network.framework result for %s (preferred lane)', url)
+                    result = await self._fetch_gopher(url, attempt)
                 else:
-                    result = _curl_result if isinstance(_curl_result, dict) else None
+                    # Clearnet fetch with parallel curl/JS-probe/NW
+                    result = await self._fetch_clearnet(
+                        url=url,
+                        attempt=attempt,
+                        _host_name=_host_name,
+                        _resolve=_resolve,
+                        _quinn_viable=_quinn_viable,
+                        proxy=proxy,
+                    )
 
-                # F350M-R: QUIC/HTTP3 fallback — when curl failed but H3 is available
-                if result is None or result.get('error'):
-                    if _quinn_viable:
-                        logger.debug('[QUINN] Falling back to quinn HTTP/3 for %s', url)
-                        trace_fetch_start(url, 'quinn', {'attempt': attempt, 'timeout': TIMEOUT_CLEARNET_HTML})
-                        quinn_result = await self._fetch_with_quinn(url)
-                        if quinn_result and not quinn_result.get('error'):
-                            result = quinn_result
-                            trace_fetch_end(url, 'quinn', 'ok', 0.0)
-                        else:
-                            trace_fetch_end(url, 'quinn', quinn_result.get('error', 'failed') if quinn_result else 'none', 0.0)
-
-                # Resolve JS-heavy status from probe or fall back to heuristic
-                _is_js: bool = False
-                if isinstance(_js_probe_result, dict):
-                    _is_js = bool(_js_probe_result.get('is_js'))
-                if not _is_js:
-                    # Fallback: URL heuristic + lazy HTML inspection (from curl response)
-                    _is_js = self._is_js_heavy(url)
-                    if not _is_js and result:
-                        _content = result.get('content', b'')
-                        if isinstance(_content, bytes):
-                            try:
-                                _content_str = _content.decode('utf-8', errors='replace')
-                            except Exception:  # noqa: BLE001 — content decode failure; skip JS inspection
-                                _content_str = ''
-                        else:
-                            _content_str = str(_content) if _content else ''
-                        _is_js = self._is_js_heavy(url, _content_str[:10000])
-
-                if _is_js:
-                    logger.debug('[LIGHTPANDA] JS-heavy detected: %s', url)
-                    trace_fetch_start(url, 'lightpanda', {'attempt': attempt})
-                    lightpanda_result = await self._fetch_with_lightpanda(url, proxy)
-                    if lightpanda_result and lightpanda_result.get('content'):
-                        lightpanda_result.setdefault('success', True)
-                        lightpanda_result.setdefault('status_code', 200)
-                        lightpanda_result.setdefault('content_type', 'text/html')
-                        lightpanda_result.setdefault('final_url', url)
-                        lightpanda_result.setdefault('headers', {})
-                        result = lightpanda_result
-                        trace_fetch_end(url, 'lightpanda', 'ok', 0.0)
-                    else:
-                        trace_fetch_end(url, 'lightpanda', 'failed', 0.0)
+                # Success check and retry logic
+                if result and not result.get('error') and result.get('status_code', 200) < 500:
+                    break
                 if result is None or result.get('error') == 'timeout' or result.get('status_code', 200) >= 500:
                     if attempt < max_retries:
-                        # CB-04: Check retry budget BEFORE scheduling retry
-                        # ISSUE-011 FIX: await async method (was sync threading.Lock which blocked event loop)
                         budget_allowed, budget_reason = await self._check_retry_budget(_host_name)
                         if not budget_allowed:
                             logger.debug('[RETRY-BUDGET] Skipping retry for %s: %s', _host_name, budget_reason)
                             self._telemetry['circuit_breaker_blocks'] = self._telemetry.get('circuit_breaker_blocks', 0) + 1
                             break
-                        # CB-01 FIX: Exponential backoff with full jitter (not just +0.5 fixed).
-                        # Full jitter: delay ∈ [0, base * 2^attempt] prevents thundering herd.
                         _delay = base_delay * (2 ** attempt)
                         jitter = _JITTER_RNG.uniform(0, _delay)
-                        delay = min(_delay + jitter, 30.0)  # ~0-3s, 0-6s, 0-12s (capped at 30s)
+                        delay = min(_delay + jitter, 30.0)
                         logger.debug('[RETRY] Attempt %s/%s for %s after %ss', attempt + 1, max_retries, url, delay)
                         trace_fetch_end(url, 'none', 'retry', 0.0, {'attempt': attempt, 'delay': delay})
-                        # CB-04: Record retry attempt for budget tracking
-                        # ISSUE-011 FIX: await async method (was sync threading.Lock which blocked event loop)
                         await self._record_retry(_host_name)
                         await asyncio.sleep(delay)
                         attempt += 1
                         continue
                 break
-            if result and (not result.get('error')):
+
+            # Success/failure recording
+            if result and not result.get('error'):
                 result.setdefault('success', True)
                 await self._aimd_release_success()
                 self._record_success(_host_name)
-                # CB-03: Record transport-level success to reset transport circuit breaker
                 if url_transport is Transport.TOR:
                     self._record_transport_success("tor")
                 elif url_transport is Transport.I2P:
@@ -2556,67 +2441,59 @@ class FetchCoordinator(UniversalCoordinator):
             elif result is None or result.get('error'):
                 is_timeout = result.get('error') == 'timeout' if result else True
                 self._record_failure(_host_name, is_timeout=is_timeout, failure_kind='fetch_error')
-                # CB-03: Record transport-level failure when darknet fetch fails
                 if url_transport is Transport.TOR:
                     self._record_transport_failure("tor", is_timeout=is_timeout)
                 elif url_transport is Transport.I2P:
                     self._record_transport_failure("i2p", is_timeout=is_timeout)
-        except (TimeoutError, httpx.HTTPError, OSError, asyncio.CancelledError) as e:  # noqa: BLE001 — best-effort; httpx/network request failure; non-critical
+
+        except (TimeoutError, httpx.HTTPError, OSError, asyncio.CancelledError) as e:  # noqa: BLE001
             logger.warning('[_fetch_url] Unexpected error for %s: %s', url, e)
             await self._aimd_release_failure()
             result = {'url': url, 'content': b'', 'error': str(e)}
-        finally:
-            self._aimd_semaphore.release()
-            if _privacy_lane != 'clearnet':
-                self._privacy_release(_privacy_lane)
-            if _host_sem is not None:
-                self._per_host_gate.release(_host_sem)
+
+        return result
+
+    def _fetch_url_postprocess(self, result: dict[str, Any] | None, url: str, _host_name: str) -> dict[str, Any] | None:
+        """F360: Post-processing for fetch result."""
+        trace_fetch_end(url, 'none', 'done', 0.0)
         if result and result.get('status_code') in (401, 403) and self._session_manager:
-            await self._session_manager.rotate_credentials(_host_name)
+            self._session_manager.rotate_credentials(_host_name)
             logger.info('[SESSION] Rotated credentials for %s', _host_name)
+
         if result and result.get('content'):
             content = result['content']
             if isinstance(content, bytes):
                 content = content.decode(errors='ignore')
             if len(content) < 5000 and self._paywall_bypass:
-                bypass_result = await self._paywall_bypass.bypass(url, content)
+                bypass_result = self._paywall_bypass.bypass(url, content)
                 if bypass_result:
-                    _ev0 = bypass_result.get('bypassed')
                     logger.info("[PAYWALL] Bypassed via %s", bypass_result.get('bypassed'))
                     result['content'] = bypass_result.get('content', '').encode()
                     result['bypassed'] = bypass_result.get('bypassed')
                     result['paywall'] = bypass_result.get('paywall')
-        trace_fetch_end(url, 'none', 'done', 0.0)
-        # OSINT-04 FIX: Validate content-type BEFORE parsing — prevents parser dispatch on binary/image data
+
+        # OSINT-04: Content-type validation
         if result and result.get('content'):
             ct = result.get('content_type', '') or ''
-            # Known content-types that are safe to parse
             _safe_ct_prefixes = ('text/', 'application/json', 'application/xml', 'application/xhtml', 'application/ld+json')
             if ct and not any(ct.startswith(p) for p in _safe_ct_prefixes):
-                _ct_log = ct[:128]
-                logger.debug('[OSINT-04] Blocking parse for content-type %s on %s', _ct_log, url)
+                logger.debug('[OSINT-04] Blocking parse for content-type %s on %s', ct[:128], url)
                 result['content'] = b''
-        # F-07: Cloudflare Turnstile / DataDome clearance cookie handling
-        # Only invoke challenge detection + storage path when status suggests a challenge
+
+        # F-07: Clearance cookie handling
         if result and result.get('status_code') in (403, 429) and self._clearance_jar is not None:
             try:
-                from ..security.turnstile_solver import (
-                    detect_turnstile_challenge,
-                    get_clearance_for_domain,
-                )
+                from ..security.turnstile_solver import detect_turnstile_challenge, get_clearance_for_domain
                 result_headers = result.get('headers') or {}
                 result_content = result.get('content', b'')
-                # Guard: only proceed if challenge signatures are actually present
                 if detect_turnstile_challenge(url, result.get('status_code', 0), result_headers, result_content):
-                    # get_clearance_for_domain is async — awaits extract_clearance_token_from_headers (sync)
-                    # but is defined as async for future browser-based solving
-                    clearance = await get_clearance_for_domain(
-                        _host_name, url, result.get('status_code', 0), result_headers, result_content
-                    )
+                    clearance = get_clearance_for_domain(_host_name, url, result.get('status_code', 0), result_headers, result_content)
                     if clearance:
                         logger.info('[CLEARANCE] Stored %d clearance cookies for %s', len(clearance), _host_name)
-            except Exception:  # noqa: BLE001 — best-effort; clearance detection/storing failure
+            except Exception:  # noqa: BLE001
                 pass
+
+        # CAPTCHA detection
         if self._captcha_detector is not None and result and result.get('content'):
             ct = result.get('content_type', '')
             content_bytes = result['content']
@@ -2627,8 +2504,9 @@ class FetchCoordinator(UniversalCoordinator):
                         logger.debug('[CAPTCHA] CAPTCHA detected at %s, skipping', url_for_check)
                         self._captcha_detections += 1
                         return None
-                except Exception:  # noqa: BLE001 — best-effort; lightpanda close failure; non-critical
+                except Exception:  # noqa: BLE001
                     pass
+
         return result
 
     async def _maybe_deep_research(self, query: str, limit: int=10) -> list[dict[str, Any]] | None:
@@ -2887,12 +2765,7 @@ def _put_task(task: object, pivot_queue: asyncio.Queue, pivot_stats: dict | None
         pivot_stats = self._pivot_stats_provider()
 
         # [FINAL]-019: temporal correlation decorrelation
-        # Parse stagger once per call — env lookup is relatively expensive.
         _pivot_stagger_ms = FeatureFlags.get_int(FeatureFlag.PIVOT_STAGGER_MS, 500)
-        try:
-            _pivot_stagger_ms = float(_pivot_stagger_ms_str)
-        except ValueError:
-            _pivot_stagger_ms = 500.0
 
         for idx, tt in enumerate(task_types_list):
             effective = self._adaptive_priority_provider(tt, base_priority)
@@ -2922,6 +2795,7 @@ def _put_task(task: object, pivot_queue: asyncio.Queue, pivot_stats: dict | None
                     pivot_stats['total'] = pivot_stats.get('total', 0) + 1
             except asyncio.QueueFull:  # noqa: BLE001
                 pass
+    def _enqueue_hypothesis_pivot(self, ioc_value: str, ioc_type: str, confidence: float, depth: int, degree: float=1.0) -> bool:
         """Enqueue a hypothesis-driven pivot task with bounded caps.
 
         Sprint F193B: Bounded hypothesis → finding feedback loop.
@@ -3379,7 +3253,7 @@ def _put_task(task: object, pivot_queue: asyncio.Queue, pivot_stats: dict | None
         max_hops: int = 2,
         timeout: float = 30.0,
         reason: str | None = None,
-    ) -> 'MicroSprintResult':
+    ) -> Any:
         """
         Lightweight targeted re-fetch for high-entropy entities.
 
@@ -3495,6 +3369,9 @@ def _put_task(task: object, pivot_queue: asyncio.Queue, pivot_stats: dict | None
                 hops_explored=hops_explored,
             )
 
+    # ---------------------------------------------------------------------------
+    # ---------------------------------------------------------------------------
+    # ---------------------------------------------------------------------------
     async def _execute_micro_sprint_protocol(
         self,
         entity_id: str,
@@ -3503,195 +3380,20 @@ def _put_task(task: object, pivot_queue: asyncio.Queue, pivot_stats: dict | None
     ) -> list[str]:
         """
         Execute a single protocol for micro-sprint.
-
-        UNIFIED-004: Extended protocol support — 10+ alternative discovery
-        protocols for entropy-driven re-fetching. Each protocol is fail-soft
-        (any error → empty list, logged at debug level).
-
-        Args:
-            entity_id: Target entity (URL, domain, IP, hash, etc.)
-            protocol: Discovery protocol name
-            max_hops: Graph traversal depth (ignored for most protocols)
-
-        Returns:
-            List of evidence IDs created
         """
         evidence_ids: list[str] = []
-
         try:
-            # ── Direct URL fetch ──────────────────────────────────────
-            if protocol == 'url':
-                self._frontier.append(entity_id)
-                step_result = await self.step(self._ctx)
-                evidence_ids = step_result.get('evidence_ids', [])
-
-            # ── Certificate Transparency ──────────────────────────────
-            elif protocol == 'ct':
-                from ..recon.ct_log_client import CTLogClient
-                from hledac.universal.paths import CACHE_ROOT
-                import httpx
-
-                cache_dir = CACHE_ROOT / 'ct_logs'
-                cache_dir.mkdir(parents=True, exist_ok=True)
-
-                client = CTLogClient(cache_dir=cache_dir)
-                async with httpx.AsyncClient() as session:
-                    results = await client.search(entity_id, session)
-                    for result in results:
-                        if isinstance(result, dict) and 'san_names' in result:
-                            for san_name in result['san_names'][:5]:
-                                evidence_ids.append(f"ct:{entity_id}:{san_name}")
-
-            # ── Passive DNS ───────────────────────────────────────────
-            elif protocol == 'passive_dns':
-                from ..security.passive_dns import lookup_passive_dns
-
-                results = await lookup_passive_dns(entity_id)
-                for result in results:
-                    if isinstance(result, str):
-                        evidence_ids.append(f"pdns:{entity_id}:{result}")
-
-            # ── DoH (DNS-over-HTTPS) ──────────────────────────────────
-            elif protocol == 'doh':
-                from ..security.passive_dns import resolve_doh
-
-                results = await resolve_doh(entity_id)
-                for result in results:
-                    if isinstance(result, str):
-                        evidence_ids.append(f"doh:{entity_id}:{result}")
-
-            # ── Wayback Machine (CDX API) ─────────────────────────────
-            elif protocol == 'wayback':
-                from ..discovery.wayback_cdx_adapter import (
-                    WaybackCDXAdapter,
-                )
-                adapter = WaybackCDXAdapter()
-                batch = await adapter.search(entity_id, max_results=10)
-                for hit in (batch.hits or []):
-                    if hasattr(hit, 'url') and hit.url:
-                        evidence_ids.append(f"wayback:{entity_id}:{hit.url[:80]}")
-
-            # ── BGP enrichment ────────────────────────────────────────
-            elif protocol == 'bgp':
-                import os
-                if FeatureFlags.get(FeatureFlag.BGP):
-                    from ..sidecar_orchestrator import SidecarOrchestrator
-                    # Lightweight BGP prefix lookup — not full sidecar
-                    # Uses existing BGP data if available
-                    evidence_ids.append(f"bgp:{entity_id}:prefix_lookup")
-                    logger.debug(
-                        '[UNIFIED-004] BGP lookup queued for %s (async sidecar)',
-                        entity_id,
-                    )
-
-            # ── Shodan ────────────────────────────────────────────────
-            elif protocol == 'shodan':
-                import os
-                if FeatureFlags.get(FeatureFlag.SHODAN):
-                    from ..recon.shodan_lane import ShodanLane
-                    lane = ShodanLane()
-                    result = await lane.search_ip(entity_id, max_results=5)
-                    if result and hasattr(result, 'items'):
-                        for item in result.items[:5]:
-                            eid = f"shodan:{entity_id}:{item.get('ip_str', '')}"
-                            evidence_ids.append(eid)
-                else:
-                    logger.debug(
-                        '[UNIFIED-004] Shodan skipped for %s (HLEDAC_ENABLE_SHODAN=0)',
-                        entity_id,
-                    )
-
-            # ── Censys ────────────────────────────────────────────────
-            elif protocol == 'censys':
-                import os
-                if FeatureFlags.get(FeatureFlag.CENSYS):
-                    # Censys uses the exposure_clients module
-                    from ..recon.exposure_clients import CensysClient
-                    client = CensysClient()
-                    result = await client.search(entity_id, max_results=5)
-                    if result and hasattr(result, 'items'):
-                        for item in result.items[:5]:
-                            eid = f"censys:{entity_id}:{item.get('ip', '')}"
-                            evidence_ids.append(eid)
-                else:
-                    logger.debug(
-                        '[UNIFIED-004] Censys skipped for %s (HLEDAC_ENABLE_CENSYS=0)',
-                        entity_id,
-                    )
-
-            # ── Gopher ─────────────────────────────────────────────────
-            elif protocol == 'gopher':
-                if FeatureFlags.get(FeatureFlag.GOPHER):
-                    # Gopher protocol fetch — historical data discovery
-                    if self._gopher_transport is not None:
-                        result = await self._gopher_transport.fetch(entity_id)
-                        if result and result.get('success'):
-                            evidence_ids.append(f"gopher:{entity_id}")
-                else:
-                    logger.debug(
-                        '[UNIFIED-004] Gopher skipped for %s (HLEDAC_ENABLE_GOPHER=0)',
-                        entity_id,
-                    )
-
-            # ── CommonCrawl ────────────────────────────────────────────
-            elif protocol == 'commoncrawl':
-                import os
-                if FeatureFlags.get(FeatureFlag.COMMONCRAWL):
-                    # CommonCrawl Index API — lightweight URL search
-                    import httpx
-                    cc_url = (
-                        "http://index.commoncrawl.org/CC-MAIN-2024-10-index"
-                        f"?url={entity_id}&output=json"
-                    )
-                    async with httpx.AsyncClient(timeout=10.0) as client:
-                        resp = await client.get(cc_url)
-                        if resp.status_code == 200:
-                            for line in resp.text.strip().split('\n')[:5]:
-                                evidence_ids.append(f"commoncrawl:{entity_id}:{line[:80]}")
-                else:
-                    logger.debug(
-                        '[UNIFIED-004] CommonCrawl skipped for %s (HLEDAC_ENABLE_COMMONCRAWL=0)',
-                        entity_id,
-                    )
-
-            # ── DHT (Mainline BitTorrent) ─────────────────────────────
-            elif protocol == 'dht':
-                import os
-                if FeatureFlags.get(FeatureFlag.DHT):
-                    # DHT discovery — hash-based entity lookups
-                    # In micro-sprint context, this is a lightweight probe
-                    evidence_ids.append(f"dht:{entity_id}:probe")
-                    logger.debug(
-                        '[UNIFIED-004] DHT probe queued for %s', entity_id,
-                    )
-                else:
-                    logger.debug(
-                        '[UNIFIED-004] DHT skipped for %s (HLEDAC_ENABLE_DHT=0)',
-                        entity_id,
-                    )
-
-            # ── Blockchain ─────────────────────────────────────────────
-            elif protocol == 'blockchain':
-                import os
-                if FeatureFlags.get(FeatureFlag.BLOCKCHAIN_ANALYZER):
-                    # Blockchain address analysis — BTC/ETH
-                    evidence_ids.append(f"blockchain:{entity_id}:lookup")
-                    logger.debug(
-                        '[UNIFIED-004] Blockchain lookup queued for %s', entity_id,
-                    )
-                else:
-                    logger.debug(
-                        '[UNIFIED-004] Blockchain skipped for %s (HLEDAC_ENABLE_BLOCKCHAIN_ANALYZER=0)',
-                        entity_id,
-                    )
-
+            handler_name = _PROTOCOL_HANDLERS.get(protocol)
+            if handler_name:
+                handler = getattr(self, handler_name, None)
+                if handler:
+                    evidence_ids = await handler(entity_id)
             else:
                 logger.debug('[UNIFIED-004] Unknown micro-sprint protocol: %s', protocol)
-
         except Exception as e:
             logger.debug('[UNIFIED-004] Protocol %s failed for %s: %s', protocol, entity_id, e)
-
         return evidence_ids
+
 
     async def _compute_evidence_entropy(self, evidence_ids: list[str]) -> float:
         """
@@ -3739,55 +3441,6 @@ def _put_task(task: object, pivot_queue: asyncio.Queue, pivot_stats: dict | None
 
         return 0.0
 
-    # SILICON-07: SwarmDAG rebalancer loop
-    async def _swarm_dag_rebalance_loop(self) -> None:
-        """
-        SILICON-07: Background loop that triggers SwarmDAG adaptive rebalancing.
-
-        Fires every 10 seconds (matching REBALANCE_INTERVAL_SECS in swarm_dag.rs).
-        On rebalance, logs the new worker allocation so operators can observe
-        mid-sprint lane migrations.
-
-        This loop is separate from the SwarmDAG internal rebalancer (which fires
-        every 10s) to provide Python-side observability and integration with
-        FetchCoordinator telemetry.
-        """
-        import time
-
-        last_rebalance_log = 0.0
-        while getattr(self, '_running', False):
-            try:
-                await asyncio.sleep(10.0)
-                if not self._swarm_dag:
-                    continue
-
-                # Trigger rebalance check in Rust/Python DAG
-                did_rebalance = self._swarm_dag.rebalance()
-
-                # Log allocation changes (but not every 10s — only on change)
-                roi_signals = self._swarm_dag.get_roi_signals()
-                allocation = self._swarm_dag.get_worker_allocation()
-
-                if did_rebalance or time.time() - last_rebalance_log > 60.0:
-                    logger.info(
-                        '[SILICON-07] SwarmDAG state: '
-                        'fetch_roi=%.1f parse_roi=%.1f analyze_roi=%.1f | '
-                        'workers: fetch=%d parse=%d analyze=%d | '
-                        'rebalance=%s',
-                        roi_signals.get('fetch', 0.0),
-                        roi_signals.get('parse', 0.0),
-                        roi_signals.get('analyze', 0.0),
-                        allocation.get('fetch', 0),
-                        allocation.get('parse', 0),
-                        allocation.get('analyze', 0),
-                        did_rebalance,
-                    )
-                    last_rebalance_log = time.time()
-
-            except asyncio.CancelledError:
-                break
-            except Exception as e:
-                logger.debug('[SILICON-07] Rebalance loop error: %s', e)
 
     async def _entropy_alert_consumer_loop(self) -> None:
         """
@@ -4102,3 +3755,161 @@ def _put_task(task: object, pivot_queue: asyncio.Queue, pivot_stats: dict | None
             self._micro_sprint_queue.put_nowait(retry_request)
         except asyncio.QueueFull:
             logger.debug('[UNIFIED-004] Retry queue full for %s — dropping', entity_id)
+
+    async def _handle_url(self, entity_id: str) -> list[str]:
+        """Handle direct URL fetch protocol."""
+        self._frontier.append(entity_id)
+        step_result = await self.step(self._ctx)
+        return step_result.get('evidence_ids', [])
+
+    async def _handle_ct(self, entity_id: str) -> list[str]:
+        """Handle Certificate Transparency protocol."""
+        from ..recon.ct_log_client import CTLogClient
+        from hledac.universal.paths import CACHE_ROOT
+        import httpx
+
+        evidence_ids = []
+        cache_dir = CACHE_ROOT / 'ct_logs'
+        cache_dir.mkdir(parents=True, exist_ok=True)
+
+        client = CTLogClient(cache_dir=cache_dir)
+        async with httpx.AsyncClient() as session:
+            results = await client.search(entity_id, session)
+            for result in results:
+                if isinstance(result, dict) and 'san_names' in result:
+                    for san_name in result['san_names'][:5]:
+                        evidence_ids.append(f"ct:{entity_id}:{san_name}")
+        return evidence_ids
+
+    async def _handle_passive_dns(self, entity_id: str) -> list[str]:
+        """Handle Passive DNS protocol."""
+        from ..security.passive_dns import lookup_passive_dns
+        evidence_ids = []
+        results = await lookup_passive_dns(entity_id)
+        for result in results:
+            if isinstance(result, str):
+                evidence_ids.append(f"pdns:{entity_id}:{result}")
+        return evidence_ids
+
+    async def _handle_doh(self, entity_id: str) -> list[str]:
+        """Handle DNS-over-HTTPS protocol."""
+        from ..security.passive_dns import resolve_doh
+        evidence_ids = []
+        results = await resolve_doh(entity_id)
+        for result in results:
+            if isinstance(result, str):
+                evidence_ids.append(f"doh:{entity_id}:{result}")
+        return evidence_ids
+
+    async def _handle_wayback(self, entity_id: str) -> list[str]:
+        """Handle Wayback Machine protocol."""
+        from ..discovery.wayback_cdx_adapter import WaybackCDXAdapter
+        evidence_ids = []
+        adapter = WaybackCDXAdapter()
+        batch = await adapter.search(entity_id, max_results=10)
+        for hit in (batch.hits or []):
+            if hasattr(hit, 'url') and hit.url:
+                evidence_ids.append(f"wayback:{entity_id}:{hit.url[:80]}")
+        return evidence_ids
+
+    async def _handle_bgp(self, entity_id: str) -> list[str]:
+        """Handle BGP enrichment protocol."""
+        evidence_ids = []
+        if FeatureFlags.get(FeatureFlag.BGP):
+            evidence_ids.append(f"bgp:{entity_id}:prefix_lookup")
+            logger.debug('[UNIFIED-004] BGP lookup queued for %s (async sidecar)', entity_id)
+        return evidence_ids
+
+    async def _handle_shodan(self, entity_id: str) -> list[str]:
+        """Handle Shodan protocol."""
+        evidence_ids = []
+        if FeatureFlags.get(FeatureFlag.SHODAN):
+            from ..recon.shodan_lane import ShodanLane
+            lane = ShodanLane()
+            result = await lane.search_ip(entity_id, max_results=5)
+            if result and hasattr(result, 'items'):
+                for item in result.items[:5]:
+                    eid = f"shodan:{entity_id}:{item.get('ip_str', '')}"
+                    evidence_ids.append(eid)
+        else:
+            logger.debug('[UNIFIED-004] Shodan skipped for %s (HLEDAC_ENABLE_SHODAN=0)', entity_id)
+        return evidence_ids
+
+    async def _handle_censys(self, entity_id: str) -> list[str]:
+        """Handle Censys protocol."""
+        evidence_ids = []
+        if FeatureFlags.get(FeatureFlag.CENSYS):
+            from ..recon.exposure_clients import CensysClient
+            client = CensysClient()
+            result = await client.search(entity_id, max_results=5)
+            if result and hasattr(result, 'items'):
+                for item in result.items[:5]:
+                    eid = f"censys:{entity_id}:{item.get('ip', '')}"
+                    evidence_ids.append(eid)
+        else:
+            logger.debug('[UNIFIED-004] Censys skipped for %s (HLEDAC_ENABLE_CENSYS=0)', entity_id)
+        return evidence_ids
+
+    async def _handle_gopher(self, entity_id: str) -> list[str]:
+        """Handle Gopher protocol."""
+        evidence_ids = []
+        if FeatureFlags.get(FeatureFlag.GOPHER):
+            if self._gopher_transport is not None:
+                result = await self._gopher_transport.fetch(entity_id)
+                if result and result.get('success'):
+                    evidence_ids.append(f"gopher:{entity_id}")
+        else:
+            logger.debug('[UNIFIED-004] Gopher skipped for %s (HLEDAC_ENABLE_GOPHER=0)', entity_id)
+        return evidence_ids
+
+    async def _handle_commoncrawl(self, entity_id: str) -> list[str]:
+        """Handle CommonCrawl protocol."""
+        import httpx
+        evidence_ids = []
+        if FeatureFlags.get(FeatureFlag.COMMONCRAWL):
+            cc_url = f"http://index.commoncrawl.org/CC-MAIN-2024-10-index?url={entity_id}&output=json"
+            async with httpx.AsyncClient(timeout=10.0) as client:
+                resp = await client.get(cc_url)
+                if resp.status_code == 200:
+                    for line in resp.text.strip().split('\n')[:5]:
+                        evidence_ids.append(f"commoncrawl:{entity_id}:{line[:80]}")
+        else:
+            logger.debug('[UNIFIED-004] CommonCrawl skipped for %s (HLEDAC_ENABLE_COMMONCRAWL=0)', entity_id)
+        return evidence_ids
+
+    async def _handle_dht(self, entity_id: str) -> list[str]:
+        """Handle DHT (BitTorrent) protocol."""
+        evidence_ids = []
+        if FeatureFlags.get(FeatureFlag.DHT):
+            evidence_ids.append(f"dht:{entity_id}:probe")
+            logger.debug('[UNIFIED-004] DHT probe queued for %s', entity_id)
+        else:
+            logger.debug('[UNIFIED-004] DHT skipped for %s (HLEDAC_ENABLE_DHT=0)', entity_id)
+        return evidence_ids
+
+    async def _handle_blockchain(self, entity_id: str) -> list[str]:
+        """Handle Blockchain protocol."""
+        evidence_ids = []
+        if FeatureFlags.get(FeatureFlag.BLOCKCHAIN_ANALYZER):
+            evidence_ids.append(f"blockchain:{entity_id}:lookup")
+            logger.debug('[UNIFIED-004] Blockchain lookup queued for %s', entity_id)
+        else:
+            logger.debug('[UNIFIED-004] Blockchain skipped for %s (HLEDAC_ENABLE_BLOCKCHAIN_ANALYZER=0)', entity_id)
+        return evidence_ids
+
+
+# Dispatch table - maps protocol name to handler method name
+_PROTOCOL_HANDLERS: dict[str, str] = {
+    'url': '_handle_url',
+    'ct': '_handle_ct',
+    'passive_dns': '_handle_passive_dns',
+    'doh': '_handle_doh',
+    'wayback': '_handle_wayback',
+    'bgp': '_handle_bgp',
+    'shodan': '_handle_shodan',
+    'censys': '_handle_censys',
+    'gopher': '_handle_gopher',
+    'commoncrawl': '_handle_commoncrawl',
+    'dht': '_handle_dht',
+    'blockchain': '_handle_blockchain',
+}

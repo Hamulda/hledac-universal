@@ -628,6 +628,60 @@ def generate_embeddings(texts: list[str], batch_size: int | None=None, keep_load
     return result
 
 
+def _deduplicate_texts(texts: list[str]) -> tuple[list[str], list[int], bool]:
+    """Deduplicate texts using xxhash, return (deduped_texts, original_to_unique, dedup_happened)."""
+    try:
+        import xxhash
+        seen: dict[str, int] = {}
+        unique_list: list[str] = []
+        original_to_unique = []
+        for text in texts:
+            h = xxhash.xxh3_64(text.encode('utf-8', errors='replace')).hexdigest()
+            if h not in seen:
+                seen[h] = len(unique_list)
+                unique_list.append(text)
+            original_to_unique.append(seen[h])
+        if len(unique_list) < len(texts):
+            dedup_ratio = (len(texts) - len(unique_list)) / len(texts)
+            logger.debug('[EMBED:J] xxhash dedup: %d→%d texts (%.0f%% duplicates removed)', len(texts), len(unique_list), dedup_ratio * 100)
+            return unique_list, original_to_unique, True
+    except ImportError:
+        logger.debug('[EMBED:J] xxhash not available — skipping dedup')
+    return texts, [], False
+
+
+def _detect_backend_name(embedder) -> str:
+    """Detect and normalize backend name from embedder type."""
+    backend_name = type(embedder).__name__.lower()
+    if 'coreml' in backend_name:
+        return 'coreml_bge'
+    elif 'ane' in backend_name or 'allminilm' in backend_name:
+        return 'ane_allminilm'
+    elif 'modernbert' in backend_name:
+        return 'mlx_modernbert'
+    return 'cpu'
+
+
+def _normalize_embeddings(embeddings: np.ndarray) -> np.ndarray:
+    """Normalize embeddings to float32 and ensure correct dimension."""
+    if embeddings.dtype != np.float32:
+        embeddings = embeddings.astype(np.float32)
+    if embeddings.shape[1] > _EMBEDDING_DIM:
+        embeddings = embeddings[:, :_EMBEDDING_DIM]
+    elif embeddings.shape[1] < _EMBEDDING_DIM:
+        pad = np.zeros((embeddings.shape[0], _EMBEDDING_DIM - embeddings.shape[1]), dtype=np.float32)
+        embeddings = np.hstack([embeddings, pad])
+    return embeddings
+
+
+def _restore_deduplicated_embeddings(original_count: int, embeddings: np.ndarray, original_to_unique: list[int]) -> np.ndarray:
+    """Restore embeddings to original order after deduplication."""
+    full_embeddings = np.zeros((original_count, _EMBEDDING_DIM), dtype=np.float32)
+    for orig_idx, unique_idx in enumerate(original_to_unique):
+        full_embeddings[orig_idx] = embeddings[unique_idx]
+    return full_embeddings
+
+
 def _embed_english_batch(texts: list[str], batch_size: int, keep_loaded: bool) -> np.ndarray:
     """
     Embed English texts via ModernBERT (internal helper for generate_embeddings).
@@ -643,27 +697,7 @@ def _embed_english_batch(texts: list[str], batch_size: int, keep_loaded: bool) -
     if not texts:
         return np.zeros((0, _EMBEDDING_DIM), dtype=np.float32)
 
-    original_to_unique: list[int] = []
-    texts_to_embed: list[str] = texts
-    dedup_happened = False
-    try:
-        import xxhash
-        seen: dict[str, int] = {}
-        unique_list: list[str] = []
-        original_to_unique = []
-        for text in texts:
-            h = xxhash.xxh3_64(text.encode('utf-8', errors='replace')).hexdigest()
-            if h not in seen:
-                seen[h] = len(unique_list)
-                unique_list.append(text)
-            original_to_unique.append(seen[h])
-        if len(unique_list) < len(texts):
-            dedup_happened = True
-            dedup_ratio = (len(texts) - len(unique_list)) / len(texts)
-            logger.debug('[EMBED:J] xxhash dedup: %d→%d texts (%.0f%% duplicates removed)', len(texts), len(unique_list), dedup_ratio * 100)
-            texts_to_embed = unique_list
-    except ImportError:
-        logger.debug('[EMBED:J] xxhash not available — skipping dedup')
+    texts_to_embed, original_to_unique, dedup_happened = _deduplicate_texts(texts)
 
     if not _check_memory_guard():
         logger.warning('[EMBED] Skipping English embedding generation due to memory pressure')
@@ -684,36 +718,12 @@ def _embed_english_batch(texts: list[str], batch_size: int, keep_loaded: bool) -
             truncate_dim=_EMBEDDING_DIM,
             memory_pressure_provider=_uma_pressure_provider
         )
-        try:
-            _ps = psutil  # already imported at module level from core.psutil_shim
-            backend_name = type(embedder).__name__.lower()
-            if 'coreml' in backend_name:
-                backend_name = 'coreml_bge'
-            elif 'ane' in backend_name or 'allminilm' in backend_name.lower():
-                backend_name = 'ane_allminilm'
-            elif 'modernbert' in backend_name.lower():
-                backend_name = 'mlx_modernbert'
-            else:
-                backend_name = 'cpu'
-            if _ps is not None:
-                _ram = _ps.virtual_memory().percent
-                logger.debug('EMBED_BACKEND: %s | texts=%d | dim=%s | ram=%.1f%%', backend_name, len(texts_to_embed), embeddings.shape, _ram)
-        except Exception:  # noqa: BLE001
-            pass
-        if embeddings.dtype != np.float32:
-            embeddings = embeddings.astype(np.float32)
-        if embeddings.shape[1] > _EMBEDDING_DIM:
-            embeddings = embeddings[:, :_EMBEDDING_DIM]
-        elif embeddings.shape[1] < _EMBEDDING_DIM:
-            pad = np.zeros((embeddings.shape[0], _EMBEDDING_DIM - embeddings.shape[1]), dtype=np.float32)
-            embeddings = np.hstack([embeddings, pad])
+        _log_embedding_stats(embedder, embeddings, len(texts_to_embed))
+        embeddings = _normalize_embeddings(embeddings)
         logger.debug(f'[EMBED] Generated English embeddings shape: {embeddings.shape}')
 
         if dedup_happened:
-            full_embeddings = np.zeros((len(texts), _EMBEDDING_DIM), dtype=np.float32)
-            for orig_idx, unique_idx in enumerate(original_to_unique):
-                full_embeddings[orig_idx] = embeddings[unique_idx]
-            embeddings = full_embeddings
+            embeddings = _restore_deduplicated_embeddings(len(texts), embeddings, original_to_unique)
         return embeddings
     except Exception as e:
         logger.error(f'[EMBED] English batch embedding failed: {e}')
@@ -721,6 +731,17 @@ def _embed_english_batch(texts: list[str], batch_size: int, keep_loaded: bool) -
     finally:
         if not keep_loaded:
             _release_embedder()
+
+
+def _log_embedding_stats(embedder, embeddings, text_count: int) -> None:
+    """Log embedding backend statistics."""
+    try:
+        if psutil is not None:
+            backend_name = _detect_backend_name(embedder)
+            ram = psutil.virtual_memory().percent
+            logger.debug('EMBED_BACKEND: %s | texts=%d | dim=%s | ram=%.1f%%', backend_name, text_count, embeddings.shape, ram)
+    except Exception:  # noqa: BLE001
+        pass
 
 def embed_query(text: str) -> np.ndarray:
     """

@@ -1041,104 +1041,72 @@ class FeatureFlags:
     # ─── Validation ─────────────────────────────────────────────────────
 
     @classmethod
-    def validate(cls) -> tuple[list[FlagValidationError], list[FlagValidationError]]:
-        """
-        Validate the current flag configuration.
-
-        Returns:
-            (errors, warnings) — errors cause exit(2), warnings are logged.
-
-        Checks:
-        - Deprecated flags in use
-        - Implication rules (soft warnings)
-        - Conflict pairs (hard errors)
-        - RAM budget (hard errors > 7000MB, warnings > 5500MB)
-        - Unknown flags in environment
-        """
-        errors: list[FlagValidationError] = []
+    def _check_deprecated_flags(cls) -> list[FlagValidationError]:
+        """Check for deprecated flag usage. Returns warnings."""
         warnings: list[FlagValidationError] = []
-        metadata = cls._get_metadata()
-
-        # 1. Check for deprecated flag usage
         for deprecated in DEPRECATED_FLAGS.values():
             if deprecated.old_name in os.environ:
-                warnings.append(
-                    FlagValidationError(
-                        flag=deprecated.old_name,
-                        message=f"DEPRECATED: Use {deprecated.new_name} instead. {deprecated.reason}",
-                        is_error=False,
-                    )
-                )
-
-        # 2. Build active flags set
-        active: set[str] = set()
-        for flag in FeatureFlag:
-            if cls.get(flag):
-                active.add(flag.value)
-
-        # 3. Check implications
-        for flag in FeatureFlag:
-            if flag not in metadata:
-                continue
-            # Only check implications if this flag is active
-            if flag.value not in active:
-                continue
-            meta = metadata[flag]
-            for implied in meta.get("implies", ()):
-                # Check if implied flag is actually enabled
-                implied_enabled = os.environ.get(implied)
-                if implied_enabled is None or not cls._parse_bool(implied_enabled):
-                    warnings.append(
-                        FlagValidationError(
-                            flag=flag.value,
-                            message=f"Implies {implied} but it is not enabled. "
-                            f"Enable {implied} for full functionality.",
-                            is_error=False,
-                        )
-                    )
-
-        # 4. Check conflicts (metadata keyed by FeatureFlag enum, not string)
-        for flag in FeatureFlag:
-            if flag not in metadata:
-                continue
-            meta = metadata[flag]
-            for conflict in meta.get("conflicts_with", ()):
-                if conflict in active and flag.value in active:
-                    errors.append(
-                        FlagValidationError(
-                            flag=flag.value,
-                            message=f"CONFLICT: {flag.value} cannot be enabled with {conflict}. "
-                            f"Disable one to proceed.",
-                            is_error=True,
-                        )
-                    )
-
-        # 5. Check RAM budget
-        total_ram = 0
-        for flag in FeatureFlag:
-            if flag.value in active and flag in metadata:
-                total_ram += metadata[flag].get("min_ram_mb", 0)
-
-        if total_ram > cls.RAM_FATAL_MB:
-            errors.append(
-                FlagValidationError(
-                    flag="RAM_BUDGET",
-                    message=f"FATAL: Estimated RAM {total_ram}MB exceeds M1 8GB limit ({cls.RAM_FATAL_MB}MB). "
-                    f"Disable some features to proceed.",
-                    is_error=True,
-                )
-            )
-        elif total_ram > cls.RAM_WARN_MB:
-            warnings.append(
-                FlagValidationError(
-                    flag="RAM_BUDGET",
-                    message=f"WARNING: Estimated RAM {total_ram}MB approaching M1 8GB limit "
-                    f"(warn at {cls.RAM_WARN_MB}MB, fatal at {cls.RAM_FATAL_MB}MB).",
+                warnings.append(FlagValidationError(
+                    flag=deprecated.old_name,
+                    message=f"DEPRECATED: Use {deprecated.new_name} instead. {deprecated.reason}",
                     is_error=False,
-                )
-            )
+                ))
+        return warnings
 
-        # 6. Check for unknown flags in environment
+    @classmethod
+    def _check_implications(cls, metadata: dict, active: set[str]) -> list[FlagValidationError]:
+        """Check implication rules. Returns warnings."""
+        warnings: list[FlagValidationError] = []
+        for flag in FeatureFlag:
+            if flag.value not in active or flag not in metadata:
+                continue
+            for implied in metadata[flag].get("implies", ()):
+                if os.environ.get(implied) is None or not cls._parse_bool(os.environ.get(implied)):
+                    warnings.append(FlagValidationError(...))
+        return warnings
+
+    @classmethod
+    def _check_conflicts(cls, metadata: dict, active: set[str]) -> list[FlagValidationError]:
+        """Check conflict pairs. Returns errors."""
+        errors: list[FlagValidationError] = []
+        for flag in FeatureFlag:
+            if flag.value not in active or flag not in metadata:
+                continue
+            for conflict in metadata[flag].get("conflicts_with", ()):
+                if conflict in active and flag.value in active:
+                    errors.append(FlagValidationError(...))
+        return errors
+
+    @classmethod
+    def _check_ram_budget(cls, metadata: dict, active: set[str]) -> tuple[list[FlagValidationError], list[FlagValidationError]]:
+        """Check RAM budget. Returns (errors, warnings)."""
+        errors: list[FlagValidationError] = []
+        warnings: list[FlagValidationError] = []
+        total_ram = sum(
+            metadata[f].get("min_ram_mb", 0)
+            for f in FeatureFlag
+            if f.value in active and f in metadata
+        )
+        if total_ram > cls.RAM_FATAL_MB:
+            errors.append(FlagValidationError(
+                flag="RAM_BUDGET",
+                message=f"FATAL: Estimated RAM {total_ram}MB exceeds M1 8GB limit ({cls.RAM_FATAL_MB}MB). "
+                        f"Disable some features to proceed.",
+                is_error=True,
+            ))
+        elif total_ram > cls.RAM_WARN_MB:
+            warnings.append(FlagValidationError(
+                flag="RAM_BUDGET",
+                message=f"WARNING: Estimated RAM {total_ram}MB approaching M1 8GB limit "
+                        f"(warn at {cls.RAM_WARN_MB}MB, fatal at {cls.RAM_FATAL_MB}MB).",
+                is_error=False,
+            ))
+        return errors, warnings
+
+    @classmethod
+    def _check_unknown_flags(cls) -> list[FlagValidationError]:
+        """Check for unknown flags in environment. Returns warnings."""
+        warnings: list[FlagValidationError] = []
         known_prefixes = (
             "HLEDAC_ENABLE_",
             "HLEDAC_",
@@ -1153,19 +1121,40 @@ class FeatureFlags:
         )
         for env_key in os.environ:
             if env_key.startswith("HLEDAC_"):
-                # Check if it's a known flag
                 is_known = any(env_key.startswith(p) for p in known_prefixes)
                 if not is_known and env_key not in DEPRECATED_FLAGS:
-                    # Check if it matches our enum
                     known = any(f.value == env_key for f in FeatureFlag)
                     if not known:
-                        warnings.append(
-                            FlagValidationError(
-                                flag=env_key,
-                                message=f"Unknown flag {env_key}. This may be a typo or deprecated flag.",
-                                is_error=False,
-                            )
-                        )
+                        warnings.append(FlagValidationError(
+                            flag=env_key,
+                            message=f"Unknown flag {env_key}. This may be a typo or deprecated flag.",
+                            is_error=False,
+                        ))
+        return warnings
+
+    @classmethod
+    def validate(cls) -> tuple[list[FlagValidationError], list[FlagValidationError]]:
+        """
+        Validate the current flag configuration.
+
+        Returns:
+            (errors, warnings) — errors cause exit(2), warnings are logged.
+        """
+        errors: list[FlagValidationError] = []
+        warnings: list[FlagValidationError] = []
+        metadata = cls._get_metadata()
+
+        # Build active flags set
+        active: set[str] = {flag.value for flag in FeatureFlag if cls.get(flag)}
+
+        # Use helper methods for validation
+        warnings.extend(cls._check_deprecated_flags())
+        warnings.extend(cls._check_implications(metadata, active))
+        errors.extend(cls._check_conflicts(metadata, active))
+        ram_errors, ram_warnings = cls._check_ram_budget(metadata, active)
+        errors.extend(ram_errors)
+        warnings.extend(ram_warnings)
+        warnings.extend(cls._check_unknown_flags())
 
         return errors, warnings
 

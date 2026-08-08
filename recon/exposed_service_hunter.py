@@ -1483,90 +1483,90 @@ class SwaggerEnumerator:
             async with self.session.get(url, follow_redirects=True, timeout=10) as resp:
                 if resp.status_code != 200:
                     return None
-                content_type = resp.headers.get('content-type', '').lower()
-                text = resp.text
-                if not text or len(text) < 20:
+                data = self._parse_spec_content(url, resp)
+                if data is None:
                     return None
-
-                endpoints: list[str] = []
-                auth_schemes: list[str] = []
-                spec_version: str = 'unknown'
-                title: str = 'unknown'
-
-                if 'json' in content_type or url.endswith('.json'):
-                    try:
-                        data = json.loads(text)
-                    except json.JSONDecodeError:
-                        # Content might be YAML despite JSON extension
-                        data = self._parse_yaml_minimal(text)
-                elif 'yaml' in content_type or url.endswith(('.yaml', '.yml')):
-                    data = self._parse_yaml_minimal(text)
-                else:
-                    # Unknown content type, try JSON first, then YAML
-                    try:
-                        data = json.loads(text)
-                    except json.JSONDecodeError:
-                        data = self._parse_yaml_minimal(text)
-
-                if isinstance(data, dict):
-                    spec_version = data.get('swagger') or data.get('openapi', 'unknown')
-                    info = data.get('info', {})
-                    if isinstance(info, dict):
-                        title = info.get('title', 'unknown')
-
-                    # Extract endpoint paths (keys under 'paths')
-                    paths = data.get('paths', {})
-                    if isinstance(paths, dict):
-                        endpoints = list(paths.keys())[:50]
-
-                    # Extract authentication schemes
-                    components = data.get('components', {})
-                    security_defs = data.get('securityDefinitions', {})
-                    security = components.get('securitySchemes', security_defs)
-                    if isinstance(security, dict):
-                        for scheme_name, scheme_def in security.items():
-                            if isinstance(scheme_def, dict):
-                                auth_type = scheme_def.get('type', scheme_def.get('in', ''))
-                                auth_schemes.append(f'{scheme_name}:{auth_type}')
-                    # Also check top-level 'security' for required schemes
-                    global_security = data.get('security', [])
-                    if isinstance(global_security, list):
-                        for sec_req in global_security[:5]:
-                            if isinstance(sec_req, dict):
-                                auth_schemes.extend(sec_req.keys())
-
-                host = urlparse(url).netloc
-                port = 443 if url.startswith('https') else 80
-                base_path = '/'.join(url.split('/')[:3])
-
-                risk = RiskLevel.HIGH.value
-                if auth_schemes:
-                    risk = RiskLevel.CRITICAL.value if any(
-                        s and 'api' in str(s).lower() or 'bearer' in str(s).lower()
-                        for s in auth_schemes
-                    ) else RiskLevel.HIGH.value
-
-                return ExposedService(
-                    service_type=ServiceType.SWAGGER.value,
-                    host=host,
-                    port=port,
-                    exposure_type=ExposureType.MISCONFIGURED.value,
-                    risk_level=risk,
-                    metadata={
-                        'endpoint': url,
-                        'spec_version': spec_version,
-                        'title': title,
-                        'endpoint_count': len(endpoints),
-                        'sample_endpoints': endpoints[:20],
-                        'auth_schemes': auth_schemes[:10],
-                        'base_path': base_path,
-                    },
-                )
+                return self._build_exposed_service(url, data)
         except httpx.HTTPError:  # noqa: BLE001
             pass
         except Exception as e:
             logger.debug(f'Error fetching Swagger spec {url}: {e}')
         return None
+
+    def _parse_spec_content(self, url: str, resp: httpx.Response) -> dict | None:
+        """Parse spec content based on content type."""
+        content_type = resp.headers.get('content-type', '').lower()
+        text = resp.text
+        if not text or len(text) < 20:
+            return None
+        if 'json' in content_type or url.endswith('.json'):
+            try:
+                return json.loads(text)
+            except json.JSONDecodeError:
+                return self._parse_yaml_minimal(text)
+        elif 'yaml' in content_type or url.endswith(('.yaml', '.yml')):
+            return self._parse_yaml_minimal(text)
+        else:
+            try:
+                return json.loads(text)
+            except json.JSONDecodeError:
+                return self._parse_yaml_minimal(text)
+
+    def _extract_spec_fields(self, data: dict) -> tuple[list[str], list[str], str, str]:
+        """Extract endpoints, auth schemes, version, and title from spec data."""
+        spec_version = data.get('swagger') or data.get('openapi', 'unknown')
+        title = 'unknown'
+        info = data.get('info', {})
+        if isinstance(info, dict):
+            title = info.get('title', 'unknown')
+        endpoints = []
+        paths = data.get('paths', {})
+        if isinstance(paths, dict):
+            endpoints = list(paths.keys())[:50]
+        auth_schemes = self._extract_auth_schemes(data)
+        return endpoints, auth_schemes, spec_version, title
+
+    def _extract_auth_schemes(self, data: dict) -> list[str]:
+        """Extract authentication schemes from spec data."""
+        auth_schemes: list[str] = []
+        components = data.get('components', {})
+        security_defs = data.get('securityDefinitions', {})
+        security = components.get('securitySchemes', security_defs)
+        if isinstance(security, dict):
+            for scheme_name, scheme_def in security.items():
+                if isinstance(scheme_def, dict):
+                    auth_type = scheme_def.get('type', scheme_def.get('in', ''))
+                    auth_schemes.append(f'{scheme_name}:{auth_type}')
+        global_security = data.get('security', [])
+        if isinstance(global_security, list):
+            for sec_req in global_security[:5]:
+                if isinstance(sec_req, dict):
+                    auth_schemes.extend(sec_req.keys())
+        return auth_schemes
+
+    def _build_exposed_service(self, url: str, data: dict) -> ExposedService:
+        """Build ExposedService from parsed spec data."""
+        endpoints, auth_schemes, spec_version, title = self._extract_spec_fields(data)
+        host = urlparse(url).netloc
+        port = 443 if url.startswith('https') else 80
+        base_path = '/'.join(url.split('/')[:3])
+        risk = RiskLevel.HIGH.value
+        if auth_schemes:
+            risk = RiskLevel.CRITICAL.value if any(
+                s and 'api' in str(s).lower() or 'bearer' in str(s).lower()
+                for s in auth_schemes
+            ) else RiskLevel.HIGH.value
+        return ExposedService(
+            service_type=ServiceType.SWAGGER.value,
+            host=host, port=port,
+            exposure_type=ExposureType.MISCONFIGURED.value,
+            risk_level=risk,
+            metadata={
+                'endpoint': url, 'spec_version': spec_version, 'title': title,
+                'endpoint_count': len(endpoints), 'sample_endpoints': endpoints[:20],
+                'auth_schemes': auth_schemes[:10], 'base_path': base_path,
+            },
+        )
 
     @staticmethod
     def _parse_yaml_minimal(text: str) -> dict | None:

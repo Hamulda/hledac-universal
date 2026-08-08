@@ -272,6 +272,52 @@ def extract_iocs_batch(
     return [[(v, t, confidence) for v, t in text_iocs] for text_iocs in raw]
 
 
+def _extract_python_fallback_indexed(texts: list[str]) -> list[tuple[int, str, str, float]]:
+    """Pure Python fallback with index preservation."""
+    py_raw = _python_fallback_extract(texts)
+    result: list[tuple[int, str, str, float]] = []
+    for idx, text_iocs in enumerate(py_raw):
+        for value, ioc_type in text_iocs:
+            result.append((idx, value, ioc_type, 0.7))
+    return result
+
+
+def _try_simd_indexed(rust: Any, texts: list[str], confidence: float) -> list[tuple[int, str, str, float]] | None:
+    """Try SIMD indexed extraction path."""
+    try:
+        ext = getattr(rust, "ioc", None)
+        if ext is not None:
+            batch_fn = getattr(ext, "batch_extract_iocs_simd_indexed", None)
+            if batch_fn is not None:
+                simd_raw = batch_fn(texts)
+                return [(idx, val, typ, confidence) for idx, val, typ in simd_raw]
+    except Exception:  # noqa: BLE001
+        pass
+    return None
+
+
+def _try_fast_batch_indexed(rust: Any, texts: list[str], confidence: float) -> list[tuple[int, str, str, float]] | None:
+    """Try fast batch extraction with index regrouping."""
+    try:
+        ext = getattr(rust, "ioc_fast", None)
+        if ext is None:
+            ext = getattr(rust, "ioc", None)
+        if ext is not None:
+            batch_fn = getattr(ext, "batch_ioc_extract_unified", None)
+            if batch_fn is None:
+                batch_fn = getattr(ext, "batch_extract_iocs", None)
+            if batch_fn is not None:
+                fast_raw = batch_fn(texts)
+                result = []
+                for idx, text_iocs in enumerate(fast_raw):
+                    for value, ioc_type in text_iocs:
+                        result.append((idx, value, ioc_type, confidence))
+                return result
+    except Exception:  # noqa: BLE001
+        pass
+    return None
+
+
 def extract_iocs_batch_indexed(
     texts: list[str],
     *,
@@ -291,49 +337,17 @@ def extract_iocs_batch_indexed(
 
     rust = _get_rust()
     if rust is None:
-        py_raw = _python_fallback_extract(texts)
-        result: list[tuple[int, str, str, float]] = []
-        for idx, text_iocs in enumerate(py_raw):
-            for value, ioc_type in text_iocs:
-                result.append((idx, value, ioc_type, 0.7))
-        return result
+        return _extract_python_fallback_indexed(texts)
 
     confidence = 0.7
 
     # Try SIMD indexed path
-    try:
-        ext = getattr(rust, "ioc", None)
-        if ext is not None:
-            batch_fn = getattr(ext, "batch_extract_iocs_simd_indexed", None)
-            if batch_fn is not None:
-                simd_raw = batch_fn(texts)
-                return [(idx, val, typ, confidence) for idx, val, typ in simd_raw]
-    except Exception:  # noqa: BLE001
-        pass
+    if result := _try_simd_indexed(rust, texts, confidence):
+        return result
 
     # Try fast batch → regroup with index
-    try:
-        ext = getattr(rust, "ioc_fast", None)
-        if ext is None:
-            ext = getattr(rust, "ioc", None)
-        if ext is not None:
-            batch_fn = getattr(ext, "batch_ioc_extract_unified", None)
-            if batch_fn is None:
-                batch_fn = getattr(ext, "batch_extract_iocs", None)
-            if batch_fn is not None:
-                fast_raw = batch_fn(texts)
-                result = []
-                for idx, text_iocs in enumerate(fast_raw):
-                    for value, ioc_type in text_iocs:
-                        result.append((idx, value, ioc_type, confidence))
-                return result
-    except Exception:  # noqa: BLE001
-        pass
+    if result := _try_fast_batch_indexed(rust, texts, confidence):
+        return result
 
     # Pure Python fallback
-    py_raw = _python_fallback_extract(texts)
-    result = []
-    for idx, text_iocs in enumerate(py_raw):
-        for value, ioc_type in text_iocs:
-            result.append((idx, value, ioc_type, confidence))
-    return result
+    return _extract_python_fallback_indexed(texts)

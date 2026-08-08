@@ -18,6 +18,7 @@ import msgspec
 import httpx
 from hledac.universal.core.concurrency import ConcurrencyCategory, get_semaphore
 from hledac.universal.utils.async_helpers import parallel_ok
+from hledac.universal.utils._patterns import lazy_resource_property  # F320: Clone elimination
 logger = logging.getLogger(__name__)
 FEDIVERSE_TIMEOUT = 10.0
 MAX_RESULTS_PER_INSTANCE = 50
@@ -76,22 +77,20 @@ class FediverseAdapter(msgspec.Struct, frozen=True, gc=False):
     """
     _semaphore: asyncio.Semaphore = field(default_factory=lambda: get_semaphore(ConcurrencyCategory.SOCIAL_MINE))
     _instance_timestamps: dict = field(default_factory=dict)
-    _session_cache: httpx.AsyncClient | None = None
-    _session_closed: bool = False
+    _session: httpx.AsyncClient | None = None
 
-    @property
-    def _session(self) -> httpx.AsyncClient:
-        """Lazy session getter."""
-        if self._session_cache is None or self._session_closed:
-            self._session_cache = httpx.AsyncClient(trust_env=False)
-            self._session_closed = False
-        return self._session_cache
+    # F320: lazy_resource_property eliminates clone with matrix_adapter.py
+    _session = lazy_resource_property(
+        "_session",
+        factory=lambda: httpx.AsyncClient(trust_env=False),
+        is_closed_attr="is_closed",
+    )
 
     async def close(self) -> None:
         """Close HTTP session."""
-        if self._session_cache and (not self._session_closed):
-            await self._session_cache.aclose()
-            self._session_closed = True
+        if self._session and (not self._session.is_closed):
+            await self._session.aclose()
+        self._session = None
 
     async def _rate_limit(self, instance: str) -> None:
         """Enforce rate limiting per instance.

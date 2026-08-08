@@ -221,6 +221,60 @@ def _safe_json_parse(raw: str) -> dict | None:
         return None
 
 
+# Content fields for JSON extraction (prioritized)
+_CONTENT_FIELDS: tuple[str, ...] = (
+    "props", "pageProps", "serverData", "data", "body", "content",
+    "text", "html", "result", "articleBody", "description", "headline",
+)
+
+
+def _is_valid_text(text: str) -> bool:
+    """Check if text is valid for extraction."""
+    return 2 < len(text) < MAX_CANDIDATE_LEN
+
+
+def _extract_str(obj) -> str:
+    """Extract text from a string value."""
+    text = obj.strip()
+    return text if _is_valid_text(text) else ""
+
+
+def _extract_list(obj, depth: int, seen: set[int]) -> str:
+    """Extract text from a list by recursing into items."""
+    parts = []
+    for item in obj:
+        text = _flatten_text(item, depth + 1, seen)
+        if text:
+            parts.append(text)
+        if sum(len(p) for p in parts) > MAX_EXTRACTED_TEXT:
+            break
+    return " ".join(parts)
+
+
+def _extract_dict(obj, depth: int, seen: set[int]) -> str:
+    """Extract text from a dict by checking prioritized content fields."""
+    parts = []
+    for key in _CONTENT_FIELDS:
+        if key in obj:
+            text = _flatten_text(obj[key], depth + 1, seen)
+            if text:
+                parts.append(text)
+
+    # Fallback: scan all values if no content fields found
+    if not parts:
+        for v in obj.values():
+            if isinstance(v, str):
+                text = v.strip()
+                if _is_valid_text(text):
+                    parts.append(text)
+            elif isinstance(v, dict):
+                text = _flatten_text(v, depth + 1, seen)
+                if text:
+                    parts.append(text)
+
+    return " ".join(parts)
+
+
 def _flatten_text(obj, depth: int = 0, seen: set[int] | None = None) -> str:
     """
     Recursively extract text from a parsed JSON object.
@@ -237,41 +291,11 @@ def _flatten_text(obj, depth: int = 0, seen: set[int] | None = None) -> str:
     seen.add(obj_id)
 
     if isinstance(obj, str):
-        text = obj.strip()
-        if 2 < len(text) < MAX_CANDIDATE_LEN:
-            return text
-        return ""
+        return _extract_str(obj)
     if isinstance(obj, list):
-        parts = []
-        for item in obj:
-            text = _flatten_text(item, depth + 1, seen)
-            if text:
-                parts.append(text)
-            if sum(len(p) for p in parts) > MAX_EXTRACTED_TEXT:
-                break
-        return " ".join(parts)
+        return _extract_list(obj, depth, seen)
     if isinstance(obj, dict):
-        # Fields that usually contain meaningful content
-        CONTENT_FIELDS = (  # noqa: N806
-            "props", "pageProps", "serverData", "data", "body", "content",
-            "text", "html", "result", "articleBody", "description", "headline",
-        )
-        parts = []
-        for key in CONTENT_FIELDS:
-            if key in obj:
-                text = _flatten_text(obj[key], depth + 1, seen)
-                if text:
-                    parts.append(text)
-        # Also try top-level keys as fallback
-        if not parts:
-            for v in obj.values():
-                if isinstance(v, str) and 2 < len(v.strip()) < MAX_CANDIDATE_LEN:
-                    parts.append(v.strip())
-                elif isinstance(v, dict):
-                    text = _flatten_text(v, depth + 1, seen)
-                    if text:
-                        parts.append(text)
-        return " ".join(parts)
+        return _extract_dict(obj, depth, seen)
     return ""
 
 
@@ -461,6 +485,261 @@ def _is_sufficient(info: dict, html: str = "") -> tuple[bool, str]:
             return True, _REASON_SUFFICIENT_METADATA
         return False, ""
     return False, ""
+
+
+# ---------------------------------------------------------------------------
+# Extracted helpers for refactored extract_static_hydration
+# ---------------------------------------------------------------------------
+
+
+def _extract_title_from_parsed(parsed) -> str:
+    """Extract title from parsed Next.js/generic JSON structure."""
+    for path in [
+        ("props", "pageProps", "title"),
+        ("props", "pageProps", "serverData", "title"),
+        ("props", "pageProps", "data", "title"),
+        ("pageProps", "title"),
+        ("title",),
+    ]:
+        val = parsed
+        for key in path:
+            if isinstance(val, dict):
+                val = val.get(key)
+            else:
+                break
+        if val:
+            return str(val)
+    return ""
+
+
+def _extract_title_from_nuxt(parsed) -> str:
+    """Extract title from Nuxt data structure."""
+    if isinstance(parsed, list) and parsed:
+        return parsed[0].get("data", {}).get("title", "")
+    return parsed.get("title", "") if isinstance(parsed, dict) else ""
+
+
+def _extract_title_from_generic(parsed) -> str:
+    """Extract title from generic JSON structure."""
+    title_candidates = [
+        parsed.get("props", {}).get("page", {}).get("title", ""),
+        parsed.get("props", {}).get("pageProps", {}).get("title", ""),
+        parsed.get("serverData", {}).get("title", ""),
+        parsed.get("data", {}).get("title", ""),
+        parsed.get("ROOT_QUERY", {}).get("title", ""),
+        parsed.get("title", ""),
+    ]
+    for t in title_candidates:
+        if t and len(str(t)) >= _MIN_TITLE_LEN:
+            return str(t)
+    return ""
+
+
+def _extract_json_hydration(html: str, info: dict, sources: list) -> None:
+    """Extract JSON-based hydration (Next.js, Nuxt, generic)."""
+    # Next.js
+    raw = _extract_from_script(html, _RE_NEXT_DATA)
+    if raw:
+        parsed = _safe_json_parse(raw)
+        if parsed is not None:
+            sources.append("next_data")
+            text = _flatten_text(parsed)
+            if text:
+                info["body"] = _truncate(text, MAX_EXTRACTED_TEXT)
+            title = _extract_title_from_parsed(parsed)
+            if title:
+                info["title"] = _truncate(str(title), MAX_TITLE_LEN)
+            info["_body_source"] = _REASON_SUFFICIENT_NEXT
+
+    # Nuxt __NUXT_DATA__
+    if not sources or not info.get("body"):
+        raw = _extract_from_script(html, _RE_NUXT_DATA)
+        if raw:
+            parsed = _safe_json_parse(raw)
+            if parsed is not None:
+                sources.append("nuxt_data")
+                text = _flatten_text(parsed)
+                if text:
+                    info["body"] = _truncate(text, MAX_EXTRACTED_TEXT)
+                title = _extract_title_from_nuxt(parsed)
+                if title:
+                    info["title"] = _truncate(str(title), MAX_TITLE_LEN)
+                info["_body_source"] = _REASON_SUFFICIENT_NUXT
+
+    # Nuxt window.__NUXT__
+    if not info.get("body"):
+        raw = _extract_from_script(html, _RE_NUXT_GLOBAL)
+        if raw:
+            parsed = _safe_json_parse(raw)
+            if parsed is not None:
+                sources.append("nuxt_data")
+                text = _flatten_text(parsed)
+                if text:
+                    info["body"] = _truncate(text, MAX_EXTRACTED_TEXT)
+                title = _extract_title_from_parsed(parsed)
+                if title:
+                    info["title"] = _truncate(str(title), MAX_TITLE_LEN)
+                info["_body_source"] = _REASON_SUFFICIENT_NUXT
+
+    # Generic hydration patterns
+    generic_patterns = [
+        ("initial_state", _RE_INITIAL_STATE),
+        ("preloaded_state", _RE_PRELOADED_STATE),
+        ("apollo_state", _RE_APOLLO_STATE),
+    ]
+    for name, pattern in generic_patterns:
+        if not info.get("body"):
+            raw = _extract_from_script(html, pattern)
+            if raw:
+                parsed = _safe_json_parse(raw)
+                if parsed is not None:
+                    sources.append(name)
+                    text = _flatten_text(parsed)
+                    if text:
+                        info["body"] = _truncate(text, MAX_EXTRACTED_TEXT)
+                    title = _extract_title_from_generic(parsed)
+                    if title:
+                        info["title"] = _truncate(str(title), MAX_TITLE_LEN)
+                    info["_body_source"] = _REASON_SUFFICIENT_METADATA
+
+
+def _extract_json_ld(html: str, info: dict, sources: list) -> None:
+    """Extract JSON-LD blocks from HTML (single-pass optimization)."""
+    json_ld_types: list[str] = []
+    json_ld_texts: list[str] = []
+    # Collect parsed blocks for title extraction (avoid double iteration)
+    parsed_blocks: list = []
+
+    for i, match in enumerate(_RE_JSON_LD.finditer(html)):
+        if i >= MAX_JSON_LD_BLOCKS:
+            break
+        raw = match.group(1).strip()
+        if len(raw) > MAX_SCRIPT_LEN:
+            continue
+        parsed = _safe_json_parse(raw)
+        if parsed is not None:
+            parsed_blocks.append(parsed)  # Store for title extraction
+            _json_ld_types(parsed, json_ld_types)
+            text = _flatten_text(parsed)
+            if text:
+                json_ld_texts.append(text)
+
+    if json_ld_types:
+        sources.append("json_ld")
+        info["json_ld_types"] = json_ld_types
+        info["json_ld_text"] = _truncate(" ".join(json_ld_texts), MAX_EXTRACTED_TEXT)
+        if not info.get("body") and json_ld_texts:
+            info["body"] = info["json_ld_text"]
+        # Promote JSON-LD headline/name to title if no title yet (reuse parsed blocks)
+        if not info.get("title"):
+            for parsed in parsed_blocks:
+                headline = parsed.get("headline") or parsed.get("name") or ""
+                if headline and len(str(headline)) >= _MIN_TITLE_LEN:
+                    info["title"] = _truncate(str(headline), MAX_TITLE_LEN)
+                    break
+
+
+def _extract_metadata(html: str, info: dict) -> dict:
+    """Extract metadata tags from HTML."""
+    metadata: dict[str, object] = {}
+
+    def _meta_val(pattern: re.Pattern, key: str):
+        m = pattern.search(html)
+        if m:
+            metadata[key] = m.group(1).strip()
+
+    _meta_val(_RE_CANONICAL, "canonical")
+    _meta_val(_RE_RSS, "rss")
+    _meta_val(_RE_ATOM, "atom")
+    _meta_val(_RE_OG_TITLE, "og_title")
+    _meta_val(_RE_OG_DESC, "og_description")
+    _meta_val(_RE_META_DESC, "meta_description")
+    _meta_val(_RE_TITLE_TAG, "title_tag")
+    _meta_val(_RE_OG_IMAGE, "og_image")
+    _meta_val(_RE_OG_URL, "og_url")
+    _meta_val(_RE_ARTICLE_PUBLISHED, "article_published_time")
+
+    # Update info with derived values
+    if not info.get("title"):
+        info["title"] = metadata.get("og_title", "") or metadata.get("title_tag", "") or ""
+    if not info.get("description"):
+        info["description"] = metadata.get("og_description", "") or metadata.get("meta_description", "") or ""
+    if not info.get("meta_desc"):
+        info["meta_desc"] = metadata.get("meta_description", "") or ""
+
+    return metadata
+
+
+def _build_hydration_result(
+    info: dict,
+    sources: list,
+    metadata: dict,
+    hydration_score: float,
+    quality_signals: tuple,
+    input_truncated: bool,
+    html: str,
+) -> HydrationExtractionResult:
+    """Build final HydrationExtractionResult from extracted info."""
+    if not sources and not metadata:
+        return HydrationExtractionResult(
+            found=False,
+            sufficient=False,
+            sources=(),
+            text="",
+            metadata={},
+            reason=_REASON_NONE,
+            hydration_score=0.0,
+            quality_signals=(),
+        )
+
+    found = bool(sources) or bool(metadata)
+
+    # Sufficiency check
+    if found:
+        sufficient, reason = _is_sufficient(info, html)
+        if sufficient:
+            # Build composite text: title + body
+            parts: list[str] = []
+            title = info.get("title")
+            if title and isinstance(title, str):
+                parts.append(title)
+            body = info.get("body") or info.get("description", "")
+            if body:
+                parts.append(body)
+            final_text = _truncate(" | ".join(parts), MAX_EXTRACTED_TEXT)
+
+            return HydrationExtractionResult(
+                found=True,
+                sufficient=True,
+                sources=tuple(sources),
+                text=final_text,
+                metadata=metadata,
+                reason=reason,
+                hydration_score=hydration_score,
+                quality_signals=quality_signals,
+            )
+        else:
+            return HydrationExtractionResult(
+                found=True,
+                sufficient=False,
+                sources=tuple(sources),
+                text="",
+                metadata=metadata,
+                reason=_REASON_FOUND_INSUFFICIENT,
+                hydration_score=hydration_score,
+                quality_signals=quality_signals,
+            )
+
+    return HydrationExtractionResult(
+        found=False,
+        sufficient=False,
+        sources=(),
+        text="",
+        metadata={},
+        reason=_REASON_NONE,
+        hydration_score=0.0,
+        quality_signals=(),
+    )
 
 
 # ---------------------------------------------------------------------------

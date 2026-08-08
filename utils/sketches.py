@@ -222,6 +222,102 @@ class HybridFrequencySketch:
             finally:
                 self.lmdb_env = None
 
+_COMMvQ_VALID_DTYPES = frozenset({'bfloat16', 'float16', 'float32'})
+
+
+def _commvq_get_dtype(cache) -> Any | None:
+    """Extract dtype from cache tensor or first element of list."""
+    import mlx.core as mx
+    if isinstance(cache, list):
+        first_elem = cache[0] if cache else None
+        if isinstance(first_elem, tuple):
+            first_tensor = first_elem[0]
+            return getattr(first_tensor, 'dtype', None)
+        return getattr(first_elem, 'dtype', None)
+    return getattr(cache, 'dtype', None)
+
+
+def _commvq_validate_dtype(cache) -> bool:
+    """Validate that cache has supported MLX dtype."""
+    import mlx.core as mx
+    try:
+        mx.eval(cache)
+    except Exception as e:
+        logger.warning(f'Cannot evaluate cache: {e}')
+        return False
+
+    dtype = _commvq_get_dtype(cache)
+    if dtype is None:
+        logger.warning('CommVQ: Cannot determine cache dtype')
+        return False
+    if str(dtype) not in _COMMvQ_VALID_DTYPES:
+        logger.warning(f'CommVQ requires bfloat16/float16/float32 cache, got {dtype}')
+        return False
+    return True
+
+
+def _commvq_extract_shape(cache) -> Any | None:
+    """Extract original tensor shape from cache."""
+    if isinstance(cache, list) and cache:
+        first_elem = cache[0]
+        if isinstance(first_elem, tuple):
+            first_tensor = first_elem[0]
+            return getattr(first_tensor, 'shape', None)
+        return getattr(first_elem, 'shape', None)
+    return getattr(cache, 'shape', None)
+
+
+def _commvq_validate_and_extract_shape(cache) -> tuple[Any, Any] | None:
+    """Validate MLX cache dtype and extract original shape."""
+    if not _commvq_validate_dtype(cache):
+        return None
+    orig_shape = _commvq_extract_shape(cache)
+    if orig_shape is None:
+        return None
+    return cache, orig_shape
+
+
+def _commvq_flatten_cache(cache, orig_shape) -> Any:
+    """Flatten cache tensor(s) into (N, D) matrix for quantization."""
+    import mlx.core as mx
+    if isinstance(cache, list):
+        all_tensors = []
+        for item in cache:
+            if isinstance(item, tuple):
+                all_tensors.append(item[0])
+                all_tensors.append(item[1])
+            else:
+                all_tensors.append(item)
+        flat = mx.concatenate([t.reshape(-1) for t in all_tensors])
+        flat = flat.reshape(-1, orig_shape[-1])
+    else:
+        flat = cache.reshape(-1, cache.shape[-1])
+    return flat
+
+
+def _commvq_quantize_group(group, bits: int) -> tuple[Any, Any] | None:
+    """Run k-means quantization on a single group. Returns (centroids, indices)."""
+    import mlx.core as mx
+    if group.size == 0:
+        return None
+    n_clusters = 1 << bits
+    indices = mx.random.randint(0, group.shape[0], (n_clusters,))
+    centroids = group[indices]
+    for _ in range(10):
+        distances = mx.sum((group[:, None] - centroids[None, :]) ** 2, axis=2)
+        assignments = mx.argmin(distances, axis=1)
+        new_centroids = mx.zeros_like(centroids)
+        for k in range(n_clusters):
+            mask: Any = assignments == k
+            cnt = mx.sum(mask)
+            if cnt > 0:
+                new_centroids[k] = mx.sum(group * mask[:, None], axis=0) / cnt
+        centroids = new_centroids
+    final_distances = mx.sum((group[:, None] - centroids[None, :]) ** 2, axis=2)
+    final_indices = mx.argmin(final_distances, axis=1)
+    return centroids, final_indices
+
+
 def commvq_quantize(cache, bits: int=2):
     """
     CommVQ 2-bit KV cache quantization (87.5% savings, MLX-native).
@@ -231,52 +327,12 @@ def commvq_quantize(cache, bits: int=2):
         logger.warning('CommVQ requires MLX, skipping quantization')
         return cache
     try:
-        import mlx.core as mx
-        try:
-            mx.eval(cache)
-            if isinstance(cache, list):
-                first_elem = cache[0] if cache else None
-                if isinstance(first_elem, tuple):
-                    first_tensor = first_elem[0]
-                    dtype = first_tensor.dtype if hasattr(first_tensor, 'dtype') else None
-                elif hasattr(first_elem, 'dtype'):
-                    dtype = first_elem.dtype
-                else:
-                    dtype = None
-                if dtype is None or dtype not in (mx.bfloat16, mx.float16, mx.float32):
-                    logger.warning(f'CommVQ requires bfloat16/float16 cache, got {dtype}')
-                    return cache
-            elif not hasattr(cache, 'dtype') or cache.dtype not in (mx.bfloat16, mx.float16, mx.float32):
-                logger.warning(f"CommVQ requires bfloat16/float16 cache, got {getattr(cache, 'dtype', 'unknown')}")
-                return cache
-        except Exception as e:
-            logger.warning(f'Cannot evaluate cache: {e}')
+        result = _commvq_validate_and_extract_shape(cache)
+        if result is None:
             return cache
-        if isinstance(cache, list) and cache:
-            first_elem = cache[0]
-            if isinstance(first_elem, tuple):
-                first_tensor = first_elem[0]
-                orig_shape = first_tensor.shape if hasattr(first_tensor, 'shape') else None
-            elif hasattr(first_elem, 'shape'):
-                orig_shape = first_elem.shape
-            else:
-                orig_shape = None
-        else:
-            orig_shape = cache.shape if hasattr(cache, 'shape') else None
-        if orig_shape is None:
-            return cache
-        if isinstance(cache, list):
-            all_tensors = []
-            for item in cache:
-                if isinstance(item, tuple):
-                    all_tensors.append(item[0])
-                    all_tensors.append(item[1])
-                else:
-                    all_tensors.append(item)
-            flat = mx.concatenate([t.reshape(-1) for t in all_tensors])
-            flat = flat.reshape(-1, orig_shape[-1])
-        else:
-            flat = cache.reshape(-1, cache.shape[-1])
+        cache, orig_shape = result
+        flat = _commvq_flatten_cache(cache, orig_shape)
+
         group_size = 1024
         n_groups = (flat.shape[0] + group_size - 1) // group_size
         compressed_groups = []
@@ -284,26 +340,10 @@ def commvq_quantize(cache, bits: int=2):
             start_idx = i * group_size
             end_idx = min((i + 1) * group_size, flat.shape[0])
             group = flat[start_idx:end_idx]
-            if group.size == 0:
-                continue
-            n_clusters = 1 << bits
-            indices = mx.random.randint(0, group.shape[0], (n_clusters,))
-            centroids = group[indices]
-            for _ in range(10):
-                distances = mx.sum((group[:, None] - centroids[None, :]) ** 2, axis=2)
-                assignments = mx.argmin(distances, axis=1)
-                new_centroids = mx.zeros_like(centroids)
-                counts = mx.zeros(n_clusters)
-                for k in range(n_clusters):
-                    mask: Any = assignments == k
-                    cnt = mx.sum(mask)
-                    counts[k] = cnt
-                    if cnt > 0:
-                        new_centroids[k] = mx.sum(group * mask[:, None], axis=0) / cnt
-                centroids = new_centroids
-            final_distances = mx.sum((group[:, None] - centroids[None, :]) ** 2, axis=2)
-            indices = mx.argmin(final_distances, axis=1)
-            compressed_groups.append((centroids, indices))
+            quantized = _commvq_quantize_group(group, bits)
+            if quantized is not None:
+                compressed_groups.append(quantized)
+
         logger.info(f'[CommVQ] Compressed {n_groups} groups, 87.5% theoretical savings')
         return ('commvq_compressed', compressed_groups, orig_shape)
     except Exception as e:

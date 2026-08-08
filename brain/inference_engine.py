@@ -637,41 +637,69 @@ class InferenceEngine:
         logger.info(f'Abductive reasoning: {len(observations)} observations → {len(hypotheses)} hypotheses')
         return hypotheses[:max_hypotheses]
 
-    def _generate_candidate_explanations(self, observations: list[InferenceEvidence]) -> list[str]:
-        """Generate candidate explanations from observations."""
-        explanations = set()
+    def _collect_entities_from_observations(self, observations: list[InferenceEvidence]) -> dict[str, list[str]]:
+        """Extract named entities from observation metadata and facts."""
         entities = defaultdict(list)
         for obs in observations:
-            for key in ['actor', 'entity', 'user', 'author', 'source']:
+            for key in ('actor', 'entity', 'user', 'author', 'source'):
                 if key in obs.metadata:
                     entities[key].append(obs.metadata[key])
-            words = obs.fact.split()
-            for word in words:
+            for word in obs.fact.split():
                 if word[0].isupper() and len(word) > 3:
                     entities['extracted'].append(word)
+        return dict(entities)
+
+    def _generate_entity_pair_explanations(self, entities: dict[str, list[str]]) -> set[str]:
+        """Generate explanations from entity pair relationships."""
+        explanations = set()
         for _entity_type, entity_list in entities.items():
-            if len(entity_list) >= 2:
-                unique_entities = list(set(entity_list))
-                for i, entity_a in enumerate(unique_entities):
-                    for entity_b in unique_entities[i + 1:]:
-                        explanations.add(f'{entity_a} and {entity_b} are the same actor')
-                        explanations.add(f'{entity_a} and {entity_b} are collaborating')
-        timestamps = [obs.timestamp for obs in observations if obs.timestamp > 0]
-        if timestamps:
-            time_range = max(timestamps) - min(timestamps)
-            if time_range < 86400:
-                explanations.add('Events are part of a coordinated campaign')
-            elif time_range < 604800:
-                explanations.add('Events are part of a sustained operation')
+            if len(entity_list) < 2:
+                continue
+            unique_entities = list(set(entity_list))
+            for i, entity_a in enumerate(unique_entities):
+                for entity_b in unique_entities[i + 1:]:
+                    explanations.add(f'{entity_a} and {entity_b} are the same actor')
+                    explanations.add(f'{entity_a} and {entity_b} are collaborating')
+        return explanations
+
+    def _generate_temporal_explanation(self, timestamps: list[float]) -> str | None:
+        """Generate temporal-based explanation from timestamp range."""
+        if not timestamps:
+            return None
+        time_range = max(timestamps) - min(timestamps)
+        if time_range < 86400:
+            return 'Events are part of a coordinated campaign'
+        if time_range < 604800:
+            return 'Events are part of a sustained operation'
+        return None
+
+    def _generate_location_explanation(self, locations: set[str]) -> str | None:
+        """Generate location-based explanation from unique locations."""
+        if len(locations) == 1:
+            return f'Activity originates from {list(locations)[0]}'
+        if len(locations) > 1:
+            return 'Distributed operation across multiple locations'
+        return None
+
+    def _collect_locations(self, observations: list[InferenceEvidence]) -> set[str]:
+        """Extract unique locations from observation metadata."""
         locations = set()
         for obs in observations:
             loc = obs.metadata.get('location') or obs.metadata.get('country')
             if loc:
                 locations.add(loc)
-        if len(locations) == 1:
-            explanations.add(f'Activity originates from {list(locations)[0]}')
-        elif len(locations) > 1:
-            explanations.add('Distributed operation across multiple locations')
+        return locations
+
+    def _generate_candidate_explanations(self, observations: list[InferenceEvidence]) -> list[str]:
+        """Generate candidate explanations from observations."""
+        entities = self._collect_entities_from_observations(observations)
+        explanations = self._generate_entity_pair_explanations(entities)
+        timestamps = [obs.timestamp for obs in observations if obs.timestamp > 0]
+        if temp_exp := self._generate_temporal_explanation(timestamps):
+            explanations.add(temp_exp)
+        locations = self._collect_locations(observations)
+        if loc_exp := self._generate_location_explanation(locations):
+            explanations.add(loc_exp)
         return list(explanations)
 
     def _calculate_prior_probability(self, explanation: str, observations: list[InferenceEvidence]) -> float:
@@ -1516,69 +1544,137 @@ class MultiHopReasoner:
         """
         if start == end:
             return [MultiHopPath(start_entity=start, end_entity=end, hops=[])]
+
+        if not self._validate_entities(start, end):
+            return []
+
+        return self._run_bfs_search(start, end, max_depth, min_confidence)
+
+    def _validate_entities(self, start: str, end: str) -> bool:
+        """Validate that both start and end entities have evidence."""
         start_evidence = self._find_evidence_for_entity(start)
         end_evidence = self._find_evidence_for_entity(end)
         if not start_evidence:
             logger.warning(f'No evidence found for start entity: {start}')
-            return []
+            return False
         if not end_evidence:
             logger.warning(f'No evidence found for end entity: {end}')
-            return []
+            return False
+        return True
+
+    def _run_bfs_search(self, start: str, end: str, max_depth: int, min_confidence: float) -> list[MultiHopPath]:
+        """Run the BFS search loop."""
         paths_found = []
         paths_explored = 0
-        # F-08: Reset counter per-call so each BFS starts fresh
         self._total_iterations = 0
         queue = deque([(start, [], {start}, 1.0)], maxlen=self.inference_engine.MAX_BFS_QUEUE)
         effective_max_depth = min(max_depth, self.inference_engine.MAX_BFS_DEPTH)
+
         while queue and paths_explored < self.max_paths:
-            # F-08: Prevent infinite loops via total iteration cap
-            self._total_iterations += 1
-            if self._total_iterations >= self.inference_engine.max_total_iterations:
-                raise InferenceLoopExceeded(
-                    f"MultiHopReasoner BFS exceeded max_total_iterations={self.inference_engine.max_total_iterations} "
-                    f"(loop would burn CPU indefinitely with malformed evidence)"
-                )
+            self._check_iteration_limit()
             current_entity, hops, visited, current_confidence = queue.popleft()
+
             if len(hops) >= effective_max_depth:
                 continue
+
             neighbors = self._get_entity_neighbors(current_entity)
-            if neighbors and EIG_AVAILABLE:
-                try:
-                    hypothesis_set = []
-                    for h in hops:
-                        hypothesis_set.append({'entity': h.from_entity, 'relation': h.relation, 'belief': h.confidence})
-                    candidates = [{'entity': n[0], 'relation': n[1], 'confidence': n[2], 'expected_reduction': 0.2} for n in neighbors[:50]]
-                    eig_calculator = EIGCalculator()
-                    ranked = eig_calculator.rank_actions(hypothesis_set, candidates)
-                    ranked_dict = {r[0]['entity']: r[1] for r in ranked}
-                    neighbors = sorted(neighbors, key=lambda n: ranked_dict.get(n[0], 0), reverse=True)
-                except Exception as e:
-                    logger.debug(f'[EIG] Neighbor ranking failed: {e}')
+            if EIG_AVAILABLE:
+                neighbors = self._rank_neighbors_with_eig(neighbors, hops)
+
             for neighbor_entity, relation, hop_confidence in neighbors:
-                if neighbor_entity in visited:
-                    continue
-                new_confidence = current_confidence * hop_confidence
-                if new_confidence < min_confidence:
-                    continue
-                hop = HopStep(step_number=len(hops) + 1, from_entity=current_entity, to_entity=neighbor_entity, relation=relation, confidence=hop_confidence, evidence=self._get_evidence_for_relation(current_entity, neighbor_entity, relation))
-                new_hops = hops + [hop]
-                if neighbor_entity == end:
-                    path = MultiHopPath(start_entity=start, end_entity=end, hops=new_hops)
-                    paths_found.append(path)
-                    paths_explored += 1
-                    if paths_explored >= self.max_paths:
-                        logger.debug(f'Max paths ({self.max_paths}) reached, terminating search')
-                        break
-                else:
-                    new_visited = visited | {neighbor_entity}
-                    queue.append((neighbor_entity, new_hops, new_visited, new_confidence))
+                result = self._process_neighbor(
+                    neighbor_entity, relation, hop_confidence,
+                    hops, visited, current_confidence, min_confidence,
+                    start, end, paths_found,
+                )
+                if result == "break":
+                    break
+                if result is not None:
+                    queue, paths_explored = result
+
+        self._update_hypothesis_if_paths_found(paths_found)
+        return paths_found
+
+    def _check_iteration_limit(self) -> None:
+        """Check and enforce iteration limit to prevent infinite loops."""
+        self._total_iterations += 1
+        if self._total_iterations >= self.inference_engine.max_total_iterations:
+            raise InferenceLoopExceeded(
+                f"MultiHopReasoner BFS exceeded max_total_iterations={self.inference_engine.max_total_iterations} "
+                f"(loop would burn CPU indefinitely with malformed evidence)"
+            )
+
+    def _rank_neighbors_with_eig(self, neighbors: list, hops: list) -> list:
+        """Rank neighbors using EIG calculator if available."""
+        if not neighbors:
+            return neighbors
+        try:
+            hypothesis_set = [
+                {'entity': h.from_entity, 'relation': h.relation, 'belief': h.confidence}
+                for h in hops
+            ]
+            candidates = [
+                {'entity': n[0], 'relation': n[1], 'confidence': n[2], 'expected_reduction': 0.2}
+                for n in neighbors[:50]
+            ]
+            eig_calculator = EIGCalculator()
+            ranked = eig_calculator.rank_actions(hypothesis_set, candidates)
+            ranked_dict = {r[0]['entity']: r[1] for r in ranked}
+            return sorted(neighbors, key=lambda n: ranked_dict.get(n[0], 0), reverse=True)
+        except Exception as e:
+            logger.debug(f'[EIG] Neighbor ranking failed: {e}')
+            return neighbors
+
+    def _process_neighbor(
+        self,
+        neighbor_entity: str,
+        relation: str,
+        hop_confidence: float,
+        hops: list,
+        visited: set,
+        current_confidence: float,
+        min_confidence: float,
+        start: str,
+        end: str,
+        paths_found: list,
+    ) -> tuple[deque, int] | str | None:
+        """Process a single neighbor in BFS traversal."""
+        if neighbor_entity in visited:
+            return None
+
+        new_confidence = current_confidence * hop_confidence
+        if new_confidence < min_confidence:
+            return None
+
+        hop = HopStep(
+            step_number=len(hops) + 1,
+            from_entity=hops[-1].to_entity if hops else start,
+            to_entity=neighbor_entity,
+            relation=relation,
+            confidence=hop_confidence,
+            evidence=self._get_evidence_for_relation(hops[-1].to_entity if hops else start, neighbor_entity, relation) if hops else "",
+        )
+        new_hops = hops + [hop]
+
+        if neighbor_entity == end:
+            path = MultiHopPath(start_entity=start, end_entity=end, hops=new_hops)
+            paths_found.append(path)
+            return "break"
+
+        new_visited = visited | {neighbor_entity}
+        return (neighbor_entity, new_hops, new_visited, new_confidence)
+
+    def _update_hypothesis_if_paths_found(self, paths_found: list) -> None:
+        """Update hypothesis set with best path if paths were found."""
         if paths_found:
             ranked = self.rank_paths(paths_found)
             if ranked:
                 best_path = ranked[0]
-                beliefs = [{'entity': h.from_entity, 'relation': h.relation, 'belief': h.confidence} for h in best_path.hops]
+                beliefs = [
+                    {'entity': h.from_entity, 'relation': h.relation, 'belief': h.confidence}
+                    for h in best_path.hops
+                ]
                 self.inference_engine.update_hypothesis_set(beliefs)
-        return paths_found
 
     def _find_evidence_for_entity(self, entity: str) -> list[str]:
         """Find evidence IDs related to an entity."""

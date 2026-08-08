@@ -156,36 +156,37 @@ class SystemDetector:
     def __init__(self) -> None:
         pass
 
-    def _detect(self) -> None:
-        """Run all hardware detection (called once per process)."""
-        is_darwin = sys.platform == 'darwin'
-        darwin_version: tuple[int, int, int] | None = None
-        darwin_machine: str | None = None
-        if is_darwin:
-            try:
-                ver = platform.mac_ver()
-                if ver[0]:
-                    version_str = ver[0].split('.')
-                    parsed = [int(x) for x in version_str[:3]]
-                    darwin_version = (parsed[0], parsed[1], parsed[2]) if len(parsed) >= 3 else None
-                else:
-                    darwin_version = None
-                darwin_machine = ver[2] if len(ver) > 2 else None
-            except Exception:
-                darwin_version = None
-                darwin_machine = None
+    # ─── Detection Helpers ───────────────────────────────────────────────────
+
+    def _detect_darwin(self) -> tuple[tuple[int, int, int] | None, str | None]:
+        """Detect macOS version and machine type."""
         try:
-            import os
+            ver = platform.mac_ver()
+            darwin_version: tuple[int, int, int] | None = None
+            if ver[0]:
+                version_str = ver[0].split('.')
+                parsed = [int(x) for x in version_str[:3]]
+                darwin_version = (parsed[0], parsed[1], parsed[2]) if len(parsed) >= 3 else None
+            darwin_machine = ver[2] if len(ver) > 2 else None
+            return darwin_version, darwin_machine
+        except Exception:
+            return None, None
+
+    def _detect_cpu(self) -> tuple[int, int]:
+        """Detect CPU logical and physical counts."""
+        try:
             cpu_logical = os.cpu_count() or 0
-            cpu_physical = cpu_logical
             try:
                 psutil = _psutil_mod()
                 cpu_physical = psutil.cpu_count(logical=False) or cpu_logical
             except Exception:  # noqa: BLE001
-                pass
+                cpu_physical = cpu_logical
+            return cpu_logical, cpu_physical
         except Exception:
-            cpu_logical = 0
-            cpu_physical = 0
+            return 0, 0
+
+    def _detect_memory(self) -> tuple[int, int, float, float, Literal['8gb', '16gb', '32gb', '64gb', 'other']]:
+        """Detect total and available memory, compute RAM tier."""
         memory_total_bytes = 0
         memory_available_bytes = 0
         memory_total_gb = 0.0
@@ -210,32 +211,29 @@ class SystemDetector:
                 ram_tier = 'other'
         except Exception:  # noqa: BLE001
             pass
-        python_build_flags: tuple[str, ...] = ()
+        return memory_total_bytes, memory_available_bytes, memory_total_gb, memory_available_gb, ram_tier
+
+    def _detect_python_flags(self) -> tuple[str, ...]:
+        """Detect Python build flags."""
         try:
             config = sysconfig.get_config_vars()
             flags = []
             for key, value in config.items():
                 if key.endswith('FLAGS') and value:
                     flags.append(str(value))
-            python_build_flags = tuple(flags)
+            return tuple(flags)
         except Exception:  # noqa: BLE001
-            pass
-        has_metal = False
-        has_ane = False
-        is_m1_silicon = False
-        is_m1_8gb = False
+            return ()
 
-        # Sprint FXXX: Python 3.14 JIT detection (PEP 749)
-        # PEP 749: JIT enabled by default in Python 3.14+ if interpreter built with --with-jit
+    def _detect_jit(self) -> tuple[bool, bool, str]:
+        """Detect Python 3.14+ JIT availability and status."""
         is_jit_available = False
         is_jit_active = False
         jit_reason = ""
         try:
             if hasattr(sys, 'jit'):
                 is_jit_available = True
-                # JIT is active if sys.flags.jit == 1
                 try:
-                    import sys
                     jit_flag = getattr(sys.flags, 'jit', 0)
                     is_jit_active = jit_flag == 1
                     jit_reason = f"sys.jit available, sys.flags.jit={jit_flag}"
@@ -245,7 +243,14 @@ class SystemDetector:
                 jit_reason = "sys.jit attribute not available (Python < 3.14 or built without --with-jit)"
         except Exception as e:
             jit_reason = f"JIT detection error: {e}"
+        return is_jit_available, is_jit_active, jit_reason
 
+    def _detect_mlx(self, is_darwin: bool, darwin_machine: str | None, ram_tier: str) -> tuple[bool, bool, bool, bool]:
+        """Detect MLX Metal/ANE availability and M1 silicon status."""
+        has_metal = False
+        has_ane = False
+        is_m1_silicon = False
+        is_m1_8gb = False
         if is_darwin:
             try:
                 import mlx.core as mx
@@ -253,11 +258,40 @@ class SystemDetector:
                 has_ane = hasattr(mx.metal, 'get_ane_utilization')
                 is_m1_silicon = darwin_machine is not None and 'arm' in darwin_machine.lower()
                 is_m1_8gb = is_m1_silicon and ram_tier == '8gb'
-            except ImportError:  # noqa: BLE001
-                pass
             except Exception:  # noqa: BLE001
                 pass
-        self._capabilities = HardwareCapabilities(is_darwin=is_darwin, darwin_version=darwin_version, darwin_machine=darwin_machine, cpu_count_physical=cpu_physical, cpu_count_logical=cpu_logical, memory_total_bytes=memory_total_bytes, memory_available_bytes=memory_available_bytes, memory_total_gb=memory_total_gb, memory_available_gb=memory_available_gb, ram_tier=ram_tier, python_build_flags=python_build_flags, has_metal=has_metal, has_ane=has_ane, is_m1_silicon=is_m1_silicon, is_m1_8gb=is_m1_8gb, is_jit_available=is_jit_available, is_jit_active=is_jit_active, jit_reason=jit_reason)
+        return has_metal, has_ane, is_m1_silicon, is_m1_8gb
+
+    def _detect(self) -> None:
+        """Run all hardware detection (called once per process)."""
+        is_darwin = sys.platform == 'darwin'
+        darwin_version, darwin_machine = self._detect_darwin() if is_darwin else (None, None)
+        cpu_logical, cpu_physical = self._detect_cpu()
+        memory_total_bytes, memory_available_bytes, memory_total_gb, memory_available_gb, ram_tier = self._detect_memory()
+        python_build_flags = self._detect_python_flags()
+        is_jit_available, is_jit_active, jit_reason = self._detect_jit()
+        has_metal, has_ane, is_m1_silicon, is_m1_8gb = self._detect_mlx(is_darwin, darwin_machine, ram_tier)
+
+        self._capabilities = HardwareCapabilities(
+            is_darwin=is_darwin,
+            darwin_version=darwin_version,
+            darwin_machine=darwin_machine,
+            cpu_count_physical=cpu_physical,
+            cpu_count_logical=cpu_logical,
+            memory_total_bytes=memory_total_bytes,
+            memory_available_bytes=memory_available_bytes,
+            memory_total_gb=memory_total_gb,
+            memory_available_gb=memory_available_gb,
+            ram_tier=ram_tier,
+            python_build_flags=python_build_flags,
+            has_metal=has_metal,
+            has_ane=has_ane,
+            is_m1_silicon=is_m1_silicon,
+            is_m1_8gb=is_m1_8gb,
+            is_jit_available=is_jit_available,
+            is_jit_active=is_jit_active,
+            jit_reason=jit_reason
+        )
 
     @property
     def capabilities(self) -> HardwareCapabilities:

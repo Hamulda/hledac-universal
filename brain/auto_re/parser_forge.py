@@ -392,6 +392,46 @@ class AutoREEngine:
 
     # ── Stage C: Sandbox execution ─────────────────────────────────────────────
 
+    # ── Stage C: Sandbox execution helpers ────────────────────────────────────
+
+    def _validate_code_length(self, code_bytes: bytes) -> None:
+        """Validate code length constraint."""
+        if len(code_bytes) > _MAX_CODE_BYTES:
+            raise ValueError(
+                f"Generated code exceeds {_MAX_CODE_BYTES} bytes "
+                f"(got {len(code_bytes)})"
+            )
+
+    def _validate_forbidden_patterns(self, code: str) -> None:
+        """Check code for forbidden patterns."""
+        for pat in _FORBIDDEN_PATTERNS:
+            if pat.search(code):
+                raise ValueError(f"Generated code contains forbidden pattern: {pat.pattern}")
+
+    def _validate_ast(self, code: str) -> ast.AST:
+        """Parse and return AST, raising on syntax error."""
+        try:
+            return ast.parse(code)
+        except SyntaxError as e:
+            raise ValueError(f"AST parse failed: {e}") from e
+
+    def _check_forbidden_ast_nodes(self, tree: ast.AST) -> None:
+        """Walk AST and reject forbidden imports/calls."""
+        forbidden_calls = {"eval", "exec", "compile", "breakpoint", "__import__"}
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Import):
+                for alias in node.names:
+                    if alias.name not in _ALLOWED_IMPORTS and not alias.name.startswith("hledac_"):
+                        raise ValueError(f"AST: forbidden import '{alias.name}'")
+            elif isinstance(node, ast.ImportFrom):
+                if node.module not in _ALLOWED_IMPORTS and not (node.module or "").startswith("hledac_"):
+                    raise ValueError(f"AST: forbidden import-from '{node.module}'")
+            elif isinstance(node, ast.Call):
+                if isinstance(node.func, ast.Name) and node.func.id in forbidden_calls:
+                    raise ValueError(f"AST: forbidden Call '{node.func.id}'")
+                if isinstance(node.func, ast.Attribute) and node.func.attr in forbidden_calls:
+                    raise ValueError(f"AST: forbidden attribute Call '{node.func.attr}'")
+
     async def _sandboxed_execute(
         self,
         parser_python: str,
@@ -406,40 +446,11 @@ class AutoREEngine:
         3. AST parse: any Import/Call to forbidden names → reject
         4. Subprocess: --add-opens isolation, 5s timeout, no network
         """
-        # 1. Length
         code_bytes = parser_python.encode("utf-8")
-        if len(code_bytes) > _MAX_CODE_BYTES:
-            raise ValueError(
-                f"Generated code exceeds {_MAX_CODE_BYTES} bytes "
-                f"(got {len(code_bytes)})"
-            )
-
-        # 2. Pattern pre-check
-        for pat in _FORBIDDEN_PATTERNS:
-            if pat.search(parser_python):
-                raise ValueError(f"Generated code contains forbidden pattern: {pat.pattern}")
-
-        # 3. AST validation
-        try:
-            tree = ast.parse(parser_python)
-        except SyntaxError as e:
-            raise ValueError(f"AST parse failed: {e}") from e
-
-        # Walk AST for forbidden nodes
-        for node in ast.walk(tree):
-            if isinstance(node, ast.Import):
-                for alias in node.names:
-                    if alias.name not in _ALLOWED_IMPORTS and not alias.name.startswith("hledac_"):
-                        raise ValueError(f"AST: forbidden import '{alias.name}'")
-            elif isinstance(node, ast.ImportFrom):
-                if node.module not in _ALLOWED_IMPORTS and not (node.module or "").startswith("hledac_"):
-                    raise ValueError(f"AST: forbidden import-from '{node.module}'")
-            elif isinstance(node, ast.Call):
-                forbidden_calls = {"eval", "exec", "compile", "breakpoint", "__import__"}
-                if isinstance(node.func, ast.Name) and node.func.id in forbidden_calls:
-                    raise ValueError(f"AST: forbidden Call '{node.func.id}'")
-                if isinstance(node.func, ast.Attribute) and node.func.attr in forbidden_calls:
-                    raise ValueError(f"AST: forbidden attribute Call '{node.func.attr}'")
+        self._validate_code_length(code_bytes)
+        self._validate_forbidden_patterns(parser_python)
+        tree = self._validate_ast(parser_python)
+        self._check_forbidden_ast_nodes(tree)
 
         # 4. Write wrapper script + run it directly (no nested -c injection)
         #    The wrapper receives data via stdin (not embedded in command line).

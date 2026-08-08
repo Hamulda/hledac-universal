@@ -193,6 +193,42 @@ class AdaptiveChunkBuffer:
         return self._pressure
 
 
+def _check_stream_cancelled(engine: DeepHermes3Engine) -> bool:
+    """Check if stream has been cancelled."""
+    if hasattr(engine, "_stream_cancelled") and isinstance(engine._stream_cancelled, asyncio.Event):
+        return engine._stream_cancelled.is_set()
+    return False
+
+
+def _update_pressure_from_level(bridge, buffer, level: str) -> None:
+    """Update bridge and buffer based on pressure level."""
+    if bridge is None:
+        return
+    try:
+        mx = _get_mlx()
+        mx.eval([])  # Sync barrier before reading
+        if hasattr(mx.metal, "get_active_memory"):
+            active = mx.metal.get_active_memory()
+            mx.eval([])  # Sync after read
+            bridge.update_pressure_metal(active, _MAX_MEMORY_BYTES)
+            buffer.update_chunk_size(bridge.get_chunk_size())
+        else:
+            _set_bridge_pressure(bridge, level)
+    except Exception:  # noqa: BLE001
+        _set_bridge_pressure(bridge, level)
+
+
+def _set_bridge_pressure(bridge, level: str) -> None:
+    """Set bridge pressure based on level string."""
+    level_upper = level.upper() if hasattr(level, 'upper') else str(level).upper()
+    if level_upper == "CRITICAL":
+        bridge.update_pressure(0.9)
+    elif level_upper == "WARNING":
+        bridge.update_pressure(0.75)
+    else:
+        bridge.update_pressure(0.5)
+
+
 async def generate_stream_adaptive(
     engine: DeepHermes3Engine,
     prompt: str,
@@ -236,7 +272,6 @@ async def generate_stream_adaptive(
     bridge = None
     try:
         from hledac.universal.core.rust_backend import rust
-
         if rust.is_available:
             bridge = rust.mlx.MLXBridge(engine, None)
     except Exception:  # noqa: BLE001
@@ -247,55 +282,23 @@ async def generate_stream_adaptive(
     current_pressure = "normal"
 
     try:
-        # Stream tokens from engine
         async for token in engine.generate_stream(
-            prompt,
-            max_tokens=max_tokens,
-            temperature=temp,
-            system_msg=system_msg,
-            thinking=thinking,
+            prompt, max_tokens=max_tokens, temperature=temp, system_msg=system_msg, thinking=thinking,
         ):
             # Check cancellation (MBridge.4)
-            if hasattr(engine, "_stream_cancelled") and isinstance(
-                engine._stream_cancelled, asyncio.Event
-            ):
-                if engine._stream_cancelled.is_set():
-                    logger.debug("[MLXBridge] Stream cancelled")
-                    break
+            if _check_stream_cancelled(engine):
+                logger.debug("[MLXBridge] Stream cancelled")
+                break
 
-            # Get memory pressure (MBridge.5)
+            # Get memory pressure periodically (MBridge.5)
             now = time.monotonic()
-            if now - last_pressure_check > 0.5:  # Check every 500ms
+            if now - last_pressure_check > 0.5:
                 last_pressure_check = now
                 try:
-                    # Use canonical mlx_memory module (not raw mx.metal.get_active_memory)
                     from hledac.universal.utils.mlx_memory import get_mlx_memory_pressure
-
                     _, level = get_mlx_memory_pressure()
-                    # Map NORMAL|WARNING|CRITICAL to lowercase
                     current_pressure = level.lower()
-
-                    # Update bridge if available
-                    if bridge is not None:
-                        # Get actual active memory bytes for bridge
-                        try:
-                            mx = _get_mlx()
-
-                            mx.eval([])  # Sync barrier before reading
-                            if hasattr(mx.metal, "get_active_memory"):
-                                active = mx.metal.get_active_memory()
-                                mx.eval([])  # Sync after read
-                                bridge.update_pressure_metal(active, _MAX_MEMORY_BYTES)
-                                new_size = bridge.get_chunk_size()
-                                buffer.update_chunk_size(new_size)
-                        except Exception:
-                            # Fallback: use pressure level from canonical API
-                            if level == "CRITICAL":
-                                bridge.update_pressure(0.9)
-                            elif level == "WARNING":
-                                bridge.update_pressure(0.75)
-                            else:
-                                bridge.update_pressure(0.5)
+                    _update_pressure_from_level(bridge, buffer, level)
                 except Exception:  # noqa: BLE001
                     pass
 
@@ -312,14 +315,11 @@ async def generate_stream_adaptive(
 
     except asyncio.CancelledError:
         logger.debug("[MLXBridge] Stream cancelled via CancelledError")
-        if hasattr(engine, "_stream_cancelled") and isinstance(
-            engine._stream_cancelled, asyncio.Event
-        ):
+        if _check_stream_cancelled(engine):
             engine._stream_cancelled.set()
         raise
     except Exception as e:
         logger.warning("[MLXBridge] Stream error: %s", e)
-        # Flush any remaining tokens
         if buffer.total_generated > 0:
             yield buffer.flush()
         raise

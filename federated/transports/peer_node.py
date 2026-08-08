@@ -424,6 +424,69 @@ class PeerNodeTransport:
         """Set sprint id for traceability. Idempotent."""
         self._sprint_id = str(sprint_id or '')[:64]
 
+    def _check_preconditions(self) -> tuple[bool, str | None]:
+        """Check if run can proceed. Returns (can_run, lane_for_log)."""
+        if self._closed:
+            return False, None
+        if not is_peer_node_enabled():
+            return False, None
+        return True, None
+
+    async def _discover_and_select_peer(self, lane: str) -> tuple[Any, str] | None:
+        """Discover peers and select one via round-robin."""
+        if not self._peers:
+            try:
+                await safe_wait_for(self._discover_peers(), timeout=PEER_NODE_HANDSHAKE_TIMEOUT_S, label='mDNS_discover')
+            except TimeoutError as e:
+                logger.debug('[FED-P2P] mDNS discover timed out: %s', e)
+            except Exception as e:
+                logger.debug('[FED-P2P] mDNS discover failed: %s', e)
+        if not self._peers:
+            logger.debug('[FED-P2P] no peers available, lane=%r', lane)
+            return None
+        peer_ids = sorted(self._peers.keys())
+        if not peer_ids:
+            return None
+        self._round_robin_idx = (self._round_robin_idx + 1) % len(peer_ids)
+        peer_id = peer_ids[self._round_robin_idx]
+        return self._peers[peer_id], peer_id
+
+    async def _send_peer_request(self, session: Any, lane: str, query: str, peer_id: str) -> list[dict[str, Any]] | None:
+        """Send request to peer and return results or None on error."""
+        payload = {
+            'v': PEER_NODE_PROTO_VERSION, 't': 'research',
+            'lane': str(lane)[:32], 'q': str(query or '')[:256],
+            'n': secrets.token_hex(8), 'ts': int(time.time() * 1000)
+        }
+        self._nonce_cache.seen(payload['n'])
+        try:
+            raw_response = await safe_wait_for(self._send_request(session, payload), timeout=PEER_NODE_HANDSHAKE_TIMEOUT_S, label='send_request')
+        except TimeoutError:
+            logger.debug('[FED-P2P] peer %s request timeout lane=%r', peer_id, lane)
+            return None
+        except Exception as e:
+            logger.debug('[FED-P2P] peer %s request failed: %s: %s', peer_id, type(e).__name__, e)
+            return None
+        if not isinstance(raw_response, dict):
+            return None
+        results = raw_response.get('results', [])
+        if not isinstance(results, list):
+            return None
+        return results
+
+    def _normalize_results(self, results: list[Any], lane: str, peer_id: str) -> list[dict[str, Any]]:
+        """Normalize and limit results from peer."""
+        out: list[dict[str, Any]] = []
+        for f in results:
+            if not isinstance(f, dict):
+                continue
+            norm = _normalize_peer_finding(f, lane, peer_id, self._sprint_id)
+            if norm is not None:
+                out.append(norm)
+            if len(out) >= _PEER_MAX_FINDINGS:
+                break
+        return out
+
     async def run(self, lane: str, query: str) -> list[dict[str, Any]]:
         """
         Dispatch (lane, query) to a peer over Noise-secured UDP.
@@ -434,50 +497,16 @@ class PeerNodeTransport:
         """
         started = time.monotonic()
         try:
-            if self._closed:
+            if not self._check_preconditions()[0]:
                 return []
-            if not is_peer_node_enabled():
+            peer_info = await self._discover_and_select_peer(lane)
+            if peer_info is None:
                 return []
-            if not self._peers:
-                try:
-                    await safe_wait_for(self._discover_peers(), timeout=PEER_NODE_HANDSHAKE_TIMEOUT_S, label='mDNS_discover')
-                except TimeoutError as e:
-                    logger.debug('[FED-P2P] mDNS discover timed out: %s', e)
-                except Exception as e:
-                    logger.debug('[FED-P2P] mDNS discover failed: %s', e)
-            if not self._peers:
-                logger.debug('[FED-P2P] no peers available, lane=%r', lane)
+            session, peer_id = peer_info
+            results = await self._send_peer_request(session, lane, query, peer_id)
+            if results is None:
                 return []
-            peer_ids = sorted(self._peers.keys())
-            if not peer_ids:
-                return []
-            self._round_robin_idx = (self._round_robin_idx + 1) % len(peer_ids)
-            peer_id = peer_ids[self._round_robin_idx]
-            session = self._peers[peer_id]
-            payload = {'v': PEER_NODE_PROTO_VERSION, 't': 'research', 'lane': str(lane)[:32], 'q': str(query or '')[:256], 'n': secrets.token_hex(8), 'ts': int(time.time() * 1000)}
-            self._nonce_cache.seen(payload['n'])
-            try:
-                raw_response = await safe_wait_for(self._send_request(session, payload), timeout=PEER_NODE_HANDSHAKE_TIMEOUT_S, label='send_request')
-            except TimeoutError:
-                logger.debug('[FED-P2P] peer %s request timeout lane=%r', peer_id, lane)
-                return []
-            except Exception as e:
-                logger.debug('[FED-P2P] peer %s request failed: %s: %s', peer_id, type(e).__name__, e)
-                return []
-            if not isinstance(raw_response, dict):
-                return []
-            results = raw_response.get('results', [])
-            if not isinstance(results, list):
-                return []
-            out: list[dict[str, Any]] = []
-            for f in results:
-                if not isinstance(f, dict):
-                    continue
-                norm = _normalize_peer_finding(f, lane, peer_id, self._sprint_id)
-                if norm is not None:
-                    out.append(norm)
-                if len(out) >= _PEER_MAX_FINDINGS:
-                    break
+            out = self._normalize_results(results, lane, peer_id)
             elapsed = time.monotonic() - started
             logger.debug('[FED-P2P] lane=%r peer=%s findings=%d dur=%.3fs', lane, peer_id, len(out), elapsed)
             return out

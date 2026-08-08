@@ -816,6 +816,130 @@ def _query_domain_score(domain: str, base_score: float, graph_stats: dict | None
         score += 0.05
     return min(1.0, max(0.0, score))
 
+def _detect_ioc_type(query: str) -> tuple[str, str]:
+    """
+    Detect IOC type and normalized value from query string.
+
+    Returns:
+        Tuple of (ioc_type, ioc_value). ioc_type is 'unknown' if not detected.
+    """
+    ioc_type: str = 'unknown'
+    ioc_value: str = query
+    if _looks_like_ip(query):
+        ioc_type = 'ip'
+        ioc_value = query
+    elif _looks_like_hash(query):
+        h = query.lower()
+        if len(h) == 32:
+            ioc_type = 'md5'
+        elif len(h) == 40:
+            ioc_type = 'sha1'
+        elif len(h) == 64:
+            ioc_type = 'sha256'
+        else:
+            ioc_type = 'hash'
+    elif _looks_like_url(query):
+        ioc_type = 'url'
+        url_match = re.search('https?://([a-zA-Z0-9](?:[a-zA-Z0-9\\-]{0,61}[a-zA-Z0-9])?(?:\\.[a-zA-Z0-9](?:[a-zA-Z0-9\\-]{0,61}[a-zA-Z0-9])?)+)', query)
+        if url_match:
+            ioc_value = url_match.group(1).lower()
+        else:
+            ioc_type = 'unknown'
+    elif _looks_like_email(query):
+        ioc_type = 'email'
+    elif _looks_like_domain(query):
+        ioc_type = 'domain'
+        ioc_value = query
+    else:
+        domain_match = re.search('([a-zA-Z0-9](?:[a-zA-Z0-9\\-]{0,61}[a-zA-Z0-9])?(?:\\.[a-zA-Z0-9](?:[a-zA-Z0-9\\-]{0,61}[a-zA-Z0-9])?)+)', query)
+        if domain_match:
+            ioc_type = 'domain'
+            ioc_value = domain_match.group(1).lower()
+    return ioc_type, ioc_value
+
+
+def _generate_pivots_for_ioc_type(
+    ioc_type: str,
+    ioc_value: str,
+    query: str,
+    pivot_id_base: str,
+    source_hint: str,
+    graph_stats: dict | None,
+) -> list[Pivot]:
+    """
+    Generate pivot candidates for a detected IOC type.
+
+    Uses dictionary dispatch for clean branching.
+    """
+    candidates: list[Pivot] = []
+
+    if ioc_type == 'domain':
+        root_domain = _extract_root_domain(ioc_value)
+        root_score = _query_domain_score(root_domain, 0.9, graph_stats)
+        candidates.append(Pivot(
+            priority=-root_score, pivot_id=f'{pivot_id_base}-root',
+            pivot_type=PivotType.DOMAIN, ioc_value=root_domain, ioc_type='domain',
+            reason='Root domain extracted from query', expected_value=root_score,
+            source_hint=source_hint, evidence_pointers=()))
+        if ioc_value != root_domain:
+            www_domain = f'www.{root_domain}'
+            www_score = _query_domain_score(www_domain, 0.7, graph_stats)
+            candidates.append(Pivot(
+                priority=-www_score, pivot_id=f'{pivot_id_base}-www',
+                pivot_type=PivotType.DOMAIN, ioc_value=www_domain, ioc_type='domain',
+                reason='Common www prefix variant', expected_value=www_score,
+                source_hint=source_hint, evidence_pointers=()))
+        candidates.append(Pivot(
+            priority=-0.5, pivot_id=f'{pivot_id_base}-archive',
+            pivot_type=PivotType.ARCHIVE, ioc_value=ioc_value, ioc_type='domain',
+            reason='Archive historical records for domain', expected_value=0.5,
+            source_hint=source_hint, evidence_pointers=()))
+
+    elif ioc_type in ('ip', 'ipv4'):
+        candidates.append(Pivot(
+            priority=-0.7, pivot_id=f'{pivot_id_base}-rdns',
+            pivot_type=PivotType.DOMAIN, ioc_value=ioc_value, ioc_type='ip',
+            reason='Reverse DNS / domain lookup for IP', expected_value=0.7,
+            source_hint=source_hint, evidence_pointers=()))
+        candidates.append(Pivot(
+            priority=-0.5, pivot_id=f'{pivot_id_base}-graph',
+            pivot_type=PivotType.GRAPH, ioc_value=ioc_value, ioc_type='ip',
+            reason='Graph traversal from IP IOC', expected_value=0.5,
+            source_hint=source_hint, evidence_pointers=()))
+
+    elif ioc_type == 'url' and ioc_value != query:
+        candidates.append(Pivot(
+            priority=-0.8, pivot_id=f'{pivot_id_base}-url-domain',
+            pivot_type=PivotType.DOMAIN, ioc_value=ioc_value, ioc_type='domain',
+            reason='Domain extracted from URL', expected_value=0.8,
+            source_hint=source_hint, evidence_pointers=()))
+        candidates.append(Pivot(
+            priority=-0.4, pivot_id=f'{pivot_id_base}-url-archive',
+            pivot_type=PivotType.ARCHIVE, ioc_value=query, ioc_type='url',
+            reason='Archive historical snapshot of URL', expected_value=0.4,
+            source_hint=source_hint, evidence_pointers=()))
+
+    elif ioc_type in ('md5', 'sha1', 'sha256', 'hash'):
+        candidates.append(Pivot(
+            priority=-0.6, pivot_id=f'{pivot_id_base}-threat',
+            pivot_type=PivotType.GRAPH, ioc_value=ioc_value, ioc_type=ioc_type,
+            reason=f"Threat intelligence lookup for {(ioc_type.upper() if ioc_type != 'hash' else 'hash')} hash",
+            expected_value=0.6, source_hint=source_hint, evidence_pointers=()))
+
+    elif ioc_type == 'email':
+        candidates.append(Pivot(
+            priority=-0.7, pivot_id=f'{pivot_id_base}-leak',
+            pivot_type=PivotType.LEAK, ioc_value=ioc_value, ioc_type='email',
+            reason='Check email for breach/leak exposure', expected_value=0.7,
+            source_hint=source_hint, evidence_pointers=()))
+        candidates.append(Pivot(
+            priority=-0.5, pivot_id=f'{pivot_id_base}-identity',
+            pivot_type=PivotType.IDENTITY, ioc_value=ioc_value, ioc_type='email',
+            reason='Identity resolution for email address', expected_value=0.5,
+            source_hint=source_hint, evidence_pointers=()))
+
+    return candidates
+
 def generate_pivot_candidates_from_query(query: str, max_candidates: int=MAX_PIVOT_CANDIDATES, mission_intent: str | None=None, graph_stats: dict | None=None) -> list[Pivot]:
     """
     [F216F] Generate bounded pivot candidates from a query string.
@@ -850,63 +974,17 @@ def generate_pivot_candidates_from_query(query: str, max_candidates: int=MAX_PIV
     query = query.strip()
     if not query:
         return []
-    candidates: list[Pivot] = []
-    pivot_id_base = str(uuid.uuid4())[:8]
-    ioc_type: str = 'unknown'
-    ioc_value: str = query
-    if _looks_like_ip(query):
-        ioc_type = 'ip'
-        ioc_value = query
-    elif _looks_like_hash(query):
-        h = query.lower()
-        if len(h) == 32:
-            ioc_type = 'md5'
-        elif len(h) == 40:
-            ioc_type = 'sha1'
-        elif len(h) == 64:
-            ioc_type = 'sha256'
-        else:
-            ioc_type = 'hash'
-    elif _looks_like_url(query):
-        ioc_type = 'url'
-        url_match = re.search('https?://([a-zA-Z0-9](?:[a-zA-Z0-9\\-]{0,61}[a-zA-Z0-9])?(?:\\.[a-zA-Z0-9](?:[a-zA-Z0-9\\-]{0,61}[a-zA-Z0-9])?)+)', query)
-        if url_match:
-            ioc_value = url_match.group(1).lower()
-        else:
-            ioc_type = 'unknown'
-    elif _looks_like_email(query):
-        ioc_type = 'email'
-    elif _looks_like_domain(query):
-        ioc_type = 'domain'
-        ioc_value = query
-    else:
-        domain_match = re.search('([a-zA-Z0-9](?:[a-zA-Z0-9\\-]{0,61}[a-zA-Z0-9])?(?:\\.[a-zA-Z0-9](?:[a-zA-Z0-9\\-]{0,61}[a-zA-Z0-9])?)+)', query)
-        if domain_match:
-            ioc_type = 'domain'
-            ioc_value = domain_match.group(1).lower()
+
+    ioc_type, ioc_value = _detect_ioc_type(query)
     if ioc_type == 'unknown':
         return []
+
+    pivot_id_base = str(uuid.uuid4())[:8]
     source_hint = 'query:direct'
-    if ioc_type == 'domain':
-        root_domain = _extract_root_domain(ioc_value)
-        root_score = _query_domain_score(root_domain, 0.9, graph_stats)
-        candidates.append(Pivot(priority=-root_score, pivot_id=f'{pivot_id_base}-root', pivot_type=PivotType.DOMAIN, ioc_value=root_domain, ioc_type='domain', reason='Root domain extracted from query', expected_value=root_score, source_hint=source_hint, evidence_pointers=()))
-        if ioc_value != root_domain:
-            www_domain = f'www.{root_domain}'
-            www_score = _query_domain_score(www_domain, 0.7, graph_stats)
-            candidates.append(Pivot(priority=-www_score, pivot_id=f'{pivot_id_base}-www', pivot_type=PivotType.DOMAIN, ioc_value=www_domain, ioc_type='domain', reason='Common www prefix variant', expected_value=www_score, source_hint=source_hint, evidence_pointers=()))
-        candidates.append(Pivot(priority=-0.5, pivot_id=f'{pivot_id_base}-archive', pivot_type=PivotType.ARCHIVE, ioc_value=ioc_value, ioc_type='domain', reason='Archive historical records for domain', expected_value=0.5, source_hint=source_hint, evidence_pointers=()))
-    elif ioc_type in ('ip', 'ipv4'):
-        candidates.append(Pivot(priority=-0.7, pivot_id=f'{pivot_id_base}-rdns', pivot_type=PivotType.DOMAIN, ioc_value=ioc_value, ioc_type='ip', reason='Reverse DNS / domain lookup for IP', expected_value=0.7, source_hint=source_hint, evidence_pointers=()))
-        candidates.append(Pivot(priority=-0.5, pivot_id=f'{pivot_id_base}-graph', pivot_type=PivotType.GRAPH, ioc_value=ioc_value, ioc_type='ip', reason='Graph traversal from IP IOC', expected_value=0.5, source_hint=source_hint, evidence_pointers=()))
-    elif ioc_type == 'url' and ioc_value != query:
-        candidates.append(Pivot(priority=-0.8, pivot_id=f'{pivot_id_base}-url-domain', pivot_type=PivotType.DOMAIN, ioc_value=ioc_value, ioc_type='domain', reason='Domain extracted from URL', expected_value=0.8, source_hint=source_hint, evidence_pointers=()))
-        candidates.append(Pivot(priority=-0.4, pivot_id=f'{pivot_id_base}-url-archive', pivot_type=PivotType.ARCHIVE, ioc_value=query, ioc_type='url', reason='Archive historical snapshot of URL', expected_value=0.4, source_hint=source_hint, evidence_pointers=()))
-    elif ioc_type in ('md5', 'sha1', 'sha256', 'hash'):
-        candidates.append(Pivot(priority=-0.6, pivot_id=f'{pivot_id_base}-threat', pivot_type=PivotType.GRAPH, ioc_value=ioc_value, ioc_type=ioc_type, reason=f"Threat intelligence lookup for {(ioc_type.upper() if ioc_type != 'hash' else 'hash')} hash", expected_value=0.6, source_hint=source_hint, evidence_pointers=()))
-    elif ioc_type == 'email':
-        candidates.append(Pivot(priority=-0.7, pivot_id=f'{pivot_id_base}-leak', pivot_type=PivotType.LEAK, ioc_value=ioc_value, ioc_type='email', reason='Check email for breach/leak exposure', expected_value=0.7, source_hint=source_hint, evidence_pointers=()))
-        candidates.append(Pivot(priority=-0.5, pivot_id=f'{pivot_id_base}-identity', pivot_type=PivotType.IDENTITY, ioc_value=ioc_value, ioc_type='email', reason='Identity resolution for email address', expected_value=0.5, source_hint=source_hint, evidence_pointers=()))
+
+    candidates = _generate_pivots_for_ioc_type(
+        ioc_type, ioc_value, query, pivot_id_base, source_hint, graph_stats)
+
     candidates.sort(key=attrgetter("priority"))
     if len(candidates) > max_candidates:
         candidates = candidates[:max_candidates]

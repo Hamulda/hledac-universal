@@ -52,6 +52,88 @@ def _compute_sha256(data: bytes) -> str:
     """Compute SHA-256 hash of bytes."""
     return hashlib.sha256(data).hexdigest()
 
+def _clonefile_or_copy(src: Path, dst: Path) -> bool:
+    """APFS clonefile with fallback. Returns True on success."""
+    try:
+        os.clonefile(str(src), str(dst))
+        return True
+    except (AttributeError, OSError):
+        try:
+            shutil.copy2(src, dst)
+            return True
+        except Exception as e:
+            logger.warning(f"[BUNDLER] clonefile/copy failed: {e}")
+            return False
+
+def _collect_sprint_artifacts(
+    sprint_id: str,
+    report_path: Path | None,
+    seeds_path: Path | None,
+    evidence_path: Path | None,
+) -> dict[str, bytes]:
+    """Collect all sprint artifacts into dict."""
+    artifacts: dict[str, bytes] = {}
+    for path, name in [(report_path, "report.json"), (seeds_path, "seeds.json")]:
+        if path and path.exists():
+            try:
+                artifacts[name] = path.read_bytes()
+            except Exception as e:
+                logger.warning(f"[BUNDLER] Failed to read {name}: {e}")
+    if evidence_path and evidence_path.exists():
+        try:
+            evidence_bytes = evidence_path.read_bytes()
+            try:
+                import compression.zstd
+                artifacts["evidence.jsonl.zst"] = compression.zstd.compress(evidence_bytes, level=9)
+            except ImportError:
+                artifacts["evidence.jsonl"] = evidence_bytes
+        except Exception as e:
+            logger.warning(f"[BUNDLER] Failed to read evidence: {e}")
+    return artifacts
+
+def _create_bundle_manifest(
+    artifacts: dict[str, bytes],
+    sprint_id: str,
+    bundle_metadata: dict[str, Any],
+) -> tuple[list[dict[str, str]], bytes]:
+    """Create manifest entries from artifacts."""
+    manifest_entries: list[dict[str, str]] = []
+    for filename, data in artifacts.items():
+        manifest_entries.append({
+            "file": filename,
+            "sha256": _compute_sha256(data),
+            "size": str(len(data)),
+        })
+    manifest_lines = [f"{e['sha256']}  {e['file']}" for e in manifest_entries]
+    manifest_bytes = "\n".join(manifest_lines).encode("utf-8")
+    return manifest_entries, manifest_bytes
+
+def _write_tarball(
+    artifacts: dict[str, bytes],
+    manifest_bytes: bytes,
+    output_path: Path,
+) -> bytes | None:
+    """Create compressed tarball. Returns bytes or None on failure."""
+    try:
+        tar_buffer = io.BytesIO()
+        with tarfile.open(fileobj=tar_buffer, mode="w") as tar:
+            for filename, data in artifacts.items():
+                info = tarfile.TarInfo(name=filename)
+                info.size = len(data)
+                tar.addfile(info, io.BytesIO(data))
+            manifest_info = tarfile.TarInfo(name="manifest.sha256")
+            manifest_info.size = len(manifest_bytes)
+            tar.addfile(manifest_info, io.BytesIO(manifest_bytes))
+        tar_bytes = tar_buffer.getvalue()
+        try:
+            import compression.zstd
+            return compression.zstd.compress(tar_bytes, level=9)
+        except ImportError:
+            return tar_bytes
+    except Exception as e:
+        logger.error(f"[BUNDLER] Failed to create tarball: {e}")
+        return None
+
 
 def _clonefile_or_copy(src: Path, dst: Path) -> bool:
     """
