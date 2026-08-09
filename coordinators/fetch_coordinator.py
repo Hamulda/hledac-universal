@@ -28,6 +28,7 @@ import time
 from collections import deque
 from collections.abc import Callable
 from pathlib import Path
+import dataclasses
 import re
 from typing import Any
 
@@ -440,6 +441,43 @@ F_NOCACHE = 48 if platform.system() == 'Darwin' else None
 def apply_fcntl_nocache(fd: int, content_length: int | None) -> None:
     """Wrapper for backward compatibility — delegates to tools/file_cache.py."""
     _apply_fcntl_nocache(fd, content_length)
+
+
+# =============================================================================
+# F360-R: Phase Result Dataclasses (slots=True for M1 8GB memory efficiency)
+# =============================================================================
+# These dataclasses define clear phase boundaries with typed inputs/outputs.
+# Using __slots__ reduces per-instance memory overhead on M1 8GB.
+
+@dataclasses.dataclass(slots=True, frozen=True)
+class _PrefetchResult:
+    """Result of preflight phase: rate limiting, privacy, AIMD checks."""
+    skip_fetch: bool = False
+    skip_reason: str | None = None
+    host_name: str = ''
+    host_sem: asyncio.Semaphore | None = None
+    privacy_lane: str = 'clearnet'
+    quinn_viable: bool = False
+
+
+@dataclasses.dataclass(slots=True, frozen=True)
+class _DnsCircuitResult:
+    """Result of DNS + circuit breaker phase."""
+    skip_fetch: bool = False
+    skip_result: dict[str, Any] | None = None
+    dns_safe: bool = True
+    dns_meta: dict[str, Any] = dataclasses.field(default_factory=dict)
+    canonical_allowed: bool = True
+    canonical_reason: str = ''
+    canonical_retry_after: float = 0.0
+    resolve: dict[str, str] | None = None
+    pre_acquired_tor_session: Any | None = None
+    pre_acquired_i2p_session: Any | None = None
+    url_transport: Any = None
+    route_decision: Any = None
+    proxy: str | None = None
+    quinn_viable: bool = False
+
 
 class FetchCoordinatorConfig(Struct, frozen=True):
     """Configuration for FetchCoordinator."""
@@ -960,81 +998,106 @@ class FetchCoordinator(UniversalCoordinator):
         except (ValueError, TypeError):  # noqa: BLE001 — best-effort; ip_address parse failure; returns False (private check)
             return False
 
-    async def _validate_fetch_target(self, url: str) -> tuple[bool, dict[str, Any]]:  # noqa: C901
+    async def _validate_fetch_target(self, url: str) -> tuple[bool, dict[str, Any]]:
         """
-        Validate fetch target: resolve and check for private IPs.
+        F360-R: Validate fetch target using phase-based approach.
 
-        NOTE (P3-8): This provides DNS rebinding protection but has a residual
-        TOCTOU window between validation and fetch. The actual fetch
-        (curl_cffi) resolves DNS independently. For HTTPS, certificate
-        validation provides secondary protection. For HTTP, the risk is
-        acknowledged but the performance cost of binding to pre-validated
-        IPs is prohibitive.
-
-        Sprint F-A4: consults ``self._host_ips_cache`` first (populated
-        by ``run_step`` via the batch DNS resolver) and falls through
-        to a per-fetch ``async_getaddrinfo`` on miss. Cache is reset
-        every batch so freshness is preserved.
-
-        C3-02 FIX: Single-flight pattern — concurrent cache misses for the same
-        host share one Future so only one DNS resolution runs. The ``_per_host_gate``
-        semaphore still enforces per-host rate limiting; single-flight prevents
-        duplicate work on simultaneous misses.
+        Phases:
+        1. Hostname extraction and literal IP check
+        2. Cache lookup (C3-02 single-flight)
+        3. DNS resolution with rate limiting
+        4. Private IP validation
         """
         try:
             hostname = _fast_url_host(url)
             if not hostname:
                 return (False, {'blocked_reason': 'no_hostname'})
-            try:
-                ip = ipaddress.ip_address(hostname)
-                if not self._is_ip_public(str(ip)):
-                    return (False, {'resolved_ips': [str(ip)], 'blocked_reason': 'private_ip_literal'})
-                return (True, {'resolved_ips': [str(ip)]})
-            except ValueError:  # noqa: BLE001
-                pass
+
+            # Phase 1: Check if hostname is a literal IP
+            literal_result = await self._check_literal_ip(hostname)
+            if literal_result is not None:
+                return literal_result
+
+            # Phase 2: Cache lookup with single-flight (C3-02)
+            cache_result = await self._check_host_cache(hostname)
+            if cache_result is not None:
+                return cache_result
+
+            # Phase 3: DNS resolution
             cache_key = hostname.lower()
-            cached_ips = self._host_ips_cache.get(cache_key)
-            if cached_ips is not None:
-                if not cached_ips:
-                    return (False, {'resolved_ips': [], 'blocked_reason': 'dns_resolution_failed'})
-                for ip_str in cached_ips:
-                    if not self._is_ip_public(ip_str):
-                        return (False, {'resolved_ips': list(cached_ips), 'blocked_reason': 'private_ip_resolved', 'blocked_ip': ip_str})
-                return (True, {'resolved_ips': list(cached_ips)})
+            ips = await self._resolve_dns_with_gate(cache_key, hostname)
+            if ips is None:
+                return (False, {'resolved_ips': [], 'blocked_reason': 'dns_resolution_failed'})
 
-            # C3-02: Single-flight — if another task is already resolving this host, wait on its Future
-            if cache_key in self._host_ips_inflight:
-                ips = await self._host_ips_inflight[cache_key]
-                if ips is None or not ips:
-                    return (False, {'resolved_ips': [], 'blocked_reason': 'dns_resolution_failed'})
-                for ip_str in ips:
-                    if not self._is_ip_public(ip_str):
-                        return (False, {'resolved_ips': ips, 'blocked_reason': 'private_ip_resolved', 'blocked_ip': ip_str})
-                return (True, {'resolved_ips': ips})
+            # Phase 4: Validate IPs are public
+            return await self._validate_ips_public(ips)
+        except (TimeoutError, httpx.HTTPError, httpx.TimeoutException, OSError) as e:  # noqa: BLE001
+            return (False, {'blocked_reason': f'validation_error: {e}'})
 
-            # Reserve slot for new resolution
-            fut: asyncio.Future[list[str] | None] = asyncio.get_event_loop().create_future()
-            self._host_ips_inflight[cache_key] = fut
+    async def _check_literal_ip(self, hostname: str) -> tuple[bool, dict[str, Any]] | None:
+        """F360-R: Phase 1 - Check if hostname is a literal IP address."""
+        try:
+            ip = ipaddress.ip_address(hostname)
+            if not self._is_ip_public(str(ip)):
+                return (False, {'resolved_ips': [str(ip)], 'blocked_reason': 'private_ip_literal'})
+            return (True, {'resolved_ips': [str(ip)]})
+        except ValueError:  # noqa: BLE001
+            return None
 
-            sem, _op_id = await self._per_host_gate.acquire(hostname)
-            try:
-                raw_results = await async_getaddrinfo(hostname, 0, proto=socket.IPPROTO_TCP)
-            finally:
-                self._per_host_gate.release(sem)
-            ips = sorted({str(r[4][0]) for r in raw_results})
-            async with self._dedup_lock:
-                if ips:
-                    self._host_ips_cache[cache_key] = ips
-                fut.set_result(ips if ips else None)
-                self._host_ips_inflight.pop(cache_key, None)
-            if not ips:
+    async def _check_host_cache(self, hostname: str) -> tuple[bool, dict[str, Any]] | None:
+        """F360-R: Phase 2 - Check cache with C3-02 single-flight pattern."""
+        cache_key = hostname.lower()
+        cached_ips = self._host_ips_cache.get(cache_key)
+
+        # Cache hit
+        if cached_ips is not None:
+            if not cached_ips:
+                return (False, {'resolved_ips': [], 'blocked_reason': 'dns_resolution_failed'})
+            for ip_str in cached_ips:
+                if not self._is_ip_public(ip_str):
+                    return (False, {'resolved_ips': list(cached_ips), 'blocked_reason': 'private_ip_resolved', 'blocked_ip': ip_str})
+            return (True, {'resolved_ips': list(cached_ips)})
+
+        # C3-02: Single-flight - wait on inflight resolution
+        if cache_key in self._host_ips_inflight:
+            ips = await self._host_ips_inflight[cache_key]
+            if ips is None or not ips:
                 return (False, {'resolved_ips': [], 'blocked_reason': 'dns_resolution_failed'})
             for ip_str in ips:
                 if not self._is_ip_public(ip_str):
                     return (False, {'resolved_ips': ips, 'blocked_reason': 'private_ip_resolved', 'blocked_ip': ip_str})
             return (True, {'resolved_ips': ips})
-        except (TimeoutError, httpx.HTTPError, httpx.TimeoutException, OSError) as e:  # noqa: BLE001 — best-effort; httpx client creation failure; non-critical
-            return (False, {'blocked_reason': f'validation_error: {e}'})
+
+        return None
+
+    async def _resolve_dns_with_gate(self, cache_key: str, hostname: str) -> list[str] | None:
+        """F360-R: Phase 3 - DNS resolution with per-host rate limiting."""
+        # Reserve slot for new resolution (single-flight)
+        fut: asyncio.Future[list[str] | None] = asyncio.get_event_loop().create_future()
+        self._host_ips_inflight[cache_key] = fut
+
+        sem, _op_id = await self._per_host_gate.acquire(hostname)
+        try:
+            raw_results = await async_getaddrinfo(hostname, 0, proto=socket.IPPROTO_TCP)
+        finally:
+            self._per_host_gate.release(sem)
+
+        ips = sorted({str(r[4][0]) for r in raw_results})
+
+        async with self._dedup_lock:
+            if ips:
+                self._host_ips_cache[cache_key] = ips
+            fut.set_result(ips if ips else None)
+            self._host_ips_inflight.pop(cache_key, None)
+
+        return ips if ips else None
+
+    async def _validate_ips_public(self, ips: list[str]) -> tuple[bool, dict[str, Any]]:
+        """F360-R: Phase 4 - Validate all resolved IPs are public."""
+        for ip_str in ips:
+            if not self._is_ip_public(ip_str):
+                return (False, {'resolved_ips': ips, 'blocked_reason': 'private_ip_resolved', 'blocked_ip': ip_str})
+        return (True, {'resolved_ips': ips})
 
     def _is_js_heavy(self, url: str, html_preview: str='') -> bool:
         """Detect JS-heavy pages by URL and HTML preview."""
@@ -2181,46 +2244,93 @@ class FetchCoordinator(UniversalCoordinator):
         return {'urls_fetched': len(evidence_ids), 'evidence_ids': evidence_ids, 'total_fetched': self._urls_fetched_count, 'stop_reason': self._stop_reason, 'frontier_remaining': len(self._frontier), 'aimd_window': self._aimd_concurrency, 'active_fetches': self._telemetry['active_fetches'], 'batch_size': batch_size, 'effective_parallelism': effective_parallelism, 'batch_elapsed_ms': batch_elapsed_ms}
 
     @_otel_instrumented('fetch.url', component='network')
-    async def _fetch_url(self, url: str, attempt: int=0) -> dict[str, Any] | None:  # noqa: C901
+    async def _fetch_url(self, url: str, attempt: int=0) -> dict[str, Any] | None:
         """
-        F360: Refactored to delegate to _fetch_url_impl().
+        F360-R: Refactored to delegate to _fetch_url_impl().
 
         See _fetch_url_impl() for full documentation.
         """
         return await self._fetch_url_impl(url, attempt)
 
-    async def _fetch_url_impl(self, url: str, attempt: int) -> dict[str, Any] | None:  # noqa: C901
+    async def _fetch_url_impl(self, url: str, attempt: int) -> dict[str, Any] | None:
         """
-        F360: Extracted implementation of _fetch_url() to reduce cyclomatic complexity.
+        F360-R: Refactored implementation using phase-based pipeline.
 
-        This method handles the full fetch lifecycle:
-        - Pre-flight: offline check, rate limiting, privacy acquisition, AIMD check
-        - DNS/circuit validation
-        - Retry loop with transport dispatch
-        - Post-processing: paywall bypass, content-type validation, clearance cookies, CAPTCHA detection
+        This method orchestrates distinct phases with clear data flow:
+        1. Preflight: offline check, rate limiting, privacy, AIMD, governor
+        2. DNS/Circuit: DNS validation + circuit breaker + transport setup
+        3. Retry loop: transport dispatch with retry logic
+        4. Cleanup: release resources
+        5. Post-process: paywall bypass, content-type, CAPTCHA
 
         Returns:
             Fetch result dict or None on skip/failure.
         """
         from urllib.parse import urlparse
         from ..project_types import OfflineModeError, is_offline_mode
+
+        # Phase 0: Offline check (early exit)
         if is_offline_mode():
             raise OfflineModeError(f'Offline mode enabled, skipping fetch: {url}')
 
-        # ---- URL parsing for later use ----
-        _parsed = urlparse(url)
+        # Phase 1: Preflight - rate limiting, privacy, AIMD, governor checks
+        _pf = await self._execute_preflight_phase(url)
+        if _pf.skip_fetch:
+            return None
 
-        # ---- Pre-flight: rate limiting & semaphore acquisition ----
-        _host_sem: asyncio.Semaphore | None = None
+        # Phase 2: DNS/Circuit + transport pre-acquisition
+        _parsed = urlparse(url)
+        _dc = await self._execute_dns_circuit_phase(url, _parsed, _pf.host_name, _pf.quinn_viable)
+
+        # Handle DNS blocked case
+        if _dc.skip_fetch:
+            return _dc.skip_result
+
+        # Phase 3: Main retry loop
+        trace_fetch_start(url, 'pending', {'attempt': attempt, 'aimd_window': self._aimd_concurrency})
+        result = await self._fetch_with_retry_loop(
+            url=url,
+            attempt=attempt,
+            max_retries=getattr(self, '_max_retries', 3),
+            base_delay=getattr(self, '_base_retry_delay', 1.0),
+            url_transport=_dc.url_transport,
+            route_decision=_dc.route_decision,
+            canonical_allowed=_dc.canonical_allowed,
+            canonical_reason=_dc.canonical_reason,
+            _host_name=_pf.host_name,
+            _resolve=_dc.resolve,
+            _quinn_viable=_dc.quinn_viable,
+            _pre_acquired_tor_session=_dc.pre_acquired_tor_session,
+            _pre_acquired_i2p_session=_dc.pre_acquired_i2p_session,
+            proxy=_dc.proxy,
+        )
+
+        # Phase 4: Cleanup - release semaphores
+        self._cleanup_fetch_resources(_pf)
+
+        # Phase 5: Post-processing
+        return self._fetch_url_postprocess(result, url, _pf.host_name)
+
+    async def _execute_preflight_phase(self, url: str) -> _PrefetchResult:
+        """
+        F360-R: Phase 1 - Preflight checks (rate limit, privacy, AIMD, governor).
+
+        Returns _PrefetchResult with skip_fetch=True if we should skip this URL.
+        """
+        # Extract host name
         _host_name = ''
         with contextlib.suppress(ValueError, TypeError):
             _host_name = _fast_url_host(url) or ''
-        if _host_name and (not url.lower().endswith(('.onion', '.i2p'))):
+
+        # Rate limiting + host semaphore
+        _host_sem: asyncio.Semaphore | None = None
+        if _host_name and not url.lower().endswith(('.onion', '.i2p')):
             _rate_wait = await self._domain_rate_limiter.acquire(_host_name)
             if _rate_wait > 0:
                 logger.debug('[RATE_LIMIT] Waited %.2fs for rate limit on %s', _rate_wait, _host_name)
             _host_sem, _ = await self._per_host_gate.acquire(_host_name)
 
+        # Privacy lane acquisition
         _privacy_lane = 'clearnet'
         _privacy_acquired = False
         try:
@@ -2229,8 +2339,31 @@ class FetchCoordinator(UniversalCoordinator):
             _privacy_lane = 'clearnet'
             _privacy_acquired = True
 
-        _aimd_sem: asyncio.Semaphore | None = None
-        # U2-05 FIX: Check io_only BEFORE acquiring AIMD slot
+        # Governor checks (U2-05): io_only and can_afford
+        _skip_reason = await self._check_governor_early_exit(url)
+        if _skip_reason:
+            async with self._dedup_lock:
+                self._processed_urls.discard(url)
+            self._telemetry['io_only_skipped' if 'io_only' in _skip_reason else 'entity_confirmation_skipped'] += 1
+            return _PrefetchResult(skip_fetch=True, skip_reason=_skip_reason, host_name=_host_name)
+
+        # AIMD acquisition
+        if _privacy_acquired:
+            await self._aimd_acquire()
+
+        # QUINN viability check (F350M-R)
+        _quinn_viable = self._check_quinn_viability(url)
+
+        return _PrefetchResult(
+            skip_fetch=False,
+            host_name=_host_name,
+            host_sem=_host_sem,
+            privacy_lane=_privacy_lane,
+            quinn_viable=_quinn_viable,
+        )
+
+    async def _check_governor_early_exit(self, url: str) -> str | None:
+        """F360-R: Governor io_only and can_afford checks. Returns skip reason or None."""
         try:
             from hledac.universal.core.protocols import get_governor
             gov = get_governor()
@@ -2238,81 +2371,142 @@ class FetchCoordinator(UniversalCoordinator):
                 try:
                     decision = gov.evaluate()
                     if decision.io_only:
-                        async with self._dedup_lock:
-                            self._processed_urls.discard(url)
-                        self._telemetry['io_only_skipped'] += 1
-                        return None
+                        return 'io_only'
                 except Exception:  # noqa: BLE001
                     pass
                 from ..core.resource_governor import Priority
                 if not gov.can_afford_sync({'ram_mb': 15}, Priority.CRITICAL):
-                    async with self._dedup_lock:
-                        self._processed_urls.discard(url)
-                    return None
+                    return 'cannot_afford'
         except (TypeError, ValueError, KeyError):  # noqa: BLE001
             pass
+        return None
 
-        if _privacy_acquired:
-            _concurrency, _aimd_sem = await self._aimd_acquire()
-
-        # F350M-R: QUINN viability check
-        _quinn_viable: bool = False
+    def _check_quinn_viability(self, url: str) -> bool:
+        """F360-R: QUINN HTTP/3 viability check (synchronous, no await needed)."""
         try:
             from hledac.universal.transport.http3_lane import http_version_for_curl_cffi
             _quinn_http_version = http_version_for_curl_cffi(url)
-            _quinn_viable = _quinn_http_version is not None
+            return _quinn_http_version is not None
         except (ImportError, Exception):  # noqa: BLE001
-            _quinn_viable = False
+            return False
 
-        # ---- DNS & circuit breaker validation ----
-        dns_safe, dns_meta, canonical_allowed, canonical_reason, canonical_retry_after = await self._check_dns_and_circuit(url, _host_name)
+    async def _execute_dns_circuit_phase(
+        self,
+        url: str,
+        parsed: Any,  # urllib.parse.ParseResult
+        host_name: str,
+        quinn_viable: bool = False,
+    ) -> _DnsCircuitResult:
+        """
+        F360-R: Phase 2 - DNS + circuit breaker validation + transport setup.
+
+        Returns _DnsCircuitResult with skip_fetch=True if DNS blocked.
+        """
+        from ..transport.transport_resolver import RouteDecision, Transport, async_get_route_decision
+
+        # DNS + circuit breaker check
+        dns_safe, dns_meta, canonical_allowed, canonical_reason, canonical_retry_after = (
+            await self._check_dns_and_circuit(url, host_name)
+        )
+
+        # Handle DNS blocked case
         if not dns_safe:
-            logger.warning("DNS rebinding defense blocked: %s for %s", dns_meta.get('blocked_reason'), _host_name)
+            logger.warning("DNS rebinding defense blocked: %s for %s", dns_meta.get('blocked_reason'), host_name)
             trace_fetch_end(url, 'dns_rebind_defense', 'blocked', 0.0, {'reason': dns_meta.get('blocked_reason')})
             self._aimd_semaphore.release()
-            if _host_sem is not None:
-                self._per_host_gate.release(_host_sem)
-            if _privacy_lane != 'clearnet':
-                self._privacy_release(_privacy_lane)
-            async with self._dedup_lock:
-                self._processed_urls.discard(url)
-            return {'error': 'blocked', 'blocked_reason': dns_meta.get('blocked_reason'), 'meta': dns_meta}
+            return _DnsCircuitResult(
+                skip_fetch=True,
+                skip_result={'error': 'blocked', 'blocked_reason': dns_meta.get('blocked_reason'), 'meta': dns_meta},
+                dns_safe=False,
+                dns_meta=dns_meta,
+                canonical_allowed=False,
+                canonical_reason=canonical_reason,
+                canonical_retry_after=canonical_retry_after,
+                resolve=None,
+            )
 
+        # Add to dedup
         async with self._dedup_lock:
             self._processed_urls.add(url)
 
-        # ---- Transport & session pre-acquisition ----
-        from ..transport.transport_resolver import RouteDecision, Transport, get_transport_for_url, async_get_route_decision
-        url_transport = get_transport_for_url(url)
+        # Transport + session pre-acquisition
+        from ..transport.transport_resolver import Transport as _T
+        url_transport: _T = _T.CLEARNET  # Default fallback
+        try:
+            from ..transport.transport_resolver import get_transport_for_url
+            url_transport = get_transport_for_url(url)
+        except Exception:  # noqa: BLE001
+            pass
+
         route_decision = await async_get_route_decision(url)
         _pre_acquired_tor_session: Any | None = None
         _pre_acquired_i2p_session: Any | None = None
-        if url_transport is Transport.TOR and route_decision is not RouteDecision.TOR_UNAVAILABLE:
-            _pre_acquired_tor_session = await self._get_tor_session(_host_name)
-        elif url_transport is Transport.I2P and route_decision is not RouteDecision.I2P_UNAVAILABLE:
-            _pre_acquired_i2p_session = await self._get_i2p_session(_host_name)
 
-        max_retries = getattr(self, '_max_retries', 3)
-        base_delay = getattr(self, '_base_retry_delay', 1.0)
-        trace_fetch_start(url, 'pending', {'attempt': attempt, 'aimd_window': self._aimd_concurrency})
-        result = None
+        try:
+            if url_transport is Transport.TOR and route_decision.name != 'TOR_UNAVAILABLE':
+                _pre_acquired_tor_session = await self._get_tor_session(host_name)
+            elif url_transport is Transport.I2P and route_decision.name != 'I2P_UNAVAILABLE':
+                _pre_acquired_i2p_session = await self._get_i2p_session(host_name)
+        except Exception:  # noqa: BLE001
+            pass
 
-        # ---- DNS rebinding protection — compute resolve binding once ----
+        # DNS rebinding protection - compute resolve binding
+        _resolve = self._compute_resolve_binding(url, parsed, host_name, dns_meta)
+
+        # Proxy selection
+        _proxy: str | None = None
+        if self._current_geo_context and self._current_geo_context in self._geo_proxies:
+            _proxy = self._geo_proxies.get(self._current_geo_context)
+
+        return _DnsCircuitResult(
+            skip_fetch=False,
+            dns_safe=True,
+            dns_meta=dns_meta,
+            canonical_allowed=canonical_allowed,
+            canonical_reason=canonical_reason,
+            canonical_retry_after=canonical_retry_after,
+            resolve=_resolve,
+            pre_acquired_tor_session=_pre_acquired_tor_session,
+            pre_acquired_i2p_session=_pre_acquired_i2p_session,
+            url_transport=url_transport,
+            route_decision=route_decision,
+            proxy=_proxy,
+            quinn_viable=quinn_viable,
+        )
+
+    def _compute_resolve_binding(
+        self,
+        url: str,
+        parsed: Any,
+        host_name: str,
+        dns_meta: dict[str, Any],
+    ) -> dict[str, str] | None:
+        """F360-R: Compute DNS resolve binding for rebinding protection."""
         _resolve: dict[str, str] | None = None
         _resolved_ips = dns_meta.get('resolved_ips', [])
         _is_darknet_url = url.lower().endswith(('.onion', '.i2p'))
+
         if _resolved_ips and not _is_darknet_url:
             try:
-                _hostname = _parsed.host
+                _hostname = parsed.host
                 if _hostname:
                     _resolve = {_hostname: _resolved_ips[0]}
             except (ValueError, TypeError):  # noqa: BLE001
                 pass
         elif not _is_darknet_url and not _resolved_ips:
-            _retry_host = _host_name or (_parsed.host if _parsed else None)
+            _retry_host = host_name or parsed.host
             if _retry_host:
                 try:
-                    _retry_results = await async_getaddrinfo(_retry_host, 0, proto=socket.IPPROTO_TCP)
+                    import socket
+                    # F360-R FIX: Use run_in_executor to avoid asyncio.run() in sync context
+                    # This prevents RuntimeError when already in an async context
+                    try:
+                        loop = asyncio.get_running_loop()
+                        import concurrent.futures
+                        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+                            _retry_results = pool.submit(asyncio.run, async_getaddrinfo(_retry_host, 0, proto=socket.IPPROTO_TCP)).result(timeout=5.0)
+                    except RuntimeError:
+                        _retry_results = asyncio.run(async_getaddrinfo(_retry_host, 0, proto=socket.IPPROTO_TCP))
                     if _retry_results:
                         _retry_ips = sorted({str(r[4][0]) for r in _retry_results})
                         for _ip_str in _retry_ips:
@@ -2323,38 +2517,18 @@ class FetchCoordinator(UniversalCoordinator):
                             _resolve = {_retry_host: _retry_ips[0]}
                 except (TimeoutError, OSError):  # noqa: BLE001
                     pass
+        return _resolve
 
-        # ---- Main retry loop ----
-        result = await self._fetch_with_retry_loop(
-            url=url,
-            attempt=attempt,
-            max_retries=max_retries,
-            base_delay=base_delay,
-            url_transport=url_transport,
-            route_decision=route_decision,
-            canonical_allowed=canonical_allowed,
-            canonical_reason=canonical_reason,
-            _host_name=_host_name,
-            _resolve=_resolve,
-            _quinn_viable=_quinn_viable,
-            _pre_acquired_tor_session=_pre_acquired_tor_session,
-            _pre_acquired_i2p_session=_pre_acquired_i2p_session,
-            proxy=None if not (self._current_geo_context and self._current_geo_context in self._geo_proxies) else self._geo_proxies.get(self._current_geo_context),
-        )
-
-        # ---- Cleanup: release semaphores ----
+    def _cleanup_fetch_resources(self, preflight: _PrefetchResult) -> None:
+        """F360-R: Release all semaphores and resources after fetch."""
         try:
             self._aimd_semaphore.release()
-            if _privacy_lane != 'clearnet':
-                self._privacy_release(_privacy_lane)
-            if _host_sem is not None:
-                self._per_host_gate.release(_host_sem)
+            if preflight.privacy_lane != 'clearnet':
+                self._privacy_release(preflight.privacy_lane)
+            if preflight.host_sem is not None:
+                self._per_host_gate.release(preflight.host_sem)
         except Exception:  # noqa: BLE001
             pass
-
-        # ---- Post-processing ----
-        result = self._fetch_url_postprocess(result, url, _host_name)
-        return result
 
     async def _fetch_with_retry_loop(
         self,
@@ -2373,127 +2547,239 @@ class FetchCoordinator(UniversalCoordinator):
         _pre_acquired_i2p_session: Any,
         proxy: str | None,
     ) -> dict[str, Any] | None:
-        from ..transport.transport_resolver import Transport
         """
-        F360: Extracted retry loop from _fetch_url().
+        F360-R: Refactored retry loop with phase-based approach.
 
-        Handles the transport dispatch and retry logic for a single URL.
+        Phases:
+        1. Circuit check (early exit if blocked)
+        2. Transport dispatch (attempt fetch)
+        3. Retry logic (exponential backoff with jitter)
+        4. Result recording (success/failure telemetry)
         """
-        _aimd_sem: asyncio.Semaphore | None = None
-        result = None
+        # Phase 1: Circuit breaker check
+        if not canonical_allowed:
+            self._handle_circuit_block(url, _host_name, canonical_reason)
+            return None
+
+        # Phase 2-3: Retry loop with transport dispatch
         try:
-            while attempt <= max_retries:
-                if not canonical_allowed:
-                    self._telemetry['circuit_breaker_blocks'] = self._telemetry.get('circuit_breaker_blocks', 0) + 1
-                    logger.debug('[CircuitBreaker] Open for %s: %s', _host_name, canonical_reason)
-                    trace_fetch_end(url, 'circuit_breaker', 'circuit_open', 0.0)
-                    result = None
-                    break
-
-                if url_transport is Transport.TOR:
-                    result = await self._fetch_tor(url, attempt, route_decision, _host_name, _pre_acquired_tor_session)
-                elif url_transport is Transport.I2P:
-                    result = await self._fetch_i2p(url, attempt, route_decision, _host_name, _pre_acquired_i2p_session)
-                elif url_transport is Transport.GOPHER:
-                    result = await self._fetch_gopher(url, attempt)
-                else:
-                    # Clearnet fetch with parallel curl/JS-probe/NW
-                    result = await self._fetch_clearnet(
-                        url=url,
-                        attempt=attempt,
-                        _host_name=_host_name,
-                        _resolve=_resolve,
-                        _quinn_viable=_quinn_viable,
-                        proxy=proxy,
-                    )
-
-                # Success check and retry logic
-                if result and not result.get('error') and result.get('status_code', 200) < 500:
-                    break
-                if result is None or result.get('error') == 'timeout' or result.get('status_code', 200) >= 500:
-                    if attempt < max_retries:
-                        budget_allowed, budget_reason = await self._check_retry_budget(_host_name)
-                        if not budget_allowed:
-                            logger.debug('[RETRY-BUDGET] Skipping retry for %s: %s', _host_name, budget_reason)
-                            self._telemetry['circuit_breaker_blocks'] = self._telemetry.get('circuit_breaker_blocks', 0) + 1
-                            break
-                        _delay = base_delay * (2 ** attempt)
-                        jitter = _JITTER_RNG.uniform(0, _delay)
-                        delay = min(_delay + jitter, 30.0)
-                        logger.debug('[RETRY] Attempt %s/%s for %s after %ss', attempt + 1, max_retries, url, delay)
-                        trace_fetch_end(url, 'none', 'retry', 0.0, {'attempt': attempt, 'delay': delay})
-                        await self._record_retry(_host_name)
-                        await asyncio.sleep(delay)
-                        attempt += 1
-                        continue
-                break
-
-            # Success/failure recording
-            if result and not result.get('error'):
-                result.setdefault('success', True)
-                await self._aimd_release_success()
-                self._record_success(_host_name)
-                if url_transport is Transport.TOR:
-                    self._record_transport_success("tor")
-                elif url_transport is Transport.I2P:
-                    self._record_transport_success("i2p")
-                self._maybe_fire_cover_traffic(transport=url_transport.name.lower())
-            elif result is None or result.get('error'):
-                is_timeout = result.get('error') == 'timeout' if result else True
-                self._record_failure(_host_name, is_timeout=is_timeout, failure_kind='fetch_error')
-                if url_transport is Transport.TOR:
-                    self._record_transport_failure("tor", is_timeout=is_timeout)
-                elif url_transport is Transport.I2P:
-                    self._record_transport_failure("i2p", is_timeout=is_timeout)
-
+            result = await self._execute_retry_loop(
+                url, attempt, max_retries, base_delay, url_transport, route_decision,
+                _host_name, _resolve, _quinn_viable, _pre_acquired_tor_session,
+                _pre_acquired_i2p_session, proxy,
+            )
         except (TimeoutError, httpx.HTTPError, OSError, asyncio.CancelledError) as e:  # noqa: BLE001
             logger.warning('[_fetch_url] Unexpected error for %s: %s', url, e)
             await self._aimd_release_failure()
-            result = {'url': url, 'content': b'', 'error': str(e)}
+            return {'url': url, 'content': b'', 'error': str(e)}
+
+        # Phase 4: Record success/failure
+        await self._record_fetch_outcome(result, url_transport, _host_name)
 
         return result
 
-    def _fetch_url_postprocess(self, result: dict[str, Any] | None, url: str, _host_name: str) -> dict[str, Any] | None:
-        """F360: Post-processing for fetch result."""
-        trace_fetch_end(url, 'none', 'done', 0.0)
-        if result and result.get('status_code') in (401, 403) and self._session_manager:
-            self._session_manager.rotate_credentials(_host_name)
-            logger.info('[SESSION] Rotated credentials for %s', _host_name)
+    def _handle_circuit_block(
+        self, url: str, host_name: str, reason: str,
+    ) -> None:
+        """F360-R: Handle circuit breaker block - telemetry only."""
+        self._telemetry['circuit_breaker_blocks'] = self._telemetry.get('circuit_breaker_blocks', 0) + 1
+        logger.debug('[CircuitBreaker] Open for %s: %s', host_name, reason)
+        trace_fetch_end(url, 'circuit_breaker', 'circuit_open', 0.0)
+        return None
 
-        if result and result.get('content'):
+    async def _execute_retry_loop(
+        self,
+        url: str,
+        attempt: int,
+        max_retries: int,
+        base_delay: float,
+        url_transport: Any,
+        route_decision: Any,
+        host_name: str,
+        _resolve: dict[str, str] | None,
+        _quinn_viable: bool,
+        _pre_acquired_tor_session: Any,
+        _pre_acquired_i2p_session: Any,
+        proxy: str | None,
+    ) -> dict[str, Any] | None:
+        """F360-R: Execute retry loop - dispatch and retry logic."""
+        result = None
+        while attempt <= max_retries:
+            # Dispatch fetch based on transport
+            result = await self._dispatch_transport_fetch(
+                url, attempt, url_transport, route_decision, host_name,
+                _resolve, _quinn_viable, _pre_acquired_tor_session,
+                _pre_acquired_i2p_session, proxy,
+            )
+
+            # Check if we should retry
+            should_retry, retry_reason = self._evaluate_retry_condition(result, attempt, max_retries)
+            if not should_retry:
+                break
+
+            # Check retry budget
+            budget_allowed, budget_reason = await self._check_retry_budget(host_name)
+            if not budget_allowed:
+                logger.debug('[RETRY-BUDGET] Skipping retry for %s: %s', host_name, budget_reason)
+                self._telemetry['circuit_breaker_blocks'] = self._telemetry.get('circuit_breaker_blocks', 0) + 1
+                break
+
+            # Calculate delay with exponential backoff and jitter
+            delay = self._calculate_retry_delay(base_delay, attempt)
+            logger.debug('[RETRY] Attempt %s/%s for %s after %ss', attempt + 1, max_retries, url, delay)
+            trace_fetch_end(url, 'none', 'retry', 0.0, {'attempt': attempt, 'delay': delay})
+            await self._record_retry(host_name)
+            await asyncio.sleep(delay)
+            attempt += 1
+
+        return result
+
+    def _evaluate_retry_condition(
+        self, result: dict[str, Any] | None, attempt: int, max_retries: int,
+    ) -> tuple[bool, str]:
+        """F360-R: Evaluate if current result warrants a retry."""
+        if result is None:
+            return attempt < max_retries, 'result_none'
+        if result.get('error'):
+            return attempt < max_retries, f"error:{result.get('error')}"
+        status_code = result.get('status_code', 200)
+        if status_code >= 500:
+            return attempt < max_retries, f'status_{status_code}'
+        return False, 'success'
+
+    def _calculate_retry_delay(self, base_delay: float, attempt: int) -> float:
+        """F360-R: Calculate retry delay with exponential backoff and jitter."""
+        _delay = base_delay * (2 ** attempt)
+        jitter = _JITTER_RNG.uniform(0, _delay)
+        return min(_delay + jitter, 30.0)
+
+    async def _dispatch_transport_fetch(
+        self,
+        url: str,
+        attempt: int,
+        url_transport: Any,
+        route_decision: Any,
+        host_name: str,
+        _resolve: dict[str, str] | None,
+        _quinn_viable: bool,
+        _pre_acquired_tor_session: Any,
+        _pre_acquired_i2p_session: Any,
+        proxy: str | None,
+    ) -> dict[str, Any] | None:
+        """F360-R: Dispatch fetch to appropriate transport."""
+        if url_transport is Transport.TOR:
+            return await self._fetch_tor(url, attempt, route_decision, host_name, _pre_acquired_tor_session)
+        if url_transport is Transport.I2P:
+            return await self._fetch_i2p(url, attempt, route_decision, host_name, _pre_acquired_i2p_session)
+        if url_transport is Transport.GOPHER:
+            return await self._fetch_gopher(url, attempt)
+        # Clearnet fetch
+        return await self._fetch_clearnet(
+            url=url, attempt=attempt, _host_name=host_name,
+            _resolve=_resolve, _quinn_viable=_quinn_viable, proxy=proxy,
+        )
+
+    async def _record_fetch_outcome(
+        self, result: dict[str, Any] | None, url_transport: Any, host_name: str,
+    ) -> None:
+        """F360-R: Record fetch outcome to telemetry."""
+        if result and not result.get('error'):
+            result.setdefault('success', True)
+            await self._aimd_release_success()
+            self._record_success(host_name)
+            transport_name = url_transport.name.lower()
+            if url_transport is Transport.TOR:
+                self._record_transport_success("tor")
+            elif url_transport is Transport.I2P:
+                self._record_transport_success("i2p")
+            self._maybe_fire_cover_traffic(transport=transport_name)
+        elif result is None or result.get('error'):
+            is_timeout = result.get('error') == 'timeout' if result else True
+            self._record_failure(host_name, is_timeout=is_timeout, failure_kind='fetch_error')
+            if url_transport is Transport.TOR:
+                self._record_transport_failure("tor", is_timeout=is_timeout)
+            elif url_transport is Transport.I2P:
+                self._record_transport_failure("i2p", is_timeout=is_timeout)
+
+    def _fetch_url_postprocess(self, result: dict[str, Any] | None, url: str, _host_name: str) -> dict[str, Any] | None:
+        """
+        F360-R: Refactored post-processing using phase-based approach.
+        
+        Phases:
+        1. Session rotation for 401/403
+        2. Paywall bypass for small responses
+        3. Content-type validation (OSINT-04)
+        4. Clearance cookie handling (F-07)
+        5. CAPTCHA detection
+        """
+        trace_fetch_end(url, 'none', 'done', 0.0)
+        
+        # Phase 1: Session rotation
+        result = self._postprocess_session_rotation(result, _host_name)
+        
+        # Phase 2: Paywall bypass
+        result = self._postprocess_paywall_bypass(result, url)
+        
+        # Phase 3: Content-type validation
+        result = self._postprocess_content_type(result, url)
+        
+        # Phase 4: Clearance cookie handling
+        result = self._postprocess_clearance(result, url, _host_name)
+        
+        # Phase 5: CAPTCHA detection
+        result = self._postprocess_captcha(result, url)
+        
+        return result
+
+    def _postprocess_session_rotation(self, result: dict[str, Any] | None, host_name: str) -> dict[str, Any] | None:
+        """F360-R: Phase 1 - Rotate credentials on 401/403."""
+        if result and result.get('status_code') in (401, 403) and self._session_manager:
+            self._session_manager.rotate_credentials(host_name)
+            logger.info('[SESSION] Rotated credentials for %s', host_name)
+        return result
+
+    def _postprocess_paywall_bypass(self, result: dict[str, Any] | None, url: str) -> dict[str, Any] | None:
+        """F360-R: Phase 2 - Paywall bypass for small responses."""
+        if result and result.get('content') and self._paywall_bypass:
             content = result['content']
             if isinstance(content, bytes):
                 content = content.decode(errors='ignore')
-            if len(content) < 5000 and self._paywall_bypass:
+            if len(content) < 5000:
                 bypass_result = self._paywall_bypass.bypass(url, content)
                 if bypass_result:
                     logger.info("[PAYWALL] Bypassed via %s", bypass_result.get('bypassed'))
                     result['content'] = bypass_result.get('content', '').encode()
                     result['bypassed'] = bypass_result.get('bypassed')
                     result['paywall'] = bypass_result.get('paywall')
+        return result
 
-        # OSINT-04: Content-type validation
+    def _postprocess_content_type(self, result: dict[str, Any] | None, url: str) -> dict[str, Any] | None:
+        """F360-R: Phase 3 - OSINT-04 Content-type validation."""
         if result and result.get('content'):
             ct = result.get('content_type', '') or ''
             _safe_ct_prefixes = ('text/', 'application/json', 'application/xml', 'application/xhtml', 'application/ld+json')
             if ct and not any(ct.startswith(p) for p in _safe_ct_prefixes):
                 logger.debug('[OSINT-04] Blocking parse for content-type %s on %s', ct[:128], url)
                 result['content'] = b''
+        return result
 
-        # F-07: Clearance cookie handling
+    def _postprocess_clearance(self, result: dict[str, Any] | None, url: str, host_name: str) -> dict[str, Any] | None:
+        """F360-R: Phase 4 - F-07 Clearance cookie handling."""
         if result and result.get('status_code') in (403, 429) and self._clearance_jar is not None:
             try:
                 from ..security.turnstile_solver import detect_turnstile_challenge, get_clearance_for_domain
                 result_headers = result.get('headers') or {}
                 result_content = result.get('content', b'')
                 if detect_turnstile_challenge(url, result.get('status_code', 0), result_headers, result_content):
-                    clearance = get_clearance_for_domain(_host_name, url, result.get('status_code', 0), result_headers, result_content)
+                    clearance = get_clearance_for_domain(host_name, url, result.get('status_code', 0), result_headers, result_content)
                     if clearance:
-                        logger.info('[CLEARANCE] Stored %d clearance cookies for %s', len(clearance), _host_name)
+                        logger.info('[CLEARANCE] Stored %d clearance cookies for %s', len(clearance), host_name)
             except Exception:  # noqa: BLE001
                 pass
+        return result
 
-        # CAPTCHA detection
+    def _postprocess_captcha(self, result: dict[str, Any] | None, url: str) -> dict[str, Any] | None:
+        """F360-R: Phase 5 - CAPTCHA detection for small images."""
         if self._captcha_detector is not None and result and result.get('content'):
             ct = result.get('content_type', '')
             content_bytes = result['content']
@@ -2506,7 +2792,6 @@ class FetchCoordinator(UniversalCoordinator):
                         return None
                 except Exception:  # noqa: BLE001
                     pass
-
         return result
 
     async def _maybe_deep_research(self, query: str, limit: int=10) -> list[dict[str, Any]] | None:
@@ -3444,19 +3729,12 @@ def _put_task(task: object, pivot_queue: asyncio.Queue, pivot_stats: dict | None
 
     async def _entropy_alert_consumer_loop(self) -> None:
         """
-        Background loop to consume entropy alerts and enqueue micro-sprint requests.
+        F360-R: Refactored entropy alert consumer with phase-based approach.
 
-        UNIFIED-003/UNIFIED-004: Closes the entropy feedback loop by:
-        1. Receiving high-entropy alerts from EntropyFetchBridge
-        2. Enqueuing micro-sprint requests onto _micro_sprint_queue (backpressure buffer)
-        3. Deduplicating by entity_id to prevent redundant re-fetches
-
-        Runs only while _running is True. Cancelled automatically on shutdown.
-
-        ISSUE-022-03 FIX: Uses SeverityPriorityQueue which delivers alerts in
-        priority order (highest severity first). This ensures critical alerts
-        (contradictions) are processed before lower-priority ones when the
-        bridge queue saturates.
+        Phases:
+        1. Queue initialization
+        2. Main loop with periodic pruning
+        3. Alert processing (extract, dedup, enqueue)
         """
         logger.info('[UNIFIED-003/004] Entropy alert consumer loop started')
         queue = getattr(self, '_entropy_bridge_queue', None)
@@ -3464,102 +3742,126 @@ def _put_task(task: object, pivot_queue: asyncio.Queue, pivot_stats: dict | None
             logger.warning('[UNIFIED-003/004] No entropy bridge queue available')
             return
 
-        # Track entities currently queued/processing for dedup.
-        # Maps entity_id → timestamp. Entries older than _PENDING_TTL_S
-        # are auto-pruned to prevent unbounded growth.
-        _PENDING_TTL_S = 120.0   # 2 min — generous for micro-sprint timeout (30s)
-        _PRUNE_INTERVAL = 10     # prune every N iterations
-        pending_entities: dict[str, float] = {}  # entity_id → added_at
-        _loop_count = 0
+        # Initialize pending entities tracking (dedup)
+        pending_entities: dict[str, float] = self._init_alert_dedup_tracking()
 
         while self._running:
-            try:
-                # Wait for alert with timeout to allow graceful shutdown
-                # ISSUE-022-03 FIX: SeverityPriorityQueue.get() returns EntropyAlert
-                # directly (unpacked from tuple). Alerts arrive in priority order.
-                alert = await asyncio.wait_for(queue.get(), timeout=5.0)
-
-                if not self._running:
-                    break
-
-                # Periodic pruning of stale pending entries
-                _loop_count += 1
-                if _loop_count % _PRUNE_INTERVAL == 0:
-                    _now = time.monotonic()
-                    _stale = [
-                        eid for eid, ts in pending_entities.items()
-                        if _now - ts > _PENDING_TTL_S
-                    ]
-                    for eid in _stale:
-                        del pending_entities[eid]
-                    if _stale:
-                        logger.debug(
-                            '[UNIFIED-003/004] Pruned %d stale pending entities '
-                            '(remaining=%d)', len(_stale), len(pending_entities),
-                        )
-
-
-                # Extract alert data - alert is an EntropyAlert dataclass
-                entity_id = alert.entity_id
-                entropy = alert.entropy
-                # Use metadata to get alternative protocols if available
-                protocols = alert.metadata.get('alternative_protocols', ['ct', 'passive_dns'])
-                reason = f"high_entropy:{alert.risk_level}"
-
-                if not entity_id:
-                    logger.debug('[UNIFIED-003/004] Alert missing entity_id, skipping')
-                    continue
-
-                # Dedup: skip if entity already in pending (queued or processing)
-                if entity_id in pending_entities:
-                    logger.debug(
-                        '[UNIFIED-003/004] Entity %s already pending, skipping',
-                        entity_id,
-                    )
-                    continue
-
-                logger.info(
-                    '[UNIFIED-003/004] High entropy alert: entity=%s entropy=%.3f reason=%s',
-                    entity_id, entropy, reason,
-                )
-
-                # Enqueue micro-sprint request with backpressure
-                request = {
-                    'entity_id': entity_id,
-                    'entropy': entropy,
-                    'protocols': protocols,
-                    'reason': reason,
-                }
-
-                try:
-                    # Non-blocking put with backpressure — drop if queue full
-                    self._micro_sprint_queue.put_nowait(request)
-                    pending_entities[entity_id] = time.monotonic()
-                    self._entropy_alerts_processed += 1
-                except asyncio.QueueFull:
-                    # ISSUE-022-03: Micro-sprint queue saturation warning
-                    # This is a different backpressure point from the entropy bridge queue
-                    logger.warning(
-                        '[ISSUE-022-03] Micro-sprint queue FULL (%d/%d), '
-                        'dropping alert for entity=%s (high-entropy:%s)',
-                        self._micro_sprint_queue.qsize(),
-                        self._micro_sprint_queue.maxsize,
-                        entity_id,
-                        alert.risk_level,
-                    )
-
-            except asyncio.TimeoutError:
-                # Normal timeout, continue loop
-                continue
-            except asyncio.CancelledError:
-                logger.info('[UNIFIED-003/004] Entropy consumer loop cancelled')
+            result = await self._process_alert_iteration(queue, pending_entities)
+            if result == 'shutdown':
                 break
-            except Exception as e:
-                logger.warning('[UNIFIED-003/004] Entropy consumer loop error: %s', e)
-                # Continue loop despite errors
-                continue
 
         logger.info('[UNIFIED-003/004] Entropy alert consumer loop stopped')
+
+    def _init_alert_dedup_tracking(self) -> dict[str, float]:
+        """F360-R: Initialize pending entities tracking for dedup."""
+        return {}  # entity_id → added_at timestamp
+
+    async def _process_alert_iteration(
+        self, queue: Any, pending_entities: dict[str, float],
+    ) -> str:
+        """
+        F360-R: Process one alert iteration.
+
+        Returns 'shutdown' to signal graceful shutdown, 'continue' otherwise.
+        """
+        try:
+            # Wait for alert with timeout (allows graceful shutdown)
+            alert = await asyncio.wait_for(queue.get(), timeout=5.0)
+
+            if not self._running:
+                return 'shutdown'
+
+            # Periodic pruning of stale pending entries
+            pending_entities = self._prune_stale_entities(pending_entities)
+
+            # Process alert: extract, dedup, enqueue
+            await self._process_single_alert(alert, pending_entities)
+
+            return 'continue'
+
+        except asyncio.TimeoutError:
+            return 'continue'
+        except asyncio.CancelledError:
+            logger.info('[UNIFIED-003/004] Entropy consumer loop cancelled')
+            return 'shutdown'
+        except Exception as e:
+            logger.warning('[UNIFIED-003/004] Entropy consumer loop error: %s', e)
+            return 'continue'
+
+    def _prune_stale_entities(
+        self, pending_entities: dict[str, float],
+    ) -> dict[str, float]:
+        """F360-R: Prune stale entities from pending set."""
+        _PENDING_TTL_S = 120.0
+        _PRUNE_INTERVAL = 10
+        _now = time.monotonic()
+
+        # Use instance counter for periodic pruning
+        if not hasattr(self, '_entropy_prune_counter'):
+            self._entropy_prune_counter = 0
+        self._entropy_prune_counter += 1
+
+        if self._entropy_prune_counter % _PRUNE_INTERVAL != 0:
+            return pending_entities
+
+        stale = [
+            eid for eid, ts in pending_entities.items()
+            if _now - ts > _PENDING_TTL_S
+        ]
+        for eid in stale:
+            del pending_entities[eid]
+
+        if stale:
+            logger.debug(
+                '[UNIFIED-003/004] Pruned %d stale pending entities (remaining=%d)',
+                len(stale), len(pending_entities),
+            )
+
+        return pending_entities
+
+    async def _process_single_alert(
+        self, alert: Any, pending_entities: dict[str, float],
+    ) -> None:
+        """F360-R: Extract, dedup, and enqueue single alert."""
+        entity_id = alert.entity_id
+        entropy = alert.entropy
+        protocols = alert.metadata.get('alternative_protocols', ['ct', 'passive_dns'])
+        reason = f"high_entropy:{alert.risk_level}"
+
+        # Skip if no entity_id
+        if not entity_id:
+            logger.debug('[UNIFIED-003/004] Alert missing entity_id, skipping')
+            return
+
+        # Dedup: skip if already pending
+        if entity_id in pending_entities:
+            logger.debug('[UNIFIED-003/004] Entity %s already pending, skipping', entity_id)
+            return
+
+        logger.info(
+            '[UNIFIED-003/004] High entropy alert: entity=%s entropy=%.3f reason=%s',
+            entity_id, entropy, reason,
+        )
+
+        # Enqueue with backpressure
+        request = {
+            'entity_id': entity_id,
+            'entropy': entropy,
+            'protocols': protocols,
+            'reason': reason,
+        }
+
+        try:
+            self._micro_sprint_queue.put_nowait(request)
+            pending_entities[entity_id] = time.monotonic()
+            self._entropy_alerts_processed += 1
+        except asyncio.QueueFull:
+            logger.warning(
+                '[ISSUE-022-03] Micro-sprint queue FULL (%d/%d), dropping alert for entity=%s',
+                self._micro_sprint_queue.qsize(),
+                self._micro_sprint_queue.maxsize,
+                entity_id,
+            )
 
     async def _micro_sprint_worker_loop(self) -> None:
         """

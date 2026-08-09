@@ -48,6 +48,82 @@ import msgspec
 from enum import StrEnum
 from pathlib import Path
 
+
+# =============================================================================
+# Shared helpers
+# =============================================================================
+
+@dataclass(frozen=True, slots=True)
+class JsonValidationResult:
+    """Result of JSON file validation."""
+    valid: bool
+    parse_error: str | None = None
+
+
+def _validate_json_file(path: Path) -> JsonValidationResult:
+    """Validate a JSON file. Returns (valid, parse_error)."""
+    try:
+        with open(path, encoding='utf-8') as fh:
+            json.load(fh)
+        return JsonValidationResult(valid=True)
+    except json.JSONDecodeError as exc:
+        return JsonValidationResult(valid=False, parse_error=f'JSON decode error: {exc}')
+    except Exception as exc:
+        return JsonValidationResult(valid=False, parse_error=str(exc))
+
+
+@dataclass(frozen=True, slots=True)
+class ImportCheckResult:
+    """Result of import contract check."""
+    found: bool
+    valid: bool
+    parse_error: str | None = None
+    blocks_live: bool = True
+
+
+def _check_import_contract(
+    module_path: str,
+    probe_dir: str,
+    filename: str,
+    checks: tuple[tuple[str, bool], ...],
+    blocks_live: bool = True,
+) -> ImportCheckResult:
+    """
+    Check an import contract. Returns ImportCheckResult.
+    
+    Args:
+        module_path: Full import path, e.g. 'hledac.universal.export.sprint_exporter'
+        probe_dir: Directory name for artifact matrix
+        filename: Filename for artifact matrix
+        checks: Tuple of (check_name, check_result) tuples
+        blocks_live: Whether failure blocks live runs
+    """
+    try:
+        import importlib
+        import_str = module_path
+        parts = module_path.rsplit('.', 1)
+        if len(parts) == 2:
+            module = importlib.import_module(parts[0])
+            obj = getattr(module, parts[1], None)
+        else:
+            obj = importlib.import_module(module_path)
+        
+        failures = [name for name, ok in checks if not ok]
+        valid = len(failures) == 0
+        return ImportCheckResult(
+            found=True,
+            valid=valid,
+            parse_error='; '.join(failures) if failures else None,
+            blocks_live=blocks_live,
+        )
+    except ImportError as exc:
+        return ImportCheckResult(
+            found=False,
+            valid=False,
+            parse_error=str(exc),
+            blocks_live=blocks_live,
+        )
+
 class OneButtonVerdict(StrEnum):
     RUN_NOW = 'RUN_NOW'
     RESTART_THEN_RUN = 'RESTART_THEN_RUN'
@@ -103,6 +179,65 @@ _F223_ARTIFACT_ALIASES: dict[str, list[tuple[str, str]]] = {'F223A_PROFILE_PROPA
 _F223_REQUIRED_PROBES = [('probe_f223a_nonfeed_profile_propagation', 'nonfeed_profile_propagation.json'), ('probe_f223b_terminality_verdict_ssot', 'terminality_verdict_ssot.json'), ('probe_f223c_public_counter_truth', 'public_counter_truth.json'), ('probe_f223d_product_value_reality', 'product_value_reality.json'), ('probe_f223h_cwd_invocation_guard', 'cwd_invocation_guard.json')]
 _F223_OPTIONAL_PROBES = [('probe_f223e_async_resource_hygiene', 'async_resource_hygiene.json'), ('probe_f223f_analyst_brief_reality', 'analyst_brief_reality.json'), ('probe_f223g_persistent_dedup_audit', 'persistent_dedup_audit.json')]
 
+
+# =============================================================================
+# Refactored run_one_button_gate — helper functions
+# =============================================================================
+
+_NONFEED_PROFILES: frozenset[str] = frozenset({'nonfeed_diagnostic', 'nonfeed_diagnostic180', 'active300'})
+
+# --- Artifact extraction helpers ---
+def _extract_missing_paths(results: list) -> list[str]:
+    """Extract missing artifact paths from results list."""
+    return [f'{r.probe_dir}/{r.filename}' for r in results if not r.valid]
+
+
+def _build_f221_artifacts_dict(
+    results: list[F221ArtifactResult],
+    missing: list[F221ArtifactResult],
+) -> dict:
+    """Build F221 artifact summary dict."""
+    return {
+        'total': len(results),
+        'valid': sum(1 for r in results if r.valid),
+        'missing': len(missing),
+        'details': [
+            {'probe_dir': r.probe_dir, 'filename': r.filename, 'found': r.found,
+             'valid': r.valid, 'parse_error': r.parse_error}
+            for r in results
+        ],
+    }
+
+
+def _build_f223_artifacts_dict(
+    required_results: list[F223ArtifactResult],
+    required_missing: list[F223ArtifactResult],
+    optional_results: list[F223ArtifactResult],
+) -> dict:
+    """Build F223 artifact summary dict."""
+    return {
+        'required_total': len(required_results),
+        'required_valid': sum(1 for r in required_results if r.valid),
+        'required_missing': len(required_missing),
+        'optional_total': len(optional_results),
+        'optional_valid': sum(1 for r in optional_results if r.valid),
+        'required_details': [
+            {'logical_name': r.logical_name, 'probe_dir': r.probe_dir, 'filename': r.filename,
+             'found': r.found, 'valid': r.valid, 'parse_error': r.parse_error,
+             'resolved_path': r.resolved_path, 'alias_used': r.alias_used,
+             'searched_paths': r.searched_paths}
+            for r in required_results
+        ],
+        'optional_details': [
+            {'logical_name': r.logical_name, 'probe_dir': r.probe_dir, 'filename': r.filename,
+             'found': r.found, 'valid': r.valid, 'parse_error': r.parse_error,
+             'resolved_path': r.resolved_path, 'alias_used': r.alias_used,
+             'searched_paths': r.searched_paths}
+            for r in optional_results
+        ],
+    }
+
+
 @lru_cache(maxsize=1)
 def _sample_uma() -> dict:
     """Sample current UMA/swap state via core.resource_governor."""
@@ -127,14 +262,9 @@ def _check_f221_artifact(repo_root: Path, probe_dir: str, filename: str) -> F221
     if not full_path.exists():
         return result
     result.found = True
-    try:
-        with open(full_path, encoding='utf-8') as fh:
-            json.load(fh)
-        result.valid = True
-    except json.JSONDecodeError as exc:
-        result.parse_error = f'JSON decode error: {exc}'
-    except Exception as exc:
-        result.parse_error = str(exc)
+    validation = _validate_json_file(full_path)
+    result.valid = validation.valid
+    result.parse_error = validation.parse_error
     return result
 
 def _check_all_f221_artifacts(repo_root: Path) -> tuple[list[F221ArtifactResult], list[F221ArtifactResult]]:
@@ -177,14 +307,9 @@ def _check_f223_artifact(repo_root: Path, logical_name: str, probe_dir: str, fil
         result.resolved_path = str(full_path)
         if candidate_dir != probe_dir or candidate_file != filename:
             result.alias_used = True
-        try:
-            with open(full_path, encoding='utf-8') as fh:
-                json.load(fh)
-            result.valid = True
-        except json.JSONDecodeError as exc:
-            result.parse_error = f'JSON decode error: {exc}'
-        except Exception as exc:
-            result.parse_error = str(exc)
+        validation = _validate_json_file(full_path)
+        result.valid = validation.valid
+        result.parse_error = validation.parse_error
         break
     result.searched_paths = searched_paths
     return result
@@ -697,58 +822,26 @@ def run_one_button_gate(
     swap_gib = uma.get('swap_used_gib', 0.0)
     uma_state = uma.get('uma_state', 'unknown')
 
+    # --- Artifact collection phase ---
     f221_results, f221_missing = _check_all_f221_artifacts(repo_root)
-    f221_valid_count = sum(1 for r in f221_results if r.valid)
-    f221_total = len(f221_results)
-    missing_f221 = [f'{r.probe_dir}/{r.filename}' for r in f221_missing]
-
     _, cross_missing = _check_cross_sprint_artifacts(repo_root)
-    missing_cross_sprint = [f'{r.probe_dir}/{r.filename}' for r in cross_missing]
-
     f223_results, f223_required_missing, f223_optional = _check_all_f223_artifacts(repo_root)
-    missing_f223_required = [f'{r.probe_dir}/{r.filename}' for r in f223_required_missing]
 
-    f221_artifacts = {
-        'total': f221_total,
-        'valid': f221_valid_count,
-        'missing': len(f221_missing),
-        'details': [
-            {'probe_dir': r.probe_dir, 'filename': r.filename, 'found': r.found,
-             'valid': r.valid, 'parse_error': r.parse_error}
-            for r in f221_results
-        ],
-    }
-
-    f223_artifacts = {
-        'required_total': len(f223_results),
-        'required_valid': sum(1 for r in f223_results if r.valid),
-        'required_missing': len(f223_required_missing),
-        'optional_total': len(f223_optional),
-        'optional_valid': sum(1 for r in f223_optional if r.valid),
-        'required_details': [
-            {'logical_name': r.logical_name, 'probe_dir': r.probe_dir, 'filename': r.filename,
-             'found': r.found, 'valid': r.valid, 'parse_error': r.parse_error,
-             'resolved_path': r.resolved_path, 'alias_used': r.alias_used,
-             'searched_paths': r.searched_paths}
-            for r in f223_results
-        ],
-        'optional_details': [
-            {'logical_name': r.logical_name, 'probe_dir': r.probe_dir, 'filename': r.filename,
-             'found': r.found, 'valid': r.valid, 'parse_error': r.parse_error,
-             'resolved_path': r.resolved_path, 'alias_used': r.alias_used,
-             'searched_paths': r.searched_paths}
-            for r in f223_optional
-        ],
-    }
-
+    # --- Build artifact summaries using helpers ---
+    f221_artifacts = _build_f221_artifacts_dict(f221_results, f221_missing)
+    f223_artifacts = _build_f223_artifacts_dict(f223_results, f223_required_missing, f223_optional)
+    missing_f221 = _extract_missing_paths(f221_missing)
+    missing_cross_sprint = _extract_missing_paths(cross_missing)
+    missing_f223_required = _extract_missing_paths(f223_required_missing)
     f223_optional_status = {'total': len(f223_optional), 'valid': sum(1 for r in f223_optional if r.valid)}
 
+    # --- Decision gate and triage ---
     decision_data = _load_decision_gate(decision_gate_path)
     triage = _load_last_live_triage(last_live_triage_path)
-
     triage_verdict = triage.get('root_cause_class') if triage else None
     triage_another_live_useful = triage.get('another_live_useful') if triage else None
 
+    # --- Surface and schema checks ---
     provider_surface_ok = _is_provider_surface_ok(decision_data)
     fallback_blocked = _has_fallback_schema(decision_data)
     canonical_fallback_detected = bool(decision_data.get('fallback_schema_blocked', False)) if decision_data else False
@@ -757,7 +850,7 @@ def run_one_button_gate(
     swap_policy_tier, swap_gate_reason = _compute_swap_policy_tier(swap_gib, uma_state)
 
     # --- Nonfeed profile flags ---
-    is_nonfeed_profile = profile in ('nonfeed_diagnostic', 'nonfeed_diagnostic180', 'active300')
+    is_nonfeed_profile = profile in _NONFEED_PROFILES
     f232g_present, f233d_present = _check_nonfeed_profile_flags(repo_root, is_nonfeed_profile)
 
     # --- Blocking conditions ---
@@ -771,8 +864,6 @@ def run_one_button_gate(
         swap_gib=swap_gib,
     )
 
-    # Note: uma_state critical/emergency is already handled by _compute_swap_policy_tier
-
     # --- Capability calculation ---
     capability = _compute_capability_live_allowed(
         provider_surface_ok=provider_surface_ok,
@@ -782,6 +873,8 @@ def run_one_button_gate(
     )
 
     # --- Verdict calculation ---
+    f221_valid_count = f221_artifacts['valid']
+    f221_total = f221_artifacts['total']
     verdict_result = _compute_verdict(
         any_blocked=any_blocked,
         blocking=blocking,
@@ -798,7 +891,6 @@ def run_one_button_gate(
     # --- Triage warnings ---
     reasons = list(verdict_result.reasons)
     warnings = list(verdict_result.warnings)
-
     if triage_verdict:
         warnings.append(f'Last-live triage verdict: {triage_verdict}')
         if not triage_another_live_useful:
@@ -851,111 +943,192 @@ def run_one_button_gate(
         investigation_reason=run_mode.investigation_reason,
     )
 
-def _render_markdown(result: OneButtonResult, profile: str, query: str) -> str:
-    """Render one-button result as markdown report."""
-    icon_map = {OneButtonVerdict.RUN_NOW: '✅', OneButtonVerdict.RESTART_THEN_RUN: '🟡', OneButtonVerdict.DO_NOT_RUN_FIX_ARTIFACTS: '❌', OneButtonVerdict.DO_NOT_RUN_PROVIDER_SURFACE: '❌', OneButtonVerdict.DO_NOT_RUN_CONTRACT: '❌', OneButtonVerdict.DO_NOT_RUN_MEMORY_HARD_BLOCK: '🚫', OneButtonVerdict.DO_NOT_RUN_UNKNOWN: '⚠️', OneButtonVerdict.READY_FOR_NONFEED_CAPABILITY_RUN: '✅', OneButtonVerdict.READY_FOR_FEED_BASELINE_ONLY: '🟡'}
-    icon = icon_map.get(result.verdict, '?')
-    lines = ['# One-Button Prelive Gate Report (F221H)', '', f'**Verdict:** {icon} `{result.verdict.value}`', f'**Live Allowed:** `{result.live_allowed}`', f'**Profile:** `{profile}`', f'**Query:** `{query}`', '', '---', '', '## Decision Summary', '']
-    if result.reasons:
-        for r in result.reasons:
-            lines.append(f'- {r}')
-    if result.warnings:
-        lines.append('')
-        lines.append('**Warnings:**')
-        for w in result.warnings:
-            lines.append(f'- {w}')
-    lines.extend(['', '---', '', '## UMA / Swap State', ''])
-    uma = result.uma
-    for key in ['system_used_gib', 'swap_used_gib', 'swap_detected', 'uma_state', 'io_only']:
+# =============================================================================
+# Markdown renderer helpers
+# =============================================================================
+
+_VERDICT_ICONS: dict[OneButtonVerdict, str] = {
+    OneButtonVerdict.RUN_NOW: '✅',
+    OneButtonVerdict.RESTART_THEN_RUN: '🟡',
+    OneButtonVerdict.DO_NOT_RUN_FIX_ARTIFACTS: '❌',
+    OneButtonVerdict.DO_NOT_RUN_PROVIDER_SURFACE: '❌',
+    OneButtonVerdict.DO_NOT_RUN_CONTRACT: '❌',
+    OneButtonVerdict.DO_NOT_RUN_MEMORY_HARD_BLOCK: '🚫',
+    OneButtonVerdict.DO_NOT_RUN_UNKNOWN: '⚠️',
+    OneButtonVerdict.READY_FOR_NONFEED_CAPABILITY_RUN: '✅',
+    OneButtonVerdict.READY_FOR_FEED_BASELINE_ONLY: '🟡',
+}
+
+_UMA_KEYS: tuple[str, ...] = ('system_used_gib', 'swap_used_gib', 'swap_detected', 'uma_state', 'io_only')
+
+
+def _render_artifact_table_row(d: dict) -> str:
+    """Render a single artifact table row with emoji indicators."""
+    found_icon = '✅' if d.get('found') else '❌'
+    valid_icon = '✅' if d.get('valid') else '❌'
+    return f"| {d.get('probe_dir', '')} | {d.get('filename', '')} | {found_icon} | {valid_icon} |"
+
+
+def _render_uma_section(uma: dict, swap_policy_tier: str, swap_gate_reason: str) -> list[str]:
+    """Render UMA/swap state section."""
+    lines = ['## UMA / Swap State', '', '| Key | Value |', '|-------|-------|']
+    for key in _UMA_KEYS:
         val = uma.get(key)
         if val is not None:
             lines.append(f'| {key} | `{val}` |')
     if uma.get('error'):
         lines.append(f"| error | `{uma.get('error')}` |")
-    lines.extend(['', f'| Swap Policy Tier | `{result.swap_policy_tier}` |', f'| Swap Gate Reason | `{result.swap_gate_reason}` |'])
-    lines.extend(['', '---', '', '## F221 Artifact Status', ''])
+    lines.extend(['', f'| Swap Policy Tier | `{swap_policy_tier}` |', f'| Swap Gate Reason | `{swap_gate_reason}` |'])
+    return lines
+
+
+def _render_f221_section(result: OneButtonResult) -> list[str]:
+    """Render F221 artifact section."""
     fa = result.f221_artifacts
-    lines.extend([f"| Total | {fa.get('total', 0)} |", f"| Valid | {fa.get('valid', 0)} |", f"| Missing | {fa.get('missing', 0)} |"])
+    lines = ['## F221 Artifact Status', '',
+             f"| Total | {fa.get('total', 0)} |",
+             f"| Valid | {fa.get('valid', 0)} |",
+             f"| Missing | {fa.get('missing', 0)} |"]
     if result.missing_f221:
-        lines.append('')
-        lines.append('**Missing F221 Artifacts:**')
-        for m in result.missing_f221:
-            lines.append(f'- `{m}`')
+        lines.extend(['', '**Missing F221 Artifacts:**'])
+        lines.extend(f'- `{m}`' for m in result.missing_f221)
     if result.missing_cross_sprint:
-        lines.append('')
-        lines.append('**Missing Cross-Sprint Artifacts:**')
-        for m in result.missing_cross_sprint:
-            lines.append(f'- `{m}`')
+        lines.extend(['', '**Missing Cross-Sprint Artifacts:**'])
+        lines.extend(f'- `{m}`' for m in result.missing_cross_sprint)
     if fa.get('details'):
-        lines.extend(['', '### F221 Artifact Details', ''])
-        lines.append('| Probe | Artifact | Found | Valid |')
-        lines.append('|------|----------|-------|-------|')
-        for d in fa['details']:
-            lines.append(f"| {d['probe_dir']} | {d['filename']} | {('✅' if d['found'] else '❌')} | {('✅' if d['valid'] else '❌')} |")
+        lines.extend(['', '### F221 Artifact Details', '',
+                     '| Probe | Artifact | Found | Valid |',
+                     '|------|----------|-------|-------|'])
+        lines.extend(_render_artifact_table_row(d) for d in fa['details'])
+    return lines
+
+
+def _render_f223_section(result: OneButtonResult) -> list[str]:
+    """Render F223 artifact section."""
     f223a = result.f223_artifacts
-    lines.extend(['', '---', '', '## F223 Post-F223 Artifact Status (Sprint F224E)', ''])
+    lines = ['## F223 Post-F223 Artifact Status (Sprint F224E)', '']
     if f223a:
-        lines.extend([f"| Required Total | {f223a.get('required_total', 0)} |", f"| Required Valid | {f223a.get('required_valid', 0)} |", f"| Required Missing | {f223a.get('required_missing', 0)} |", f"| Optional Total | {f223a.get('optional_total', 0)} |", f"| Optional Valid | {f223a.get('optional_valid', 0)} |"])
+        lines.extend([
+            f"| Required Total | {f223a.get('required_total', 0)} |",
+            f"| Required Valid | {f223a.get('required_valid', 0)} |",
+            f"| Required Missing | {f223a.get('required_missing', 0)} |",
+            f"| Optional Total | {f223a.get('optional_total', 0)} |",
+            f"| Optional Valid | {f223a.get('optional_valid', 0)} |",
+        ])
     if result.missing_f223_required:
-        lines.append('')
-        lines.append('**Missing F223 Required Artifacts:**')
-        for m in result.missing_f223_required:
-            lines.append(f'- `{m}`')
+        lines.extend(['', '**Missing F223 Required Artifacts:**'])
+        lines.extend(f'- `{m}`' for m in result.missing_f223_required)
     if f223a and f223a.get('required_details'):
-        lines.extend(['', '### F223 Required Artifact Details', ''])
-        lines.append('| Probe | Artifact | Found | Valid |')
-        lines.append('|------|----------|-------|-------|')
-        for d in f223a['required_details']:
-            lines.append(f"| {d['probe_dir']} | {d['filename']} | {('✅' if d['found'] else '❌')} | {('✅' if d['valid'] else '❌')} |")
+        lines.extend(['', '### F223 Required Artifact Details', '',
+                     '| Probe | Artifact | Found | Valid |',
+                     '|------|----------|-------|-------|'])
+        lines.extend(_render_artifact_table_row(d) for d in f223a['required_details'])
     if f223a and f223a.get('optional_details'):
-        lines.extend(['', '### F223 Optional Artifact Details', ''])
-        lines.append('(_Optional — advisory only, does not block_)')
-        lines.append('| Probe | Artifact | Found | Valid |')
-        lines.append('|------|----------|-------|-------|')
-        for d in f223a['optional_details']:
-            lines.append(f"| {d['probe_dir']} | {d['filename']} | {('✅' if d['found'] else '❌')} | {('✅' if d['valid'] else '❌')} |")
-    lines.extend(['', '---', '', '## Provider Surface', ''])
-    ps_icon = '✅' if result.provider_surface_ok else '❌'
-    lines.append(f'- **OK:** {ps_icon} `{result.provider_surface_ok}`')
-    lines.append(f'- **Fallback Schema Blocked:** `{result.fallback_schema_blocked}`')
-    lines.extend(['', '---', '', '## F233F Gate: Capability vs Feed Split', ''])
-    lines.extend(['| Field | Value |', '|-------|-------|', f'| Live Allowed | `{result.live_allowed}` |', f'| Capability Live Allowed | `{result.capability_live_allowed}` |', f'| Feed Baseline Allowed | `{result.feed_baseline_allowed}` |', f'| Why Capability Blocked | `{result.why_nonfeed_capability_blocked}` |', f'| Degraded But Allowed | `{result.degraded_but_allowed}` |', f'| Canonical Fallback Detected | `{result.canonical_fallback_detected}` |', f'| F232G Research Quality Present | `{result.f232g_research_quality_present}` |', f'| F233D Nonfeed Prelude Coverage | `{result.f233d_nonfeed_prelude_coverage}` |'])
+        lines.extend(['', '### F223 Optional Artifact Details', '',
+                     '(_Optional — advisory only, does not block_)',
+                     '| Probe | Artifact | Found | Valid |',
+                     '|------|----------|-------|-------|'])
+        lines.extend(_render_artifact_table_row(d) for d in f223a['optional_details'])
+    return lines
+
+
+def _render_capability_section(result: OneButtonResult) -> list[str]:
+    """Render capability vs feed split section."""
+    icon = '✅' if result.provider_surface_ok else '❌'
+    lines = ['## F233F Gate: Capability vs Feed Split', '',
+             '| Field | Value |', '|-------|-------|',
+             f'| Live Allowed | `{result.live_allowed}` |',
+             f'| Capability Live Allowed | `{result.capability_live_allowed}` |',
+             f'| Feed Baseline Allowed | `{result.feed_baseline_allowed}` |',
+             f'| Why Capability Blocked | `{result.why_nonfeed_capability_blocked}` |',
+             f'| Degraded But Allowed | `{result.degraded_but_allowed}` |',
+             f'| Canonical Fallback Detected | `{result.canonical_fallback_detected}` |',
+             f'| F232G Research Quality Present | `{result.f232g_research_quality_present}` |',
+             f'| F233D Nonfeed Prelude Coverage | `{result.f233d_nonfeed_prelude_coverage}` |']
     if result.capability_live_allowed:
-        lines.extend(['', '### Exact Command (Nonfeed Capability)', ''])
-        lines.append('```bash')
-        lines.append(f"{result.live_command.get('command', '')}")
-        lines.append('```')
+        lines.extend(['', '### Exact Command (Nonfeed Capability)', '', '```bash', result.live_command.get('command', ''), '```'])
     elif result.feed_baseline_allowed:
-        lines.extend(['', '### Exact Command (Feed Baseline)', ''])
-        lines.append('_Nonfeed capability blocked. Feed baseline run:_')
-        lines.append('```bash')
-        lines.append(f"{result.live_command.get('command', '')}")
-        lines.append('```')
+        lines.extend(['', '### Exact Command (Feed Baseline)', '',
+                     '_Nonfeed capability blocked. Feed baseline run:_', '```bash', result.live_command.get('command', ''), '```'])
     else:
-        lines.extend(['', '### Exact Command', ''])
-        lines.append('_No run type currently allowed._')
-    if result.triage_verdict:
-        lines.extend(['', '---', '', '## Last-Live Triage', ''])
-        lines.append(f'- **Triage Verdict:** `{result.triage_verdict}`')
-        lines.append(f'- **Another Live Useful:** `{result.triage_another_live_useful}`')
-    lines.extend(['', '---', '', '## Live Command (Sprint F224E)', ''])
+        lines.extend(['', '### Exact Command', '', '_No run type currently allowed._'])
+    return lines
+
+
+def _render_live_command_section(result: OneButtonResult) -> list[str]:
+    """Render live command section."""
     lc = result.live_command
+    lines = ['## Live Command (Sprint F224E)', '']
     if lc:
-        lines.append('### Exact Command')
-        lines.append(f"```bash\n{lc.get('command', '')}\n```")
-        lines.append('')
-        lines.append('### Expected Post-F223 Assertions')
+        lines.extend(['### Exact Command', f"```bash\n{lc.get('command', '')}\n```", '',
+                     '### Expected Post-F223 Assertions'])
         assertions = lc.get('expected_assertions', {})
-        for key, val in assertions.items():
-            lines.append(f'- `{key}` → `{val}`')
-        lines.append('')
-        lines.append('### Abort Conditions')
+        lines.extend(f'- `{k}` → `{v}`' for k, v in assertions.items())
+        lines.extend(['', '### Abort Conditions'])
         abort_if = lc.get('abort_if', {})
-        for reason, desc in abort_if.items():
-            lines.append(f'- **{reason}:** {desc}')
+        lines.extend(f'- **{r}:** {d}' for r, d in abort_if.items())
     else:
         lines.append('_No live command generated (gate did not pass)._')
-    lines.extend(['', '---', '', '## How to Run This Gate', '', '```bash', 'python tools/prelive_one_button_gate.py \\', '  --repo-root . \\', '  --profile nonfeed_diagnostic180 \\', '  --query "mozilla.org certificate transparency subdomains april 2026" \\', '  --output-json probe_f221h_one_button_prelive_gate/one_button_prelive_gate.json \\', '  --output-md probe_f221h_one_button_prelive_gate/REPORT_ONE_BUTTON_PRELIVE_GATE.md', '```', '', 'With optional last-live triage:', '```bash', 'python tools/prelive_one_button_gate.py \\', '  --repo-root . --profile nonfeed_diagnostic180 \\', '  --query "..." \\', '  --last-live-triage probe_f219g_live_artifact_triage/triage.json \\', '  --decision-gate-json probe_f219f_prelive_decision_gate/prelive_decision.json \\', '  --output-json ... --output-md ...', '```'])
+    return lines
+
+
+_USAGE_TEMPLATE: tuple[str, ...] = (
+    '', '---', '',
+    '## How to Run This Gate', '',
+    '```bash',
+    'python tools/prelive_one_button_gate.py \\',
+    '  --repo-root . \\',
+    '  --profile nonfeed_diagnostic180 \\',
+    '  --query "mozilla.org certificate transparency subdomains april 2026" \\',
+    '  --output-json probe_f221h_one_button_prelive_gate/one_button_prelive_gate.json \\',
+    '  --output-md probe_f221h_one_button_prelive_gate/REPORT_ONE_BUTTON_PRELIVE_GATE.md',
+    '```',
+    '',
+    'With optional last-live triage:',
+    '```bash',
+    'python tools/prelive_one_button_gate.py \\',
+    '  --repo-root . --profile nonfeed_diagnostic180 \\',
+    '  --query "..." \\',
+    '  --last-live-triage probe_f219g_live_artifact_triage/triage.json \\',
+    '  --decision-gate-json probe_f219f_prelive_decision_gate/prelive_decision.json \\',
+    '  --output-json ... --output-md ...',
+    '```',
+)
+
+
+def _render_markdown(result: OneButtonResult, profile: str, query: str) -> str:
+    """Render one-button result as markdown report."""
+    icon = _VERDICT_ICONS.get(result.verdict, '?')
+    lines: list[str] = [
+        '# One-Button Prelive Gate Report (F221H)', '',
+        f'**Verdict:** {icon} `{result.verdict.value}`',
+        f'**Live Allowed:** `{result.live_allowed}`',
+        f'**Profile:** `{profile}`',
+        f'**Query:** `{query}`',
+        '', '---', '',
+        '## Decision Summary', '',
+    ]
+    lines.extend(f'- {r}' for r in result.reasons)
+    if result.warnings:
+        lines.extend(['', '**Warnings:**'])
+        lines.extend(f'- {w}' for w in result.warnings)
+    lines.extend(['', '---'])
+    lines.extend(_render_uma_section(result.uma, result.swap_policy_tier, result.swap_gate_reason))
+    lines.extend(['', '---'])
+    lines.extend(_render_f221_section(result))
+    lines.extend(['', '---'])
+    lines.extend(_render_f223_section(result))
+    lines.extend(['', '---', '', '## Provider Surface', '',
+                  f'- **OK:** {icon} `{result.provider_surface_ok}`',
+                  f'- **Fallback Schema Blocked:** `{result.fallback_schema_blocked}`'])
+    lines.extend(['', '---'])
+    lines.extend(_render_capability_section(result))
+    if result.triage_verdict:
+        lines.extend(['', '---', '', '## Last-Live Triage', '',
+                      f'- **Triage Verdict:** `{result.triage_verdict}`',
+                      f'- **Another Live Useful:** `{result.triage_another_live_useful}`'])
+    lines.extend(_render_live_command_section(result))
+    lines.extend(_USAGE_TEMPLATE)
     return '\n'.join(lines)
 
 class SelfTestResult(msgspec.Struct, frozen=True, gc=False):
@@ -972,6 +1145,84 @@ class SelfTestResult(msgspec.Struct, frozen=True, gc=False):
     def to_dict(self) -> dict:
         return {'self_test_passed': self.self_test_passed, 'artifact_matrix': self.artifact_matrix, 'assertion_contract_ok': self.assertion_contract_ok, 'command_contract_ok': self.command_contract_ok, 'cwd_contract_ok': self.cwd_contract_ok, 'blocking_reasons': self.blocking_reasons, 'warnings': self.warnings, 'profile_assertions': self.profile_assertions}
 
+# --- Artifact matrix builder helpers for _run_self_test ---
+
+@dataclass(frozen=True, slots=True)
+class _F229ContractCheck:
+    """F229 import contract check definition."""
+    module_path: str
+    probe_dir: str
+    filename: str
+    category: str
+    failures: tuple[str, ...]
+    blocks_live: bool = True
+
+
+_F229_CONTRACT_CHECKS: tuple[_F229ContractCheck, ...] = (
+    _F229ContractCheck(
+        module_path='hledac.universal.export.sprint_exporter',
+        probe_dir='export',
+        filename='sprint_exporter.py',
+        category='F229-EXPORT-A',
+        failures=('_generate_next_sprint_seeds',),
+    ),
+    _F229ContractCheck(
+        module_path='hledac.universal.runtime.sprint_scheduler',
+        probe_dir='runtime',
+        filename='sprint_scheduler.py',
+        category='F229-RUNTIME-A',
+        failures=('SprintScheduler', 'run_sprint'),
+    ),
+    _F229ContractCheck(
+        module_path='pipeline.live_public_pipeline.PipelineRunResult',
+        probe_dir='pipeline',
+        filename='live_public_pipeline.py',
+        category='F229-PUBLIC-A',
+        failures=('public_bootstrap_order',),
+    ),
+    _F229ContractCheck(
+        module_path='benchmarks.live_sprint_measurement.LiveMeasurementResult',
+        probe_dir='benchmarks',
+        filename='live_sprint_measurement.py',
+        category='F229-NONFEED-A',
+        failures=('nonfeed_profile_expected_lanes', 'acquisition_report'),
+    ),
+)
+
+
+def _run_f229_contract_checks() -> tuple[list[dict], list[str]]:
+    """Run F229 contract checks. Returns (artifact_matrix, blocking_reasons)."""
+    import importlib
+    artifact_matrix: list[dict] = []
+    blocking_reasons: list[str] = []
+    for check in _F229_CONTRACT_CHECKS:
+        parts = check.module_path.rsplit('.', 1)
+        entry = {
+            'probe_dir': check.probe_dir,
+            'filename': check.filename,
+            'category': check.category,
+            'found': False,
+            'valid': False,
+            'parse_error': None,
+            'blocks_live': check.blocks_live,
+        }
+        try:
+            module = importlib.import_module(parts[0])
+            obj = getattr(module, parts[1]) if len(parts) == 2 else module
+            failures = [f for f in check.failures if not hasattr(obj, f)]
+            entry['found'] = True
+            entry['valid'] = len(failures) == 0
+            entry['parse_error'] = '; '.join(failures) if failures else None
+            if failures:
+                for f in failures:
+                    blocking_reasons.append(f'{check.category}: {check.module_path} missing {f}')
+        except ImportError as exc:
+            entry['parse_error'] = str(exc)
+            blocking_reasons.append(f'{check.category}: {check.module_path} not importable: {exc}')
+        artifact_matrix.append(entry)
+    return artifact_matrix, blocking_reasons
+
+
 def _run_self_test(repo_root: Path, profile: str, query: str) -> SelfTestResult:
     """
     Self-test mode: validates artifact resolution and expected assertion contract.
@@ -987,93 +1238,77 @@ def _run_self_test(repo_root: Path, profile: str, query: str) -> SelfTestResult:
         warnings.append(f"CWD contract: {reality['cwd_warning']}")
     if not reality['universal_root_exists']:
         blocking_reasons.append(f"universal_root does not exist: {reality['universal_root']}")
+    
+    # --- F223 and cross-sprint artifacts ---
     f223_req_results, f223_req_missing, f223_opt_results = _check_all_f223_artifacts(repo_root)
-    _ = f223_req_missing
     for r in f223_req_results:
-        entry = {'probe_dir': r.probe_dir, 'filename': r.filename, 'category': 'required', 'found': r.found, 'valid': r.valid, 'parse_error': r.parse_error, 'blocks_live': True}
-        artifact_matrix.append(entry)
+        artifact_matrix.append({'probe_dir': r.probe_dir, 'filename': r.filename, 'category': 'required', 'found': r.found, 'valid': r.valid, 'parse_error': r.parse_error, 'blocks_live': True})
         if not r.valid:
             blocking_reasons.append(f'required artifact invalid/missing: {r.probe_dir}/{r.filename}')
     for r in f223_opt_results:
-        entry = {'probe_dir': r.probe_dir, 'filename': r.filename, 'category': 'optional', 'found': r.found, 'valid': r.valid, 'parse_error': r.parse_error, 'blocks_live': False}
-        artifact_matrix.append(entry)
+        artifact_matrix.append({'probe_dir': r.probe_dir, 'filename': r.filename, 'category': 'optional', 'found': r.found, 'valid': r.valid, 'parse_error': r.parse_error, 'blocks_live': False})
         if not r.valid:
             warnings.append(f'optional artifact invalid/missing: {r.probe_dir}/{r.filename}')
-    cross_results, cross_missing = _check_cross_sprint_artifacts(repo_root)
-    _ = cross_missing
+    cross_results, _ = _check_cross_sprint_artifacts(repo_root)
     for r in cross_results:
-        entry = {'probe_dir': r.probe_dir, 'filename': r.filename, 'category': 'cross_sprint_required', 'found': r.found, 'valid': r.valid, 'parse_error': r.parse_error, 'blocks_live': True}
-        artifact_matrix.append(entry)
+        artifact_matrix.append({'probe_dir': r.probe_dir, 'filename': r.filename, 'category': 'cross_sprint_required', 'found': r.found, 'valid': r.valid, 'parse_error': r.parse_error, 'blocks_live': True})
         if not r.valid:
             blocking_reasons.append(f'cross-sprint artifact invalid/missing: {r.probe_dir}/{r.filename}')
-    try:
-        from hledac.universal.export import sprint_exporter as _export_sprint_exporter
-        _has_export = hasattr(_export_sprint_exporter, '_generate_next_sprint_seeds')
-        if not _has_export:
-            blocking_reasons.append('F229-EXPORT-A: export.sprint_exporter missing _generate_next_sprint_seeds')
-        else:
-            artifact_matrix.append({'probe_dir': 'export', 'filename': 'sprint_exporter.py', 'category': 'F229-EXPORT-A', 'found': True, 'valid': True, 'parse_error': None, 'blocks_live': True})
-    except ImportError as _exc:
-        blocking_reasons.append(f'F229-EXPORT-A: export.sprint_exporter not importable: {_exc}')
-        artifact_matrix.append({'probe_dir': 'export', 'filename': 'sprint_exporter.py', 'category': 'F229-EXPORT-A', 'found': False, 'valid': False, 'parse_error': str(_exc), 'blocks_live': True})
-    try:
-        from hledac.universal.runtime import sprint_scheduler as _runtime_scheduler
-        _has_scheduler = hasattr(_runtime_scheduler, 'SprintScheduler') or hasattr(_runtime_scheduler, 'run_sprint')
-        if not _has_scheduler:
-            blocking_reasons.append('F229-RUNTIME-A: runtime.sprint_scheduler missing SprintScheduler/run_sprint')
-        else:
-            artifact_matrix.append({'probe_dir': 'runtime', 'filename': 'sprint_scheduler.py', 'category': 'F229-RUNTIME-A', 'found': True, 'valid': True, 'parse_error': None, 'blocks_live': True})
-    except ImportError as _exc:
-        blocking_reasons.append(f'F229-RUNTIME-A: runtime.sprint_scheduler not importable: {_exc}')
-        artifact_matrix.append({'probe_dir': 'runtime', 'filename': 'sprint_scheduler.py', 'category': 'F229-RUNTIME-A', 'found': False, 'valid': False, 'parse_error': str(_exc), 'blocks_live': True})
-    try:
-        from pipeline.live_public_pipeline import PipelineRunResult as _PipResult
-        if hasattr(_PipResult, 'public_bootstrap_order'):
-            artifact_matrix.append({'probe_dir': 'pipeline', 'filename': 'live_public_pipeline.py', 'category': 'F229-PUBLIC-A', 'found': True, 'valid': True, 'parse_error': None, 'blocks_live': True})
-        else:
-            blocking_reasons.append('F229-PUBLIC-A: PipelineRunResult missing public_bootstrap_order field')
-            artifact_matrix.append({'probe_dir': 'pipeline', 'filename': 'live_public_pipeline.py', 'category': 'F229-PUBLIC-A', 'found': True, 'valid': False, 'parse_error': 'public_bootstrap_order field not found on PipelineRunResult', 'blocks_live': True})
-    except ImportError as _exc:
-        blocking_reasons.append(f'F229-PUBLIC-A: pipeline.live_public_pipeline not importable: {_exc}')
-        artifact_matrix.append({'probe_dir': 'pipeline', 'filename': 'live_public_pipeline.py', 'category': 'F229-PUBLIC-A', 'found': False, 'valid': False, 'parse_error': str(_exc), 'blocks_live': True})
-    try:
-        from benchmarks.live_sprint_measurement import LiveMeasurementResult as _LMR
-        _has_lanes = hasattr(_LMR, 'nonfeed_profile_expected_lanes')
-        _has_acq_report = hasattr(_LMR, 'acquisition_report')
-        if not _has_lanes:
-            blocking_reasons.append('F229-NONFEED-A: LiveMeasurementResult missing nonfeed_profile_expected_lanes')
-        if not _has_acq_report:
-            blocking_reasons.append('F229-NONFEED-A: LiveMeasurementResult missing acquisition_report')
-        _nonfeed_valid = _has_lanes and _has_acq_report
-        artifact_matrix.append({'probe_dir': 'benchmarks', 'filename': 'live_sprint_measurement.py', 'category': 'F229-NONFEED-A', 'found': True, 'valid': _nonfeed_valid, 'parse_error': None if _nonfeed_valid else 'missing nonfeed fields', 'blocks_live': True})
-    except ImportError as _exc:
-        blocking_reasons.append(f'F229-NONFEED-A: benchmarks.live_sprint_measurement not importable: {_exc}')
-        artifact_matrix.append({'probe_dir': 'benchmarks', 'filename': 'live_sprint_measurement.py', 'category': 'F229-NONFEED-A', 'found': False, 'valid': False, 'parse_error': str(_exc), 'blocks_live': True})
-    expected_profile = profile
-    expected_acquisition = _get_acquisition_profile_for_benchmark(expected_profile)
-    profile_assertions = {'benchmark_profile': expected_profile, 'acquisition_profile': expected_acquisition, 'run_quality_verdict': 'PASS_VALID_CAPABILITY_RUN or FAIL_NONFEED_EVIDENCE_MISSING', 'hardware_constrained': False, 'capability_synthesis': 'not None', 'next_sprint_seeds': 'not None', 'public_terminal_stage_not_discovery_timeout': True, 'CT_raw_gt_0_accepted_eq_0_no_loss': False, 'nonfeed_priority_enabled': True, 'terminality_satisfied': True, 'FAIL_NONFEED_EVIDENCE_MISSING': True, 'runtime_accepted_findings_divergence': True, 'public_stage_counters_raw_count': True}
+    
+    # --- F229 contract checks ---
+    f229_matrix, f229_blocking = _run_f229_contract_checks()
+    artifact_matrix.extend(f229_matrix)
+    blocking_reasons.extend(f229_blocking)
+    
+    # --- Profile assertions ---
+    expected_acquisition = _get_acquisition_profile_for_benchmark(profile)
+    profile_assertions = {
+        'benchmark_profile': profile,
+        'acquisition_profile': expected_acquisition,
+        'run_quality_verdict': 'PASS_VALID_CAPABILITY_RUN or FAIL_NONFEED_EVIDENCE_MISSING',
+        'hardware_constrained': False,
+        'capability_synthesis': 'not None',
+        'next_sprint_seeds': 'not None',
+        'public_terminal_stage_not_discovery_timeout': True,
+        'CT_raw_gt_0_accepted_eq_0_no_loss': False,
+        'nonfeed_priority_enabled': True,
+        'terminality_satisfied': True,
+        'FAIL_NONFEED_EVIDENCE_MISSING': True,
+        'runtime_accepted_findings_divergence': True,
+        'public_stage_counters_raw_count': True,
+    }
+    
+    # --- Assertion contract ---
     assertion_contract_ok = True
-    if expected_profile == 'nonfeed_diagnostic180':
-        if expected_acquisition != 'nonfeed_diagnostic':
-            assertion_contract_ok = False
-            blocking_reasons.append(f'assertion contract violation: benchmark_profile={expected_profile} maps to acquisition_profile={expected_acquisition}, expected nonfeed_diagnostic')
-    elif expected_profile not in _BENCHMARK_TO_ACQUISITION_PROFILE:
-        warnings.append(f'profile {expected_profile!r} not in benchmark→acquisition map')
-    command_contract_ok = True
-    encoded_query = query.replace('"', '\\"')
-    expected_cmd_substrings = [f'--profile {profile}', f'--query "{encoded_query}"', '--live']
-    constructed_cmd = f'rtk proxy python -m hledac.universal.benchmarks.live_sprint_measurement --profile {profile} --query "{encoded_query}" --live'
-    for substr in expected_cmd_substrings:
-        if substr not in constructed_cmd:
-            command_contract_ok = False
-            blocking_reasons.append(f'command contract violated: expected substring {substr!r} in live command')
-    if profile == 'nonfeed_diagnostic':
-        warnings.append("profile is 'nonfeed_diagnostic' — did you mean 'nonfeed_diagnostic180'? nonfeed_diagnostic180 is the benchmark profile that maps to nonfeed_diagnostic acquisition.")
     if profile == 'nonfeed_diagnostic180' and expected_acquisition != 'nonfeed_diagnostic':
         assertion_contract_ok = False
         blocking_reasons.append(f'acquisition_profile={expected_acquisition} != nonfeed_diagnostic for benchmark profile nonfeed_diagnostic180')
+    elif profile not in _BENCHMARK_TO_ACQUISITION_PROFILE:
+        warnings.append(f'profile {profile!r} not in benchmark→acquisition map')
+    
+    # --- Command contract ---
+    command_contract_ok = True
+    encoded_query = query.replace('"', '\\"')
+    constructed_cmd = f'rtk proxy python -m hledac.universal.benchmarks.live_sprint_measurement --profile {profile} --query "{encoded_query}" --live'
+    for substr in (f'--profile {profile}', f'--query "{encoded_query}"', '--live'):
+        if substr not in constructed_cmd:
+            command_contract_ok = False
+            blocking_reasons.append(f'command contract violated: expected substring {substr!r} in live command')
+    
+    if profile == 'nonfeed_diagnostic':
+        warnings.append("profile is 'nonfeed_diagnostic' — did you mean 'nonfeed_diagnostic180'? nonfeed_diagnostic180 is the benchmark profile that maps to nonfeed_diagnostic acquisition.")
+    
     self_test_passed = cwd_contract_ok and assertion_contract_ok and command_contract_ok and (not blocking_reasons)
-    return SelfTestResult(self_test_passed=self_test_passed, artifact_matrix=artifact_matrix, assertion_contract_ok=assertion_contract_ok, command_contract_ok=command_contract_ok, cwd_contract_ok=cwd_contract_ok, blocking_reasons=blocking_reasons, warnings=warnings, profile_assertions=profile_assertions)
+    return SelfTestResult(
+        self_test_passed=self_test_passed,
+        artifact_matrix=artifact_matrix,
+        assertion_contract_ok=assertion_contract_ok,
+        command_contract_ok=command_contract_ok,
+        cwd_contract_ok=cwd_contract_ok,
+        blocking_reasons=blocking_reasons,
+        warnings=warnings,
+        profile_assertions=profile_assertions,
+    )
 
 def _render_self_test_markdown(result: SelfTestResult, profile: str, query: str) -> str:
     """Render self-test result as markdown."""
@@ -1118,66 +1353,44 @@ def _build_parser() -> argparse.ArgumentParser:
     p.add_argument('--self-test', action='store_true', help='Run self-test mode: validates artifact resolution and expected assertion contract without running live. Never loads MLX or makes network calls. Emits machine-checkable JSON readiness matrix.')
     return p
 
-def main() -> int:
-    parser = _build_parser()
-    args = parser.parse_args()
-    repo_root = Path(args.repo_root).resolve()
-    if not repo_root.exists():
-        print(f'ERROR: repo root does not exist: {repo_root}', file=sys.stderr)
-        return 1
-    if args.self_test:
-        st_result = _run_self_test(repo_root, args.profile, args.query)
-        icon = '✅' if st_result.self_test_passed else '❌'
-        print(f"{'=' * 60}")
-        print(f"  Self-Test:    {icon} {('PASSED' if st_result.self_test_passed else 'FAILED')}")
-        print(f"  CWD Contract: {('✅' if st_result.cwd_contract_ok else '❌')}")
-        print(f"  Assertion Contract: {('✅' if st_result.assertion_contract_ok else '❌')}")
-        print(f"  Command Contract: {('✅' if st_result.command_contract_ok else '❌')}")
-        print(f"{'=' * 60}")
-        if st_result.blocking_reasons:
-            print('Blocking reasons:')
-            for b in st_result.blocking_reasons:
-                print(f'  - {b}')
-        if st_result.warnings:
-            print('Warnings:')
-            for w in st_result.warnings:
-                print(f'  - {w}')
+def _print_selftest_summary(st_result: SelfTestResult) -> None:
+    """Print self-test summary to stdout."""
+    icon = '✅' if st_result.self_test_passed else '❌'
+    print(f"{'=' * 60}")
+    print(f"  Self-Test:    {icon} {'PASSED' if st_result.self_test_passed else 'FAILED'}")
+    print(f"  CWD Contract: {'✅' if st_result.cwd_contract_ok else '❌'}")
+    print(f"  Assertion Contract: {'✅' if st_result.assertion_contract_ok else '❌'}")
+    print(f"  Command Contract: {'✅' if st_result.command_contract_ok else '❌'}")
+    print(f"{'=' * 60}")
+    if st_result.blocking_reasons:
+        print('Blocking reasons:')
+        for b in st_result.blocking_reasons:
+            print(f'  - {b}')
+    if st_result.warnings:
+        print('Warnings:')
+        for w in st_result.warnings:
+            print(f'  - {w}')
+    print()
+    print('Artifact matrix:')
+    for a in st_result.artifact_matrix:
+        found = '✅' if a['found'] else '❌'
+        valid = '✅' if a['valid'] else '❌'
+        blocks = '🚫' if a['blocks_live'] else '—'
+        print(f"  [{blocks}] {a['probe_dir']}/{a['filename']} found={found} valid={valid}")
+    if st_result.profile_assertions:
         print()
-        print('Artifact matrix:')
-        for a in st_result.artifact_matrix:
-            found = '✅' if a['found'] else '❌'
-            valid = '✅' if a['valid'] else '❌'
-            blocks = '🚫' if a['blocks_live'] else '—'
-            print(f"  [{blocks}] {a['probe_dir']}/{a['filename']} found={found} valid={valid}")
-        if st_result.profile_assertions:
-            print()
-            print('Profile assertions:')
-            for k, v in st_result.profile_assertions.items():
-                print(f'  {k} → {v}')
-        print()
-        print('##GATE_SELFTEST_JSON##')
-        print(json.dumps(st_result.to_dict(), indent=2))
-        print('##GATE_SELFTEST_JSON_END##')
-        if args.output_json:
-            args.output_json.parent.mkdir(parents=True, exist_ok=True)
-            with open(args.output_json, 'w', encoding='utf-8') as fh:
-                json.dump(st_result.to_dict(), fh, indent=2, default=str)
-            print(f'\nJSON report written: {args.output_json}')
-        if args.output_md:
-            md_text = _render_self_test_markdown(st_result, args.profile, args.query)
-            args.output_md.parent.mkdir(parents=True, exist_ok=True)
-            with open(args.output_md, 'w', encoding='utf-8') as fh:
-                fh.write(md_text)
-            print(f'Markdown report written: {args.output_md}')
-        return 0 if st_result.self_test_passed else 1
-    cwd_warning = _check_cwd_guard(repo_root)
-    if cwd_warning:
-        print(f'CWD GUARD: {cwd_warning}', file=sys.stderr)
-        print('Aborting artifact scan due to wrong CWD.', file=sys.stderr)
-        return 1
-    result = run_one_button_gate(repo_root=repo_root, profile=args.profile, query=args.query, decision_gate_path=args.decision_gate_json, last_live_triage_path=args.last_live_triage)
-    icon_map = {OneButtonVerdict.RUN_NOW: '✅', OneButtonVerdict.RESTART_THEN_RUN: '🟡', OneButtonVerdict.DO_NOT_RUN_FIX_ARTIFACTS: '❌', OneButtonVerdict.DO_NOT_RUN_PROVIDER_SURFACE: '❌', OneButtonVerdict.DO_NOT_RUN_CONTRACT: '❌', OneButtonVerdict.DO_NOT_RUN_MEMORY_HARD_BLOCK: '🚫', OneButtonVerdict.DO_NOT_RUN_UNKNOWN: '⚠️', OneButtonVerdict.READY_FOR_NONFEED_CAPABILITY_RUN: '✅', OneButtonVerdict.READY_FOR_FEED_BASELINE_ONLY: '🟡'}
-    icon = icon_map.get(result.verdict, '?')
+        print('Profile assertions:')
+        for k, v in st_result.profile_assertions.items():
+            print(f'  {k} → {v}')
+    print()
+    print('##GATE_SELFTEST_JSON##')
+    print(json.dumps(st_result.to_dict(), indent=2))
+    print('##GATE_SELFTEST_JSON_END##')
+
+
+def _print_gate_summary(result: OneButtonResult) -> None:
+    """Print gate summary to stdout."""
+    icon = _VERDICT_ICONS.get(result.verdict, '?')
     print(f"{'=' * 60}")
     print(f'  Verdict:      {icon} {result.verdict.value}')
     print(f'  Live Allowed: {result.live_allowed}')
@@ -1220,17 +1433,42 @@ def main() -> int:
             print(f'  {reason}: {desc}')
     else:
         print('No live command generated (gate did not pass).')
-    if args.output_json:
-        args.output_json.parent.mkdir(parents=True, exist_ok=True)
-        with open(args.output_json, 'w', encoding='utf-8') as fh:
-            json.dump(result.to_dict(), fh, indent=2, default=str)
-        print(f'\nJSON report written: {args.output_json}')
-    if args.output_md:
-        md_text = _render_markdown(result, args.profile, args.query)
-        args.output_md.parent.mkdir(parents=True, exist_ok=True)
-        with open(args.output_md, 'w', encoding='utf-8') as fh:
+
+
+def _write_outputs(output_json: Path | None, output_md: Path | None, json_data: dict, md_text: str | None = None, md_renderer=None, args=None) -> None:
+    """Write JSON and/or markdown output files."""
+    if output_json:
+        output_json.parent.mkdir(parents=True, exist_ok=True)
+        with open(output_json, 'w', encoding='utf-8') as fh:
+            json.dump(json_data, fh, indent=2, default=str)
+        print(f'\nJSON report written: {output_json}')
+    if output_md and md_text:
+        output_md.parent.mkdir(parents=True, exist_ok=True)
+        with open(output_md, 'w', encoding='utf-8') as fh:
             fh.write(md_text)
-        print(f'Markdown report written: {args.output_md}')
+        print(f'Markdown report written: {output_md}')
+
+
+def main() -> int:
+    parser = _build_parser()
+    args = parser.parse_args()
+    repo_root = Path(args.repo_root).resolve()
+    if not repo_root.exists():
+        print(f'ERROR: repo root does not exist: {repo_root}', file=sys.stderr)
+        return 1
+    if args.self_test:
+        st_result = _run_self_test(repo_root, args.profile, args.query)
+        _print_selftest_summary(st_result)
+        _write_outputs(args.output_json, args.output_md, st_result.to_dict(), md_text=_render_self_test_markdown(st_result, args.profile, args.query))
+        return 0 if st_result.self_test_passed else 1
+    cwd_warning = _check_cwd_guard(repo_root)
+    if cwd_warning:
+        print(f'CWD GUARD: {cwd_warning}', file=sys.stderr)
+        print('Aborting artifact scan due to wrong CWD.', file=sys.stderr)
+        return 1
+    result = run_one_button_gate(repo_root=repo_root, profile=args.profile, query=args.query, decision_gate_path=args.decision_gate_json, last_live_triage_path=args.last_live_triage)
+    _print_gate_summary(result)
+    _write_outputs(args.output_json, args.output_md, result.to_dict(), md_text=_render_markdown(result, args.profile, args.query))
     return 0 if result.live_allowed else 1
 if __name__ == '__main__':
     sys.exit(main())

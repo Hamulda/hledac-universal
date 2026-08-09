@@ -25,11 +25,14 @@ import hashlib
 import itertools
 import logging
 import os
+import random
 import threading
 import time
 import urllib.parse
 from collections import deque
-from typing import Any, Awaitable
+from contextlib import aclosing
+from dataclasses import dataclass, field
+from typing import TYPE_CHECKING, Any, Awaitable, Protocol, runtime_checkable
 
 from hledac.universal.core.constants import M1_BOUNDS
 from hledac.universal.utils.locks import LazyAsyncioLock
@@ -366,6 +369,14 @@ _RESOLVED_SESSION_TTL_S: float = 300.0  # 5 min TTL
 #
 # The eviction task runs every _EVICTION_INTERVAL_S and removes sessions
 # older than their TTL from all three caches.
+#
+# Architecture (NEXUS-018-010-refactor):
+#   - _AsyncClosable: @runtime_checkable Protocol replaces duck-typed hasattr checks
+#   - _EvictionMetrics: structured per-pass telemetry (profile/host/resolved evicted + errors)
+#   - _run_eviction_pass: single inline pass across all three caches (DRY, no indirection)
+#   - Session close tasks scheduled via safe_create_task (fire-and-forget, lock-free)
+#   - _profile_session_access always cleaned in finally block — no dangling entries on error
+#   - isinstance(session, _AsyncClosable) primary; hasattr fallback for non-conforming types
 
 # Eviction interval: 30 s (matches prewarm_pool staleness guard pattern)
 _EVICTION_INTERVAL_S: float = 30.0
@@ -380,101 +391,159 @@ _eviction_task: asyncio.Task[None] | None = None
 _eviction_started: bool = False
 _eviction_start_lock = threading.Lock()
 
+# ── Protocol for async-closable session objects ─────────────────────────────
+# Replaces hasattr(session, "aclose") checks with structural typing.
+# AsyncSession (curl_cffi) satisfies this protocol natively.
+
+
+@runtime_checkable
+class _AsyncClosable(Protocol):
+    """Structural protocol for objects with an async close method."""
+
+    async def aclose(self) -> object:
+        ...
+
+
+# ── Eviction metrics ─────────────────────────────────────────────────────────
+
+
+@dataclass
+class _EvictionMetrics:
+    """Per-pass eviction statistics, accumulated across a single _evict_stale_sessions call."""
+
+    profile_evicted: int = 0
+    host_evicted: int = 0
+    resolved_evicted: int = 0
+    errors: int = 0
+
+    @property
+    def total(self) -> int:
+        return self.profile_evicted + self.host_evicted + self.resolved_evicted
+
+
+# ── Profile-access touch helper ─────────────────────────────────────────────
+
 
 def _touch_profile_session(profile: str) -> None:
     """Record a last-access timestamp for a profile session."""
     _profile_session_access[profile] = time.monotonic()
 
 
-def _find_stale_profiles(now: float) -> list[str]:
-    """Find profiles with idle time exceeding TTL."""
-    return [
-        profile for profile in list(_curl_cffi_sessions)
-        if now - _profile_session_access.get(profile, now) >= _PROFILE_SESSION_IDLE_TTL_S
-    ]
+# ── Unified eviction pass ───────────────────────────────────────────────────
 
-def _evict_profile(profile: str) -> None:
-    """Evict a single profile session."""
-    try:
-        session = _curl_cffi_sessions.pop(profile, None)
-        if profile in _curl_cffi_profiles_order:
+
+def _run_eviction_pass(now: float) -> _EvictionMetrics:
+    """Execute one eviction pass across all cache types.
+
+    Returns an EvictionMetrics snapshot for observability.
+    """
+    metrics = _EvictionMetrics()
+
+    # ── Profile sessions (access-time based) ─────────────────────────────────
+    for profile in list(_curl_cffi_sessions):
+        age = now - _profile_session_access.get(profile, now)
+        if age < _PROFILE_SESSION_IDLE_TTL_S:
+            continue
+        try:
+            session = _curl_cffi_sessions.pop(profile, None)
             _curl_cffi_profiles_order.remove(profile)
-        _profile_session_access.pop(profile, None)
-        if session is not None and hasattr(session, "aclose"):
-            safe_create_task(session.aclose(), name=f"curl_cffi:evict:idle:{profile}")
-    except Exception:  # noqa: BLE001
-        pass
+        except Exception:  # noqa: BLE001
+            metrics.errors += 1
+        finally:
+            # Always clean up the access record, even on error.
+            _profile_session_access.pop(profile, None)
+        if session is not None:
+            if isinstance(session, _AsyncClosable):
+                safe_create_task(
+                    session.aclose(),
+                    name=f"curl_cffi:evict:profile:{profile}",
+                )
+            elif hasattr(session, "aclose"):
+                safe_create_task(
+                    session.aclose(),
+                    name=f"curl_cffi:evict:profile:{profile}",
+                )
+            metrics.profile_evicted += 1
 
-def _find_stale_host_sessions(now: float) -> list[tuple[str, str]]:
-    """Find host sessions with age exceeding TTL."""
-    return [
-        cache_key for cache_key, (_, last_access) in list(_host_sessions.items())
-        if now - last_access >= _HOST_SESSION_TTL_S
-    ]
-
-def _evict_host_session(cache_key: tuple[str, str]) -> None:
-    """Evict a single host session."""
-    try:
-        old = _host_sessions.pop(cache_key, None)
-        if cache_key in _host_access_order:
+    # ── Host sessions (age based) ───────────────────────────────────────────
+    for cache_key, (session, _) in list(_host_sessions.items()):
+        if now - _host_sessions[cache_key][1] < _HOST_SESSION_TTL_S:
+            continue
+        try:
+            _host_sessions.pop(cache_key, None)
             _host_access_order.remove(cache_key)
-        if old is not None and hasattr(old[0], "aclose"):
-            safe_create_task(old[0].aclose(), name=f"curl_cffi:evict:host:{cache_key[0]}")
-    except Exception:  # noqa: BLE001
-        pass
+        except Exception:  # noqa: BLE001
+            metrics.errors += 1
+            continue
+        if isinstance(session, _AsyncClosable):
+            safe_create_task(
+                session.aclose(),
+                name=f"curl_cffi:evict:host:{cache_key[0]}",
+            )
+        elif hasattr(session, "aclose"):
+            safe_create_task(
+                session.aclose(),
+                name=f"curl_cffi:evict:host:{cache_key[0]}",
+            )
+        metrics.host_evicted += 1
 
-def _find_stale_resolved_sessions(now: float) -> list:
-    """Find resolved sessions with age exceeding TTL."""
-    return [
-        cache_key for cache_key, (_, last_access) in list(_resolved_sessions.items())
-        if now - last_access >= _RESOLVED_SESSION_TTL_S
-    ]
-
-def _evict_resolved_session(cache_key) -> None:
-    """Evict a single resolved session."""
-    try:
-        old = _resolved_sessions.pop(cache_key, None)
-        if cache_key in _resolved_sessions_order:
+    # ── Resolved sessions (age based) ────────────────────────────────────────
+    for cache_key, (session, _) in list(_resolved_sessions.items()):
+        if now - _resolved_sessions[cache_key][1] < _RESOLVED_SESSION_TTL_S:
+            continue
+        try:
+            _resolved_sessions.pop(cache_key, None)
             _resolved_sessions_order.remove(cache_key)
-        if old is not None and hasattr(old[0], "aclose"):
-            safe_create_task(old[0].aclose(), name=f"curl_cffi:evict:resolved")
-    except Exception:  # noqa: BLE001
-        pass
+        except Exception:  # noqa: BLE001
+            metrics.errors += 1
+            continue
+        if isinstance(session, _AsyncClosable):
+            safe_create_task(
+                session.aclose(),
+                name=f"curl_cffi:evict:resolved:{cache_key[0]}",
+            )
+        elif hasattr(session, "aclose"):
+            safe_create_task(
+                session.aclose(),
+                name=f"curl_cffi:evict:resolved:{cache_key[0]}",
+            )
+        metrics.resolved_evicted += 1
+
+    return metrics
+
+
+def _format_eviction_log(metrics: _EvictionMetrics) -> str:
+    """Format eviction metrics for structured logging."""
+    parts: list[str] = []
+    if metrics.profile_evicted > 0:
+        parts.append(f"{metrics.profile_evicted} profiles")
+    if metrics.host_evicted > 0:
+        parts.append(f"{metrics.host_evicted} hosts")
+    if metrics.resolved_evicted > 0:
+        parts.append(f"{metrics.resolved_evicted} resolved")
+    summary = " + ".join(parts) if parts else "nothing"
+    return (
+        f"[NEXUS-018-010] Evicted {metrics.total} stale sessions ({summary}); "
+        f"errors={metrics.errors}"
+    )
+
 
 async def _evict_stale_sessions() -> None:
     """Evict stale sessions from all three caches.
 
     Called periodically by the background eviction task.
-    Never raises — all errors are caught and logged.
+    Schedules async close tasks outside the critical section to avoid
+    holding the lock while fire-and-forget tasks are in flight.
+    Never raises — all errors are tracked in metrics.
     """
     now = time.monotonic()
 
+    metrics: _EvictionMetrics
     async with _curl_cffi_lock:
-        # Profile sessions
-        stale_profiles = _find_stale_profiles(now)
-        for profile in stale_profiles:
-            _evict_profile(profile)
+        metrics = _run_eviction_pass(now)
 
-        # Host sessions
-        stale_hosts = _find_stale_host_sessions(now)
-        for cache_key in stale_hosts:
-            _evict_host_session(cache_key)
-
-        # Resolved sessions
-        stale_resolved = _find_stale_resolved_sessions(now)
-        for cache_key in stale_resolved:
-            _evict_resolved_session(cache_key)
-
-    total_evicted = len(stale_profiles) + len(stale_hosts) + len(stale_resolved)
-    if total_evicted > 0:
-        logger.debug(
-            "[NEXUS-018-010] Evicted %d stale sessions: "
-            "%d profiles + %d hosts + %d resolved",
-            total_evicted,
-            len(stale_profiles),
-            len(stale_hosts),
-            len(stale_resolved),
-        )
+    if metrics.total > 0 or metrics.errors > 0:
+        logger.debug(_format_eviction_log(metrics))
 
 
 async def _eviction_loop() -> None:
@@ -485,13 +554,14 @@ async def _eviction_loop() -> None:
     """
     logger.debug(
         "[NEXUS-018-010] Session eviction loop started "
-        "(interval=%.0fs, profile_ttl=%.0fs, host_ttl=%.0fs)",
+        "(interval=%.0fs, profile_ttl=%.0fs, host_ttl=%.0fs, resolved_ttl=%.0fs)",
         _EVICTION_INTERVAL_S,
         _PROFILE_SESSION_IDLE_TTL_S,
         _HOST_SESSION_TTL_S,
+        _RESOLVED_SESSION_TTL_S,
     )
-    # NEXUS-018-010-review: Run an immediate first pass so stale sessions
-    # accumulated before the loop started are evicted without waiting 30s.
+    # Run an immediate first pass so stale sessions accumulated before the
+    # loop started are evicted without waiting _EVICTION_INTERVAL_S.
     try:
         await _evict_stale_sessions()
     except asyncio.CancelledError:

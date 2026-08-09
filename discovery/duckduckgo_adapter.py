@@ -768,9 +768,497 @@ def _build_query_variants(query: str, dspy_variants: list | None = None) -> list
 # Public API
 # ---------------------------------------------------------------------------
 
-# ---------------------------------------------------------------------------
-# Refactored helpers (CC reduction)
-# ---------------------------------------------------------------------------
+
+# ── F280A: Pipeline-based refactoring for async_search_public_web ───────────
+# Problem: CC=27, 13 ifs, 6 exception handlers, 4 nesting depth
+# Solution: Extract each concern into composable pipeline stages
+# Modern patterns: dataclass attrs, match/case, explicit state machine
+
+
+from dataclasses import dataclass, field
+from enum import Enum, auto
+
+
+class SearchStage(Enum):
+    """Tracks which pipeline stage we are in for debugging/metrics."""
+    VALIDATION = auto()
+    REPLAY_CHECK = auto()
+    DSPY_EXPANSION = auto()
+    VARIANT_BUILD = auto()
+    CACHE_CHECK = auto()
+    LIVE_SEARCH = auto()
+    FALLBACK_SEARCH = auto()
+    RESULT_PROCESSING = auto()
+    CACHE_WRITE = auto()
+    CASSETTE_WRITE = auto()
+    COMPLETE = auto()
+
+
+@dataclass(frozen=True, slots=True)
+class SearchContext:
+    """
+    Immutable search execution context that flows through the pipeline.
+
+    Each stage returns a new context with updated fields rather than
+    mutating state - this makes the pipeline easier to reason about
+    and test in isolation.
+    """
+    original_query: str
+    trimmed_query: str
+    max_results: int
+    timeout_s: float
+    stage: SearchStage = SearchStage.VALIDATION
+
+    # Computed during pipeline
+    dspy_variants: tuple[str, ...] = field(default_factory=tuple)
+    query_variants: tuple[str, ...] = field(default_factory=tuple)
+    raw_hits: list[dict] = field(default_factory=list)
+    error_tag: str | None = None
+    error_exc: BaseException | None = None
+    fallback_triggered: str | None = None
+    provider_status: dict = field(default_factory=dict)
+    start_time: float = field(default_factory=time.monotonic)
+
+    # Result (set by pipeline)
+    result: DiscoveryBatchResult | None = None
+
+    @property
+    def elapsed_s(self) -> float:
+        return time.monotonic() - self.start_time
+
+    @property
+    def should_fallback(self) -> bool:
+        """Check if current error warrants fallback attempt."""
+        return _should_use_fallback(self.error_tag) if self.error_tag else False
+
+    @property
+    def is_terminal(self) -> bool:
+        """Check if we should stop the pipeline."""
+        return self.result is not None
+
+
+@dataclass(slots=True)
+class SearchPolicy:
+    """
+    Encapsulates all validation, caching, and routing decisions.
+
+    Extracted from async_search_public_web to reduce CC.
+    """
+    replay_enabled: bool = field(default_factory=replay_enabled)
+    replay_strict: bool = field(default_factory=replay_strict_enabled)
+
+    def validate_input(self, query: str) -> tuple[bool, str | None, int]:
+        """
+        Validate and normalize search input.
+
+        Returns:
+            (is_valid, error_tag, normalized_max_results)
+        """
+        trimmed = query.strip()
+        if not trimmed:
+            return False, "empty_query", DEFAULT_MAX_RESULTS
+
+        try:
+            max_results = max(1, min(int(self._max_results), HARD_MAX_RESULTS))
+        except (TypeError, ValueError):
+            max_results = DEFAULT_MAX_RESULTS
+
+        return True, None, max_results
+
+    _max_results: int = DEFAULT_MAX_RESULTS
+
+    def normalize_max_results(self, max_results: int | None) -> int:
+        """Normalize max_results to valid bounds."""
+        if max_results is None:
+            return DEFAULT_MAX_RESULTS
+        try:
+            return max(1, min(int(max_results), HARD_MAX_RESULTS))
+        except (TypeError, ValueError):
+            return DEFAULT_MAX_RESULTS
+
+    def check_replay_cassette(self, query: str, adapter: str) -> dict | None:
+        """Check for replay cassette hit."""
+        if not self.replay_enabled:
+            return None
+        return read_cassette(adapter, query)
+
+    def should_strict_replay_miss(self, query: str, adapter: str) -> bool:
+        """Check if we should fail on replay miss in strict mode."""
+        return self.replay_strict and self.check_replay_cassette(query, adapter) is None
+
+
+@dataclass(slots=True)
+class ErrorClassifier:
+    """
+    Centralized error classification for search backends.
+
+    Reduces complexity by extracting all error-handling logic
+    into a single, testable class.
+    """
+
+    def classify(self, exc: BaseException | None, err_str: str = "") -> str:
+        """Classify exception into error taxonomy tag."""
+        if exc is None:
+            return "unknown_backend_error"
+
+        err_name = type(exc).__name__
+        err_lower = str(exc).lower()
+
+        match (err_lower, err_name):
+            case _ if "ratelimit" in err_lower or "RatelimitException" in err_name:
+                return "rate_limited"
+            case _ if "timeout" in err_lower or "TimeoutException" in err_name or isinstance(exc, TimeoutError):
+                return "timeout"
+            case _ if "proxy" in err_lower or "ProxyError" in err_name:
+                return "proxy_error"
+            case _ if "network" in err_lower or "ConnectionError" in err_name or "HTTPError" in err_name:
+                return "network_error"
+            case _ if "server" in err_lower or any(code in str(exc) for code in ("500", "502", "503", "504")):
+                return "server_error"
+            case _:
+                return "unknown_backend_error"
+
+    def should_fallback(self, error_tag: str) -> bool:
+        """Determine if error warrants fallback to secondary backend."""
+        return error_tag in {
+            "timeout",
+            "proxy_error",
+            "network_error",
+            "server_error",
+            "unknown_backend_error"
+        }
+
+    def build_error_result(
+        self,
+        error_tag: str,
+        *,
+        selected: bool = False,
+        reason: str = "",
+        fallback_triggered: str | None = None,
+    ) -> DiscoveryBatchResult:
+        """Build a standardized error result."""
+        return DiscoveryBatchResult(
+            hits=(),
+            error=error_tag,
+            fallback_triggered=fallback_triggered,
+            provider_status_debug=[{
+                "provider": "ddg_mojeek",
+                "state": "production",
+                "selected": selected,
+                "reason": reason or error_tag,
+            }],
+        )
+
+
+# Shared instances for the module
+_error_classifier = ErrorClassifier()
+_policy = SearchPolicy()
+
+
+# ── Pipeline stages ───────────────────────────────────────────────────────────
+
+
+def _stage_validate(ctx: SearchContext) -> SearchContext:
+    """Stage 1: Input validation and normalization."""
+    if not ctx.trimmed_query:
+        return dataclass_replace(ctx,
+            stage=SearchStage.VALIDATION,
+            result=DiscoveryBatchResult(hits=(), error="empty_query"),
+            stage=SearchStage.COMPLETE,
+        )
+
+    # Normalize max_results
+    normalized_max = _policy.normalize_max_results(ctx.max_results)
+
+    return dataclass_replace(ctx,
+        stage=SearchStage.REPLAY_CHECK,
+        max_results=normalized_max,
+    )
+
+
+def _stage_check_replay(ctx: SearchContext) -> SearchContext:
+    """Stage 2: Check replay cassette (primary adapter)."""
+    if not replay_enabled():
+        return dataclass_replace(ctx, stage=SearchStage.DSPY_EXPANSION)
+
+    cassette = read_cassette("public_duckduckgo", ctx.trimmed_query)
+    if cassette is not None:
+        return dataclass_replace(ctx,
+            stage=SearchStage.COMPLETE,
+            result=_build_cassette_result(ctx.trimmed_query, cassette, ctx.elapsed_s),
+        )
+
+    if replay_strict_enabled():
+        return dataclass_replace(ctx,
+            stage=SearchStage.COMPLETE,
+            result=_build_replay_miss_result(ctx.trimmed_query, ctx.elapsed_s),
+        )
+
+    return dataclass_replace(ctx, stage=SearchStage.DSPY_EXPANSION)
+
+
+async def _stage_dspy_expand(ctx: SearchContext) -> SearchContext:
+    """Stage 3: DSPy query expansion (optional)."""
+    if not FeatureFlags.get(FeatureFlag.DSPY):
+        return dataclass_replace(ctx, stage=SearchStage.VARIANT_BUILD)
+
+    try:
+        from hledac.universal.brain.dspy_service import expand_query
+        expanded = await expand_query(ctx.trimmed_query) or []
+        return dataclass_replace(ctx,
+            stage=SearchStage.VARIANT_BUILD,
+            dspy_variants=tuple(expanded),
+        )
+    except Exception:
+        return dataclass_replace(ctx, stage=SearchStage.VARIANT_BUILD)
+
+
+def _stage_build_variants(ctx: SearchContext) -> SearchContext:
+    """Stage 4: Build query variants."""
+    variants = _build_query_variants(ctx.trimmed_query, list(ctx.dspy_variants))
+
+    if len(variants) > 1:
+        # Multi-variant search path - delegate to _search_with_variants
+        # Return context with special marker indicating multi-variant mode
+        return dataclass_replace(ctx,
+            stage=SearchStage.LIVE_SEARCH,
+            query_variants=tuple(variants),
+        )
+
+    return dataclass_replace(ctx,
+        stage=SearchStage.CACHE_CHECK,
+        query_variants=tuple(variants),
+    )
+
+
+def _stage_check_cache(ctx: SearchContext) -> SearchContext:
+    """Stage 5: Per-run cache check."""
+    cached = _get_cached_discovery(ctx.trimmed_query)
+    if cached is not None:
+        return dataclass_replace(ctx,
+            stage=SearchStage.COMPLETE,
+            result=_build_cache_hit_result(cached),
+        )
+    return dataclass_replace(ctx, stage=SearchStage.LIVE_SEARCH)
+
+
+async def _stage_live_search(ctx: SearchContext) -> SearchContext:
+    """Stage 6: Execute live search with timeout."""
+    # Multi-variant search path
+    if len(ctx.query_variants) > 1:
+        result = await _search_with_variants(
+            ctx.trimmed_query,
+            list(ctx.query_variants),
+            ctx.max_results,
+            max(1, ctx.max_results // len(ctx.query_variants)),
+            ctx.timeout_s,
+        )
+        return dataclass_replace(ctx,
+            stage=SearchStage.RESULT_PROCESSING,
+            result=result,
+        )
+
+    # Single variant: check replay first
+    if replay_enabled():
+        cached_replay = read_cassette(_PUBLIC_REPLAY_ADAPTER, ctx.trimmed_query)
+        if cached_replay is not None:
+            return dataclass_replace(ctx,
+                stage=SearchStage.COMPLETE,
+                result=_build_cached_replay_result(ctx.trimmed_query, cached_replay, ctx.elapsed_s),
+            )
+        if replay_strict_enabled():
+            return dataclass_replace(ctx,
+                stage=SearchStage.COMPLETE,
+                result=_build_replay_miss_result(ctx.trimmed_query, ctx.elapsed_s),
+            )
+
+    # Live search
+    try:
+        async with asyncio.timeout(ctx.timeout_s):
+            raw_hits = await _ddgs_text_search(
+                ctx.trimmed_query,
+                ctx.max_results,
+                ctx.timeout_s,
+            )
+        return dataclass_replace(ctx,
+            stage=SearchStage.RESULT_PROCESSING,
+            raw_hits=raw_hits,
+        )
+
+    except asyncio.CancelledError:
+        global _last_error
+        _last_error = "cancelled"
+        raise
+
+    except TimeoutError:
+        global _last_error
+        _last_error = "timeout"
+        return dataclass_replace(ctx,
+            stage=SearchStage.COMPLETE,
+            result=_build_timeout_result(ctx.trimmed_query),
+        )
+
+    except Exception as e:
+        global _last_error
+        error_tag = _error_classifier.classify(e, str(e))
+        _last_error = error_tag
+
+        if not _error_classifier.should_fallback(error_tag):
+            return dataclass_replace(ctx,
+                stage=SearchStage.COMPLETE,
+                result=_error_classifier.build_error_result(
+                    error_tag,
+                    selected=False,
+                    reason=f"non_backend_error_{error_tag}",
+                ),
+            )
+
+        # Fallback path
+        try:
+            fallback_hits = await _scrape_mojeek(ctx.trimmed_query, n=ctx.max_results)
+        except Exception:
+            fallback_hits = []
+
+        if fallback_hits:
+            return dataclass_replace(ctx,
+                stage=SearchStage.RESULT_PROCESSING,
+                raw_hits=fallback_hits,
+                fallback_triggered="primary_backend_failed",
+                error_tag=error_tag,
+            )
+        else:
+            return dataclass_replace(ctx,
+                stage=SearchStage.COMPLETE,
+                result=DiscoveryBatchResult(
+                    hits=(),
+                    error=error_tag,
+                    fallback_triggered="primary_backend_failed_fallback_failed",
+                    provider_status_debug=[
+                        {"provider": "ddg_mojeek", "state": "production", "selected": False, "reason": "fallback_failed_primary"},
+                        {"provider": "mojeek_scrape", "state": "production", "selected": False, "reason": "fallback_failed"},
+                    ],
+                ),
+            )
+
+
+def _stage_process_results(ctx: SearchContext) -> SearchContext:
+    """Stage 7: Process raw hits into final result."""
+    if ctx.result is not None:
+        # Already processed (e.g., multi-variant search)
+        return dataclass_replace(ctx, stage=SearchStage.CACHE_WRITE)
+
+    hits_list, _, _ = _process_raw_hits(ctx.raw_hits, ctx.trimmed_query, ctx.max_results)
+    final_hits = tuple(
+        DiscoveryHit(
+            query=h.query,
+            title=h.title,
+            url=h.url,
+            snippet=h.snippet,
+            source=h.source,
+            rank=i,
+            retrieved_ts=h.retrieved_ts,
+            score=h.score,
+            reason=h.reason,
+        )
+        for i, h in enumerate(hits_list[:ctx.max_results])
+    )
+
+    result = DiscoveryBatchResult(
+        hits=final_hits,
+        error=ctx.error_tag,
+        fallback_triggered=ctx.fallback_triggered,
+        provider_status_debug=[{
+            "provider": "ddg_mojeek",
+            "state": "production",
+            "selected": True,
+            "reason": "primary_backend" if not ctx.fallback_triggered else "fallback",
+        }],
+    )
+
+    return dataclass_replace(ctx,
+        stage=SearchStage.CACHE_WRITE,
+        result=result,
+    )
+
+
+def _stage_write_caches(ctx: SearchContext) -> SearchContext:
+    """Stage 8: Write replay cassette and per-run cache."""
+    if ctx.result is None:
+        return dataclass_replace(ctx, stage=SearchStage.COMPLETE)
+
+    # Write cassette if replay enabled
+    if replay_enabled():
+        write_cassette(_PUBLIC_REPLAY_ADAPTER, ctx.trimmed_query, {
+            "hits": list(ctx.result.hits),
+            "error": ctx.result.error,
+            "fallback_triggered": ctx.result.fallback_triggered,
+            "cache_hit": False,
+            "provider_name": "duckduckgo",
+            "provider_chain": ["duckduckgo"],
+            "source_family": "search",
+            "elapsed_s": ctx.result.elapsed_s,
+            "error_type": ctx.result.error_type,
+            "provider_status_debug": ctx.result.provider_status_debug,
+        })
+
+    # Write per-run cache
+    _set_cached_discovery(ctx.original_query, ctx.result)
+
+    return dataclass_replace(ctx, stage=SearchStage.COMPLETE)
+
+
+def dataclass_replace(ctx: SearchContext, **updates) -> SearchContext:
+    """Create a new SearchContext with updated fields (immutable pattern)."""
+    import dataclasses
+    return dataclasses.replace(ctx, **updates)
+
+
+# ── Main async_search_public_web with pipeline ───────────────────────────────
+
+
+async def async_search_public_web(
+    query: str,
+    max_results: int = DEFAULT_MAX_RESULTS,
+    timeout_s: float = DEFAULT_TIMEOUT_S,
+) -> DiscoveryBatchResult:
+    """
+    Public web discovery via DuckDuckGo using pipeline architecture.
+
+    Pipeline stages:
+        1. validate → 2. replay_check → 3. dspy_expand → 4. variant_build
+        → 5. cache_check → 6. live_search → 7. process_results → 8. write_caches
+
+    Complexity: CC < 10 (was 27)
+    """
+    # Initialize context
+    ctx = SearchContext(
+        original_query=query,
+        trimmed_query=query.strip(),
+        max_results=max_results,
+        timeout_s=timeout_s,
+    )
+
+    # Run pipeline stages
+    stages = [
+        _stage_validate,
+        _stage_check_replay,
+        lambda c: _stage_dspy_expand(c),
+        _stage_build_variants,
+        _stage_check_cache,
+        lambda c: _stage_live_search(c),
+        _stage_process_results,
+        _stage_write_caches,
+    ]
+
+    for stage in stages:
+        if ctx.is_terminal:
+            break
+        ctx = await stage(ctx)
+
+    return ctx.result or DiscoveryBatchResult(hits=(), error="pipeline_error")
+
+
+# ── Legacy helper functions preserved for compatibility ─────────────────────
 
 
 def _process_raw_hits(
@@ -1073,152 +1561,6 @@ def _apply_fallback(
             {"provider": "mojeek_scrape", "state": "production", "selected": True, "reason": "fallback_primary"},
         ],
     )
-
-
-async def async_search_public_web(
-    query: str,
-    max_results: int = DEFAULT_MAX_RESULTS,
-    timeout_s: float = DEFAULT_TIMEOUT_S,
-) -> DiscoveryBatchResult:
-    """Public web discovery via DuckDuckGo (refactored, CC < 10)."""
-    global _last_error
-
-    # Input validation
-    trimmed = query.strip()
-    if not trimmed:
-        _last_error = "empty_query"
-        return DiscoveryBatchResult(hits=(), error="empty_query")
-
-    # Bounds
-    try:
-        max_results = max(1, min(int(max_results), HARD_MAX_RESULTS))
-    except (TypeError, ValueError):
-        max_results = DEFAULT_MAX_RESULTS
-
-    start = time.monotonic()
-
-    # Replay cassette check (primary)
-    if replay_enabled():
-        cassette = read_cassette("public_duckduckgo", trimmed)
-        if cassette is not None:
-            return _build_cassette_result(trimmed, cassette, time.monotonic() - start)
-        elif replay_strict_enabled():
-            return _build_replay_miss_result(trimmed, time.monotonic() - start)
-
-    # Sprint F213B: Query variant expansion
-    dspy_expanded: list = []
-    if FeatureFlags.get(FeatureFlag.DSPY):
-        try:
-            from hledac.universal.brain.dspy_service import expand_query
-            dspy_expanded = await expand_query(trimmed) or []
-        except Exception:
-            dspy_expanded = []
-
-    variants = _build_query_variants(trimmed, dspy_expanded)
-
-    # Multi-variant search
-    if len(variants) > 1:
-        return await _search_with_variants(
-            trimmed, variants, max_results,
-            max(1, max_results // len(variants)),
-            timeout_s
-        )
-
-    # Single variant / direct search with replay
-    if replay_enabled():
-        cached = read_cassette(_PUBLIC_REPLAY_ADAPTER, trimmed)
-        if cached is not None:
-            return _build_cached_replay_result(trimmed, cached, time.monotonic() - start)
-        elif replay_strict_enabled():
-            return _build_replay_miss_result(trimmed, time.monotonic() - start)
-
-    # Per-run cache check
-    cached = _get_cached_discovery(trimmed)
-    if cached is not None:
-        return _build_cache_hit_result(cached)
-
-    # Live search with timeout
-    try:
-        async with asyncio.timeout(timeout_s):
-            raw_hits = await _ddgs_text_search(trimmed, max_results, timeout_s)
-    except asyncio.CancelledError:
-        _last_error = "cancelled"
-        raise
-    except TimeoutError:
-        _last_error = "timeout"
-        return _build_timeout_result(trimmed)
-    except Exception as e:
-        err_str = str(e)
-        err_name = type(e).__name__
-        error_tag = _classify_error(err_str, err_name)
-        _last_error = error_tag
-
-        if not _should_use_fallback(error_tag):
-            return DiscoveryBatchResult(
-                hits=(),
-                error=error_tag,
-                provider_status_debug=[{
-                    "provider": "ddg_mojeek",
-                    "state": "production",
-                    "selected": False,
-                    "reason": f"non_backend_error_{error_tag}",
-                }],
-            )
-
-        try:
-            fallback_hits = await _scrape_mojeek(trimmed, n=max_results)
-        except Exception:
-            fallback_hits = []
-
-        if fallback_hits:
-            return _apply_fallback(fallback_hits, trimmed, max_results, error_tag)
-        else:
-            return DiscoveryBatchResult(
-                hits=(),
-                error=error_tag,
-                fallback_triggered="primary_backend_failed_fallback_failed",
-                provider_status_debug=[
-                    {"provider": "ddg_mojeek", "state": "production", "selected": False, "reason": "fallback_failed_primary"},
-                    {"provider": "mojeek_scrape", "state": "production", "selected": False, "reason": "fallback_failed"},
-                ],
-            )
-
-    # Process successful hits
-    hits_list, _, _ = _process_raw_hits(raw_hits, trimmed, max_results)
-    final_hits = tuple(DiscoveryHit(
-        query=h.query, title=h.title, url=h.url, snippet=h.snippet,
-        source=h.source, rank=i, retrieved_ts=h.retrieved_ts,
-        score=h.score, reason=h.reason,
-    ) for i, h in enumerate(hits_list[:max_results]))
-
-    result = DiscoveryBatchResult(
-        hits=final_hits,
-        error=None,
-        provider_status_debug=[{
-            "provider": "ddg_mojeek",
-            "state": "production",
-            "selected": True,
-            "reason": "primary_backend",
-        }],
-    )
-
-    # Write cassette
-    if replay_enabled():
-        write_cassette(_PUBLIC_REPLAY_ADAPTER, trimmed, {
-            "hits": list(final_hits),
-            "error": None,
-            "fallback_triggered": None,
-            "cache_hit": False,
-            "provider_name": "duckduckgo",
-            "provider_chain": ["duckduckgo"],
-            "source_family": "search",
-            "elapsed_s": result.elapsed_s,
-            "error_type": None,
-            "provider_status_debug": result.provider_status_debug,
-        })
-
-    _set_cached_discovery(query, result)
-    return result
 
 
 # ── Sprint 8VB: Multi-Engine Search ───────────────────────────────────────────

@@ -99,12 +99,12 @@ def _json_dumps(obj: Any, *, indent: int | None = None, default: Any = None) -> 
         # codec doesn't support custom default= handlers  --  use orjson/stdlib fallback
         try:
             import orjson
-
+            
             opts = orjson.OPT_INDENT_2 if indent else 0
             return orjson.dumps(obj, default=default, option=opts).decode()
         except Exception:
             import json as _stdlib_json
-
+            
             return _stdlib_json.dumps(obj, indent=indent, default=default)
 
     if indent:
@@ -4437,50 +4437,9 @@ def _get_correlation_shortlist(correlation: dict[str, Any] | None) -> str | None
                     return f"{action}: {target[:40]}" if target else action[:80]
     return None
 
-# [IMPORTED from components] def placeholder at L3699
-
-    # [IMPORTED from components] def placeholder at L3780
-
-    # [IMPORTED from components] def placeholder at L3789
-
-    # [IMPORTED from components] def placeholder at L3975
-
-    # [IMPORTED from components] def placeholder at L4010
-
-    # [IMPORTED from components] def placeholder at L4079
-
-    # [IMPORTED from components] def placeholder at L4125
-
-    # [IMPORTED from components] def placeholder at L4173
-
-    # [IMPORTED from components] def placeholder at L4231
-
-    # [IMPORTED from components] def placeholder at L4283
-
-    # [IMPORTED from components] def placeholder at L4333
-
-    # [IMPORTED from components] def placeholder at L4389
-
+# [IMPORTED from components] placeholder markers - functions moved to components package
+# Line references: L3699, L3780, L3789, L3975, L4010, L4079, L4125, L4173, L4231, L4283, L4333, L4389, L4489, L4528
 
 # Sprint F238E Phase C: Optional runtime_timing section in JSON export
 _MAX_RUNTIME_TIMING_EVENTS = 500  # mirror of _MAX_TELEMETRY_EVENTS in sprint_timer.py
 
-
-# [IMPORTED from components] def placeholder at L4489
-
-
-# Sprint F240B: Runtime Telemetry Drives Operator Diagnosis
-# [IMPORTED from components] def placeholder at L4528
-
-
-def _make_serializable(obj: Any) -> Any:
-    """Rekurzivně převede objekt na JSON-serializovatelný dict."""
-    if isinstance(obj, (str, int, float, bool, type(None))):
-        return obj
-    if isinstance(obj, dict):
-        return {k: _make_serializable(v) for k, v in obj.items()}
-    if isinstance(obj, (list, tuple)):
-        return [_make_serializable(v) for v in obj]
-    if hasattr(obj, "__dict__"):
-        return _make_serializable(obj.__dict__)
-    return str(obj)

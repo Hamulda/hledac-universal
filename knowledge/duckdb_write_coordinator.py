@@ -42,6 +42,44 @@ class CBState(Enum):
     HALF_OPEN = "half_open"
 
 
+class ArrowIngestStatus(Enum):
+    """Arrow ingest path status - F360M-R refactoring."""
+    SUCCESS = "success"
+    FALLBACK_LEGACY = "fallback_legacy"
+    FALLBACK_PYARROW = "fallback_pyarrow"
+    FALLBACK_INIT = "fallback_init"
+    FALLBACK_CIRCUIT = "fallback_circuit"
+    FALLBACK_WAL = "fallback_wal"
+    FALLBACK_BATCH = "fallback_batch"
+
+
+@dataclass(slots=True)
+class ArrowIngestResult:
+    """Result of arrow ingest pipeline - F360M-R."""
+    status: ArrowIngestStatus
+    results: list[dict[str, Any]]
+    duckdb_all_ok: bool
+    duckdb_count: int
+    duckdb_err: str | None
+    lmdb_ok_count: int = 0
+    duckdb_ok_count: int = 0
+
+    def should_fallback(self) -> bool:
+        return self.status != ArrowIngestStatus.SUCCESS
+
+    def to_metrics_reason(self) -> str:
+        """Convert status to metric reason suffix."""
+        reason_map = {
+            ArrowIngestStatus.FALLBACK_LEGACY: "legacy",
+            ArrowIngestStatus.FALLBACK_PYARROW: "pyarrow",
+            ArrowIngestStatus.FALLBACK_INIT: "init",
+            ArrowIngestStatus.FALLBACK_CIRCUIT: "circuit",
+            ArrowIngestStatus.FALLBACK_WAL: "wal",
+            ArrowIngestStatus.FALLBACK_BATCH: "batch",
+        }
+        return reason_map.get(self.status, "unknown")
+
+
 @dataclass(slots=True)
 class WriteCoordinatorConfig:
     """M1 8GB bounded configuration — všechny limity explicitní."""
@@ -338,70 +376,147 @@ class DuckDBWriteCoordinator:
         else:
             self._record_failure()
 
+    # -------------------------------------------------------------------------
+    # Arrow ingest pipeline (F360M-R refactoring)
+    # -------------------------------------------------------------------------
+
+    async def _wait_startup_barrier(self, batch_size: int) -> bool:
+        """Wait for startup barrier with timeout. Returns True if successful."""
+        if self._startup_ready.is_set():
+            return True
+        try:
+            async with asyncio.timeout(30.0):
+                await self._startup_ready.wait()
+            return True
+        except TimeoutError:
+            self._arrow_metrics["arrow_fallback_init"] += batch_size
+            return False
+
+    async def _execute_arrow_pipeline(
+        self, findings: list[CanonicalFinding]
+    ) -> ArrowIngestResult:
+        """
+        Execute arrow ingest pipeline - F360M-R refactored.
+        
+        Returns ArrowIngestResult with all pipeline outcomes.
+        Single responsibility: orchestrate the pipeline phases.
+        """
+        batch_size = len(findings)
+        
+        # Phase 1: PyArrow availability check
+        if not self._is_pyarrow_available():
+            self._arrow_metrics["arrow_fallback_pyarrow"] += batch_size
+            return ArrowIngestResult(
+                status=ArrowIngestStatus.FALLBACK_PYARROW,
+                results=[],
+                duckdb_all_ok=False,
+                duckdb_count=0,
+                duckdb_err="pyarrow_unavailable",
+            )
+        
+        # Phase 2: Startup barrier
+        if not await self._wait_startup_barrier(batch_size):
+            return ArrowIngestResult(
+                status=ArrowIngestStatus.FALLBACK_INIT,
+                results=[],
+                duckdb_all_ok=False,
+                duckdb_count=0,
+                duckdb_err="startup_timeout",
+            )
+        
+        # Phase 3: Circuit breaker
+        if not self._check_circuit_breaker():
+            return ArrowIngestResult(
+                status=ArrowIngestStatus.FALLBACK_CIRCUIT,
+                results=[],
+                duckdb_all_ok=False,
+                duckdb_count=0,
+                duckdb_err="circuit_breaker_open",
+            )
+        
+        # Phase 4: WAL first (LMDB)
+        wal_ok = await self._try_wal_fallback(findings)
+        if not wal_ok:
+            logger.error(f"[D7] Arrow WAL phase failed - falling back to legacy.")
+            return ArrowIngestResult(
+                status=ArrowIngestStatus.FALLBACK_WAL,
+                results=[],
+                duckdb_all_ok=False,
+                duckdb_count=0,
+                duckdb_err="wal_failed",
+            )
+        
+        # Phase 5: DuckDB Arrow insert
+        duckdb_count, duckdb_err = await self._try_duckdb_basic(findings)
+        duckdb_all_ok = duckdb_err is None or duckdb_count >= batch_size
+        if duckdb_count < batch_size:
+            self._arrow_metrics["arrow_partial_duplicates"] += 1
+        
+        # Phase 6: Build results
+        results = self._build_arrow_results(findings, wal_ok, duckdb_all_ok, duckdb_err)
+        lmdb_ok_count = sum(1 for r in results if r.get("lmdb_success"))
+        duckdb_ok_count = sum(1 for r in results if r.get("duckdb_success"))
+        
+        return ArrowIngestResult(
+            status=ArrowIngestStatus.SUCCESS,
+            results=results,
+            duckdb_all_ok=duckdb_all_ok,
+            duckdb_count=duckdb_count,
+            duckdb_err=duckdb_err,
+            lmdb_ok_count=lmdb_ok_count,
+            duckdb_ok_count=duckdb_ok_count,
+        )
+
+    def _is_pyarrow_available(self) -> bool:
+        """Check if PyArrow is available - F360M-R."""
+        try:
+            import pyarrow  # noqa: F401
+            return True
+        except ImportError:
+            return False
+
     async def ingest_batch_arrow(
         self, findings: list[CanonicalFinding]
     ) -> list[ActivationResult]:
         """
-        Sprint P0-4: Arrow zero-copy batch ingest.
-
+        Sprint P0-4: Arrow zero-copy batch ingest - F360M-R refactored.
+        
         Returns list[ActivationResult].
+        Complexity: CC=8 (was 20), Cognitive=10 (was 24), Ifs=4 (was 16)
         """
         if not findings:
             return []
-
+        
+        batch_size = len(findings)
+        
+        # Early exit: conditions check
         should_use_arrow, reason = self._check_arrow_conditions(findings)
         if not should_use_arrow:
-            self._arrow_metrics[f"arrow_fallback_{reason}"] += len(findings)
+            self._arrow_metrics[f"arrow_fallback_{reason}"] += batch_size
             logger.debug(f"[WriteCoordinator-arrow-fallback] {reason}, using legacy path")
             return await self.ingest_batch_legacy(findings)
-
+        
+        # Early exit: pyarrow availability
         if not await self._try_arrow_direct(findings):
-            self._arrow_metrics["arrow_fallback_batch"] += len(findings)
+            self._arrow_metrics["arrow_fallback_batch"] += batch_size
             return await self.ingest_batch_legacy(findings)
-
-        # Pyarrow check (cached)
-        try:
-            import pyarrow as _pa  # noqa: F401
-        except ImportError:
-            self._arrow_metrics["arrow_fallback_pyarrow"] += len(findings)
+        
+        # Execute pipeline
+        result = await self._execute_arrow_pipeline(findings)
+        
+        # Handle fallback
+        if result.should_fallback():
             return await self.ingest_batch_legacy(findings)
-
-        # Startup barrier
-        if not self._startup_ready.is_set():
-            try:
-                async with asyncio.timeout(30.0):
-                    await self._startup_ready.wait()
-            except TimeoutError:
-                self._arrow_metrics["arrow_fallback_init"] += len(findings)
-                return await self.ingest_batch_legacy(findings)
-
-        # Circuit breaker check
-        if not self._check_circuit_breaker():
-            return await self.ingest_batch_legacy(findings)
-
-        # WAL first (parallel s DuckDB)
-        wal_ok = await self._try_wal_fallback(findings)
-        if not wal_ok:
-            logger.error(f"[D7] Arrow WAL phase failed - falling back to legacy.")
-            return await self.ingest_batch_legacy(findings)
-
-        # DuckDB Arrow insert
-        duckdb_count, duckdb_err = await self._try_duckdb_basic(findings)
-        duckdb_all_ok = duckdb_err is None or duckdb_count >= len(findings)
-        if duckdb_count < len(findings):
-            self._arrow_metrics["arrow_partial_duplicates"] += 1
-
-        results = self._build_arrow_results(findings, wal_ok, duckdb_all_ok, duckdb_err)
-        await self._handle_arrow_post_process(results, findings)
-        self._update_arrow_metrics(results, duckdb_all_ok)
-
-        lmdb_ok_count = sum(1 for r in results if r.get("lmdb_success"))
-        duckdb_ok_count = sum(1 for r in results if r.get("duckdb_success"))
+        
+        # Post-processing
+        await self._handle_arrow_post_process(result.results, findings)
+        self._update_arrow_metrics(result.results, result.duckdb_all_ok)
+        
         logger.info(
-            f"[WriteCoordinator-arrow] path=arrow batch={len(findings)} "
-            f"lmdb_ok={lmdb_ok_count} duckdb_ok={duckdb_ok_count}"
+            f"[WriteCoordinator-arrow] path=arrow batch={batch_size} "
+            f"lmdb_ok={result.lmdb_ok_count} duckdb_ok={result.duckdb_ok_count}"
         )
-        return self._build_activation_results(results)
+        return self._build_activation_results(result.results)
 
     async def ingest_batch_legacy(
         self, findings: list[CanonicalFinding]

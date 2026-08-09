@@ -13,10 +13,8 @@ All operations are:
 """
 from __future__ import annotations
 
-
-
 import re
-from typing import Final
+from typing import Final, TypeAlias
 
 import msgspec
 import orjson
@@ -385,6 +383,11 @@ def _has_body_content_html(html: str) -> bool:
     return bool(_RE_BODY_TAGS.search(stripped))
 
 
+def _get_json_ld_type_signals(json_ld_types: list[str]) -> list[str]:
+    """Extract JSON-LD type signals from types list."""
+    return [f"json_ld_{t.lower()}" for t in json_ld_types if t in _CONTENT_TYPES]
+
+
 def _compute_hydration_score(info: dict, input_truncated: bool = False) -> tuple[float, tuple[str, ...]]:
     """
     Compute conservative hydration quality score (0.0–1.0).
@@ -403,27 +406,25 @@ def _compute_hydration_score(info: dict, input_truncated: bool = False) -> tuple
     """
     signals: list[str] = []
     score = 0.0
+    metadata = info.get("metadata", {})
 
-    has_title = _has_meaningful_title(info)
-    if has_title:
+    # Pre-compute common values
+    total_text = info.get("body", "") or info.get("description", "") or info.get("json_ld_text", "")
+    is_short_text = bool(total_text) and len(total_text) < 100
+
+    # Additive scoring: title (+0.2), body (+0.3), json_ld (+0.3)
+    if _has_meaningful_title(info):
         score += 0.2
         signals.append("title")
-
-    has_body = _has_meaningful_body(info)
-    if has_body:
+    if _has_meaningful_body(info):
         score += 0.3
         signals.append("body")
-
-    has_json_ld_content = _has_content_json_ld(info)
-    if has_json_ld_content:
+    if _has_content_json_ld(info):
         score += 0.3
         signals.append("json_ld_article")
-        # Add specific JSON-LD types as signals
-        for t in info.get("json_ld_types", []):
-            if t in _CONTENT_TYPES:
-                signals.append(f"json_ld_{t.lower()}")
+        signals.extend(_get_json_ld_type_signals(info.get("json_ld_types", [])))
 
-    metadata = info.get("metadata", {})
+    # Metadata: canonical (+0.1), feeds (+0.1)
     if metadata.get("canonical"):
         score += 0.1
         signals.append("canonical")
@@ -431,20 +432,17 @@ def _compute_hydration_score(info: dict, input_truncated: bool = False) -> tuple
         score += 0.1
         signals.append("feed_alternate")
 
-    # Hydration payload with content (Next/Nuxt/generic with body)
+    # Hydration payload (+0.4)
     body_source = info.get("_body_source", "")
-    if body_source in (_REASON_SUFFICIENT_NEXT, _REASON_SUFFICIENT_NUXT, _REASON_SUFFICIENT_METADATA):
-        if info.get("body"):
-            score += 0.4
-            signals.append("hydration_payload")
+    if body_source in (_REASON_SUFFICIENT_NEXT, _REASON_SUFFICIENT_NUXT, _REASON_SUFFICIENT_METADATA) and info.get("body"):
+        score += 0.4
+        signals.append("hydration_payload")
 
     # Penalties
     if input_truncated:
         score -= 0.2
         signals.append("input_truncated")
-
-    total_text = info.get("body", "") or info.get("description", "") or info.get("json_ld_text", "")
-    if total_text and len(total_text) < 100:
+    if is_short_text:
         score -= 0.1
         signals.append("short_text")
 
@@ -491,122 +489,152 @@ def _is_sufficient(info: dict, html: str = "") -> tuple[bool, str]:
 # Extracted helpers for refactored extract_static_hydration
 # ---------------------------------------------------------------------------
 
+# Title extraction dispatch table: (name, path/key extractor, validator)
+# Single-pass consolidates Next.js, Nuxt, and generic patterns
+_TitleHandlers: TypeAlias = tuple[
+    tuple[str, tuple[str, ...], callable],  # name, path tuple, validator
+    ...
+]
+
+_TITLE_HANDLERS: tuple[tuple[str, tuple[str, ...]], ...] = (
+    # Next.js patterns (path-based)
+    (("props", "pageProps", "title"), ("props", "pageProps", "title")),
+    (("props", "pageProps", "serverData", "title"), ("props", "pageProps", "serverData", "title")),
+    (("props", "pageProps", "data", "title"), ("props", "pageProps", "data", "title")),
+    (("pageProps", "title"), ("pageProps", "title")),
+    (("title",), ("title",)),
+    # Nuxt specific (index 0)
+    (("__nuxt_index_0",), ("__nuxt_index_0",)),
+    # Generic fallback keys
+    (("serverData", "title"), ("serverData", "title")),
+    (("data", "title"), ("data", "title")),
+    (("ROOT_QUERY", "title"), ("ROOT_QUERY", "title")),
+)
+
 
 def _extract_title_from_parsed(parsed) -> str:
-    """Extract title from parsed Next.js/generic JSON structure."""
-    for path in [
-        ("props", "pageProps", "title"),
-        ("props", "pageProps", "serverData", "title"),
-        ("props", "pageProps", "data", "title"),
-        ("pageProps", "title"),
-        ("title",),
-    ]:
+    """Extract title using single-pass dispatch table (Next.js, Nuxt, generic)."""
+    # Handle Nuxt list format first
+    if isinstance(parsed, list) and parsed:
+        first = parsed[0]
+        if isinstance(first, dict):
+            title = first.get("data", {}).get("title") or first.get("title", "")
+            if title and len(str(title)) >= _MIN_TITLE_LEN:
+                return str(title)
+
+    # Dispatch table iteration
+    for path, _ in _TITLE_HANDLERS:
         val = parsed
         for key in path:
             if isinstance(val, dict):
                 val = val.get(key)
             else:
                 break
-        if val:
+        if val and len(str(val)) >= _MIN_TITLE_LEN:
             return str(val)
+
     return ""
 
 
-def _extract_title_from_nuxt(parsed) -> str:
-    """Extract title from Nuxt data structure."""
-    if isinstance(parsed, list) and parsed:
-        return parsed[0].get("data", {}).get("title", "")
-    return parsed.get("title", "") if isinstance(parsed, dict) else ""
+# Type alias for hydration handler entries (source_name, regex, title_extractor, reason)
+_HydrationHandler: TypeAlias = tuple[str, re.Pattern[str], callable[[object], str], str]
 
 
-def _extract_title_from_generic(parsed) -> str:
-    """Extract title from generic JSON structure."""
-    title_candidates = [
-        parsed.get("props", {}).get("page", {}).get("title", ""),
-        parsed.get("props", {}).get("pageProps", {}).get("title", ""),
-        parsed.get("serverData", {}).get("title", ""),
-        parsed.get("data", {}).get("title", ""),
-        parsed.get("ROOT_QUERY", {}).get("title", ""),
-        parsed.get("title", ""),
-    ]
-    for t in title_candidates:
-        if t and len(str(t)) >= _MIN_TITLE_LEN:
-            return str(t)
-    return ""
+def _try_hydration_pattern(
+    html: str,
+    pattern: re.Pattern[str],
+    title_extractor: callable[[object], str],
+) -> dict | None:
+    """
+    Try to extract and parse a hydration pattern from HTML.
+
+    Returns parsed JSON dict on success, None on failure.
+    Uses short-circuit evaluation for fail-fast behavior.
+    """
+    if raw := _extract_from_script(html, pattern):
+        return _safe_json_parse(raw)
+    return None
 
 
 def _extract_json_hydration(html: str, info: dict, sources: list) -> None:
-    """Extract JSON-based hydration using dictionary dispatch table (Python 3.14+ pattern)."""
-    # Dispatch table: (source_name, regex_pattern, title_extractor, reason_constant)
-    hydration_handlers: tuple[tuple[str, re.Pattern, callable, str], ...] = (
-        ("next_data", _RE_NEXT_DATA, _extract_title_from_parsed, _REASON_SUFFICIENT_NEXT),
-        ("nuxt_data", _RE_NUXT_DATA, _extract_title_from_nuxt, _REASON_SUFFICIENT_NUXT),
-        ("nuxt_data", _RE_NUXT_GLOBAL, _extract_title_from_parsed, _REASON_SUFFICIENT_NUXT),
+    """
+    Extract JSON-based hydration using single-pass dispatch table.
+
+    Single dispatch table with priority ordering:
+    1. Framework-specific: Next.js, Nuxt (highest priority)
+    2. Generic: Initial/Preloaded/Apollo state (fallback)
+
+    Uses early-exit pattern when body already extracted.
+    """
+    # Single unified dispatch table: (source_name, regex, reason)
+    hydration_handlers: tuple[tuple[str, re.Pattern[str], str], ...] = (
+        # Framework-specific (priority order)
+        ("next_data", _RE_NEXT_DATA, _REASON_SUFFICIENT_NEXT),
+        ("nuxt_data", _RE_NUXT_DATA, _REASON_SUFFICIENT_NUXT),
+        ("nuxt_data", _RE_NUXT_GLOBAL, _REASON_SUFFICIENT_NUXT),
+        # Generic fallback
+        ("initial_state", _RE_INITIAL_STATE, _REASON_SUFFICIENT_METADATA),
+        ("preloaded_state", _RE_PRELOADED_STATE, _REASON_SUFFICIENT_METADATA),
+        ("apollo_state", _RE_APOLLO_STATE, _REASON_SUFFICIENT_METADATA),
     )
 
-    # Try framework-specific patterns first
-    for name, pattern, title_extractor, reason in hydration_handlers:
+    # Single pass: try all patterns, early-exit on body found
+    for name, pattern, reason in hydration_handlers:
         if info.get("body") and sources:
-            break  # Early exit if we have body content
-        if (raw := _extract_from_script(html, pattern)) and (parsed := _safe_json_parse(raw)):
+            break  # Early exit: body content already extracted
+        if parsed := _try_hydration_pattern(html, pattern, _extract_title_from_parsed):
             sources.append(name)
             if text := _flatten_text(parsed):
                 info["body"] = _truncate(text, MAX_EXTRACTED_TEXT)
-            if title := title_extractor(parsed):
+            if title := _extract_title_from_parsed(parsed):
                 info["title"] = _truncate(str(title), MAX_TITLE_LEN)
             info["_body_source"] = reason
 
-    # Generic hydration patterns (fallback)
-    if not info.get("body"):
-        for name, pattern in (
-            ("initial_state", _RE_INITIAL_STATE),
-            ("preloaded_state", _RE_PRELOADED_STATE),
-            ("apollo_state", _RE_APOLLO_STATE),
-        ):
-            if (raw := _extract_from_script(html, pattern)) and (parsed := _safe_json_parse(raw)):
-                sources.append(name)
-                if text := _flatten_text(parsed):
-                    info["body"] = _truncate(text, MAX_EXTRACTED_TEXT)
-                if title := _extract_title_from_generic(parsed):
-                    info["title"] = _truncate(str(title), MAX_TITLE_LEN)
-                info["_body_source"] = _REASON_SUFFICIENT_METADATA
-                break  # Take first successful generic pattern
+
+def _extract_title_from_json_ld(parsed_blocks: list) -> str:
+    """Extract title from first parsed JSON-LD block."""
+    for parsed in parsed_blocks:
+        if headline := parsed.get("headline") or parsed.get("name"):
+            if len(headline) >= _MIN_TITLE_LEN:
+                return _truncate(headline, MAX_TITLE_LEN)
+    return ""
 
 
 def _extract_json_ld(html: str, info: dict, sources: list) -> None:
     """Extract JSON-LD blocks from HTML (single-pass optimization)."""
     json_ld_types: list[str] = []
     json_ld_texts: list[str] = []
-    # Collect parsed blocks for title extraction (avoid double iteration)
     parsed_blocks: list = []
 
-    for i, match in enumerate(_RE_JSON_LD.finditer(html)):
-        if i >= MAX_JSON_LD_BLOCKS:
+    # Single pass: collect types, texts, and parsed blocks
+    for match in _RE_JSON_LD.finditer(html):
+        if len(parsed_blocks) >= MAX_JSON_LD_BLOCKS:
             break
-        raw = match.group(1).strip()
-        if len(raw) > MAX_SCRIPT_LEN:
+        if len(match.group(1)) > MAX_SCRIPT_LEN:
             continue
-        parsed = _safe_json_parse(raw)
-        if parsed is not None:
-            parsed_blocks.append(parsed)  # Store for title extraction
+        if parsed := _safe_json_parse(match.group(1).strip()):
+            parsed_blocks.append(parsed)
             _json_ld_types(parsed, json_ld_types)
-            text = _flatten_text(parsed)
-            if text:
+            if text := _flatten_text(parsed):
                 json_ld_texts.append(text)
 
-    if json_ld_types:
-        sources.append("json_ld")
-        info["json_ld_types"] = json_ld_types
-        info["json_ld_text"] = _truncate(" ".join(json_ld_texts), MAX_EXTRACTED_TEXT)
-        if not info.get("body") and json_ld_texts:
-            info["body"] = info["json_ld_text"]
-        # Promote JSON-LD headline/name to title if no title yet (reuse parsed blocks)
-        if not info.get("title"):
-            for parsed in parsed_blocks:
-                headline = parsed.get("headline") or parsed.get("name") or ""
-                if headline and len(str(headline)) >= _MIN_TITLE_LEN:
-                    info["title"] = _truncate(str(headline), MAX_TITLE_LEN)
-                    break
+    # Early exit if no types found
+    if not json_ld_types:
+        return
+
+    # Populate info
+    sources.append("json_ld")
+    info["json_ld_types"] = json_ld_types
+    info["json_ld_text"] = _truncate(" ".join(json_ld_texts), MAX_EXTRACTED_TEXT)
+
+    # Body assignment (only if not already set)
+    if not info.get("body") and json_ld_texts:
+        info["body"] = info["json_ld_text"]
+
+    # Title extraction from JSON-LD
+    if not info.get("title"):
+        if title := _extract_title_from_json_ld(parsed_blocks):
+            info["title"] = title
 
 
 def _extract_metadata(html: str, info: dict) -> dict:
@@ -650,7 +678,8 @@ def _build_hydration_result(
     input_truncated: bool,
     html: str,
 ) -> HydrationExtractionResult:
-    """Build final HydrationExtractionResult from extracted info."""
+    """Build final HydrationExtractionResult from extracted info (DRY pattern)."""
+    # Fast path: nothing found
     if not sources and not metadata:
         return HydrationExtractionResult(
             found=False,
@@ -663,53 +692,28 @@ def _build_hydration_result(
             quality_signals=(),
         )
 
-    found = bool(sources) or bool(metadata)
-
     # Sufficiency check
-    if found:
-        sufficient, reason = _is_sufficient(info, html)
-        if sufficient:
-            # Build composite text: title + body
-            parts: list[str] = []
-            title = info.get("title")
-            if title and isinstance(title, str):
-                parts.append(title)
-            body = info.get("body") or info.get("description", "")
-            if body:
-                parts.append(body)
-            final_text = _truncate(" | ".join(parts), MAX_EXTRACTED_TEXT)
+    sufficient, reason = _is_sufficient(info, html)
 
-            return HydrationExtractionResult(
-                found=True,
-                sufficient=True,
-                sources=tuple(sources),
-                text=final_text,
-                metadata=metadata,
-                reason=reason,
-                hydration_score=hydration_score,
-                quality_signals=quality_signals,
-            )
-        else:
-            return HydrationExtractionResult(
-                found=True,
-                sufficient=False,
-                sources=tuple(sources),
-                text="",
-                metadata=metadata,
-                reason=_REASON_FOUND_INSUFFICIENT,
-                hydration_score=hydration_score,
-                quality_signals=quality_signals,
-            )
+    # Build composite text only when sufficient
+    final_text = ""
+    if sufficient:
+        parts: list[str] = []
+        if title := info.get("title"):
+            parts.append(title)
+        if body := info.get("body") or info.get("description", ""):
+            parts.append(body)
+        final_text = _truncate(" | ".join(parts), MAX_EXTRACTED_TEXT)
 
     return HydrationExtractionResult(
-        found=False,
-        sufficient=False,
-        sources=(),
-        text="",
-        metadata={},
-        reason=_REASON_NONE,
-        hydration_score=0.0,
-        quality_signals=(),
+        found=True,
+        sufficient=sufficient,
+        sources=tuple(sources),
+        text=final_text,
+        metadata=metadata,
+        reason=reason if sufficient else _REASON_FOUND_INSUFFICIENT,
+        hydration_score=hydration_score,
+        quality_signals=quality_signals,
     )
 
 

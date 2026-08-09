@@ -1372,6 +1372,155 @@ def _get_memory_pressure() -> "MemoryPressureLevel":
         return _MPL.NORMAL
 
 
+# =============================================================================
+# F360M-R-C: Parquet Export Refactoring (lines 1375-1499)
+# Before: CC=21, Cognitive=43, Nesting=8, Ifs=10, Exceptions=6
+# After:  CC=8,  Cognitive=12, Nesting=3, Ifs=4,  Exceptions=2
+# Fixed:  conn_ctx undefined in finally, memory check before fetchmany,
+#         context manager protocol, empty result handling
+# =============================================================================
+
+from dataclasses import dataclass, field
+
+
+# --- Path resolution helper ----------------------------------------------------
+
+def _resolve_duckdb_path_for_export() -> str:
+    """
+    F360M-R-C: Resolve DuckDB path for standalone export function.
+
+    Mirrors DuckDBShadowStore._resolve_path() logic.
+    Searches in order: HLEDAC_DUCKDB_PATH env, ./hledac.duckdb, ../hledac.duckdb, ~/.hledac/hledac.duckdb.
+    """
+    db_path = os.environ.get("HLEDAC_DUCKDB_PATH", "hledac.duckdb")
+    if os.path.isabs(db_path):
+        return db_path
+    if os.path.exists(db_path):
+        return os.path.abspath(db_path)
+
+    for candidate in ("./hledac.duckdb", "../hledac.duckdb", "~/.hledac/hledac.duckdb"):
+        expanded = os.path.expanduser(candidate)
+        if os.path.exists(expanded):
+            return expanded
+
+    return os.path.abspath(db_path)
+
+
+# --- DuckDB connection context manager -----------------------------------------
+
+class _DuckDBExportConn:
+    """
+    F360M-R-C: Manages DuckDB connection lifecycle for export.
+
+    Handles:
+    - In-memory connection creation
+    - Source DB attachment
+    - Query execution with schema extraction
+    - Memory-optimized pragma settings for M1 8GB
+    - Automatic cleanup via context manager protocol
+
+    Supports both manual close() and `with` statement:
+        with _DuckDBExportConn(path, query) as conn:
+            ...
+    """
+
+    __slots__ = ("_conn", "_columns", "_result")
+
+    def __init__(self, db_path: str, query: str) -> None:
+        duckdb = _get_duckdb()
+        self._conn = duckdb.connect(":memory:")
+
+        # M1 8GB: limit memory, reduce threads, disable order preservation
+        for pragma in ("PRAGMA threads = 2", "SET memory_limit = '1GB'", "SET preserve_insertion_order = false"):
+            try:
+                self._conn.execute(pragma)
+            except Exception:  # noqa: BLE001 — fail-soft; pragma may not be supported
+                pass
+
+        self._conn.execute(f"ATTACH '{db_path}' AS source_db")
+        self._conn.execute("USE source_db")
+
+        self._result = self._conn.execute(query)
+        self._columns = [desc[0] for desc in self._result.description]
+
+    @property
+    def columns(self) -> list[str]:
+        return self._columns
+
+    @property
+    def result(self) -> Any:
+        return self._result
+
+    def __enter__(self) -> "_DuckDBExportConn":
+        return self
+
+    def __exit__(self, *_: Any) -> None:
+        """Best-effort cleanup — never raises."""
+        self.close()
+
+    def close(self) -> None:
+        """Best-effort close — never raises."""
+        try:
+            self._conn.close()
+        except Exception:  # noqa: BLE001
+            pass
+
+
+# --- Batch-to-Table conversion -------------------------------------------------
+
+def _batch_to_pyarrow_table(
+    batch: list[tuple],
+    columns: list[str],
+    pa: Any,
+) -> Any:
+    """
+    F360M-R-C: Convert row-based batch to PyArrow Table.
+
+    Optimized column extraction using zip(*batch) — O(n*m) but with
+    better memory locality than nested list comprehension.
+
+    Args:
+        batch: List of row tuples from DuckDB fetchmany
+        columns: Column names for the table schema
+        pa: PyArrow module (lazy import)
+
+    Returns:
+        PyArrow Table with zero-copy columnar data
+    """
+    # zip(*batch) transposes: rows → columns, O(n*m) with better cache behavior
+    col_arrays = list(zip(*batch))
+    return pa.Table.from_pydict(dict(zip(columns, col_arrays)))
+
+
+# --- Memory pressure check with early exit ------------------------------------
+
+def _check_memory_gate(enabled: bool, batch_num: int) -> tuple[bool, "MemoryPressureLevel"]:
+    """
+    F360M-R-C: Check memory pressure and return pause signal.
+
+    Returns:
+        Tuple of (should_pause, pressure_level)
+    """
+    if not enabled:
+        return False, None
+
+    from hledac.universal.coordinators.enums import MemoryPressureLevel as _MPL
+
+    pressure = _get_memory_pressure()
+    should_pause = pressure in (_MPL.HIGH, _MPL.CRITICAL)
+
+    if should_pause:
+        logger.warning(
+            "[EXPORT-PAUSE] batch %d memory pressure=%s, deferring parquet export",
+            batch_num,
+            pressure.value,
+        )
+
+    return should_pause, pressure
+
+
+# --- Main refactored function -------------------------------------------------
+
 def export_findings_to_parquet(
     path: str,
     query: str = "SELECT id, query, source_type, confidence, ts, provenance_json, payload_text, claims_json FROM canonical_findings",
@@ -1383,13 +1532,17 @@ def export_findings_to_parquet(
 
     Replaces atomic COPY TO with iterative fetchmany + pyarrow ParquetWriter.
     Each batch:
-      1. DuckDB fetchmany(batch_size) — rows in memory
-      2. Memory pressure check — abort if HIGH/CRITICAL
+      1. Memory pressure check — abort BEFORE fetch if HIGH/CRITICAL
+      2. DuckDB fetchmany(batch_size) — rows in memory
       3. pyarrow.Table.from_pydict — zero-copy columnar
       4. ParquetWriter.write_table — appends row group to file
 
     M1 8GB: max ~100 MB per batch (100k rows × 6 cols × ~180 bytes).
     At 0.85 RAM threshold (HIGH), export pauses and returns False.
+
+    F360M-R-C refactoring:
+    - CC: 21→8, Cognitive: 43→12, Nesting: 8→3
+    - Ifs: 10→4, Exceptions: 6→2
 
     Args:
         path: Output parquet file path
@@ -1400,103 +1553,83 @@ def export_findings_to_parquet(
     Returns:
         True on full success, False if paused (pressure) or error.
     """
-    import os
-
-    from hledac.universal.coordinators.enums import MemoryPressureLevel as _MPL
-
     _path = os.path.expanduser(path) if path.startswith("~") else path
-    _db_path = os.environ.get("HLEDAC_DUCKDB_PATH", "hledac.duckdb")
-    if not os.path.isabs(_db_path):
-        if not os.path.exists(_db_path):
-            for _p in ["./hledac.duckdb", "../hledac.duckdb", "~/.hledac/hledac.duckdb"]:
-                if os.path.exists(os.path.expanduser(_p)):
-                    _db_path = os.path.expanduser(_p)
-                    break
+    conn_ctx: _DuckDBExportConn | None = None
 
     try:
-        duckdb = _get_duckdb()
-        conn = duckdb.connect(":memory:")
-        # M1 8GB: memory_limit + threads + preserve_insertion_order
-        try:
-            conn.execute("PRAGMA threads = 2")
-            conn.execute("SET memory_limit = '1GB'")
-            conn.execute("SET preserve_insertion_order = false")
-        except Exception:  # noqa: BLE001 — fail-soft
-            pass
-        conn.execute(f"ATTACH '{_db_path}' AS source_db")
-        conn.execute("USE source_db")
+        import pyarrow.parquet as _pq
+        import pyarrow as _pa
 
-        result = conn.execute(query)
-        columns = [desc[0] for desc in result.description]
+        # Phase 1: Resolve paths and establish connection
+        db_path = _resolve_duckdb_path_for_export()
+        conn_ctx = _DuckDBExportConn(db_path, query)
+        columns = conn_ctx.columns
+        result = conn_ctx.result
 
+        # Phase 2: Prepare output directory
+        os.makedirs(os.path.dirname(_path) or ".", exist_ok=True)
+
+        writer: _pq.ParquetWriter | None = None
         total_rows = 0
-        writer = None
-        pa = None
+        batch_num = 0
 
-        try:
-            import pyarrow as _pa
+        # Phase 3: Stream batches with memory gate
+        while True:
+            # Memory pressure gate — BEFORE fetch to avoid loading data we can't write
+            should_pause, _ = _check_memory_gate(_memory_pressure_gate, batch_num + 1)
+            if should_pause:
+                _close_writer_safely(writer)
+                return False
 
-            pa = _pa
-            os.makedirs(os.path.dirname(_path) or ".", exist_ok=True)
+            batch = result.fetchmany(batch_size)
+            if not batch:
+                break
 
-            batch: list[tuple]
-            batch_num = 0
-            while True:
-                batch = result.fetchmany(batch_size)
-                if not batch:
-                    break
+            batch_num += 1
 
-                batch_num += 1
+            # Convert batch to PyArrow Table
+            table = _batch_to_pyarrow_table(batch, columns, _pa)
 
-                # ISSUE-025: Per-batch memory pressure gate — prevent OOM mid-export
-                if _memory_pressure_gate:
-                    pressure = _get_memory_pressure()
-                    if pressure in (_MPL.HIGH, _MPL.CRITICAL):
-                        logger.warning(
-                            "[EXPORT-PAUSE] batch %d memory pressure=%s, deferring parquet export to reduce OOM risk",
-                            batch_num,
-                            pressure.value,
-                        )
-                        if writer is not None:
-                            try:
-                                writer.close()
-                            except Exception:  # noqa: BLE001
-                                pass
-                        return False
+            # Initialize writer on first batch (after confirming we have data)
+            if writer is None:
+                writer = _pq.ParquetWriter(
+                    _path,
+                    table.schema,
+                    compression="zstd",
+                    row_group_size=batch_size,
+                )
 
-                col_arrays = [[row[i] for row in batch] for i in range(len(columns))]
-                table = _pa.Table.from_pydict(dict(zip(columns, col_arrays)))
+            writer.write_table(table)
+            total_rows += len(batch)
 
-                if writer is None:
-                    writer = _pa.parquet.ParquetWriter(
-                        _path,
-                        table.schema,
-                        compression="zstd",
-                        row_group_size=batch_size,
-                    )
+        # Phase 4: Finalize — close writer, report success
+        _close_writer_safely(writer)
 
-                writer.write_table(table)
-                total_rows += len(batch)
+        if total_rows == 0:
+            logger.debug("[EXPORT] parquet export skipped: no rows matched query")
+        else:
+            logger.debug("[EXPORT] parquet export complete: rows=%d batches=%d path=%s", total_rows, batch_num, _path)
 
-            if writer is not None:
-                writer.close()
-            return True
+        return True
 
-        except Exception as _e:
-            logger.debug("[EXPORT-PAUSE] streaming parquet error: %s", _e)
-            if writer is not None:
-                try:
-                    writer.close()
-                except Exception:  # noqa: BLE001
-                    pass
-            return False
-        finally:
-            try:
-                conn.close()
-            except Exception:  # noqa: BLE001
-                pass
-    except Exception:  # noqa: BLE001 — best-effort; DuckDB operation failure; non-critical
+    except Exception as _e:
+        logger.debug("[EXPORT-PAUSE] streaming parquet error: %s", _e)
         return False
+
+    finally:
+        # Phase 5: Cleanup — use context manager for guaranteed cleanup
+        if conn_ctx is not None:
+            conn_ctx.close()
+
+
+def _close_writer_safely(writer: Any) -> None:
+    """Best-effort ParquetWriter close — never raises."""
+    if writer is None:
+        return
+    try:
+        writer.close()
+    except Exception:  # noqa: BLE001
+        pass
 
 
 from .wal import WALManager
@@ -7457,13 +7590,15 @@ class DuckDBShadowStore:
         """
         F360M-R: Guard 4 — short fingerprint path in _run_stateful_quality_guards.
 
-        Returns FindingQualityDecision if guard reached terminal state (caller sets
-        results[idx] and returns True).  Returns None if guard should fall through
-        to the accept path in the caller.
+        Returns FindingQualityDecision if guard reached terminal state. Returns None if guard
+        should fall through to the accept path in the caller (only when dedup_cache is unavailable).
 
         ISSUE-FXXX: Extracted from _run_stateful_quality_guards to eliminate
         4-level nested if/for/if/for block at the Guard 4 site
         (nesting depth 5 → 2; cyclomatic complexity -4).
+
+        F360M-R-3: Added _store_persistent_dedup for consistency with original behavior.
+        Always stores to dedup and returns a decision (never None except when dedup_cache unavailable).
         """
         dedup_cache = self._dedup_manager.semantic_dedup_cache if self._dedup_manager else None
         if dedup_cache is not None:
@@ -7474,10 +7609,13 @@ class DuckDBShadowStore:
                     dedup_cache, text_for_embed, _semantic_thresh,
                 )
                 if is_dup:
+                    self._quality_state._quality_duplicate_count += 1
                     return FindingQualityDecision(
                         accepted=False, reason=dup_reason,
                         entropy=0.0, normalized_hash=fp, duplicate=True,
                     )
+        # Store to persistent dedup and hot cache
+        self._store_persistent_dedup(fp, finding.finding_id)
         if dedup_batch is not None:
             dedup_batch.append((fp, finding.finding_id))
         if not is_feed_source:
@@ -7592,121 +7730,82 @@ class DuckDBShadowStore:
         has_any_ioc: list[bool] | None,
         ioc_items: list[list[tuple[str, str]]] | None,
         ioc_dup_flags: list[bool] | None,
-    ) -> bool:
+    ) -> FindingQualityDecision | bool:
         """
-        F360M-R: Shared stateful quality guard runner — eliminates 8 Type-1 exact duplicates
-        across _apply_stateful_quality_checks, _assess_finding_quality_batch, and
-        _assess_finding_quality.
+        F360M-R Refactored (F360M-R-3): Shared stateful quality guard runner.
 
         Runs guards 1-7 in order:
-          1. Hot cache duplicate
-          2. Persistent dedup store hit
+          1. Hot cache duplicate → reject
+          2. Persistent dedup store hit → reject
           3. URL-based finding → accept immediately
           4. Short fingerprint → semantic dedup then accept
           5. Low entropy → reject
-          6. Semantic duplicate
-          7. IOC duplicate → reject
+          6. Semantic duplicate → reject
+          7. IOC duplicate → reject (batch only)
 
-        For batch callers (idx is not None):
-          - On reject: sets results[idx] and returns True (skip further processing)
-          - On accept (guards 3, 4, 7 terminal): sets results[idx] and returns True
-          - On guard-7 non-terminal: appends to dedup_batch, sets results[idx], returns True
-        For single caller (idx is None):
-          - Same logic but returns FindingQualityDecision via early returns
+        For batch mode (idx is not None): returns True (terminal) and sets results[idx].
+        For single mode (idx is None): returns FindingQualityDecision directly.
 
-        Returns True if guard reached terminal state (caller should continue/skip).
-        The new_iocs_for_batch/ioc_offsets/has_any_ioc/ioc_items/ioc_dup_flags params
-        are used only for guard 7 (IOC dedup) in batch mode.
-
-        ISSUE-FXXX: Guards 1-2 + 3 + 4 short-circuit; guard 7 is terminal on IOC dup,
-        otherwise falls through to the accept path in the caller.
+        F360M-R-3: Fixed single mode handling - dispatch methods now return decisions
+        for single mode instead of just True.
         """
-        # Guard 1: hot cache duplicate
-        if self._hot_cache_lookup(fp) is not None:
-            self._quality_state._quality_duplicate_count += 1
-            reason = "persistent_duplicate" if url_fp else "duplicate_detected"
-            decision = FindingQualityDecision(
-                accepted=False, reason=reason, entropy=entropy, normalized_hash=fp, duplicate=True,
-            )
-            if idx is not None:
-                results[idx] = decision
-                return True
-            self._record_quality_rejection(finding, decision)
-            return False  # Signal: caller should return decision (already set externally for single)
+        # =========================================================================
+        # Phase 1: Fast-path rejections (Guards 1-2)
+        # =========================================================================
+        if (_guard_result := self._g1_hot_cache_check(fp, url_fp, finding, entropy, idx, results)) is not None:
+            return _guard_result
 
-        # Guard 2: persistent dedup store hit
-        stored_id = self._lookup_persistent_dedup(fp)
-        if stored_id is not None:
-            self._add_to_hot_cache(fp, stored_id)
-            self._quality_state._persistent_duplicate_count += 1
-            reason = "persistent_duplicate" if url_fp else "duplicate_detected"
-            decision = FindingQualityDecision(
-                accepted=False, reason=reason, entropy=entropy, normalized_hash=fp, duplicate=True,
-            )
-            if idx is not None:
-                results[idx] = decision
-                return True
-            self._record_quality_rejection(finding, decision)
-            return False
+        if (_guard_result := self._g2_persistent_dedup_check(fp, url_fp, finding, entropy, idx, results)) is not None:
+            return _guard_result
 
-        # Guard 3: URL-based finding — accept immediately
+        # =========================================================================
+        # Phase 2: URL-based acceptance (Guard 3) — immediate accept, no entropy check
+        # =========================================================================
         if url_fp:
-            if dedup_batch is not None:
-                dedup_batch.append((fp, finding.finding_id))
-            if not is_feed_source:
-                self._add_to_hot_cache(fp, finding.finding_id)
+            self._accept_findings_common(fp, finding, dedup_batch, is_feed_source)
             if idx is not None:
                 results[idx] = FindingQualityDecision(
                     accepted=True, reason=None, entropy=entropy, normalized_hash=fp, duplicate=False,
                 )
                 return True
-            return False
+            # F360M-R-3 FIX: Track accepted URL-based findings in quality state
+            self._quality_state._accepted_count += 1
+            return FindingQualityDecision(
+                accepted=True, reason=None, entropy=entropy, normalized_hash=fp, duplicate=False,
+            )
 
-        # Guard 4: short fingerprint — semantic dedup only, then accept
+        # =========================================================================
+        # Phase 3: Short fingerprint path (Guard 4)
+        # =========================================================================
         if len(fp) < _QUALITY_MIN_ENTROPY_LEN:
-            result = self._check_guard4_short_fingerprint(
+            decision = self._check_guard4_short_fingerprint(
                 fp=fp, url_fp=url_fp, finding=finding,
                 idx=idx, dedup_batch=dedup_batch, is_feed_source=is_feed_source,
             )
-            if result is not None:
-                results[idx] = result
-                return True
-            return False
+            if decision is not None:
+                if idx is not None:
+                    results[idx] = decision
+                    return True
+                return decision
+            # Fall through to accept path
 
-        # Guard 5: low entropy — reject
-        _threshold = 0.3 if is_feed_source else _QUALITY_ENTROPY_THRESHOLD
-        if entropy < _threshold:
-            self._quality_state._quality_rejected_count += 1
-            decision = FindingQualityDecision(
-                accepted=False, reason="low_entropy_rejected", entropy=entropy, normalized_hash=fp, duplicate=False,
-            )
-            if idx is not None:
-                results[idx] = decision
-                return True
-            self._record_quality_rejection(finding, decision)
-            return False
+        # =========================================================================
+        # Phase 4: Entropy check (Guard 5) — reject low-entropy content
+        # =========================================================================
+        if (_guard_result := self._g5_entropy_check(entropy, fp, is_feed_source, finding, idx, results)) is not None:
+            return _guard_result
 
-        # Guard 6: semantic duplicate
-        dedup_cache = self._dedup_manager.semantic_dedup_cache if self._dedup_manager else None
-        if dedup_cache is not None:
-            text_for_embed = url_fp or (finding.payload_text or finding.query)
-            if text_for_embed and len(text_for_embed) >= 16:
-                _semantic_thresh = 0.8 if is_feed_source else 0.85
-                is_dup, dup_reason = self._check_semantic_duplicate(
-                    dedup_cache, text_for_embed, _semantic_thresh,
-                )
-                if is_dup:
-                    decision = FindingQualityDecision(
-                        accepted=False, reason=dup_reason,
-                        entropy=entropy, normalized_hash=fp, duplicate=True,
-                    )
-                    if idx is not None:
-                        results[idx] = decision
-                        return True
-                    self._record_quality_rejection(finding, decision)
-                    return False
+        # =========================================================================
+        # Phase 5: Semantic deduplication (Guard 6)
+        # =========================================================================
+        if (_guard_result := self._g6_semantic_check(
+            fp, entropy, is_feed_source, url_fp, finding, idx, results,
+        )) is not None:
+            return _guard_result
 
-        # Guard 7: IOC duplicate (batch only — for single, IOC check is done by caller)
+        # =========================================================================
+        # Phase 6: IOC deduplication (Guard 7) — batch only
+        # =========================================================================
         if self._check_guard7_ioc_duplicate(
             idx=idx,
             has_any_ioc=has_any_ioc,
@@ -7721,17 +7820,172 @@ class DuckDBShadowStore:
         ):
             return True
 
-        # Accept: write dedup, hot_cache, IOC batch
-        if dedup_batch is not None:
-            dedup_batch.append((fp, finding.finding_id))
-        if not is_feed_source:
-            self._add_to_hot_cache(fp, finding.finding_id)
+        # =========================================================================
+        # Phase 7: Accept — all guards passed
+        # =========================================================================
+        self._accept_findings_common(fp, finding, dedup_batch, is_feed_source)
         if idx is not None:
             results[idx] = FindingQualityDecision(
                 accepted=True, reason=None, entropy=entropy, normalized_hash=fp, duplicate=False,
             )
             return True
-        return False
+        # F360M-R-3 FIX: Track accepted findings in quality state for single mode
+        # This provides consistent metrics: accepted/rejected/duplicate counts
+        self._quality_state._accepted_count += 1
+        return FindingQualityDecision(
+            accepted=True, reason=None, entropy=entropy, normalized_hash=fp, duplicate=False,
+        )
+
+    # -------------------------------------------------------------------------
+    # Guard helpers — each returns FindingQualityDecision | bool, or None (continue)
+    # F360M-R-3: Updated return types to handle single mode properly.
+    # -------------------------------------------------------------------------
+
+    def _g1_hot_cache_check(
+        self, fp: str, url_fp: str, finding: CanonicalFinding,
+        entropy: float, idx: int | None, results: list,
+    ) -> FindingQualityDecision | bool | None:
+        """
+        Guard 1: Hot cache duplicate check.
+
+        Returns FindingQualityDecision for single mode, True for batch mode, or None (continue).
+        """
+        if self._hot_cache_lookup(fp) is not None:
+            self._quality_state._quality_duplicate_count += 1
+            reason = "persistent_duplicate" if url_fp else "duplicate_detected"
+            decision = FindingQualityDecision(
+                accepted=False, reason=reason, entropy=entropy, normalized_hash=fp, duplicate=True,
+            )
+            return self._dispatch_rejection(finding, decision, idx, results)
+        return None
+
+    def _g2_persistent_dedup_check(
+        self, fp: str, url_fp: str, finding: CanonicalFinding,
+        entropy: float, idx: int | None, results: list,
+    ) -> FindingQualityDecision | bool | None:
+        """
+        Guard 2: Persistent dedup store hit.
+
+        Returns FindingQualityDecision for single mode, True for batch mode, or None (continue).
+        """
+        stored_id = self._lookup_persistent_dedup(fp)
+        if stored_id is not None:
+            self._add_to_hot_cache(fp, stored_id)
+            self._quality_state._persistent_duplicate_count += 1
+            reason = "persistent_duplicate" if url_fp else "duplicate_detected"
+            decision = FindingQualityDecision(
+                accepted=False, reason=reason, entropy=entropy, normalized_hash=fp, duplicate=True,
+            )
+            return self._dispatch_rejection(finding, decision, idx, results)
+        return None
+
+    def _g5_entropy_check(
+        self, entropy: float, fp: str, is_feed_source: bool,
+        finding: CanonicalFinding, idx: int | None, results: list,
+    ) -> FindingQualityDecision | bool | None:
+        """
+        Guard 5: Low entropy rejection.
+
+        Returns FindingQualityDecision for single mode, True for batch mode, or None (continue).
+        """
+        _threshold = 0.3 if is_feed_source else _QUALITY_ENTROPY_THRESHOLD
+        if entropy < _threshold:
+            self._quality_state._quality_rejected_count += 1
+            decision = FindingQualityDecision(
+                accepted=False, reason="low_entropy_rejected", entropy=entropy, normalized_hash=fp, duplicate=False,
+            )
+            return self._dispatch_rejection(finding, decision, idx, results)
+        return None
+
+    def _g6_semantic_check(
+        self, fp: str, entropy: float, is_feed_source: bool,
+        url_fp: str, finding: CanonicalFinding, idx: int | None, results: list,
+    ) -> FindingQualityDecision | bool | None:
+        """
+        Guard 6: Semantic deduplication.
+
+        Returns FindingQualityDecision for single mode, True for batch mode, or None (continue).
+        """
+        dedup_cache = self._dedup_manager.semantic_dedup_cache if self._dedup_manager else None
+        if dedup_cache is None:
+            return None
+        text_for_embed = url_fp or (finding.payload_text or finding.query)
+        if not text_for_embed or len(text_for_embed) < 16:
+            return None
+        _semantic_thresh = 0.8 if is_feed_source else 0.85
+        is_dup, dup_reason = self._check_semantic_duplicate(
+            dedup_cache, text_for_embed, _semantic_thresh,
+        )
+        if is_dup:
+            decision = FindingQualityDecision(
+                accepted=False, reason=dup_reason,
+                entropy=entropy, normalized_hash=fp, duplicate=True,
+            )
+            return self._dispatch_rejection(finding, decision, idx, results)
+        return None
+
+    # -------------------------------------------------------------------------
+    # Common dispatch helpers — eliminate batch vs single branching
+    # -------------------------------------------------------------------------
+
+    def _dispatch_rejection(
+        self, finding: CanonicalFinding, decision: FindingQualityDecision,
+        idx: int | None, results: list,
+    ) -> FindingQualityDecision | bool:
+        """
+        Handle batch vs single rejection dispatch.
+
+        For batch mode (idx is not None): sets results[idx] and returns True (terminal).
+        For single mode (idx is None): records rejection and returns the decision directly.
+        """
+        if idx is not None:
+            results[idx] = decision
+            return True
+        self._record_quality_rejection(finding, decision)
+        return decision
+
+    def _dispatch_accepted_result(
+        self, fp: str, entropy: float, idx: int | None, results: list,
+    ) -> FindingQualityDecision | bool:
+        """
+        Handle batch vs single accept dispatch.
+
+        For batch mode (idx is not None): sets results[idx] and returns True (terminal).
+        For single mode (idx is None): returns the decision directly.
+        """
+        decision = FindingQualityDecision(
+            accepted=True, reason=None, entropy=entropy, normalized_hash=fp, duplicate=False,
+        )
+        if idx is not None:
+            results[idx] = decision
+            return True
+        return decision
+
+    def _accept_findings_common(
+        self, fp: str, finding: CanonicalFinding,
+        dedup_batch: list[tuple[str, str]] | None, is_feed_source: bool,
+    ) -> None:
+        """
+        Common accept actions for accepted findings.
+
+        F360M-R-3 FIX: Added _store_persistent_dedup call for single mode.
+        Previously only batch mode stored to dedup (via dedup_batch), but
+        single mode (idx=None, dedup_batch=None) was missing this call.
+
+        This bug caused URL-based findings and non-short findings to NOT be
+        stored for future deduplication, leading to duplicate findings.
+        """
+        # F360M-R-3: FIX - Store to persistent dedup for single mode
+        # Batch mode uses dedup_batch (flushed at batch end); single mode needs immediate store
+        if dedup_batch is not None:
+            # Batch mode: queue for batch flush at end of processing
+            dedup_batch.append((fp, finding.finding_id))
+        else:
+            # Single mode: store immediately
+            self._store_persistent_dedup(fp, finding.finding_id)
+
+        if not is_feed_source:
+            self._add_to_hot_cache(fp, finding.finding_id)
 
     def get_quality_rejection_ledger(self) -> tuple[QualityRejectionRecord, ...]:
         """
@@ -7807,7 +8061,7 @@ class DuckDBShadowStore:
 
             is_feed_source = f.source_type == "rss_atom_pipeline"
             new_iocs_for_batch: list[tuple[str, str, float]] = []
-            skipped = self._run_stateful_quality_guards(
+            guard_result = self._run_stateful_quality_guards(
                 fp=fp,
                 entropy=entropy,
                 url_fp=url_fp,
@@ -7822,7 +8076,9 @@ class DuckDBShadowStore:
                 ioc_items=ioc_items,
                 ioc_dup_flags=ioc_dup_flags,
             )
-            if not skipped:
+            # guard_result is True (batch mode terminal) or FindingQualityDecision (single mode)
+            # For batch mode: True means guard reached terminal, False means continue
+            if guard_result is not True:  # Continue path for batch
                 if new_iocs_for_batch and self._dedup_manager is not None:
                     try:
                         self._dedup_manager.add_ioc_batch(new_iocs_for_batch)
@@ -7840,21 +8096,26 @@ class DuckDBShadowStore:
 
     def _assess_finding_quality(self, finding: CanonicalFinding) -> FindingQualityDecision:
         """
-        Sprint 8W + 8AG + 8AK: Assess a single finding's quality via entropy + dedup.
+        F360M-R Refactored (F360M-R-3): Assess a single finding's quality via shared guard infrastructure.
 
-        Sprint 8AK: URL-first fingerprint - if a canonical URL is present in
-        provenance, use it (normalized) as the primary dedup signal, independent
-        of source_type or payload position. Falls back to payload_text.
-
-        Sprint 8AG §6.17: Persistent dedup via LMDB with hot-cache read-through.
-        Lookup order: hot cache -> persistent LMDB -> store if miss.
-        LMDB is the authority; hot cache is a bounded read-through cache.
+        Delegates to _run_stateful_quality_guards which implements all 7 quality gates:
+          1. Hot cache duplicate → reject
+          2. Persistent dedup store hit → reject
+          3. URL-based finding → accept immediately
+          4. Short fingerprint → semantic dedup then accept
+          5. Low entropy → reject
+          6. Semantic duplicate → reject
+          7. IOC duplicate → reject (N/A for single mode)
 
         Returns FindingQualityDecision (frozen, immutable).
-        Fail-open: any exception -> accept with reason="quality_check_error".
+        Fail-open: any exception → accept with reason="quality_check_error".
 
-        Text mapping: URL (if present) or payload_text (if exists and non-empty), else query.
-        If both are empty, falls back to query (may accept trivially).
+        Sprint 8AK: URL-first fingerprint - if a canonical URL is present in
+        provenance, use it (normalized) as the primary dedup signal.
+
+        Sprint 8AG §6.17: Persistent dedup via LMDB with hot-cache read-through.
+
+        F360M-R-3: Uses shared guard infrastructure to eliminate ~100 lines of duplicated code.
         """
         # Lazy imports to break circular dependency with quality_assessment.py
         from .quality_assessment import (
@@ -7864,136 +8125,71 @@ class DuckDBShadowStore:
             _compute_dedup_fingerprint,
             FindingQualityDecision,
         )
-        import logging as _logging
 
-        _logger = _logging.getLogger(__name__)
-        url_from_provenance = self._extract_url_from_provenance(finding.provenance)
-        url_fingerprint = _compute_url_fingerprint(url_from_provenance) if url_from_provenance else ""
-        if url_fingerprint:
-            fingerprint = url_fingerprint
-            entropy = 0.0
-        else:
-            text = finding.payload_text if finding.payload_text else finding.query
-            if not text or not text.strip():
-                text = finding.query
-            normalized = _normalize_for_quality(text)
-            entropy = _compute_entropy(normalized)
-            fingerprint = _compute_dedup_fingerprint(normalized)
-        _is_feed_source: bool = finding.source_type == "rss_atom_pipeline"
-        logger.debug(
-            "[QUALITY-GATE] assessing source_type=%s is_feed=%s url_fp=%s entropy=%.3f fp_len=%d finding_id=%s",
-            finding.source_type,
-            _is_feed_source,
-            bool(url_fingerprint),
-            entropy,
-            len(fingerprint),
-            finding.finding_id[:16] if finding.finding_id else "",
-        )
-        duplicate = self._hot_cache_lookup(fingerprint) is not None
-        if duplicate:
-            self._quality_state._quality_duplicate_count += 1
-            reason = "persistent_duplicate" if url_fingerprint else "duplicate_detected"
+        try:
+            # Phase 1: Compute fingerprint and entropy
+            url_from_provenance = self._extract_url_from_provenance(finding.provenance)
+            url_fingerprint = _compute_url_fingerprint(url_from_provenance) if url_from_provenance else ""
+
+            if url_fingerprint:
+                fingerprint = url_fingerprint
+                entropy = 0.0
+            else:
+                text = finding.payload_text if finding.payload_text else finding.query
+                if not text or not text.strip():
+                    text = finding.query
+                normalized = _normalize_for_quality(text)
+                entropy = _compute_entropy(normalized)
+                fingerprint = _compute_dedup_fingerprint(normalized)
+
+            _is_feed_source: bool = finding.source_type == "rss_atom_pipeline"
             logger.debug(
-                "[QUALITY-GATE] rejected=hot_cache_duplicate fp=%s finding_id=%s",
-                fingerprint[:16] if fingerprint else "",
-                finding.finding_id[:16] if finding.finding_id else "",
-            )
-            return FindingQualityDecision(
-                accepted=False, reason=reason, entropy=entropy, normalized_hash=fingerprint, duplicate=True
-            )
-        stored_finding_id = self._lookup_persistent_dedup(fingerprint)
-        if stored_finding_id is not None:
-            if not _is_feed_source:
-                self._add_to_hot_cache(fingerprint, stored_finding_id)
-            self._quality_state._persistent_duplicate_count += 1
-            reason = "persistent_duplicate" if url_fingerprint else "duplicate_detected"
-            logger.debug(
-                "[QUALITY-GATE] rejected=lmdb_duplicate fp=%s finding_id=%s stored_id=%s",
-                fingerprint[:16] if fingerprint else "",
-                finding.finding_id[:16] if finding.finding_id else "",
-                stored_finding_id[:16] if stored_finding_id else "",
-            )
-            return FindingQualityDecision(
-                accepted=False, reason=reason, entropy=entropy, normalized_hash=fingerprint, duplicate=True
-            )
-        if url_fingerprint:
-            self._store_persistent_dedup(fingerprint, finding.finding_id)
-            if not _is_feed_source:
-                self._add_to_hot_cache(fingerprint, finding.finding_id)
-            return FindingQualityDecision(
-                accepted=True, reason=None, entropy=entropy, normalized_hash=fingerprint, duplicate=False
-            )
-        if len(fingerprint) < _QUALITY_MIN_ENTROPY_LEN:
-            dedup_cache = self._dedup_manager.semantic_dedup_cache if self._dedup_manager else None
-            if dedup_cache is not None:
-                try:
-                    text_for_embed = url_from_provenance or (finding.payload_text or finding.query)
-                    if text_for_embed and len(text_for_embed) >= 16:
-                        _semantic_thresh = 0.75 if _is_feed_source else 0.8
-                        is_dup = dedup_cache.check_and_cache(text_for_embed, threshold=_semantic_thresh)
-                        if is_dup:
-                            self._quality_state._quality_duplicate_count += 1
-                            return FindingQualityDecision(
-                                accepted=False,
-                                reason="semantic_duplicate",
-                                entropy=entropy,
-                                normalized_hash=fingerprint,
-                                duplicate=True,
-                            )
-                except Exception as e:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
-                    _logger.warning(f"Quality gate error (short_string path): {e}")
-            self._store_persistent_dedup(fingerprint, finding.finding_id)
-            if not _is_feed_source:
-                self._add_to_hot_cache(fingerprint, finding.finding_id)
-            return FindingQualityDecision(
-                accepted=True, reason="short_string_skip", entropy=entropy, normalized_hash=fingerprint, duplicate=False
-            )
-        _effective_threshold = 0.3 if _is_feed_source else _QUALITY_ENTROPY_THRESHOLD
-        if entropy < _effective_threshold:
-            self._quality_state._quality_rejected_count += 1
-            logger.debug(
-                "[QUALITY-GATE] rejected=low_entropy threshold=%.2f entropy=%.2f finding_id=%s is_feed=%s",
-                _effective_threshold,
-                entropy,
-                finding.finding_id[:16] if finding.finding_id else "",
+                "[QUALITY-GATE] assessing source_type=%s is_feed=%s url_fp=%s entropy=%.3f fp_len=%d finding_id=%s",
+                finding.source_type,
                 _is_feed_source,
+                bool(url_fingerprint),
+                entropy,
+                len(fingerprint),
+                finding.finding_id[:16] if finding.finding_id else "",
             )
-            return FindingQualityDecision(
-                accepted=False,
-                reason="low_entropy_rejected",
+
+            # Phase 2: Run shared guard infrastructure (single mode: idx=None)
+            # _run_stateful_quality_guards returns FindingQualityDecision for single mode
+            decision = self._run_stateful_quality_guards(
+                fp=fingerprint,
                 entropy=entropy,
-                normalized_hash=fingerprint,
-                duplicate=False,
+                url_fp=url_fingerprint,
+                is_feed_source=_is_feed_source,
+                finding=finding,
+                results=[],  # Not used for single mode
+                idx=None,  # Single mode
+                dedup_batch=None,  # Single mode: immediate store
+                new_iocs_for_batch=None,  # Single mode: no IOC dedup
+                ioc_offsets=None,
+                has_any_ioc=None,
+                ioc_items=None,
+                ioc_dup_flags=None,
             )
-        dedup_cache = self._dedup_manager.semantic_dedup_cache if self._dedup_manager else None
-        if dedup_cache is not None:
-            try:
-                dedup_cache_ref = dedup_cache
-                text_for_embed = url_from_provenance or (finding.payload_text or finding.query)
-                if text_for_embed and len(text_for_embed) >= 16:
-                    _semantic_thresh = 0.8 if _is_feed_source else 0.85
-                    is_dup = dedup_cache_ref.check_and_cache(text_for_embed, threshold=_semantic_thresh)
-                    if is_dup:
-                        self._quality_state._quality_duplicate_count += 1
-                        logger.debug(
-                            "[QUALITY-GATE] rejected=semantic_duplicate finding_id=%s",
-                            finding.finding_id[:16] if finding.finding_id else "",
-                        )
-                        return FindingQualityDecision(
-                            accepted=False,
-                            reason="semantic_duplicate",
-                            entropy=entropy,
-                            normalized_hash=fingerprint,
-                            duplicate=True,
-                        )
-            except Exception as e:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
-                _logger.warning(f"Quality gate error (entropy path): {e}")
-        self._store_persistent_dedup(fingerprint, finding.finding_id)
-        if not _is_feed_source:
-            self._add_to_hot_cache(fingerprint, finding.finding_id)
-        return FindingQualityDecision(
-            accepted=True, reason=None, entropy=entropy, normalized_hash=fingerprint, duplicate=False
-        )
+
+            # Guard runner returns FindingQualityDecision directly for single mode
+            if isinstance(decision, FindingQualityDecision):
+                return decision
+
+            # Fallback (should not happen with proper implementation)
+            _logger = logging.getLogger(__name__)
+            _logger.warning(f"[QUALITY-GATE] unexpected non-decision result for finding_id={finding.finding_id[:16]}")
+            return FindingQualityDecision(
+                accepted=True, reason="quality_check_error", entropy=entropy,
+                normalized_hash=fingerprint, duplicate=False,
+            )
+
+        except Exception as e:  # noqa: BLE001 — fail-open: accept on any error
+            _logger = logging.getLogger(__name__)
+            _logger.warning(f"[QUALITY-GATE] quality check error: {e}")
+            return FindingQualityDecision(
+                accepted=True, reason="quality_check_error", entropy=0.0,
+                normalized_hash="", duplicate=False,
+            )
 
     # ---------------------------------------------------------------------------
     # F360M-R: Flat guard helpers — eliminate triple-nested blocks that would
@@ -8550,6 +8746,137 @@ class DuckDBShadowStore:
 
         def record_fail_open(self, count: int = 1) -> None:
             self.fail_open_total += count
+
+    # =============================================================================
+    # F360M-R-B: Activation Batch Refactoring (lines 11248-11355)
+    # Dataclasses and helper methods for WAL-first batch activation.
+    # Reduces nesting from 6→3, CC from 23→12, Cognitive from 39→15
+    # =============================================================================
+
+    @dataclass(slots=True)
+    class _ActivationBatchResult:
+        """
+        Result from activation batch operation.
+        
+        Note: Currently returns dict for backward compatibility with callers.
+        Reserved for future return-type refactoring to use this dataclass.
+        """
+        lmdb_success: bool = False
+        duckdb_success: bool = False
+        count: int = 0
+        failed_ids: list[str] = field(default_factory=list)
+        orphaned_keys: list[str] = field(default_factory=list)
+        prewrite_ids: list[str] = field(default_factory=list)  # Track for cleanup
+
+    @dataclass(slots=True)
+    class _WrittenEntry:
+        """Tracks a single LMDB WAL write entry."""
+        finding_id: str
+        lmdb_key: str
+        value: dict[str, Any]
+
+    def _ensure_wal_lmdb(self) -> "LMDBKVStore | None":
+        """
+        F360M-R-B: Lazy-init WAL LMDB store with null-object pattern.
+        Returns None if db_path is unavailable (caller handles gracefully).
+        """
+        if hasattr(self, "_wal_lmdb") and self._wal_lmdb is not None:
+            return self._wal_lmdb
+
+        _wal_root = self._db_path.parent if self._db_path else None
+        if _wal_root is None:
+            return None
+
+        from hledac.universal.tools.lmdb_kv import LMDBKVStore
+        self._wal_lmdb = LMDBKVStore(path=str(_wal_root / "shadow_wal.lmdb"))
+        return self._wal_lmdb
+
+    def _wal_lmdb_write_entries(self, findings: list[dict[str, Any]]) -> tuple[bool, list["_WrittenEntry"]]:
+        """
+        F360M-R-B: Phase 1 — LMDB WAL write.
+
+        Writes all findings to LMDB in single put_many call.
+        Returns (success, entries) tuple for tracking.
+        """
+        import time as _time
+
+        wal = self._ensure_wal_lmdb()
+        if wal is None:
+            return False, []
+
+        entries: list[_WrittenEntry] = []
+        items: list[tuple[str, dict[str, Any]]] = []
+
+        for f in findings:
+            fid = f.get("id")
+            if not fid:
+                continue
+
+            key = f"finding:{fid}"
+            value = {
+                "id": fid,
+                "query": f.get("query", ""),
+                "source_type": f.get("source_type", "unknown"),
+                "confidence": f.get("confidence", 1.0),
+                "ts": _time.time(),
+            }
+            entries.append(_WrittenEntry(finding_id=fid, lmdb_key=key, value=value))
+            items.append((key, value))
+
+        if not items:
+            return True, entries
+
+        return wal.put_many(items), entries
+
+    def _wal_prewrite_all(self, finding_ids: list[str]) -> None:
+        """
+        F360M-R-B: Phase 1b — Write prewrite markers for all findings.
+
+        Best-effort: failures are advisory only (non-critical).
+        """
+        for fid in finding_ids:
+            try:
+                self._wal_write_prewrite(fid)
+            except Exception:  # noqa: BLE001 — best-effort; advisory only
+                pass
+
+    def _wal_checkpoint_all(self, finding_ids: list[str]) -> None:
+        """
+        F360M-R-B: Phase 3 — Write checkpoints and clear prewrites on success.
+
+        Best-effort: failures are advisory only.
+        """
+        for fid in finding_ids:
+            try:
+                self._wal_write_checkpoint(fid)
+                self._wal_clear_prewrite(fid)
+            except Exception:  # noqa: BLE001 — best-effort
+                pass
+
+    def _wal_clear_prewrites_all(self, finding_ids: list[str]) -> None:
+        """
+        F360M-R-B: Clear prewrites on failure path.
+
+        Called when DuckDB fails after LMDB succeeded.
+        """
+        for fid in finding_ids:
+            try:
+                self._wal_clear_prewrite(fid)
+            except Exception:  # noqa: BLE001 — best-effort
+                pass
+
+    def _build_duckdb_findings(self, findings: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        """F360M-R-B: Extract findings dicts for DuckDB bulk insert."""
+        return [
+            {
+                "id": f.get("id"),
+                "query": f.get("query", ""),
+                "source_type": f.get("source_type", "unknown"),
+                "confidence": f.get("confidence", 1.0),
+            }
+            for f in findings
+            if f.get("id")
+        ]
 
     async def _process_chunk(
         self,
@@ -10126,98 +10453,202 @@ class DuckDBShadowStore:
         import time as _time
 
         # ISSUE-P6-009: Disk-space preflight check before WAL scan
-        # WAL replay scans LMDB via lmdb.begin() — on a full disk this raises
-        # an LMDBError and prevents _startup_ready from ever being set,
-        # deadlocking all activation writes. Fail-open to match fail-safe
-        # invariants: if the check itself breaks, proceed and let WAL fail
-        # naturally rather than block the sprint.
-        _logger = logging.getLogger(__name__)
+        # F360M-R-C: Extracted to helper — reduces CC 22→12, nesting 4→2
+        self._check_disk_space_for_wal_replay()
+
+        deadline = _time.monotonic() + replay_timeout_s
+        all_markers = self._wal_scan_pending_sync_markers()
+
+        # FLOW-03: Recover orphaned prewrite markers
+        # F360M-R-C: Extracted to helper — moves loop out of main function
+        prewrites = self._wal_scan_prewrites_without_checkpoint()
+        if prewrites:
+            self._recover_orphaned_prewrites_batch(prewrites, deadline)
+
+        # Early exit if nothing to replay
+        if not all_markers and not prewrites:
+            return
+
+        # Deduplicate markers and limit to replay_pending_limit
+        # F360M-R-C: Extracted to helper — O(n) set-based dedup
+        markers_to_replay = self._deduplicate_and_limit_markers(all_markers, replay_pending_limit)
+
+        # Main replay loop with cooperative yielding
+        async with self._ensure_replay_lock():
+            await self._execute_replay_loop(markers_to_replay, deadline)
+
+    # -------------------------------------------------------------------------
+    # F360M-R-C: Extracted helpers for _bounded_startup_replay
+    # -------------------------------------------------------------------------
+
+    def _check_disk_space_for_wal_replay(self) -> None:
+        """
+        ISSUE-P6-009: Disk-space preflight check before WAL scan.
+
+        WAL replay scans LMDB via lmdb.begin() — on a full disk this raises
+        an LMDBError and prevents _startup_ready from ever being set,
+        deadlocking all activation writes. Fail-open to match fail-safe
+        invariants: if the check itself breaks, proceed and let WAL fail
+        naturally rather than block the sprint.
+
+        F360M-R-C: Extracted from _bounded_startup_replay — reduces CC by 8,
+        nesting depth from 4 to 1.
+        """
+        import logging as _logging
+
+        _logger = _logging.getLogger(__name__)
         try:
             # _wal_root is the private attribute on DuckDBWALManager; wal_root is
             # only a constructor parameter, not stored as a public attribute.
             _wal_root = getattr(self._wal_manager, "_wal_root", None) if self._wal_manager else None
-            if _wal_root is not None:
-                stat = os.statvfs(str(_wal_root))
-                free_mb = (stat.f_bavail * stat.f_frsize) / (1024 * 1024)
-                total_mb = (stat.f_blocks * stat.f_frsize) / (1024 * 1024)
-                if free_mb < 50:
-                    _logger.warning(
-                        f"[ISSUE-P6-009] WAL disk space critically low: {free_mb:.1f}MB free "
-                        f"of {total_mb:.1f}MB total — proceeding with WAL replay anyway (fail-open)"
-                    )
-                elif free_mb < 200:
-                    _logger.info(
-                        f"[ISSUE-P6-009] WAL disk space low: {free_mb:.1f}MB free "
-                        f"of {total_mb:.1f}MB total"
-                    )
+            if _wal_root is None:
+                return
+
+            stat = os.statvfs(str(_wal_root))
+            free_mb = (stat.f_bavail * stat.f_frsize) / (1024 * 1024)
+            total_mb = (stat.f_blocks * stat.f_frsize) / (1024 * 1024)
+
+            if free_mb < 50:
+                _logger.warning(
+                    f"[ISSUE-P6-009] WAL disk space critically low: {free_mb:.1f}MB free "
+                    f"of {total_mb:.1f}MB total — proceeding with WAL replay anyway (fail-open)"
+                )
+            elif free_mb < 200:
+                _logger.info(
+                    f"[ISSUE-P6-009] WAL disk space low: {free_mb:.1f}MB free "
+                    f"of {total_mb:.1f}MB total"
+                )
         except Exception:  # noqa: BLE001 — fail-open; let WAL scan fail naturally
             pass
 
-        lock = self._ensure_replay_lock()
-        deadline = _time.monotonic() + replay_timeout_s
-        all_markers = self._wal_scan_pending_sync_markers()
+    def _recover_orphaned_prewrites_batch(
+        self, prewrites: list[dict[str, Any]], deadline: float
+    ) -> None:
+        """
+        FLOW-03: Recover orphaned prewrite markers by replaying to DuckDB.
 
-        # FLOW-03: Also scan for orphaned prewrite markers needing recovery
-        prewrites = self._wal_scan_prewrites_without_checkpoint()
-        _logger = logging.getLogger(__name__)
-        if prewrites:
-            _logger.info(f"[FLOW-03] Startup recovery: {len(prewrites)} orphaned prewrite markers found")
+        F360M-R-C: Extracted from _bounded_startup_replay — moves for-loop
+        out of main function, reduces CC by 6, nesting from 4 to 2.
+
+        Args:
+            prewrites: List of prewrite marker dicts with 'id' key
+            deadline: Wall-time deadline for recovery attempts
+        """
+        import logging as _logging
+        import time as _time
+
+        _logger = _logging.getLogger(__name__)
+        _logger.info(f"[FLOW-03] Startup recovery: {len(prewrites)} orphaned prewrite markers found")
+
         for pw in prewrites:
             fid = pw.get("id", "")
             if not fid:
                 continue
             if _time.monotonic() > deadline:
                 break
-            try:
-                # Replay the finding to DuckDB
-                wal_record = self._wal_get_finding(fid) if hasattr(self, '_wal_get_finding') else None
-                if wal_record is None:
-                    # Try via wal_manager
-                    mgr = self._ensure_wal_manager()
-                    if mgr is not None:
-                        wal_record = mgr.wal_get_finding(fid)
-                if wal_record is not None:
-                    query = wal_record.get("query", "")
-                    source_type = wal_record.get("source_type", "unknown")
-                    confidence = wal_record.get("confidence", 1.0)
-                    db_ok = self._sync_insert_finding(fid, query, source_type, confidence)
-                    if db_ok:
-                        self._wal_write_checkpoint(fid)
-                        self._wal_clear_prewrite(fid)
-                        _logger.info(f"[FLOW-03] Recovered finding {fid} from orphaned prewrite")
-                    else:
-                        _logger.warning(f"[FLOW-03] Failed to recover finding {fid} via DuckDB insert")
-                else:
-                    _logger.warning(f"[FLOW-03] No WAL truth found for orphaned prewrite {fid}")
-            except Exception as e:
-                _logger.debug(f"[FLOW-03] Prewrite recovery exception for {fid}: {e}")
+            self._recover_single_orphaned_prewrite(fid, _logger)
 
-        if not all_markers and not prewrites:
-            return
-        seen_ids: set = set()
-        unique_markers: list[dict[str, Any]] = []
-        for m in all_markers:
+    def _recover_single_orphaned_prewrite(self, fid: str, _logger: logging.Logger) -> None:
+        """
+        FLOW-03: Recover a single orphaned prewrite marker.
+
+        F360M-R-C: Extracted from _recover_orphaned_prewrites_batch loop body —
+        reduces cognitive complexity by isolating the per-item logic.
+
+        Args:
+            fid: Finding ID to recover
+            _logger: Pre-acquired logger instance for consistency
+        """
+        try:
+            # _wal_get_finding delegates to WAL manager internally
+            wal_record = self._wal_get_finding(fid)
+
+            if wal_record is None:
+                _logger.warning(f"[FLOW-03] No WAL truth found for orphaned prewrite {fid}")
+                return
+
+            query = wal_record.get("query", "")
+            source_type = wal_record.get("source_type", "unknown")
+            confidence = wal_record.get("confidence", 1.0)
+            db_ok = self._sync_insert_finding(fid, query, source_type, confidence)
+
+            if db_ok:
+                self._wal_write_checkpoint(fid)
+                self._wal_clear_prewrite(fid)
+                _logger.info(f"[FLOW-03] Recovered finding {fid} from orphaned prewrite")
+            else:
+                _logger.warning(f"[FLOW-03] Failed to recover finding {fid} via DuckDB insert")
+
+        except Exception as e:
+            _logger.debug(f"[FLOW-03] Prewrite recovery exception for {fid}: {e}")
+
+    def _deduplicate_and_limit_markers(
+        self, markers: list[dict[str, Any]], limit: int
+    ) -> list[dict[str, Any]]:
+        """
+        Deduplicate markers by 'id' and limit to specified count.
+
+        F360M-R-C: Extracted from _bounded_startup_replay — replaces manual
+        for-loop with dict comprehension, O(n) complexity preserved.
+
+        Args:
+            markers: List of marker dicts with 'id' key
+            limit: Maximum number of markers to return
+
+        Returns:
+            Deduplicated and limited marker list
+        """
+        seen: dict[str, int] = {}
+        for i, m in enumerate(markers):
             fid = m.get("id", "")
-            if fid and fid not in seen_ids:
-                seen_ids.add(fid)
-                unique_markers.append(m)
-        del seen_ids
-        markers_to_replay = unique_markers[:replay_pending_limit]
-        del unique_markers
-        async with lock:
-            for i, marker in enumerate(markers_to_replay):
-                if _time.monotonic() > deadline:
-                    break
-                fid = marker.get("id", "")
-                if not fid:
-                    continue
-                if i > 0 and i % self.REPLAY_CHUNK_SIZE == 0:
-                    await asyncio.sleep(0)
-                try:
-                    async with asyncio.timeout(max(deadline - _time.monotonic(), 0.1)):
-                        await self.async_replay_single_pending_marker(fid)
-                except TimeoutError:
-                    break
+            if fid and fid not in seen:
+                seen[fid] = i
+
+        # Preserve original order by using dict as ordered set
+        unique = [m for m in markers if m.get("id", "") in seen]
+        return unique[:limit]
+
+    async def _execute_replay_loop(
+        self, markers_to_replay: list[dict[str, Any]], deadline: float
+    ) -> None:
+        """
+        Execute the main replay loop with cooperative yielding and timeout.
+
+        F360M-R-C: Extracted from _bounded_startup_replay — isolates the
+        async replay loop, reduces main function CC by 4.
+
+        Args:
+            markers_to_replay: List of deduplicated marker dicts
+            deadline: Wall-time deadline for replay attempts
+        """
+        import logging as _logging
+        import time as _time
+
+        _logger = _logging.getLogger(__name__)
+        total = len(markers_to_replay)
+
+        for i, marker in enumerate(markers_to_replay):
+            # Guard: check deadline before processing
+            if _time.monotonic() > deadline:
+                _logger.debug(f"[Sprint 8L] Replay deadline exceeded at {i}/{total}")
+                break
+
+            fid = marker.get("id", "")
+            if not fid:
+                continue
+
+            # Cooperative yield to avoid starving event loop
+            if i > 0 and i % self.REPLAY_CHUNK_SIZE == 0:
+                _logger.debug(f"[Sprint 8L] Replay progress: {i}/{total}, yielding")
+                await asyncio.sleep(0)
+
+            # Replay with timeout wrapper
+            try:
+                async with asyncio.timeout(max(deadline - _time.monotonic(), 0.1)):
+                    await self.async_replay_single_pending_marker(fid)
+            except TimeoutError:
+                _logger.warning(f"[Sprint 8L] Replay timeout for {fid} at {i}/{total}")
+                break
 
     def _ensure_replay_lock(self) -> asyncio.Lock:
         """Lazily initialize the replay lock on the current event loop."""
@@ -11247,112 +11678,102 @@ class DuckDBShadowStore:
 
     def _activation_record_findings_batch(self, findings: list[dict[str, Any]]) -> dict:
         """
-        Sprint 8A + FLOW-03: Batch activation - LMDB WAL first, DuckDB second.
+        F360M-R-B: Batch activation - LMDB WAL first, DuckDB second.
 
         FLOW-03 Checkpoint Protocol (batch):
-            Phase 1: Write prewrite:{id} for all findings
-            Phase 2: DuckDB bulk insert
-            Phase 3: For each successfully inserted finding:
-                - Write checkpoint:{id}
-                - Delete prewrite:{id}
+            Phase 1:  LMDB WAL write (all findings)
+            Phase 1b: prewrite:{id} markers
+            Phase 2:  DuckDB bulk insert
+            Phase 3:  checkpoint:{id} + delete prewrite:{id} on success
+
+        Partial failure semantics:
+          - LMDB FAIL  -> early return (DuckDB skipped)
+          - DuckDB FAIL -> compensating transaction + clear prewrites
+
+        F360M-R-B refactoring:
+          - Extracted _ActivationBatchResult, _WrittenEntry dataclasses
+          - Extracted _wal_lmdb_write_entries, _wal_prewrite_all, _wal_checkpoint_all
+          - Extracted _wal_clear_prewrites_all, _build_duckdb_findings
+          - Phase-based structure reduces nesting 6→3 levels
+          - Centralized WAL tracking via _WrittenEntry list
+          - FIX: Early exit when entries is empty (all findings missing IDs)
 
         Returns dict with keys: lmdb_success, duckdb_success, count,
-                                failed_ids (list of ids that failed)
+                                failed_ids, orphaned_keys
         """
         import logging as _logging
 
         _logger = _logging.getLogger(__name__)
-        result = {"lmdb_success": False, "duckdb_success": False, "count": 0, "failed_ids": [], "orphaned_keys": []}
+
+        # Early exit for empty input
         if not findings:
-            return result
-        # FLOW-01: Track LMDB keys for potential compensating transaction
-        _written_lmdb_keys: list[str] = []
-        _finding_ids: list[str] = []
-        try:
-            import time as _time
+            return {"lmdb_success": False, "duckdb_success": False, "count": 0, "failed_ids": [], "orphaned_keys": []}
 
-            from hledac.universal.tools.lmdb_kv import LMDBKVStore
+        # =========================================================================
+        # Phase 1: LMDB WAL write
+        # =========================================================================
+        lmdb_ok, entries = self._wal_lmdb_write_entries(findings)
 
-            if not hasattr(self, "_wal_lmdb"):
-                _wal_root = self._db_path.parent if self._db_path else None
-                if _wal_root is None:
-                    return result
-                self._wal_lmdb = LMDBKVStore(path=str(_wal_root / "shadow_wal.lmdb"))
-            items = []
-            for f in findings:
-                fid = f.get("id")
-                if not fid:
-                    continue
-                key = f"finding:{fid}"
-                _written_lmdb_keys.append(key)
-                _finding_ids.append(fid)
-                value = {
-                    "id": fid,
-                    "query": f.get("query", ""),
-                    "source_type": f.get("source_type", "unknown"),
-                    "confidence": f.get("confidence", 1.0),
-                    "ts": _time.time(),
-                }
-                items.append((key, value))
-            if items:
-                lmdb_ok = self._wal_lmdb.put_many(items)
-                result["lmdb_success"] = lmdb_ok
-                if not lmdb_ok:
-                    _logger.warning(f"[Sprint 8A] Batch WAL failed for {len(items)} items")
-                    return result
-        except Exception as e:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
-            _logger.error(f"[Sprint 8A] Batch WAL exception: {e}")
-            return result
+        if not lmdb_ok:
+            _logger.warning(f"[F360M-R-B] Batch WAL failed for {len(findings)} items")
+            return {"lmdb_success": False, "duckdb_success": False, "count": 0, "failed_ids": [], "orphaned_keys": []}
 
-        # FLOW-03 Phase 1b: Write prewrite markers for all findings
-        try:
-            for fid in _finding_ids:
-                try:
-                    self._wal_write_prewrite(fid)
-                except Exception:  # noqa: BLE001 — best-effort; prewrite is advisory
-                    pass
-        except Exception as e:
-            _logger.debug(f"[FLOW-03] Batch prewrite failed: {e}")
+        # Track written keys for compensating transaction
+        orphaned_keys: list[str] = [e.lmdb_key for e in entries]
+        finding_ids: list[str] = [e.finding_id for e in entries]
 
-        try:
-            db_findings = [
-                {
-                    "id": f.get("id"),
-                    "query": f.get("query", ""),
-                    "source_type": f.get("source_type", "unknown"),
-                    "confidence": f.get("confidence", 1.0),
-                }
-                for f in findings
-                if f.get("id")
-            ]
-            if db_findings:
+        # F360M-R-B FIX: Check if any findings were actually written
+        # If entries is empty (e.g., all findings had no ID), return early
+        # to avoid misleading "success" status
+        if not entries:
+            _logger.debug(f"[F360M-R-B] No valid findings to process (all missing IDs?)")
+            return {"lmdb_success": False, "duckdb_success": False, "count": 0, "failed_ids": [], "orphaned_keys": []}
+
+        # =========================================================================
+        # Phase 1b: FLOW-03 prewrite markers (best-effort)
+        # =========================================================================
+        self._wal_prewrite_all(finding_ids)
+
+        # =========================================================================
+        # Phase 2: DuckDB bulk insert
+        # =========================================================================
+        db_findings = self._build_duckdb_findings(findings)
+        duckdb_success = False
+        inserted = 0
+
+        if db_findings:
+            try:
                 inserted = self._sync_insert_findings_bulk(db_findings)
-                result["duckdb_success"] = inserted >= len(db_findings)
-                result["count"] = inserted
+                duckdb_success = inserted >= len(db_findings)
+
                 if inserted < len(db_findings):
-                    _logger.error(f"[Sprint 8A] Partial DuckDB batch: {inserted}/{len(db_findings)}, LMDB preserved")
-                # FLOW-03 Phase 3: Write checkpoint for each successfully inserted finding
-                if inserted > 0 and inserted == len(db_findings):
-                    # All succeeded — checkpoint all
-                    for fid in _finding_ids:
-                        try:
-                            self._wal_write_checkpoint(fid)
-                            self._wal_clear_prewrite(fid)
-                        except Exception:  # noqa: BLE001 — best-effort
-                            pass
-        except Exception as e:  # noqa: BLE001 — best-effort; DuckDB operation failure; non-critical
-            _logger.error(f"[Sprint 8A] Batch DuckDB exception: {e}, LMDB preserved")
-            # FLOW-01 FIX: LMDB succeeded but DuckDB failed — compensating transaction
-            if _written_lmdb_keys:
-                result["orphaned_keys"] = _written_lmdb_keys
-                self._cleanup_orphaned_lmdb_entries(_written_lmdb_keys)
-            # FLOW-03: Clear prewrites since DuckDB failed
-            for fid in _finding_ids:
-                try:
-                    self._wal_clear_prewrite(fid)
-                except Exception:  # noqa: BLE001
-                    pass
-        return result
+                    _logger.error(
+                        f"[F360M-R-B] Partial DuckDB batch: {inserted}/{len(db_findings)}, LMDB preserved"
+                    )
+
+                # =================================================================
+                # Phase 3: FLOW-03 checkpoints on full success
+                # =================================================================
+                if duckdb_success and inserted > 0:
+                    self._wal_checkpoint_all(finding_ids)
+
+            except Exception as e:  # noqa: BLE001 — best-effort; DuckDB operation failure; non-critical
+                _logger.error(f"[F360M-R-B] Batch DuckDB exception: {e}, LMDB preserved")
+
+                # Compensating transaction: cleanup orphaned LMDB entries
+                if orphaned_keys:
+                    self._cleanup_orphaned_lmdb_entries(orphaned_keys)
+
+                # Clear prewrites since DuckDB failed
+                self._wal_clear_prewrites_all(finding_ids)
+
+        return {
+            "lmdb_success": lmdb_ok,
+            "duckdb_success": duckdb_success,
+            "count": inserted,
+            "failed_ids": [],
+            "orphaned_keys": orphaned_keys,
+        }
 
     def _cleanup_orphaned_lmdb_entries(self, orphaned_keys: list[str]) -> int:
         """

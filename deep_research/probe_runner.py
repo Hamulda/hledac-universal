@@ -169,6 +169,38 @@ async def _handle_network_probe(scanner, domain, store, max_buckets, query, loca
         logger.warning(f'[DEEP_PROBE] Unexpected error: {e}')
         result['errors'].append(str(e))
 
+def _create_initial_result() -> dict:
+    """Create initial result dict."""
+    return {
+        'urls_discovered': 0, 'buckets_scanned': 0, 'ipfs_results': 0,
+        'dht_peers': 0, 'probe_duration_s': 0.0, 'probe_source_type': 'deep_probe',
+        'findings_ingested': 0, 'cache_hit': False, 'errors': []
+    }
+
+
+async def _try_init_scanner() -> Any:
+    """Try to initialize DeepProbeScanner."""
+    try:
+        from hledac.universal.deep_probe import DeepProbeScanner
+        return DeepProbeScanner(max_memory_mb=100)
+    except Exception:
+        logger.debug('[DEEP_PROBE] DeepProbeScanner init failed')
+        return None
+
+
+async def _execute_probe_path(
+    scanner: Any, query: str, store, max_buckets: int,
+    local_seam: Any, start_time: float, timeout_s: float, result: dict
+) -> dict:
+    """Execute the network probe path."""
+    domain = _extract_domain(query)
+    if not domain:
+        domain = query.strip().lower().replace(' ', '_')[:50]
+    all_findings: list[CanonicalFinding] = []
+    await _handle_network_probe(scanner, domain, store, max_buckets, query, local_seam, start_time, timeout_s, all_findings, result)
+    return result
+
+
 async def run_deep_probe(query: str, store, timeout_s: float=MAX_PROBE_DURATION_S, max_depth: int=MAX_CRAWL_DEPTH, max_buckets: int=MAX_BUCKET_SCAN) -> dict:
     """
     Run deep probe research as post-sprint bounded activity.
@@ -192,26 +224,11 @@ async def run_deep_probe(query: str, store, timeout_s: float=MAX_PROBE_DURATION_
       - Findings persisted ONLY via async_ingest_findings_batch()
       - DHT findings use source_type="dht_discovery" (NOT persisted — invariant_7)
     """
-    DeepProbeScanner: Any = None
-    scan_ipfs: Any = None
-    try:
-        from hledac.universal.deep_probe import DeepProbeScanner as _DS
-        from hledac.universal.deep_probe import scan_ipfs as _si
-        DeepProbeScanner = _DS
-        scan_ipfs = _si
-    except ImportError:
-        logger.debug('[DEEP_PROBE] deep_probe module not available')
     from hledac.universal.knowledge.search_index import LocalSearchSeam
     _ = max_depth
     start_time = time.monotonic()
-    result = {'urls_discovered': 0, 'buckets_scanned': 0, 'ipfs_results': 0, 'dht_peers': 0, 'probe_duration_s': 0.0, 'probe_source_type': 'deep_probe', 'findings_ingested': 0, 'cache_hit': False, 'errors': []}
-    all_findings: list[CanonicalFinding] = []
-    scanner: DeepProbeScanner | None = None
-    if DeepProbeScanner is not None:
-        try:
-            scanner = DeepProbeScanner(max_memory_mb=100)
-        except Exception:
-            logger.debug('[DEEP_PROBE] DeepProbeScanner init failed')
+    result = _create_initial_result()
+    scanner = await _try_init_scanner()
     local_seam = LocalSearchSeam()
 
     # Try cache lookup first
@@ -227,10 +244,9 @@ async def run_deep_probe(query: str, store, timeout_s: float=MAX_PROBE_DURATION_
         return await _handle_cache_hit(store, local_results, query, result, start_time)
 
     try:
-        domain = _extract_domain(query)
-        if not domain:
-            domain = query.strip().lower().replace(' ', '_')[:50]
-        await _handle_network_probe(scanner, domain, store, max_buckets, query, local_seam, start_time, timeout_s, all_findings, result)
+        result = await _execute_probe_path(
+            scanner, query, store, max_buckets, local_seam, start_time, timeout_s, result
+        )
     except Exception as e:
         logger.warning(f'[DEEP_PROBE] Unexpected error: {e}')
         result['errors'].append(str(e))

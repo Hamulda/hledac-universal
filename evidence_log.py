@@ -2390,22 +2390,32 @@ class EvidenceLog:
         except Exception:
             pass
 
+    def _compute_chain_hash(self, prev_hash: str | None, content_hash: str, event_id: str) -> str:
+        """Compute chain hash for an event."""
+        chain_input = f'{prev_hash}:{content_hash}:{event_id}'
+        return hashlib.sha256(chain_input.encode()).hexdigest()
+
+    def _update_chain_state(self, event: EvidenceEvent) -> None:
+        """Update event with chain state and update internal chain head."""
+        event.prev_chain_hash = self._chain_head
+        event.chain_hash = self._compute_chain_hash(
+            self._chain_head, event.content_hash, event.event_id
+        )
+        self._chain_head = event.chain_hash
+
     def append(self, event: EvidenceEvent) -> None:
         """Přidá událost do logu - M1 8GB optimized s ring bufferem."""
         self._validate_event(event)
         self._seq += 1
         event.seq_no = self._seq
-        event.prev_chain_hash = self._chain_head
-        chain_input = f'{self._chain_head}:{event.content_hash}:{event.event_id}'
-        event.chain_hash = hashlib.sha256(chain_input.encode()).hexdigest()
-        self._chain_head = event.chain_hash
+        self._update_chain_state(event)
         self._send_to_mpsc(event)
         if self._enable_persist:
             self._persist_event(event)
         event.payload = self._trim_payload_fast(event.payload)
         event.content_hash = event.calculate_hash()
-        event.chain_hash = hashlib.sha256(f'{event.prev_chain_hash}:{event.content_hash}:{event.event_id}'.encode()).hexdigest()
-        self._chain_head = event.chain_hash
+        # Update chain hash after content change
+        self._update_chain_state(event)
         self._update_indexes(event)
         self._record_analytics(event)
 

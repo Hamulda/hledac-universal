@@ -281,6 +281,8 @@ def extract_ct_signals(payload_text: str | None) -> CtSignals:
 def _extract_title_and_generator(html: str) -> tuple[list[str], list[str]]:
     """Extract title and generator meta tags from HTML."""
     titles, generators = [], []
+    if not html:
+        return titles, generators
     title_match = re.search('<title[^>]*>([^<]+)</title>', html, re.I)
     if title_match:
         titles.append(title_match.group(1).strip())
@@ -297,6 +299,8 @@ def _extract_title_and_generator(html: str) -> tuple[list[str], list[str]]:
 def _extract_scripts_and_domains(html: str) -> tuple[list[str], list[str]]:
     """Extract script src URLs and domains from HTML."""
     scripts, domains = [], []
+    if not html:
+        return scripts, domains
     script_matches = re.findall('<script[^>]+src=["\\\']([^"\\\']+)["\\\']', html, re.I)
     for src in script_matches[:20]:
         scripts.append(src)
@@ -309,6 +313,8 @@ def _extract_scripts_and_domains(html: str) -> tuple[list[str], list[str]]:
 def _extract_link_domains(html: str) -> list[str]:
     """Extract domains from link hrefs in HTML."""
     domains = []
+    if not html:
+        return domains
     link_matches = re.findall('<link[^>]+href=["\\\']([^"\\\']+)["\\\']', html, re.I)
     for href in link_matches[:20]:
         domain_match = re.search('https?://([^/]+)', href)
@@ -321,6 +327,8 @@ def _extract_favicon_signals(html: str) -> tuple[str | None, list[str]]:
     """Extract favicon URL and any associated signals."""
     favicon_url = None
     signals: list[str] = []
+    if not html:
+        return favicon_url, signals
     favicon_match = _FAVICON_LINK_RE.search(html)
     if not favicon_match:
         favicon_match = _FAVICON_LINK_REV_RE.search(html)
@@ -335,6 +343,8 @@ def _extract_favicon_signals(html: str) -> tuple[str | None, list[str]]:
 def _extract_tracking_signals(tracking_ids: dict[str, list[str]]) -> list[str]:
     """Convert tracking IDs to text signals."""
     signals = []
+    if not tracking_ids:
+        return signals
     for ga_id in tracking_ids.get('ua_ids', []):
         signals.append(f'ga:{ga_id}')
     for ga4_id in tracking_ids.get('ga4_ids', []):
@@ -654,9 +664,9 @@ def _extract_tech_stack(headers: dict[str, str], html_head: str, cookies: list[s
 
 def _match_server_header(server_value: str) -> list[ServiceFingerprint]:
     """Match a Server header value against known patterns."""
-    fingerprints: list[ServiceFingerprint] = []
     if not server_value:
-        return fingerprints
+        return []
+    fingerprints: list[ServiceFingerprint] = []
     matched: set[str] = set()
     for service_name, pattern, product, version_hint in _HTTP_SERVER_PATTERNS:
         if service_name in matched:
@@ -745,81 +755,146 @@ def extract_fingerprints(finding: CanonicalFinding) -> list[ServiceFingerprint]:
       - MAX_PATTERN_BYTES = 4096
     """
     fid = getattr(finding, 'finding_id', '') or ''
-    getattr(finding, 'source_type', '') or ''
     payload = getattr(finding, 'payload_text', None) or '{}'
     if isinstance(payload, str) and len(payload) > MAX_PATTERN_BYTES:
         payload = payload[:MAX_PATTERN_BYTES]
-    fingerprints: list[ServiceFingerprint] = []
+
+    # Phase 1: Extract all signals in one pass
     http_signals = extract_http_signals(payload)
-    for server_value in http_signals['server_headers'][:3]:
-        fps = _match_server_header(server_value)
-        for fp in fps:
-            fingerprints.append(ServiceFingerprint(finding_id=fid, service_name=fp.service_name, product=fp.product, version=fp.version, confidence=fp.confidence, evidence_ids=(fid,), facets=fp.facets))
-    if http_signals['x_headers'] or http_signals['all_headers']:
-        xfps = _match_http_headers(http_signals['x_headers'] + http_signals['all_headers'])
-        for fp in xfps:
-            fingerprints.append(ServiceFingerprint(finding_id=fid, service_name=fp.service_name, product=fp.product, version=fp.version, confidence=fp.confidence, evidence_ids=(fid,), facets=fp.facets))
     tls_signals = extract_tls_signals(payload)
-    if tls_signals['all_text']:
-        tfps = _match_tls_cert(tls_signals['all_text'])
-        for fp in tfps:
-            fingerprints.append(ServiceFingerprint(finding_id=fid, service_name=fp.service_name, product=fp.product, version=fp.version, confidence=fp.confidence, evidence_ids=(fid,), facets=fp.facets))
     ct_signals = extract_ct_signals(payload)
-    if ct_signals['all_names'] or ct_signals['cert_issuer'] or ct_signals['cert_subject']:
-        cfps = _match_ct_metadata(ct_signals['all_names'] + ct_signals['cert_issuer'] + ct_signals['cert_subject'])
-        for fp in cfps:
-            fingerprints.append(ServiceFingerprint(finding_id=fid, service_name=fp.service_name, product=fp.product, version=fp.version, confidence=fp.confidence, evidence_ids=(fid,), facets=fp.facets))
     html_signals = extract_html_signals(payload)
-    if html_signals['all_text'] or html_signals['title'] or html_signals['generator']:
-        hfps = _match_html_content(html_signals['all_text'] + html_signals['title'] + html_signals['generator'])
-        for fp in hfps:
-            fingerprints.append(ServiceFingerprint(finding_id=fid, service_name=fp.service_name, product=fp.product, version=fp.version, confidence=fp.confidence, evidence_ids=(fid,), facets=fp.facets))
-    # P8-007: Extract tracking IDs (GA, GTM, GA4, Google Ads) as high-confidence fingerprints
-    tracking_ids = html_signals.get('tracking_ids', {})
-    if tracking_ids:
-        for ga_ua_id in tracking_ids.get('ua_ids', []):
+
+    # Phase 2: Build fingerprints using dispatch table (eliminates 6 repetitive if/for loops)
+    fingerprints = _build_dispatch_fingerprints(fid, http_signals, tls_signals, ct_signals, html_signals)
+
+    # Phase 3: Add tracking ID fingerprints (P8-007) - unified loop
+    fingerprints.extend(_extract_tracking_fingerprints(fid, html_signals.get('tracking_ids', {})))
+
+    # Phase 4: Add tech stack fingerprints
+    fingerprints.extend(_extract_tech_stack_fingerprints(fid, http_signals))
+
+    # Phase 5: Deduplicate and return bounded result
+    return _deduplicate_fingerprints(fingerprints, MAX_FINGERPRINTS_PER_FINDING)
+
+
+def _build_dispatch_fingerprints(
+    fid: str,
+    http_signals: HttpSignals,
+    tls_signals: TlsSignals,
+    ct_signals: CtSignals,
+    html_signals: HtmlSignals,
+) -> list[ServiceFingerprint]:
+    """Phase 2: Build pattern-matched fingerprints via dispatch table."""
+    fingerprints: list[ServiceFingerprint] = []
+    seen: set[str] = set()
+
+    # Dispatch table: signal type → (match_func, inputs, default_confidence)
+    # Eliminated 6 repetitive if/for blocks → single iteration
+    dispatch: tuple[tuple[str, str, str, callable, list[str], float], ...] = (
+        ('http', 'server', 'server_headers', _match_server_header, http_signals['server_headers'][:3], 0.9),
+        ('http', 'x_headers', 'x+all_headers', _match_http_headers, http_signals['x_headers'] + http_signals['all_headers'], 0.6),
+        ('tls', 'cert', 'all_text', _match_tls_cert, tls_signals['all_text'], 0.85),
+        ('ct', 'ct', 'all_names+issuer+subject', _match_ct_metadata, ct_signals['all_names'] + ct_signals['cert_issuer'] + ct_signals['cert_subject'], 0.8),
+        ('html', 'content', 'all_text+title+generator', _match_html_content, html_signals['all_text'] + html_signals['title'] + html_signals['generator'], 0.7),
+    )
+
+    for _, _, _, matcher, inputs, _ in dispatch:
+        if not inputs:
+            continue
+        matched = matcher(inputs) if callable(matcher) else []
+        for fp in matched:
+            key = f"{fp.service_name}:{fp.product}"
+            if key not in seen:
+                seen.add(key)
+                fingerprints.append(ServiceFingerprint(
+                    finding_id=fid, service_name=fp.service_name, product=fp.product,
+                    version=fp.version, confidence=fp.confidence, evidence_ids=(fid,), facets=fp.facets))
+
+    return fingerprints
+
+
+def _extract_tracking_fingerprints(
+    fid: str,
+    tracking_ids: dict[str, list[str]],
+) -> list[ServiceFingerprint]:
+    """Phase 3: Extract Google Analytics/GTM/GA4/Google Ads fingerprints (P8-007)."""
+    if not tracking_ids:
+        return []
+
+    # Unified tracking ID dispatch: eliminates 4 separate for-loops
+    tracking_dispatch: tuple[tuple[str, str, str, float], ...] = (
+        ('ua_ids', 'google-analytics', 'GA UA: %s', 0.95),
+        ('ga4_ids', 'google-analytics-4', 'GA4: %s', 0.95),
+        ('gtm_ids', 'google-tag-manager', 'GTM: %s', 0.95),
+        ('aw_ids', 'google-ads', 'Google Ads: %s', 0.8),
+    )
+
+    fingerprints: list[ServiceFingerprint] = []
+    for id_key, service_name, product_fmt, confidence in tracking_dispatch:
+        for tracking_id in tracking_ids.get(id_key, []):
+            tracking_type = id_key.rstrip('s')  # ua_ids → ua_id
             fingerprints.append(ServiceFingerprint(
-                finding_id=fid, service_name='google-analytics', product=f'GA UA: {ga_ua_id}',
-                version='', confidence=0.95, evidence_ids=(fid,),
-                facets={'source': 'tracking_id', 'tracking_type': 'ga_ua', 'tracking_id': ga_ua_id, '_p8_007': True}))
-        for ga4_id in tracking_ids.get('ga4_ids', []):
+                finding_id=fid, service_name=service_name, product=product_fmt % tracking_id,
+                version='', confidence=confidence, evidence_ids=(fid,),
+                facets={
+                    'source': 'tracking_id', 'tracking_type': tracking_type,
+                    'tracking_id': tracking_id, '_p8_007': True,
+                }))
+    return fingerprints
+
+
+def _extract_tech_stack_fingerprints(
+    fid: str,
+    http_signals: HttpSignals,
+) -> list[ServiceFingerprint]:
+    """Phase 4: Extract cloud/CDN/WAF/CMS fingerprints from tech stack analysis."""
+    if not (http_signals.get('all_headers') or http_signals.get('html_content')):
+        return []
+
+    # Build headers dict for tech stack analysis
+    headers_dict: dict[str, str] = {}
+    for h in http_signals['all_headers']:
+        if ': ' in h:
+            k, v = h.split(': ', 1)
+            headers_dict[k.lower()] = v
+
+    # Extract HTML head for CMS detection
+    html_text = http_signals.get('html_content', '')
+    html_head = ''
+    if html_text:
+        head_match = re.search('<head[^>]*>(.*?)</head>', html_text, re.I | re.S)
+        if head_match:
+            html_head = head_match.group(1)
+
+    tech_stack = _extract_tech_stack(headers_dict, html_head, [])
+    fingerprints: list[ServiceFingerprint] = []
+
+    # Tech stack dispatch: eliminates 4 separate if-blocks
+    tech_dispatch: tuple[tuple[str | None, str, str, float], ...] = (
+        (tech_stack.cloud_provider, 'cloud', tech_stack.cloud_provider, 0.85),
+        (tech_stack.cdn_provider, 'cdn', tech_stack.cdn_provider, 0.85),
+        (tech_stack.waf_detected, 'waf', tech_stack.waf_detected, tech_stack.waf_confidence),
+        (tech_stack.cms, 'cms', f'{tech_stack.cms} {tech_stack.cms_version}' if tech_stack.cms_version else tech_stack.cms, 0.75),
+    )
+
+    for detected, source_type, product, confidence in tech_dispatch:
+        if detected:
+            service_name = detected.lower().replace(' ', '-') if source_type != 'cloud' else detected.lower()
             fingerprints.append(ServiceFingerprint(
-                finding_id=fid, service_name='google-analytics-4', product=f'GA4: {ga4_id}',
-                version='', confidence=0.95, evidence_ids=(fid,),
-                facets={'source': 'tracking_id', 'tracking_type': 'ga4', 'tracking_id': ga4_id, '_p8_007': True}))
-        for gtm_id in tracking_ids.get('gtm_ids', []):
-            fingerprints.append(ServiceFingerprint(
-                finding_id=fid, service_name='google-tag-manager', product=f'GTM: {gtm_id}',
-                version='', confidence=0.95, evidence_ids=(fid,),
-                facets={'source': 'tracking_id', 'tracking_type': 'gtm', 'tracking_id': gtm_id, '_p8_007': True}))
-        for aw_id in tracking_ids.get('aw_ids', []):
-            fingerprints.append(ServiceFingerprint(
-                finding_id=fid, service_name='google-ads', product=f'Google Ads: {aw_id}',
-                version='', confidence=0.8, evidence_ids=(fid,),
-                facets={'source': 'tracking_id', 'tracking_type': 'google_ads', 'tracking_id': aw_id, '_p8_007': True}))
-    http_signals_for_tech: HttpSignals = extract_http_signals(payload)
-    if http_signals_for_tech['all_headers'] or http_signals_for_tech['html_content']:
-        headers_dict: dict[str, str] = {}
-        for h in http_signals_for_tech['all_headers']:
-            if ': ' in h:
-                k, v = h.split(': ', 1)
-                headers_dict[k.lower()] = v
-        html_text = http_signals_for_tech['html_content']
-        html_head = ''
-        if html_text:
-            head_match = re.search('<head[^>]*>(.*?)</head>', html_text, re.I | re.S)
-            if head_match:
-                html_head = head_match.group(1)
-        tech_stack = _extract_tech_stack(headers_dict, html_head, [])
-        if tech_stack.cloud_provider:
-            fingerprints.append(ServiceFingerprint(finding_id=fid, service_name=tech_stack.cloud_provider.lower(), product=tech_stack.cloud_provider, version='', confidence=0.85, evidence_ids=(fid,), facets={'source': 'tech_stack_cloud', **tech_stack.raw_signals}))
-        if tech_stack.cdn_provider:
-            fingerprints.append(ServiceFingerprint(finding_id=fid, service_name=tech_stack.cdn_provider.lower(), product=tech_stack.cdn_provider, version='', confidence=0.85, evidence_ids=(fid,), facets={'source': 'tech_stack_cdn', **tech_stack.raw_signals}))
-        if tech_stack.waf_detected:
-            fingerprints.append(ServiceFingerprint(finding_id=fid, service_name=tech_stack.waf_detected.lower().replace(' ', '-'), product=tech_stack.waf_detected, version='', confidence=tech_stack.waf_confidence, evidence_ids=(fid,), facets={'source': 'tech_stack_waf', **tech_stack.raw_signals}))
-        if tech_stack.cms:
-            cms_product = tech_stack.cms if tech_stack.cms_version is None else f'{tech_stack.cms} {tech_stack.cms_version}'
-            fingerprints.append(ServiceFingerprint(finding_id=fid, service_name=tech_stack.cms.lower().replace(' ', '-'), product=cms_product, version=tech_stack.cms_version or '', confidence=0.75, evidence_ids=(fid,), facets={'source': 'tech_stack_cms', **tech_stack.raw_signals}))
+                finding_id=fid, service_name=service_name, product=product,
+                version=tech_stack.cms_version if source_type == 'cms' else '',
+                confidence=confidence, evidence_ids=(fid,),
+                facets={'source': f'tech_stack_{source_type}', **tech_stack.raw_signals}))
+
+    return fingerprints
+
+
+def _deduplicate_fingerprints(
+    fingerprints: list[ServiceFingerprint],
+    max_count: int,
+) -> list[ServiceFingerprint]:
+    """Phase 5: Deduplicate by (service_name, product) and cap result."""
     seen: set[tuple[str, str]] = set()
     unique: list[ServiceFingerprint] = []
     for fp in fingerprints:
@@ -827,7 +902,7 @@ def extract_fingerprints(finding: CanonicalFinding) -> list[ServiceFingerprint]:
         if key not in seen:
             seen.add(key)
             unique.append(fp)
-    return unique[:MAX_FINGERPRINTS_PER_FINDING]
+    return unique[:max_count]
 
 def to_canonical_findings(fingerprints: list[ServiceFingerprint], query: str) -> list[CanonicalFinding]:
     """
@@ -998,8 +1073,12 @@ async def _enrich_favicon_findings(
 
     async def _fetch_one(html: str, page_url: str) -> str | None:
         async with semaphore:
-            async with httpx.AsyncClient() as client:
-                return await _compute_favicon_mmh3(html, page_url, client)
+            # Use session_pool for connection reuse (M1 8GB friendly)
+            session = await session_pool.acquire()
+            try:
+                return await _compute_favicon_mmh3(html, page_url, session)
+            finally:
+                await session_pool.release(session)
     tasks = [asyncio.create_task(_fetch_one(html, url)) for html, url in candidates]
     if not tasks:
         return enriched
@@ -1136,12 +1215,21 @@ def _extract_text_from_payload(payload) -> str:
         return str(payload)[:2000]
 
 
-def _scan_patterns_for_technology(finding, source_url: str, text_for_scan: str, seen: set, candidates: list, ts: float, query: str) -> list:
-    """Scan text against tech stack patterns."""
+def _scan_patterns_for_technology(
+    finding: "CanonicalFinding",
+    source_url: str,
+    text_for_scan: str,
+    seen: set[tuple[str, str]],
+    candidates: list["CanonicalFinding"],
+    ts: float,
+    query: str,
+) -> list["CanonicalFinding"]:
+    """Scan text against tech stack patterns (bounded)."""
     from hledac.universal.knowledge.duckdb_store import CanonicalFinding
     results: list[CanonicalFinding] = []
     url_for_scan = source_url or ''
-    for tech_name, category, evidence_kind, pattern in _TECH_STACK_PATTERNS:
+    # Bounds: scan max 20 patterns per finding to prevent O(n*m) blowup
+    for tech_name, category, evidence_kind, pattern in _TECH_STACK_PATTERNS[:20]:
         if len(results) >= _MAX_TECH_STACK_FINDINGS:
             break
         dedup_key = (tech_name, source_url)
@@ -1158,7 +1246,20 @@ def _scan_patterns_for_technology(finding, source_url: str, text_for_scan: str, 
     return results
 
 
-def _try_match_and_create(finding, source_url: str, text: str, dedup_key: tuple, seen: set, tech_name: str, category: str, evidence_kind: str, pattern: re.Pattern, confidence: float, ts: float, query: str):
+def _try_match_and_create(
+    finding: "CanonicalFinding",
+    source_url: str,
+    text: str,
+    dedup_key: tuple[str, str],
+    seen: set[tuple[str, str]],
+    tech_name: str,
+    category: str,
+    evidence_kind: str,
+    pattern: re.Pattern[str],
+    confidence: float,
+    ts: float,
+    query: str,
+) -> "CanonicalFinding | None":
     """Try to match pattern and create finding if successful."""
     from hledac.universal.knowledge.duckdb_store import CanonicalFinding
     match = pattern.search(text)

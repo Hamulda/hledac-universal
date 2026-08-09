@@ -58,6 +58,40 @@ from hledac.universal.pipeline.public_patterns import _make_finding_id  # noqa: 
 
 
 # -----------------------------------------------------------------------------
+# F363: DiscoveryPhaseResult - returned by DiscoveryEngine.run()
+# F364: Converted from dataclass to msgspec.Struct for consistency
+# Note: Named DiscoveryPhaseResult to avoid conflict with discovery/base.py:38
+# Moved before DiscoveryEngine for forward reference (F363 refactor)
+# -----------------------------------------------------------------------------
+
+
+class DiscoveryPhaseResult(Struct, frozen=True, gc=False):
+    """Structured discovery output for downstream phases.
+
+    F363: Replaces 13-element tuple return from DiscoveryEngine.run().
+    F364: Converted from dataclass to msgspec.Struct for consistency with codebase.
+    Provides named access to all discovery results with type hints.
+
+    Note: Named DiscoveryPhaseResult to avoid conflict with DiscoveryResult
+    in discovery/base.py which represents a single discovery hit.
+    """
+    hits: tuple
+    discovery_result: Any
+    discovery_error: str | None
+    discovery_error_type: str | None
+    discovery_elapsed_s: float | None
+    discovery_attempted: bool
+    discovery_telemetry: dict
+    academic_findings_count: int
+    ct_injected: int
+    cc_injected: int
+    onion_findings_count: int
+    pastebin_findings_count: int
+    github_secrets_count: int
+    keyword_seed_fallback_triggered: bool
+
+
+# -----------------------------------------------------------------------------
 # F360: Module-level DiscoveryEngine (extracted from async_run_live_public_pipeline)
 # Replaces nested class to reduce CC of async_run_live_public_pipeline from 170 to ~50
 # -----------------------------------------------------------------------------
@@ -72,6 +106,7 @@ class DiscoveryEngine(Struct):
 
     Extracted from async_run_live_public_pipeline for CC reduction (F360).
     F362: Refactored into helper methods to reduce CC from 27 to ~12.
+    F364: Refactored to return DiscoveryPhaseResult (msgspec.Struct) instead of 13-element tuple.
     """
 
     query: str
@@ -80,29 +115,11 @@ class DiscoveryEngine(Struct):
     public_bootstrap_enabled: bool
     seed_context: Any | None
 
-    async def run(
-        self,
-        uma_state: str,
-    ) -> tuple[
-        tuple,
-        Any,
-        str | None,
-        str | None,
-        float | None,
-        bool,
-        dict,
-        int,
-        int,
-        int,
-        int,
-        int,
-        int,
-    ]:
-        """Run discovery phase with bootstrap, rescue, and keyword fallback."""
-        # F362: Extract telemetry init to reduce CC
-        _kw_result = {"candidates_count": 0, "fetch_attempted": 0, "fetch_success": 0,
-                       "bootstrap_order": "disabled", "errors": 0, "hits": ()}
+    async def run(self, uma_state: str) -> DiscoveryPhaseResult:
+        """Run discovery phase with bootstrap, rescue, and keyword fallback.
 
+        Returns DiscoveryPhaseResult with all discovery telemetry and enriched hits.
+        """
         # Phase 1: Bootstrap + Rescue
         bs = await self._run_bootstrap_phase()
         bootstrap_hits, rescue_hits = bs["bootstrap_hits"], bs["rescue_hits"]
@@ -110,20 +127,21 @@ class DiscoveryEngine(Struct):
         # Phase 2: Discovery
         disc = await self._run_discovery_phase(bootstrap_hits, rescue_hits)
         hits = disc["hits"]
-        discovery_result = disc["result"]
         discovery_error = disc["error"]
         discovery_error_type = disc["error_type"]
         discovery_elapsed_s = disc["elapsed"]
         discovery_attempted = disc["attempted"]
 
         # Phase 3: Keyword fallback (only if no hits)
+        kw_result = {"candidates_count": 0, "fetch_attempted": 0, "fetch_success": 0,
+                      "bootstrap_order": "disabled", "errors": 0, "hits": ()}
         if not hits:
-            _kw_result = await self._run_keyword_fallback()
-            hits = _kw_result["hits"]
+            kw_result = await self._run_keyword_fallback()
+            hits = kw_result["hits"]
 
         # Build discovery telemetry
         discovery_telemetry = _build_discovery_telemetry(
-            discovery_result=discovery_result,
+            discovery_result=disc["result"],
             discovery_error=discovery_error,
             discovery_error_type=discovery_error_type,
             discovery_elapsed_s=discovery_elapsed_s,
@@ -146,11 +164,11 @@ class DiscoveryEngine(Struct):
             pub_rescue_errors=0,
             pub_rescue_order=bs["rescue_order"],
             keyword_seed_fallback_triggered=bs["keyword_fallback_triggered"],
-            pub_keyword_bootstrap_candidates_count=_kw_result["candidates_count"],
-            pub_keyword_bootstrap_fetch_attempted=_kw_result["fetch_attempted"],
-            pub_keyword_bootstrap_fetch_success=_kw_result["fetch_success"],
-            pub_keyword_bootstrap_order=_kw_result["bootstrap_order"],
-            pub_keyword_bootstrap_errors=_kw_result["errors"],
+            pub_keyword_bootstrap_candidates_count=kw_result["candidates_count"],
+            pub_keyword_bootstrap_fetch_attempted=kw_result["fetch_attempted"],
+            pub_keyword_bootstrap_fetch_success=kw_result["fetch_success"],
+            pub_keyword_bootstrap_order=kw_result["bootstrap_order"],
+            pub_keyword_bootstrap_errors=kw_result["errors"],
             pub_build_success_count=0,
             pub_build_failure_count=0,
             pub_duplicate_count=0,
@@ -175,17 +193,58 @@ class DiscoveryEngine(Struct):
             stage_failure_reason=None,
         )
 
-        # Empty hits case
+        # Empty hits case - return minimal result
         if not hits:
-            return (
-                (), None, discovery_error, discovery_error_type, discovery_elapsed_s, discovery_attempted,
-                discovery_telemetry, 0, 0, 0, 0, 0, 0
+            return DiscoveryPhaseResult(
+                hits=(),
+                discovery_result=None,
+                discovery_error=discovery_error,
+                discovery_error_type=discovery_error_type,
+                discovery_elapsed_s=discovery_elapsed_s,
+                discovery_attempted=discovery_attempted,
+                discovery_telemetry=discovery_telemetry,
+                academic_findings_count=0,
+                ct_injected=0,
+                cc_injected=0,
+                onion_findings_count=0,
+                pastebin_findings_count=0,
+                github_secrets_count=0,
+                keyword_seed_fallback_triggered=bs["keyword_fallback_triggered"],
             )
 
+        # Run augmentation phases
+        augmented_result = await self._run_augmentation_phases(hits)
+        hits = augmented_result["hits"]
+
+        # Phase: Onion discovery
+        onion_findings_count = await _run_onion_phase(hits, self.query, self.store)
+
+        return DiscoveryPhaseResult(
+            hits=hits,
+            discovery_result=disc["result"],
+            discovery_error=discovery_error,
+            discovery_error_type=discovery_error_type,
+            discovery_elapsed_s=discovery_elapsed_s,
+            discovery_attempted=discovery_attempted,
+            discovery_telemetry=discovery_telemetry,
+            academic_findings_count=augmented_result["academic_findings_count"],
+            ct_injected=augmented_result["ct_injected"],
+            cc_injected=augmented_result["cc_injected"],
+            onion_findings_count=onion_findings_count,
+            pastebin_findings_count=augmented_result["pastebin_findings_count"],
+            github_secrets_count=augmented_result["github_secrets_count"],
+            keyword_seed_fallback_triggered=bs["keyword_fallback_triggered"],
+        )
+
+    async def _run_augmentation_phases(self, hits: tuple) -> dict:
+        """Run all augmentation phases: academic, CT, CC, Pastebin, GitHub.
+
+        Returns dict with enriched hits and injection counts.
+        """
         # Academic research lane
         academic_findings_count = await _run_academic_lane(self.store, self.query)
 
-        # Phase 1: CT + CC + Pastebin/GitHub in parallel
+        # CT + CC + Pastebin/GitHub in parallel
         ct_augmented, cc_augmented, p20_counts = await _run_phase1_augmentation(
             hits, self.query, self.store
         )
@@ -193,17 +252,17 @@ class DiscoveryEngine(Struct):
         cc_injected = len(cc_augmented) - len(hits)
         pastebin_findings_count, github_secrets_count = p20_counts
 
-        # Merge: CC builds on CT result
-        hits = cc_augmented
+        # CC builds on CT result
+        enriched_hits = cc_augmented
 
-        # Phase 2: Onion discovery
-        onion_findings_count = await _run_onion_phase(hits, self.query, self.store)
-
-        return (
-            hits, discovery_result, discovery_error, discovery_error_type, discovery_elapsed_s, discovery_attempted,
-            discovery_telemetry, academic_findings_count, ct_injected, cc_injected,
-            onion_findings_count, pastebin_findings_count, github_secrets_count
-        )
+        return {
+            "hits": enriched_hits,
+            "academic_findings_count": academic_findings_count,
+            "ct_injected": ct_injected,
+            "cc_injected": cc_injected,
+            "pastebin_findings_count": pastebin_findings_count,
+            "github_secrets_count": github_secrets_count,
+        }
 
     # -------------------------------------------------------------------------
     # F362: Helper methods extracted from DiscoveryEngine.run
@@ -1842,32 +1901,18 @@ class Phase2_ResourceGovernance:
 # =============================================================================
 # Phase 3: Discovery Runner (uses existing DiscoveryEngine)
 # =============================================================================
-
-@dataclass
-class DiscoveryResult:
-    """Structured discovery output for downstream phases."""
-    hits: tuple
-    discovery_result: Any
-    discovery_error: str | None
-    discovery_error_type: str | None
-    discovery_elapsed_s: float | None
-    discovery_attempted: bool
-    discovery_telemetry: dict
-    academic_findings_count: int
-    ct_injected: int
-    cc_injected: int
-    onion_findings_count: int
-    pastebin_findings_count: int
-    github_secrets_count: int
-    keyword_seed_fallback_triggered: bool
-
+# NOTE: DiscoveryPhaseResult is defined before DiscoveryEngine (line ~70)
 
 class Phase3_DiscoveryRunner:
     """Phase 3: Run discovery using DiscoveryEngine."""
 
-    async def run(self, ctx: PipelineContext) -> tuple[PipelineContext, DiscoveryResult]:
-        """Execute discovery phase and return structured result."""
-        result = await DiscoveryEngine(
+    async def run(self, ctx: PipelineContext) -> tuple[PipelineContext, DiscoveryPhaseResult]:
+        """Execute discovery phase and return structured result.
+
+        F364: DiscoveryEngine.run() now returns DiscoveryPhaseResult directly,
+        eliminating tuple unpacking in this phase.
+        """
+        discovery_info = await DiscoveryEngine(
             query=ctx.query,
             store=ctx.store,
             max_results=ctx.max_results,
@@ -1875,33 +1920,12 @@ class Phase3_DiscoveryRunner:
             seed_context=ctx.seed_context,
         ).run(uma_state=ctx.uma_state)
 
-        (hits, discovery_result, discovery_error, discovery_error_type,
-         discovery_elapsed_s, discovery_attempted, discovery_telemetry,
-         academic_findings_count, ct_injected, cc_injected,
-         onion_findings_count, pastebin_findings_count,
-         github_secrets_count) = result
-
-        discovery_info = DiscoveryResult(
-            hits=hits,
-            discovery_result=discovery_result,
-            discovery_error=discovery_error,
-            discovery_error_type=discovery_error_type,
-            discovery_elapsed_s=discovery_elapsed_s,
-            discovery_attempted=discovery_attempted,
-            discovery_telemetry=discovery_telemetry,
-            academic_findings_count=academic_findings_count,
-            ct_injected=ct_injected,
-            cc_injected=cc_injected,
-            onion_findings_count=onion_findings_count,
-            pastebin_findings_count=pastebin_findings_count,
-            github_secrets_count=github_secrets_count,
-            keyword_seed_fallback_triggered=discovery_telemetry.get(
-                "keyword_seed_fallback_triggered", False),
+        return (
+            PipelineContext(**{**ctx.__dict__,
+                              "hits": discovery_info.hits,
+                              "discovery_telemetry": discovery_info.discovery_telemetry}),
+            discovery_info,
         )
-
-        return (PipelineContext(**{**ctx.__dict__, "hits": hits,
-                                   "discovery_telemetry": discovery_telemetry}),
-                discovery_info)
 
 
 # =============================================================================
@@ -1954,7 +1978,7 @@ def _extract_hit_metadata(hit) -> dict:
 class Phase4_FetchOrchestrator:
     """Phase 4: Create fetch tasks, run parallel execution, assemble results."""
 
-    async def run(self, ctx: PipelineContext, discovery: DiscoveryResult) -> tuple[PipelineContext, list]:
+    async def run(self, ctx: PipelineContext, discovery: DiscoveryPhaseResult) -> tuple[PipelineContext, list]:
         """Execute fetch batch and return page results."""
         from .public_fetch import _fetch_and_process_page
 
@@ -2285,7 +2309,7 @@ class Phase5_TelemetryAggregator:
         self._ledger = _CandidateLedger()
         self._skip = _FetchSkipAnalyzer()
 
-    def run(self, ctx: PipelineContext, discovery: DiscoveryResult) -> dict:
+    def run(self, ctx: PipelineContext, discovery: DiscoveryPhaseResult) -> dict:
         """Aggregate telemetry using composed specialized aggregators."""
         results = ctx.all_page_results
         fetched = [p for p in results if p.fetched]
@@ -2809,7 +2833,7 @@ class ResultBuilder:
     """Builds PipelineRunResult from phase outputs."""
 
     @staticmethod
-    def build(ctx: PipelineContext, telemetry: dict, discovery: DiscoveryResult,
+    def build(ctx: PipelineContext, telemetry: dict, discovery: DiscoveryPhaseResult,
               public_stage_failure: str | None, public_stage_failure_reason: str | None,
               generated_report: str, tot_solution_count: int) -> PipelineRunResult:
         """Assemble final PipelineRunResult with all telemetry fields."""

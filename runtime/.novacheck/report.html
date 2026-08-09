@@ -1,0 +1,644 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <title>NovaCheck — Trust Score 0/100</title>
+  <style>
+    :root {
+      color-scheme: light dark;
+      --bg: #f7f8fa;
+      --surface: #ffffff;
+      --surface-2: #f1f3f5;
+      --text: #17191c;
+      --muted: #5e6670;
+      --line: #dfe3e8;
+      --accent: #0969da;
+      --ready: #16794b;
+      --review: #9a6700;
+      --blocked: #cf222e;
+      --critical: #cf222e;
+      --high: #bc4c00;
+      --medium: #9a6700;
+      --low: #0969da;
+      --info: #57606a;
+    }
+    * { box-sizing: border-box; }
+    html { scroll-behavior: smooth; }
+    body {
+      margin: 0;
+      font: 15px/1.55 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      color: var(--text);
+      background: var(--bg);
+    }
+    a { color: var(--accent); }
+    button { font: inherit; }
+    button:focus-visible, summary:focus-visible, a:focus-visible {
+      outline: 3px solid color-mix(in srgb, var(--accent) 35%, transparent);
+      outline-offset: 2px;
+    }
+    .skip-link { position: absolute; left: -9999px; }
+    .skip-link:focus { left: 1rem; top: 1rem; z-index: 10; background: var(--surface); padding: .6rem; }
+    .topbar { border-bottom: 1px solid var(--line); background: var(--surface); }
+    .topbar-inner, main { max-width: 1040px; margin: 0 auto; }
+    .topbar-inner { padding: 1rem 1.25rem; display: flex; justify-content: space-between; gap: 1rem; align-items: center; }
+    .brand { font-size: 1.05rem; font-weight: 750; letter-spacing: .02em; }
+    .privacy { color: var(--muted); font-size: .82rem; }
+    main { padding: 2rem 1.25rem 4rem; }
+    h1 { font-size: 1.55rem; margin: 0; }
+    h2 { font-size: 1.12rem; margin: 2rem 0 .8rem; }
+    h3 { font-size: .98rem; margin: 0; }
+    h4 { font-size: .82rem; margin: 1rem 0 .3rem; text-transform: uppercase; letter-spacing: .035em; color: var(--muted); }
+    .sub { color: var(--muted); margin: .25rem 0 0; font-size: .88rem; overflow-wrap: anywhere; }
+    .summary {
+      display: grid;
+      grid-template-columns: 180px 1fr;
+      margin-top: 1.25rem;
+      background: var(--surface);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      overflow: hidden;
+    }
+    .score {
+      display: grid;
+      place-content: center;
+      text-align: center;
+      padding: 1.5rem;
+      border-right: 1px solid var(--line);
+    }
+    .score strong { display: block; font-size: 2.2rem; line-height: 1; }
+    .score span { color: var(--muted); font-size: .78rem; }
+    .summary-main { padding: 1.35rem 1.5rem; }
+    .status { display: inline-flex; align-items: center; gap: .4rem; font-weight: 700; text-transform: uppercase; letter-spacing: .04em; font-size: .76rem; }
+    .status::before { content: ""; width: .55rem; height: .55rem; border-radius: 50%; background: currentColor; }
+    .status.ready { color: var(--ready); }
+    .status.review { color: var(--review); }
+    .status.blocked { color: var(--blocked); }
+    progress { display: block; width: 100%; height: .55rem; margin: .8rem 0; accent-color: var(--accent); }
+    .summary-meta { color: var(--muted); font-size: .85rem; }
+    .next {
+      margin-top: 1rem;
+      padding: .8rem 1rem;
+      border-left: 4px solid var(--accent);
+      background: var(--surface-2);
+    }
+    .metrics {
+      display: grid;
+      grid-template-columns: repeat(5, minmax(0, 1fr));
+      gap: .65rem;
+      margin-top: 1rem;
+    }
+    .metric { padding: .75rem; background: var(--surface); border: 1px solid var(--line); border-radius: 6px; }
+    .metric strong { display: block; font-size: 1.25rem; }
+    .metric span { color: var(--muted); font-size: .75rem; text-transform: uppercase; }
+    .controls { display: flex; flex-wrap: wrap; gap: .45rem; margin-bottom: .85rem; }
+    .filter, .copy {
+      border: 1px solid var(--line);
+      background: var(--surface);
+      color: var(--text);
+      border-radius: 6px;
+      padding: .38rem .65rem;
+      cursor: pointer;
+    }
+    .filter[aria-pressed="true"] { border-color: var(--accent); color: var(--accent); background: var(--surface-2); }
+    .filter span { color: var(--muted); margin-left: .25rem; }
+    .pill {
+      display: inline-block;
+      font-size: .72rem;
+      text-transform: uppercase;
+      letter-spacing: .04em;
+      padding: .16rem .48rem;
+      border: 1px solid currentColor;
+      border-radius: 999px;
+      font-weight: 650;
+    }
+    .sev-critical { color: var(--critical); }
+    .sev-high { color: var(--high); }
+    .sev-medium { color: var(--medium); }
+    .sev-low { color: var(--low); }
+    .sev-info { color: var(--info); }
+    .finding {
+      color: var(--text);
+      background: var(--surface);
+      border: 1px solid var(--line);
+      border-left: 4px solid var(--info);
+      border-radius: 6px;
+      margin-bottom: .85rem;
+    }
+    .finding.sev-critical { border-left-color: var(--critical); }
+    .finding.sev-high { border-left-color: var(--high); }
+    .finding.sev-medium { border-left-color: var(--medium); }
+    .finding.sev-low { border-left-color: var(--low); }
+    .finding-head { display: flex; align-items: flex-start; gap: .75rem; padding: .9rem 1rem; }
+    .finding-title { min-width: 0; flex: 1; }
+    .loc { color: var(--muted); font: .78rem ui-monospace, "Cascadia Code", monospace; margin: .2rem 0 0; overflow-wrap: anywhere; }
+    details { border-top: 1px solid var(--line); }
+    summary { cursor: pointer; padding: .55rem 1rem; color: var(--muted); font-size: .82rem; }
+    .finding-body { padding: 0 1rem 1rem; }
+    .finding-body p { margin: .3rem 0; }
+    .fix {
+      margin-top: 1rem;
+      background: var(--surface-2);
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      padding: .75rem;
+    }
+    .fix-head { display: flex; justify-content: space-between; gap: 1rem; align-items: center; }
+    .fix-head h4 { margin: 0; }
+    .copy { font-size: .78rem; white-space: nowrap; }
+    pre {
+      margin: .65rem 0 0; white-space: pre-wrap; word-break: break-word;
+      font-family: ui-monospace, "Cascadia Code", monospace;
+      font-size: .82rem;
+    }
+    .evidence { display: block; padding: .55rem .65rem; background: var(--surface-2); border-radius: 4px; overflow-wrap: anywhere; }
+    .empty { padding: 1.2rem; background: var(--surface); border: 1px solid var(--line); border-radius: 6px; color: var(--ready); }
+    .badge-box {
+      margin-top: 2rem;
+      padding: 1rem 1.1rem;
+      background: var(--surface);
+      border: 1px solid var(--line);
+      border-radius: 6px;
+    }
+    .badge-box code {
+      display: block;
+      margin-top: .5rem;
+      padding: .65rem;
+      background: var(--surface-2);
+      font-size: .8rem;
+      overflow-x: auto;
+    }
+    .skips { color: var(--muted); font-size: .9rem; }
+    .coverage { margin-top: 1rem; }
+    .coverage summary { padding-left: 0; }
+    footer { margin-top: 2.5rem; color: var(--muted); font-size: .8rem; }
+    [hidden] { display: none !important; }
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --bg: #0f1115; --surface: #171a20; --surface-2: #20242c;
+        --text: #edf0f3; --muted: #a5adb8; --line: #343a44; --accent: #58a6ff;
+        --ready: #3fb950; --review: #d29922; --blocked: #f85149;
+        --critical: #f85149; --high: #f0883e; --medium: #d29922; --low: #58a6ff; --info: #a5adb8;
+      }
+    }
+    @media (max-width: 680px) {
+      .privacy { display: none; }
+      .summary { grid-template-columns: 1fr; }
+      .score { border-right: 0; border-bottom: 1px solid var(--line); }
+      .metrics { grid-template-columns: repeat(2, 1fr); }
+      .finding-head { align-items: flex-start; }
+      .fix-head { align-items: flex-start; }
+    }
+    @media print {
+      body { background: white; color: black; }
+      .topbar, .controls, .copy, .badge-box { display: none; }
+      main { max-width: none; padding: 0; }
+      .finding { break-inside: avoid; }
+      details > * { display: block; }
+    }
+  </style>
+</head>
+<body>
+  <a class="skip-link" href="#findings">Skip to findings</a>
+  <header class="topbar">
+    <div class="topbar-inner">
+      <div class="brand">NovaCheck</div>
+      <div class="privacy">Local report · no source code sent to the cloud</div>
+    </div>
+  </header>
+  <main>
+    <h1>Security &amp; AI Trust Report</h1>
+    <p class="sub">/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/runtime · 8/9/2026, 2:29:48 PM</p>
+
+    <section class="summary" aria-labelledby="summary-title">
+      <div class="score" aria-label="Trust Score 0 out of 100">
+        <strong>0</strong>
+        <span>Trust Score / 100</span>
+      </div>
+      <div class="summary-main">
+        <div class="status blocked">Blocked</div>
+        <h2 id="summary-title" style="margin:.35rem 0 0">14 risks to review</h2>
+        <progress max="100" value="0">0%</progress>
+        <div class="summary-meta">critical · 8 checks · 4209ms · 0 informational signals</div>
+        <div class="next"><strong>Next step:</strong> Fix the 14 critical findings before shipping.</div>
+      </div>
+    </section>
+
+    <section class="metrics" aria-label="Severity summary">
+      <div class="metric sev-critical"><strong>14</strong><span>critical</span></div><div class="metric sev-high"><strong>0</strong><span>high</span></div><div class="metric sev-medium"><strong>0</strong><span>medium</span></div><div class="metric sev-low"><strong>0</strong><span>low</span></div><div class="metric sev-info"><strong>0</strong><span>info</span></div>
+    </section>
+
+    <section id="findings" aria-labelledby="findings-title">
+      <h2 id="findings-title">Finding</h2>
+      <div class="controls" aria-label="Filter findings">
+              <button type="button" class="filter" data-filter="all" aria-pressed="true">All <span>14</span></button>
+              <button type="button" class="filter" data-filter="critical">critical <span>14</span></button>
+            </div>
+            <div id="finding-list">
+      <article class="finding sev-critical" data-severity="critical">
+        <div class="finding-head">
+          <span class="pill sev-critical">critical</span>
+          <div class="finding-title">
+            <h3>Package does not exist on PyPI: hledac</h3>
+            <p class="loc">__init__.py:9 · ghost-deps</p>
+          </div>
+        </div>
+        <details open>
+          <summary>Details and remediation</summary>
+          <div class="finding-body">
+            <h4>Why this is a risk</h4>
+            <p>The package `hledac` is declared or imported but does not exist on PyPI. In AI-generated projects this often indicates a hallucinated dependency (slopsquatting): an invented name that an attacker could register and fill with malware. Resolvers applied: external-registry. Resolvers skipped: none.</p>
+            <h4>Evidence</h4><code class="evidence">hledac</code>
+            <div class="fix">
+              <div class="fix-head">
+                <h4>Recommended fix</h4>
+                <button type="button" class="copy" data-copy="fix-0">Copy prompt</button>
+              </div>
+              <pre id="fix-0">The package &quot;hledac&quot; (PyPI) does not exist on the registry. Find every reference in __init__.py (line 9) and in manifests. Replace it with the correct maintained package, update dependencies, and verify that build and tests pass. Do not ship until the ghost package is removed.</pre>
+            </div>
+          </div>
+        </details>
+      </article>
+
+      <article class="finding sev-critical" data-severity="critical">
+        <div class="finding-head">
+          <span class="pill sev-critical">critical</span>
+          <div class="finding-title">
+            <h3>Package does not exist on PyPI: __future__</h3>
+            <p class="loc">_legacy_role_based_pools.py:72 · ghost-deps</p>
+          </div>
+        </div>
+        <details open>
+          <summary>Details and remediation</summary>
+          <div class="finding-body">
+            <h4>Why this is a risk</h4>
+            <p>The package `__future__` is declared or imported but does not exist on PyPI. In AI-generated projects this often indicates a hallucinated dependency (slopsquatting): an invented name that an attacker could register and fill with malware. Resolvers applied: external-registry. Resolvers skipped: none.</p>
+            <h4>Evidence</h4><code class="evidence">__future__</code>
+            <div class="fix">
+              <div class="fix-head">
+                <h4>Recommended fix</h4>
+                <button type="button" class="copy" data-copy="fix-1">Copy prompt</button>
+              </div>
+              <pre id="fix-1">The package &quot;__future__&quot; (PyPI) does not exist on the registry. Find every reference in _legacy_role_based_pools.py (line 72) and in manifests. Replace it with the correct maintained package, update dependencies, and verify that build and tests pass. Do not ship until the ghost package is removed.</pre>
+            </div>
+          </div>
+        </details>
+      </article>
+
+      <article class="finding sev-critical" data-severity="critical">
+        <div class="finding-head">
+          <span class="pill sev-critical">critical</span>
+          <div class="finding-title">
+            <h3>Package does not exist on PyPI: concurrent</h3>
+            <p class="loc">_legacy_role_based_pools.py:79 · ghost-deps</p>
+          </div>
+        </div>
+        <details open>
+          <summary>Details and remediation</summary>
+          <div class="finding-body">
+            <h4>Why this is a risk</h4>
+            <p>The package `concurrent` is declared or imported but does not exist on PyPI. In AI-generated projects this often indicates a hallucinated dependency (slopsquatting): an invented name that an attacker could register and fill with malware. Resolvers applied: external-registry. Resolvers skipped: none.</p>
+            <h4>Evidence</h4><code class="evidence">concurrent</code>
+            <div class="fix">
+              <div class="fix-head">
+                <h4>Recommended fix</h4>
+                <button type="button" class="copy" data-copy="fix-2">Copy prompt</button>
+              </div>
+              <pre id="fix-2">The package &quot;concurrent&quot; (PyPI) does not exist on the registry. Find every reference in _legacy_role_based_pools.py (line 79) and in manifests. Replace it with the correct maintained package, update dependencies, and verify that build and tests pass. Do not ship until the ghost package is removed.</pre>
+            </div>
+          </div>
+        </details>
+      </article>
+
+      <article class="finding sev-critical" data-severity="critical">
+        <div class="finding-head">
+          <span class="pill sev-critical">critical</span>
+          <div class="finding-title">
+            <h3>Package does not exist on PyPI: otel</h3>
+            <p class="loc">_telemetry_setup.py:49 · ghost-deps</p>
+          </div>
+        </div>
+        <details open>
+          <summary>Details and remediation</summary>
+          <div class="finding-body">
+            <h4>Why this is a risk</h4>
+            <p>The package `otel` is declared or imported but does not exist on PyPI. In AI-generated projects this often indicates a hallucinated dependency (slopsquatting): an invented name that an attacker could register and fill with malware. Resolvers applied: external-registry. Resolvers skipped: none.</p>
+            <h4>Evidence</h4><code class="evidence">otel</code>
+            <div class="fix">
+              <div class="fix-head">
+                <h4>Recommended fix</h4>
+                <button type="button" class="copy" data-copy="fix-3">Copy prompt</button>
+              </div>
+              <pre id="fix-3">The package &quot;otel&quot; (PyPI) does not exist on the registry. Find every reference in _telemetry_setup.py (line 49) and in manifests. Replace it with the correct maintained package, update dependencies, and verify that build and tests pass. Do not ship until the ghost package is removed.</pre>
+            </div>
+          </div>
+        </details>
+      </article>
+
+      <article class="finding sev-critical" data-severity="critical">
+        <div class="finding-head">
+          <span class="pill sev-critical">critical</span>
+          <div class="finding-title">
+            <h3>Package does not exist on PyPI: opentelemetry</h3>
+            <p class="loc">_telemetry_setup.py:74 · ghost-deps</p>
+          </div>
+        </div>
+        <details open>
+          <summary>Details and remediation</summary>
+          <div class="finding-body">
+            <h4>Why this is a risk</h4>
+            <p>The package `opentelemetry` is declared or imported but does not exist on PyPI. In AI-generated projects this often indicates a hallucinated dependency (slopsquatting): an invented name that an attacker could register and fill with malware. Resolvers applied: external-registry. Resolvers skipped: none.</p>
+            <h4>Evidence</h4><code class="evidence">opentelemetry</code>
+            <div class="fix">
+              <div class="fix-head">
+                <h4>Recommended fix</h4>
+                <button type="button" class="copy" data-copy="fix-4">Copy prompt</button>
+              </div>
+              <pre id="fix-4">The package &quot;opentelemetry&quot; (PyPI) does not exist on the registry. Find every reference in _telemetry_setup.py (line 74) and in manifests. Replace it with the correct maintained package, update dependencies, and verify that build and tests pass. Do not ship until the ghost package is removed.</pre>
+            </div>
+          </div>
+        </details>
+      </article>
+
+      <article class="finding sev-critical" data-severity="critical">
+        <div class="finding-head">
+          <span class="pill sev-critical">critical</span>
+          <div class="finding-title">
+            <h3>SQL injection risk: execute</h3>
+            <p class="loc">cti/db/duckdb_domain_mv.py:230 · dangerous-sinks</p>
+          </div>
+        </div>
+        <details >
+          <summary>Details and remediation</summary>
+          <div class="finding-body">
+            <h4>Why this is a risk</h4>
+            <p>SQL query built through concatenation or interpolation. Unsanitized input can modify the query (SQL injection), enabling data access or modification, authentication bypass, or worse. AI often implements dynamic filters by concatenating strings instead of using parameters.</p>
+            <h4>Evidence</h4><code class="evidence">cur.execute(f&quot;SELECT 1 FROM {_TABLE_NAME} LIMIT 1;&quot;)</code>
+            <div class="fix">
+              <div class="fix-head">
+                <h4>Recommended fix</h4>
+                <button type="button" class="copy" data-copy="fix-5">Copy prompt</button>
+              </div>
+              <pre id="fix-5">Rewrite the query with bound parameters (placeholders such as $1, ?, or :name) and pass values separately. Avoid f-strings, interpolated template literals, and string concatenation in SQL. With Prisma, use $queryRaw with Prisma.sql fragments and never pass user input to $queryRawUnsafe. Occurrence at cti/db/duckdb_domain_mv.py:230.</pre>
+            </div>
+          </div>
+        </details>
+      </article>
+
+      <article class="finding sev-critical" data-severity="critical">
+        <div class="finding-head">
+          <span class="pill sev-critical">critical</span>
+          <div class="finding-title">
+            <h3>SQL injection risk: execute</h3>
+            <p class="loc">cti/db/duckdb_domain_mv.py:468 · dangerous-sinks</p>
+          </div>
+        </div>
+        <details >
+          <summary>Details and remediation</summary>
+          <div class="finding-body">
+            <h4>Why this is a risk</h4>
+            <p>SQL query built through concatenation or interpolation. Unsanitized input can modify the query (SQL injection), enabling data access or modification, authentication bypass, or worse. AI often implements dynamic filters by concatenating strings instead of using parameters.</p>
+            <h4>Evidence</h4><code class="evidence">cur.execute( f&quot;SELECT COUNT(*) FROM {_TABLE_NAME} WHERE {cond};&quot; # nosem: forma…</code>
+            <div class="fix">
+              <div class="fix-head">
+                <h4>Recommended fix</h4>
+                <button type="button" class="copy" data-copy="fix-6">Copy prompt</button>
+              </div>
+              <pre id="fix-6">Rewrite the query with bound parameters (placeholders such as $1, ?, or :name) and pass values separately. Avoid f-strings, interpolated template literals, and string concatenation in SQL. With Prisma, use $queryRaw with Prisma.sql fragments and never pass user input to $queryRawUnsafe. Occurrence at cti/db/duckdb_domain_mv.py:468.</pre>
+            </div>
+          </div>
+        </details>
+      </article>
+
+      <article class="finding sev-critical" data-severity="critical">
+        <div class="finding-head">
+          <span class="pill sev-critical">critical</span>
+          <div class="finding-title">
+            <h3>SQL injection risk: execute</h3>
+            <p class="loc">cti/db/duckdb_domain_mv.py:509 · dangerous-sinks</p>
+          </div>
+        </div>
+        <details >
+          <summary>Details and remediation</summary>
+          <div class="finding-body">
+            <h4>Why this is a risk</h4>
+            <p>SQL query built through concatenation or interpolation. Unsanitized input can modify the query (SQL injection), enabling data access or modification, authentication bypass, or worse. AI often implements dynamic filters by concatenating strings instead of using parameters.</p>
+            <h4>Evidence</h4><code class="evidence">cur.execute(f&quot;SELECT COUNT(*) FROM {_TABLE_NAME};&quot;)</code>
+            <div class="fix">
+              <div class="fix-head">
+                <h4>Recommended fix</h4>
+                <button type="button" class="copy" data-copy="fix-7">Copy prompt</button>
+              </div>
+              <pre id="fix-7">Rewrite the query with bound parameters (placeholders such as $1, ?, or :name) and pass values separately. Avoid f-strings, interpolated template literals, and string concatenation in SQL. With Prisma, use $queryRaw with Prisma.sql fragments and never pass user input to $queryRawUnsafe. Occurrence at cti/db/duckdb_domain_mv.py:509.</pre>
+            </div>
+          </div>
+        </details>
+      </article>
+
+      <article class="finding sev-critical" data-severity="critical">
+        <div class="finding-head">
+          <span class="pill sev-critical">critical</span>
+          <div class="finding-title">
+            <h3>Package does not exist on PyPI: evidence_log</h3>
+            <p class="loc">enrichment_services.py:93 · ghost-deps</p>
+          </div>
+        </div>
+        <details >
+          <summary>Details and remediation</summary>
+          <div class="finding-body">
+            <h4>Why this is a risk</h4>
+            <p>The package `evidence_log` is declared or imported but does not exist on PyPI. In AI-generated projects this often indicates a hallucinated dependency (slopsquatting): an invented name that an attacker could register and fill with malware. Resolvers applied: external-registry. Resolvers skipped: none.</p>
+            <h4>Evidence</h4><code class="evidence">evidence_log</code>
+            <div class="fix">
+              <div class="fix-head">
+                <h4>Recommended fix</h4>
+                <button type="button" class="copy" data-copy="fix-8">Copy prompt</button>
+              </div>
+              <pre id="fix-8">The package &quot;evidence_log&quot; (PyPI) does not exist on the registry. Find every reference in enrichment_services.py (line 93) and in manifests. Replace it with the correct maintained package, update dependencies, and verify that build and tests pass. Do not ship until the ghost package is removed.</pre>
+            </div>
+          </div>
+        </details>
+      </article>
+
+      <article class="finding sev-critical" data-severity="critical">
+        <div class="finding-head">
+          <span class="pill sev-critical">critical</span>
+          <div class="finding-title">
+            <h3>Package does not exist on PyPI: interpreters</h3>
+            <p class="loc">execution_gateway.py:102 · ghost-deps</p>
+          </div>
+        </div>
+        <details >
+          <summary>Details and remediation</summary>
+          <div class="finding-body">
+            <h4>Why this is a risk</h4>
+            <p>The package `interpreters` is declared or imported but does not exist on PyPI. In AI-generated projects this often indicates a hallucinated dependency (slopsquatting): an invented name that an attacker could register and fill with malware. Resolvers applied: external-registry. Resolvers skipped: none.</p>
+            <h4>Evidence</h4><code class="evidence">interpreters</code>
+            <div class="fix">
+              <div class="fix-head">
+                <h4>Recommended fix</h4>
+                <button type="button" class="copy" data-copy="fix-9">Copy prompt</button>
+              </div>
+              <pre id="fix-9">The package &quot;interpreters&quot; (PyPI) does not exist on the registry. Find every reference in execution_gateway.py (line 102) and in manifests. Replace it with the correct maintained package, update dependencies, and verify that build and tests pass. Do not ship until the ghost package is removed.</pre>
+            </div>
+          </div>
+        </details>
+      </article>
+
+      <article class="finding sev-critical" data-severity="critical">
+        <div class="finding-head">
+          <span class="pill sev-critical">critical</span>
+          <div class="finding-title">
+            <h3>Package does not exist on PyPI: atexit</h3>
+            <p class="loc">lmdb_pool.py:44 · ghost-deps</p>
+          </div>
+        </div>
+        <details >
+          <summary>Details and remediation</summary>
+          <div class="finding-body">
+            <h4>Why this is a risk</h4>
+            <p>The package `atexit` is declared or imported but does not exist on PyPI. In AI-generated projects this often indicates a hallucinated dependency (slopsquatting): an invented name that an attacker could register and fill with malware. Resolvers applied: external-registry. Resolvers skipped: none.</p>
+            <h4>Evidence</h4><code class="evidence">atexit</code>
+            <div class="fix">
+              <div class="fix-head">
+                <h4>Recommended fix</h4>
+                <button type="button" class="copy" data-copy="fix-10">Copy prompt</button>
+              </div>
+              <pre id="fix-10">The package &quot;atexit&quot; (PyPI) does not exist on the registry. Find every reference in lmdb_pool.py (line 44) and in manifests. Replace it with the correct maintained package, update dependencies, and verify that build and tests pass. Do not ship until the ghost package is removed.</pre>
+            </div>
+          </div>
+        </details>
+      </article>
+
+      <article class="finding sev-critical" data-severity="critical">
+        <div class="finding-head">
+          <span class="pill sev-critical">critical</span>
+          <div class="finding-title">
+            <h3>Code execution risk: compile</h3>
+            <p class="loc">pivot_executor.py:240 · dangerous-sinks</p>
+          </div>
+        </div>
+        <details >
+          <summary>Details and remediation</summary>
+          <div class="finding-body">
+            <h4>Why this is a risk</h4>
+            <p>Dynamic code execution through eval, Function, or vm. If the input is not fully controlled, an attacker can execute arbitrary code in the process (RCE). This is a common AI-code pattern that interprets strings instead of using safe parsers.</p>
+            <h4>Evidence</h4><code class="evidence">re.compile('(?&lt;!\\w)' + ioc_escaped + '(?!\\w)', re.IGNORECASE)</code>
+            <div class="fix">
+              <div class="fix-head">
+                <h4>Recommended fix</h4>
+                <button type="button" class="copy" data-copy="fix-11">Copy prompt</button>
+              </div>
+              <pre id="fix-11">Remove eval, new Function, and vm.runIn*. Use JSON parsers, ASTs, or dedicated libraries. Never execute strings received from users, files, or the network. Occurrence at pivot_executor.py:240.</pre>
+            </div>
+          </div>
+        </details>
+      </article>
+
+      <article class="finding sev-critical" data-severity="critical">
+        <div class="finding-head">
+          <span class="pill sev-critical">critical</span>
+          <div class="finding-title">
+            <h3>Package does not exist on PyPI: metrics_registry</h3>
+            <p class="loc">resource_governor.py:682 · ghost-deps</p>
+          </div>
+        </div>
+        <details >
+          <summary>Details and remediation</summary>
+          <div class="finding-body">
+            <h4>Why this is a risk</h4>
+            <p>The package `metrics_registry` is declared or imported but does not exist on PyPI. In AI-generated projects this often indicates a hallucinated dependency (slopsquatting): an invented name that an attacker could register and fill with malware. Resolvers applied: external-registry. Resolvers skipped: none.</p>
+            <h4>Evidence</h4><code class="evidence">metrics_registry</code>
+            <div class="fix">
+              <div class="fix-head">
+                <h4>Recommended fix</h4>
+                <button type="button" class="copy" data-copy="fix-12">Copy prompt</button>
+              </div>
+              <pre id="fix-12">The package &quot;metrics_registry&quot; (PyPI) does not exist on the registry. Find every reference in resource_governor.py (line 682) and in manifests. Replace it with the correct maintained package, update dependencies, and verify that build and tests pass. Do not ship until the ghost package is removed.</pre>
+            </div>
+          </div>
+        </details>
+      </article>
+
+      <article class="finding sev-critical" data-severity="critical">
+        <div class="finding-head">
+          <span class="pill sev-critical">critical</span>
+          <div class="finding-title">
+            <h3>Package does not exist on PyPI: deep_research</h3>
+            <p class="loc">sidecar_protocol_adapters.py:1367 · ghost-deps</p>
+          </div>
+        </div>
+        <details >
+          <summary>Details and remediation</summary>
+          <div class="finding-body">
+            <h4>Why this is a risk</h4>
+            <p>The package `deep_research` is declared or imported but does not exist on PyPI. In AI-generated projects this often indicates a hallucinated dependency (slopsquatting): an invented name that an attacker could register and fill with malware. Resolvers applied: external-registry. Resolvers skipped: none.</p>
+            <h4>Evidence</h4><code class="evidence">deep_research</code>
+            <div class="fix">
+              <div class="fix-head">
+                <h4>Recommended fix</h4>
+                <button type="button" class="copy" data-copy="fix-13">Copy prompt</button>
+              </div>
+              <pre id="fix-13">The package &quot;deep_research&quot; (PyPI) does not exist on the registry. Find every reference in sidecar_protocol_adapters.py (line 1367) and in manifests. Replace it with the correct maintained package, update dependencies, and verify that build and tests pass. Do not ship until the ghost package is removed.</pre>
+            </div>
+          </div>
+        </details>
+      </article></div>
+    </section>
+
+    <details class="coverage">
+             <summary>Partial coverage: 1 check was skipped</summary>
+             <ul class="skips"><li><code>ai-unreviewed</code> — No recognized provenance found (Agent Trace / SPDX-AI-Disclosure). Detector skipped.</li></ul>
+           </details>
+
+    
+
+    <details class="badge-box">
+      <summary><strong>README badge</strong></summary>
+      <p class="sub">Paste this snippet into your README:</p>
+      <code>[![NovaCheck](https://img.shields.io/badge/NovaCheck-0%2F100-red)](./.novacheck/report.html)</code>
+    </details>
+
+    <footer>Generated by NovaCheck · The Trust Score reflects detected signals and does not guarantee the absence of vulnerabilities.</footer>
+  </main>
+  <script>
+    document.querySelectorAll(".filter").forEach((button) => {
+      button.addEventListener("click", () => {
+        const filter = button.dataset.filter;
+        document.querySelectorAll(".filter").forEach((item) =>
+          item.setAttribute("aria-pressed", String(item === button))
+        );
+        document.querySelectorAll(".finding").forEach((finding) => {
+          finding.hidden = filter !== "all" && finding.dataset.severity !== filter;
+        });
+      });
+    });
+    document.querySelectorAll(".copy").forEach((button) => {
+      button.addEventListener("click", async () => {
+        const target = document.getElementById(button.dataset.copy);
+        if (!target) return;
+        const text = target.textContent || "";
+        try {
+          if (navigator.clipboard && window.isSecureContext) {
+            await navigator.clipboard.writeText(text);
+          } else {
+            const area = document.createElement("textarea");
+            area.value = text;
+            area.style.position = "fixed";
+            area.style.opacity = "0";
+            document.body.appendChild(area);
+            area.select();
+            document.execCommand("copy");
+            area.remove();
+          }
+        } catch {
+          return;
+        }
+        const previous = button.textContent;
+        button.textContent = "Copied";
+        setTimeout(() => { button.textContent = previous; }, 1400);
+      });
+    });
+  </script>
+</body>
+</html>

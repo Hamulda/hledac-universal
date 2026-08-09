@@ -526,22 +526,28 @@ class BatchDNSResolver:
             IPv4-literal hosts are returned as a single-element list
             (no DNS lookup) so the caller can treat the result uniformly.
         """
+        # Fast path: empty or disabled
         if not hosts or self._is_disabled():
             return {}
 
         self._ensure_async_primitives()
-        assert self._semaphore is not None
-        assert self._lock is not None
         self._stats.batch_calls += 1
 
+        # Normalize and validate
         unique_hosts = self._normalize_hosts(hosts)
         if not unique_hosts:
             return {}
 
+        return await self._execute_resolve(unique_hosts, timeout)
+
+    async def _execute_resolve(
+        self, unique_hosts: list[str], timeout: float
+    ) -> dict[str, list[str]]:
+        """Execute the actual resolution pipeline."""
         now = time.monotonic()
         result: dict[str, list[str]] = {}
 
-        # Check cache (excludes IPv4 literals)
+        # Check cache
         result, misses = await self._check_cached_results(unique_hosts, now)
         if not misses:
             return result
