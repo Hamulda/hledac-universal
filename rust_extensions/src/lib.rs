@@ -42,15 +42,15 @@ use std::sync::LazyLock;
 pub mod ioc;
 
 // Individual modules (kept for backward compatibility and direct access)
-pub mod ioc_extract;           // Standard IOC extraction
-pub mod ioc_extract_fast;      // Fast Aho-Corasick extraction
-pub mod ioc_extract_simd;     // SIMD NEON extraction (M1 optimized)
-pub mod ioc_patterns;         // Pattern definitions (single source of truth)
+pub mod deobfuscate;
+pub mod ioc_cooccurrence_rs; // IOC co-occurrence analysis
+pub mod ioc_dedup; // IOC deduplication (cross-sprint persistence)
+pub mod ioc_extract; // Standard IOC extraction
+pub mod ioc_extract_fast; // Fast Aho-Corasick extraction
+pub mod ioc_extract_simd; // SIMD NEON extraction (M1 optimized)
+pub mod ioc_patterns; // Pattern definitions (single source of truth)
 pub mod ioc_patterns_generated; // Generated patterns (codegen)
-pub mod ioc_dedup;           // IOC deduplication (cross-sprint persistence)
-pub mod ioc_cooccurrence_rs;  // IOC co-occurrence analysis
-pub mod ioc_stream_scan;      // Streaming SIMD scanner (mmap/bytes zero-copy)
-pub mod deobfuscate;          // CyberChef-style IOC deobfuscation
+pub mod ioc_stream_scan; // Streaming SIMD scanner (mmap/bytes zero-copy) // CyberChef-style IOC deobfuscation
 
 // ============================================================================
 // Thread Pool Group - Unified Pool Management
@@ -60,126 +60,126 @@ pub mod deobfuscate;          // CyberChef-style IOC deobfuscation
 pub mod pools;
 
 // Individual pool modules (kept for backward compatibility)
-pub mod elastic_pool;         // Phase-aware dynamic resizing
-pub mod adaptive_scheduler;   // Memory-pressure aware thresholds
-pub mod pool_run;             // GIL wrappers & channel dispatch
-pub mod mpsc_pool;           // Bounded MPSC queue pool
-pub mod gil;                 // GIL management utilities
+pub mod adaptive_scheduler; // Memory-pressure aware thresholds
+pub mod elastic_pool; // Phase-aware dynamic resizing
+pub mod gil;
+pub mod mpsc_pool; // Bounded MPSC queue pool
+pub mod pool_run; // GIL wrappers & channel dispatch // GIL management utilities
 
 // ============================================================================
 // Graph Analytics Group
 // ============================================================================
 
-pub mod finding_collapser;    // NEXUS-018-04: Pre-LLM synthesis collapser
-pub mod consistency_verifier;  // META-007: "confident liar" detection
-pub mod graph_analytics;      // GRAPH-01: PageRank, Louvain, SCC
-pub mod graph_centrality;     // Centrality metrics
-pub mod graph_traverse;       // DuckPGQ graph traversal
-pub mod graph_cache;          // TinyLFU LRU cache
-pub mod lsh_index;           // LSH near-duplicate detection
-pub mod hot_edges_rs;         // Hot edge counter
+pub mod consistency_verifier; // META-007: "confident liar" detection
+pub mod finding_collapser; // NEXUS-018-04: Pre-LLM synthesis collapser
+pub mod graph_analytics; // GRAPH-01: PageRank, Louvain, SCC
+pub mod graph_cache; // TinyLFU LRU cache
+pub mod graph_centrality; // Centrality metrics
+pub mod graph_traverse; // DuckPGQ graph traversal
+pub mod hot_edges_rs;
+pub mod lsh_index; // LSH near-duplicate detection // Hot edge counter
 
 // ============================================================================
 // Aho-Corasick & Pattern Matching
 // ============================================================================
 
-pub mod aho_corasick;         // Multi-pattern matching
-pub mod query_terms;          // Query-context scanning
+pub mod aho_corasick; // Multi-pattern matching
+pub mod query_terms; // Query-context scanning
 
 // ============================================================================
 // Data Structures & Storage
 // ============================================================================
 
 #[cfg(feature = "bloom")]
-pub mod bloom;                // BloomFilter for URL dedup
-pub mod compress;             // LZ4/Zstd compression
+pub mod bloom; // BloomFilter for URL dedup
+pub mod compress; // LZ4/Zstd compression
 #[cfg(feature = "advanced")]
-pub mod regex_lz4;            // LZ4-compressed pattern store
+pub mod content_hasher; // SHA-256, BLAKE3 hashing
 #[cfg(feature = "advanced")]
-pub mod content_hasher;       // SHA-256, BLAKE3 hashing
-pub mod xxhash_ext;           // xxHash3-64 non-cryptographic hash
+pub mod regex_lz4; // LZ4-compressed pattern store
 #[cfg(feature = "data")]
-pub mod rolling_hash;        // P3-3: Rabin-Karp rolling hash
-pub mod url_set;             // Mmap-backed URL set
-pub mod url_engine;          // URL parsing & classification
-pub mod url_ops;             // URL operations & normalization
-pub mod zero_copy;           // Zero-copy PyO3 batch utilities
-pub mod serde_json_rs;       // JSON serialization (STIX export)
-pub mod spsc_queue;         // Lock-free SPSC queue
+pub mod rolling_hash; // P3-3: Rabin-Karp rolling hash
+pub mod serde_json_rs; // JSON serialization (STIX export)
+pub mod spsc_queue;
+pub mod url_engine; // URL parsing & classification
+pub mod url_ops; // URL operations & normalization
+pub mod url_set; // Mmap-backed URL set
+pub mod xxhash_ext; // xxHash3-64 non-cryptographic hash
+pub mod zero_copy; // Zero-copy PyO3 batch utilities // Lock-free SPSC queue
 
 // ============================================================================
 // Cryptography & Security
 // ============================================================================
 
+pub mod circuit_breaker;
 #[cfg(feature = "core")]
-pub mod crypto_accelerate;   // CommonCrypto SHA-256 (M1 optimized)
-pub mod tls_metadata;       // TLS cert metadata extraction
-#[cfg(feature = "tls13")]
-pub mod tls13;              // TLS 1.3 JA4 fingerprinting
+pub mod crypto_accelerate; // CommonCrypto SHA-256 (M1 optimized)
+pub mod h2_safari_preset; // Safari WebKit HTTP/2 presets
+pub mod nw_connection; // Apple Network.framework TCP
+pub mod onion_validation; // GRAPH-03: .onion v3 validation
 #[cfg(feature = "quic")]
-pub mod quic;               // QUIC/HTTP3 via Quinn+H3
-pub mod nw_connection;      // Apple Network.framework TCP
-pub mod h2_safari_preset;   // Safari WebKit HTTP/2 presets
-pub mod onion_validation;   // GRAPH-03: .onion v3 validation
-pub mod circuit_breaker;    // Circuit breaker pattern
+pub mod quic; // QUIC/HTTP3 via Quinn+H3
+#[cfg(feature = "tls13")]
+pub mod tls13; // TLS 1.3 JA4 fingerprinting
+pub mod tls_metadata; // TLS cert metadata extraction // Circuit breaker pattern
 
 // ============================================================================
 // Network & Transport (HEIST-02: Embedded Tor)
 // ============================================================================
 
 #[cfg(feature = "embedded_tor")]
-pub mod arti_bridge;        // HEIST-02: In-process Tor via Arti (PyO3 bindings)
+pub mod arti_bridge; // HEIST-02: In-process Tor via Arti (PyO3 bindings)
 
 // ============================================================================
 // Text Processing
 // ============================================================================
 
-pub mod html_parse;          // HTML parsing & link extraction
-pub mod text_similarity;     // R25: Trigram Jaccard similarity
-pub mod text_norm;          // Unicode NFC/NFD normalization
+pub mod html_parse; // HTML parsing & link extraction
+pub mod text_norm; // Unicode NFC/NFD normalization
+pub mod text_similarity; // R25: Trigram Jaccard similarity
 pub mod unicode_fingerprint; // Zero-width & homoglyph fingerprint
-pub mod xml_sanitize;       // R7c: XML sanitization
+pub mod xml_sanitize; // R7c: XML sanitization
 
 // ============================================================================
 // System & Platform
 // ============================================================================
 
 pub mod int_counter_layout; // SoA buffer for integer counters
-pub mod madvise;          // Darwin madvise (MADV_FREE_REUSABLE)
-pub mod memory;           // Memory statistics via sysinfo
-pub mod os_unfair_lock;   // ISSUE-4.3: os_unfair_lock (~5ns)
-pub mod sendfile;         // ISSUE-4.4: sendfile(2) zero-copy
+pub mod madvise; // Darwin madvise (MADV_FREE_REUSABLE)
+pub mod memory; // Memory statistics via sysinfo
+pub mod os_unfair_lock; // ISSUE-4.3: os_unfair_lock (~5ns)
+pub mod sendfile; // ISSUE-4.4: sendfile(2) zero-copy
 
 // ============================================================================
 // Quality & Signal Processing
 // ============================================================================
 
-pub mod quality_gate;         // Quality gate kernels
-pub mod _entropy;             // Entropy helpers
-pub mod claims_extraction;    // ISSUE-27: Claims extraction (CPU-bound sentence splitting)
+pub mod _entropy; // Entropy helpers
+pub mod claims_extraction; // ISSUE-27: Claims extraction (CPU-bound sentence splitting)
+pub mod quality_gate; // Quality gate kernels
+pub mod rate_limit; // ISSUE-016: NVD API rate limiter
 #[cfg(feature = "advanced")]
-pub mod signal_batch;        // ARM NEON signal aggregation
+pub mod signal_batch; // ARM NEON signal aggregation
 #[cfg(feature = "advanced")]
-pub mod simd_similarity;     // SIMD cosine similarity
-pub mod simhash_ext;         // SimHash near-duplicate detection
-pub mod telemetry_agg;       // Real-time metrics aggregation
-pub mod rate_limit;          // ISSUE-016: NVD API rate limiter
-pub mod sprint_policies;     // RL sprint policy layer
+pub mod simd_similarity; // SIMD cosine similarity
+pub mod simhash_ext; // SimHash near-duplicate detection
+pub mod sprint_policies;
+pub mod telemetry_agg; // Real-time metrics aggregation // RL sprint policy layer
 
 // ============================================================================
 // Advanced Features (Feature-Gated)
 // ============================================================================
 
 #[cfg(feature = "advanced")]
-pub mod swarm_dag;           // SILICON-07: Work-stealing DAG
+pub mod federated_qtable;
 #[cfg(feature = "advanced")]
-pub mod feed_decision;       // Feed decision classifiers
+pub mod feed_decision; // Feed decision classifiers
 #[cfg(feature = "advanced")]
-pub mod feed_pipeline;       // Feed pipeline operators
+pub mod feed_pipeline; // Feed pipeline operators
 #[cfg(feature = "advanced")]
-pub mod pipeline_compose;    // Multi-stage pipeline operators
+pub mod pipeline_compose; // Multi-stage pipeline operators
 #[cfg(feature = "advanced")]
-pub mod federated_qtable;    // ISSUE-023: Federated Q-table
+pub mod swarm_dag; // SILICON-07: Work-stealing DAG // ISSUE-023: Federated Q-table
 
 // ============================================================================
 // Data Processing
@@ -188,75 +188,77 @@ pub mod federated_qtable;    // ISSUE-023: Federated Q-table
 #[cfg(feature = "data")]
 pub mod arrow_batch_builder; // Arrow ArrayBuilder batch construction
 #[cfg(feature = "data")]
-pub mod parquet_reader;      // F320+: Lazy parquet reader
+pub mod parquet_reader; // F320+: Lazy parquet reader
 
 #[cfg(feature = "data")]
-pub mod aimd_controller;     // ISSUE-2.2: AIMD controller
+pub mod aimd_controller; // ISSUE-2.2: AIMD controller
 #[cfg(feature = "data")]
-pub mod async_query;         // R26: Async DuckDB queries
-pub mod data;                // DuckDB bridge
-pub mod dedup_bloom;         // Distributed BloomFilter + Count-Min Sketch
+pub mod async_query; // R26: Async DuckDB queries
+pub mod data; // DuckDB bridge
+pub mod dedup_bloom; // Distributed BloomFilter + Count-Min Sketch
 
 // ============================================================================
 // ML/AI Infrastructure
 // ============================================================================
 
-pub mod mlx_bridge;          // ISSUE-015: MLX async token streaming
-#[cfg(feature = "ane")]
-pub mod ane;                 // Apple Neural Engine bindings
 #[cfg(feature = "accelerate")]
-pub mod accelerate;         // R22: Accelerate/vDSP FFI
+pub mod accelerate; // R22: Accelerate/vDSP FFI
+#[cfg(feature = "ane")]
+pub mod ane; // Apple Neural Engine bindings
+#[cfg(feature = "iosurface")]
+pub mod iosurface_bridge; // IO-4: IOSurface zero-copy bridge (CVPixelBuffer → Metal)
 #[cfg(feature = "metal")]
-pub mod metal_compute;       // R22: Metal GPU matmul
+pub mod metal_compute; // R22: Metal GPU matmul
 #[cfg(feature = "metal")]
-pub mod metal_hashcrack;    // SILICON-01: GPU hash cracking
+pub mod metal_hashcrack; // SILICON-01: GPU hash cracking
 #[cfg(feature = "metal")]
-pub mod metal_shared_buf;   // SILICON-04: Shared Metal buffer
-pub mod simd;               // ISSUE-023: Modular SIMD (NEON fallback)
+pub mod metal_shared_buf; // SILICON-04: Shared Metal buffer
+pub mod mlx_bridge; // ISSUE-015: MLX async token streaming
+pub mod simd; // ISSUE-023: Modular SIMD (NEON fallback)
 
 // ============================================================================
 // Network Protocols
 // ============================================================================
 
 #[cfg(feature = "dns")]
-pub mod dns;                // DoH/DoT/DoQ DNS resolution
-pub mod dns_tunnel;         // ISSUE-033: DNS tunneling detection
+pub mod dns; // DoH/DoT/DoQ DNS resolution
+pub mod dns_tunnel; // ISSUE-033: DNS tunneling detection
 
 // ============================================================================
 // Document Processing
 // ============================================================================
 
-#[cfg(feature = "pdf")]
-pub mod pdf;               // PDF text extraction
 #[cfg(feature = "office")]
-pub mod office;            // Office document extraction
+pub mod office;
+#[cfg(feature = "pdf")]
+pub mod pdf; // PDF text extraction // Office document extraction
 
 // ============================================================================
 // Database & Search
 // ============================================================================
 
-pub mod lmdb_dht;          // ISSUE-004: Rust LMDB DHT backend
-#[cfg(feature = "native_db")]
-pub mod native_db;         // HEIST-03: Wire-protocol DB extraction
 #[cfg(feature = "fulltext")]
-pub mod fulltext_index;   // ISSUE-011: Tantivy fulltext search
+pub mod fulltext_index;
+pub mod lmdb_dht; // ISSUE-004: Rust LMDB DHT backend
+#[cfg(feature = "native_db")]
+pub mod native_db; // HEIST-03: Wire-protocol DB extraction // ISSUE-011: Tantivy fulltext search
 
 // ============================================================================
 // External Integrations
 // ============================================================================
 
 #[cfg(feature = "simdjson")]
-pub mod simdjson_extract;  // HEIST-05: simdjson JSON extraction
+pub mod simdjson_extract; // HEIST-05: simdjson JSON extraction
 #[cfg(feature = "stix")]
-pub mod stix_2_1;         // STIX 2.1 encode/decode
+pub mod stix_2_1; // STIX 2.1 encode/decode
 #[cfg(feature = "otel")]
-pub mod tracing;          // R24: OpenTelemetry tracing
+pub mod tracing; // R24: OpenTelemetry tracing
 
 // IP parsing (network utility)
-pub mod ip_parse;          // Sprint P2-3: IP parsing & classification
+pub mod ip_parse; // Sprint P2-3: IP parsing & classification
 
 // Health & telemetry
-pub mod health;            // Issue #22: Health endpoint
+pub mod health; // Issue #22: Health endpoint
 
 // MLX integration (depends on metal feature)
 #[cfg(feature = "metal")]
@@ -404,7 +406,10 @@ fn apply_affinity_hint(_p_cores: usize) {
     // musl: sched_setaffinity not available — skip silently
 }
 
-#[cfg(not(any(target_os = "macos", all(target_os = "linux", not(target_env = "musl")))))]
+#[cfg(not(any(
+    target_os = "macos",
+    all(target_os = "linux", not(target_env = "musl"))
+)))]
 fn apply_affinity_hint(_p_cores: usize) {
     // Windows / other: no-op
 }
@@ -470,23 +475,27 @@ macro_rules! build_mixed_pool {
             .build()
             .unwrap_or_else(|e| {
                 eprintln!(
-                    concat!("CRITICAL [SWARM]-009: mixed_pool(", $name, ") ThreadPoolBuilder::build failed: {}"),
+                    concat!(
+                        "CRITICAL [SWARM]-009: mixed_pool(",
+                        $name,
+                        ") ThreadPoolBuilder::build failed: {}"
+                    ),
                     e
                 );
-                panic!(
-                    concat!("Cannot recover: mixed_pool(", $name, ") initialization failed. M1 8GB OOM?"),
-                );
+                panic!(concat!(
+                    "Cannot recover: mixed_pool(",
+                    $name,
+                    ") initialization failed. M1 8GB OOM?"
+                ),);
             })
     }};
 }
 
 pub(crate) fn mixed_pool(n_items: usize) -> &'static ThreadPool {
-    static POOL_SINGLE: LazyLock<ThreadPool, fn() -> ThreadPool> = LazyLock::new(|| {
-        build_mixed_pool!("mixed-1", 1)
-    });
-    static POOL_PAIR: LazyLock<ThreadPool, fn() -> ThreadPool> = LazyLock::new(|| {
-        build_mixed_pool!("mixed-2", 2)
-    });
+    static POOL_SINGLE: LazyLock<ThreadPool, fn() -> ThreadPool> =
+        LazyLock::new(|| build_mixed_pool!("mixed-1", 1));
+    static POOL_PAIR: LazyLock<ThreadPool, fn() -> ThreadPool> =
+        LazyLock::new(|| build_mixed_pool!("mixed-2", 2));
 
     if n_items < adaptive_scheduler::mixed_threshold() {
         &POOL_SINGLE
@@ -531,8 +540,10 @@ mod qos_class_helpers {
 
     // Compile-time assertion: qos_class_t must be 4 bytes (i32/u32).
     // Catches libc version changes that alter the type layout.
-    const _: () = assert!(std::mem::size_of::<qos_class_t>() == 4,
-        "qos_class_t must be 4 bytes (i32); check libc version");
+    const _: () = assert!(
+        std::mem::size_of::<qos_class_t>() == 4,
+        "qos_class_t must be 4 bytes (i32); check libc version"
+    );
 
     /// Safely convert a raw i32 QoS class constant to libc::qos_class_t.
     #[inline]
@@ -653,7 +664,11 @@ mod lib_tests {
         // n=31 < 32 → 1 thread
         adaptive_scheduler::update_memory_pressure(1);
         let pool = mixed_pool(31);
-        assert_eq!(pool.current_num_threads(), 1, "n=31 < threshold=32 (normal) → 1 thread");
+        assert_eq!(
+            pool.current_num_threads(),
+            1,
+            "n=31 < threshold=32 (normal) → 1 thread"
+        );
     }
 
     #[test]
@@ -662,7 +677,11 @@ mod lib_tests {
         // n=32 >= 32 → 2 threads
         adaptive_scheduler::update_memory_pressure(1);
         let pool = mixed_pool(32);
-        assert_eq!(pool.current_num_threads(), 2, "n=32 >= threshold=32 (normal) → 2 threads");
+        assert_eq!(
+            pool.current_num_threads(),
+            2,
+            "n=32 >= threshold=32 (normal) → 2 threads"
+        );
     }
 
     #[test]
@@ -682,7 +701,11 @@ mod lib_tests {
         // Idle (pressure=0): threshold=16, n=31 >= 16 → 2 threads
         adaptive_scheduler::update_memory_pressure(0);
         let pool = mixed_pool(31);
-        assert_eq!(pool.current_num_threads(), 2, "idle: n=31 >= threshold=16 → 2 threads");
+        assert_eq!(
+            pool.current_num_threads(),
+            2,
+            "idle: n=31 >= threshold=16 → 2 threads"
+        );
     }
 
     #[test]
@@ -690,7 +713,11 @@ mod lib_tests {
         // Pressure (pressure=2): threshold=64, n=31 < 64 → 1 thread
         adaptive_scheduler::update_memory_pressure(2);
         let pool = mixed_pool(31);
-        assert_eq!(pool.current_num_threads(), 1, "pressure: n=31 < threshold=64 → 1 thread");
+        assert_eq!(
+            pool.current_num_threads(),
+            1,
+            "pressure: n=31 < threshold=64 → 1 thread"
+        );
     }
 
     // batch_sha256 tests (Issue #9: parallel for large batches)
@@ -705,7 +732,11 @@ mod lib_tests {
         // Verify all are valid 64-char hex SHA256
         for h in &results {
             assert_eq!(h.len(), 64);
-            assert!(h.chars().all(|c| c.is_ascii_hexdigit()), "invalid hex: {}", h);
+            assert!(
+                h.chars().all(|c| c.is_ascii_hexdigit()),
+                "invalid hex: {}",
+                h
+            );
         }
         // Two identical inputs produce identical hashes
         assert_eq!(results[0], results[0]);
@@ -716,12 +747,18 @@ mod lib_tests {
     fn test_batch_sha256_large_parallel() {
         // n=256 >= 128 → cpu_pool parallel path
         adaptive_scheduler::update_memory_pressure(1); // normal = threshold 32
-        let input: Vec<String> = (0..256).map(|i| format!("batch_sha256_item_{}", i)).collect();
+        let input: Vec<String> = (0..256)
+            .map(|i| format!("batch_sha256_item_{}", i))
+            .collect();
         let results = ioc_extract::batch_sha256(input.clone());
         assert_eq!(results.len(), 256);
         for h in &results {
             assert_eq!(h.len(), 64);
-            assert!(h.chars().all(|c| c.is_ascii_hexdigit()), "invalid hex: {}", h);
+            assert!(
+                h.chars().all(|c| c.is_ascii_hexdigit()),
+                "invalid hex: {}",
+                h
+            );
         }
     }
 
@@ -831,6 +868,22 @@ fn __features__() -> Vec<String> {
 
 #[pymodule]
 fn hledac_rust_extensions(m: &Bound<'_, PyModule>) -> PyResult<()> {
+    // SAFE-1 FIX: Set custom panic hook for FFI safety.
+    // With panic="unwind" in Cargo.toml, panics can be caught by catch_unwind.
+    // The panic hook ensures panics are logged before being caught.
+    // This prevents silent failures and helps debugging in production.
+    std::panic::set_hook(Box::new(|panic_info| {
+        let location = panic_info.location().map(|l| format!("{}:{}:{}", l.file(), l.line(), l.column())).unwrap_or_else(|| "unknown".to_string());
+        let message = if let Some(s) = panic_info.payload().downcast_ref::<&str>() {
+            s.to_string()
+        } else if let Some(s) = panic_info.payload().downcast_ref::<String>() {
+            s.clone()
+        } else {
+            "Unknown panic payload".to_string()
+        };
+        eprintln!("[PANIC-HOOK] location={} message=\"{}\"", location, message);
+    }));
+
     // Expose package version for Python-side ABI compatibility checking (F275).
     // CARGO_PKG_VERSION is set by Cargo at compile time from Cargo.toml.
     m.add("__version__", env!("CARGO_PKG_VERSION"))?;
@@ -847,7 +900,7 @@ fn hledac_rust_extensions(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(__features__, m)?)?;
 
     m.add_class::<aho_corasick::AhoCorasickMatcher>()?;
-    m.add_class::<aho_corasick::PatternHit>()?;  // Issue #37: zero-copy hit struct
+    m.add_class::<aho_corasick::PatternHit>()?; // Issue #37: zero-copy hit struct
 
     // B4: Query-context multi-pattern scanner — replaces 4× Python str.find loops
     query_terms::register_functions(m)?;
@@ -867,16 +920,28 @@ fn hledac_rust_extensions(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<url_set::UrlSet>()?;
 
     // IOC extraction + URL normalization
-    dns_tunnel::register_functions(m)?;  // ISSUE #33: entropy, n-gram, wavelet analysis
-    // ISSUE-008: ioc_extract provides has_* functions (uses ioc_patterns.rs, single source)
+    dns_tunnel::register_functions(m)?; // ISSUE #33: entropy, n-gram, wavelet analysis
+                                        // ISSUE-008: ioc_extract provides has_* functions (uses ioc_patterns.rs, single source)
     ioc_extract::register_functions(m)?;
     // Fast IOC extraction: unified Aho-Corasick automaton (single O(n) scan)
     m.add_function(wrap_pyfunction!(ioc_extract_fast::ioc_extract_unified, m)?)?;
-    m.add_function(wrap_pyfunction!(ioc_extract_fast::batch_ioc_extract_unified, m)?)?;
-    m.add_function(wrap_pyfunction!(ioc_extract_fast::batch_ioc_extract_unified_python, m)?)?;
+    m.add_function(wrap_pyfunction!(
+        ioc_extract_fast::batch_ioc_extract_unified,
+        m
+    )?)?;
+    m.add_function(wrap_pyfunction!(
+        ioc_extract_fast::batch_ioc_extract_unified_python,
+        m
+    )?)?;
     // Issue #15: structured entities with positions — replaces Python 25× re.finditer() post-pass
-    m.add_function(wrap_pyfunction!(ioc_extract_fast::extract_structured_entities_py, m)?)?;
-    m.add_function(wrap_pyfunction!(ioc_extract_fast::batch_extract_structured_entities_py, m)?)?;
+    m.add_function(wrap_pyfunction!(
+        ioc_extract_fast::extract_structured_entities_py,
+        m
+    )?)?;
+    m.add_function(wrap_pyfunction!(
+        ioc_extract_fast::batch_extract_structured_entities_py,
+        m
+    )?)?;
     // R4.3: SIMD IOC extraction — regex-automata build_many (NEON on M1, ~5× faster for bulk text ≥4KB)
     ioc_extract_simd::register_functions(m)?;
     // ADVERSARY-003: CyberChef-Pipeline — recursive IOC deobfuscation before SIMD scan
@@ -927,8 +992,14 @@ fn hledac_rust_extensions(m: &Bound<'_, PyModule>) -> PyResult<()> {
 
     // Issue 4.1: Rust-powered co-occurrence engine — 10× faster than Python dict
     // HashMap<String, BitSet> inverted index, rayon parallel across findings batch
-    m.add_function(wrap_pyfunction!(ioc_cooccurrence_rs::compute_cooccurrence_edges_py, m)?)?;
-    m.add_function(wrap_pyfunction!(ioc_cooccurrence_rs::batch_cooccurrence_edges_py, m)?)?;
+    m.add_function(wrap_pyfunction!(
+        ioc_cooccurrence_rs::compute_cooccurrence_edges_py,
+        m
+    )?)?;
+    m.add_function(wrap_pyfunction!(
+        ioc_cooccurrence_rs::batch_cooccurrence_edges_py,
+        m
+    )?)?;
 
     // SimHash for near-duplicate document detection
     simhash_ext::register_functions(m)?;
@@ -955,12 +1026,24 @@ fn hledac_rust_extensions(m: &Bound<'_, PyModule>) -> PyResult<()> {
 
     // NEXUS-018-04: Pre-LLM synthesis map-reduce collapser — deterministic
     m.add_function(wrap_pyfunction!(finding_collapser::collapse_findings, m)?)?;
-    m.add_function(wrap_pyfunction!(finding_collapser::collapser_is_deterministic, m)?)?;
+    m.add_function(wrap_pyfunction!(
+        finding_collapser::collapser_is_deterministic,
+        m
+    )?)?;
 
     // META-007: Propositional consistency verifier — "confident liar" detection
-    m.add_function(wrap_pyfunction!(consistency_verifier::check_finding_consistency, m)?)?;
-    m.add_function(wrap_pyfunction!(consistency_verifier::get_contradiction_type_name, m)?)?;
-    m.add_function(wrap_pyfunction!(consistency_verifier::quick_consistency_check, m)?)?;
+    m.add_function(wrap_pyfunction!(
+        consistency_verifier::check_finding_consistency,
+        m
+    )?)?;
+    m.add_function(wrap_pyfunction!(
+        consistency_verifier::get_contradiction_type_name,
+        m
+    )?)?;
+    m.add_function(wrap_pyfunction!(
+        consistency_verifier::quick_consistency_check,
+        m
+    )?)?;
 
     // Issue B5: TLS cert metadata — single Rust call replacing 5-level Python fallback.
     tls_metadata::register_functions(m)?;
@@ -996,8 +1079,8 @@ fn hledac_rust_extensions(m: &Bound<'_, PyModule>) -> PyResult<()> {
     // adaptive_scheduler is always compiled — no feature gate needed
     adaptive_scheduler::register_functions(m)?;
     // swarm_dag is optional (feature = "advanced") // SILICON-07: Work-stealing DAG with ROI-based adaptive pool sizing
-    rate_limit::register_module(m)?;  // ISSUE #016: NVD token bucket rate limiter
-    // F5.2: FeedDominanceGuard + LaneBudgetPool in Rust (zero-copy, no GIL)
+    rate_limit::register_module(m)?; // ISSUE #016: NVD token bucket rate limiter
+                                     // F5.2: FeedDominanceGuard + LaneBudgetPool in Rust (zero-copy, no GIL)
     sprint_policies::register(m)?;
 
     // IntCounterLayout — SoA buffer for hot-path integer counters
@@ -1240,6 +1323,10 @@ fn hledac_rust_extensions(m: &Bound<'_, PyModule>) -> PyResult<()> {
     #[cfg(feature = "metal")]
     metal_hashcrack::register(m)?;
 
+    // IO-4: IOSurface zero-copy bridge — CVPixelBuffer → Metal texture
+    #[cfg(feature = "iosurface")]
+    iosurface_bridge::register(m)?;
+
     // DuckDB bridge — isolated module for future cdylib extraction (saves ~8 MB .dylib)
     #[cfg(feature = "data")]
     data::register_functions(m)?;
@@ -1266,9 +1353,18 @@ fn hledac_rust_extensions(m: &Bound<'_, PyModule>) -> PyResult<()> {
     tracing::register(m)?;
 
     // GRAPH-03: .onion v3 address validation — Ed25519 checksum verification
-    m.add_function(wrap_pyfunction!(onion_validation::rust_validate_onion_v3, m)?)?;
-    m.add_function(wrap_pyfunction!(onion_validation::rust_validate_onion_v3_detailed, m)?)?;
-    m.add_function(wrap_pyfunction!(onion_validation::rust_validate_onion_batch, m)?)?;
+    m.add_function(wrap_pyfunction!(
+        onion_validation::rust_validate_onion_v3,
+        m
+    )?)?;
+    m.add_function(wrap_pyfunction!(
+        onion_validation::rust_validate_onion_v3_detailed,
+        m
+    )?)?;
+    m.add_function(wrap_pyfunction!(
+        onion_validation::rust_validate_onion_batch,
+        m
+    )?)?;
 
     // ISSUE-011: Tantivy fulltext search (mmap-backed, zero-copy BM25)
     // Feature-gated: fulltext = ["dep:tantivy"]

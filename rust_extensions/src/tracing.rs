@@ -22,8 +22,8 @@
 //!   HLEDAC_TRACING_ENABLED=1  # Enable/disable (default: 1)
 //!   HLEDAC_TRACING_SERVICE_NAME # Service name (default: hledac-rust)
 
-use std::sync::OnceLock;
 use pyo3::prelude::*;
+use std::sync::OnceLock;
 
 // ============== Global State ==============
 
@@ -90,10 +90,7 @@ impl TraceContext {
 pub(crate) fn set_tls_trace_context(trace_id: Option<u128>, span_id: Option<u128>) {
     if let (Some(tid), Some(sid)) = (trace_id, span_id) {
         if tid != 0 && sid != 0 {
-            let ctx = TraceContext::new(
-                format!("{:032x}", tid),
-                format!("{:016x}", sid),
-            );
+            let ctx = TraceContext::new(format!("{:032x}", tid), format!("{:016x}", sid));
             CURRENT_TRACE.with(|cell| {
                 *cell.borrow_mut() = Some(ctx);
             });
@@ -104,17 +101,13 @@ pub(crate) fn set_tls_trace_context(trace_id: Option<u128>, span_id: Option<u128
 /// Get the current trace_id from TLS. Used by pool_run.rs execute_with_optional_span.
 #[cfg(feature = "otel")]
 pub(crate) fn get_tls_trace_id() -> Option<String> {
-    CURRENT_TRACE.with(|cell| {
-        cell.borrow().as_ref().map(|ctx| ctx.trace_id.clone())
-    })
+    CURRENT_TRACE.with(|cell| cell.borrow().as_ref().map(|ctx| ctx.trace_id.clone()))
 }
 
 /// Get the current span_id from TLS.
 #[cfg(feature = "otel")]
 pub(crate) fn get_tls_span_id() -> Option<String> {
-    CURRENT_TRACE.with(|cell| {
-        cell.borrow().as_ref().map(|ctx| ctx.span_id.clone())
-    })
+    CURRENT_TRACE.with(|cell| cell.borrow().as_ref().map(|ctx| ctx.span_id.clone()))
 }
 
 /// Clear the current trace context on this thread.
@@ -155,8 +148,7 @@ pub(crate) fn is_tracing_enabled() -> bool {
 }
 
 fn get_service_name() -> String {
-    std::env::var("HLEDAC_TRACING_SERVICE_NAME")
-        .unwrap_or_else(|_| "hledac-rust".to_string())
+    std::env::var("HLEDAC_TRACING_SERVICE_NAME").unwrap_or_else(|_| "hledac-rust".to_string())
 }
 
 // ============== Init ==============
@@ -409,9 +401,7 @@ pub fn span_enter(trace_id: String, span_id: String) -> bool {
 
     // Retrieve the span from start_span and enter it.
     // If start_span wasn't called (no span in STARTED_SPAN), create one as fallback.
-    let entered = STARTED_SPAN.with(|cell| {
-        cell.borrow_mut().take().map(|span| span.enter())
-    });
+    let entered = STARTED_SPAN.with(|cell| cell.borrow_mut().take().map(|span| span.enter()));
 
     // Store the guard in SPAN_GUARD so it survives until span_exit() is called.
     SPAN_GUARD.with(|cell| {
@@ -462,11 +452,9 @@ pub fn get_current_trace_id() -> (String, bool) {
         return (String::new(), false);
     }
 
-    CURRENT_TRACE.with(|cell| {
-        match cell.borrow().as_ref() {
-            Some(ctx) if ctx.trace_id.len() == TRACE_ID_LEN => (ctx.trace_id.clone(), true),
-            _ => (String::new(), false),
-        }
+    CURRENT_TRACE.with(|cell| match cell.borrow().as_ref() {
+        Some(ctx) if ctx.trace_id.len() == TRACE_ID_LEN => (ctx.trace_id.clone(), true),
+        _ => (String::new(), false),
     })
 }
 
@@ -486,11 +474,9 @@ pub fn get_current_span_id() -> (String, bool) {
         return (String::new(), false);
     }
 
-    CURRENT_TRACE.with(|cell| {
-        match cell.borrow().as_ref() {
-            Some(ctx) if ctx.span_id.len() == SPAN_ID_LEN => (ctx.span_id.clone(), true),
-            _ => (String::new(), false),
-        }
+    CURRENT_TRACE.with(|cell| match cell.borrow().as_ref() {
+        Some(ctx) if ctx.span_id.len() == SPAN_ID_LEN => (ctx.span_id.clone(), true),
+        _ => (String::new(), false),
     })
 }
 

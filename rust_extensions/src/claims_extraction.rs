@@ -40,10 +40,10 @@
 //!   Polarity: pre-categorized word sets (O(n) string search)
 //!   Confidence: deterministic policy port from confidence_policy.py
 
+use crate::adaptive_scheduler;
 use crate::gil::release_gil;
 use crate::ioc_extract;
 use crate::mixed_pool;
-use crate::adaptive_scheduler;
 use pyo3::prelude::*;
 use pyo3::types::PyList;
 use rayon::prelude::*;
@@ -52,7 +52,7 @@ use rayon::prelude::*;
 #[repr(C)]
 pub struct Claim {
     pub text: String,
-    pub polarity: String,  // "positive" | "negative" | "neutral"
+    pub polarity: String, // "positive" | "negative" | "neutral"
     pub confidence: f64,
     pub source: String,
     pub evidence_type: String,
@@ -79,17 +79,42 @@ static SENTENCE_SPLITTER: std::sync::LazyLock<regex_automata::meta::Regex> =
 
 static NEGATIVE_WORDS: std::sync::LazyLock<Vec<&'static str>> = std::sync::LazyLock::new(|| {
     vec![
-        "not", "no evidence", "false", "denies", "debunked", "failed to",
-        "contrary", "contradicts", "disputed", "unverified", "unconfirmed",
-        "incorrect", "inaccurate", "misleading", "fabricated", "hoax",
+        "not",
+        "no evidence",
+        "false",
+        "denies",
+        "debunked",
+        "failed to",
+        "contrary",
+        "contradicts",
+        "disputed",
+        "unverified",
+        "unconfirmed",
+        "incorrect",
+        "inaccurate",
+        "misleading",
+        "fabricated",
+        "hoax",
     ]
 });
 
 static POSITIVE_WORDS: std::sync::LazyLock<Vec<&'static str>> = std::sync::LazyLock::new(|| {
     vec![
-        "confirmed", "observed", "detected", "reported", "evidence shows",
-        "verified", "corroborated", "supported", "consistent with", "matches",
-        "validates", "demonstrates", "confirms", "establishes", "proves",
+        "confirmed",
+        "observed",
+        "detected",
+        "reported",
+        "evidence shows",
+        "verified",
+        "corroborated",
+        "supported",
+        "consistent with",
+        "matches",
+        "validates",
+        "demonstrates",
+        "confirms",
+        "establishes",
+        "proves",
     ]
 });
 
@@ -114,7 +139,8 @@ const MAX_CONFIDENCE: f64 = 0.75;
 fn split_sentences(text: &str) -> Vec<String> {
     // Normalize whitespace first
     let normalized = text.split_whitespace().collect::<Vec<_>>().join(" ");
-    let sentences: Vec<&str> = SENTENCE_SPLITTER.split(&normalized)
+    let sentences: Vec<&str> = SENTENCE_SPLITTER
+        .split(&normalized)
         .map(|span| &normalized[span.start..span.end])
         .collect();
 
@@ -157,7 +183,7 @@ fn derive_confidence(
         "FEED" => confidence += 0.05,    // RSS/Atom
         "WAYBACK" => confidence += 0.02, // Archive
         "STEALTH" => confidence += 0.08, // Stealth sources
-        "PUBLIC" => {}                    // default
+        "PUBLIC" => {}                   // default
         _ => confidence += 0.0,
     }
 
@@ -208,7 +234,10 @@ fn extract_claims_from_text(
     let summary_words: std::collections::HashSet<String> = if summary.is_empty() {
         std::collections::HashSet::new()
     } else {
-        summary.split_whitespace().map(|w| w.to_lowercase()).collect()
+        summary
+            .split_whitespace()
+            .map(|w| w.to_lowercase())
+            .collect()
     };
 
     let source_family = match source_type.to_uppercase().as_str() {
@@ -233,8 +262,10 @@ fn extract_claims_from_text(
         let has_title_agreement = if title_words.is_empty() || summary_words.is_empty() {
             false
         } else {
-            let sentence_words: std::collections::HashSet<String> =
-                sentence.split_whitespace().map(|w| w.to_lowercase()).collect();
+            let sentence_words: std::collections::HashSet<String> = sentence
+                .split_whitespace()
+                .map(|w| w.to_lowercase())
+                .collect();
             sentence_words.intersection(&title_words).count() >= 2
                 && sentence_words.intersection(&summary_words).count() >= 2
         };
@@ -274,9 +305,7 @@ pub struct EvidencePacket<'a> {
     pub evidence_type: &'a str,
 }
 
-pub fn batch_extract_claims_inner(
-    packets: &[(&str, &str, &str, &str, &str)],
-) -> Vec<Vec<Claim>> {
+pub fn batch_extract_claims_inner(packets: &[(&str, &str, &str, &str, &str)]) -> Vec<Vec<Claim>> {
     let n = packets.len();
 
     if n == 0 {
@@ -301,7 +330,13 @@ pub fn batch_extract_claims_inner(
                     packets
                         .par_iter()
                         .map(|(text, title, summary, source_type, evidence_type)| {
-                            extract_claims_from_text(text, title, summary, source_type, evidence_type)
+                            extract_claims_from_text(
+                                text,
+                                title,
+                                summary,
+                                source_type,
+                                evidence_type,
+                            )
                         })
                         .collect()
                 })
@@ -369,10 +404,19 @@ pub fn batch_extract_claims<'py>(
     // Parallel path — GIL released for rayon workers
     let packets: Vec<(&str, &str, &str, &str, &str)> = texts
         .iter()
-        .map(|(t, ti, s, st, et)| (t.as_str(), ti.as_str(), s.as_str(), st.as_str(), et.as_str()))
+        .map(|(t, ti, s, st, et)| {
+            (
+                t.as_str(),
+                ti.as_str(),
+                s.as_str(),
+                st.as_str(),
+                et.as_str(),
+            )
+        })
         .collect();
 
-    let results: Vec<Vec<Claim>> = crate::gil::release_gil(py, || batch_extract_claims_inner(&packets));
+    let results: Vec<Vec<Claim>> =
+        crate::gil::release_gil(py, || batch_extract_claims_inner(&packets));
 
     results
         .into_iter()
@@ -403,7 +447,11 @@ pub fn batch_extract_claims_python<'py>(
         return Ok(vec![]);
     }
 
-    if n != titles.len() || n != summaries.len() || n != source_types.len() || n != evidence_types.len() {
+    if n != titles.len()
+        || n != summaries.len()
+        || n != source_types.len()
+        || n != evidence_types.len()
+    {
         return Err(pyo3::exceptions::PyValueError::new_err(
             "All input lists must have the same length",
         ));
@@ -437,11 +485,20 @@ pub fn batch_extract_claims_python<'py>(
         .zip(summaries_owned.iter())
         .zip(source_types_owned.iter())
         .zip(evidence_types_owned.iter())
-        .map(|((((t, ti), s), st), et)| (t.as_str(), ti.as_str(), s.as_str(), st.as_str(), et.as_str()))
+        .map(|((((t, ti), s), st), et)| {
+            (
+                t.as_str(),
+                ti.as_str(),
+                s.as_str(),
+                st.as_str(),
+                et.as_str(),
+            )
+        })
         .collect();
 
     // R4-02: GIL released — batch_extract_claims_inner uses rayon parallel (CPU-intensive)
-    let results: Vec<Vec<Claim>> = crate::gil::release_gil(py, || batch_extract_claims_inner(&packets));
+    let results: Vec<Vec<Claim>> =
+        crate::gil::release_gil(py, || batch_extract_claims_inner(&packets));
 
     Ok(results
         .into_iter()
@@ -467,14 +524,18 @@ mod tests {
 
     #[test]
     fn test_split_sentences() {
-        let text = "Server 192.168.1.1 responding on port 8080. Email admin@example.com for access.";
+        let text =
+            "Server 192.168.1.1 responding on port 8080. Email admin@example.com for access.";
         let sentences = split_sentences(text);
         assert!(sentences.len() >= 1);
     }
 
     #[test]
     fn test_polarity_positive() {
-        assert_eq!(derive_polarity("evidence shows confirmed detection"), "positive");
+        assert_eq!(
+            derive_polarity("evidence shows confirmed detection"),
+            "positive"
+        );
     }
 
     #[test]
@@ -539,13 +600,7 @@ mod tests {
 
     #[test]
     fn test_short_text() {
-        let claims = extract_claims_from_text(
-            "Short.",
-            "title",
-            "summary",
-            "PUBLIC",
-            "web",
-        );
+        let claims = extract_claims_from_text("Short.", "title", "summary", "PUBLIC", "web");
         // Short sentences (< 20 chars) should be filtered
         assert!(claims.is_empty());
     }
@@ -555,7 +610,13 @@ mod tests {
         let packets = vec![
             ("First sentence here.", "", "", "PUBLIC", "web"),
             ("Second sentence here.", "", "", "PUBLIC", "web"),
-            ("Third sentence here.", "", "", "CT", "certificate_transparency"),
+            (
+                "Third sentence here.",
+                "",
+                "",
+                "CT",
+                "certificate_transparency",
+            ),
         ];
         let results = batch_extract_claims_inner(&packets);
         assert_eq!(results.len(), 3);

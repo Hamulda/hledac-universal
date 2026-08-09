@@ -35,10 +35,10 @@
 
 #![allow(dead_code)]
 
+use parking_lot::RwLock;
 use pyo3::prelude::*;
 use std::collections::HashMap;
 use std::sync::LazyLock;
-use parking_lot::RwLock;
 
 /// Metal device handle wrapper
 struct MetalDevice {
@@ -106,10 +106,16 @@ impl std::fmt::Display for MetalError {
         match self {
             MetalError::DeviceNotFound => write!(f, "Metal device not found"),
             MetalError::OutOfMemory => write!(f, "Metal out of memory (256 MB buffer limit)"),
-            MetalError::KernelCompilationFailed(msg) => write!(f, "Metal kernel compilation failed: {}", msg),
-            MetalError::BufferCreationFailed(msg) => write!(f, "Metal buffer creation failed: {}", msg),
+            MetalError::KernelCompilationFailed(msg) => {
+                write!(f, "Metal kernel compilation failed: {}", msg)
+            }
+            MetalError::BufferCreationFailed(msg) => {
+                write!(f, "Metal buffer creation failed: {}", msg)
+            }
             MetalError::CommandQueueFailed(msg) => write!(f, "Metal command queue failed: {}", msg),
-            MetalError::UnsupportedOperation(msg) => write!(f, "Unsupported Metal operation: {}", msg),
+            MetalError::UnsupportedOperation(msg) => {
+                write!(f, "Unsupported Metal operation: {}", msg)
+            }
         }
     }
 }
@@ -154,7 +160,11 @@ pub fn init() -> (bool, Option<String>, Option<String>) {
             *telemetry = MetalTelemetry::default();
             (true, Some(d.name.clone()), None)
         }
-        None => (false, None, Some("Metal not available on this platform".to_string())),
+        None => (
+            false,
+            None,
+            Some("Metal not available on this platform".to_string()),
+        ),
     }
 }
 
@@ -165,7 +175,12 @@ pub fn init() -> (bool, Option<String>, Option<String>) {
 pub fn get_device_info() -> (bool, Option<String>, usize, usize) {
     let device = METAL_DEVICE.read();
     match device.as_ref() {
-        Some(d) => (true, Some(d.name.clone()), d.max_working_set_size, d.allocated_bytes),
+        Some(d) => (
+            true,
+            Some(d.name.clone()),
+            d.max_working_set_size,
+            d.allocated_bytes,
+        ),
         None => (false, None, 0, 0),
     }
 }
@@ -203,7 +218,9 @@ pub fn batch_matmul(
 ) -> Result<(Vec<f32>, (usize, usize, usize), f64), PyErr> {
     // Validate inputs
     if query.is_empty() || expert_weights.is_empty() {
-        return Err(pyo3::exceptions::PyValueError::new_err("Input arrays cannot be empty"));
+        return Err(pyo3::exceptions::PyValueError::new_err(
+            "Input arrays cannot be empty",
+        ));
     }
 
     let expected_query_len = batch_size * hidden_dim;
@@ -212,14 +229,16 @@ pub fn batch_matmul(
     if query.len() != expected_query_len {
         return Err(pyo3::exceptions::PyValueError::new_err(format!(
             "Query size mismatch: expected {}, got {}",
-            expected_query_len, query.len()
+            expected_query_len,
+            query.len()
         )));
     }
 
     if expert_weights.len() != expected_weights_len {
         return Err(pyo3::exceptions::PyValueError::new_err(format!(
             "Expert weights size mismatch: expected {}, got {}",
-            expected_weights_len, expert_weights.len()
+            expected_weights_len,
+            expert_weights.len()
         )));
     }
 
@@ -227,9 +246,9 @@ pub fn batch_matmul(
     {
         let mut telemetry = METAL_TELEMETRY.write();
         telemetry.matmul_calls += 1;
-        telemetry.total_tokens = telemetry.total_tokens.saturating_add(
-            (batch_size * num_experts * hidden_dim) as u64
-        );
+        telemetry.total_tokens = telemetry
+            .total_tokens
+            .saturating_add((batch_size * num_experts * hidden_dim) as u64);
     }
 
     // STUB: Delegate to CPU fallback (NEON-based)
@@ -324,7 +343,9 @@ pub fn batch_matvec(
     hidden_dim: usize,
 ) -> Result<(Vec<f32>, (usize, usize), f64), PyErr> {
     if query.is_empty() || expert_weights.is_empty() {
-        return Err(pyo3::exceptions::PyValueError::new_err("Input arrays cannot be empty"));
+        return Err(pyo3::exceptions::PyValueError::new_err(
+            "Input arrays cannot be empty",
+        ));
     }
 
     let expected_query = batch_size * hidden_dim;
@@ -333,14 +354,16 @@ pub fn batch_matvec(
     if query.len() != expected_query {
         return Err(pyo3::exceptions::PyValueError::new_err(format!(
             "Query size: expected {}, got {}",
-            expected_query, query.len()
+            expected_query,
+            query.len()
         )));
     }
 
     if expert_weights.len() != expected_weights {
         return Err(pyo3::exceptions::PyValueError::new_err(format!(
             "Expert weights size: expected {}, got {}",
-            expected_weights, expert_weights.len()
+            expected_weights,
+            expert_weights.len()
         )));
     }
 
@@ -364,9 +387,9 @@ pub fn batch_matvec(
     {
         let mut telemetry = METAL_TELEMETRY.write();
         telemetry.matmul_calls += 1;
-        telemetry.total_tokens = telemetry.total_tokens.saturating_add(
-            (batch_size * num_experts * hidden_dim) as u64
-        );
+        telemetry.total_tokens = telemetry
+            .total_tokens
+            .saturating_add((batch_size * num_experts * hidden_dim) as u64);
         telemetry.gpu_fallback_cpu += 1;
     }
 
@@ -406,11 +429,14 @@ pub fn clear_cache() -> usize {
     // 2. Release unused buffers
     // 3. Call metal::Device::clear_cache()
     let mut device = METAL_DEVICE.write();
-    let released = device.as_mut().map(|d| {
-        let allocated = d.allocated_bytes;
-        d.allocated_bytes = 0;
-        allocated
-    }).unwrap_or(0);
+    let released = device
+        .as_mut()
+        .map(|d| {
+            let allocated = d.allocated_bytes;
+            d.allocated_bytes = 0;
+            allocated
+        })
+        .unwrap_or(0);
     released
 }
 
@@ -459,18 +485,16 @@ mod tests {
     fn test_batch_matvec_cpu_fallback() {
         // Simple test case: 2 queries, 3 experts, hidden_dim=4
         let query = vec![
-            1.0, 0.0, 0.0, 0.0,  // query 0
-            0.0, 1.0, 0.0, 0.0,  // query 1
+            1.0, 0.0, 0.0, 0.0, // query 0
+            0.0, 1.0, 0.0, 0.0, // query 1
         ];
         let expert_weights = vec![
-            1.0, 0.0, 0.0, 0.0,  // expert 0
-            0.0, 1.0, 0.0, 0.0,  // expert 1
-            0.0, 0.0, 1.0, 0.0,  // expert 2
+            1.0, 0.0, 0.0, 0.0, // expert 0
+            0.0, 1.0, 0.0, 0.0, // expert 1
+            0.0, 0.0, 1.0, 0.0, // expert 2
         ];
 
-        let (result, shape, _time) = batch_matvec(
-            query, expert_weights, 2, 3, 4
-        ).unwrap();
+        let (result, shape, _time) = batch_matvec(query, expert_weights, 2, 3, 4).unwrap();
 
         assert_eq!(shape, (2, 3));
         assert_eq!(result.len(), 6);

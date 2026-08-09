@@ -1,16 +1,15 @@
+#[cfg(feature = "advanced")]
+use crate::adaptive_scheduler;
 /// High-performance IOC extraction and URL normalization.
 /// Uses pre-compiled regex from ioc_patterns.rs (single source of truth).
 ///
 /// Issue #8: All IOC patterns consolidated in ioc_patterns.rs (single source of truth).
 /// This module imports patterns from ioc_patterns.rs — DO NOT redefine patterns here.
-
 use crate::gil::release_gil;
-#[cfg(feature = "advanced")]
-use crate::adaptive_scheduler;
 use crate::ioc_patterns::{
-    CVE_PAT, DOMAIN_PAT, EMAIL_PAT, ENCODING_BASE32_PAT, ENCODING_BASE64_PAT,
-    ENCODING_HEX_PAT, ENCODING_HIGH_ENTROPY_PAT, HASH_PAT, IPV4_PAT, IPV6_PAT,
-    MD5_PAT, SHA1_PAT, SHA256_PAT, URL_PAT,
+    CVE_PAT, DOMAIN_PAT, EMAIL_PAT, ENCODING_BASE32_PAT, ENCODING_BASE64_PAT, ENCODING_HEX_PAT,
+    ENCODING_HIGH_ENTROPY_PAT, HASH_PAT, IPV4_PAT, IPV6_PAT, MD5_PAT, SHA1_PAT, SHA256_PAT,
+    URL_PAT,
 };
 use crate::url_engine;
 use pyo3::prelude::*;
@@ -20,22 +19,36 @@ use regex::Regex;
 use std::collections::HashSet;
 
 // ISSUE-014: Pre-compiled regex from centralized patterns (single source of truth)
-static IPV4_RE: std::sync::LazyLock<Regex> = std::sync::LazyLock::new(|| Regex::new(IPV4_PAT).unwrap());
-static IPV6_RE: std::sync::LazyLock<Regex> = std::sync::LazyLock::new(|| Regex::new(IPV6_PAT).unwrap());
-static DOMAIN_RE: std::sync::LazyLock<Regex> = std::sync::LazyLock::new(|| Regex::new(DOMAIN_PAT).unwrap());
-static MD5_RE: std::sync::LazyLock<Regex> = std::sync::LazyLock::new(|| Regex::new(MD5_PAT).unwrap());
-static SHA1_RE: std::sync::LazyLock<Regex> = std::sync::LazyLock::new(|| Regex::new(SHA1_PAT).unwrap());
-static SHA256_RE: std::sync::LazyLock<Regex> = std::sync::LazyLock::new(|| Regex::new(SHA256_PAT).unwrap());
-static EMAIL_RE: std::sync::LazyLock<Regex> = std::sync::LazyLock::new(|| Regex::new(EMAIL_PAT).unwrap());
+static IPV4_RE: std::sync::LazyLock<Regex> =
+    std::sync::LazyLock::new(|| Regex::new(IPV4_PAT).unwrap());
+static IPV6_RE: std::sync::LazyLock<Regex> =
+    std::sync::LazyLock::new(|| Regex::new(IPV6_PAT).unwrap());
+static DOMAIN_RE: std::sync::LazyLock<Regex> =
+    std::sync::LazyLock::new(|| Regex::new(DOMAIN_PAT).unwrap());
+static MD5_RE: std::sync::LazyLock<Regex> =
+    std::sync::LazyLock::new(|| Regex::new(MD5_PAT).unwrap());
+static SHA1_RE: std::sync::LazyLock<Regex> =
+    std::sync::LazyLock::new(|| Regex::new(SHA1_PAT).unwrap());
+static SHA256_RE: std::sync::LazyLock<Regex> =
+    std::sync::LazyLock::new(|| Regex::new(SHA256_PAT).unwrap());
+static EMAIL_RE: std::sync::LazyLock<Regex> =
+    std::sync::LazyLock::new(|| Regex::new(EMAIL_PAT).unwrap());
 #[allow(dead_code)]
-static HASH_RE: std::sync::LazyLock<Regex> = std::sync::LazyLock::new(|| Regex::new(HASH_PAT).unwrap());
-static CVE_RE: std::sync::LazyLock<Regex> = std::sync::LazyLock::new(|| Regex::new(CVE_PAT).unwrap());
-static URL_RE: std::sync::LazyLock<Regex> = std::sync::LazyLock::new(|| Regex::new(URL_PAT).unwrap());
-static ENCODING_BASE32_RE: std::sync::LazyLock<Regex> = std::sync::LazyLock::new(|| Regex::new(ENCODING_BASE32_PAT).unwrap());
-static ENCODING_BASE64_RE: std::sync::LazyLock<Regex> = std::sync::LazyLock::new(|| Regex::new(ENCODING_BASE64_PAT).unwrap());
-static ENCODING_HEX_RE: std::sync::LazyLock<Regex> = std::sync::LazyLock::new(|| Regex::new(ENCODING_HEX_PAT).unwrap());
+static HASH_RE: std::sync::LazyLock<Regex> =
+    std::sync::LazyLock::new(|| Regex::new(HASH_PAT).unwrap());
+static CVE_RE: std::sync::LazyLock<Regex> =
+    std::sync::LazyLock::new(|| Regex::new(CVE_PAT).unwrap());
+static URL_RE: std::sync::LazyLock<Regex> =
+    std::sync::LazyLock::new(|| Regex::new(URL_PAT).unwrap());
+static ENCODING_BASE32_RE: std::sync::LazyLock<Regex> =
+    std::sync::LazyLock::new(|| Regex::new(ENCODING_BASE32_PAT).unwrap());
+static ENCODING_BASE64_RE: std::sync::LazyLock<Regex> =
+    std::sync::LazyLock::new(|| Regex::new(ENCODING_BASE64_PAT).unwrap());
+static ENCODING_HEX_RE: std::sync::LazyLock<Regex> =
+    std::sync::LazyLock::new(|| Regex::new(ENCODING_HEX_PAT).unwrap());
 #[allow(dead_code)]
-static ENCODING_HIGH_ENTROPY_RE: std::sync::LazyLock<Regex> = std::sync::LazyLock::new(|| Regex::new(ENCODING_HIGH_ENTROPY_PAT).unwrap());
+static ENCODING_HIGH_ENTROPY_RE: std::sync::LazyLock<Regex> =
+    std::sync::LazyLock::new(|| Regex::new(ENCODING_HIGH_ENTROPY_PAT).unwrap());
 
 /// Register all IOC extraction functions with Python module.
 pub fn register_functions(m: &Bound<'_, PyModule>) -> PyResult<()> {
@@ -192,12 +205,7 @@ pub fn batch_ioc_extract_fast<'py>(
             let pool = crate::mixed_pool(n);
             Ok(Python::attach(|py| {
                 release_gil(py, || {
-                    pool.install(|| {
-                        owned
-                            .par_iter()
-                            .flat_map(|text| scan_iocs(text))
-                            .collect()
-                    })
+                    pool.install(|| owned.par_iter().flat_map(|text| scan_iocs(text)).collect())
                 })
             }))
         }
@@ -237,11 +245,9 @@ fn url_normalize(url: &str) -> String {
 fn batch_dedup_urls(urls: Vec<String>) -> Vec<String> {
     let mut seen = std::collections::HashSet::new();
     urls.into_iter()
-        .filter(|url| {
-            match url_engine::normalize(url) {
-                Ok(normalized) => seen.insert(normalized),
-                Err(_) => seen.insert(url.clone()),
-            }
+        .filter(|url| match url_engine::normalize(url) {
+            Ok(normalized) => seen.insert(normalized),
+            Err(_) => seen.insert(url.clone()),
         })
         .collect()
 }
@@ -278,15 +284,14 @@ pub fn batch_sha256(items: Vec<String>) -> Vec<String> {
         items.iter().map(|s| sha256_hex(s.as_bytes())).collect()
     } else {
         // Issue #9 fix: mixed_pool (P-core only) instead of cpu_pool (all cores)
-        crate::mixed_pool(n).install(|| {
-            items.par_iter().map(|s| sha256_hex(s.as_bytes())).collect()
-        })
+        crate::mixed_pool(n)
+            .install(|| items.par_iter().map(|s| sha256_hex(s.as_bytes())).collect())
     }
 }
 
 fn sha256_hex(data: &[u8]) -> String {
+    use sha2::{Digest, Sha256};
     use std::fmt::Write;
-    use sha2::{Sha256, Digest};
     let mut hasher = Sha256::new();
     hasher.update(data);
     let result = hasher.finalize();
@@ -313,7 +318,10 @@ pub fn detect_encoding_patterns(query: &str) -> Vec<String> {
 
         // Check for Base32 (uppercase, digits 2-7, padding)
         if ENCODING_BASE32_RE.is_match(part) && part.len() >= 8 {
-            let base32_chars = part.chars().filter(|c| c.is_uppercase() || "234567".contains(*c)).count();
+            let base32_chars = part
+                .chars()
+                .filter(|c| c.is_uppercase() || "234567".contains(*c))
+                .count();
             if base32_chars as f64 / part.len() as f64 > 0.9 {
                 if seen.insert("base32".to_string()) {
                     patterns.push("base32".to_string());

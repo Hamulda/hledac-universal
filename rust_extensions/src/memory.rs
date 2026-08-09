@@ -89,7 +89,8 @@ pub fn get_available_memory_gib() -> f64 {
     {
         let mut vm_stat: libc::vm_statistics64 = unsafe { std::mem::zeroed() };
         let mut count = (std::mem::size_of::<libc::vm_statistics64>()
-            / std::mem::size_of::<libc::integer_t>()) as libc::mach_msg_type_number_t;
+            / std::mem::size_of::<libc::integer_t>())
+            as libc::mach_msg_type_number_t;
         let ret = unsafe {
             libc::host_statistics64(
                 #[allow(deprecated)]
@@ -237,7 +238,8 @@ pub fn advise_free(ptr: usize, len: usize) -> bool {
     }
     #[cfg(target_os = "macos")]
     {
-        let result = unsafe { libc::madvise(ptr as *mut libc::c_void, len, libc::MADV_FREE_REUSABLE) };
+        let result =
+            unsafe { libc::madvise(ptr as *mut libc::c_void, len, libc::MADV_FREE_REUSABLE) };
         result == 0
     }
     #[cfg(not(target_os = "macos"))]
@@ -323,11 +325,14 @@ pub fn get_memory_snapshot(py: Python<'_>) -> PyResult<Bound<'_, PyDict>> {
 
     let dict = PyDict::new(py);
     dict.set_item("rss_bytes", rss_bytes).unwrap();
-    dict.set_item("rss_gib", rss_bytes as f64 / (1024.0_f64.powi(3))).unwrap();
+    dict.set_item("rss_gib", rss_bytes as f64 / (1024.0_f64.powi(3)))
+        .unwrap();
     dict.set_item("peak_rss_bytes", peak_rss_bytes_val).unwrap();
-    dict.set_item("available_memory_gib", available_memory_gib).unwrap();
+    dict.set_item("available_memory_gib", available_memory_gib)
+        .unwrap();
     dict.set_item("total_memory_gib", total_memory_gib).unwrap();
-    dict.set_item("metal_active_bytes", metal_active_bytes).unwrap();
+    dict.set_item("metal_active_bytes", metal_active_bytes)
+        .unwrap();
     dict.set_item("metal_active_gib", metal_active_gib).unwrap();
     dict.set_item("pressure_level", pressure).unwrap();
     Ok(dict)

@@ -61,8 +61,8 @@ use std::collections::HashSet;
 // Issue #031: Import patterns from generated module (single source of truth).
 // Previously had inline patterns in build_many — now uses ioc_patterns_generated.rs.
 use crate::ioc_patterns_generated::{
-    IPV4_PAT, DOMAIN_PAT, MD5_PAT, SHA1_PAT, SHA256_PAT,
-    EMAIL_PAT, CVE_PAT, MAC_PAT, BTC_PAT, ETH_PAT,
+    BTC_PAT, CVE_PAT, DOMAIN_PAT, EMAIL_PAT, ETH_PAT, IPV4_PAT, MAC_PAT, MD5_PAT, SHA1_PAT,
+    SHA256_PAT,
 };
 
 /// Issue #5: Single-pass meta-regex — one automaton, one scan, all patterns.
@@ -262,7 +262,10 @@ fn batch_extract_iocs_inner(
 
     // Serial forced: individual texts below threshold — pool overhead exceeds SIMD benefit.
     // This is the `simd_force_serial_below_kb` adaptive threshold.
-    if texts.iter().all(|t| t.len() < simd_force_serial_below_kb * 1024) {
+    if texts
+        .iter()
+        .all(|t| t.len() < simd_force_serial_below_kb * 1024)
+    {
         return texts
             .iter()
             .enumerate()
@@ -350,7 +353,10 @@ pub fn batch_extract_iocs_simd(texts: Vec<String>, _py: Python<'_>) -> Vec<(Stri
 
 /// Batch extract with text index — returns (text_idx, ioc_value, ioc_type).
 #[pyfunction]
-pub fn batch_extract_iocs_simd_indexed(texts: Vec<String>, _py: Python<'_>) -> Vec<(usize, String, String)> {
+pub fn batch_extract_iocs_simd_indexed(
+    texts: Vec<String>,
+    _py: Python<'_>,
+) -> Vec<(usize, String, String)> {
     if texts.is_empty() {
         return Vec::new();
     }
@@ -436,8 +442,7 @@ mod tests {
 
     #[test]
     fn test_simd_sha256() {
-        let text =
-            "Hash: a591a6d40bf420404a011733cfb7b190d62c65bf0bcda32b57b277d9ad9f146e";
+        let text = "Hash: a591a6d40bf420404a011733cfb7b190d62c65bf0bcda32b57b277d9ad9f146e";
         let iocs = extract_one_simd(text);
         assert!(iocs.iter().any(|(_v, t)| t == "sha256"));
     }
@@ -485,8 +490,14 @@ mod tests {
         // F1.2 fix: Verify both G1 and G2 initialize without panic
         let regex_g1 = IOC_META_REGEX_G1.as_ref();
         let regex_g2 = IOC_META_REGEX_G2.as_ref();
-        assert!(regex_g1.is_ok(), "IOC_META_REGEX_G1 should build successfully");
-        assert!(regex_g2.is_ok(), "IOC_META_REGEX_G2 should build successfully");
+        assert!(
+            regex_g1.is_ok(),
+            "IOC_META_REGEX_G1 should build successfully"
+        );
+        assert!(
+            regex_g2.is_ok(),
+            "IOC_META_REGEX_G2 should build successfully"
+        );
     }
 
     // ─── IPv6 Boundary Tests (P1 fix) ───────────────────────────────────────

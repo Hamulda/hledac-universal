@@ -191,7 +191,11 @@ impl RustFederatedQTable {
     /// Periodic eviction: removes `n` lowest-Q entries.
     /// Should be called every ~100 updates or when table is near capacity.
     /// Returns the number of entries evicted.
-    fn do_evict(qtable: &RwLock<AHashMap<String, f64>>, total_count: &AtomicUsize, n: usize) -> usize {
+    fn do_evict(
+        qtable: &RwLock<AHashMap<String, f64>>,
+        total_count: &AtomicUsize,
+        n: usize,
+    ) -> usize {
         if n == 0 {
             return 0;
         }
@@ -249,12 +253,7 @@ impl RustFederatedQTable {
 
     /// get_best_action(lane, state_key, actions: Vec<String>) -> String
     /// Concurrent readers allowed — all action Q-values read simultaneously.
-    pub fn get_best_action(
-        &self,
-        lane: &str,
-        state_key: &str,
-        actions: Vec<String>,
-    ) -> String {
+    pub fn get_best_action(&self, lane: &str, state_key: &str, actions: Vec<String>) -> String {
         if actions.is_empty() {
             return String::new();
         }
@@ -305,10 +304,7 @@ impl RustFederatedQTable {
     /// update_batch(items: Vec<(lane, state_key, action, reward, next_state_key)>)
     /// Rayon parallel — each item processed independently.
     /// ISSUE-011 fix (continued): parking_lot::RwLock replaces DashMap for PyO3 GIL safety.
-    pub fn update_batch(
-        &self,
-        items: Vec<(String, String, String, f64, String)>,
-    ) -> usize {
+    pub fn update_batch(&self, items: Vec<(String, String, String, f64, String)>) -> usize {
         let n = items.len();
         if n == 0 {
             return 0;
@@ -326,24 +322,28 @@ impl RustFederatedQTable {
         if n >= threshold {
             // Rayon parallel: each item processed independently.
             // RwLock handles concurrent reads (for next_max_q) and exclusive writes.
-            items.par_iter().for_each(|(lane, state_key, action, reward, next_state_key)| {
-                Self::atomic_q_update(
-                    qtable,
-                    total_count,
-                    alpha,
-                    gamma,
-                    lane,
-                    state_key,
-                    action,
-                    *reward,
-                    next_state_key,
-                    max_entries,
-                );
-            });
+            items
+                .par_iter()
+                .for_each(|(lane, state_key, action, reward, next_state_key)| {
+                    Self::atomic_q_update(
+                        qtable,
+                        total_count,
+                        alpha,
+                        gamma,
+                        lane,
+                        state_key,
+                        action,
+                        *reward,
+                        next_state_key,
+                        max_entries,
+                    );
+                });
 
             // Update eviction counter after batch.
             let batch_updates = self.updates_since_eviction.fetch_add(n, Ordering::Relaxed);
-            if batch_updates + n >= 100 && self.total_count.load(Ordering::Relaxed) >= self.max_entries / 2 {
+            if batch_updates + n >= 100
+                && self.total_count.load(Ordering::Relaxed) >= self.max_entries / 2
+            {
                 self.updates_since_eviction.store(0, Ordering::Relaxed);
                 self.evict_lowest_q(10);
             }
@@ -376,7 +376,11 @@ impl RustFederatedQTable {
     /// to_dict() -> HashMap<String, f64>
     /// Collects all entries — O(n) but serial, used for persistence only.
     pub fn to_dict(&self) -> HashMap<String, f64> {
-        self.qtable.read().iter().map(|(k, v)| (k.clone(), *v)).collect()
+        self.qtable
+            .read()
+            .iter()
+            .map(|(k, v)| (k.clone(), *v))
+            .collect()
     }
 
     /// len() -> usize
@@ -510,37 +514,39 @@ pub fn rust_federated_qtable_batch_update(
         let alpha = 0.1;
         let gamma = 0.9;
 
-        items.par_iter().for_each(|(lane, state_key, action, reward, next_state_key)| {
-            let full_key = format!("{}::{}|{}", lane, state_key, action);
-            let next_key = format!("{}::{}", lane, next_state_key);
+        items
+            .par_iter()
+            .for_each(|(lane, state_key, action, reward, next_state_key)| {
+                let full_key = format!("{}::{}|{}", lane, state_key, action);
+                let next_key = format!("{}::{}", lane, next_state_key);
 
-            // Phase 1: read lock for next_max_q
-            // FIX: k.ends_with(&next_key) where next_key="lane::next_state_key" and
-            // k="lane::state_key|action" NEVER matches (k has "|" in middle).
-            // Correct: strip "|action" suffix and compare to next_key.
-            let next_max_q = {
-                let guard = qtable.read();
-                guard
-                    .iter()
-                    .filter(|(k, _)| {
-                        k.starts_with(&format!("{}::", lane))
-                            && k.split('|').next() == Some(&next_key)
-                    })
-                    .map(|(_, v)| *v)
-                    .fold(0.0f64, |acc, q| acc.max(q))
-            };
+                // Phase 1: read lock for next_max_q
+                // FIX: k.ends_with(&next_key) where next_key="lane::next_state_key" and
+                // k="lane::state_key|action" NEVER matches (k has "|" in middle).
+                // Correct: strip "|action" suffix and compare to next_key.
+                let next_max_q = {
+                    let guard = qtable.read();
+                    guard
+                        .iter()
+                        .filter(|(k, _)| {
+                            k.starts_with(&format!("{}::", lane))
+                                && k.split('|').next() == Some(&next_key)
+                        })
+                        .map(|(_, v)| *v)
+                        .fold(0.0f64, |acc, q| acc.max(q))
+                };
 
-            let target = *reward + gamma * next_max_q;
+                let target = *reward + gamma * next_max_q;
 
-            // Phase 2: write lock for update/insert
-            let mut guard = qtable.write();
-            if let Some(current_q) = guard.get(&full_key) {
-                let current_q = *current_q;
-                guard.insert(full_key, current_q + alpha * (target - current_q));
-            } else {
-                guard.insert(full_key, target);
-            }
-        });
+                // Phase 2: write lock for update/insert
+                let mut guard = qtable.write();
+                if let Some(current_q) = guard.get(&full_key) {
+                    let current_q = *current_q;
+                    guard.insert(full_key, current_q + alpha * (target - current_q));
+                } else {
+                    guard.insert(full_key, target);
+                }
+            });
     }
     n
 }
@@ -551,10 +557,7 @@ pub fn rust_federated_qtable_batch_update(
 
 pub fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<RustFederatedQTable>()?;
-    m.add_function(wrap_pyfunction!(
-        rust_federated_qtable_batch_update,
-        m
-    )?)?;
+    m.add_function(wrap_pyfunction!(rust_federated_qtable_batch_update, m)?)?;
     Ok(())
 }
 
@@ -603,29 +606,43 @@ mod tests {
 
         // Simulate 100 concurrent updates to the same entry.
         let items: Vec<_> = (0..100)
-            .map(|_| (lane.to_string(), state_key.to_string(), action.to_string(), reward, next_state_key.to_string()))
+            .map(|_| {
+                (
+                    lane.to_string(),
+                    state_key.to_string(),
+                    action.to_string(),
+                    reward,
+                    next_state_key.to_string(),
+                )
+            })
             .collect();
 
-        items.par_iter().for_each(|(lane, state_key, action, reward, next_state_key)| {
-            RustFederatedQTable::atomic_q_update(
-                &qtable,
-                &total_count,
-                alpha,
-                gamma,
-                lane,
-                state_key,
-                action,
-                *reward,
-                next_state_key,
-                1024,
-            );
-        });
+        items
+            .par_iter()
+            .for_each(|(lane, state_key, action, reward, next_state_key)| {
+                RustFederatedQTable::atomic_q_update(
+                    &qtable,
+                    &total_count,
+                    alpha,
+                    gamma,
+                    lane,
+                    state_key,
+                    action,
+                    *reward,
+                    next_state_key,
+                    1024,
+                );
+            });
 
         // With atomic CAS, Q-value should converge to the correct value after 100 updates.
         // Not a lost update (which would give wrong Q-value).
         let guard = qtable.read();
         let q = guard.get("surface::state_0|fetch").unwrap();
-        assert!(*q > 0.0 && *q <= 1.0, "Q-value should be bounded, got {}", *q);
+        assert!(
+            *q > 0.0 && *q <= 1.0,
+            "Q-value should be bounded, got {}",
+            *q
+        );
     }
 
     #[test]
@@ -705,7 +722,10 @@ mod tests {
 
         let key2 = "dark::my-state|scan";
         assert_eq!(RustFederatedQTable::extract_lane(key2), Some("dark"));
-        assert_eq!(RustFederatedQTable::extract_state_key(key2), Some("my-state"));
+        assert_eq!(
+            RustFederatedQTable::extract_state_key(key2),
+            Some("my-state")
+        );
         assert_eq!(RustFederatedQTable::extract_action(key2), Some("scan"));
     }
 

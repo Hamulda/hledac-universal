@@ -55,7 +55,10 @@ pub(crate) struct CacheKey {
 
 impl CacheKey {
     fn new(root_value: String, max_hops: usize) -> Self {
-        Self { root_value, max_hops }
+        Self {
+            root_value,
+            max_hops,
+        }
     }
 
     fn file_path(cache_dir: &PathBuf) -> PathBuf {
@@ -105,7 +108,12 @@ impl CacheHeader {
         let version = data[4];
         let entry_count = u32::from_le_bytes(data[5..9].try_into().ok()?);
         let data_size = u64::from_le_bytes(data[9..17].try_into().ok()?);
-        Some(Self { magic, version, entry_count, data_size })
+        Some(Self {
+            magic,
+            version,
+            entry_count,
+            data_size,
+        })
     }
 }
 
@@ -182,9 +190,12 @@ impl LRUCache {
         {
             if let Some(old_key) = self.lru_order.pop_front() {
                 if let Some(v) = self.entries.remove(&old_key) {
-                    if let Ok(old_serialized) = bincode::encode_to_vec(&v, bincode::config::standard()) {
+                    if let Ok(old_serialized) =
+                        bincode::encode_to_vec(&v, bincode::config::standard())
+                    {
                         let old_compressed = lz4_compress(&old_serialized);
-                        self.current_bytes = self.current_bytes.saturating_sub(old_compressed.len());
+                        self.current_bytes =
+                            self.current_bytes.saturating_sub(old_compressed.len());
                     }
                     self.dirty = true;
                 }
@@ -243,8 +254,8 @@ impl LRUCache {
         // FFI-05: Wrap `map_mut` in `catch_unwind`. If a panic occurs
         // (e.g., due to memory pressure or TOCTOU race), we catch it and
         // return gracefully instead of propagating panic across the FFI boundary.
-        let mmap = match panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            unsafe { memmap2::MmapMut::map_mut(&file) }
+        let mmap = match panic::catch_unwind(std::panic::AssertUnwindSafe(|| unsafe {
+            memmap2::MmapMut::map_mut(&file)
         })) {
             Ok(Ok(m)) => m,
             Ok(Err(e)) => {
@@ -270,9 +281,9 @@ impl LRUCache {
 
         while offset + 4 <= data_size && loaded < header.entry_count {
             // Read key_len
-            let key_len = u32::from_le_bytes(
-                mmap[offset..offset + 4].try_into().unwrap_or([0u8; 4])
-            ) as usize;
+            let key_len =
+                u32::from_le_bytes(mmap[offset..offset + 4].try_into().unwrap_or([0u8; 4]))
+                    as usize;
             offset += 4;
 
             if offset + key_len + 4 + 4 > data_size {
@@ -280,21 +291,20 @@ impl LRUCache {
             }
 
             // Read key_value
-            let key_value = String::from_utf8(
-                mmap[offset..offset + key_len].to_vec()
-            ).unwrap_or_default();
+            let key_value =
+                String::from_utf8(mmap[offset..offset + key_len].to_vec()).unwrap_or_default();
             offset += key_len;
 
             // Read max_hops
-            let max_hops = u32::from_le_bytes(
-                mmap[offset..offset + 4].try_into().unwrap_or([0u8; 4])
-            ) as usize;
+            let max_hops =
+                u32::from_le_bytes(mmap[offset..offset + 4].try_into().unwrap_or([0u8; 4]))
+                    as usize;
             offset += 4;
 
             // Read value_len
-            let value_len = u32::from_le_bytes(
-                mmap[offset..offset + 4].try_into().unwrap_or([0u8; 4])
-            ) as usize;
+            let value_len =
+                u32::from_le_bytes(mmap[offset..offset + 4].try_into().unwrap_or([0u8; 4]))
+                    as usize;
             offset += 4;
 
             if offset + value_len + 8 > data_size {
@@ -315,7 +325,10 @@ impl LRUCache {
                     &decomp,
                     bincode::config::standard(),
                 ) {
-                    let key = CacheKey { root_value: key_value, max_hops };
+                    let key = CacheKey {
+                        root_value: key_value,
+                        max_hops,
+                    };
                     self.entries.insert(key.clone(), results);
                     self.lru_order.push_back(key);
                     self.current_bytes += compressed_value.len() + 256; // rough estimate
@@ -349,13 +362,17 @@ impl LRUCache {
         {
             Ok(f) => f,
             Err(e) => {
-                eprintln!("[graph_traverse/cache] flush: cannot open cache file: {}", e);
+                eprintln!(
+                    "[graph_traverse/cache] flush: cannot open cache file: {}",
+                    e
+                );
                 return;
             }
         };
 
         // Collect entries sorted by LRU order (oldest first)
-        let entries_sorted: Vec<_> = self.lru_order
+        let entries_sorted: Vec<_> = self
+            .lru_order
             .iter()
             .filter_map(|k| self.entries.get(k).map(|v| (k.clone(), v.clone())))
             .collect();
@@ -386,7 +403,10 @@ impl LRUCache {
             let mut result = Vec::with_capacity(MAX_CACHE_BYTES);
             let mut size = 0;
             let mut seen = std::collections::HashSet::new();
-            for entry in all_data.chunks(all_data.len() / self.entries.len().max(1)).rev() {
+            for entry in all_data
+                .chunks(all_data.len() / self.entries.len().max(1))
+                .rev()
+            {
                 if size + entry.len() > MAX_CACHE_BYTES {
                     break;
                 }

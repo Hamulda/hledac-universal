@@ -59,21 +59,24 @@ static IOC_PATTERNS: LazyLock<Vec<Regex>> = LazyLock::new(|| {
 static STOP_WORDS: LazyLock<HashSet<&'static str>> = LazyLock::new(|| {
     let mut set = HashSet::new();
     // Articles, pronouns, prepositions, conjunctions, auxiliary verbs
-    ["the", "a", "an", "is", "are", "was", "were", "be", "been", "being",
-     "have", "has", "had", "do", "does", "did", "will", "would", "could", "should",
-     "may", "might", "must", "shall", "can", "need", "dare", "ought", "used",
-     "to", "of", "in", "for", "on", "with", "at", "by", "from", "as", "into",
-     "through", "during", "before", "after", "above", "below", "between",
-     "under", "again", "further", "then", "once", "here", "there", "when",
-     "where", "why", "how", "all", "each", "few", "more", "most", "other",
-     "some", "such", "no", "nor", "not", "only", "own", "same", "so",
-     "than", "too", "very", "just", "also", "now", "and", "but", "or", "yet",
-     "if", "because", "until", "while", "about", "against", "this", "that",
-     "these", "those", "it", "its", "they", "them", "their", "what", "which",
-     "who", "whom", "whose", "him", "her", "his", "we", "us", "our", "you",
-     "your", "i", "me", "my", "mine", "am", "get", "got", "like", "back",
-     "up", "down", "out", "over", "off", "any", "new", "first", "last",
-     "see", "known", "known", "seen", "via", "per", "via"].into_iter().for_each(|w| { set.insert(w); });
+    [
+        "the", "a", "an", "is", "are", "was", "were", "be", "been", "being", "have", "has", "had",
+        "do", "does", "did", "will", "would", "could", "should", "may", "might", "must", "shall",
+        "can", "need", "dare", "ought", "used", "to", "of", "in", "for", "on", "with", "at", "by",
+        "from", "as", "into", "through", "during", "before", "after", "above", "below", "between",
+        "under", "again", "further", "then", "once", "here", "there", "when", "where", "why",
+        "how", "all", "each", "few", "more", "most", "other", "some", "such", "no", "nor", "not",
+        "only", "own", "same", "so", "than", "too", "very", "just", "also", "now", "and", "but",
+        "or", "yet", "if", "because", "until", "while", "about", "against", "this", "that",
+        "these", "those", "it", "its", "they", "them", "their", "what", "which", "who", "whom",
+        "whose", "him", "her", "his", "we", "us", "our", "you", "your", "i", "me", "my", "mine",
+        "am", "get", "got", "like", "back", "up", "down", "out", "over", "off", "any", "new",
+        "first", "last", "see", "known", "known", "seen", "via", "per", "via",
+    ]
+    .into_iter()
+    .for_each(|w| {
+        set.insert(w);
+    });
     set
 });
 
@@ -176,10 +179,7 @@ fn normalise_entity(entity: &str) -> String {
     let s = s.trim_end_matches('/').trim_end_matches('#').trim();
     // Strip trailing path for URLs
     if s.starts_with("http") {
-        s.split('/')
-            .take(3)
-            .collect::<Vec<_>>()
-            .join("/")
+        s.split('/').take(3).collect::<Vec<_>>().join("/")
     } else {
         s.to_string()
     }
@@ -287,7 +287,11 @@ impl FindingGroup {
                 format!("  - {} [{}]", url, snippet)
             })
             .collect();
-        lines.push(format!("**Sources ({} total):**\n{}", self.sources.len(), source_lines.join("\n")));
+        lines.push(format!(
+            "**Sources ({} total):**\n{}",
+            self.sources.len(),
+            source_lines.join("\n")
+        ));
 
         let joined = lines.join("\n");
         if joined.len() > max_chars {
@@ -355,14 +359,10 @@ fn collapse_findings_core(
     for g in &mut group_list {
         let mut seen: HashMap<String, usize> = HashMap::new();
         g.sources.retain(|(url, _, text)| {
-            let key = format!(
-                "{}:{}",
-                url,
-                text.chars().take(40).collect::<String>()
-            );
+            let key = format!("{}:{}", url, text.chars().take(40).collect::<String>());
             let count = seen.entry(key).or_insert(0);
             *count += 1;
-            *count == 1  // keep only first occurrence
+            *count == 1 // keep only first occurrence
         });
     }
 
@@ -412,7 +412,11 @@ fn render_collapsed_markdown(
     );
 
     for (i, g) in groups.iter().enumerate() {
-        out.push_str(&format!("### Group {} ({} sources)\n", i + 1, g.sources.len()));
+        out.push_str(&format!(
+            "### Group {} ({} sources)\n",
+            i + 1,
+            g.sources.len()
+        ));
         out.push_str(&g.render(max_chars_per_group, max_sources_per_group));
         out.push_str("\n\n");
     }
@@ -477,11 +481,14 @@ pub fn collapse_findings(
 
     let total_findings = findings.len();
     if total_findings == 0 {
-        return Ok(Vec::from("## Pre-Collapsed IOC Tree\n\n*No findings to collapse.*\n"));
+        return Ok(Vec::from(
+            "## Pre-Collapsed IOC Tree\n\n*No findings to collapse.*\n",
+        ));
     }
 
     // Core collapse — protected by catch_unwind for FFI safety
-    let (groups, original_entity_count) = collapse_findings_safe(&findings, max_groups, max_chars_per_group)?;
+    let (groups, original_entity_count) =
+        collapse_findings_safe(&findings, max_groups, max_chars_per_group)?;
 
     // Render
     let markdown = render_collapsed_markdown(
@@ -559,31 +566,31 @@ fn compute_char_entropy(text: &str) -> f64 {
     if text.is_empty() {
         return 0.0;
     }
-    
+
     let mut counts: [u64; 128] = [0; 128];
     let mut total: u64 = 0;
-    
+
     for c in text.chars() {
         if let Some(idx) = u32::try_from(c).ok().filter(|&i| i < 128) {
             counts[idx as usize] += 1;
             total += 1;
         }
     }
-    
+
     if total == 0 {
         return 0.0;
     }
-    
+
     let mut entropy: f64 = 0.0;
     let total_f = total as f64;
-    
+
     for &count in &counts {
         if count > 0 {
             let p = (count as f64) / total_f;
             entropy -= p * p.log2();
         }
     }
-    
+
     entropy
 }
 
@@ -594,15 +601,17 @@ fn compute_tfidf_boilerplate<'a>(groups: &[&'a str], threshold: f64) -> HashSet<
     if num_groups == 0 {
         return HashSet::new();
     }
-    
+
     let mut word_doc_freq: HashMap<String, usize> = HashMap::new();
     let mut word_groups: HashMap<String, HashSet<usize>> = HashMap::new();
-    
+
     // Single pass: count which groups each word appears in
     for (group_idx, group_text) in groups.iter().enumerate() {
         let mut seen_in_group: HashSet<&str> = HashSet::new();
-        
-        for word in group_text.split(|c: char| c.is_whitespace() || "!\"#$%&'()*+,-./:;<=>?@[\\]^_`{|}~".contains(c)) {
+
+        for word in group_text
+            .split(|c: char| c.is_whitespace() || "!\"#$%&'()*+,-./:;<=>?@[\\]^_`{|}~".contains(c))
+        {
             let word = word.trim();
             if word.len() < 2 || word.chars().all(|c| c.is_numeric()) {
                 continue;
@@ -615,18 +624,18 @@ fn compute_tfidf_boilerplate<'a>(groups: &[&'a str], threshold: f64) -> HashSet<
             if STOP_WORDS.contains(word_lower.as_str()) {
                 continue;
             }
-            
+
             if seen_in_group.insert(word) {
                 *word_doc_freq.entry(word_lower.clone()).or_insert(0) += 1;
                 word_groups.entry(word_lower).or_default().insert(group_idx);
             }
         }
     }
-    
+
     // Find boilerplate: words in >= threshold fraction of groups
     let mut boilerplate: HashSet<String> = HashSet::new();
     let min_docs = ((num_groups as f64) * threshold).ceil() as usize;
-    
+
     for (word, &doc_count) in &word_doc_freq {
         if doc_count >= min_docs {
             // Also verify the word appears consistently across groups
@@ -637,7 +646,7 @@ fn compute_tfidf_boilerplate<'a>(groups: &[&'a str], threshold: f64) -> HashSet<
             }
         }
     }
-    
+
     boilerplate
 }
 
@@ -650,7 +659,7 @@ fn strip_markdown_formatting(text: &str) -> String {
     let mut chars = text.chars().peekable();
     let mut in_code_inline = false;
     let mut in_code_block = false;
-    
+
     while let Some(c) = chars.next() {
         match c {
             '`' => {
@@ -665,7 +674,7 @@ fn strip_markdown_formatting(text: &str) -> String {
                 } else {
                     in_code_inline = true;
                 }
-            },
+            }
             '*' => {
                 if !in_code_inline && !in_code_block {
                     if chars.peek() == Some(&'*') {
@@ -675,7 +684,7 @@ fn strip_markdown_formatting(text: &str) -> String {
                 } else {
                     result.push(c);
                 }
-            },
+            }
             '#' | '-' | '+' => {
                 if !in_code_inline && !in_code_block {
                     if chars.peek() == Some(&' ') {
@@ -688,13 +697,13 @@ fn strip_markdown_formatting(text: &str) -> String {
                 } else {
                     result.push(c);
                 }
-            },
+            }
             _ => {
                 result.push(c);
             }
         }
     }
-    
+
     result
 }
 
@@ -710,13 +719,13 @@ fn should_keep_word(
 ) -> bool {
     // Pre-compute lowercase once for all checks
     let word_lower = word.to_lowercase();
-    
+
     // IOC protection: NEVER drop protected IOCs
     // Case-insensitive exact match
     if protected_iocs.contains(word) || protected_iocs.contains(&word_lower) {
         return true;
     }
-    
+
     // Substring match: protect if word contains a known IOC
     // Note: protected_iocs are already lowercase from extract_all_iocs
     for ioc in protected_iocs {
@@ -724,46 +733,49 @@ fn should_keep_word(
             return true;
         }
     }
-    
+
     // Pattern match: protect words that ARE IOCs (IP, hash, CVE, etc.)
     // This catches standalone IOCs not captured by substring matching
     if contains_protected_ioc(word) {
         return true;
     }
-    
+
     // Boilerplate check (TF-IDF) — boilerplate contains lowercase words
     if boilerplate.contains(&word_lower) {
         return false;
     }
-    
+
     // Stop word check
     if STOP_WORDS.contains(word_lower.as_str()) {
         return false;
     }
-    
+
     // Short words: only keep if they contain digits (likely numeric IOCs)
     if word.len() < config.min_word_length {
         return word.chars().any(|c| c.is_ascii_digit());
     }
-    
+
     // Entropy check: low entropy = low information
     let word_entropy = compute_char_entropy(word);
     if word_entropy < config.min_entropy_bits {
         return false;
     }
-    
+
     // Keep words with digits (likely IOCs like IPs, hashes, versions)
     if word.chars().any(|c| c.is_ascii_digit()) {
         return true;
     }
-    
+
     // Keep words with path-like structure (URLs, file paths, domains)
-    if word.chars().next().map_or(false, |c| c.is_ascii_alphabetic()) 
-        && (word.contains('.') || word.contains('/') || word.contains(':')) 
+    if word
+        .chars()
+        .next()
+        .map_or(false, |c| c.is_ascii_alphabetic())
+        && (word.contains('.') || word.contains('/') || word.contains(':'))
     {
         return true;
     }
-    
+
     // Default: keep the word
     true
 }
@@ -777,40 +789,37 @@ fn should_keep_word(
 /// - Markdown stripping: removes formatting characters where structure is preserved
 ///
 /// Target: 30-50% token reduction, ~5-10μs for 4,000 chars on M1.
-pub fn compress_prompt_core(
-    text: &str,
-    config: &CompressionConfig,
-) -> String {
+pub fn compress_prompt_core(text: &str, config: &CompressionConfig) -> String {
     if text.is_empty() {
         return String::new();
     }
-    
+
     // Extract and protect all IOCs first
     let protected_iocs = extract_all_iocs(text);
     if protected_iocs.is_empty() && text.len() < 200 {
         // Very short text without IOCs — skip compression
         return text.to_string();
     }
-    
+
     // Split into groups for TF-IDF analysis
     // Groups are separated by "### Group N" headers
-    let groups: Vec<&str> = text.split("### Group")
+    let groups: Vec<&str> = text
+        .split("### Group")
         .filter(|g| !g.trim().is_empty())
         .collect();
-    
+
     // Compute boilerplate words (TF-IDF)
     let boilerplate = compute_tfidf_boilerplate(&groups, config.tfidf_threshold);
-    
+
     // Build result string
     let mut result = String::with_capacity(text.len());
-    
+
     // Process word by word, preserving structure
-    let markdown_chars: HashSet<char> = 
-        "#*_-`[]()!|".chars().collect();
-    
+    let markdown_chars: HashSet<char> = "#*_-`[]()!|".chars().collect();
+
     let mut i = text.chars().peekable();
     let mut word_buf = String::new();
-    
+
     while let Some(c) = i.next() {
         // Handle bold markers ** specially - skip the second *
         if c == '*' && config.strip_markdown {
@@ -824,7 +833,7 @@ pub fn compress_prompt_core(
             // Single * (italic marker) - strip it
             continue;
         }
-        
+
         // Preserve structure characters
         if markdown_chars.contains(&c) || c == '\n' || c == ':' || c == '(' || c == ')' {
             // Flush any accumulated word using helper
@@ -834,7 +843,7 @@ pub fn compress_prompt_core(
                 }
                 word_buf.clear();
             }
-            
+
             // Preserve structure (backticks for code)
             if config.strip_markdown {
                 if c == '`' {
@@ -845,7 +854,6 @@ pub fn compress_prompt_core(
             } else {
                 result.push(c);
             }
-            
         } else if c.is_whitespace() {
             // Flush word using helper
             if !word_buf.is_empty() {
@@ -860,25 +868,20 @@ pub fn compress_prompt_core(
             word_buf.push(c);
         }
     }
-    
+
     // Flush remaining word using helper
     if !word_buf.is_empty() {
         if should_keep_word(&word_buf, &protected_iocs, &boilerplate, config) {
             result.push_str(&word_buf);
         }
     }
-    
+
     // Post-process: collapse multiple spaces, normalize newlines
-    let result = result
-        .split_whitespace()
-        .collect::<Vec<_>>()
-        .join(" ");
-    
+    let result = result.split_whitespace().collect::<Vec<_>>().join(" ");
+
     // Re-add reasonable newlines after headers
-    let result = result
-        .replace(" ##", "\n##")
-        .replace(" ###", "\n###");
-    
+    let result = result.replace(" ##", "\n##").replace(" ###", "\n###");
+
     result
 }
 
@@ -901,7 +904,7 @@ impl CompressionStats {
         };
         // Rough token estimation: ~4 chars per token
         let tokens_saved = (orig_len.saturating_sub(comp_len)) / 4;
-        
+
         Self {
             original_len: orig_len,
             compressed_len: comp_len,
@@ -941,24 +944,24 @@ pub fn compress_prompt(
     let enabled = std::env::var("HLEDAC_ENABLE_PROMPT_COMPRESSION")
         .map(|v| v != "0")
         .unwrap_or(true);
-    
+
     if !enabled {
         return Ok(text.to_string());
     }
-    
+
     if text.is_empty() {
         return Ok(String::new());
     }
-    
+
     let config = CompressionConfig {
         tfidf_threshold: tfidf_threshold.clamp(0.0, 1.0),
         min_entropy_bits: min_entropy_bits.clamp(0.0, 8.0),
         min_word_length: 3,
         strip_markdown,
     };
-    
+
     let compressed = compress_prompt_core(text, &config);
-    
+
     // Return compressed text
     Ok(compressed)
 }
@@ -974,19 +977,21 @@ pub fn get_compression_stats(text: &str) -> PyResult<String> {
             "compressed_len": 0,
             "reduction_ratio": 0.0,
             "estimated_tokens_saved": 0,
-        }).to_string());
+        })
+        .to_string());
     }
-    
+
     let config = CompressionConfig::default();
     let compressed = compress_prompt_core(text, &config);
     let stats = CompressionStats::new(text, &compressed);
-    
+
     Ok(serde_json::json!({
         "original_len": stats.original_len,
         "compressed_len": stats.compressed_len,
         "reduction_ratio": stats.reduction_ratio,
         "estimated_tokens_saved": stats.estimated_tokens_saved,
-    }).to_string())
+    })
+    .to_string())
 }
 
 #[cfg(test)]
@@ -1045,17 +1050,10 @@ mod tests {
         let json = serde_json::to_vec(&findings).unwrap();
 
         // Run 100× — all results must be byte-identical
-        let (first, _) = collapse_findings_core(
-            &serde_json::from_slice(&json).unwrap(),
-            12,
-            400,
-        );
+        let (first, _) = collapse_findings_core(&serde_json::from_slice(&json).unwrap(), 12, 400);
         for _ in 0..99 {
-            let (again, _) = collapse_findings_core(
-                &serde_json::from_slice(&json).unwrap(),
-                12,
-                400,
-            );
+            let (again, _) =
+                collapse_findings_core(&serde_json::from_slice(&json).unwrap(), 12, 400);
             assert_eq!(
                 first.len(),
                 again.len(),
@@ -1076,8 +1074,10 @@ mod tests {
         let mut g = FindingGroup::default();
         g.ioc_type = "ip".to_string();
         g.entity = "1.2.3.4".to_string();
-        g.sources.push(("vt".to_string(), 0.9, "malware".to_string()));
-        g.sources.push(("av".to_string(), 0.8, "malware".to_string()));
+        g.sources
+            .push(("vt".to_string(), 0.9, "malware".to_string()));
+        g.sources
+            .push(("av".to_string(), 0.8, "malware".to_string()));
         // score = 0.9 * log2(2+1) = 0.9 * 1.585 ≈ 1.426
         let s = g.score();
         assert!((s - 0.9_f32 * 1.58496_f32).abs() < 0.001);

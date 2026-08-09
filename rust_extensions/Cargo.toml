@@ -212,7 +212,11 @@ whisper-rs = { version = "0.13", optional = true }
 #   dns:     ~5 MB compile (hickory-dns + tokio), ~8 MB resident
 #   native_db: ~50 KB compile (pure Rust), ~200 KB resident per session
 # Enable explicitly: --features "dns,native_db" or set HLEDAC_ENABLE_DNS=1 / HLEDAC_ENABLE_NATIVE_DB=1
-default = ["core", "data"]
+#
+# IO-4 fix: Added metal_shared to default — enables zero-copy IOSurface pipeline on M1.
+# Metal is compiled with minimal extra cost (it's already on Apple Silicon).
+# SharedMetalBuffer enables: CVPixelBuffer→Metal→MLX zero-copy sharing.
+default = ["core", "data", "metal_shared"]
 
 # core: IOC extraction, URL ops, hashing, compression, HTML parsing
 # Always compiled. No heavy deps. Available even with --no-default-features.
@@ -274,7 +278,7 @@ advanced = [
 #   HLEDAC_ENABLE_MACH_REMAP=1 AND file_size >= 100MB.
 mach = []
 
-full = ["core", "data", "graph", "advanced", "tls13", "pdf", "office", "quic", "ane", "coreml_ane", "stix", "metal", "metal_shared", "otel", "fulltext", "native_db", "simdjson", "nw_framework", "whisper"]
+full = ["core", "data", "graph", "advanced", "tls13", "pdf", "office", "quic", "ane", "coreml_ane", "stix", "metal", "metal_shared", "iosurface", "otel", "fulltext", "native_db", "simdjson", "nw_framework", "whisper"]
 
 # simdjson: Zero-alloc JSON Pointer extraction via simd-json (ARM NEON native)
 # Adds: simdjson_extract.json_pointer_extract() — 2-4x faster than serde_json on M1
@@ -366,6 +370,13 @@ metal = ["dep:metal", "dep:objc2-metal"]
 #   zero-copy numpy views via PEP 3118 buffer protocol,
 #   batch MLX array creation (1 copy vs N copies).
 metal_shared = ["dep:metal", "dep:objc2-metal"]
+
+# IO-4: IOSurface zero-copy bridge — CVPixelBuffer → Metal texture
+# Provides: IOSurfaceTextureDescriptor PyClass for zero-copy IOSurface handling,
+#   CVPixelBuffer → IOSurface → MTLTexture pipeline,
+#   Vision/OCR zero-copy integration via CIImage(ioSurface:).
+# Requires: metal feature (MTLTexture creation from IOSurface).
+iosurface = ["metal_shared"]
 
 # R24: OpenTelemetry-compatible tracing via tracing-subscriber JSON stdout
 # Python reads spans from stdout JSON — no opentelemetry dep conflicts
@@ -472,7 +483,26 @@ opt-level = 3
 lto = "thin"
 codegen-units = 1
 strip = "symbols"
-panic = "abort"
+# SAFE-1 FIX: Changed from "abort" to "unwind" — CRITICAL for FFI safety.
+#
+# WHY "unwind" (not "abort"):
+#   - With "abort", every `catch_unwind` call is completely inert.
+#   - Any Rust panic (unwrap, serde error, NaN float, rayon OOM) → SIGABRT → kills Python.
+#   - With "unwind", panics can be caught and converted to PyErr gracefully.
+#
+# Existing FFI safety infrastructure (now active):
+#   - ffi_safe! macro in madvise.rs:96
+#   - catch_unwind in ioc_extract.rs:176
+#   - catch_unwind in graph_traverse/cache.rs:257
+#   - catch_unwind_or_return() in ffi_safe.rs:161
+#
+# Performance impact:
+#   - Modern Rust (1.68+) uses LLVM zero-cost exceptions for unwinding.
+#   - M1 8GB: negligible overhead vs the FFI boundary latency already present.
+#   - Binary size: ~2-5% larger (unwind tables).
+#
+# Custom panic handler (lib.rs): Converts panics to PyRuntimeError for Python caller.
+panic = "unwind"
 
 # ISSUE-P6-003 FIX: NEON target features are provided via TWO layers:
 # 1. .cargo/config.toml [target.aarch64-apple-darwin] rustflags (cargo builds)

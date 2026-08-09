@@ -11,35 +11,40 @@ use std::path::Path;
 /// Connection is opened read-only with PRAGMA threads=1.
 pub fn get_thread_connection(db_path: &Path) -> PyResult<duckdb::Connection> {
     // Open new connection
-    let conn = duckdb::Connection::open(db_path)
-        .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(
-            format!("DuckDB open failed for {:?}: {}", db_path, e)))?;
+    let conn = duckdb::Connection::open(db_path).map_err(|e| {
+        PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!(
+            "DuckDB open failed for {:?}: {}",
+            db_path, e
+        ))
+    })?;
 
     // M1 8GB: read_only=True = no WAL overhead
     // PRAGMA threads=1 = we parallelize across workers, not inside DuckDB
     conn.execute_batch("PRAGMA threads=1; PRAGMA read_only=true")
-        .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(
-            format!("PRAGMA setup failed: {}", e)))?;
+        .map_err(|e| {
+            PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!("PRAGMA setup failed: {}", e))
+        })?;
 
     Ok(conn)
 }
 
 /// Execute a query and return results as a vector of rows (each row is Vec<String>).
 pub fn execute_query(conn: duckdb::Connection, sql: &str) -> PyResult<Vec<Vec<String>>> {
-    let mut stmt = conn.prepare(sql)
-        .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(
-            format!("prepare error: {}", e)))?;
+    let mut stmt = conn.prepare(sql).map_err(|e| {
+        PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!("prepare error: {}", e))
+    })?;
 
     let n_cols = stmt.column_count();
     let mut rows: Vec<Vec<String>> = Vec::new();
 
-    let mut row_iter = stmt.query([])
-        .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(
-            format!("query error: {}", e)))?;
+    let mut row_iter = stmt.query([]).map_err(|e| {
+        PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!("query error: {}", e))
+    })?;
 
     while let Some(row_result) = row_iter.next().transpose() {
-        let row = row_result.map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(
-            format!("row read error: {}", e)))?;
+        let row = row_result.map_err(|e| {
+            PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!("row read error: {}", e))
+        })?;
         let mut row_values: Vec<String> = Vec::with_capacity(n_cols);
         for i in 0..n_cols {
             let val: duckdb::types::ValueRef<'_> = match row.get_ref(i) {
@@ -91,12 +96,10 @@ pub fn duckdb_open_connection(db_path: String) -> PyResult<bool> {
 #[pyfunction]
 pub fn duckdb_health_check(db_path: String) -> PyResult<String> {
     let conn = duckdb::Connection::open(&db_path)
-        .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(
-            format!("open: {}", e)))?;
+        .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!("open: {}", e)))?;
     let version: String = conn
         .query_row("SELECT duckdb_version()", [], |row| row.get(0))
-        .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(
-            format!("query: {}", e)))?;
+        .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!("query: {}", e)))?;
     Ok(version)
 }
 

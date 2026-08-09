@@ -9,17 +9,37 @@ use url::Url;
 /// Tracking parameters to strip from URLs (common analytics/campaign params).
 /// Exposed as a public static for Python-side import via hledac_rust_extensions.
 pub static TRACKING_PARAMS: &[&str] = &[
-    "utm_source", "utm_medium", "utm_campaign", "utm_term", "utm_content",
-    "fbclid", "gclid", "gclsrc", "dclid",
-    "msclkid", "twclid",
-    "mc_cid", "mc_eid",
-    "_ga", "_gl",
-    "yclid", "ymclid",
-    "spm", "scm_source", "scm_content",
-    "share_source", "share_medium",
-    "ref", "referrer", "ref_src", "ref_url",
-    "campaign", "source", "affiliate",
-    "zanpid", "aff_id",
+    "utm_source",
+    "utm_medium",
+    "utm_campaign",
+    "utm_term",
+    "utm_content",
+    "fbclid",
+    "gclid",
+    "gclsrc",
+    "dclid",
+    "msclkid",
+    "twclid",
+    "mc_cid",
+    "mc_eid",
+    "_ga",
+    "_gl",
+    "yclid",
+    "ymclid",
+    "spm",
+    "scm_source",
+    "scm_content",
+    "share_source",
+    "share_medium",
+    "ref",
+    "referrer",
+    "ref_src",
+    "ref_url",
+    "campaign",
+    "source",
+    "affiliate",
+    "zanpid",
+    "aff_id",
 ];
 
 /// Normalizes a URL for canonical representation.
@@ -57,7 +77,11 @@ fn canonicalize_url_internal(parsed: &Url) -> PyResult<String> {
         let sorted_query = url::form_urlencoded::Serializer::new(String::new())
             .extend_pairs(pairs)
             .finish();
-        normalized.set_query(if sorted_query.is_empty() { None } else { Some(&sorted_query) });
+        normalized.set_query(if sorted_query.is_empty() {
+            None
+        } else {
+            Some(&sorted_query)
+        });
     }
 
     // 4. Remove fragment
@@ -148,9 +172,7 @@ pub fn canonicalize_batch(urls: Vec<String>) -> Vec<String> {
 /// Batch fingerprint URLs.
 #[pyfunction]
 pub fn batch_fingerprint(urls: Vec<String>) -> Vec<Option<u64>> {
-    urls.into_iter()
-        .map(|u| fingerprint(&u).ok())
-        .collect()
+    urls.into_iter().map(|u| fingerprint(&u).ok()).collect()
 }
 
 /// Validates that a URL is syntactically valid and uses http/https scheme.
@@ -164,9 +186,7 @@ pub fn is_valid_url(url: &str) -> bool {
 /// Filters a list of URLs to only valid http/https URLs.
 #[pyfunction]
 pub fn filter_valid_urls(urls: Vec<String>) -> Vec<String> {
-    urls.into_iter()
-        .filter(|u| is_valid_url(u))
-        .collect()
+    urls.into_iter().filter(|u| is_valid_url(u)).collect()
 }
 
 /// Returns the list of tracking parameter names stripped by strip_tracking_params().
@@ -187,7 +207,8 @@ pub fn extract_domain(url: &str) -> PyResult<String> {
     let parsed = Url::parse(url)
         .map_err(|e| PyErr::new::<pyo3::exceptions::PyValueError, _>(e.to_string()))?;
 
-    let host = parsed.host_str()
+    let host = parsed
+        .host_str()
         .ok_or_else(|| PyErr::new::<pyo3::exceptions::PyValueError, _>("no host in URL"))?;
 
     Ok(host.to_string())
@@ -246,8 +267,9 @@ mod tests {
     #[test]
     fn test_strip_tracking_params() {
         let result = strip_tracking_params(
-            "https://example.com/page?utm_source=google&fbclid=abc123&id=123"
-        ).unwrap();
+            "https://example.com/page?utm_source=google&fbclid=abc123&id=123",
+        )
+        .unwrap();
         assert!(!result.contains("utm_source"));
         assert!(!result.contains("fbclid"));
         assert!(result.contains("id=123"));

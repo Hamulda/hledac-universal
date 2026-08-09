@@ -19,7 +19,7 @@
 
 use crate::data::connection::get_thread_connection;
 use pyo3::prelude::*;
-use pyo3::types::{PyDict, PyFloat, PyList, PyTuple, PyString};
+use pyo3::types::{PyDict, PyFloat, PyList, PyString, PyTuple};
 use rayon::iter::IntoParallelIterator;
 use rayon::prelude::*;
 use std::path::Path;
@@ -81,25 +81,40 @@ fn traverse_single(db_path: &Path, root_value: &str, max_hops: usize) -> Vec<Tra
     let mut stmt = match conn.prepare(sql) {
         Ok(s) => s,
         Err(e) => {
-            eprintln!("[data/graph_traverse] prepare failed for root {}: {}", root_value, e);
+            eprintln!(
+                "[data/graph_traverse] prepare failed for root {}: {}",
+                root_value, e
+            );
             return Vec::new();
         }
     };
 
     let mapped: Vec<TraversalResult> = match stmt.query_map(
-        [root_value, &max_hops.to_string(), &MAX_RESULTS_PER_ROOT.to_string()],
+        [
+            root_value,
+            &max_hops.to_string(),
+            &MAX_RESULTS_PER_ROOT.to_string(),
+        ],
         |row| {
             let dst_value: String = row.get(0).unwrap_or(String::new());
             let ioc_type: String = row.get(1).unwrap_or(String::new());
             let confidence: f64 = row.get(2).unwrap_or(0.0);
             let source: String = row.get(3).unwrap_or(String::new());
-            Ok(TraversalResult { dst_value, ioc_type, confidence, source })
+            Ok(TraversalResult {
+                dst_value,
+                ioc_type,
+                confidence,
+                source,
+            })
         },
     ) {
         Ok(m) => m.filter_map(|r| r.ok()).collect(),
         Err(e) => {
-            eprintln!("[data/graph_traverse] query failed for root {}: {}", root_value, e);
-            return Vec::new()
+            eprintln!(
+                "[data/graph_traverse] query failed for root {}: {}",
+                root_value, e
+            );
+            return Vec::new();
         }
     };
 
@@ -148,12 +163,15 @@ pub fn batch_graph_traverse(
             let elem1 = PyString::new(py, &r.ioc_type);
             let elem2 = PyFloat::new(py, r.confidence);
             let elem3 = PyString::new(py, &r.source);
-            let tuple = PyTuple::new(py, &[
-                elem0.as_any(),
-                elem1.as_any(),
-                elem2.as_any(),
-                elem3.as_any(),
-            ])?;
+            let tuple = PyTuple::new(
+                py,
+                &[
+                    elem0.as_any(),
+                    elem1.as_any(),
+                    elem2.as_any(),
+                    elem3.as_any(),
+                ],
+            )?;
             py_list.append(tuple)?;
         }
         dict.set_item(&values[i], &py_list)?;
@@ -175,23 +193,23 @@ pub fn graph_stats(py: Python<'_>, db_path: String) -> PyResult<Py<PyDict>> {
     let py_dict = PyDict::new(py);
 
     // Count nodes
-    if let Ok(count) = conn.query_row::<i64, _, _>(
-        "SELECT COUNT(*) FROM ioc_nodes", [], |row| row.get(0)
-    ) {
+    if let Ok(count) =
+        conn.query_row::<i64, _, _>("SELECT COUNT(*) FROM ioc_nodes", [], |row| row.get(0))
+    {
         py_dict.set_item("nodes", count as f64)?;
     }
 
     // Count edges
-    if let Ok(count) = conn.query_row::<i64, _, _>(
-        "SELECT COUNT(*) FROM ioc_edges", [], |row| row.get(0)
-    ) {
+    if let Ok(count) =
+        conn.query_row::<i64, _, _>("SELECT COUNT(*) FROM ioc_edges", [], |row| row.get(0))
+    {
         py_dict.set_item("edges", count as f64)?;
     }
 
     // DuckDB version
-    if let Ok(version) = conn.query_row::<String, _, _>(
-        "SELECT duckdb_version()", [], |row| row.get(0)
-    ) {
+    if let Ok(version) =
+        conn.query_row::<String, _, _>("SELECT duckdb_version()", [], |row| row.get(0))
+    {
         py_dict.set_item("duckdb_version", version)?;
     }
 

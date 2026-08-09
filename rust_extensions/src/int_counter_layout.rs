@@ -467,15 +467,9 @@ fn chain_hash_snapshot<'py>(
     // Build content bytes once — reused by both hashers (dual-emit).
     // digest::Digest needs content as a single contiguous slice.
     let content_bytes = content.as_bytes();
-    let prefix_parts: [&[u8]; 4] = [
-        prev_chain_hex.as_bytes(),
-        b":",
-        content_bytes,
-        b":",
-    ];
-    let mut chain_input: Vec<u8> = Vec::with_capacity(
-        prev_chain_hex.len() + 1 + content.len() + 1 + event_id.len(),
-    );
+    let prefix_parts: [&[u8]; 4] = [prev_chain_hex.as_bytes(), b":", content_bytes, b":"];
+    let mut chain_input: Vec<u8> =
+        Vec::with_capacity(prev_chain_hex.len() + 1 + content.len() + 1 + event_id.len());
     for part in &prefix_parts {
         chain_input.extend_from_slice(part);
     }
@@ -508,11 +502,7 @@ mod tests {
 
     #[test]
     fn test_construction_and_bump() {
-        let mut layout = IntCounterLayoutRust::new(vec![
-            "a".to_string(),
-            "b".to_string(),
-        ])
-        .unwrap();
+        let mut layout = IntCounterLayoutRust::new(vec!["a".to_string(), "b".to_string()]).unwrap();
         assert_eq!(layout.bump("a", 1), 1);
         assert_eq!(layout.bump("a", 5), 6);
         assert_eq!(layout.bump("b", 1), 1);
@@ -530,10 +520,7 @@ mod tests {
 
     #[test]
     fn test_duplicate_name_errors() {
-        let result = IntCounterLayoutRust::new(vec![
-            "a".to_string(),
-            "a".to_string(),
-        ]);
+        let result = IntCounterLayoutRust::new(vec!["a".to_string(), "a".to_string()]);
         assert!(result.is_err());
     }
 
@@ -545,11 +532,7 @@ mod tests {
 
     #[test]
     fn test_snapshot_returns_fresh_dict() {
-        let mut layout = IntCounterLayoutRust::new(vec![
-            "x".to_string(),
-            "y".to_string(),
-        ])
-        .unwrap();
+        let mut layout = IntCounterLayoutRust::new(vec!["x".to_string(), "y".to_string()]).unwrap();
         layout.bump("x", 10);
         // Snapshot via Python would require GIL — verify internal state directly.
         assert_eq!(layout.buffer, vec![10, 0]);
@@ -558,12 +541,9 @@ mod tests {
 
     #[test]
     fn test_reset_zeros_buffer() {
-        let mut layout = IntCounterLayoutRust::new(vec![
-            "a".to_string(),
-            "b".to_string(),
-            "c".to_string(),
-        ])
-        .unwrap();
+        let mut layout =
+            IntCounterLayoutRust::new(vec!["a".to_string(), "b".to_string(), "c".to_string()])
+                .unwrap();
         layout.bump("a", 100);
         layout.bump("b", 200);
         layout.bump("c", 300);
@@ -589,23 +569,18 @@ mod tests {
 
     #[test]
     fn test_len_returns_count() {
-        let layout = IntCounterLayoutRust::new(vec![
-            "a".to_string(),
-            "b".to_string(),
-            "c".to_string(),
-        ])
-        .unwrap();
+        let layout =
+            IntCounterLayoutRust::new(vec!["a".to_string(), "b".to_string(), "c".to_string()])
+                .unwrap();
         assert_eq!(layout.__len__(), 3);
         assert_eq!(layout.buffer.len(), 3);
     }
 
     #[test]
     fn test_bump_internal() {
-        let mut layout = IntCounterLayoutRust::new(vec![
-            "primary".to_string(),
-            "secondary".to_string(),
-        ])
-        .unwrap();
+        let mut layout =
+            IntCounterLayoutRust::new(vec!["primary".to_string(), "secondary".to_string()])
+                .unwrap();
         layout.bump("primary", 50);
         // bump_internal only touches slot 0 (primary)
         assert_eq!(layout.bump_internal(7), 57);

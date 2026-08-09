@@ -17,16 +17,56 @@ use std::sync::LazyLock;
 
 /// English letter bigram frequencies (copied from Python for consistency)
 const ENGLISH_BIGRAMS: &[(&str, f64)] = &[
-    ("th", 0.035), ("he", 0.030), ("in", 0.024), ("er", 0.022), ("an", 0.021),
-    ("re", 0.018), ("on", 0.017), ("at", 0.016), ("en", 0.015), ("nd", 0.015),
-    ("ti", 0.014), ("es", 0.014), ("or", 0.014), ("te", 0.013), ("of", 0.013),
-    ("ed", 0.013), ("is", 0.012), ("it", 0.012), ("al", 0.012), ("ar", 0.011),
-    ("st", 0.011), ("to", 0.011), ("nt", 0.011), ("ng", 0.010), ("se", 0.010),
-    ("ha", 0.010), ("as", 0.009), ("ou", 0.009), ("io", 0.009), ("le", 0.009),
-    ("ve", 0.009), ("co", 0.009), ("me", 0.009), ("de", 0.009), ("hi", 0.008),
-    ("ri", 0.008), ("ro", 0.008), ("ic", 0.008), ("ne", 0.008), ("ea", 0.008),
-    ("ra", 0.008), ("ce", 0.007), ("li", 0.007), ("ch", 0.007), ("ll", 0.007),
-    ("be", 0.007), ("ma", 0.007), ("si", 0.007), ("om", 0.007), ("ur", 0.006),
+    ("th", 0.035),
+    ("he", 0.030),
+    ("in", 0.024),
+    ("er", 0.022),
+    ("an", 0.021),
+    ("re", 0.018),
+    ("on", 0.017),
+    ("at", 0.016),
+    ("en", 0.015),
+    ("nd", 0.015),
+    ("ti", 0.014),
+    ("es", 0.014),
+    ("or", 0.014),
+    ("te", 0.013),
+    ("of", 0.013),
+    ("ed", 0.013),
+    ("is", 0.012),
+    ("it", 0.012),
+    ("al", 0.012),
+    ("ar", 0.011),
+    ("st", 0.011),
+    ("to", 0.011),
+    ("nt", 0.011),
+    ("ng", 0.010),
+    ("se", 0.010),
+    ("ha", 0.010),
+    ("as", 0.009),
+    ("ou", 0.009),
+    ("io", 0.009),
+    ("le", 0.009),
+    ("ve", 0.009),
+    ("co", 0.009),
+    ("me", 0.009),
+    ("de", 0.009),
+    ("hi", 0.008),
+    ("ri", 0.008),
+    ("ro", 0.008),
+    ("ic", 0.008),
+    ("ne", 0.008),
+    ("ea", 0.008),
+    ("ra", 0.008),
+    ("ce", 0.007),
+    ("li", 0.007),
+    ("ch", 0.007),
+    ("ll", 0.007),
+    ("be", 0.007),
+    ("ma", 0.007),
+    ("si", 0.007),
+    ("om", 0.007),
+    ("ur", 0.006),
 ];
 
 static BIGRAM_DB: LazyLock<HashMap<String, f64>> = LazyLock::new(|| {
@@ -37,9 +77,7 @@ static BIGRAM_DB: LazyLock<HashMap<String, f64>> = LazyLock::new(|| {
     m
 });
 
-static VOWELS: LazyLock<Vec<char>> = LazyLock::new(|| {
-    vec!['a', 'e', 'i', 'o', 'u']
-});
+static VOWELS: LazyLock<Vec<char>> = LazyLock::new(|| vec!['a', 'e', 'i', 'o', 'u']);
 
 /// Calculate Shannon entropy of data.
 /// Returns entropy in bits per character.
@@ -172,14 +210,15 @@ pub fn ngram_analysis(query: &str) -> NgramScore {
     let mut trigram_count = 0;
 
     for window in bytes.windows(3) {
-        let vowel_count = window.iter()
+        let vowel_count = window
+            .iter()
             .filter(|&&c| vowels.contains(&(c as char)))
             .count();
 
         let score = match vowel_count {
-            1 | 2 => 0.7,  // Expected vowel distribution
-            0 => 0.2,       // No vowels is suspicious
-            _ => 0.4,       // Too many vowels
+            1 | 2 => 0.7, // Expected vowel distribution
+            0 => 0.2,     // No vowels is suspicious
+            _ => 0.4,     // Too many vowels
         };
 
         trigram_sum += score;
@@ -418,7 +457,12 @@ pub fn rust_fast_entropy_screen(query: &str, threshold: f64) -> (f64, i8) {
 #[pyfunction]
 pub fn rust_ngram_analysis(query: &str) -> (f64, f64, f64, f64) {
     let score = ngram_analysis(query);
-    (score.bigram_freq, score.trigram_freq, score.char_distribution, score.anomaly_score)
+    (
+        score.bigram_freq,
+        score.trigram_freq,
+        score.char_distribution,
+        score.anomaly_score,
+    )
 }
 
 /// Wavelet preprocess - returns 256-element list.
@@ -439,13 +483,20 @@ pub fn rust_entropy_ngram(query: &str, entropy_threshold: f64) -> (f64, i8, f64,
         Some(false) => 0i8,
         None => -1i8,
     };
-    (entropy, flag, ngram.bigram_freq, ngram.trigram_freq, ngram.char_distribution, ngram.anomaly_score)
+    (
+        entropy,
+        flag,
+        ngram.bigram_freq,
+        ngram.trigram_freq,
+        ngram.char_distribution,
+        ngram.anomaly_score,
+    )
 }
 
 /// Majority vote from Python values.
 #[pyfunction]
 pub fn rust_majority_vote(
-    entropy_flag: i8,      // 1 = suspicious, 0 = benign, -1 = inconclusive
+    entropy_flag: i8, // 1 = suspicious, 0 = benign, -1 = inconclusive
     ngram_anomaly: f64,
     has_encoding: bool,
     ngram_threshold: f64,

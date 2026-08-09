@@ -473,7 +473,10 @@ mod tests {
         let err = result.unwrap_err();
         // Error message should mention the invalid capacity
         let msg = err.to_string();
-        assert!(msg.contains("capacity") || msg.contains("0") || msg.contains("bounded"),
-            "Error message should indicate capacity issue, got: {}", msg);
+        assert!(
+            msg.contains("capacity") || msg.contains("0") || msg.contains("bounded"),
+            "Error message should indicate capacity issue, got: {}",
+            msg
+        );
     }
 }

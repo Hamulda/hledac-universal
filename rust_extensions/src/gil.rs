@@ -15,8 +15,7 @@ static RELEASE_GIL_PANICKED: std::sync::atomic::AtomicBool =
 /// Returns true if the previous release_gil call caught a panic.
 #[inline]
 pub fn release_gil_caught_panic() -> bool {
-    RELEASE_GIL_PANICKED
-        .swap(false, std::sync::atomic::Ordering::SeqCst)
+    RELEASE_GIL_PANICKED.swap(false, std::sync::atomic::Ordering::SeqCst)
 }
 
 /// Execute a closure (GIL NOT released - simplified version).

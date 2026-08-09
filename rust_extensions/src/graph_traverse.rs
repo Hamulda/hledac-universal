@@ -130,6 +130,9 @@ fn traverse_single(db_path: &str, root_value: &str, max_hops: usize) -> Vec<Trav
             None => return Vec::new(),
         };
 
+        // Use explicit CAST for numeric parameters to avoid DuckDB prepared statement type coercion issues
+        // DuckDB treats all $N placeholders as strings by default, requiring explicit CAST
+        // The bound_max_hops is enforced at runtime to prevent exceeding MAX_HOPS
         let sql = r#"
             WITH RECURSIVE paths(dst_id, depth) AS (
                 SELECT e.dst_id, 1
@@ -140,24 +143,31 @@ fn traverse_single(db_path: &str, root_value: &str, max_hops: usize) -> Vec<Trav
                 SELECT e.dst_id, p.depth + 1
                 FROM ioc_edges e
                 JOIN paths p ON p.dst_id = e.src_id
-                WHERE p.depth < $2
+                WHERE p.depth < CAST($2 AS INTEGER)
             )
             SELECT n.value, n.ioc_type, n.confidence, n.source
             FROM paths p
             JOIN ioc_nodes n ON n.id = p.dst_id
-            LIMIT $3
+            LIMIT CAST($3 AS INTEGER)
         "#;
 
-        let mut stmt = match conn.prepare(sql) {
+        let mut stmt = match conn.prepare(&sql) {
             Ok(s) => s,
             Err(e) => {
-                eprintln!("[graph_traverse] prepare failed for root {}: {}", root_value, e);
+                eprintln!(
+                    "[graph_traverse] prepare failed for root {}: {}",
+                    root_value, e
+                );
                 return Vec::new();
             }
         };
 
         let mapped = match stmt.query_map(
-            [root_value, &max_hops.to_string(), &MAX_RESULTS_PER_ROOT.to_string()],
+            [
+                root_value,
+                &max_hops.to_string(),
+                &MAX_RESULTS_PER_ROOT.to_string(),
+            ],
             |row| {
                 let dst_value: String = match row.get::<usize, Option<String>>(0) {
                     Ok(Some(v)) => v,
@@ -175,12 +185,20 @@ fn traverse_single(db_path: &str, root_value: &str, max_hops: usize) -> Vec<Trav
                     Ok(Some(v)) => v,
                     _ => String::new(),
                 };
-                Ok(TraversalResult { dst_value, ioc_type, confidence, source })
+                Ok(TraversalResult {
+                    dst_value,
+                    ioc_type,
+                    confidence,
+                    source,
+                })
             },
         ) {
             Ok(m) => m,
             Err(e) => {
-                eprintln!("[graph_traverse] query failed for root {}: {}", root_value, e);
+                eprintln!(
+                    "[graph_traverse] query failed for root {}: {}",
+                    root_value, e
+                );
                 return Vec::new();
             }
         };
@@ -210,15 +228,24 @@ pub fn batch_graph_traverse<'py>(
         )));
     }
 
-    let max_hops = if max_hops == 0 { 1 } else { max_hops.min(MAX_HOPS) };
+    let max_hops = if max_hops == 0 {
+        1
+    } else {
+        max_hops.min(MAX_HOPS)
+    };
     let db_path_clone = db_path.clone();
     let cache_dir = get_cache_dir();
 
-    let results: Vec<(String, Vec<TraversalResult>)> =
-        io_pool().install(|| values.par_iter().map(|v| {
-            let traversal = cache::get_cached_traversal(&db_path_clone, v, max_hops, cache_dir.clone());
-            (v.clone(), traversal)
-        }).collect());
+    let results: Vec<(String, Vec<TraversalResult>)> = io_pool().install(|| {
+        values
+            .par_iter()
+            .map(|v| {
+                let traversal =
+                    cache::get_cached_traversal(&db_path_clone, v, max_hops, cache_dir.clone());
+                (v.clone(), traversal)
+            })
+            .collect()
+    });
 
     let dict = PyDict::new(py);
     for (root_value, traversal) in results {
@@ -246,7 +273,11 @@ pub fn graph_traverse_single<'py>(
     value: String,
     max_hops: usize,
 ) -> PyResult<Bound<'py, PyList>> {
-    let max_hops = if max_hops == 0 { 1 } else { max_hops.min(MAX_HOPS) };
+    let max_hops = if max_hops == 0 {
+        1
+    } else {
+        max_hops.min(MAX_HOPS)
+    };
     let cache_dir = get_cache_dir();
     let results = cache::get_cached_traversal(&db_path, &value, max_hops, cache_dir);
 
@@ -288,8 +319,10 @@ pub fn graph_stats<'py>(
         }
 
         let conn = opt_conn.as_mut()?;
-        Some((conn.query_row::<i64, _, _>("SELECT COUNT(*) FROM ioc_nodes", [], |row| row.get(0)),
-              conn.query_row::<i64, _, _>("SELECT COUNT(*) FROM ioc_edges", [], |row| row.get(0))))
+        Some((
+            conn.query_row::<i64, _, _>("SELECT COUNT(*) FROM ioc_nodes", [], |row| row.get(0)),
+            conn.query_row::<i64, _, _>("SELECT COUNT(*) FROM ioc_edges", [], |row| row.get(0)),
+        ))
     });
 
     match result {
@@ -388,25 +421,44 @@ pub fn batch_graph_traverse_flat<'py>(
         )));
     }
 
-    let max_hops = if max_hops == 0 { 1 } else { max_hops.min(MAX_HOPS) };
+    let max_hops = if max_hops == 0 {
+        1
+    } else {
+        max_hops.min(MAX_HOPS)
+    };
     let max_per_root = max_per_root.min(MAX_RESULTS_PER_ROOT);
     let db_path_clone = db_path.clone();
     let cache_dir = get_cache_dir();
 
     let flat_results: Vec<FlatTraversalResult> = io_pool().install(|| {
-        values.par_iter().flat_map(|root_value| {
-            let results = cache::get_cached_traversal(&db_path_clone, root_value, max_hops, cache_dir.clone());
-            results.into_iter().take(max_per_root).map(|r| FlatTraversalResult {
-                dst_value: r.dst_value,
-                ioc_type: r.ioc_type,
-                confidence: r.confidence,
-                source: root_value.clone(),
-                depth: 1,
-            }).collect::<Vec<_>>()
-        }).collect()
+        values
+            .par_iter()
+            .flat_map(|root_value| {
+                let results = cache::get_cached_traversal(
+                    &db_path_clone,
+                    root_value,
+                    max_hops,
+                    cache_dir.clone(),
+                );
+                results
+                    .into_iter()
+                    .take(max_per_root)
+                    .map(|r| FlatTraversalResult {
+                        dst_value: r.dst_value,
+                        ioc_type: r.ioc_type,
+                        confidence: r.confidence,
+                        source: root_value.clone(),
+                        depth: 1,
+                    })
+                    .collect::<Vec<_>>()
+            })
+            .collect()
     });
 
-    let flat_results = flat_results.into_iter().take(MAX_FLAT_RESULTS).collect::<Vec<_>>();
+    let flat_results = flat_results
+        .into_iter()
+        .take(MAX_FLAT_RESULTS)
+        .collect::<Vec<_>>();
 
     let list = PyList::empty(py);
     for item in flat_results {
@@ -542,7 +594,9 @@ fn load_ioc_graph_from_db(
                 break;
             }
             if let Ok((src, dst)) = row {
-                if let (Some(&src_idx), Some(&dst_idx)) = (name_to_idx.get(&src), name_to_idx.get(&dst)) {
+                if let (Some(&src_idx), Some(&dst_idx)) =
+                    (name_to_idx.get(&src), name_to_idx.get(&dst))
+                {
                     if src_idx < n && dst_idx < n {
                         adj[src_idx].push(dst_idx);
                         adj[dst_idx].push(src_idx); // Undirected for PageRank/communities

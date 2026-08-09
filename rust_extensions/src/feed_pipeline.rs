@@ -79,7 +79,9 @@ fn parse_rss_xml(xml_str: &str) -> Vec<FeedEntryRaw> {
     let reader = EventReader::from_str(xml_str);
     for e in reader {
         match e {
-            Ok(XmlEvent::StartElement { name, attributes, .. }) => {
+            Ok(XmlEvent::StartElement {
+                name, attributes, ..
+            }) => {
                 let tag = name.local_name.clone();
                 if tag == "item" || tag == "entry" {
                     in_entry = true;
@@ -104,7 +106,9 @@ fn parse_rss_xml(xml_str: &str) -> Vec<FeedEntryRaw> {
                     in_entry = false;
                     let guid_val = if current_guid.trim().is_empty() {
                         current_link.trim().to_string()
-                    } else { current_guid.trim().to_string() };
+                    } else {
+                        current_guid.trim().to_string()
+                    };
                     let title_trimmed = current_title.trim().to_string();
                     let desc_trimmed = current_description.trim().to_string();
                     entries.push(FeedEntryRaw {
@@ -118,17 +122,25 @@ fn parse_rss_xml(xml_str: &str) -> Vec<FeedEntryRaw> {
                 current_tag.clear();
             }
             Ok(XmlEvent::Characters(s)) => {
-                if !in_entry { continue; }
+                if !in_entry {
+                    continue;
+                }
                 match current_tag.as_str() {
                     "title" => current_title.push_str(&s),
-                    "link" => { if current_link.is_empty() { current_link.push_str(&s); } }
+                    "link" => {
+                        if current_link.is_empty() {
+                            current_link.push_str(&s);
+                        }
+                    }
                     "description" | "summary" | "content" => current_description.push_str(&s),
                     "guid" | "id" => current_guid.push_str(&s),
                     _ => {}
                 }
             }
             Ok(XmlEvent::CData(s)) => {
-                if !in_entry { continue; }
+                if !in_entry {
+                    continue;
+                }
                 match current_tag.as_str() {
                     "title" => current_title.push_str(&s),
                     "description" | "summary" | "content" => current_description.push_str(&s),
@@ -151,7 +163,12 @@ fn build_automaton(patterns: &[String]) -> Option<AhoCorasick> {
 }
 
 // pre_lowercased: caller guarantees text is already lowercase (assembly_text is built from title_lower + desc_lower).
-fn scan_text(automaton: &AhoCorasick, patterns: &[String], pre_lowercased_text: &str, labels: &[String]) -> Vec<PatternHitRaw> {
+fn scan_text(
+    automaton: &AhoCorasick,
+    patterns: &[String],
+    pre_lowercased_text: &str,
+    labels: &[String],
+) -> Vec<PatternHitRaw> {
     let mut hits = Vec::new();
     let mut value_buf = String::new();
     for m in automaton.find_iter(pre_lowercased_text) {
@@ -165,7 +182,13 @@ fn scan_text(automaton: &AhoCorasick, patterns: &[String], pre_lowercased_text: 
             value_buf.push_str(&pre_lowercased_text[start..end]);
             value_buf.clone()
         };
-        hits.push(PatternHitRaw { start, end, pattern, label, value });
+        hits.push(PatternHitRaw {
+            start,
+            end,
+            pattern,
+            label,
+            value,
+        });
     }
     hits
 }
@@ -185,7 +208,14 @@ fn scan_entries_parallel(
         Some(a) => a,
         None => return Vec::new(), // Empty patterns — nothing to match.
     };
-    scan_entries_parallel_impl(entries, patterns, labels, seen_guids, max_entries, &automaton)
+    scan_entries_parallel_impl(
+        entries,
+        patterns,
+        labels,
+        seen_guids,
+        max_entries,
+        &automaton,
+    )
 }
 
 /// Like scan_entries_parallel but accepts a pre-built automaton.
@@ -198,7 +228,14 @@ fn scan_entries_parallel_with_automaton(
     max_entries: usize,
     automaton: &AhoCorasick,
 ) -> Vec<EntryScanResult> {
-    scan_entries_parallel_impl(entries, patterns, labels, seen_guids, max_entries, automaton)
+    scan_entries_parallel_impl(
+        entries,
+        patterns,
+        labels,
+        seen_guids,
+        max_entries,
+        automaton,
+    )
 }
 
 fn scan_entries_parallel_impl(
@@ -228,7 +265,9 @@ fn scan_entries_parallel_impl(
             // OsUnfairLock: ~5ns lock/unlock vs ~25ns parking_lot::Mutex.
             // NOT reentrant but safe here: purely computational, no suspension.
             let is_dupe = !seen_guids.check_and_insert(entry_hash);
-            if is_dupe { return None; }
+            if is_dupe {
+                return None;
+            }
 
             // Reuse pre-lowercased title/desc — only allocate assembly_text.
             let assembly_text = if entry.desc_lower.is_empty() {
@@ -240,13 +279,20 @@ fn scan_entries_parallel_impl(
             let entry_url = if !entry.link.is_empty() {
                 entry.link.clone()
             } else {
-                format!("urn:feed:entry:{}", entry.title.chars().take(64).collect::<String>())
+                format!(
+                    "urn:feed:entry:{}",
+                    entry.title.chars().take(64).collect::<String>()
+                )
             };
             Some(EntryScanResult {
                 entry_idx: idx,
                 combined_hits,
                 entry_url,
-                assembly_phase: if entry.desc_lower.is_empty() { "title_only".to_string() } else { "title_description".to_string() },
+                assembly_phase: if entry.desc_lower.is_empty() {
+                    "title_only".to_string()
+                } else {
+                    "title_description".to_string()
+                },
             })
         })
         .collect()
@@ -259,10 +305,19 @@ pub fn feed_entry_pipeline(
     max_entries: usize,
     patterns: Vec<String>,
     labels: Vec<String>,
-) -> Vec<(usize, String, Vec<(usize, usize, String, String, String)>, usize, usize, String)> {
+) -> Vec<(
+    usize,
+    String,
+    Vec<(usize, usize, String, String, String)>,
+    usize,
+    usize,
+    String,
+)> {
     let seen_guids = Arc::new(SeenGuids::new());
     let entries = parse_rss_xml(&raw_xml);
-    if entries.is_empty() { return Vec::new(); }
+    if entries.is_empty() {
+        return Vec::new();
+    }
     // Release GIL during rayon parallel scan — rayon threads are pure Rust,
     // no Python callbacks. Allows concurrent HTTP I/O on other threads.
     // R6: migrated to PyO3 0.29 Python::attach + py.detach via release_gil().
@@ -271,10 +326,24 @@ pub fn feed_entry_pipeline(
             scan_entries_parallel(&entries, &patterns, &labels, &seen_guids, max_entries)
         })
     });
-    results.into_iter().map(|r| {
-        let combined_hits = r.combined_hits.into_iter().map(|h| (h.start, h.end, h.pattern, h.label, h.value)).collect();
-        (r.entry_idx, r.entry_url, combined_hits, 0, 0, r.assembly_phase)
-    }).collect()
+    results
+        .into_iter()
+        .map(|r| {
+            let combined_hits = r
+                .combined_hits
+                .into_iter()
+                .map(|h| (h.start, h.end, h.pattern, h.label, h.value))
+                .collect();
+            (
+                r.entry_idx,
+                r.entry_url,
+                combined_hits,
+                0,
+                0,
+                r.assembly_phase,
+            )
+        })
+        .collect()
 }
 
 #[pyfunction]
@@ -283,7 +352,16 @@ pub fn feed_batch_pipeline(
     feeds: Vec<(String, usize)>,
     patterns: Vec<String>,
     labels: Vec<String>,
-) -> Vec<Vec<(usize, String, Vec<(usize, usize, String, String, String)>, usize, usize, String)>> {
+) -> Vec<
+    Vec<(
+        usize,
+        String,
+        Vec<(usize, usize, String, String, String)>,
+        usize,
+        usize,
+        String,
+    )>,
+> {
     // Build automaton ONCE for all feeds — avoids redundant O(N·M) rebuilds.
     let automaton = match build_automaton(&patterns) {
         Some(a) => a,
@@ -298,16 +376,19 @@ pub fn feed_batch_pipeline(
     // Vec is unnecessary here since the closure doesn't consume patterns/labels.
     Python::attach(|py| {
         release_gil(py, || {
-            feeds.into_par_iter().map(|(xml, max_entries)| {
-                feed_entry_pipeline_xml_impl(
-                    &xml,
-                    max_entries,
-                    &patterns,
-                    &labels,
-                    &automaton,
-                    &seen_guids,
-                )
-            }).collect()
+            feeds
+                .into_par_iter()
+                .map(|(xml, max_entries)| {
+                    feed_entry_pipeline_xml_impl(
+                        &xml,
+                        max_entries,
+                        &patterns,
+                        &labels,
+                        &automaton,
+                        &seen_guids,
+                    )
+                })
+                .collect()
         })
     })
 }
@@ -321,9 +402,18 @@ fn feed_entry_pipeline_xml_impl(
     labels: &[String],
     automaton: &AhoCorasick,
     seen_guids: &Arc<SeenGuids>,
-) -> Vec<(usize, String, Vec<(usize, usize, String, String, String)>, usize, usize, String)> {
+) -> Vec<(
+    usize,
+    String,
+    Vec<(usize, usize, String, String, String)>,
+    usize,
+    usize,
+    String,
+)> {
     let entries = parse_rss_xml(raw_xml);
-    if entries.is_empty() { return Vec::new(); }
+    if entries.is_empty() {
+        return Vec::new();
+    }
     let results = scan_entries_parallel_with_automaton(
         &entries,
         patterns,
@@ -332,10 +422,24 @@ fn feed_entry_pipeline_xml_impl(
         max_entries,
         automaton,
     );
-    results.into_iter().map(|r| {
-        let combined_hits = r.combined_hits.into_iter().map(|h| (h.start, h.end, h.pattern, h.label, h.value)).collect();
-        (r.entry_idx, r.entry_url, combined_hits, 0, 0, r.assembly_phase)
-    }).collect()
+    results
+        .into_iter()
+        .map(|r| {
+            let combined_hits = r
+                .combined_hits
+                .into_iter()
+                .map(|h| (h.start, h.end, h.pattern, h.label, h.value))
+                .collect();
+            (
+                r.entry_idx,
+                r.entry_url,
+                combined_hits,
+                0,
+                0,
+                r.assembly_phase,
+            )
+        })
+        .collect()
 }
 
 pub fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
@@ -362,7 +466,12 @@ mod tests {
         let labels = vec!["threat".to_string()];
         let automaton = build_automaton(&patterns).expect("automaton for non-empty patterns");
         // scan_text expects pre-lowercased text — lowercase the input ourselves.
-        let hits = scan_text(&automaton, &patterns, "malware detected".to_lowercase(), &labels);
+        let hits = scan_text(
+            &automaton,
+            &patterns,
+            "malware detected".to_lowercase(),
+            &labels,
+        );
         assert_eq!(hits.len(), 1);
     }
 }

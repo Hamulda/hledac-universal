@@ -90,15 +90,9 @@ extern "C" {
         configure_tls: *const c_void,
         queue: DispatchQueueT,
     ) -> NwParametersT;
-    fn nw_connection_create(
-        endpoint: NwEndpointT,
-        parameters: NwParametersT,
-    ) -> NwConnectionT;
+    fn nw_connection_create(endpoint: NwEndpointT, parameters: NwParametersT) -> NwConnectionT;
     fn nw_connection_set_queue(connection: NwConnectionT, queue: DispatchQueueT);
-    fn nw_connection_set_state_changed_handler(
-        connection: NwConnectionT,
-        handler: *const c_void,
-    );
+    fn nw_connection_set_state_changed_handler(connection: NwConnectionT, handler: *const c_void);
     fn nw_connection_start(connection: NwConnectionT);
     fn nw_connection_cancel(connection: NwConnectionT);
     fn nw_connection_send(
@@ -119,10 +113,7 @@ extern "C" {
 // libdispatch is part of libSystem.dylib on macOS — no explicit link needed
 #[cfg(feature = "nw_framework")]
 extern "C" {
-    fn dispatch_queue_create(
-        label: *const u8,
-        attr: *const c_void,
-    ) -> DispatchQueueT;
+    fn dispatch_queue_create(label: *const u8, attr: *const c_void) -> DispatchQueueT;
     fn dispatch_release(object: *mut c_void);
     fn dispatch_data_create(
         buffer: *const u8,
@@ -138,7 +129,7 @@ extern "C" {
         data: DispatchDataT,
         buffer_ptr: *mut *const c_void,
         size_ptr: *mut usize,
-    ) -> *mut c_void;  // dispatch_data_map_t (opaque, released via dispatch_release)
+    ) -> *mut c_void; // dispatch_data_map_t (opaque, released via dispatch_release)
 }
 
 // ---------------------------------------------------------------------------
@@ -237,10 +228,8 @@ impl ConnectionState {
                     if remaining.is_zero() {
                         return Err("connection timeout waiting for ready state".to_string());
                     }
-                    let (new_state, timeout_result) = self
-                        .cv
-                        .wait_timeout(state, remaining)
-                        .unwrap();
+                    let (new_state, timeout_result) =
+                        self.cv.wait_timeout(state, remaining).unwrap();
                     state = new_state;
                     if timeout_result.timed_out() {
                         return Err("connection timeout waiting for ready state".to_string());
@@ -321,7 +310,8 @@ unsafe fn extract_dispatch_data(data: DispatchDataT) -> Vec<u8> {
     let mut size: usize = 0;
     let map = dispatch_data_create_map(data, &mut buffer_ptr, &mut size);
     let result = if !buffer_ptr.is_null() && size > 0 {
-        let slice = std::slice::from_raw_parts(buffer_ptr as *const u8, size.min(MAX_RESPONSE_BODY));
+        let slice =
+            std::slice::from_raw_parts(buffer_ptr as *const u8, size.min(MAX_RESPONSE_BODY));
         let mut out = Vec::with_capacity(slice.len());
         out.extend_from_slice(slice);
         out
@@ -364,7 +354,11 @@ fn fetch_inner(url: &str, timeout_ms: u64) -> NwResponse {
     let port = parsed.port().unwrap_or(if use_tls { 443 } else { 80 });
     let port_str = port.to_string();
     let path = parsed.path().to_string()
-        + if let Some(q) = parsed.query() { &format!("?{}", q) } else { "" };
+        + if let Some(q) = parsed.query() {
+            &format!("?{}", q)
+        } else {
+            ""
+        };
 
     // Acquire connection pool permit
     let _permit = match CONNECTION_SEM.try_acquire() {
@@ -377,7 +371,10 @@ fn fetch_inner(url: &str, timeout_ms: u64) -> NwResponse {
         }
         Err(_) => {
             return NwResponse::error(
-                &format!("nw: connection pool full ({} max)", MAX_CONCURRENT_CONNECTIONS),
+                &format!(
+                    "nw: connection pool full ({} max)",
+                    MAX_CONCURRENT_CONNECTIONS
+                ),
                 elapsed_ms(t0),
             );
         }
@@ -418,17 +415,10 @@ fn fetch_inner_impl(
 
     // Create dispatch queue for this connection
     let label = format!("com.hledac.nw.{}:{}\0", host, port_str);
-    let queue = unsafe {
-        dispatch_queue_create(label.as_ptr(), std::ptr::null())
-    };
+    let queue = unsafe { dispatch_queue_create(label.as_ptr(), std::ptr::null()) };
 
     // Create endpoint: nw_endpoint_create_host(hostname, port)
-    let endpoint = unsafe {
-        nw_endpoint_create_host(
-            host.as_ptr(),
-            port_str.as_ptr(),
-        )
-    };
+    let endpoint = unsafe { nw_endpoint_create_host(host.as_ptr(), port_str.as_ptr()) };
 
     // Create parameters: secure TCP with default TLS, or plain TCP
     let parameters: NwParametersT = if use_tls {
@@ -453,19 +443,17 @@ fn fetch_inner_impl(
     let conn_state_for_block = Arc::clone(&conn_state);
 
     // Set state change handler using block2
-    let state_handler = block2::ConcreteBlock::new(
-        move |state: i32, error: *mut c_void| {
-            let mut s = conn_state_for_block.state.lock().unwrap();
-            *s = state;
-            if state == NW_CONNECTION_STATE_FAILED && !error.is_null() {
-                // error is an nw_error_t — extract description
-                // For simplicity, mark as failed with generic message
-                let mut em = conn_state_for_block.error_msg.lock().unwrap();
-                *em = Some("Network.framework connection failed".to_string());
-            }
-            conn_state_for_block.cv.notify_all();
-        },
-    );
+    let state_handler = block2::ConcreteBlock::new(move |state: i32, error: *mut c_void| {
+        let mut s = conn_state_for_block.state.lock().unwrap();
+        *s = state;
+        if state == NW_CONNECTION_STATE_FAILED && !error.is_null() {
+            // error is an nw_error_t — extract description
+            // For simplicity, mark as failed with generic message
+            let mut em = conn_state_for_block.error_msg.lock().unwrap();
+            *em = Some("Network.framework connection failed".to_string());
+        }
+        conn_state_for_block.cv.notify_all();
+    });
     let state_handler_block = state_handler.copy();
 
     unsafe {
@@ -509,16 +497,14 @@ fn fetch_inner_impl(
 
     // Send completion block
     let send_conn_state = Arc::clone(&conn_state);
-    let send_handler = block2::ConcreteBlock::new(
-        move |error: *mut c_void| {
-            let mut done = send_conn_state.send_done.lock().unwrap();
-            *done = true;
-            if !error.is_null() {
-                let mut em = send_conn_state.send_error.lock().unwrap();
-                *em = Some("send failed".to_string());
-            }
-        },
-    );
+    let send_handler = block2::ConcreteBlock::new(move |error: *mut c_void| {
+        let mut done = send_conn_state.send_done.lock().unwrap();
+        *done = true;
+        if !error.is_null() {
+            let mut em = send_conn_state.send_error.lock().unwrap();
+            *em = Some("send failed".to_string());
+        }
+    });
     let send_handler_block = send_handler.copy();
 
     unsafe {
@@ -563,7 +549,10 @@ fn fetch_inner_impl(
     // Set up receive handler
     let recv_conn_state = Arc::clone(&conn_state);
     let recv_handler = block2::ConcreteBlock::new(
-        move |data: *mut c_void, _content_context: *mut c_void, is_complete: bool, error: *mut c_void| {
+        move |data: *mut c_void,
+              _content_context: *mut c_void,
+              is_complete: bool,
+              error: *mut c_void| {
             if !error.is_null() {
                 recv_conn_state.mark_recv_done();
                 return;
@@ -628,7 +617,12 @@ fn parse_http_response(data: &[u8], t0: Instant) -> NwResponse {
             // Try \n\n
             match find_subsequence(data, b"\n\n") {
                 Some(pos) => pos,
-                None => return NwResponse::error("nw: invalid HTTP response (no header separator)", elapsed_ms(t0)),
+                None => {
+                    return NwResponse::error(
+                        "nw: invalid HTTP response (no header separator)",
+                        elapsed_ms(t0),
+                    )
+                }
             }
         }
     };
@@ -793,26 +787,38 @@ fn quic_varint_decode(data: &[u8]) -> Option<(u64, usize)> {
     let (val, len) = match first >> 6 {
         0 => (first as u64 & 0x3F, 1),
         1 => {
-            if data.len() < 2 { return None; }
+            if data.len() < 2 {
+                return None;
+            }
             (((first as u64 & 0x3F) << 8) | data[1] as u64, 2)
         }
         2 => {
-            if data.len() < 4 { return None; }
-            (((first as u64 & 0x3F) << 24)
-                | (data[1] as u64) << 16
-                | (data[2] as u64) << 8
-                | data[3] as u64, 4)
+            if data.len() < 4 {
+                return None;
+            }
+            (
+                ((first as u64 & 0x3F) << 24)
+                    | (data[1] as u64) << 16
+                    | (data[2] as u64) << 8
+                    | data[3] as u64,
+                4,
+            )
         }
         _ => {
-            if data.len() < 8 { return None; }
-            (((first as u64 & 0x3F) << 56)
-                | (data[1] as u64) << 48
-                | (data[2] as u64) << 40
-                | (data[3] as u64) << 32
-                | (data[4] as u64) << 24
-                | (data[5] as u64) << 16
-                | (data[6] as u64) << 8
-                | data[7] as u64, 8)
+            if data.len() < 8 {
+                return None;
+            }
+            (
+                ((first as u64 & 0x3F) << 56)
+                    | (data[1] as u64) << 48
+                    | (data[2] as u64) << 40
+                    | (data[3] as u64) << 32
+                    | (data[4] as u64) << 24
+                    | (data[5] as u64) << 16
+                    | (data[6] as u64) << 8
+                    | data[7] as u64,
+                8,
+            )
         }
     };
     Some((val, len))
@@ -941,7 +947,9 @@ fn parse_h3_response(data: &[u8]) -> H3Response {
             Some(v) => v,
             None => {
                 return H3Response {
-                    status, headers, body,
+                    status,
+                    headers,
+                    body,
                     error: Some("h3: failed to decode frame type".to_string()),
                 };
             }
@@ -953,7 +961,9 @@ fn parse_h3_response(data: &[u8]) -> H3Response {
             Some(v) => v,
             None => {
                 return H3Response {
-                    status, headers, body,
+                    status,
+                    headers,
+                    body,
                     error: Some("h3: failed to decode frame length".to_string()),
                 };
             }
@@ -963,7 +973,9 @@ fn parse_h3_response(data: &[u8]) -> H3Response {
         let frame_end = pos + frame_len as usize;
         if frame_end > data.len() {
             return H3Response {
-                status, headers, body,
+                status,
+                headers,
+                body,
                 error: Some("h3: frame exceeds data boundary".to_string()),
             };
         }
@@ -1013,10 +1025,9 @@ fn parse_h3_response(data: &[u8]) -> H3Response {
                     hpos = value_end;
 
                     // Convert to strings
-                    if let (Ok(name_str), Ok(value_str)) = (
-                        std::str::from_utf8(name),
-                        std::str::from_utf8(value),
-                    ) {
+                    if let (Ok(name_str), Ok(value_str)) =
+                        (std::str::from_utf8(name), std::str::from_utf8(value))
+                    {
                         if name_str == ":status" {
                             status = value_str.parse::<u16>().unwrap_or(200);
                         } else if !name_str.starts_with(':') {
@@ -1052,11 +1063,16 @@ fn fetch_quic_inner(url: &str, timeout_ms: u64) -> NwResponse {
     // Parse URL
     let parsed = match url::Url::parse(url) {
         Ok(u) => u,
-        Err(e) => return NwResponse::error(&format!("nw-quic: invalid URL: {}", e), elapsed_ms(t0)),
+        Err(e) => {
+            return NwResponse::error(&format!("nw-quic: invalid URL: {}", e), elapsed_ms(t0))
+        }
     };
 
     if parsed.scheme() != "https" {
-        return NwResponse::error("nw-quic: only HTTPS URLs supported for QUIC", elapsed_ms(t0));
+        return NwResponse::error(
+            "nw-quic: only HTTPS URLs supported for QUIC",
+            elapsed_ms(t0),
+        );
     }
 
     let host = match parsed.host_str() {
@@ -1067,7 +1083,11 @@ fn fetch_quic_inner(url: &str, timeout_ms: u64) -> NwResponse {
     let port = parsed.port().unwrap_or(443);
     let port_str = port.to_string();
     let path = parsed.path().to_string()
-        + if let Some(q) = parsed.query() { &format!("?{}", q) } else { "" };
+        + if let Some(q) = parsed.query() {
+            &format!("?{}", q)
+        } else {
+            ""
+        };
 
     let authority = format!("{}:{}", host, port);
 
@@ -1076,7 +1096,10 @@ fn fetch_quic_inner(url: &str, timeout_ms: u64) -> NwResponse {
         Ok(p) => p,
         Err(_) => {
             return NwResponse::error(
-                &format!("nw-quic: connection pool full ({} max)", MAX_CONCURRENT_CONNECTIONS),
+                &format!(
+                    "nw-quic: connection pool full ({} max)",
+                    MAX_CONCURRENT_CONNECTIONS
+                ),
                 elapsed_ms(t0),
             );
         }
@@ -1094,14 +1117,10 @@ fn fetch_quic_inner(url: &str, timeout_ms: u64) -> NwResponse {
 
     // Create dispatch queue
     let label = format!("com.hledac.nw-quic.{}:{}\0", host, port_str);
-    let queue = unsafe {
-        dispatch_queue_create(label.as_ptr(), std::ptr::null())
-    };
+    let queue = unsafe { dispatch_queue_create(label.as_ptr(), std::ptr::null()) };
 
     // Create endpoint
-    let endpoint = unsafe {
-        nw_endpoint_create_host(host.as_ptr(), port_str.as_ptr())
-    };
+    let endpoint = unsafe { nw_endpoint_create_host(host.as_ptr(), port_str.as_ptr()) };
 
     // Create QUIC parameters (instead of TCP)
     let parameters: NwParametersT = unsafe { nw_parameters_create_quic() };
@@ -1115,17 +1134,15 @@ fn fetch_quic_inner(url: &str, timeout_ms: u64) -> NwResponse {
     let conn_state_for_block = Arc::clone(&conn_state);
 
     // State change handler
-    let state_handler = block2::ConcreteBlock::new(
-        move |state: i32, error: *mut c_void| {
-            let mut s = conn_state_for_block.state.lock().unwrap();
-            *s = state;
-            if state == NW_CONNECTION_STATE_FAILED && !error.is_null() {
-                let mut em = conn_state_for_block.error_msg.lock().unwrap();
-                *em = Some("Network.framework QUIC connection failed".to_string());
-            }
-            conn_state_for_block.cv.notify_all();
-        },
-    );
+    let state_handler = block2::ConcreteBlock::new(move |state: i32, error: *mut c_void| {
+        let mut s = conn_state_for_block.state.lock().unwrap();
+        *s = state;
+        if state == NW_CONNECTION_STATE_FAILED && !error.is_null() {
+            let mut em = conn_state_for_block.error_msg.lock().unwrap();
+            *em = Some("Network.framework QUIC connection failed".to_string());
+        }
+        conn_state_for_block.cv.notify_all();
+    });
     let state_handler_block = state_handler.copy();
 
     unsafe {
@@ -1156,7 +1173,10 @@ fn fetch_quic_inner(url: &str, timeout_ms: u64) -> NwResponse {
         (b":scheme".to_vec(), b"https".to_vec()),
         (b":authority".to_vec(), authority.as_bytes().to_vec()),
         (b":path".to_vec(), path.as_bytes().to_vec()),
-        (b"user-agent".to_vec(), b"Hledac/1.0 (Network.framework QUIC)".to_vec()),
+        (
+            b"user-agent".to_vec(),
+            b"Hledac/1.0 (Network.framework QUIC)".to_vec(),
+        ),
         (b"accept".to_vec(), b"*/*".to_vec()),
         (b"accept-encoding".to_vec(), b"identity".to_vec()),
     ]);
@@ -1187,16 +1207,14 @@ fn fetch_quic_inner(url: &str, timeout_ms: u64) -> NwResponse {
 
     // Send completion block
     let send_conn_state = Arc::clone(&conn_state);
-    let send_handler = block2::ConcreteBlock::new(
-        move |error: *mut c_void| {
-            let mut done = send_conn_state.send_done.lock().unwrap();
-            *done = true;
-            if !error.is_null() {
-                let mut em = send_conn_state.send_error.lock().unwrap();
-                *em = Some("QUIC send failed".to_string());
-            }
-        },
-    );
+    let send_handler = block2::ConcreteBlock::new(move |error: *mut c_void| {
+        let mut done = send_conn_state.send_done.lock().unwrap();
+        *done = true;
+        if !error.is_null() {
+            let mut em = send_conn_state.send_error.lock().unwrap();
+            *em = Some("QUIC send failed".to_string());
+        }
+    });
     let send_handler_block = send_handler.copy();
 
     unsafe {
@@ -1244,7 +1262,10 @@ fn fetch_quic_inner(url: &str, timeout_ms: u64) -> NwResponse {
     // Receive response
     let recv_conn_state = Arc::clone(&conn_state);
     let recv_handler = block2::ConcreteBlock::new(
-        move |data: *mut c_void, _content_context: *mut c_void, is_complete: bool, error: *mut c_void| {
+        move |data: *mut c_void,
+              _content_context: *mut c_void,
+              is_complete: bool,
+              error: *mut c_void| {
             if !error.is_null() {
                 recv_conn_state.mark_recv_done();
                 return;
@@ -1300,12 +1321,20 @@ fn fetch_quic_inner(url: &str, timeout_ms: u64) -> NwResponse {
     let h3_resp = parse_h3_response(&response_bytes);
 
     if let Some(ref err) = h3_resp.error {
-        let result = NwResponse::error(&format!("nw-quic: HTTP/3 parse error: {}", err), elapsed_ms(t0));
+        let result = NwResponse::error(
+            &format!("nw-quic: HTTP/3 parse error: {}", err),
+            elapsed_ms(t0),
+        );
         cleanup_quic_stats(true);
         return result;
     }
 
-    let result = NwResponse::ok(h3_resp.status, h3_resp.headers, h3_resp.body, elapsed_ms(t0));
+    let result = NwResponse::ok(
+        h3_resp.status,
+        h3_resp.headers,
+        h3_resp.body,
+        elapsed_ms(t0),
+    );
     cleanup_quic_stats(false);
     result
 }
@@ -1353,7 +1382,8 @@ pub fn fetch(url: &str, timeout_ms: Option<u64>) -> NwResponse {
         body: vec![],
         error: Some(
             "nw: rust extension built without 'nw_framework' feature \
-             (use maturin build --features nw_framework)".to_string(),
+             (use maturin build --features nw_framework)"
+                .to_string(),
         ),
         elapsed_ms: 0.0,
     }
@@ -1370,7 +1400,8 @@ pub fn fetch_quic(url: &str, timeout_ms: Option<u64>) -> NwResponse {
         body: vec![],
         error: Some(
             "nw-quic: rust extension built without 'nw_framework' feature \
-             (use maturin build --features nw_framework)".to_string(),
+             (use maturin build --features nw_framework)"
+                .to_string(),
         ),
         elapsed_ms: 0.0,
     }

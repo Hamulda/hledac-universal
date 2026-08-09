@@ -59,7 +59,8 @@ impl RollingHashEngine {
         let nc = new_char as u128;
         let new_hash: u128 = ((old.wrapping_sub(oc.wrapping_mul(power)) % modulus)
             .wrapping_mul(base)
-            .wrapping_add(nc)) % modulus;
+            .wrapping_add(nc))
+            % modulus;
         let result = new_hash as u64;
         self.current_hash = result;
         result
@@ -122,4 +123,3 @@ pub fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<RollingHashEngine>()?;
     Ok(())
 }
-

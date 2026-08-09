@@ -123,14 +123,12 @@ fn compress_page_with_dict_impl(data: &[u8], dict_id: u32) -> Result<Vec<u8>, &'
     match dict {
         Some(dict_data) => {
             // Compress with dictionary
-            let mut encoder = zstd::stream::Encoder::with_dictionary(
-                Vec::new(), 3, &dict_data[..],
-            ).map_err(|_| "zstd dict encoder init failed")?;
+            let mut encoder = zstd::stream::Encoder::with_dictionary(Vec::new(), 3, &dict_data[..])
+                .map_err(|_| "zstd dict encoder init failed")?;
             // Use write_all via io::Write
             std::io::Write::write_all(&mut encoder, data)
                 .map_err(|_| "zstd dict compress failed")?;
-            let zstd_out = encoder.finish()
-                .map_err(|_| "zstd dict finish failed")?;
+            let zstd_out = encoder.finish().map_err(|_| "zstd dict finish failed")?;
 
             if zstd_out.len() < data.len() {
                 let mut out = Vec::with_capacity(1 + DICT_ID_SIZE + zstd_out.len());
@@ -209,8 +207,9 @@ fn decompress_page_impl(wire: &[u8]) -> Result<Vec<u8>, &'static str> {
                 .cloned();
             match dict {
                 Some(dict_data) => {
-                    let mut decoder = zstd::stream::Decoder::with_dictionary(compressed, &dict_data[..])
-                        .map_err(|_| "zstd dict decoder init failed")?;
+                    let mut decoder =
+                        zstd::stream::Decoder::with_dictionary(compressed, &dict_data[..])
+                            .map_err(|_| "zstd dict decoder init failed")?;
                     let mut out = Vec::new();
                     std::io::copy(&mut decoder, &mut out)
                         .map_err(|_| "zstd dict decompress read failed")?;
@@ -218,7 +217,7 @@ fn decompress_page_impl(wire: &[u8]) -> Result<Vec<u8>, &'static str> {
                 }
                 None => Err("unknown dictionary ID — register it first"),
             }
-        },
+        }
         _ => Err("unknown compression marker"),
     }
 }
@@ -236,9 +235,8 @@ fn decompress_page_impl(wire: &[u8]) -> Result<Vec<u8>, &'static str> {
 ///   bytes — wire-format compressed page (marker + payload)
 #[pyfunction]
 pub fn compress_page(data: &[u8]) -> PyResult<Vec<u8>> {
-    compress_page_impl(data).map_err(|e| {
-        pyo3::exceptions::PyValueError::new_err(format!("compress_page: {}", e))
-    })
+    compress_page_impl(data)
+        .map_err(|e| pyo3::exceptions::PyValueError::new_err(format!("compress_page: {}", e)))
 }
 
 /// Decompress a wire-format page from LMDB storage.
@@ -250,9 +248,8 @@ pub fn compress_page(data: &[u8]) -> PyResult<Vec<u8>> {
 ///   bytes — decompressed original page
 #[pyfunction]
 pub fn decompress_page(wire: &[u8]) -> PyResult<Vec<u8>> {
-    decompress_page_impl(wire).map_err(|e| {
-        pyo3::exceptions::PyValueError::new_err(format!("decompress_page: {}", e))
-    })
+    decompress_page_impl(wire)
+        .map_err(|e| pyo3::exceptions::PyValueError::new_err(format!("decompress_page: {}", e)))
 }
 
 /// Compress many pages in parallel via rayon.
@@ -315,9 +312,7 @@ pub fn batch_decompress_pages(wires: Vec<Vec<u8>>) -> Vec<Vec<u8>> {
     if n < 64 {
         wires
             .iter()
-            .map(|wire| {
-                decompress_page_impl(wire).unwrap_or_else(|_| Vec::new())
-            })
+            .map(|wire| decompress_page_impl(wire).unwrap_or_else(|_| Vec::new()))
             .collect()
     } else {
         // Issue #6: GIL released via `release_gil` to enable true rayon parallelism.
@@ -327,9 +322,7 @@ pub fn batch_decompress_pages(wires: Vec<Vec<u8>>) -> Vec<Vec<u8>> {
                 crate::io_pool().install(|| {
                     wires
                         .par_iter()
-                        .map(|wire| {
-                            decompress_page_impl(wire).unwrap_or_else(|_| Vec::new())
-                        })
+                        .map(|wire| decompress_page_impl(wire).unwrap_or_else(|_| Vec::new()))
                         .collect()
                 })
             })
@@ -355,11 +348,9 @@ pub fn batch_decompress_pages(wires: Vec<Vec<u8>>) -> Vec<Vec<u8>> {
 ///   bool — True if registered, False if ID already exists
 #[pyfunction]
 pub fn register_zstd_dict(dict_id: u32, dict_data: Vec<u8>) -> PyResult<bool> {
-    let mut registry = DICT_REGISTRY
-        .lock()
-        .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(
-            format!("dict registry lock poisoned: {}", e)
-        ))?;
+    let mut registry = DICT_REGISTRY.lock().map_err(|e| {
+        pyo3::exceptions::PyRuntimeError::new_err(format!("dict registry lock poisoned: {}", e))
+    })?;
     if registry.contains_key(&dict_id) {
         return Ok(false);
     }
@@ -376,11 +367,9 @@ pub fn register_zstd_dict(dict_id: u32, dict_data: Vec<u8>) -> PyResult<bool> {
 ///   bool — True if removed, False if not found
 #[pyfunction]
 pub fn unregister_zstd_dict(dict_id: u32) -> PyResult<bool> {
-    let mut registry = DICT_REGISTRY
-        .lock()
-        .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(
-            format!("dict registry lock poisoned: {}", e)
-        ))?;
+    let mut registry = DICT_REGISTRY.lock().map_err(|e| {
+        pyo3::exceptions::PyRuntimeError::new_err(format!("dict registry lock poisoned: {}", e))
+    })?;
     Ok(registry.remove(&dict_id).is_some())
 }
 
@@ -397,9 +386,8 @@ pub fn unregister_zstd_dict(dict_id: u32) -> PyResult<bool> {
 ///   bytes — wire-format compressed page
 #[pyfunction]
 pub fn compress_page_dict(data: &[u8], dict_id: u32) -> PyResult<Vec<u8>> {
-    compress_page_with_dict_impl(data, dict_id).map_err(|e| {
-        pyo3::exceptions::PyValueError::new_err(format!("compress_page_dict: {}", e))
-    })
+    compress_page_with_dict_impl(data, dict_id)
+        .map_err(|e| pyo3::exceptions::PyValueError::new_err(format!("compress_page_dict: {}", e)))
 }
 
 // ---------------------------------------------------------------------------
@@ -454,9 +442,8 @@ pub fn lz4_decompress_raw(compressed: &[u8]) -> PyResult<Vec<u8>> {
     wire.extend_from_slice(&size.to_le_bytes());
     wire.extend_from_slice(compressed);
 
-    lz4_flex::decompress_size_prepended(&wire).map_err(|e| {
-        pyo3::exceptions::PyValueError::new_err(format!("lz4_decompress_raw: {}", e))
-    })
+    lz4_flex::decompress_size_prepended(&wire)
+        .map_err(|e| pyo3::exceptions::PyValueError::new_err(format!("lz4_decompress_raw: {}", e)))
 }
 
 /// Compress a JSONL batch: join lines with '\n', compress with lz4 frame.
@@ -576,5 +563,4 @@ mod tests {
         let decompressed = batch_decompress_pages(wires);
         assert_eq!(decompressed, pages);
     }
-
-    }
+}

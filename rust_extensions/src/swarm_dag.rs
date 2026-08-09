@@ -315,7 +315,7 @@ impl Rebalancer {
         &self,
         fetch_roi: f64,
         parse_roi: f64,
-        _analyze_roi: f64,  // reserved for future analyze↔graph rebalancing
+        _analyze_roi: f64, // reserved for future analyze↔graph rebalancing
         now_secs: u64,
     ) -> bool {
         let last = self.last_rebalance.load(Ordering::Acquire);
@@ -390,7 +390,8 @@ impl WorkerContext {
                 continue;
             }
             if let Some(task) = self.channels[idx].try_recv() {
-                self.steal_cursor.store((cursor + offset + 1) % n, Ordering::Relaxed);
+                self.steal_cursor
+                    .store((cursor + offset + 1) % n, Ordering::Relaxed);
                 self.process_task(task);
                 return;
             }
@@ -488,7 +489,12 @@ impl WorkStealingDAG {
         let channels = Arc::clone(&self.channels);
         let callback = self.result_callback.clone();
         let running = Arc::clone(&self.running);
-        let total_workers = self.rebalancer.get_allocation().iter().sum::<usize>().max(1);
+        let total_workers = self
+            .rebalancer
+            .get_allocation()
+            .iter()
+            .sum::<usize>()
+            .max(1);
 
         for worker_id in 0..MAX_WORKERS {
             let ch = Arc::clone(&channels);
@@ -650,8 +656,14 @@ impl WorkStealingDAG {
     ///     Dict with submitted, completed, pending per type.
     fn get_stats(&self) -> Vec<(&'static str, usize)> {
         vec![
-            ("submitted", self.submitted_count.load(Ordering::Acquire) as usize),
-            ("completed", self.completed_count.load(Ordering::Acquire) as usize),
+            (
+                "submitted",
+                self.submitted_count.load(Ordering::Acquire) as usize,
+            ),
+            (
+                "completed",
+                self.completed_count.load(Ordering::Acquire) as usize,
+            ),
         ]
     }
 

@@ -156,6 +156,12 @@ class _ANNIndex:
         "_autotune",
         # SWARM-002: multilingual settings
         "_multilingual_table_name",
+        # MRL-2: MRL truncation settings
+        "_mrl_truncator",
+        "_mrl_source_dim",
+        "_mrl_target_dim",
+        # SAFE-4: Desync observability counter
+        "_usearch_desync_count",
     )
 
     def __init__(self, db_path: Path, embed_dim: int = _EMBEDDING_DIM) -> None:
@@ -168,6 +174,11 @@ class _ANNIndex:
         self._initialized: bool = False
         self._lock = threading.Lock()
 
+        # MRL-2: MRL truncation for multilingual embeddings (BGE-M3 1024d → 256d)
+        self._mrl_truncator: object | None = None
+        self._mrl_source_dim: int = 1024  # BGE-M3 native dimension
+        self._mrl_target_dim: int = embed_dim  # USEARCH index dimension
+
         # USEARCH primary ANN
         self._usearch_index = None  # usearch.index.Index
         self._usearch_loaded: bool = False
@@ -176,6 +187,10 @@ class _ANNIndex:
         # SWARM-002: USEARCH multilingual index
         self._usearch_index_multilingual = None
         self._usearch_labels_multilingual: list[str] = []
+
+        # SAFE-4: Desync observability - counts failed usearch.add() after label was potentially appended
+        # This metric indicates data integrity issues requiring reconciliation
+        self._usearch_desync_count: int = 0
 
         # SWARM-002: Multilingual table name
         self._multilingual_table_name = "semantic_dedup_multilingual_v1"
@@ -281,6 +296,20 @@ class _ANNIndex:
                     self._multilingual_table_name, schema=schema_multi
                 )
                 logger.info(f"[ANN] Created multilingual table at {self._db_path}")
+
+            # MRL-2: Initialize MRL truncator for multilingual embeddings
+            # BGE-M3 1024d → truncate to 256d for USEARCH index compatibility
+            try:
+                from hledac.universal.core.multilingual.mrl import MRLTruncator
+                self._mrl_truncator = MRLTruncator(
+                    source_dim=self._mrl_source_dim,
+                    target_dim=self._mrl_target_dim,
+                    normalize=True
+                )
+                logger.info(f"[ANN] MRL truncator initialized: {self._mrl_source_dim}d → {self._mrl_target_dim}d")
+            except ImportError:
+                self._mrl_truncator = None
+                logger.warning("[ANN] MRL truncator unavailable (hledac.universal.core.multilingual.mrl not found)")
 
             self._initialized = True
             self._boot_error = None
@@ -551,6 +580,10 @@ class _ANNIndex:
     ) -> dict[str, tuple[list[float], str, float]]:
         """Collect ANN candidates from USEARCH index (M1 Metal SIMD).
 
+        MRL-2 FIX: Fetch actual vectors from LanceDB for each key returned by USEARCH.
+        Previous code returned empty vectors [] which caused cosine similarity = 0.0
+        and all candidates to be filtered out by _MIN_SCORE (0.90).
+
         Returns empty dict on any error (fail-open).
         """
         if self._usearch_index is None:
@@ -558,12 +591,45 @@ class _ANNIndex:
         try:
             matches = self._usearch_index.search(query_np, fetch_limit)
             candidates: dict[str, tuple[list[float], str, float]] = {}
+            usearch_keys: list[str] = []
             for match in matches:
                 idx = int(match.key)
                 if idx < len(self._usearch_labels):
                     fk = self._usearch_labels[idx]
                     score = float(1.0 - match.distance)
                     candidates[fk] = ([], "", score)
+                    usearch_keys.append(fk)
+
+            # MRL-2 FIX: Fetch actual vectors from LanceDB for USEARCH keys
+            # This ensures re-ranking gets real vectors instead of zeros
+            if usearch_keys and self._table is not None:
+                with self._lock:
+                    try:
+                        # Fetch vectors for all USEARCH keys in one query
+                        result_df = self._table.to_lance().query().where(
+                            f"finding_key IN ({','.join(repr(k) for k in usearch_keys)})"
+                        ).select(["finding_key", "vector", "text_hash"]).to_list()
+
+                        # Build lookup map
+                        vector_map: dict[str, tuple[list[float], str]] = {}
+                        for row in result_df:
+                            fk = row.get("finding_key", "")
+                            if fk:
+                                vec = row.get("vector", [])
+                                th = row.get("text_hash", "")
+                                vector_map[fk] = (vec, th)
+
+                        # Update candidates with actual vectors
+                        for fk in usearch_keys:
+                            if fk in vector_map:
+                                vec, th = vector_map[fk]
+                                old_score = candidates.get(fk, ([], "", 0.0))[2]
+                                candidates[fk] = (vec, th, old_score)
+                    except Exception:
+                        # Fallback: vectors will be zeros → score will be 0.0
+                        # But at least the keys are still searchable
+                        pass
+
             return candidates
         except Exception as e:
             logger.debug(f"[ANN] USEARCH search failed: {e}")
@@ -632,6 +698,10 @@ class _ANNIndex:
     ) -> dict[str, tuple[list[float], str, float]]:
         """Collect ANN candidates from multilingual USEARCH index (M1 Metal SIMD).
 
+        MRL-2 FIX: Fetch actual vectors from multilingual LanceDB for each key.
+        Previous code returned empty vectors [] which caused cosine similarity = 0.0
+        and all candidates to be filtered out by _MIN_SCORE (0.90).
+
         Returns empty dict on any error (fail-open).
         """
         if self._usearch_index_multilingual is None:
@@ -639,12 +709,40 @@ class _ANNIndex:
         try:
             matches = self._usearch_index_multilingual.search(query_np, fetch_limit)
             candidates: dict[str, tuple[list[float], str, float]] = {}
+            usearch_keys: list[str] = []
             for match in matches:
                 idx = int(match.key)
                 if idx < len(self._usearch_labels_multilingual):
                     fk = self._usearch_labels_multilingual[idx]
                     score = float(1.0 - match.distance)
                     candidates[fk] = ([], "", score)
+                    usearch_keys.append(fk)
+
+            # MRL-2 FIX: Fetch actual vectors from multilingual LanceDB
+            if usearch_keys and self._table_multilingual is not None:
+                with self._lock:
+                    try:
+                        # Fetch vectors for all multilingual USEARCH keys
+                        result_df = self._table_multilingual.to_lance().query().where(
+                            f"finding_key IN ({','.join(repr(k) for k in usearch_keys)})"
+                        ).select(["finding_key", "vector", "text_hash"]).to_list()
+
+                        vector_map: dict[str, tuple[list[float], str]] = {}
+                        for row in result_df:
+                            fk = row.get("finding_key", "")
+                            if fk:
+                                vec = row.get("vector", [])
+                                th = row.get("text_hash", "")
+                                vector_map[fk] = (vec, th)
+
+                        for fk in usearch_keys:
+                            if fk in vector_map:
+                                vec, th = vector_map[fk]
+                                old_score = candidates.get(fk, ([], "", 0.0))[2]
+                                candidates[fk] = (vec, th, old_score)
+                    except Exception:
+                        pass
+
             return candidates
         except Exception as e:
             logger.debug(f"[ANN] Multilingual USEARCH search failed: {e}")
@@ -829,6 +927,14 @@ class _ANNIndex:
             # SWARM-002: Route to appropriate table based on language
             is_multilingual = language is not None and language != 'en'
             target_table = self._table_multilingual if is_multilingual else self._table
+
+            # MRL-2: Truncate multilingual embeddings to target dimension
+            # BGE-M3 1024d → 256d for USEARCH index compatibility
+            if is_multilingual and self._mrl_truncator is not None:
+                try:
+                    emb = self._mrl_truncator.truncate(emb)
+                except Exception as e:
+                    logger.debug(f"[ANN] MRL truncation failed: {e}, using full embedding")
             target_usearch = self._usearch_index_multilingual if is_multilingual else self._usearch_index
             target_labels = self._usearch_labels_multilingual if is_multilingual else self._usearch_labels
 
@@ -845,14 +951,23 @@ class _ANNIndex:
             with self._lock:
                 target_table.add([row])
 
-            # Add to USEARCH index (primary ANN)
-            if target_usearch is not None:
-                try:
-                    new_idx = len(target_labels)
-                    target_labels.append(finding_key)
-                    target_usearch.add(new_idx, emb)
-                except Exception as e:
-                    logger.debug(f"[ANN] USEARCH upsert failed: {e}")
+                # MRL-2 FIX: Moved USEARCH ops inside lock to prevent race condition
+                # Previous code had data race between table.add() and usearch.add()
+                # SAFE-4 FIX: Atomic label↔vector sync - add to USEARCH FIRST, then append label
+                # If usearch.add() fails, label is NOT appended (no desync)
+                # If usearch.add() succeeds but label.append() fails, vector is orphaned but
+                # that's recoverable; desynced label→wrong-vector is NOT
+                if target_usearch is not None:
+                    try:
+                        new_idx = len(target_labels)
+                        # Add vector FIRST (source of truth for search)
+                        target_usearch.add(new_idx, emb)
+                        # Only append label after confirmed vector insert
+                        target_labels.append(finding_key)
+                    except Exception as e:
+                        logger.error(f"[ANN] USEARCH upsert FAILED (vector not added): {e}")
+                        # Increment desync counter for observability
+                        self._usearch_desync_count += 1
 
             # Evict oldest if over cap
             self._maybe_evict()
@@ -887,26 +1002,46 @@ class _ANNIndex:
             return False
 
     def _maybe_evict(self) -> None:
-        """Evict oldest entries if table exceeds MAX_ENTRIES (both English and multilingual)."""
+        """Evict oldest entries if table exceeds MAX_ENTRIES (both English and multilingual).
+
+        MRL-2 FIX: Evict by index in REVERSE order to prevent position shifting.
+        Previous code removed labels one by one, causing label↔index desync.
+        Now: collect indices first, sort descending, remove from end to beginning.
+
+        PERFORMANCE OPTIMIZATION: Combined to_arrow() call instead of two separate calls.
+        """
         # Evict English index
         try:
             count = self._table.count_rows()
             if count > _MAX_ENTRIES:
                 to_delete = int(count * 0.1)
-                oldest_ts = self._get_oldest_timestamp()
-                if oldest_ts is not None:
-                    oldest_ts = self._table.to_arrow().sort_by([("added_at", "asc")]).slice(0, to_delete)
-                    keys_to_delete = oldest_ts["finding_key"].to_pylist()
+                # MRL-2 OPTIMIZATION: Single to_arrow() call instead of two
+                # Previous: _get_oldest_timestamp() + another to_arrow() = 2× full table copy
+                oldest_table = self._table.to_arrow().sort_by([("added_at", "asc")]).slice(0, to_delete)
+                if oldest_table.num_rows > 0:
+                    keys_to_delete = oldest_table["finding_key"].to_pylist()
+
+                    # MRL-2 FIX: Collect indices to remove, sort descending, remove from end
+                    indices_to_remove = []
                     for key in keys_to_delete:
-                        self._table.delete(f"finding_key = '{key}'")
-                        # Also remove from USEARCH index
                         if key in self._usearch_labels:
                             idx = self._usearch_labels.index(key)
-                            try:
-                                self._usearch_index.remove(idx)
-                            except Exception:  # noqa: BLE001
-                                pass
+                            indices_to_remove.append((idx, key))
+
+                    # Sort by index descending so we remove from end first
+                    indices_to_remove.sort(key=lambda x: x[0], reverse=True)
+
+                    for idx, key in indices_to_remove:
+                        self._table.delete(f"finding_key = '{key}'")
+                        try:
+                            self._usearch_index.remove(idx)
+                        except Exception:  # noqa: BLE001
+                            pass
+                        # Remove from list after index removal (now safe because we're going backward)
+                        try:
                             self._usearch_labels.remove(key)
+                        except ValueError:
+                            pass  # Already removed
         except Exception as e:
             logger.debug(f"[ANN] English evict failed: {e}")
 
@@ -918,16 +1053,26 @@ class _ANNIndex:
                     to_delete = int(count_multi * 0.1)
                     oldest_multi = self._table_multilingual.to_arrow().sort_by([("added_at", "asc")]).slice(0, to_delete)
                     keys_to_delete = oldest_multi["finding_key"].to_pylist()
+
+                    # MRL-2 FIX: Same approach for multilingual index
+                    indices_to_remove = []
                     for key in keys_to_delete:
-                        self._table_multilingual.delete(f"finding_key = '{key}'")
-                        # Also remove from multilingual USEARCH index
                         if key in self._usearch_labels_multilingual:
                             idx = self._usearch_labels_multilingual.index(key)
-                            try:
-                                self._usearch_index_multilingual.remove(idx)
-                            except Exception:  # noqa: BLE001
-                                pass
+                            indices_to_remove.append((idx, key))
+
+                    indices_to_remove.sort(key=lambda x: x[0], reverse=True)
+
+                    for idx, key in indices_to_remove:
+                        self._table_multilingual.delete(f"finding_key = '{key}'")
+                        try:
+                            self._usearch_index_multilingual.remove(idx)
+                        except Exception:  # noqa: BLE001
+                            pass
+                        try:
                             self._usearch_labels_multilingual.remove(key)
+                        except ValueError:
+                            pass
         except Exception as e:
             logger.debug(f"[ANN] Multilingual evict failed: {e}")
 

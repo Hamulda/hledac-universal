@@ -64,7 +64,8 @@ fn strip_doctype(input: &str) -> String {
                 if i + 9 <= n {
                     let tag = &bytes[i..i + 9];
                     // Check <!DOCTYPE (case-insensitive via to_ascii_lowercase)
-                    if tag[0] == b'<' && tag[1] == b'!'
+                    if tag[0] == b'<'
+                        && tag[1] == b'!'
                         && tag[2].to_ascii_lowercase() == b'd'
                         && tag[3..9].iter().all(|&b| b.is_ascii_lowercase())
                         && &tag[3..9] == b"doctype"
@@ -128,7 +129,8 @@ fn strip_entity(input: &str) -> String {
                 if i + 9 <= n {
                     let tag = &bytes[i..i + 9];
                     // Check <!ENTITY (case-insensitive via to_ascii_lowercase)
-                    if tag[0] == b'<' && tag[1] == b'!'
+                    if tag[0] == b'<'
+                        && tag[1] == b'!'
                         && tag[2].to_ascii_lowercase() == b'e'
                         && tag[3..9].iter().all(|&b| b.is_ascii_lowercase())
                         && &tag[3..9] == b"entity"
@@ -308,7 +310,10 @@ mod tests {
             "<rss><item><title>A</title></item></rss>".to_string(),
             "<!DOCTYPE rss><rss><item><title>B</title></item></rss>".to_string(),
         ];
-        let results = items.iter().map(|s| sanitize_xml_helper(s)).collect::<Vec<_>>();
+        let results = items
+            .iter()
+            .map(|s| sanitize_xml_helper(s))
+            .collect::<Vec<_>>();
         assert_eq!(results.len(), 2);
         assert_eq!(results[0], "<rss><item><title>A</title></item></rss>");
         assert!(!results[1].contains("<!DOCTYPE"));
@@ -332,7 +337,10 @@ mod tests {
         let input = "<!DOCTYPE rss [<!ENTITY foo \"bar\">]><rss><item>test</item></rss>";
         let result = sanitize_xml_helper(input);
         // ENTITY must be stripped; DOCTYPE stripped; <rss> preserved
-        assert!(!result.contains("<!ENTITY"), "ENTITY inside subset must be removed");
+        assert!(
+            !result.contains("<!ENTITY"),
+            "ENTITY inside subset must be removed"
+        );
         assert!(!result.contains("<!DOCTYPE"), "DOCTYPE must be removed");
         assert!(result.contains("<rss>"), "RSS content must be preserved");
     }

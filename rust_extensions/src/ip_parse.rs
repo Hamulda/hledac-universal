@@ -75,9 +75,7 @@ pub fn is_private_ip(s: &str) -> bool {
 #[pyfunction]
 pub fn is_public_ip(s: &str) -> bool {
     match s.parse::<IpAddr>() {
-        Ok(IpAddr::V4(ipv4)) => {
-            !ipv4.is_loopback() && !ipv4.is_private() && !ipv4.is_link_local()
-        }
+        Ok(IpAddr::V4(ipv4)) => !ipv4.is_loopback() && !ipv4.is_private() && !ipv4.is_link_local(),
         Ok(IpAddr::V6(_)) => true,
         Err(_) => false,
     }
@@ -102,17 +100,21 @@ pub fn batch_ip_classify(ips: Vec<String>) -> Vec<u8> {
     let batch: Vec<&[String]> = ips.chunks(BATCH_MAX).collect();
 
     crate::io_pool().install(|| {
-        batch.par_iter().map(|chunk| {
-            let mut out: Vec<u8> = Vec::with_capacity(chunk.len());
-            for s in *chunk {
-                let cls: u8 = match s.parse::<IpAddr>() {
-                    Ok(ip) => IpClass::from_ip(ip) as u8,
-                    Err(_) => IpClass::Invalid as u8,
-                };
-                out.push(cls);
-            }
-            out
-        }).flatten().collect::<Vec<u8>>()
+        batch
+            .par_iter()
+            .map(|chunk| {
+                let mut out: Vec<u8> = Vec::with_capacity(chunk.len());
+                for s in *chunk {
+                    let cls: u8 = match s.parse::<IpAddr>() {
+                        Ok(ip) => IpClass::from_ip(ip) as u8,
+                        Err(_) => IpClass::Invalid as u8,
+                    };
+                    out.push(cls);
+                }
+                out
+            })
+            .flatten()
+            .collect::<Vec<u8>>()
     })
 }
 
@@ -147,7 +149,10 @@ mod tests {
 
     #[test]
     fn test_parse_ipv4() {
-        assert_eq!(parse_ip_fast("192.168.1.1"), Some("192.168.1.1".to_string()));
+        assert_eq!(
+            parse_ip_fast("192.168.1.1"),
+            Some("192.168.1.1".to_string())
+        );
         assert_eq!(parse_ip_fast("8.8.8.8"), Some("8.8.8.8".to_string()));
     }
 
@@ -200,13 +205,13 @@ mod tests {
     fn test_batch_classify() {
         let ips = vec![
             "192.168.1.1".to_string(), // private
-            "8.8.8.8".to_string(),    // public
+            "8.8.8.8".to_string(),     // public
             "invalid".to_string(),     // invalid
         ];
         let results = batch_ip_classify(ips);
         assert_eq!(results.len(), 3);
         assert_eq!(results[0], IpClass::Private as u8); // 192.168.1.1 → private
-        assert_eq!(results[1], IpClass::Public as u8);  // 8.8.8.8 → public
+        assert_eq!(results[1], IpClass::Public as u8); // 8.8.8.8 → public
         assert_eq!(results[2], IpClass::Invalid as u8); // invalid → 0
     }
 

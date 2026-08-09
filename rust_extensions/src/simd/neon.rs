@@ -75,10 +75,7 @@ pub fn normalize_neon(vec: &mut [f32]) -> Result<bool, EmbeddingError> {
         return Err(EmbeddingError::dimension_mismatch(4, len));
     }
     if len % 4 != 0 {
-        return Err(EmbeddingError::dimension_mismatch(
-            (len / 4) * 4,
-            len,
-        ));
+        return Err(EmbeddingError::dimension_mismatch((len / 4) * 4, len));
     }
 
     // Compute sum of squares using NEON with tree-reduction.
@@ -114,10 +111,8 @@ pub fn normalize_neon(vec: &mut [f32]) -> Result<bool, EmbeddingError> {
         for chunk in 0..chunks {
             let idx = chunk * 4;
             let vals = core::arch::aarch64::vld1q_f32(vec.as_ptr().add(idx));
-            let scaled = core::arch::aarch64::vmulq_f32(
-                vals,
-                core::arch::aarch64::vdupq_n_f32(inv_norm),
-            );
+            let scaled =
+                core::arch::aarch64::vmulq_f32(vals, core::arch::aarch64::vdupq_n_f32(inv_norm));
             core::arch::aarch64::vst1q_f32(vec.as_mut_ptr().add(idx), scaled);
         }
     }
@@ -146,10 +141,7 @@ pub fn cosine_neon(a: &[f32], b: &[f32]) -> Result<f32, EmbeddingError> {
     let len = a.len();
 
     if len < 4 || len % 4 != 0 {
-        return Err(EmbeddingError::dimension_mismatch(
-            (len / 4) * 4,
-            len,
-        ));
+        return Err(EmbeddingError::dimension_mismatch((len / 4) * 4, len));
     }
 
     let chunks = len / 4;

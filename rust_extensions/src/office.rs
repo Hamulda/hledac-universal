@@ -71,13 +71,16 @@ pub fn extract_text(path: &str, format: &str) -> PyResult<String> {
     let fmt = parse_format(format)?;
 
     // Check file size before loading
-    let metadata = std::fs::metadata(path)
-        .map_err(|e| pyo3::exceptions::PyIOError::new_err(format!("Failed to read file metadata: {e}")))?;
+    let metadata = std::fs::metadata(path).map_err(|e| {
+        pyo3::exceptions::PyIOError::new_err(format!("Failed to read file metadata: {e}"))
+    })?;
 
     if metadata.len() > MAX_FILE_SIZE as u64 {
-        return Err(pyo3::exceptions::PyValueError::new_err(
-            format!("File too large: {} bytes (max: {} bytes)", metadata.len(), MAX_FILE_SIZE)
-        ));
+        return Err(pyo3::exceptions::PyValueError::new_err(format!(
+            "File too large: {} bytes (max: {} bytes)",
+            metadata.len(),
+            MAX_FILE_SIZE
+        )));
     }
 
     match fmt {
@@ -104,9 +107,11 @@ pub fn extract_text_from_bytes(data: &[u8], format: &str) -> PyResult<String> {
     let fmt = parse_format(format)?;
 
     if data.len() > MAX_FILE_SIZE {
-        return Err(pyo3::exceptions::PyValueError::new_err(
-            format!("Data too large: {} bytes (max: {} bytes)", data.len(), MAX_FILE_SIZE)
-        ));
+        return Err(pyo3::exceptions::PyValueError::new_err(format!(
+            "Data too large: {} bytes (max: {} bytes)",
+            data.len(),
+            MAX_FILE_SIZE
+        )));
     }
 
     match fmt {
@@ -203,7 +208,11 @@ fn xml_text(xml: &str, open_tag: &str, close_tag: &str) -> Option<String> {
     let rest = &xml[start..];
     let end = rest.find(close_tag)?;
     let text = &rest[..end];
-    if text.is_empty() { None } else { Some(text.to_string()) }
+    if text.is_empty() {
+        None
+    } else {
+        Some(text.to_string())
+    }
 }
 
 /// Parse a DC (Dublin Core) XML element value from core.xml.
@@ -229,8 +238,8 @@ fn parse_app(xml: &str, tag: &str) -> Option<String> {
 
 /// Extract metadata from a ZIP-based Office document (docx/xlsx/pptx).
 fn extract_office_metadata_from_zip(data: &[u8], fmt: OfficeFormat) -> OfficeMetadata {
-    use zip::ZipArchive;
     use std::io::Cursor;
+    use zip::ZipArchive;
 
     let cursor = Cursor::new(data);
     let mut archive = match ZipArchive::new(cursor) {
@@ -253,8 +262,7 @@ fn extract_office_metadata_from_zip(data: &[u8], fmt: OfficeFormat) -> OfficeMet
             meta.comments = parse_dc(&core_xml, "description");
             meta.created = parse_dc(&core_xml, "date");
             meta.last_modified_by = parse_cp(&core_xml, "lastModifiedBy");
-            meta.revision = parse_cp(&core_xml, "revision")
-                .and_then(|s| s.parse().ok());
+            meta.revision = parse_cp(&core_xml, "revision").and_then(|s| s.parse().ok());
 
             // Total editing time in seconds — DCTERMS:duration e.g. "PT1H30M"
             if let Some(dur) = parse_dc(&core_xml, "duration") {
@@ -275,16 +283,16 @@ fn extract_office_metadata_from_zip(data: &[u8], fmt: OfficeFormat) -> OfficeMet
             // Counts by format
             match fmt {
                 OfficeFormat::Docx => {
-                    meta.page_count = parse_app(&app_xml, "Pages")
-                        .and_then(|s| s.parse::<i32>().ok());
+                    meta.page_count =
+                        parse_app(&app_xml, "Pages").and_then(|s| s.parse::<i32>().ok());
                 }
                 OfficeFormat::Xlsx => {
-                    meta.sheet_count = parse_app(&app_xml, "Sheets")
-                        .and_then(|s| s.parse::<i32>().ok());
+                    meta.sheet_count =
+                        parse_app(&app_xml, "Sheets").and_then(|s| s.parse::<i32>().ok());
                 }
                 OfficeFormat::Pptx => {
-                    meta.slide_count = parse_app(&app_xml, "Slides")
-                        .and_then(|s| s.parse::<i32>().ok());
+                    meta.slide_count =
+                        parse_app(&app_xml, "Slides").and_then(|s| s.parse::<i32>().ok());
                 }
             }
         }
@@ -325,7 +333,11 @@ fn parse_iso8601_duration(s: &str) -> Option<i32> {
         }
     }
 
-    if total > 0 { Some(total) } else { None }
+    if total > 0 {
+        Some(total)
+    } else {
+        None
+    }
 }
 
 /// Extract metadata from an Office document file.
@@ -340,13 +352,16 @@ fn parse_iso8601_duration(s: &str) -> Option<i32> {
 pub fn extract_metadata(path: &str, format: &str) -> PyResult<OfficeMetadata> {
     let path_obj = std::path::Path::new(path);
 
-    let metadata = std::fs::metadata(path_obj)
-        .map_err(|e| pyo3::exceptions::PyIOError::new_err(format!("Failed to read file metadata: {e}")))?;
+    let metadata = std::fs::metadata(path_obj).map_err(|e| {
+        pyo3::exceptions::PyIOError::new_err(format!("Failed to read file metadata: {e}"))
+    })?;
 
     if metadata.len() > MAX_FILE_SIZE as u64 {
-        return Err(pyo3::exceptions::PyValueError::new_err(
-            format!("File too large: {} bytes (max: {} bytes)", metadata.len(), MAX_FILE_SIZE)
-        ));
+        return Err(pyo3::exceptions::PyValueError::new_err(format!(
+            "File too large: {} bytes (max: {} bytes)",
+            metadata.len(),
+            MAX_FILE_SIZE
+        )));
     }
 
     let fmt = parse_format(format)?;
@@ -367,9 +382,11 @@ pub fn extract_metadata(path: &str, format: &str) -> PyResult<OfficeMetadata> {
 #[pyfunction]
 pub fn extract_metadata_from_bytes(data: &[u8], format: &str) -> PyResult<OfficeMetadata> {
     if data.len() > MAX_FILE_SIZE {
-        return Err(pyo3::exceptions::PyValueError::new_err(
-            format!("Data too large: {} bytes (max: {} bytes)", data.len(), MAX_FILE_SIZE)
-        ));
+        return Err(pyo3::exceptions::PyValueError::new_err(format!(
+            "Data too large: {} bytes (max: {} bytes)",
+            data.len(),
+            MAX_FILE_SIZE
+        )));
     }
 
     let fmt = parse_format(format)?;
@@ -382,12 +399,12 @@ pub fn extract_metadata_from_bytes(data: &[u8], format: &str) -> PyResult<Office
 
 /// Parse format string to OfficeFormat enum.
 fn parse_format(format: &str) -> PyResult<OfficeFormat> {
-    OfficeFormat::from_py_str(format)
-        .ok_or_else(|| {
-            pyo3::exceptions::PyValueError::new_err(
-                format!("Unknown office format: '{}'. Expected: docx, xlsx, or pptx", format)
-            )
-        })
+    OfficeFormat::from_py_str(format).ok_or_else(|| {
+        pyo3::exceptions::PyValueError::new_err(format!(
+            "Unknown office format: '{}'. Expected: docx, xlsx, or pptx",
+            format
+        ))
+    })
 }
 
 // ---------------------------------------------------------------------------
@@ -403,9 +420,10 @@ fn extract_docx(path: &Path) -> PyResult<String> {
 fn extract_docx_from_bytes(data: &[u8]) -> PyResult<String> {
     match docx_rs::read_docx(data) {
         Ok(docx) => Ok(extract_text_from_docx_doc(&docx.document)),
-        Err(e) => Err(pyo3::exceptions::PyIOError::new_err(
-            format!("Failed to parse DOCX: {:?}", e)
-        )),
+        Err(e) => Err(pyo3::exceptions::PyIOError::new_err(format!(
+            "Failed to parse DOCX: {:?}",
+            e
+        ))),
     }
 }
 
@@ -533,14 +551,13 @@ fn extract_pptx_from_bytes(data: &[u8]) -> PyResult<String> {
 /// NOTE: We pass the ENTIRE ZIP data to Xlsx::new(), not individual sheet files.
 fn extract_spreadsheet_from_bytes(data: &[u8]) -> PyResult<String> {
     use calamine::{Reader, Xlsx};
-    use zip::ZipArchive;
     use std::io::Cursor;
+    use zip::ZipArchive;
 
     let cursor = Cursor::new(data);
-    let mut archive = ZipArchive::new(cursor)
-        .map_err(|e| pyo3::exceptions::PyIOError::new_err(
-            format!("Failed to read ZIP archive: {:?}", e)
-        ))?;
+    let mut archive = ZipArchive::new(cursor).map_err(|e| {
+        pyo3::exceptions::PyIOError::new_err(format!("Failed to read ZIP archive: {:?}", e))
+    })?;
 
     // Find all sheet files in the ZIP (xl/worksheets/sheet*.xml)
     let sheet_files: Vec<String> = (0..archive.len())
@@ -560,10 +577,9 @@ fn extract_spreadsheet_from_bytes(data: &[u8]) -> PyResult<String> {
 
     // calamine's Xlsx::new() reads the ENTIRE XLSX ZIP (workbook.xml + sheet XMLs)
     // We cannot use individual sheet files - Xlsx::new needs the whole ZIP
-    let mut workbook: Xlsx<_> = Xlsx::new(std::io::Cursor::new(data))
-        .map_err(|e| pyo3::exceptions::PyIOError::new_err(
-            format!("Failed to parse XLSX: {:?}", e)
-        ))?;
+    let mut workbook: Xlsx<_> = Xlsx::new(std::io::Cursor::new(data)).map_err(|e| {
+        pyo3::exceptions::PyIOError::new_err(format!("Failed to parse XLSX: {:?}", e))
+    })?;
 
     let sheet_names = workbook.sheet_names().to_vec();
     for sheet_name in sheet_names {
@@ -572,18 +588,16 @@ fn extract_spreadsheet_from_bytes(data: &[u8]) -> PyResult<String> {
             for row in sheet_range.rows() {
                 let row_text: Vec<String> = row
                     .iter()
-                    .map(|cell| {
-                        match cell {
-                            calamine::Data::String(s) => s.clone(),
-                            calamine::Data::Float(f) => f.to_string(),
-                            calamine::Data::Int(i) => i.to_string(),
-                            calamine::Data::Bool(b) => b.to_string(),
-                            calamine::Data::DateTime(dt) => dt.to_string(),
-                            calamine::Data::DateTimeIso(s) => s.clone(),
-                            calamine::Data::DurationIso(s) => s.clone(),
-                            calamine::Data::Error(e) => format!("ERROR: {:?}", e),
-                            calamine::Data::Empty => String::new(),
-                        }
+                    .map(|cell| match cell {
+                        calamine::Data::String(s) => s.clone(),
+                        calamine::Data::Float(f) => f.to_string(),
+                        calamine::Data::Int(i) => i.to_string(),
+                        calamine::Data::Bool(b) => b.to_string(),
+                        calamine::Data::DateTime(dt) => dt.to_string(),
+                        calamine::Data::DateTimeIso(s) => s.clone(),
+                        calamine::Data::DurationIso(s) => s.clone(),
+                        calamine::Data::Error(e) => format!("ERROR: {:?}", e),
+                        calamine::Data::Empty => String::new(),
                     })
                     .collect();
 

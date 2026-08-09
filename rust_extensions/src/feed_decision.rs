@@ -298,11 +298,7 @@ pub fn feed_branch_verdict(
     let feed_burns_budget = fallback_waste > 0 && findings_rich == 0;
 
     let (verdict_tag, next_action, confidence_note) = if total_findings == 0 {
-        (
-            "no_signal",
-            "reassess_feed",
-            "no findings in either branch",
-        )
+        ("no_signal", "reassess_feed", "no findings in either branch")
     } else {
         let rich_ratio = feed_native_yield_ratio;
         let (tag, _action, _note) = if rich_ratio >= 0.7 {
@@ -318,7 +314,10 @@ pub fn feed_branch_verdict(
         } else if feed_burns_budget {
             ("fallback_more", "feed burns budget; rely on fallback")
         } else if feed_corroborates {
-            ("continue_feed", "both branches contribute; feed is valuable")
+            (
+                "continue_feed",
+                "both branches contribute; feed is valuable",
+            )
         } else if feed_signal_present && fallback_useful == 0 {
             ("continue_feed", "feed-native only; fallback not needed")
         } else {
@@ -345,63 +344,123 @@ pub fn feed_branch_verdict(
     // Return Python dict directly — no JSON roundtrip parsing in Python.
     // [SWARM]-009 FIX: Replace .unwrap() with ? operator for PyErr propagation.
     let dict = PyDict::new(py);
-    dict.set_item("verdict_tag", verdict_tag)
-        .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(
-            format!("feed_economics_verdict: failed to set verdict_tag: {e}")))?;
+    dict.set_item("verdict_tag", verdict_tag).map_err(|e| {
+        PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!(
+            "feed_economics_verdict: failed to set verdict_tag: {e}"
+        ))
+    })?;
     dict.set_item("feed_native_yield", findings_rich)
-        .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(
-            format!("feed_economics_verdict: failed to set feed_native_yield: {e}")))?;
+        .map_err(|e| {
+            PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!(
+                "feed_economics_verdict: failed to set feed_native_yield: {e}"
+            ))
+        })?;
     dict.set_item("fallback_yield", findings_fallback)
-        .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(
-            format!("feed_economics_verdict: failed to set fallback_yield: {e}")))?;
-    dict.set_item("total_yield", total_findings)
-        .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(
-            format!("feed_economics_verdict: failed to set total_yield: {e}")))?;
-    dict.set_item("squandered_high_usefulness_entries", squandered_high_usefulness)
-        .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(
-            format!("feed_economics_verdict: failed to set squandered_high_usefulness_entries: {e}")))?;
+        .map_err(|e| {
+            PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!(
+                "feed_economics_verdict: failed to set fallback_yield: {e}"
+            ))
+        })?;
+    dict.set_item("total_yield", total_findings).map_err(|e| {
+        PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!(
+            "feed_economics_verdict: failed to set total_yield: {e}"
+        ))
+    })?;
+    dict.set_item(
+        "squandered_high_usefulness_entries",
+        squandered_high_usefulness,
+    )
+    .map_err(|e| {
+        PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!(
+            "feed_economics_verdict: failed to set squandered_high_usefulness_entries: {e}"
+        ))
+    })?;
     dict.set_item("unnecessary_fallbacks", fallback_waste)
-        .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(
-            format!("feed_economics_verdict: failed to set unnecessary_fallbacks: {e}")))?;
+        .map_err(|e| {
+            PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!(
+                "feed_economics_verdict: failed to set unnecessary_fallbacks: {e}"
+            ))
+        })?;
     dict.set_item("useful_fallbacks", fallback_useful)
-        .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(
-            format!("feed_economics_verdict: failed to set useful_fallbacks: {e}")))?;
+        .map_err(|e| {
+            PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!(
+                "feed_economics_verdict: failed to set useful_fallbacks: {e}"
+            ))
+        })?;
     dict.set_item("feed_corroborates", feed_corroborates)
-        .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(
-            format!("feed_economics_verdict: failed to set feed_corroborates: {e}")))?;
+        .map_err(|e| {
+            PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!(
+                "feed_economics_verdict: failed to set feed_corroborates: {e}"
+            ))
+        })?;
     dict.set_item("feed_burns_budget", feed_burns_budget)
-        .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(
-            format!("feed_economics_verdict: failed to set feed_burns_budget: {e}")))?;
+        .map_err(|e| {
+            PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!(
+                "feed_economics_verdict: failed to set feed_burns_budget: {e}"
+            ))
+        })?;
     dict.set_item("feed_next_action", next_action)
-        .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(
-            format!("feed_economics_verdict: failed to set feed_next_action: {e}")))?;
+        .map_err(|e| {
+            PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!(
+                "feed_economics_verdict: failed to set feed_next_action: {e}"
+            ))
+        })?;
     dict.set_item("feed_confidence_note", confidence_note)
-        .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(
-            format!("feed_economics_verdict: failed to set feed_confidence_note: {e}")))?;
+        .map_err(|e| {
+            PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!(
+                "feed_economics_verdict: failed to set feed_confidence_note: {e}"
+            ))
+        })?;
     dict.set_item("feed_confidence_score", confidence)
-        .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(
-            format!("feed_economics_verdict: failed to set feed_confidence_score: {e}")))?;
+        .map_err(|e| {
+            PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!(
+                "feed_economics_verdict: failed to set feed_confidence_score: {e}"
+            ))
+        })?;
     dict.set_item("feed_native_yield_ratio", feed_native_yield_ratio)
-        .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(
-            format!("feed_economics_verdict: failed to set feed_native_yield_ratio: {e}")))?;
+        .map_err(|e| {
+            PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!(
+                "feed_economics_verdict: failed to set feed_native_yield_ratio: {e}"
+            ))
+        })?;
     dict.set_item("fallback_value_ratio", fallback_value_ratio)
-        .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(
-            format!("feed_economics_verdict: failed to set fallback_value_ratio: {e}")))?;
+        .map_err(|e| {
+            PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!(
+                "feed_economics_verdict: failed to set fallback_value_ratio: {e}"
+            ))
+        })?;
     dict.set_item("high_usefulness_waste_rate", high_usefulness_waste_rate)
-        .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(
-            format!("feed_economics_verdict: failed to set high_usefulness_waste_rate: {e}")))?;
-    dict.set_item("metadata_strong_content_weak", metadata_strong_but_content_weak)
-        .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(
-            format!("feed_economics_verdict: failed to set metadata_strong_content_weak: {e}")))?;
+        .map_err(|e| {
+            PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!(
+                "feed_economics_verdict: failed to set high_usefulness_waste_rate: {e}"
+            ))
+        })?;
+    dict.set_item(
+        "metadata_strong_content_weak",
+        metadata_strong_but_content_weak,
+    )
+    .map_err(|e| {
+        PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!(
+            "feed_economics_verdict: failed to set metadata_strong_content_weak: {e}"
+        ))
+    })?;
     dict.set_item("low_trust_feed_hits", low_trust_feed_hits)
-        .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(
-            format!("feed_economics_verdict: failed to set low_trust_feed_hits: {e}")))?;
+        .map_err(|e| {
+            PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!(
+                "feed_economics_verdict: failed to set low_trust_feed_hits: {e}"
+            ))
+        })?;
     dict.set_item("entries_with_hits", total_entries_with_hits)
-        .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(
-            format!("feed_economics_verdict: failed to set entries_with_hits: {e}")))?;
-    dict.set_item("entries_seen", entries_seen)
-        .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(
-            format!("feed_economics_verdict: failed to set entries_seen: {e}")))?;
+        .map_err(|e| {
+            PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!(
+                "feed_economics_verdict: failed to set entries_with_hits: {e}"
+            ))
+        })?;
+    dict.set_item("entries_seen", entries_seen).map_err(|e| {
+        PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!(
+            "feed_economics_verdict: failed to set entries_seen: {e}"
+        ))
+    })?;
     Ok(dict.into())
 }
 

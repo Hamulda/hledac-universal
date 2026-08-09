@@ -12,11 +12,11 @@
 //! M1 8GB: automaton built once, stored as PyO3 struct field.
 //! Memory: O(patterns × avg_len) + O(unique_labels × str).
 
-use pyo3::prelude::*;
 use aho_corasick::AhoCorasick;
+use parking_lot::Mutex;
+use pyo3::prelude::*;
 use regex::Regex;
 use std::collections::HashMap;
-use parking_lot::Mutex;
 
 /// Interned string store — Box::leak for 'static lifetime.
 // KEY OPTIMIZATION (Issue #37): labels are interned once at construction
@@ -31,7 +31,9 @@ struct InternStore {
 
 impl InternStore {
     fn new() -> Self {
-        Self { map: Mutex::new(HashMap::new()) }
+        Self {
+            map: Mutex::new(HashMap::new()),
+        }
     }
 
     /// Intern a label string, returning a static reference.
@@ -71,16 +73,28 @@ pub struct PatternHit {
     #[pyo3(get)]
     pub end: usize,
     #[pyo3(get)]
-    pub pattern: String,  // owned: interned pattern string
+    pub pattern: String, // owned: interned pattern string
     #[pyo3(get)]
-    pub label: Option<String>,  // interned label (None = no label)
+    pub label: Option<String>, // interned label (None = no label)
     #[pyo3(get)]
-    pub value: String,  // substring from text (original case)
+    pub value: String, // substring from text (original case)
 }
 
 impl PatternHit {
-    fn new(start: usize, end: usize, pattern: String, label: Option<String>, value: String) -> Self {
-        Self { start, end, pattern, label, value }
+    fn new(
+        start: usize,
+        end: usize,
+        pattern: String,
+        label: Option<String>,
+        value: String,
+    ) -> Self {
+        Self {
+            start,
+            end,
+            pattern,
+            label,
+            value,
+        }
     }
 }
 
@@ -159,7 +173,11 @@ impl AhoCorasickMatcher {
     /// When provided, `scan_with_captures` can extract subgroup values.
     #[new]
     #[pyo3(signature = (patterns = vec![], labels = vec![], capture_patterns = vec![]))]
-    fn new(patterns: Vec<String>, labels: Vec<String>, capture_patterns: Vec<String>) -> PyResult<Self> {
+    fn new(
+        patterns: Vec<String>,
+        labels: Vec<String>,
+        capture_patterns: Vec<String>,
+    ) -> PyResult<Self> {
         let automaton = AhoCorasick::new(&patterns).expect("Failed to build automaton");
         // InternStore: labels interned once at construction, reused across every scan()
         let intern_store = InternStore::new();
@@ -199,11 +217,7 @@ impl AhoCorasickMatcher {
     ///   "word"         — require word-boundary: prev char NOT alphanumeric AND
     ///                     next char NOT alphanumeric (or at text boundaries)
     #[pyo3(signature = (text, boundary_policy=None))]
-    fn scan(
-        &self,
-        text: &str,
-        boundary_policy: Option<&str>,
-    ) -> Vec<PatternHit> {
+    fn scan(&self, text: &str, boundary_policy: Option<&str>) -> Vec<PatternHit> {
         let check_boundary = boundary_policy == Some("word");
         let text_len = text.len();
         let mut results = Vec::new();
@@ -230,7 +244,12 @@ impl AhoCorasickMatcher {
             let pattern_name = self.patterns.get(idx).cloned().unwrap_or_default();
             // get() returns &Option<&Option<&str>>, copied() gives Option<&Option<&str>>,
             // and_then flattens to Option<&str>, then to_owned() converts to Option<String>.
-            let label = self.interned_labels.get(idx).copied().and_then(|x| x).map(|s| s.to_owned());
+            let label = self
+                .interned_labels
+                .get(idx)
+                .copied()
+                .and_then(|x| x)
+                .map(|s| s.to_owned());
             results.push(PatternHit::new(start, end, pattern_name, label, value));
         }
         results
@@ -246,7 +265,10 @@ impl AhoCorasickMatcher {
     ///
     /// Note: capture regexes are compiled once per call (not per match).
     /// For 17 patterns with 10 matches each this saves ~153 regex compilations.
-    fn scan_with_captures(&self, text: &str) -> Vec<(usize, usize, String, Option<String>, String)> {
+    fn scan_with_captures(
+        &self,
+        text: &str,
+    ) -> Vec<(usize, usize, String, Option<String>, String)> {
         // Pre-compile all capture regexes once — avoids O(matches × patterns) Regex::new() calls.
         let compiled: Vec<Option<Regex>> = self
             .capture_patterns_raw
@@ -276,7 +298,12 @@ impl AhoCorasickMatcher {
             let pattern_name = self.patterns.get(idx).cloned().unwrap_or_default();
             // get() -> &Option<&Option<&str>>, copied() -> Option<Option<&str>>,
             // and_then identity -> Option<&str>, to_owned() -> Option<String>.
-            let label = self.interned_labels.get(idx).copied().and_then(|x| x).map(|s| s.to_owned());
+            let label = self
+                .interned_labels
+                .get(idx)
+                .copied()
+                .and_then(|x| x)
+                .map(|s| s.to_owned());
             results.push((start, end, pattern_name, label, capture_val));
         }
         results
@@ -324,19 +351,28 @@ impl AhoCorasickMatcher {
                                 }
                                 last_end = end;
                                 if check_boundary {
-                                    let before_ok =
-                                        start == 0 || !is_boundary_char(&text, start);
-                                    let after_ok =
-                                        end >= t_len || !is_boundary_char_at(&text, end);
+                                    let before_ok = start == 0 || !is_boundary_char(&text, start);
+                                    let after_ok = end >= t_len || !is_boundary_char_at(&text, end);
                                     if !(before_ok && after_ok) {
                                         continue;
                                     }
                                 }
                                 let value = text[start..end].to_string();
-                                let pattern_name = self.patterns.get(idx).cloned().unwrap_or_default();
+                                let pattern_name =
+                                    self.patterns.get(idx).cloned().unwrap_or_default();
                                 // same double-Option flatten via and_then
-                                let label = interned_labels.get(idx).copied().and_then(|x| x).map(|s| s.to_owned());
-                                results.push(PatternHit::new(start, end, pattern_name, label, value));
+                                let label = interned_labels
+                                    .get(idx)
+                                    .copied()
+                                    .and_then(|x| x)
+                                    .map(|s| s.to_owned());
+                                results.push(PatternHit::new(
+                                    start,
+                                    end,
+                                    pattern_name,
+                                    label,
+                                    value,
+                                ));
                             }
                             results
                         })

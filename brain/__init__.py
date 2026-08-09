@@ -157,6 +157,10 @@ unload_embedding_model = None  # type: ignore[assignment,misc]
 # coremltools import is ~200ms; defer to first attribute access.
 ANE_AVAILABLE = None
 
+# [GNN-3]: CoreML-GNN for ANE inference — lazy
+GNN_AVAILABLE = None  # gnn_node_mapper module
+ANE_GNN_AVAILABLE = None  # ane_gnn module
+
 # SILICON-02b: WhisperEngine — whisper.cpp CoreML/ANE speech-to-text — lazy (A2-FIX)
 # whispercpp import is ~150ms; defer to first attribute access.
 WHISPER_AVAILABLE = None
@@ -235,6 +239,21 @@ _ENGINE_REGISTRY: tuple[tuple[str, str, tuple[str, ...], str | None], ...] = (
     ("absence_mining", "ABSENCE_MINING_AVAILABLE", (
         "AbsenceMiningEngine", "AbsenceFinding", "AbsenceReport", "AbsenceType",
         "get_absence_engine", "get_absence_engine_sync", "ABSENCE_MINING_AVAILABLE",
+    ), None),
+    # [GNN-3]: CoreML-GNN for ANE inference
+    ("gnn_node_mapper", "GNN_AVAILABLE", (
+        "get_node_mapper", "reset_node_mapper", "GNN_AVAILABLE",
+        "NodeMapping", "MappingLRUCache", "EmbeddingReference",
+        "make_kuzu_id", "parse_kuzu_id", "build_one_hot_type",
+        "fetch_node_embeddings", "normalize_ioc_type",
+        "GNN_IOC_TYPES", "NUM_GNN_IOC_TYPES",
+    ), None),
+    ("ane_gnn", "ANE_GNN_AVAILABLE", (
+        "ANEGNNEngine", "GraphSAGEModel", "HybridLinkPredictor",
+        "GNNConfig", "GNNBatchResult", "LinkPredictionResult",
+        "get_ane_gnn_engine", "get_hybrid_predictor",
+        "export_graphsage_to_coreml", "ANE_GNN_AVAILABLE",
+        "GNN_FEATURE_DIM", "GNN_ACTIVATION_THRESHOLD",
     ), None),
 )
 

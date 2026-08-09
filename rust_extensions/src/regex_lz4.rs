@@ -188,9 +188,7 @@ mod tests {
 
     #[test]
     fn test_compression_ratio_1k_patterns() {
-        let patterns: Vec<String> = (0..1000)
-            .map(|i| format!("pattern_{}", i))
-            .collect();
+        let patterns: Vec<String> = (0..1000).map(|i| format!("pattern_{}", i)).collect();
         let store = RegexLz4Store::new(patterns);
         let ratio = store.compression_ratio();
         // LZ4 on JSON patterns should achieve >1.0 ratio
@@ -232,9 +230,7 @@ mod tests {
 
     #[test]
     fn test_save_load_roundtrip() {
-        let patterns: Vec<String> = (0..100)
-            .map(|i| format!("persist_pattern_{}", i))
-            .collect();
+        let patterns: Vec<String> = (0..100).map(|i| format!("persist_pattern_{}", i)).collect();
         let store = RegexLz4Store::new(patterns.clone());
         let path = "/tmp/test_regex_lz4.bin";
         store.save_to_file(path).unwrap();

@@ -86,10 +86,11 @@ pub fn parquet_row_group_stats(path: &str) -> PyResult<Option<Vec<(usize, f64, f
 
             // Read single row-group with ts column only
             // PyArrow signature: iter_batches(batch_size, row_groups=None, columns=None)
-            let batches = match pf.call_method1("iter_batches", (batch_size, &row_groups_list, &cols_list)) {
-                Ok(b) => b,
-                Err(_) => break,
-            };
+            let batches =
+                match pf.call_method1("iter_batches", (batch_size, &row_groups_list, &cols_list)) {
+                    Ok(b) => b,
+                    Err(_) => break,
+                };
 
             let mut min_ts: Option<f64> = None;
             let mut max_ts: Option<f64> = None;

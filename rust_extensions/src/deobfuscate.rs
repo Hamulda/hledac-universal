@@ -114,7 +114,11 @@ struct CandidateRegion {
 
 impl CandidateRegion {
     fn new(start: usize, end: usize, entropy: f64) -> Self {
-        Self { start, end, entropy }
+        Self {
+            start,
+            end,
+            entropy,
+        }
     }
 }
 
@@ -317,7 +321,10 @@ fn printable_ratio(data: &[u8]) -> f64 {
     if data.is_empty() {
         return 0.0;
     }
-    let printable = data.iter().filter(|&&b| b.is_ascii_graphic() || b == b' ' || b == b'\n' || b == b'\r' || b == b'\t').count();
+    let printable = data
+        .iter()
+        .filter(|&&b| b.is_ascii_graphic() || b == b' ' || b == b'\n' || b == b'\r' || b == b'\t')
+        .count();
     printable as f64 / data.len() as f64
 }
 
@@ -363,7 +370,11 @@ fn decode_base64_nopad(s: &str) -> Option<String> {
 fn decode_base64_impl(s: &str, table: &[i8; 256]) -> Option<String> {
     // Strip whitespace
     let s = s.as_bytes();
-    let s_trimmed: Vec<u8> = s.iter().filter(|&&b| !b.is_ascii_whitespace()).copied().collect();
+    let s_trimmed: Vec<u8> = s
+        .iter()
+        .filter(|&&b| !b.is_ascii_whitespace())
+        .copied()
+        .collect();
     let s = &s_trimmed;
 
     if s.is_empty() {
@@ -560,16 +571,10 @@ fn try_rot13(s: &str) -> Option<String> {
     }
     let decoded: String = s_clean
         .chars()
-        .map(|c| {
-            match c {
-                'a'..='z' => {
-                    ((c as u8 - b'a' + 13) % 26 + b'a') as char
-                }
-                'A'..='Z' => {
-                    ((c as u8 - b'A' + 13) % 26 + b'A') as char
-                }
-                _ => c,
-            }
+        .map(|c| match c {
+            'a'..='z' => ((c as u8 - b'a' + 13) % 26 + b'a') as char,
+            'A'..='Z' => ((c as u8 - b'A' + 13) % 26 + b'A') as char,
+            _ => c,
         })
         .collect();
     Some(decoded)
@@ -711,7 +716,9 @@ fn peel_region(region: &str, depth: u8, max_depth: u8) -> Option<DecodedCandidat
 
     // Pick the best candidate (highest score)
     let best = results.into_iter().flatten().max_by(|a, b| {
-        a.score.partial_cmp(&b.score).unwrap_or(std::cmp::Ordering::Equal)
+        a.score
+            .partial_cmp(&b.score)
+            .unwrap_or(std::cmp::Ordering::Equal)
     })?;
 
     // Recursive re-entry: if decoded output still has high entropy, peel again
@@ -862,9 +869,7 @@ pub fn decode_ioc_candidates(text: &str, max_depth: Option<u8>) -> DeobfuscateRe
         .iter()
         .filter_map(|region| {
             let region_text = &text[region.start..region.end];
-            peel_region(region_text, 1, depth).map(|c| {
-                (c.encoding, c.decoded, c.bytes_decoded)
-            })
+            peel_region(region_text, 1, depth).map(|c| (c.encoding, c.decoded, c.bytes_decoded))
         })
         .collect();
 
@@ -1037,10 +1042,7 @@ mod tests {
         // then base64 encoded
         let text = "NjI2OWY2MzY5NmU2ZDNi";
         let candidates = deobfuscate_impl(text, 3);
-        assert!(
-            !candidates.is_empty(),
-            "Nested Base64→Hex should peel"
-        );
+        assert!(!candidates.is_empty(), "Nested Base64→Hex should peel");
     }
 
     #[test]

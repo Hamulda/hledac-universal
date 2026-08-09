@@ -22,8 +22,12 @@ fn extract_features_from_cargo_toml() -> Vec<String> {
     let Some(toml_text) = cargo_toml else {
         return Vec::new();
     };
-    let features_section = toml_text.split("[features]").nth(1)
-        .and_then(|s| s.split('\n').take_while(|l| !l.starts_with('[')).collect::<String>().into());
+    let features_section = toml_text.split("[features]").nth(1).and_then(|s| {
+        s.split('\n')
+            .take_while(|l| !l.starts_with('['))
+            .collect::<String>()
+            .into()
+    });
     let Some(features_text) = features_section else {
         return Vec::new();
     };
@@ -35,7 +39,14 @@ fn extract_features_from_cargo_toml() -> Vec<String> {
                 return None;
             }
             // Feature line format: "name = [...]" or "name/"
-            let name = line.split('=').next().unwrap_or(line).split('/').next().unwrap_or(line).trim();
+            let name = line
+                .split('=')
+                .next()
+                .unwrap_or(line)
+                .split('/')
+                .next()
+                .unwrap_or(line)
+                .trim();
             if name.is_empty() || name == "[features]" {
                 None
             } else {
@@ -81,19 +92,12 @@ fn main() {
     // vDSP was removed in Darwin 25.5 (macOS 26.5).
     #[cfg(target_os = "macos")]
     {
-        if let Ok(output) = std::process::Command::new("uname")
-            .arg("-r")
-            .output()
-        {
+        if let Ok(output) = std::process::Command::new("uname").arg("-r").output() {
             let version = String::from_utf8_lossy(&output.stdout);
             // Parse "25.5.0" -> (25, 5)
             let parts: Vec<&str> = version.trim().split('.').collect();
-            let major: u32 = parts.get(0)
-                .and_then(|s| s.parse().ok())
-                .unwrap_or(0);
-            let minor: u32 = parts.get(1)
-                .and_then(|s| s.parse().ok())
-                .unwrap_or(0);
+            let major: u32 = parts.get(0).and_then(|s| s.parse().ok()).unwrap_or(0);
+            let minor: u32 = parts.get(1).and_then(|s| s.parse().ok()).unwrap_or(0);
 
             // Darwin 25.5+ = macOS 26.5+ — vDSP removed
             if major > 25 || (major == 25 && minor >= 5) {

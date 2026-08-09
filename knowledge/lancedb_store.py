@@ -370,7 +370,21 @@ class LanceDBIdentityStore:
     _COMPACT_FRAGMENT_THRESHOLD = 1000  # Trigger compact after N inserts
     _COMPACT_TIME_THRESHOLD_S = 300.0  # Trigger compact after N seconds
     _COMPACT_MIN_INTERVAL_S = 60.0  # Minimum interval between compacts
-    __slots__ = tuple(('_cache_db', '_cache_env', '_embedding_dim', '_mlx_embeddings', '_mlx_embeddings_total_count', '_mlx_id_to_idx', '_mlx_ids', '_mlx_load_chunk_size', '_orch', '_table', 'db', 'uri', '_binary_embeddings', '_compact_in_flight', '_insert_count_since_compact', '_last_compact_ts'))
+    __slots__ = tuple((
+        '_cache_db', '_cache_env', '_embedding_dim', '_mlx_embeddings', '_mlx_embeddings_total_count',
+        '_mlx_id_to_idx', '_mlx_ids', '_mlx_load_chunk_size', '_orch', '_table', 'db', 'uri',
+        '_binary_embeddings', '_compact_in_flight', '_insert_count_since_compact', '_last_compact_ts',
+        # MRL-2 FIX: Added missing __slots__ attributes that were causing AttributeError
+        '_colbert_reranker', '_flashrank_reranker', '_colbert_loaded', '_flashrank_loaded',
+        '_memory_history', '_eviction_threshold', '_usearch_index', '_usearch_loaded', '_lancedb_has_fts',
+        '_embedder', '_embedder_type', '_embed_lock', '_current_mrl_dim', '_mrl_enabled',
+        '_mlx_embed_manager', '_fallback_dim', '_writeback_buffer', '_writeback_lock',
+        '_access_counts', '_index_build_status', '_index_cache', '_index_cache_time',
+        '_index_build_deferred', '_metrics', '_large_override_enabled', '_ivfpq_enabled',
+        '_ivfpq_num_partitions', '_ivfpq_num_sub_vectors', '_usearch_index_multilingual',
+        '_usearch_loaded_multilingual', '_usearch_labels_multilingual', '_multilingual_table_name',
+        '_mrl_truncator', '_mrl_source_dim', '_mrl_target_dim',
+    ))
 
     def __init__(self, uri: str=str(_DEFAULT_URI), orchestrator=None):
         """
@@ -548,7 +562,10 @@ class LanceDBIdentityStore:
         if self._embedder_type is None:
             await self._initialize_embedder()
         if self._embedder_type == 'numpy_fallback':
-            emb = np.random.randn(self._fallback_dim).astype(np.float32)
+            # IO-4 fix: Deterministic hash-based fallback instead of np.random.randn
+            # to avoid poisoning LanceDB ANN index with random vectors
+            rng = np.random.default_rng(hash(text) & 0xFFFFFFFF)
+            emb = rng.standard_normal(self._fallback_dim, dtype=np.float32)
             norm = np.linalg.norm(emb)
             if norm > 0:
                 emb = (emb / norm).tolist()
@@ -576,9 +593,12 @@ class LanceDBIdentityStore:
         if self._embedder_type is None:
             await self._initialize_embedder()
         if self._embedder_type == 'numpy_fallback':
+            # IO-4 fix: Deterministic hash-based fallback instead of np.random.randn
+            # to avoid poisoning LanceDB ANN index with random vectors
             all_embs = []
-            for _ in texts:
-                emb = np.random.randn(self._fallback_dim).astype(np.float32)
+            for i, text in enumerate(texts):
+                rng = np.random.default_rng(hash((text, i)) & 0xFFFFFFFF)
+                emb = rng.standard_normal(self._fallback_dim, dtype=np.float32)
                 norm = np.linalg.norm(emb)
                 if norm > 0:
                     emb = emb / norm
@@ -975,10 +995,12 @@ class LanceDBIdentityStore:
                 except Exception:  # noqa: BLE001
                     pass
                 limit = min(chunk_size, total_count - offset)
-                chunk_data = self._table.to_lance().to_table(columns=['_embedding', 'id'], offset=offset, limit=limit).to_pydict()
-                if not chunk_data.get('_embedding'):
+                # MRL-2 FIX: Column name is 'embedding' not '_embedding'
+                # Table schema uses 'embedding' (from add_entity line 1471)
+                chunk_data = self._table.to_lance().to_table(columns=['embedding', 'id'], offset=offset, limit=limit).to_pydict()
+                if not chunk_data.get('embedding'):
                     continue
-                raw_emb = chunk_data['_embedding']
+                raw_emb = chunk_data['embedding']
                 import numpy as np
                 if raw_emb and isinstance(raw_emb[0], (list, tuple)):
                     emb_np = np.ascontiguousarray(raw_emb, dtype=np.float32)
@@ -986,7 +1008,10 @@ class LanceDBIdentityStore:
                     emb_np = np.ascontiguousarray(raw_emb, dtype=np.float32) if raw_emb else np.array([], dtype=np.float32)
                 emb_chunk = mx.array(emb_np)
                 ids_chunk = chunk_data['id']
-                signs = (emb_chunk > 0).astype(mx.uint8)
+                # MRL-2 FIX: Sign convention unified to (>= 0) for consistent Hamming.
+                # Previous: (emb_chunk > 0) caused mismatch with _pack_query_to_binary.
+                # Now: 1 if >= 0, 0 if < 0 — matches query packing convention.
+                signs = (emb_chunk >= 0).astype(mx.uint8)
                 batch, dim = signs.shape
                 padded_dim = (dim + 7) // 8 * 8
                 padded = mx.zeros((batch, padded_dim), dtype=mx.uint8)
@@ -1006,7 +1031,8 @@ class LanceDBIdentityStore:
             self._mlx_embeddings = mx.concatenate(all_embeddings, axis=0)
             self._mlx_ids = all_ids
             self._mlx_id_to_idx = id_to_idx_global
-            self._embedding_dim = len(chunk_data['_embedding'][0]) if chunk_data.get('_embedding') else 256
+            # MRL-2 FIX: Column name is 'embedding' not '_embedding'
+            self._embedding_dim = len(chunk_data['embedding'][0]) if chunk_data.get('embedding') else 256
             logger.info(f'Loaded {len(all_ids)} embeddings to MLX in {len(all_embeddings)} chunks (M1 8GB safe)')
         except Exception as e:
             logger.warning(f'Failed to load embeddings to MLX: {e}')
@@ -1016,29 +1042,45 @@ class LanceDBIdentityStore:
 
         P4.2: Uses module-level _cosine_sim_batch (compiled once at import).
         Supports (B, D) × (N, D) → (B, N) for flexible batching.
+
+        MRL-2 FIX: Uses float32 vectors from candidates dict directly,
+        not packed uint8 from _mlx_embeddings (dtype mismatch bug).
         """
         if not candidates:
             return candidates[:top_k]
-        if self._mlx_embeddings is None:
-            await self._load_embeddings_to_mlx()
-        if self._mlx_embeddings is None:
-            return candidates[:top_k]
-        import mlx.core as mx
-        cand_indices = []
+
+        # MRL-2 FIX: Extract float32 vectors from candidates, not uint8 from _mlx_embeddings
+        cand_vectors = []
         valid_candidates = []
         for c in candidates:
-            idx = self._mlx_id_to_idx.get(c.get('id'))
-            if idx is not None:
-                cand_indices.append(idx)
+            vec = c.get('vector') or c.get('_embedding')
+            if vec and isinstance(vec, (list, np.ndarray)) and len(vec) > 0:
+                cand_vectors.append(np.array(vec, dtype=np.float32))
                 valid_candidates.append(c)
+
         if not valid_candidates:
             return candidates[:top_k]
-        q = mx.array(query_emb).reshape(1, -1)
-        d = self._mlx_embeddings[cand_indices]
-        scores = _cosine_sim_batch(q, d)
-        scores_np = np.array(scores.squeeze(0))
-        sorted_idx = np.argsort(scores_np)[::-1][:top_k]
-        return [valid_candidates[i] for i in sorted_idx]
+
+        try:
+            import mlx.core as mx
+            q = mx.array(query_emb, dtype=mx.float32).reshape(1, -1)
+            c_mx = mx.array(np.stack(cand_vectors).astype(np.float32))
+            scores = _cosine_sim_batch(q, c_mx)
+            scores_np = np.array(scores.squeeze(0))
+            sorted_idx = np.argsort(scores_np)[::-1][:top_k]
+            return [valid_candidates[i] for i in sorted_idx]
+        except Exception:
+            # Fallback to numpy cosine
+            q_np = np.array(query_emb, dtype=np.float32)
+            q_norm = q_np / (np.linalg.norm(q_np) + 1e-8)
+            results = []
+            for i, vec in enumerate(cand_vectors):
+                v = vec.astype(np.float32)
+                v_norm = v / (np.linalg.norm(v) + 1e-8)
+                score = float(np.dot(q_norm, v_norm))
+                results.append((i, score))
+            results.sort(key=lambda x: x[1], reverse=True)
+            return [valid_candidates[i] for i, _ in results[:top_k]]
 
     def _pack_query_to_binary(self, query_vec: list[float]) -> bytes:
         """Pack float32 query vector to packed binary bytes.
@@ -1091,8 +1133,10 @@ class LanceDBIdentityStore:
             query_packed = self._pack_query_to_binary(query_emb)
             candidates_flat = self._mlx_embeddings[cand_indices].tolist()
             all_bytes = b''.join((bytes((int(x) for x in row)) for row in candidates_flat))
-            scores: list[float] = _bhs(query_packed, list(all_bytes), len(cand_indices), num_bytes)
-            sorted_idx = sorted(range(len(scores)), key=lambda i: scores[i])[:count]
+            scores: list[float] = _bhs(query_packed, all_bytes, len(cand_indices), num_bytes)
+            # MRL-2 FIX: Sort DESCENDING (highest similarity first) to match MLX path
+            # Previous bug: ascending sort took least similar instead of most similar
+            sorted_idx = sorted(range(len(scores)), key=lambda i: scores[i], reverse=True)[:count]
             return [valid_candidates[i] for i in sorted_idx]
         except Exception:  # noqa: BLE001
             pass
@@ -1124,11 +1168,13 @@ class LanceDBIdentityStore:
         while len(selected) < top_k and remaining:
             mmr_scores = []
             for doc in remaining:
-                doc_emb = np.array(doc.get('_embedding', [0] * len(query_emb)))
+                # MRL-2 FIX: Column name is 'embedding' not '_embedding'
+                doc_emb = np.array(doc.get('embedding', doc.get('_embedding', [0] * len(query_emb))))
                 sim_to_query = np.dot(query_emb_np, doc_emb) / (np.linalg.norm(query_emb_np) * np.linalg.norm(doc_emb) + 1e-08)
                 max_sim_to_selected = 0
                 if selected:
-                    selected_embs = np.array([s.get('_embedding', [0] * len(query_emb)) for s in selected])
+                    # MRL-2 FIX: Column name is 'embedding' not '_embedding'
+                    selected_embs = np.array([s.get('embedding', s.get('_embedding', [0] * len(query_emb))) for s in selected])
                     sims = np.dot(selected_embs, doc_emb) / (np.linalg.norm(selected_embs, axis=1) * np.linalg.norm(doc_emb) + 1e-08)
                     max_sim_to_selected = np.max(sims) if sims.size > 0 else 0
                 mmr = lambda_param * sim_to_query - (1 - lambda_param) * max_sim_to_selected
@@ -1155,13 +1201,14 @@ class LanceDBIdentityStore:
             if self._table.count_rows() < 1000:
                 self._usearch_loaded = True
                 return
-            data = self._table.to_lance().to_table(columns=['_embedding', 'id']).to_pydict()
-            if len(data.get('_embedding', [])) == 0:
+            # MRL-2 FIX: Column name is 'embedding' not '_embedding' (table schema uses 'embedding')
+            data = self._table.to_lance().to_table(columns=['embedding', 'id']).to_pydict()
+            if len(data.get('embedding', [])) == 0:
                 return
             self._usearch_index = Index(ndim=self._embedding_dim, metric='cos', dtype='f32', connectivity=16, expansion_add=128, expansion_search=64)
-            for i, emb in enumerate(data['_embedding'][:10000]):
+            for i, emb in enumerate(data['embedding'][:10000]):
                 self._usearch_index.add(i, np.array(emb, dtype=np.float32))
-            logger.info(f"usearch index loaded with {len(data['_embedding'][:10000])} vectors")
+            logger.info(f"usearch index loaded with {len(data['embedding'][:10000])} vectors")
         except Exception as e:
             logger.warning(f'usearch unavailable: {e}')
             self._usearch_index = None
@@ -1801,9 +1848,8 @@ class LanceDBIdentityStore:
             return []
         candidate_embs: list[np.ndarray] = []
         for c in candidates:
-            emb = c.get('_embedding')
-            if emb is None:
-                emb = c.get('embedding')
+            # MRL-2 FIX: Primary key is 'embedding', fallback to '_embedding' for backward compat
+            emb = c.get('embedding') or c.get('_embedding')
             if emb is not None:
                 candidate_embs.append(np.array(emb, dtype='float32'))
             else:

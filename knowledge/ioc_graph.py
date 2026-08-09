@@ -402,8 +402,8 @@ class IOCGraph:
             return {'ioc_created': 0, 'obs_flushed': 0}
         ioc_copy = self._ioc_buffer[:]
         obs_copy = self._obs_buffer[:]
-        self._ioc_buffer.clear()
-        self._obs_buffer.clear()
+        # CRITICAL FIX: Clear buffers ONLY after successful write to prevent data loss
+        # If write fails, data remains in buffer for retry
 
         # Apply temporal decay to IOC confidences if JTMS has facts
         # Also resolve observed_at: None → time.time()
@@ -444,6 +444,7 @@ class IOCGraph:
 
         ioc_created: list[str] = []
         obs_recorded: int = 0
+        failed: bool = False
         try:
             if ioc_copy:
                 ioc_created = await self.upsert_ioc_batch(ioc_copy)
@@ -453,8 +454,18 @@ class IOCGraph:
         except Exception as e:
             import logging
             logging.warning(f'[IOCGraph] flush_buffers failed: {e}')
-        import logging
-        logging.info(f'[IOCGraph] Buffer flushed: {len(ioc_created)} IOCs newly created, {obs_recorded} observations')
+            failed = True
+            # Restore buffers on failure so data is not lost
+            self._ioc_buffer.extend(ioc_copy)
+            self._obs_buffer.extend(obs_copy)
+        
+        # Only clear buffers on success
+        if not failed:
+            self._ioc_buffer.clear()
+            self._obs_buffer.clear()
+            import logging
+            logging.info(f'[IOCGraph] Buffer flushed: {len(ioc_created)} IOCs newly created, {obs_recorded} observations')
+        
         return {'ioc_created': len(ioc_created), 'obs_flushed': obs_recorded}
 
     async def _record_observation_batch_sync_async(self, obs: list[tuple[str, str, str, float, str]]) -> None:
@@ -478,10 +489,17 @@ class IOCGraph:
         - IOC: id, ioc_type, value, first_seen, last_seen, confidence,
                earliest_observed, latest_observed, observation_count
         - OBSERVED: FROM IOC TO IOC, finding_id, source_type, first_seen, last_seen
+
+        [GNN-3]: Extended schema with per-node embedding references for GNN:
+        - embedding_table: STRING — LanceDB table name for embedding lookup
+        - embedding_row_id: INTEGER — LanceDB row ID for this node's embedding
+        - embedding_dim: INTEGER — Dimension of embedding vector
+        - embedding_updated_at: DOUBLE — Unix timestamp of last embedding update
         """
         self._db = _kuzu.Database(str(self._db_path))
         self._conn = _kuzu.Connection(self._db)
-        # IOC node table with [META]-006 temporal fields
+
+        # IOC node table with [META]-006 temporal fields + [GNN-3] embedding refs
         try:
             self._conn.execute(
                 'CREATE NODE TABLE IOC('
@@ -493,18 +511,24 @@ class IOCGraph:
                 'confidence DOUBLE, '
                 'earliest_observed DOUBLE, '
                 'latest_observed DOUBLE, '
-                'observation_count INTEGER'
+                'observation_count INTEGER, '
+                'embedding_table STRING, '
+                'embedding_row_id INTEGER, '
+                'embedding_dim INTEGER, '
+                'embedding_updated_at DOUBLE'
                 ')'
             )
             self._schema_has_temporal = True
         except Exception:  # noqa: BLE001
             pass
+
         try:
             self._conn.execute('CREATE REL TABLE OBSERVED(FROM IOC TO IOC, finding_id STRING, source_type STRING, first_seen DOUBLE, last_seen DOUBLE)')
         except Exception:  # noqa: BLE001
             pass
 
         # SWARM-003: PREDICTED edge type for link prediction results
+        # Extended with [GNN-3] fields
         try:
             self._conn.execute(
                 'CREATE REL TABLE PREDICTED('
@@ -516,30 +540,23 @@ class IOCGraph:
                 'common_neighbors INTEGER, '
                 'method STRING, '
                 'created_at DOUBLE, '
-                'verified BOOLEAN DEFAULT false'
+                'verified BOOLEAN DEFAULT false, '
+                'gnn_score DOUBLE DEFAULT 0.0, '
+                'combined_score DOUBLE DEFAULT 0.0'
                 ')'
             )
         except Exception:  # noqa: BLE001
             pass
 
-        # SWARM-003: PREDICTED edge type for link prediction results
-        # Properties: confidence, adamic_adar, jaccard, pref_attach, common_neighbors, method
+        # [GNN-3]: Probe whether existing DB has embedding fields
+        self._schema_has_embeddings = False
         try:
             self._conn.execute(
-                'CREATE REL TABLE PREDICTED('
-                'FROM IOC TO IOC, '
-                'confidence DOUBLE, '
-                'adamic_adar DOUBLE, '
-                'jaccard DOUBLE, '
-                'pref_attach DOUBLE, '
-                'common_neighbors INTEGER, '
-                'method STRING, '
-                'created_at DOUBLE, '
-                'verified BOOLEAN DEFAULT false'
-                ')'
+                "MATCH (n:IOC) RETURN n.embedding_table, n.embedding_row_id LIMIT 1"
             )
-        except Exception:  # noqa: BLE001
-            pass
+            self._schema_has_embeddings = True
+        except Exception:
+            self._schema_has_embeddings = False
 
         # [META]-006: Probe whether existing DB has temporal fields
         if not self._schema_has_temporal:
@@ -550,6 +567,38 @@ class IOCGraph:
                 self._schema_has_temporal = True
             except Exception:
                 self._schema_has_temporal = False
+
+        # [GNN-3]: Migrate PREDICTED edge schema if missing GNN fields
+        self._schema_has_gnn_scores = False
+        try:
+            self._conn.execute(
+                "MATCH ()-[r:PREDICTED]->() RETURN r.gnn_score, r.combined_score LIMIT 1"
+            )
+            self._schema_has_gnn_scores = True
+        except Exception:
+            self._schema_has_gnn_scores = False
+        
+        if not self._schema_has_gnn_scores:
+            # Kuzu supports ALTER to add properties to existing tables
+            try:
+                self._conn.execute(
+                    "ALTER (FROM)->(TO) ADD gnn_score DOUBLE DEFAULT 0.0"
+                )
+                self._conn.execute(
+                    "ALTER (FROM)->(TO) ADD combined_score DOUBLE DEFAULT 0.0"
+                )
+                self._schema_has_gnn_scores = True
+                logger.info('[IOCGraph] Migrated PREDICTED edge schema with GNN fields')
+            except Exception:
+                # ALTER failed - might be syntax issue or already added
+                # Try to verify again
+                try:
+                    self._conn.execute(
+                        "MATCH ()-[r:PREDICTED]->() RETURN r.gnn_score LIMIT 1"
+                    )
+                    self._schema_has_gnn_scores = True
+                except Exception:
+                    self._schema_has_gnn_scores = False
 
     async def close(self) -> None:
         """Gracefully close the Kuzu connection.
@@ -1609,13 +1658,14 @@ class IOCGraph:
         nodes, value_to_id = [], {}
         try:
             res = conn.execute('MATCH (n:IOC) RETURN n.value, n.ioc_type')
-            for node_id in range(1, float('inf')):
-                if not res.has_next(): break
+            node_id = 1
+            while res.has_next():
                 row = res.get_next()
                 value, ioc_type = str(row[0]) if row[0] else '', str(row[1]) if row[1] else 'unknown'
                 if value and value not in value_to_id:
                     value_to_id[value] = node_id
                     nodes.append((node_id, value, ioc_type))
+                    node_id += 1
         except Exception as e:
             import logging; logging.warning(f'[IOCGraph] Failed to load nodes: {e}')
         return nodes, value_to_id
@@ -2011,8 +2061,8 @@ class IOCGraph:
         for nid in node_map:
             node_map[nid]['degree'] = 0
 
-        # Phase 2: Extract edges
-        edges, degree_map = self._extract_topology_edges(conn, node_map)
+        # Phase 2: Extract edges (SAFE-5: bounded to prevent unbounded memory growth)
+        edges, degree_map = self._extract_topology_edges(conn, node_map, max_edges=max_nodes * 10)
         for nid, deg in degree_map.items():
             if nid in node_map:
                 node_map[nid]['degree'] = deg
@@ -2038,12 +2088,19 @@ class IOCGraph:
     # -------------------------------------------------------------------------
 
     def _extract_topology_nodes(self, conn, max_nodes: int) -> dict:
-        """Phase 1: Extract all nodes from graph."""
+        """Phase 1: Extract top-scored nodes from graph.
+
+        SAFE-5: Uses SQL LIMIT to bound memory at database level.
+        Previously loaded ALL nodes then truncated — now limits at query time.
+        """
         node_map = {}
         try:
+            # SAFE-5: LIMIT pushed to database to avoid unbounded memory growth
+            # max_nodes=0 means no limit (used for small graphs)
+            limit_clause = f'LIMIT {max_nodes}' if max_nodes > 0 else ''
             res = conn.execute(
-                'MATCH (n:IOC) RETURN n.id, n.value, n.ioc_type, n.confidence, n.first_seen, n.last_seen '
-                'ORDER BY n.confidence DESC NULLS LAST')
+                f'MATCH (n:IOC) RETURN n.id, n.value, n.ioc_type, n.confidence, n.first_seen, n.last_seen '
+                f'ORDER BY n.confidence DESC NULLS LAST {limit_clause}')
             col_names = res.get_column_names()
             while res.has_next():
                 row = res.get_next()
@@ -2062,36 +2119,75 @@ class IOCGraph:
             import logging
             logging.warning(f'[IOCGraph] topology: node extraction failed: {e}')
             return {}
+        # Post-load truncate only as safety net (shouldn't be needed with LIMIT)
         if max_nodes > 0 and len(node_map) > max_nodes:
             node_map = {nid: node_map[nid] for nid in list(node_map.keys())[:max_nodes]}
         return node_map
 
-    def _extract_topology_edges(self, conn, node_map) -> tuple[list, dict]:
-        """Phase 2: Extract edges where both endpoints are in node_map."""
+    def _extract_topology_edges(self, conn, node_map, max_edges: int = 50000) -> tuple[list, dict]:
+        """Phase 2: Extract edges where both endpoints are in node_map.
+
+        SAFE-5: Bounded edge extraction to prevent unbounded memory growth.
+        - Uses IN clause with node IDs to filter at database level
+        - Limits total edges via LIMIT clause
+        - Truncates edge_set to prevent O(edges) memory growth
+        """
         edges, degree_map, edge_set = [], {nid: 0 for nid in node_map}, set()
+        node_ids = list(node_map.keys())
+        max_edges_cap = min(max_edges, len(node_ids) * 10)  # Cap at 10 edges per node average
+        
         try:
-            res = conn.execute(
-                'MATCH (a:IOC)-[r:OBSERVED]->(b:IOC) RETURN a.id, b.id, r.finding_id, r.source_type, r.confidence, r.last_seen')
-            col_names = res.get_column_names()
-            while res.has_next():
-                row = res.get_next()
-                data = dict(zip(col_names, row, strict=False))
-                src, dst = str(data.get('a.id', '')), str(data.get('b.id', ''))
-                if src in node_map and dst in node_map and (src, dst) not in edge_set:
-                    edge_set.add((src, dst))
-                    edges.append({
-                        'source': src,
-                        'target': dst,
-                        'finding_id': str(data.get('finding_id', '') or ''),
-                        'source_type': str(data.get('source_type', 'unknown') or 'unknown'),
-                        'confidence': float(data.get('confidence', 1.0)),
-                        'last_seen': float(data.get('last_seen', 0.0) or 0.0),
-                    })
-                    degree_map[src] = degree_map.get(src, 0) + 1
-                    degree_map[dst] = degree_map.get(dst, 0) + 1
+            # SAFE-5: Filter edges at database level using IN clause
+            # This prevents loading all graph edges when we only need subgraph edges
+            if node_ids:
+                # Build parameterized IN clause for source nodes
+                placeholders = ', '.join(['?' for _ in node_ids[:1000]])  # Limit IN clause size
+                sql = f'''
+                    MATCH (a:IOC)-[r:OBSERVED]->(b:IOC)
+                    WHERE a.id IN ({placeholders}) AND b.id IN ({placeholders})
+                    RETURN a.id, b.id, r.finding_id, r.source_type, r.confidence, r.last_seen
+                    LIMIT {max_edges_cap}
+                '''
+                # Use first 1000 node IDs for IN clause (covers most use cases)
+                params = node_ids[:1000]
+                
+                try:
+                    res = conn.execute(sql, params)
+                except Exception:
+                    # Fallback: simpler query if parameterized fails
+                    res = conn.execute(
+                        f'MATCH (a:IOC)-[r:OBSERVED]->(b:IOC) RETURN a.id, b.id, r.finding_id, r.source_type, r.confidence, r.last_seen LIMIT {max_edges_cap}')
+            else:
+                res = None
+            
+            if res:
+                col_names = res.get_column_names()
+                while res.has_next():
+                    row = res.get_next()
+                    data = dict(zip(col_names, row, strict=False))
+                    src, dst = str(data.get('a.id', '')), str(data.get('b.id', ''))
+                    if src in node_map and dst in node_map and (src, dst) not in edge_set:
+                        edge_set.add((src, dst))
+                        edges.append({
+                            'source': src,
+                            'target': dst,
+                            'finding_id': str(data.get('finding_id', '') or ''),
+                            'source_type': str(data.get('source_type', 'unknown') or 'unknown'),
+                            'confidence': float(data.get('confidence', 1.0)),
+                            'last_seen': float(data.get('last_seen', 0.0) or 0.0),
+                        })
+                        degree_map[src] = degree_map.get(src, 0) + 1
+                        degree_map[dst] = degree_map.get(dst, 0) + 1
+                        
+                        # SAFE-5: Early exit when reaching edge limit
+                        if len(edges) >= max_edges_cap:
+                            break
         except Exception as e:
             import logging
             logging.warning(f'[IOCGraph] topology: edge extraction failed: {e}')
+        
+        # SAFE-5: Clear edge_set to free memory (edges list already bounded)
+        edge_set.clear()
         return edges, degree_map
 
     def _detect_topology_communities(self, node_map, edges, max_community_size: int) -> tuple:
@@ -2255,11 +2351,13 @@ class IOCGraph:
         nodes, value_to_id = [], {}
         try:
             res = conn.execute('MATCH (n:IOC) RETURN n.value, n.ioc_type')
-            for nid in range(1, float('inf')):
-                if not res.has_next(): break
+            nid = 1
+            while res.has_next():
                 row = res.get_next()
                 if (value := str(row[0]) if row[0] else '') and value not in value_to_id:
-                    value_to_id[value] = nid; nodes.append((nid, value, str(row[1]) if row[1] else 'unknown'))
+                    value_to_id[value] = nid
+                    nodes.append((nid, value, str(row[1]) if row[1] else 'unknown'))
+                    nid += 1
         except Exception: return [], {}
         edges = []
         try:

@@ -314,10 +314,7 @@ unsafe fn dot(a: &[f32], b: &[f32]) -> f32 {
 /// Candidates must already be L2-normalized; this normalizes the query only.
 /// Returns one score per candidate.
 #[inline]
-fn cosine_scores_for_one_query(
-    query: &[f32],
-    candidates: &[&[f32]],
-) -> Vec<f32> {
+fn cosine_scores_for_one_query(query: &[f32], candidates: &[&[f32]]) -> Vec<f32> {
     let n = candidates.len();
     if n == 0 {
         return Vec::new();
@@ -368,8 +365,7 @@ pub fn batch_cosine_scores(
     num_queries: usize,
     num_candidates: usize,
     dim: usize,
-) -> PyResult<Vec<Vec<f32>>>
-{
+) -> PyResult<Vec<Vec<f32>>> {
     if num_queries == 0 || num_candidates == 0 {
         return Ok(vec![]);
     }
@@ -398,13 +394,19 @@ pub fn batch_cosine_scores(
     if query_flat.len() != expected_query_len {
         return Err(pyo3::exceptions::PyValueError::new_err(format!(
             "batch_cosine_scores: query_flat size mismatch (got {} expected {} for Q={} D={})",
-            query_flat.len(), expected_query_len, num_queries, dim
+            query_flat.len(),
+            expected_query_len,
+            num_queries,
+            dim
         )));
     }
     if candidates_flat.len() != expected_cand_len {
         return Err(pyo3::exceptions::PyValueError::new_err(format!(
             "batch_cosine_scores: candidates_flat size mismatch (got {} expected {} for N={} D={})",
-            candidates_flat.len(), expected_cand_len, num_candidates, dim
+            candidates_flat.len(),
+            expected_cand_len,
+            num_candidates,
+            dim
         )));
     }
 
@@ -457,28 +459,29 @@ fn topk_for_one_row(scores: &[f32], k: usize) -> (Vec<usize>, Vec<f32>) {
         let mut indices: Vec<usize> = (0..n).collect();
         indices.select_nth_unstable_by(n - k, |a, b| {
             // Compare by score descending (largest first)
-            scores[*b].partial_cmp(&scores[*a]).unwrap_or(std::cmp::Ordering::Equal)
+            scores[*b]
+                .partial_cmp(&scores[*a])
+                .unwrap_or(std::cmp::Ordering::Equal)
         });
         // Top-K candidates are in the last K positions (not yet sorted)
         let top_candidates = &indices[n - k..];
 
         // Phase 2: argsort the top-K — O(K log K), descending by score
-        let mut order: Vec<(usize, f32)> = top_candidates.iter().enumerate().map(|(pos, &idx)| {
-            (pos, scores[idx])
-        }).collect::<Vec<_>>();
-        order.sort_by(|a, b| {
-            b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal)
-        });
+        let mut order: Vec<(usize, f32)> = top_candidates
+            .iter()
+            .enumerate()
+            .map(|(pos, &idx)| (pos, scores[idx]))
+            .collect::<Vec<_>>();
+        order.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
 
         let top_indices: Vec<usize> = order.iter().map(|(pos, _)| top_candidates[*pos]).collect();
         let top_scores: Vec<f32> = top_indices.iter().map(|&idx| scores[idx]).collect();
         (top_indices, top_scores)
     } else {
         // Return all sorted
-        let mut order: Vec<(usize, f32)> = scores.iter().enumerate().map(|(i, &s)| (i, s)).collect();
-        order.sort_by(|a, b| {
-            b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal)
-        });
+        let mut order: Vec<(usize, f32)> =
+            scores.iter().enumerate().map(|(i, &s)| (i, s)).collect();
+        order.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
         let top_indices: Vec<usize> = order.iter().map(|(i, _)| *i).collect();
         let top_scores: Vec<f32> = order.iter().map(|(_, s)| *s).collect();
         (top_indices, top_scores)
@@ -508,15 +511,15 @@ pub fn batch_topk_indices(
     num_queries: usize,
     num_candidates: usize,
     k: usize,
-) -> PyResult<(Vec<Vec<usize>>, Vec<Vec<f32>>)>
-{
+) -> PyResult<(Vec<Vec<usize>>, Vec<Vec<f32>>)> {
     if num_queries == 0 || num_candidates == 0 {
         return Ok((vec![], vec![]));
     }
     if k == 0 {
-        return Err(pyo3::exceptions::PyValueError::new_err(
-            format!("batch_topk_indices: k must be > 0, got {}", k)
-        ));
+        return Err(pyo3::exceptions::PyValueError::new_err(format!(
+            "batch_topk_indices: k must be > 0, got {}",
+            k
+        )));
     }
     if num_queries > MAX_QUERIES {
         return Err(pyo3::exceptions::PyValueError::new_err(format!(
@@ -535,7 +538,10 @@ pub fn batch_topk_indices(
     if scores_flat.len() != expected_len {
         return Err(pyo3::exceptions::PyValueError::new_err(format!(
             "batch_topk_indices: scores_flat size mismatch (got {} expected {} for Q={} N={})",
-            scores_flat.len(), expected_len, num_queries, num_candidates
+            scores_flat.len(),
+            expected_len,
+            num_queries,
+            num_candidates
         )));
     }
 
@@ -572,26 +578,40 @@ pub fn batch_topk_indices(
 // ---------------------------------------------------------------------------
 
 /// Count set bits in a 16-byte chunk using ARM NEON.
-/// 16 × u8 → 8 × u16 (vpaddl) → 4 × u32 (vpaddl) → 2 × u64 (vpaddl) → sum
+/// MRL-2 FIX: Added vcntq_u8 before vpaddlq_u8. Previous code summed byte VALUES,
+/// not bit COUNTS. The fix: 16×u8 → vcntq_u8 → 16×u8 popcounts → vpaddl → sum.
+///
+/// ARM NEON popcount sequence:
+/// 1. vld1q_u8: load 16 bytes
+/// 2. vcntq_u8: population count per byte (THIS WAS MISSING)
+/// 3. vpaddlq_u8: 16×u8 → 8×u16 (pairwise horizontal add)
+/// 4. vpaddlq_u16: 8×u16 → 4×u32
+/// 5. vpaddlq_u32: 4×u32 → 2×u64
+/// 6. Horizontal sum of 2×u64 → u32
+///
 /// Caller guarantees buf.len() >= 16.
 #[cfg(neon_available)]
 #[target_feature(enable = "neon")]
 #[inline]
-unsafe fn popcount_neon_chunk(buf: &[u8]) -> u32 { unsafe {
-    use core::arch::aarch64::*;
-    let ptr = buf.as_ptr() as *const u8;
-    let bytes = vld1q_u8(ptr);
-    // 16×u8 → 8×u16 (pairwise add, no accumulation needed)
-    let u16_vals = vpaddlq_u8(bytes);
-    // 8×u16 → 4×u32 (pairwise add)
-    let u32_vals = vpaddlq_u16(u16_vals);
-    // 4×u32 → 2×u64 (pairwise add)
-    let u64_vals = vpaddlq_u32(u32_vals);
-    // Horizontal sum of 2×u64 → u32
-    let lo = vgetq_lane_u64(u64_vals, 0) as u32;
-    let hi = vgetq_lane_u64(u64_vals, 1) as u32;
-    lo.wrapping_add(hi)
-}}
+unsafe fn popcount_neon_chunk(buf: &[u8]) -> u32 {
+    unsafe {
+        use core::arch::aarch64::*;
+        let ptr = buf.as_ptr() as *const u8;
+        let bytes = vld1q_u8(ptr);
+        // MRL-2 FIX: Count set bits BEFORE summing
+        let popcounts = vcntq_u8(bytes);
+        // 16×u8 (popcounts) → 8×u16 (pairwise add)
+        let u16_vals = vpaddlq_u8(popcounts);
+        // 8×u16 → 4×u32 (pairwise add)
+        let u32_vals = vpaddlq_u16(u16_vals);
+        // 4×u32 → 2×u64 (pairwise add)
+        let u64_vals = vpaddlq_u32(u32_vals);
+        // Horizontal sum of 2×u64 → u32
+        let lo = vgetq_lane_u64(u64_vals, 0) as u32;
+        let hi = vgetq_lane_u64(u64_vals, 1) as u32;
+        lo.wrapping_add(hi)
+    }
+}
 
 /// Count set bits in a buffer using ARM NEON (aarch64).
 /// Processes 16 bytes per iteration; scalar tail for remainder.
@@ -600,26 +620,28 @@ unsafe fn popcount_neon_chunk(buf: &[u8]) -> u32 { unsafe {
 #[cfg(neon_available)]
 #[target_feature(enable = "neon")]
 #[inline]
-unsafe fn popcount_neon(buf: &[u8]) -> u32 { unsafe {
-    let mut count: u32 = 0;
-    let mut i = 0usize;
-    let full_chunks = buf.len() / 16;
+unsafe fn popcount_neon(buf: &[u8]) -> u32 {
+    unsafe {
+        let mut count: u32 = 0;
+        let mut i = 0usize;
+        let full_chunks = buf.len() / 16;
 
-    for _ in 0..full_chunks {
-        count += popcount_neon_chunk(&buf[i..i + 16]);
-        i += 16;
-    }
-
-    // Scalar tail (1–15 bytes).
-    for &byte in &buf[i..] {
-        let mut v = byte;
-        while v != 0 {
-            count += 1;
-            v &= v - 1;
+        for _ in 0..full_chunks {
+            count += popcount_neon_chunk(&buf[i..i + 16]);
+            i += 16;
         }
+
+        // Scalar tail (1–15 bytes).
+        for &byte in &buf[i..] {
+            let mut v = byte;
+            while v != 0 {
+                count += 1;
+                v &= v - 1;
+            }
+        }
+        count
     }
-    count
-}}
+}
 
 /// Count set bits using a portable SWAR algorithm (fallback for non-NEON).
 #[cfg(not(neon_available))]
@@ -655,10 +677,7 @@ fn popcount(buf: &[u8]) -> u32 {
 ///
 /// Design invariants: S.T1, S.T2, S.T3 apply (fail-soft, bounded, no panic).
 #[inline]
-fn hamming_scores_for_one_query(
-    query_packed: &[u8],
-    candidates_packed: &[&[u8]],
-) -> Vec<f32> {
+fn hamming_scores_for_one_query(query_packed: &[u8], candidates_packed: &[&[u8]]) -> Vec<f32> {
     let num_bytes = query_packed.len();
     let n = candidates_packed.len();
     if n == 0 {
@@ -734,7 +753,8 @@ pub fn batch_hamming_scores(
     if query_packed.len() != num_bytes {
         return Err(pyo3::exceptions::PyValueError::new_err(format!(
             "batch_hamming_scores: query_packed size mismatch (got {} expected {})",
-            query_packed.len(), num_bytes
+            query_packed.len(),
+            num_bytes
         )));
     }
 
@@ -879,13 +899,17 @@ pub fn batch_cosine_scores_npy(
     if q.len() != nq * dim {
         return Err(pyo3::exceptions::PyValueError::new_err(format!(
             "batch_cosine_scores_npy: q.len() {} != nq*dim={}*{}",
-            q.len(), nq, dim
+            q.len(),
+            nq,
+            dim
         )));
     }
     if c.len() != nc * dim {
         return Err(pyo3::exceptions::PyValueError::new_err(format!(
             "batch_cosine_scores_npy: c.len() {} != nc*dim={}*{}",
-            c.len(), nc, dim
+            c.len(),
+            nc,
+            dim
         )));
     }
 
@@ -898,9 +922,12 @@ pub fn batch_cosine_scores_npy(
     // is pure), safe to run without GIL.
     Python::attach(|py| {
         release_gil(py, || {
-            c_norm.par_chunks_mut(dim)
+            c_norm
+                .par_chunks_mut(dim)
                 .into_par_iter()
-                .for_each(|slice| { let _ = normalize(slice); });
+                .for_each(|slice| {
+                    let _ = normalize(slice);
+                });
         })
     });
 
@@ -955,15 +982,23 @@ mod tests {
     #[test]
     fn test_cosine_identity() {
         let query = vec![1.0_f32, 0.0, 0.0];
-        let candidates: Vec<&[f32]> = vec![
-            &[1.0, 0.0, 0.0],
-            &[0.0, 1.0, 0.0],
-            &[0.0, 0.0, 1.0],
-        ];
+        let candidates: Vec<&[f32]> = vec![&[1.0, 0.0, 0.0], &[0.0, 1.0, 0.0], &[0.0, 0.0, 1.0]];
         let scores = cosine_scores_for_one_query(&query, &candidates);
-        assert!((scores[0] - 1.0).abs() < 1e-5, "identical got {}", scores[0]);
-        assert!((scores[1] - 0.0).abs() < 1e-6, "orthogonal got {}", scores[1]);
-        assert!((scores[2] - 0.0).abs() < 1e-6, "orthogonal got {}", scores[2]);
+        assert!(
+            (scores[0] - 1.0).abs() < 1e-5,
+            "identical got {}",
+            scores[0]
+        );
+        assert!(
+            (scores[1] - 0.0).abs() < 1e-6,
+            "orthogonal got {}",
+            scores[1]
+        );
+        assert!(
+            (scores[2] - 0.0).abs() < 1e-6,
+            "orthogonal got {}",
+            scores[2]
+        );
     }
 
     #[test]
@@ -982,9 +1017,7 @@ mod tests {
     fn test_batch_api() {
         let query_flat = vec![1.0, 0.0, 0.0, 0.0];
         let candidates_flat = vec![
-            1.0, 0.0, 0.0, 0.0,
-            0.0, 1.0, 0.0, 0.0,
-            0.707, 0.707, 0.0, 0.0,
+            1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.707, 0.707, 0.0, 0.0,
         ];
         let result = batch_cosine_scores(query_flat, candidates_flat, 1, 3, 4).unwrap();
         assert_eq!(result.len(), 1);
@@ -996,10 +1029,7 @@ mod tests {
     #[test]
     fn test_2_queries() {
         let query_flat = vec![1.0, 0.0, 0.0, 0.0, 1.0, 0.0];
-        let candidates_flat = vec![
-            1.0, 0.0, 0.0,
-            0.0, 1.0, 0.0,
-        ];
+        let candidates_flat = vec![1.0, 0.0, 0.0, 0.0, 1.0, 0.0];
         let result = batch_cosine_scores(query_flat, candidates_flat, 2, 2, 3).unwrap();
         assert_eq!(result.len(), 2);
         assert!((result[0][0] - 1.0).abs() < 1e-5);
@@ -1058,7 +1088,11 @@ mod tests {
         let candidates = vec![0b11110000u8, 0b00001111];
         let result = batch_hamming_scores(query, candidates, 1, 2).unwrap();
         assert_eq!(result.len(), 1);
-        assert!((result[0] - 1.0).abs() < 1e-6, "identical got {}", result[0]);
+        assert!(
+            (result[0] - 1.0).abs() < 1e-6,
+            "identical got {}",
+            result[0]
+        );
     }
 
     #[test]
@@ -1120,5 +1154,61 @@ mod tests {
         assert!((result[0] - 1.0).abs() < 1e-6);
         assert!((result[1] - 0.0).abs() < 1e-6);
         assert!((result[2] - 0.5).abs() < 1e-6);
+    }
+
+    // MRL-2 FIX: Unit tests for popcount with 32-byte buffer (triggers NEON path)
+    // The previous bug was masked because test buffers were <16 bytes.
+    #[test]
+    fn test_popcount_32_bytes_all_set() {
+        // All 32 bytes = 0xFF → 256 bits total
+        let buf = vec![0xFFu8; 32];
+        let count = popcount(&buf);
+        assert_eq!(count, 256, "32 bytes of 0xFF should have 256 set bits");
+    }
+
+    #[test]
+    fn test_popcount_32_bytes_alternating() {
+        // 0xAA = 10101010 (4 bits per byte) × 32 = 128 bits
+        let buf = vec![0xAAu8; 32];
+        let count = popcount(&buf);
+        assert_eq!(count, 128, "32 bytes of 0xAA should have 128 set bits");
+    }
+
+    #[test]
+    fn test_popcount_32_bytes_mixed() {
+        // Mixed pattern: 0xFF(8) + 0x00(8) + 0xFF(8) + 0x00(8) = 128 bits
+        let buf = vec![
+            0xFFu8, 0x00u8, 0xFFu8, 0x00u8, 0xFFu8, 0x00u8, 0xFFu8, 0x00u8, 0xFFu8, 0x00u8, 0xFFu8,
+            0x00u8, 0xFFu8, 0x00u8, 0xFFu8, 0x00u8, 0xFFu8, 0x00u8, 0xFFu8, 0x00u8, 0xFFu8, 0x00u8,
+            0xFFu8, 0x00u8, 0xFFu8, 0x00u8, 0xFFu8, 0x00u8, 0xFFu8, 0x00u8, 0xFFu8, 0x00u8,
+        ];
+        let count = popcount(&buf);
+        assert_eq!(
+            count, 128,
+            "Mixed 0xFF/0x00 pattern should have 128 set bits"
+        );
+    }
+
+    #[test]
+    fn test_hamming_256_dim_neon() {
+        // MRL-2 FIX: Test with 32-byte buffer (256-dim equivalent, triggers NEON path)
+        let query = vec![0xFFu8; 32];
+        let candidates = vec![
+            vec![0xFFu8; 32], // identical → 1.0
+            vec![0x00u8; 32], // all opposite → 0.0
+            vec![0xAAu8; 32], // 128/256 bits differ → 0.5
+            vec![0x55u8; 32], // 128/256 bits differ → 0.5
+        ];
+        let candidates_flat: Vec<u8> = candidates.iter().flat_map(|v| v.clone()).collect();
+        let result = batch_hamming_scores(query, candidates_flat.clone(), 4, 32).unwrap();
+        assert_eq!(result.len(), 4);
+        assert!(
+            (result[0] - 1.0).abs() < 1e-6,
+            "identical got {}",
+            result[0]
+        );
+        assert!((result[1] - 0.0).abs() < 1e-6, "opposite got {}", result[1]);
+        assert!((result[2] - 0.5).abs() < 1e-6, "half got {}", result[2]);
+        assert!((result[3] - 0.5).abs() < 1e-6, "half got {}", result[3]);
     }
 }

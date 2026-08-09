@@ -72,13 +72,8 @@ fn resolve_pointer<'a>(
             simd_json::BorrowedValue::Object(obj) => {
                 // simd-json objects are ordered — linear scan for key
                 let key = unescaped.as_str();
-                obj.iter().find_map(|(k, v)| {
-                    if k == key {
-                        Some(v)
-                    } else {
-                        None
-                    }
-                })?
+                obj.iter()
+                    .find_map(|(k, v)| if k == key { Some(v) } else { None })?
             }
             simd_json::BorrowedValue::Array(arr) => {
                 let index: usize = unescaped.parse().ok()?;
@@ -136,10 +131,7 @@ fn value_to_bytes(value: &simd_json::BorrowedValue<'_>) -> Option<Vec<u8>> {
 /// Returns:
 ///   bytes of the matched value, or None if path not found or parse error.
 #[pyfunction]
-pub fn json_pointer_extract(
-    json_bytes: &[u8],
-    pointer: &str,
-) -> PyResult<Option<Vec<u8>>> {
+pub fn json_pointer_extract(json_bytes: &[u8], pointer: &str) -> PyResult<Option<Vec<u8>>> {
     // Bounds check
     if json_bytes.len() < MIN_INPUT_SIZE {
         return Ok(None);

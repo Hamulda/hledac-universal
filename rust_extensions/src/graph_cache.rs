@@ -273,7 +273,7 @@ impl PyGraphLRUCache {
         // Extract counter value BEFORE the borrow to avoid conflicts
         cache.counter += 1;
         let counter_val = cache.counter;
-        
+
         if let Some(entry) = cache.entries.get_mut(&key) {
             entry.last_access = counter_val;
             entry.frequency += 1;
@@ -316,7 +316,7 @@ impl PyGraphLRUCache {
             existing.last_access = counter_val;
             existing.size_bytes = size;
             // existing borrow ends here automatically
-            
+
             cache.current_bytes = cache.current_bytes.saturating_sub(old_size) + size;
             cache.admission.record(key_bytes.as_bytes());
             return true;

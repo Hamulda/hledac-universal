@@ -9,7 +9,6 @@ use unicode_normalization::UnicodeNormalization;
 
 use crate::gil::release_gil;
 
-
 const BATCH_HARD_CAP: usize = 50_000;
 
 /// 16 bytes per NEON register (128-bit).
@@ -20,47 +19,47 @@ const BATCH_NEON_CHUNK: usize = 16;
 // ---------------------------------------------------------------------------
 
 #[cfg(target_arch = "aarch64")]
-unsafe fn is_ascii_only_neon(data: &[u8]) -> bool { unsafe {
-    use core::arch::aarch64::*;
-    let len = data.len();
-    let chunks = len / BATCH_NEON_CHUNK;
-    let mut i = 0;
-    for _ in 0..chunks {
-        let vals = vld1q_u8(data.as_ptr().add(i));
-        // Any byte >= 128 sets the high bit — check all 16 lanes
-        let high_bits = vreinterpretq_u8_u32(vcgeq_u32(
-            vreinterpretq_u32_u8(vals),
-            vdupq_n_u32(0),
-        ));
-        let mask = vgetq_lane_u8(high_bits, 0)
-            | vgetq_lane_u8(high_bits, 1)
-            | vgetq_lane_u8(high_bits, 2)
-            | vgetq_lane_u8(high_bits, 3)
-            | vgetq_lane_u8(high_bits, 4)
-            | vgetq_lane_u8(high_bits, 5)
-            | vgetq_lane_u8(high_bits, 6)
-            | vgetq_lane_u8(high_bits, 7)
-            | vgetq_lane_u8(high_bits, 8)
-            | vgetq_lane_u8(high_bits, 9)
-            | vgetq_lane_u8(high_bits, 10)
-            | vgetq_lane_u8(high_bits, 11)
-            | vgetq_lane_u8(high_bits, 12)
-            | vgetq_lane_u8(high_bits, 13)
-            | vgetq_lane_u8(high_bits, 14)
-            | vgetq_lane_u8(high_bits, 15);
-        if mask != 0 {
-            return false;
+unsafe fn is_ascii_only_neon(data: &[u8]) -> bool {
+    unsafe {
+        use core::arch::aarch64::*;
+        let len = data.len();
+        let chunks = len / BATCH_NEON_CHUNK;
+        let mut i = 0;
+        for _ in 0..chunks {
+            let vals = vld1q_u8(data.as_ptr().add(i));
+            // Any byte >= 128 sets the high bit — check all 16 lanes
+            let high_bits =
+                vreinterpretq_u8_u32(vcgeq_u32(vreinterpretq_u32_u8(vals), vdupq_n_u32(0)));
+            let mask = vgetq_lane_u8(high_bits, 0)
+                | vgetq_lane_u8(high_bits, 1)
+                | vgetq_lane_u8(high_bits, 2)
+                | vgetq_lane_u8(high_bits, 3)
+                | vgetq_lane_u8(high_bits, 4)
+                | vgetq_lane_u8(high_bits, 5)
+                | vgetq_lane_u8(high_bits, 6)
+                | vgetq_lane_u8(high_bits, 7)
+                | vgetq_lane_u8(high_bits, 8)
+                | vgetq_lane_u8(high_bits, 9)
+                | vgetq_lane_u8(high_bits, 10)
+                | vgetq_lane_u8(high_bits, 11)
+                | vgetq_lane_u8(high_bits, 12)
+                | vgetq_lane_u8(high_bits, 13)
+                | vgetq_lane_u8(high_bits, 14)
+                | vgetq_lane_u8(high_bits, 15);
+            if mask != 0 {
+                return false;
+            }
+            i += BATCH_NEON_CHUNK;
         }
-        i += BATCH_NEON_CHUNK;
-    }
-    // Tail: scalar check
-    for &b in &data[i..] {
-        if b > 127 {
-            return false;
+        // Tail: scalar check
+        for &b in &data[i..] {
+            if b > 127 {
+                return false;
+            }
         }
+        true
     }
-    true
-}}
+}
 
 #[cfg(not(target_arch = "aarch64"))]
 unsafe fn is_ascii_only_neon(_data: &[u8]) -> bool {
@@ -71,36 +70,38 @@ unsafe fn is_ascii_only_neon(_data: &[u8]) -> bool {
 /// Fast-path case-fold for ASCII-only text using NEON.
 /// A-Z (0x41-0x5A) → a-z (OR 0x20).  All other bytes unchanged.
 #[cfg(target_arch = "aarch64")]
-unsafe fn ascii_case_fold_neon(input: &[u8]) -> Vec<u8> { unsafe {
-    use core::arch::aarch64::*;
-    let len = input.len();
-    let chunks = len / BATCH_NEON_CHUNK;
-    let mut out = Vec::with_capacity(len);
-    out.extend_from_slice(input); // pre-alloc full size
+unsafe fn ascii_case_fold_neon(input: &[u8]) -> Vec<u8> {
+    unsafe {
+        use core::arch::aarch64::*;
+        let len = input.len();
+        let chunks = len / BATCH_NEON_CHUNK;
+        let mut out = Vec::with_capacity(len);
+        out.extend_from_slice(input); // pre-alloc full size
 
-    let mask = vdupq_n_u8(0x20); // OR mask for A-Z → a-z
-    let lo = vdupq_n_u8(b'A');
-    let hi = vdupq_n_u8(b'Z');
+        let mask = vdupq_n_u8(0x20); // OR mask for A-Z → a-z
+        let lo = vdupq_n_u8(b'A');
+        let hi = vdupq_n_u8(b'Z');
 
-    let mut i = 0;
-    for _ in 0..chunks {
-        let vals = vld1q_u8(out.as_ptr().add(i));
-        // 1 where byte is in 'A'..'Z'
-        let in_range = vorrq_u8(vcgeq_u8(vals, lo), vcgtq_u8(hi, vals));
-        let folded = vbslq_u8(in_range, vals, vorrq_u8(vals, mask));
-        vst1q_u8(out.as_mut_ptr().add(i), folded);
-        i += BATCH_NEON_CHUNK;
-    }
-
-    // Tail: scalar
-    for j in i..len {
-        let b = out[j];
-        if b >= b'A' && b <= b'Z' {
-            out[j] = b | 0x20;
+        let mut i = 0;
+        for _ in 0..chunks {
+            let vals = vld1q_u8(out.as_ptr().add(i));
+            // 1 where byte is in 'A'..'Z'
+            let in_range = vorrq_u8(vcgeq_u8(vals, lo), vcgtq_u8(hi, vals));
+            let folded = vbslq_u8(in_range, vals, vorrq_u8(vals, mask));
+            vst1q_u8(out.as_mut_ptr().add(i), folded);
+            i += BATCH_NEON_CHUNK;
         }
+
+        // Tail: scalar
+        for j in i..len {
+            let b = out[j];
+            if b >= b'A' && b <= b'Z' {
+                out[j] = b | 0x20;
+            }
+        }
+        out
     }
-    out
-}}
+}
 
 #[cfg(not(target_arch = "aarch64"))]
 unsafe fn ascii_case_fold_neon(_input: &[u8]) -> Vec<u8> {
@@ -137,7 +138,15 @@ pub fn batch_nfc_normalize(texts: Vec<String>) -> Result<Vec<String>, PyErr> {
     let n = texts.len();
     let out = Python::attach(|py| {
         release_gil(py, move || {
-            crate::mixed_pool(n).install(|| texts.iter().map(|x| x.clone()).collect::<Vec<_>>().par_iter().map(|s| s.nfc().collect()).collect())
+            crate::mixed_pool(n).install(|| {
+                texts
+                    .iter()
+                    .map(|x| x.clone())
+                    .collect::<Vec<_>>()
+                    .par_iter()
+                    .map(|s| s.nfc().collect())
+                    .collect()
+            })
         })
     });
     Ok(out)
@@ -153,10 +162,7 @@ pub fn batch_nfc_normalize(texts: Vec<String>) -> Result<Vec<String>, PyErr> {
 pub fn strip_diacritics(text: &str) -> String {
     // Combining Diacritical Marks block: U+0300–U+036F
     // Combining Diacritical Marks Extended block: U+1AB0–U+1AFF
-    const MARK_RANGES: &[(char, char)] = &[
-        ('\u{0300}', '\u{036F}'),
-        ('\u{1AB0}', '\u{1AFF}'),
-    ];
+    const MARK_RANGES: &[(char, char)] = &[('\u{0300}', '\u{036F}'), ('\u{1AB0}', '\u{1AFF}')];
     text.nfd()
         .filter(|c| !MARK_RANGES.iter().any(|(lo, hi)| c >= lo && c <= hi))
         .collect()
@@ -173,15 +179,16 @@ pub fn batch_strip_diacritics(texts: Vec<String>) -> Result<Vec<String>, PyErr> 
             BATCH_HARD_CAP
         )));
     }
-    const MARK_RANGES: &[(char, char)] = &[
-        ('\u{0300}', '\u{036F}'),
-        ('\u{1AB0}', '\u{1AFF}'),
-    ];
+    const MARK_RANGES: &[(char, char)] = &[('\u{0300}', '\u{036F}'), ('\u{1AB0}', '\u{1AFF}')];
     let n = texts.len();
     let out = Python::attach(|py| {
         release_gil(py, move || {
             crate::mixed_pool(n).install(|| {
-                texts.iter().map(|x| x.clone()).collect::<Vec<_>>().par_iter()
+                texts
+                    .iter()
+                    .map(|x| x.clone())
+                    .collect::<Vec<_>>()
+                    .par_iter()
                     .map(|s| {
                         s.nfd()
                             .filter(|c| !MARK_RANGES.iter().any(|(lo, hi)| c >= lo && c <= hi))
@@ -265,10 +272,7 @@ pub fn batch_strip_diacritics_fast(texts: Vec<String>) -> Result<Vec<String>, Py
         )));
     }
 
-    const MARK_RANGES: &[(char, char)] = &[
-        ('\u{0300}', '\u{036F}'),
-        ('\u{1AB0}', '\u{1AFF}'),
-    ];
+    const MARK_RANGES: &[(char, char)] = &[('\u{0300}', '\u{036F}'), ('\u{1AB0}', '\u{1AFF}')];
 
     let n = texts.len();
     let out = Python::attach(|py| {
@@ -286,7 +290,9 @@ pub fn batch_strip_diacritics_fast(texts: Vec<String>) -> Result<Vec<String>, Py
                             } else {
                                 // Non-ASCII: NFD decompose and filter combining marks
                                 s.nfd()
-                                    .filter(|c| !MARK_RANGES.iter().any(|(lo, hi)| c >= lo && c <= hi))
+                                    .filter(|c| {
+                                        !MARK_RANGES.iter().any(|(lo, hi)| c >= lo && c <= hi)
+                                    })
                                     .collect()
                             }
                         }
@@ -408,7 +414,11 @@ mod tests {
 
     #[test]
     fn test_batch_nfc_normalize_fast_mixed() {
-        let texts = vec!["café".to_string(), "Brno".to_string(), "žluťoučký".to_string()];
+        let texts = vec![
+            "café".to_string(),
+            "Brno".to_string(),
+            "žluťoučký".to_string(),
+        ];
         let out = batch_nfc_normalize_fast(texts).unwrap();
         assert_eq!(out.len(), 3);
         // café: NFC composed
@@ -456,6 +466,13 @@ mod tests {
             "ÉCLAIR".to_string(),
         ];
         let out = batch_strip_diacritics_fast(texts).unwrap();
-        assert_eq!(out, vec!["Brnenska".to_string(), "hello".to_string(), "ECLAIR".to_string()]);
+        assert_eq!(
+            out,
+            vec![
+                "Brnenska".to_string(),
+                "hello".to_string(),
+                "ECLAIR".to_string()
+            ]
+        );
     }
 }

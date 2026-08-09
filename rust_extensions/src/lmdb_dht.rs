@@ -96,7 +96,8 @@ fn close_lmdb_env(path: &str) {
 /// Execute a read-only LMDB transaction.
 fn lmdb_get(env: &Bound<'_, PyAny>, key: &[u8]) -> PyResult<Option<Vec<u8>>> {
     let txn = env.getattr("begin")?.call1((false,))?;
-    let result: Option<Vec<u8>> = txn.call_method1("get", (key,))?
+    let result: Option<Vec<u8>> = txn
+        .call_method1("get", (key,))?
         .extract()
         .ok()
         .unwrap_or(None);
@@ -111,11 +112,13 @@ fn lmdb_get_two<'py>(
     key2: &[u8],
 ) -> PyResult<(Option<Vec<u8>>, Option<Vec<u8>>)> {
     let txn = env.getattr("begin")?.call1((false,))?;
-    let v1: Option<Vec<u8>> = txn.call_method1("get", (key1,))?
+    let v1: Option<Vec<u8>> = txn
+        .call_method1("get", (key1,))?
         .extract()
         .ok()
         .unwrap_or(None);
-    let v2: Option<Vec<u8>> = txn.call_method1("get", (key2,))?
+    let v2: Option<Vec<u8>> = txn
+        .call_method1("get", (key2,))?
         .extract()
         .ok()
         .unwrap_or(None);
@@ -124,11 +127,7 @@ fn lmdb_get_two<'py>(
 }
 
 /// Execute a write LMDB transaction (single put, then commit).
-fn lmdb_put<'py>(
-    env: &Bound<'py, PyAny>,
-    key: &[u8],
-    value: &[u8],
-) -> PyResult<()> {
+fn lmdb_put<'py>(env: &Bound<'py, PyAny>, key: &[u8], value: &[u8]) -> PyResult<()> {
     let txn = env.getattr("begin")?.call1((true,))?;
     txn.call_method1("put", (key, value))?;
     txn.call_method0("commit")?;
@@ -316,8 +315,18 @@ pub fn lmdb_dht_get_all_dht_nodes<'py>(
             let mut out = Vec::with_capacity(limit.min(1000));
 
             for item in rust_iter {
-                let item = item.map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(format!("lmdb_dht iterator error: {}", e)))?;
-                let pair: Vec<Vec<u8>> = item.extract().map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(format!("lmdb_dht extract error: {}", e)))?;
+                let item = item.map_err(|e| {
+                    pyo3::exceptions::PyRuntimeError::new_err(format!(
+                        "lmdb_dht iterator error: {}",
+                        e
+                    ))
+                })?;
+                let pair: Vec<Vec<u8>> = item.extract().map_err(|e| {
+                    pyo3::exceptions::PyRuntimeError::new_err(format!(
+                        "lmdb_dht extract error: {}",
+                        e
+                    ))
+                })?;
                 if pair.len() != 2 {
                     continue;
                 }
@@ -342,10 +351,7 @@ pub fn lmdb_dht_get_all_dht_nodes<'py>(
 /// B-14 fix: GIL released via py.detach() during cursor iteration.
 #[pyfunction]
 #[pyo3(name = "lmdb_dht_count_dht_nodes")]
-pub fn lmdb_dht_count_dht_nodes<'py>(
-    py: Python<'py>,
-    path: String,
-) -> PyResult<usize> {
+pub fn lmdb_dht_count_dht_nodes<'py>(py: Python<'py>, path: String) -> PyResult<usize> {
     let env = get_lmdb_env(py, &path)?;
     let env_owned: Py<PyAny> = Py::clone_ref(&env.unbind(), py);
     let prefix = b"dht_node:".to_vec();
@@ -362,8 +368,18 @@ pub fn lmdb_dht_count_dht_nodes<'py>(
             let py_iter: Bound<'_, PyAny> = cursor.call_method0("iter")?;
             let rust_iter = py_iter.try_iter()?;
             for item in rust_iter {
-                let item = item.map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(format!("lmdb_dht iterator error: {}", e)))?;
-                let pair: Vec<Vec<u8>> = item.extract().map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(format!("lmdb_dht extract error: {}", e)))?;
+                let item = item.map_err(|e| {
+                    pyo3::exceptions::PyRuntimeError::new_err(format!(
+                        "lmdb_dht iterator error: {}",
+                        e
+                    ))
+                })?;
+                let pair: Vec<Vec<u8>> = item.extract().map_err(|e| {
+                    pyo3::exceptions::PyRuntimeError::new_err(format!(
+                        "lmdb_dht extract error: {}",
+                        e
+                    ))
+                })?;
                 if pair.len() != 2 || !pair[0].starts_with(&prefix) {
                     continue;
                 }
@@ -384,10 +400,7 @@ pub fn lmdb_dht_count_dht_nodes<'py>(
 /// blocking of other Python threads during this potentially slow operation.
 #[pyfunction]
 #[pyo3(name = "lmdb_dht_clear_dht_nodes")]
-pub fn lmdb_dht_clear_dht_nodes<'py>(
-    py: Python<'py>,
-    path: String,
-) -> PyResult<()> {
+pub fn lmdb_dht_clear_dht_nodes<'py>(py: Python<'py>, path: String) -> PyResult<()> {
     let env = get_lmdb_env(py, &path)?;
     let env_owned: Py<PyAny> = Py::clone_ref(&env.unbind(), py);
     let prefix = b"dht_node:".to_vec();
@@ -409,10 +422,16 @@ pub fn lmdb_dht_clear_dht_nodes<'py>(
             let rust_iter = py_iter.try_iter()?;
             for item in rust_iter {
                 let item = item.map_err(|e| {
-                    pyo3::exceptions::PyRuntimeError::new_err(format!("lmdb_dht iterator error: {}", e))
+                    pyo3::exceptions::PyRuntimeError::new_err(format!(
+                        "lmdb_dht iterator error: {}",
+                        e
+                    ))
                 })?;
                 let pair: Vec<Vec<u8>> = item.extract().map_err(|e| {
-                    pyo3::exceptions::PyRuntimeError::new_err(format!("lmdb_dht extract error: {}", e))
+                    pyo3::exceptions::PyRuntimeError::new_err(format!(
+                        "lmdb_dht extract error: {}",
+                        e
+                    ))
                 })?;
                 if pair.len() != 2 {
                     continue;
@@ -521,8 +540,18 @@ pub fn lmdb_dht_scan_all_nodes<'py>(
             let mut out: Vec<Vec<u8>> = Vec::with_capacity(limit.min(1000));
 
             for item in rust_iter {
-                let item = item.map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(format!("lmdb_dht iterator error: {}", e)))?;
-                let pair: Vec<Vec<u8>> = item.extract().map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(format!("lmdb_dht extract error: {}", e)))?;
+                let item = item.map_err(|e| {
+                    pyo3::exceptions::PyRuntimeError::new_err(format!(
+                        "lmdb_dht iterator error: {}",
+                        e
+                    ))
+                })?;
+                let pair: Vec<Vec<u8>> = item.extract().map_err(|e| {
+                    pyo3::exceptions::PyRuntimeError::new_err(format!(
+                        "lmdb_dht extract error: {}",
+                        e
+                    ))
+                })?;
                 if pair.len() != 2 {
                     continue;
                 }
@@ -581,8 +610,7 @@ pub fn lmdb_dht_bfs_traverse<'py>(
         let env_owned = env_owned;
         Python::attach(|py| {
             let env = unsafe { Bound::from_borrowed_ptr(py, env_owned.as_ptr()) };
-            let mut visited: std::collections::HashSet<Vec<u8>> =
-                std::collections::HashSet::new();
+            let mut visited: std::collections::HashSet<Vec<u8>> = std::collections::HashSet::new();
             let mut frontier: Vec<Vec<u8>> = start_keys;
 
             for _ in 0..max_hops {
@@ -600,16 +628,15 @@ pub fn lmdb_dht_bfs_traverse<'py>(
 
                     let txn: Bound<'_, PyAny> = env.getattr("begin")?.call1((false,))?;
                     let py_bytes = pyo3::types::PyBytes::new(py, &neigh_key);
-                    let neigh_data: Option<Vec<u8>> = txn.call_method1("get", (py_bytes,))?
+                    let neigh_data: Option<Vec<u8>> = txn
+                        .call_method1("get", (py_bytes,))?
                         .extract()
                         .ok()
                         .unwrap_or(None);
                     drop(txn);
 
                     if let Some(data) = neigh_data {
-                        if let Ok(neighbors) =
-                            serde_json::from_slice::<Vec<String>>(&data)
-                        {
+                        if let Ok(neighbors) = serde_json::from_slice::<Vec<String>>(&data) {
                             for neighbor in neighbors {
                                 let n_bytes = neighbor.into_bytes();
                                 if visited.insert(n_bytes.clone()) {
@@ -749,7 +776,10 @@ pub fn lmdb_async_put_batch<'py>(
                         Err(e) => return Err(e),
                     };
                     for (k, v) in chunk {
-                        if txn.call_method1("put", (k.as_slice(), v.as_slice())).is_err() {
+                        if txn
+                            .call_method1("put", (k.as_slice(), v.as_slice()))
+                            .is_err()
+                        {
                             return Err(pyo3::exceptions::PyIOError::new_err("put failed"));
                         }
                     }
@@ -942,14 +972,8 @@ pub fn register_functions(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(lmdb_dht_get_all_dht_nodes, m)?)?;
     m.add_function(wrap_pyfunction!(lmdb_dht_count_dht_nodes, m)?)?;
     m.add_function(wrap_pyfunction!(lmdb_dht_clear_dht_nodes, m)?)?;
-    m.add_function(wrap_pyfunction!(
-        lmdb_dht_save_routing_snapshot,
-        m
-    )?)?;
-    m.add_function(wrap_pyfunction!(
-        lmdb_dht_load_routing_snapshot,
-        m
-    )?)?;
+    m.add_function(wrap_pyfunction!(lmdb_dht_save_routing_snapshot, m)?)?;
+    m.add_function(wrap_pyfunction!(lmdb_dht_load_routing_snapshot, m)?)?;
     m.add_function(wrap_pyfunction!(lmdb_dht_scan_all_nodes, m)?)?;
     m.add_function(wrap_pyfunction!(lmdb_dht_bfs_traverse, m)?)?;
     m.add_function(wrap_pyfunction!(lmdb_dht_close_env, m)?)?;

@@ -39,11 +39,11 @@
 //! Python fallback: `TorTransport` in `transport/tor_transport.py` uses
 //! external `tor` binary when ArtiNode is not available.
 
+use parking_lot::Mutex;
 use pyo3::prelude::*;
 use std::collections::HashMap;
 use std::path::PathBuf;
-use std::time::{Duration, Instant};
-use parking_lot::Mutex;  // parking_lot: no PoisonError, no unwrap needed
+use std::time::{Duration, Instant}; // parking_lot: no PoisonError, no unwrap needed
 
 use arti_client::{TorClient, TorClientConfig};
 use tor_rtcompat::PreferredRuntime;
@@ -99,7 +99,7 @@ impl PooledStream {
     fn is_idle(&self) -> bool {
         self.last_used.elapsed() > Duration::from_secs(IDLE_TIMEOUT_SECS)
     }
-    
+
     fn touch(&mut self) {
         self.last_used = Instant::now();
     }
@@ -118,23 +118,27 @@ impl ConnectionPool {
             max_size,
         }
     }
-    
+
     fn get(&mut self, host: &str, port: u16) -> Option<PooledStream> {
         // Find matching connection
-        if let Some(idx) = self.connections.iter().position(|c| c.host == host && c.port == port && !c.is_idle()) {
+        if let Some(idx) = self
+            .connections
+            .iter()
+            .position(|c| c.host == host && c.port == port && !c.is_idle())
+        {
             let mut stream = self.connections.remove(idx);
             stream.touch();
             return Some(stream);
         }
         None
     }
-    
+
     fn put(&mut self, stream: PooledStream) {
         if self.connections.len() < self.max_size {
             self.connections.push(stream);
         }
     }
-    
+
     fn cleanup(&mut self) {
         self.connections.retain(|c| !c.is_idle());
     }
@@ -184,7 +188,7 @@ pub struct ArtiNode {
 
     /// Connection pool for reusing TCP streams.
     pool: Mutex<ConnectionPool>,
-    
+
     /// Circuit count for pre-building.
     circuits_prebuilt: Mutex<usize>,
 }
@@ -260,24 +264,29 @@ impl ArtiNode {
         }
 
         let handle = self.handle.clone();
-        let result: Result<(TorClient<PreferredRuntime>, usize), String> = handle.block_on(async {
-            let fut = async {
-                let config = TorClientConfig::default();
-                let client = TorClient::create_bootstrapped(config).await?;
-                
-                // Pre-build circuits for faster first requests
-                let circuits_built = prebuild_circuits(&client, PREBUILD_CIRCUITS).await;
-                
-                Ok::<(TorClient<PreferredRuntime>, usize), Box<dyn std::error::Error + Send + Sync>>(
-                    (client, circuits_built)
-                )
-            };
-            match tokio::time::timeout(Duration::from_secs(BOOTSTRAP_TIMEOUT_S), fut).await {
-                Ok(Ok(c)) => Ok(c),
-                Ok(Err(e)) => Err(format!("Arti bootstrap failed: {}", e)),
-                Err(_) => Err(format!("Arti bootstrap timed out after {}s", BOOTSTRAP_TIMEOUT_S)),
-            }
-        });
+        let result: Result<(TorClient<PreferredRuntime>, usize), String> =
+            handle.block_on(async {
+                let fut = async {
+                    let config = TorClientConfig::default();
+                    let client = TorClient::create_bootstrapped(config).await?;
+
+                    // Pre-build circuits for faster first requests
+                    let circuits_built = prebuild_circuits(&client, PREBUILD_CIRCUITS).await;
+
+                    Ok::<
+                        (TorClient<PreferredRuntime>, usize),
+                        Box<dyn std::error::Error + Send + Sync>,
+                    >((client, circuits_built))
+                };
+                match tokio::time::timeout(Duration::from_secs(BOOTSTRAP_TIMEOUT_S), fut).await {
+                    Ok(Ok(c)) => Ok(c),
+                    Ok(Err(e)) => Err(format!("Arti bootstrap failed: {}", e)),
+                    Err(_) => Err(format!(
+                        "Arti bootstrap timed out after {}s",
+                        BOOTSTRAP_TIMEOUT_S
+                    )),
+                }
+            });
 
         match result {
             Ok((tc, circuits)) => {
@@ -322,12 +331,14 @@ impl ArtiNode {
         {
             let guard = self.runtime.lock();
             if guard.is_none() {
-                return Err(pyo3::exceptions::PyRuntimeError::new_err("Runtime destroyed"));
+                return Err(pyo3::exceptions::PyRuntimeError::new_err(
+                    "Runtime destroyed",
+                ));
             }
         }
 
         let handle = self.handle.clone();
-        
+
         // Try with retry
         let mut last_error = String::new();
         for attempt in 0..MAX_RETRIES {
@@ -336,11 +347,10 @@ impl ArtiNode {
                 let delay = RETRY_BASE_DELAY_MS * 2u64.pow(attempt as u32);
                 std::thread::sleep(Duration::from_millis(delay));
             }
-            
-            let result: Result<Vec<u8>, String> = handle.block_on(async {
-                fetch_with_pool(&tc, &parsed, timeout, &self.pool).await
-            });
-            
+
+            let result: Result<Vec<u8>, String> =
+                handle.block_on(async { fetch_with_pool(&tc, &parsed, timeout, &self.pool).await });
+
             match result {
                 Ok(data) => return Ok(data),
                 Err(e) => {
@@ -352,10 +362,10 @@ impl ArtiNode {
                 }
             }
         }
-        
+
         Err(pyo3::exceptions::PyRuntimeError::new_err(last_error))
     }
-    
+
     /// Fetch multiple URLs in parallel (batch operation).
     ///
     /// Args:
@@ -364,37 +374,39 @@ impl ArtiNode {
     ///
     /// Returns:
     ///     List of (status, body) tuples. status=0 means error, body contains error message.
-    fn fetch_batch(&self, urls: Vec<String>, timeout_s: Option<f64>) -> PyResult<Vec<(u16, Vec<u8>)>> {
+    fn fetch_batch(
+        &self,
+        urls: Vec<String>,
+        timeout_s: Option<f64>,
+    ) -> PyResult<Vec<(u16, Vec<u8>)>> {
         let timeout = Duration::from_secs_f64(timeout_s.unwrap_or(DEFAULT_TIMEOUT_S));
-        
+
         let tc = {
             let guard = self.client.lock();
             guard
                 .as_ref()
-                .ok_or_else(|| {
-                    pyo3::exceptions::PyRuntimeError::new_err("Tor not bootstrapped")
-                })?
+                .ok_or_else(|| pyo3::exceptions::PyRuntimeError::new_err("Tor not bootstrapped"))?
                 .clone()
         };
-        
+
         let handle = self.handle.clone();
-        
+
         // Run the batch in tokio
         let results: Vec<(u16, Vec<u8>)> = handle.block_on(async {
             let mut handles = Vec::with_capacity(urls.len());
-            
+
             for url in urls {
                 let tc_clone = tc.clone();
                 let timeout_clone = timeout;
                 let pool = ConnectionPool::new(MAX_POOL_SIZE);
-                
+
                 handles.push(tokio::spawn(async move {
                     let parsed = parse_http_url(&url)?;
                     let pool_mutex = parking_lot::Mutex::new(pool);
                     fetch_with_pool(&tc_clone, &parsed, timeout_clone, &pool_mutex).await
                 }));
             }
-            
+
             let mut results = Vec::with_capacity(handles.len());
             for join_handle in handles {
                 match join_handle.await {
@@ -405,7 +417,7 @@ impl ArtiNode {
             }
             results
         });
-        
+
         Ok(results)
     }
 
@@ -418,17 +430,17 @@ impl ArtiNode {
     fn bootstrap_status_str(&self) -> String {
         self.bootstrap_status.lock().clone()
     }
-    
+
     /// Get number of pre-built circuits.
     fn circuits_prebuilt(&self) -> usize {
         *self.circuits_prebuilt.lock()
     }
-    
+
     /// Get current connection pool size.
     fn pool_size(&self) -> usize {
         self.pool.lock().connections.len()
     }
-    
+
     /// Clear the connection pool.
     fn clear_pool(&self) {
         self.pool.lock().cleanup();
@@ -458,12 +470,9 @@ impl ArtiNode {
 // Circuit Pre-building
 // ---------------------------------------------------------------------------
 
-async fn prebuild_circuits(
-    client: &TorClient<PreferredRuntime>,
-    count: usize,
-) -> usize {
+async fn prebuild_circuits(client: &TorClient<PreferredRuntime>, count: usize) -> usize {
     let mut built = 0;
-    
+
     for _ in 0..count {
         // Try to create and use a circuit
         match client.connect(("check.torproject.org", 80)).await {
@@ -475,7 +484,7 @@ async fn prebuild_circuits(
             }
         }
     }
-    
+
     built
 }
 
@@ -532,26 +541,39 @@ async fn fetch_with_pool(
     pool: &Mutex<ConnectionPool>,
 ) -> Result<Vec<u8>, String> {
     // Try to get from pool
-    let pooled = {
-        pool.lock().get(&url.host, url.port)
-    };
-    
+    let pooled = { pool.lock().get(&url.host, url.port) };
+
     if let Some(pooled) = pooled {
         // Try using pooled connection
-        match fetch_using_stream(pooled.stream, &url.host, url.port, &url.path, timeout, &url.host, url.port, pool).await {
+        match fetch_using_stream(
+            pooled.stream,
+            &url.host,
+            url.port,
+            &url.path,
+            timeout,
+            &url.host,
+            url.port,
+            pool,
+        )
+        .await
+        {
             Ok(data) => return Ok(data),
             Err(_) => {
                 // Pooled connection failed, continue to create new
             }
         }
     }
-    
+
     // Create new connection
-    let stream = client.connect((url.host.as_str(), url.port))
+    let stream = client
+        .connect((url.host.as_str(), url.port))
         .await
         .map_err(|e| format!("Tor connect to {}:{} failed: {}", url.host, url.port, e))?;
-    
-    fetch_using_stream(stream, &url.host, url.port, &url.path, timeout, &url.host, url.port, pool).await
+
+    fetch_using_stream(
+        stream, &url.host, url.port, &url.path, timeout, &url.host, url.port, pool,
+    )
+    .await
 }
 
 async fn fetch_using_stream(
@@ -566,15 +588,18 @@ async fn fetch_using_stream(
 ) -> Result<Vec<u8>, String> {
     // For now, close the connection after use (Arti manages circuit-level pooling)
     // Connection-level pooling would require protocol changes
-    
+
     let request = format!(
         "GET {} HTTP/1.1\r\nHost: {}:{}\r\nUser-Agent: hledac-universal/2.0 (Arti-Optimized)\r\nAccept: */*\r\nConnection: close\r\n\r\n",
         path, pool_host, pool_port
     );
 
     use tokio::io::AsyncWriteExt;
-    match tokio::time::timeout(Duration::from_secs(10), stream.write_all(request.as_bytes()))
-        .await
+    match tokio::time::timeout(
+        Duration::from_secs(10),
+        stream.write_all(request.as_bytes()),
+    )
+    .await
     {
         Ok(Ok(())) => {}
         Ok(Err(e)) => return Err(format!("HTTP write failed: {}", e)),
@@ -595,7 +620,11 @@ async fn fetch_using_stream(
     let body = &buf[body_start..];
 
     if body.len() > MAX_BODY_SIZE {
-        return Err(format!("Body too large: {} bytes (max {})", body.len(), MAX_BODY_SIZE));
+        return Err(format!(
+            "Body too large: {} bytes (max {})",
+            body.len(),
+            MAX_BODY_SIZE
+        ));
     }
 
     // Follow redirect (limited to MAX_REDIRECTS in outer loop)
@@ -605,7 +634,10 @@ async fn fetch_using_stream(
         if let Some(loc) = headers.get("location") {
             // Can't easily follow redirects across different hosts with pool
             // Return what we have - caller can handle redirects
-            return Err(format!("Redirect to {} requires manual follow (pooled connection)", loc));
+            return Err(format!(
+                "Redirect to {} requires manual follow (pooled connection)",
+                loc
+            ));
         }
     }
 
@@ -629,7 +661,7 @@ fn is_transient_error(error: &str) -> bool {
         "network unreachable",
         "resource temporarily unavailable",
     ];
-    
+
     let lower = error.to_lowercase();
     transient_patterns.iter().any(|p| lower.contains(p))
 }

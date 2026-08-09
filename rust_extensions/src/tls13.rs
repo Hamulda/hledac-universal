@@ -134,9 +134,7 @@ fn compute_ja4(client_hello: &[u8]) -> Result<String, Tls13Error> {
     use sha2::{Digest, Sha256};
 
     if client_hello.len() < 5 {
-        return Err(Tls13Error::InvalidInput(
-            "ClientHello too short".into(),
-        ));
+        return Err(Tls13Error::InvalidInput("ClientHello too short".into()));
     }
 
     // ClientHello structure:
@@ -178,7 +176,7 @@ fn compute_ja4(client_hello: &[u8]) -> Result<String, Tls13Error> {
 
     let cipher_suites_start = pos;
     let cipher_suites_count = cipher_suites_len / 2; // Each cipher is 2 bytes
-    // JA4: cipher_suites_byte_count as 4-char hex (byte length, not count)
+                                                     // JA4: cipher_suites_byte_count as 4-char hex (byte length, not count)
     let cipher_suites_byte_count_hex = format!("{:04x}", cipher_suites_len);
     pos += cipher_suites_len;
 
@@ -210,7 +208,8 @@ fn compute_ja4(client_hello: &[u8]) -> Result<String, Tls13Error> {
     while ext_pos + 4 <= extensions_data.len() {
         let ext_type = u16::from_be_bytes([extensions_data[ext_pos], extensions_data[ext_pos + 1]]);
         let ext_len =
-            u16::from_be_bytes([extensions_data[ext_pos + 2], extensions_data[ext_pos + 3]]) as usize;
+            u16::from_be_bytes([extensions_data[ext_pos + 2], extensions_data[ext_pos + 3]])
+                as usize;
         ext_pos += 4;
 
         extension_types.push(ext_type);
@@ -220,7 +219,8 @@ fn compute_ja4(client_hello: &[u8]) -> Result<String, Tls13Error> {
             sni_present = true;
         } else if ext_type == 0x0010 {
             // ALPN — type 16 (0x0010)
-            let alpn_data = &extensions_data[ext_pos..(ext_pos + ext_len).min(extensions_data.len())];
+            let alpn_data =
+                &extensions_data[ext_pos..(ext_pos + ext_len).min(extensions_data.len())];
             parse_alpn(alpn_data, &mut alpn_protocols);
         } else if ext_type == 0xfd00 {
             // ECH — type 0xfd00 (65037)
@@ -238,7 +238,10 @@ fn compute_ja4(client_hello: &[u8]) -> Result<String, Tls13Error> {
         .filter_map(|i| {
             let offset = cipher_suites_start + i * 2;
             if offset + 2 <= client_hello.len() {
-                Some(u16::from_be_bytes([client_hello[offset], client_hello[offset + 1]]))
+                Some(u16::from_be_bytes([
+                    client_hello[offset],
+                    client_hello[offset + 1],
+                ]))
             } else {
                 None
             }
@@ -276,7 +279,7 @@ fn compute_ja4(client_hello: &[u8]) -> Result<String, Tls13Error> {
         tls_version_str,
         sni_char,
         cipher_suites_byte_count_hex, // byte length of cipher suites (4 hex chars)
-        ext_count_str                // byte length of extensions (4 hex chars)
+        ext_count_str                 // byte length of extensions (4 hex chars)
     );
 
     // Build ja4_part_b
@@ -304,11 +307,7 @@ fn compute_ja4(client_hello: &[u8]) -> Result<String, Tls13Error> {
 
     // Final JA4: hash_a[:6] + hash_b[:6] = 12 chars
     // Note: ja4_part_c (ALPN) is already baked into hash_b via ja4_part_b_raw
-    let ja4 = format!(
-        "{}{}",
-        &hash_a[..6],
-        &hash_b[..6]
-    );
+    let ja4 = format!("{}{}", &hash_a[..6], &hash_b[..6]);
 
     Ok(ja4)
 }
@@ -455,17 +454,16 @@ fn connect_and_fingerprint_internal(
         .with_custom_certificate_verifier(verifier)
         .with_no_client_auth()
         .with_alpn_protocols(alpn.iter().map(|s| s.as_bytes().to_vec()).collect())
-        .with_single_cert(
-            vec![rustls::pki_types::CertificateDer::from(vec![])],
-            None,
-        )
+        .with_single_cert(vec![rustls::pki_types::CertificateDer::from(vec![])], None)
         .map_err(|e| Tls13Error::HandshakeFailed(format!("Config build failed: {}", e)))?;
 
     let mut session = rustls::ClientConnection::new(
         std::sync::Arc::new(config),
-        rustls::pki_types::ServerName::DnsName(sni_host.try_into().map_err(|_| {
-            Tls13Error::InvalidInput(format!("Invalid SNI: {}", sni_host))
-        })?),
+        rustls::pki_types::ServerName::DnsName(
+            sni_host
+                .try_into()
+                .map_err(|_| Tls13Error::InvalidInput(format!("Invalid SNI: {}", sni_host)))?,
+        ),
     )
     .map_err(|e| Tls13Error::HandshakeFailed(format!("Connection failed: {}", e)))?;
 
@@ -492,7 +490,12 @@ fn connect_and_fingerprint_internal(
             match session.process_new_packets() {
                 Ok(()) => {}
                 Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => continue,
-                Err(e) => return Err(Tls13Error::HandshakeFailed(format!("Process packets: {}", e))),
+                Err(e) => {
+                    return Err(Tls13Error::HandshakeFailed(format!(
+                        "Process packets: {}",
+                        e
+                    )))
+                }
             }
 
             if !session.is_handcomplete() {
@@ -516,7 +519,9 @@ fn connect_and_fingerprint_internal(
     // Extract connection data
     let peer_certs = session.peer_certificates();
     let cert_verified = peer_certs.map(|certs| !certs.is_empty()).unwrap_or(false);
-    let negotiated_alpn = session.alpn_protocol().map(|b| String::from_utf8_lossy(b).to_string());
+    let negotiated_alpn = session
+        .alpn_protocol()
+        .map(|b| String::from_utf8_lossy(b).to_string());
     let tls_version = format!("{:?}", session.protocol_version())
         .trim_start_matches("ProtocolVersion::")
         .to_lowercase();
@@ -690,13 +695,11 @@ fn extract_client_hello_from_session(
 #[pyfunction]
 pub fn ja4_from_client_hello(chello_hex: &str) -> PyResult<String> {
     // Remove whitespace and validate hex
-    let hex_clean: String = chello_hex
-        .chars()
-        .filter(|c| !c.is_whitespace())
-        .collect();
+    let hex_clean: String = chello_hex.chars().filter(|c| !c.is_whitespace()).collect();
 
-    let client_hello = hex::decode(&hex_clean)
-        .map_err(|e| PyErr::new::<pyo3::exceptions::PyValueError, _>(format!("Invalid hex: {}", e)))?;
+    let client_hello = hex::decode(&hex_clean).map_err(|e| {
+        PyErr::new::<pyo3::exceptions::PyValueError, _>(format!("Invalid hex: {}", e))
+    })?;
 
     compute_ja4(&client_hello).map_err(|e| e.to_py_err())
 }
@@ -750,8 +753,8 @@ pub fn connect_and_ja4(
     let alpn = alpn.unwrap_or_else(|| vec!["h2".to_string(), "http/1.1".to_string()]);
     let timeout = timeout_ms.unwrap_or(5000);
 
-    let result =
-        connect_and_fingerprint_internal(host, port, sni, alpn, timeout).map_err(|e| e.to_py_err())?;
+    let result = connect_and_fingerprint_internal(host, port, sni, alpn, timeout)
+        .map_err(|e| e.to_py_err())?;
 
     Python::with_gil(|py| {
         let dict = pyo3::types::PyDict::new(py);
@@ -798,10 +801,9 @@ pub fn batch_ja4(
     let results: Vec<Py<PyDict>> = hosts
         .par_iter()
         .map(|(host, port)| {
-            let sni = snis.as_ref().and_then(|s| {
-                s.get(hosts.iter().position(|(h, _)| h == host)?)
-                    .cloned()
-            });
+            let sni = snis
+                .as_ref()
+                .and_then(|s| s.get(hosts.iter().position(|(h, _)| h == host)?).cloned());
 
             let result = connect_and_fingerprint_internal(host, *port, sni, alpn.clone(), timeout);
 

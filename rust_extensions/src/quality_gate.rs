@@ -67,9 +67,8 @@ static NON_PRINTABLE_RE: std::sync::LazyLock<Regex> = std::sync::LazyLock::new(|
 
 /// Whitespace runs (any \s: space, tab, LF, CR, VT, FF) → single space.
 /// Mirrors Python `" ".join(stripped.split())`.
-static WHITESPACE_RE: std::sync::LazyLock<Regex> = std::sync::LazyLock::new(|| {
-    Regex::new(r"\s+").expect("hardcoded whitespace regex")
-});
+static WHITESPACE_RE: std::sync::LazyLock<Regex> =
+    std::sync::LazyLock::new(|| Regex::new(r"\s+").expect("hardcoded whitespace regex"));
 
 // ---------------------------------------------------------------------------
 // Normalization
@@ -97,9 +96,7 @@ pub fn normalize_quality_text(text: &str) -> String {
     // Collapse whitespace runs (includes \t \n \r) → single space.
     let ws_collapsed = WHITESPACE_RE.replace_all(trimmed, " ");
     // Strip remaining non-printable (ord < 32 excluding \t \n \r, plus \x7f).
-    NON_PRINTABLE_RE
-        .replace_all(&ws_collapsed, "")
-        .into_owned()
+    NON_PRINTABLE_RE.replace_all(&ws_collapsed, "").into_owned()
 }
 
 // ---------------------------------------------------------------------------
@@ -330,7 +327,12 @@ impl PyQualityDecision {
         }
     }
 
-    pub fn duplicate_detected(entropy: f64, normalized_hash: String, persistent: bool, is_url: bool) -> Self {
+    pub fn duplicate_detected(
+        entropy: f64,
+        normalized_hash: String,
+        persistent: bool,
+        is_url: bool,
+    ) -> Self {
         Self {
             accepted: false,
             reason: if persistent {
@@ -398,7 +400,10 @@ static HIGH_CONF_IOC_RE: std::sync::LazyLock<Regex> = std::sync::LazyLock::new(|
 /// This is the CPU-bound hot path that benefits from Rayon parallelization.
 fn assess_single_finding(f: &PyFindingInput) -> PyQualityDecision {
     // Extract URL from provenance if present
-    let url_fp_opt = f.provenance.as_ref().map(|p| extract_url_from_provenance(p));
+    let url_fp_opt = f
+        .provenance
+        .as_ref()
+        .map(|p| extract_url_from_provenance(p));
     let is_url = url_fp_opt.as_ref().map(|s| !s.is_empty()).unwrap_or(false);
 
     let is_feed_source = f.source_type == "rss_atom_pipeline";
@@ -409,7 +414,12 @@ fn assess_single_finding(f: &PyFindingInput) -> PyQualityDecision {
         let fp = url_fingerprint(url);
         (url.clone(), fp, 0.0)
     } else {
-        let raw_text = f.payload_text.as_ref().or(Some(&f.query)).map(|s| s.as_str()).unwrap_or("");
+        let raw_text = f
+            .payload_text
+            .as_ref()
+            .or(Some(&f.query))
+            .map(|s| s.as_str())
+            .unwrap_or("");
         if raw_text.is_empty() {
             (String::new(), String::new(), 0.0)
         } else {
@@ -439,7 +449,11 @@ fn assess_single_finding(f: &PyFindingInput) -> PyQualityDecision {
     }
 
     // Low entropy check — feed sources have lower threshold
-    let threshold = if is_feed_source { 0.3 } else { QUALITY_ENTROPY_THRESHOLD };
+    let threshold = if is_feed_source {
+        0.3
+    } else {
+        QUALITY_ENTROPY_THRESHOLD
+    };
     if entropy < threshold {
         return PyQualityDecision::low_entropy(entropy, normalized_hash, false);
     }
@@ -472,7 +486,13 @@ pub fn assess_findings_quality_batch(
     // RUST-PANIC-001 FIX: release_gil wraps py.detach in catch_unwind.
     let results: Vec<PyQualityDecision> = release_gil(py, move || {
         crate::cpu_pool().install(|| {
-            findings.iter().map(|x| x.clone()).collect::<Vec<_>>().par_iter().map(assess_single_finding).collect()
+            findings
+                .iter()
+                .map(|x| x.clone())
+                .collect::<Vec<_>>()
+                .par_iter()
+                .map(assess_single_finding)
+                .collect()
         })
     });
     if release_gil_caught_panic() {
@@ -752,7 +772,9 @@ mod tests {
     fn test_dedup_fingerprint_length_and_charset() {
         let fp = dedup_fingerprint("hello world");
         assert_eq!(fp.len(), 32, "BLAKE2b-128 hex must be 32 chars");
-        assert!(fp.chars().all(|c| c.is_ascii_hexdigit() && !c.is_ascii_uppercase()));
+        assert!(fp
+            .chars()
+            .all(|c| c.is_ascii_hexdigit() && !c.is_ascii_uppercase()));
     }
 
     #[test]

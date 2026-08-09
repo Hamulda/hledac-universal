@@ -294,12 +294,7 @@ mod py_bindings {
 
         /// Context manager exit — releases the lock.
         /// Called by Python's `with` statement on the ORIGINAL lock object.
-        fn __exit__(
-            &mut self,
-            _exc_type: PyObject,
-            _exc_val: PyObject,
-            _exc_tb: PyObject,
-        ) -> bool {
+        fn __exit__(&mut self, _exc_type: PyObject, _exc_val: PyObject, _exc_tb: PyObject) -> bool {
             unsafe {
                 darwin::unlock_release(&self.inner);
             }
@@ -348,12 +343,7 @@ mod py_bindings {
         }
 
         /// No-op — unlock happens in the lock's __exit__.
-        fn __exit__(
-            &mut self,
-            _exc_type: PyObject,
-            _exc_val: PyObject,
-            _exc_tb: PyObject,
-        ) -> bool {
+        fn __exit__(&mut self, _exc_type: PyObject, _exc_val: PyObject, _exc_tb: PyObject) -> bool {
             false
         }
     }

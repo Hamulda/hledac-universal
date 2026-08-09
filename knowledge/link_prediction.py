@@ -396,7 +396,7 @@ class LinkPredictor:
             )
             return node_edges[:top_k]
 
-    def add_predicted_edges_to_graph(
+    async def add_predicted_edges_to_graph(
         self,
         graph: IOCGraph,
         result: LinkPredictionResult,
@@ -417,15 +417,20 @@ class LinkPredictor:
         for edge in result.edges:
             if edge.confidence >= min_confidence:
                 try:
-                    graph.add_predicted_edge(
-                        src_id=edge.src_id,
-                        dst_id=edge.dst_id,
+                    # Convert DuckDB BIGINT id to Kuzu string format (type:xxh64)
+                    src_kuzu_id = edge.src_id if isinstance(edge.src_id, str) else f"pending:{edge.src_id}"
+                    dst_kuzu_id = edge.dst_id if isinstance(edge.dst_id, str) else f"pending:{edge.dst_id}"
+                    
+                    success = await graph.add_predicted_edge(
+                        src_id=src_kuzu_id,
+                        dst_id=dst_kuzu_id,
                         confidence=edge.confidence,
                         method=edge.method_name,
                         adamic_adar=edge.adamic_adar,
                         jaccard=edge.jaccard,
                     )
-                    count += 1
+                    if success:
+                        count += 1
                 except Exception as e:
                     logger.warning(
                         "[SWARM-003] Failed to add predicted edge %s -> %s: %s",

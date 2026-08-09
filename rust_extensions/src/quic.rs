@@ -60,7 +60,8 @@ impl QuicResponse {
 }
 
 /// Global semaphore for connection concurrency limit.
-static CONNECTION_SEM: tokio::sync::Semaphore = tokio::sync::Semaphore::const_new(MAX_CONCURRENT_CONNECTIONS);
+static CONNECTION_SEM: tokio::sync::Semaphore =
+    tokio::sync::Semaphore::const_new(MAX_CONCURRENT_CONNECTIONS);
 
 /// Global tokio runtime for async operations.
 /// Created once per process, reused for all requests.
@@ -68,7 +69,7 @@ static CONNECTION_SEM: tokio::sync::Semaphore = tokio::sync::Semaphore::const_ne
 static RUNTIME: std::sync::OnceLock<tokio::runtime::Runtime> = std::sync::OnceLock::new();
 
 /// Get or create the global tokio runtime.
-/// 
+///
 /// NOTE: Uses `.expect()` because OnceLock doesn't support fallible init pre-1.66.
 /// If this fails, the QUIC module is unusable. Error indicates system-level issue
 /// (e.g., OOM, resource limits) that cannot be recovered from.
@@ -76,7 +77,7 @@ fn get_runtime() -> &'static tokio::runtime::Runtime {
     RUNTIME.get_or_init(|| {
         tokio::runtime::Builder::new_multi_thread()
             .enable_all()
-            .max_blocking_threads(2)  // M1 8GB: only 2 threads needed for QUIC I/O
+            .max_blocking_threads(2) // M1 8GB: only 2 threads needed for QUIC I/O
             .build()
             .expect("quic: OOM or system limit exceeded during tokio runtime creation")
     })
@@ -128,15 +129,23 @@ pub fn fetch(
     // Acquire permit with timeout
     let permit = match CONNECTION_SEM.try_acquire() {
         Ok(p) => p,
-        Err(_) => {
-            return QuicResponse::error("quic: connection limit exceeded (3 concurrent max)")
-        }
+        Err(_) => return QuicResponse::error("quic: connection limit exceeded (3 concurrent max)"),
     };
 
     // Use global runtime instead of creating per-request
     let rt = get_runtime();
     let result = rt.block_on(async {
-        fetch_async(&host, port, path, authority, method, body, headers, timeout_secs).await
+        fetch_async(
+            &host,
+            port,
+            path,
+            authority,
+            method,
+            body,
+            headers,
+            timeout_secs,
+        )
+        .await
     });
 
     // Explicit drop of permit to release connection slot
@@ -220,28 +229,22 @@ async fn fetch_async(
     // Connect with timeout
     let connecting = endpoint.connect(client_config, remote, host);
 
-    let quinn_conn = match tokio::time::timeout(
-        Duration::from_secs_f64(timeout_secs),
-        connecting,
-    )
-    .await
-    {
-        Ok(Ok(conn)) => conn,
-        Ok(Err(e)) => return QuicResponse::error(&format!("quic: connection failed: {}", e)),
-        Err(_) => return QuicResponse::error("quic: connection timeout"),
-    };
+    let quinn_conn =
+        match tokio::time::timeout(Duration::from_secs_f64(timeout_secs), connecting).await {
+            Ok(Ok(conn)) => conn,
+            Ok(Err(e)) => return QuicResponse::error(&format!("quic: connection failed: {}", e)),
+            Err(_) => return QuicResponse::error("quic: connection timeout"),
+        };
 
     // Open bi-directional stream for HTTP/3 request
-    let (mut send, mut recv) = match tokio::time::timeout(
-        Duration::from_secs_f64(timeout_secs),
-        quinn_conn.open_bi(),
-    )
-    .await
-    {
-        Ok(Ok(pair)) => pair,
-        Ok(Err(e)) => return QuicResponse::error(&format!("quic: open_bi failed: {}", e)),
-        Err(_) => return QuicResponse::error("quic: open_bi timeout"),
-    };
+    let (mut send, mut recv) =
+        match tokio::time::timeout(Duration::from_secs_f64(timeout_secs), quinn_conn.open_bi())
+            .await
+        {
+            Ok(Ok(pair)) => pair,
+            Ok(Err(e)) => return QuicResponse::error(&format!("quic: open_bi failed: {}", e)),
+            Err(_) => return QuicResponse::error("quic: open_bi timeout"),
+        };
 
     // Build HTTP/3 request headers
     let mut request = Vec::new();
@@ -522,7 +525,9 @@ pub fn fetch(
     timeout_s: Option<f64>,
 ) -> QuicResponse {
     let _ = (url, method, body, headers, timeout_s);
-    QuicResponse::error("quic: rust extension built without 'quic' feature (use maturin build --features quic)")
+    QuicResponse::error(
+        "quic: rust extension built without 'quic' feature (use maturin build --features quic)",
+    )
 }
 
 /// Register the quic module with the Python extension.

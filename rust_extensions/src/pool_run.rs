@@ -45,12 +45,12 @@ use std::time::Duration;
 // ~2x faster than std::sync::Mutex, and .lock() returns Guard directly (no Result).
 // This prevents unwrap() panics from propagating as Rust panics across the PyO3 FFI boundary.
 
-use crossbeam_channel::{bounded, Sender, Receiver};
+use crossbeam_channel::{bounded, Receiver, Sender};
 
 use crate::elastic_pool::{get_cpu_pool, get_io_pool};
-#[cfg(feature = "otel")]
-use crate::tracing::{is_tracing_enabled, set_tls_trace_context, clear_tls_trace_context};
 use crate::mixed_pool;
+#[cfg(feature = "otel")]
+use crate::tracing::{clear_tls_trace_context, is_tracing_enabled, set_tls_trace_context};
 
 // State encoding for atomic compare-exchange
 const STATE_PENDING: u8 = 0;
@@ -108,32 +108,38 @@ struct SharedTask {
 static RAYON_SHUTDOWN: AtomicBool = AtomicBool::new(false);
 
 fn cpu_sender() -> &'static parking_lot::Mutex<Option<Sender<WorkItem>>> {
-    static SENDER: LazyLock<parking_lot::Mutex<Option<Sender<WorkItem>>>, fn() -> parking_lot::Mutex<Option<Sender<WorkItem>>>> =
-        LazyLock::new(|| {
-            let (tx, rx) = bounded(256);
-            spawn_dispatcher("cpu", Arc::new(rx));
-            parking_lot::Mutex::new(Some(tx))
-        });
+    static SENDER: LazyLock<
+        parking_lot::Mutex<Option<Sender<WorkItem>>>,
+        fn() -> parking_lot::Mutex<Option<Sender<WorkItem>>>,
+    > = LazyLock::new(|| {
+        let (tx, rx) = bounded(256);
+        spawn_dispatcher("cpu", Arc::new(rx));
+        parking_lot::Mutex::new(Some(tx))
+    });
     &SENDER
 }
 
 fn io_sender() -> &'static parking_lot::Mutex<Option<Sender<WorkItem>>> {
-    static SENDER: LazyLock<parking_lot::Mutex<Option<Sender<WorkItem>>>, fn() -> parking_lot::Mutex<Option<Sender<WorkItem>>>> =
-        LazyLock::new(|| {
-            let (tx, rx) = bounded(256);
-            spawn_dispatcher("io", Arc::new(rx));
-            parking_lot::Mutex::new(Some(tx))
-        });
+    static SENDER: LazyLock<
+        parking_lot::Mutex<Option<Sender<WorkItem>>>,
+        fn() -> parking_lot::Mutex<Option<Sender<WorkItem>>>,
+    > = LazyLock::new(|| {
+        let (tx, rx) = bounded(256);
+        spawn_dispatcher("io", Arc::new(rx));
+        parking_lot::Mutex::new(Some(tx))
+    });
     &SENDER
 }
 
 fn mixed_sender() -> &'static parking_lot::Mutex<Option<Sender<WorkItem>>> {
-    static SENDER: LazyLock<parking_lot::Mutex<Option<Sender<WorkItem>>>, fn() -> parking_lot::Mutex<Option<Sender<WorkItem>>>> =
-        LazyLock::new(|| {
-            let (tx, rx) = bounded(256);
-            spawn_dispatcher("mixed", Arc::new(rx));
-            parking_lot::Mutex::new(Some(tx))
-        });
+    static SENDER: LazyLock<
+        parking_lot::Mutex<Option<Sender<WorkItem>>>,
+        fn() -> parking_lot::Mutex<Option<Sender<WorkItem>>>,
+    > = LazyLock::new(|| {
+        let (tx, rx) = bounded(256);
+        spawn_dispatcher("mixed", Arc::new(rx));
+        parking_lot::Mutex::new(Some(tx))
+    });
     &SENDER
 }
 
@@ -169,16 +175,14 @@ fn spawn_dispatcher(pool_name: &str, rx: Arc<Receiver<WorkItem>>) {
 
 /// Dispatcher loop for fixed pools (cpu, io).
 fn run_dispatcher_loop(pool: Arc<ThreadPool>, rx: Arc<Receiver<WorkItem>>) {
-    pool.install(|| {
-        loop {
-            if RAYON_SHUTDOWN.load(Ordering::Acquire) {
-                break;
-            }
-            match rx.recv_timeout(Duration::from_millis(100)) {
-                Ok(work) => execute_work_item(work),
-                Err(crossbeam_channel::RecvTimeoutError::Timeout) => continue,
-                Err(crossbeam_channel::RecvTimeoutError::Disconnected) => break,
-            }
+    pool.install(|| loop {
+        if RAYON_SHUTDOWN.load(Ordering::Acquire) {
+            break;
+        }
+        match rx.recv_timeout(Duration::from_millis(100)) {
+            Ok(work) => execute_work_item(work),
+            Err(crossbeam_channel::RecvTimeoutError::Timeout) => continue,
+            Err(crossbeam_channel::RecvTimeoutError::Disconnected) => break,
         }
     });
 }
@@ -188,7 +192,9 @@ fn run_mixed_dispatcher_loop(rx: Arc<Receiver<WorkItem>>) {
     if std::panic::catch_unwind(|| {
         let _ = mixed_pool(0);
         let _ = mixed_pool(usize::MAX);
-    }).is_err() {
+    })
+    .is_err()
+    {
         return;
     }
 
@@ -212,10 +218,7 @@ fn run_mixed_dispatcher_loop(rx: Arc<Receiver<WorkItem>>) {
 
 // Stub when otel is disabled — just execute the closure directly.
 #[cfg(not(feature = "otel"))]
-fn execute_with_optional_span<R>(
-    _trace_context: Option<TraceContext>,
-    f: impl FnOnce() -> R,
-) -> R {
+fn execute_with_optional_span<R>(_trace_context: Option<TraceContext>, f: impl FnOnce() -> R) -> R {
     f()
 }
 
@@ -229,10 +232,7 @@ fn execute_with_optional_span<R>(
 /// the Python ↔ Rust FFI boundary.
 ///
 /// When `trace_context` is None, simply executes the closure without tracing.
-fn execute_with_optional_span<R>(
-    trace_context: Option<TraceContext>,
-    f: impl FnOnce() -> R,
-) -> R {
+fn execute_with_optional_span<R>(trace_context: Option<TraceContext>, f: impl FnOnce() -> R) -> R {
     match trace_context {
         Some(ctx) if is_tracing_enabled() => {
             // TEL-02: Set TLS context for Rust-side tracing span created below.
@@ -252,7 +252,8 @@ fn execute_with_optional_span<R>(
             // If f() panics, in_scope propagates the panic and clear_tls_trace_context()
             // would never run — leaving stale TLS context on the worker thread,
             // contaminating subsequent work items processed by the same thread.
-            let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| span.in_scope(f)));
+            let result =
+                std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| span.in_scope(f)));
 
             // Always clear TLS after span ends — both on success and on panic
             clear_tls_trace_context();
@@ -299,19 +300,21 @@ fn execute_work_item(work: WorkItem) {
     let py_result = execute_with_optional_span(work.trace_context.clone(), || {
         // Execute Python function with GIL
         Python::attach(|py| {
-            let result = work.func.into_bound(py).call1((work.args.into_bound(py),))?;
+            let result = work
+                .func
+                .into_bound(py)
+                .call1((work.args.into_bound(py),))?;
             Ok(result.unbind())
         })
     });
 
     // Atomically set STATE_READY if still PENDING (not aborted by timeout)
     let expected = STATE_PENDING;
-    if shared.state.compare_exchange(
-        expected,
-        STATE_READY,
-        Ordering::AcqRel,
-        Ordering::Acquire,
-    ).is_ok() {
+    if shared
+        .state
+        .compare_exchange(expected, STATE_READY, Ordering::AcqRel, Ordering::Acquire)
+        .is_ok()
+    {
         let mut guard = shared.result.lock();
         *guard = Some(py_result);
     }
@@ -325,11 +328,7 @@ fn execute_work_item(work: WorkItem) {
 
 #[pyfunction]
 #[pyo3(name = "cpu_pool_run")]
-pub fn cpu_pool_run_(
-    _py: Python<'_>,
-    func: Py<PyAny>,
-    args: Py<PyTuple>,
-) -> PyResult<Py<PyAny>> {
+pub fn cpu_pool_run_(_py: Python<'_>, func: Py<PyAny>, args: Py<PyTuple>) -> PyResult<Py<PyAny>> {
     Python::attach(|py| {
         let result = func.into_bound(py).call1((args.into_bound(py),))?;
         Ok(result.unbind())
@@ -338,11 +337,7 @@ pub fn cpu_pool_run_(
 
 #[pyfunction]
 #[pyo3(name = "io_pool_run")]
-pub fn io_pool_run_(
-    _py: Python<'_>,
-    func: Py<PyAny>,
-    args: Py<PyTuple>,
-) -> PyResult<Py<PyAny>> {
+pub fn io_pool_run_(_py: Python<'_>, func: Py<PyAny>, args: Py<PyTuple>) -> PyResult<Py<PyAny>> {
     Python::attach(|py| {
         let result = func.into_bound(py).call1((args.into_bound(py),))?;
         Ok(result.unbind())
@@ -390,9 +385,10 @@ pub fn rayon_submit_channel_(
     // When both trace_id and span_id are provided, create a TraceContext.
     // This allows Rust-side tracing spans to be linked to Python OTel spans.
     let trace_context: Option<TraceContext> = match (trace_id, span_id) {
-        (Some(tid), Some(sid)) if tid != 0 && sid != 0 => {
-            Some(TraceContext { trace_id: tid, span_id: sid })
-        }
+        (Some(tid), Some(sid)) if tid != 0 && sid != 0 => Some(TraceContext {
+            trace_id: tid,
+            span_id: sid,
+        }),
         _ => None,
     };
 
@@ -527,71 +523,66 @@ pub fn rayon_join_channel_(
     // FFI-03 FIX: catch_unwind around the critical section (Arc access).
     // AssertUnwindSafe tells panic::catch_unwind that the closure won't
     // unwind through a RIIA guard that requires drop semantics.
-    let inner_result: PyResult<Py<PyAny>> = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        py.detach(|| {
+    let inner_result: PyResult<Py<PyAny>> =
+        std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            py.detach(|| {
+                let mut guard = shared.result.lock();
+                while (*guard).is_none() {
+                    let remaining = deadline.saturating_duration_since(std::time::Instant::now());
+                    if remaining.is_zero() {
+                        break;
+                    }
+                    // wait_for: atomically unlocks mutex and blocks on condvar;
+                    // on notify or timeout, reacquires mutex and returns WaitTimeoutResult.
+                    // Guard is MODIFIED IN-PLACE (parking_lot semantics).
+                    // On macOS this maps to pthread_cond_timedwait — real OS thread block.
+                    let _wait_result = shared.condvar.wait_for(&mut guard, remaining);
+                }
+                // timed_out = true if result is still None after wait loop
+                timed_out_flag_clone.store((*guard).is_none(), Ordering::Release);
+            });
+            // Re-lock to read result — allow_threads released the mutex on each iteration
+            let timed_out = timed_out_flag.load(Ordering::Acquire);
             let mut guard = shared.result.lock();
-            while (*guard).is_none() {
-                let remaining = deadline.saturating_duration_since(std::time::Instant::now());
-                if remaining.is_zero() {
-                    break;
-                }
-                // wait_for: atomically unlocks mutex and blocks on condvar;
-                // on notify or timeout, reacquires mutex and returns WaitTimeoutResult.
-                // Guard is MODIFIED IN-PLACE (parking_lot semantics).
-                // On macOS this maps to pthread_cond_timedwait — real OS thread block.
-                let _wait_result = shared.condvar.wait_for(&mut guard, remaining);
-            }
-            // timed_out = true if result is still None after wait loop
-            timed_out_flag_clone.store((*guard).is_none(), Ordering::Release);
-        });
-        // Re-lock to read result — allow_threads released the mutex on each iteration
-        let timed_out = timed_out_flag.load(Ordering::Acquire);
-        let mut guard = shared.result.lock();
-        if timed_out {
-            // Try to claim ABORTED ownership atomically.
-            // If CAS fails → worker already won (wrote result and transitioned to READY).
-            // We must NOT overwrite the worker's valid result with a timeout error.
-            // If CAS succeeds → we own the result; write timeout error only if still None.
-            let expected = STATE_PENDING;
-            let we_own = shared.state
-                .compare_exchange(
-                    expected,
-                    STATE_ABORTED,
-                    Ordering::AcqRel,
-                    Ordering::Acquire,
-                )
-                .is_ok();
-            drop(guard);
+            if timed_out {
+                // Try to claim ABORTED ownership atomically.
+                // If CAS fails → worker already won (wrote result and transitioned to READY).
+                // We must NOT overwrite the worker's valid result with a timeout error.
+                // If CAS succeeds → we own the result; write timeout error only if still None.
+                let expected = STATE_PENDING;
+                let we_own = shared
+                    .state
+                    .compare_exchange(expected, STATE_ABORTED, Ordering::AcqRel, Ordering::Acquire)
+                    .is_ok();
+                drop(guard);
 
-            if we_own {
-                // WE are responsible for the result — write timeout error if worker didn't.
-                let mut rguard = shared.result.lock();
-                if rguard.is_none() {
-                    *rguard = Some(Err(PyErr::new::<
-                        pyo3::exceptions::PyRuntimeError,
-                        _,
-                    >("Rayon dispatch timed out")));
+                if we_own {
+                    // WE are responsible for the result — write timeout error if worker didn't.
+                    let mut rguard = shared.result.lock();
+                    if rguard.is_none() {
+                        *rguard = Some(Err(PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(
+                            "Rayon dispatch timed out",
+                        )));
+                    }
+                }
+                // else: worker won the race — don't overwrite its valid result
+
+                let result = shared.result.lock().take();
+                match result {
+                    Some(Ok(py_obj)) => Ok(py_obj.into_pyobject(py).unwrap().into()),
+                    Some(Err(err)) => Err(err),
+                    None => Ok(py.None().into_pyobject(py).unwrap().into()),
+                }
+            } else {
+                let result = (*guard).take();
+                match result {
+                    Some(Ok(py_obj)) => Ok(py_obj.into_pyobject(py).unwrap().into()),
+                    Some(Err(err)) => Err(err),
+                    None => Ok(py.None().into_pyobject(py).unwrap().into()),
                 }
             }
-            // else: worker won the race — don't overwrite its valid result
-
-            let result = shared.result.lock().take();
-            match result {
-                Some(Ok(py_obj)) => Ok(py_obj.into_pyobject(py).unwrap().into()),
-                Some(Err(err)) => Err(err),
-                None => Ok(py.None().into_pyobject(py).unwrap().into()),
-            }
-        } else {
-            let result = (*guard).take();
-            match result {
-                Some(Ok(py_obj)) => Ok(py_obj.into_pyobject(py).unwrap().into()),
-                Some(Err(err)) => Err(err),
-                None => Ok(py.None().into_pyobject(py).unwrap().into()),
-            }
-        }
-    })).map_err(|_| {
-        PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("Panic in rayon_join")
-    })?;
+        }))
+        .map_err(|_| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("Panic in rayon_join"))?;
 
     inner_result
 }
@@ -634,9 +625,8 @@ pub fn rayon_abort_channel_(py: Python<'_>, handle_ptr: usize) -> PyResult<()> {
                 let _wait_result = shared.condvar.wait_for(&mut guard, remaining);
             }
         });
-    })).map_err(|_| {
-        PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("Panic in rayon_abort")
-    })?;
+    }))
+    .map_err(|_| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("Panic in rayon_abort"))?;
 
     Ok(())
 }

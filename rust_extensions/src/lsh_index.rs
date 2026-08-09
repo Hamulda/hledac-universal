@@ -187,7 +187,11 @@ impl LSHIndex {
     /// List of result lists, one per fingerprint, sorted by similarity descending.
     /// Empty inner list if no candidates found.
     #[pyo3(signature = (fingerprints, max_results=100))]
-    pub fn batch_query(&self, fingerprints: Vec<u64>, max_results: usize) -> Vec<Vec<(String, f64)>> {
+    pub fn batch_query(
+        &self,
+        fingerprints: Vec<u64>,
+        max_results: usize,
+    ) -> Vec<Vec<(String, f64)>> {
         fingerprints
             .iter()
             .map(|fp| self.query(*fp, max_results))

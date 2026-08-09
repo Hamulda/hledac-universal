@@ -21,10 +21,10 @@
 //! - rust_async_query_with_params(sql, params) — parameterized query
 //! - init_async_pool(db_path, max_connections) — initialize pool
 
+use parking_lot::Mutex;
 use pyo3::prelude::*;
 use rayon::prelude::*;
 use std::sync::Arc;
-use parking_lot::Mutex;
 
 /// ISSUE-001: Thread-safe DuckDB connection pool with O(1) access pattern.
 /// Uses atomic round-robin index instead of O(N) linear scan.
@@ -47,9 +47,7 @@ pub(crate) struct StdConnectionPool {
 
 impl StdConnectionPool {
     fn new(db_path: String, max_connections: usize) -> Self {
-        let connections = (0..max_connections)
-            .map(|_| Mutex::new(None))
-            .collect();
+        let connections = (0..max_connections).map(|_| Mutex::new(None)).collect();
         Self {
             connections,
             db_path,
@@ -153,11 +151,9 @@ fn execute_duckdb_query_sync(
         match row_iter.next() {
             Ok(Some(row)) => {
                 let cols: Vec<String> = (0..n_cols)
-                    .map(|i| {
-                        match row.get_ref(i) {
-                            Ok(val) => format_value_ref(val),
-                            Err(e) => format!("<error: {}>", e),
-                        }
+                    .map(|i| match row.get_ref(i) {
+                        Ok(val) => format_value_ref(val),
+                        Err(e) => format!("<error: {}>", e),
                     })
                     .collect();
                 results.push(cols);
@@ -188,7 +184,11 @@ fn format_value_ref(val: duckdb::types::ValueRef<'_>) -> String {
         ValueRef::Timestamp(tu, ts) => format!("Timestamp({tu:?},{ts})"),
         ValueRef::Date32(d) => format!("Date32({d})"),
         ValueRef::Time64(tu, t) => format!("Time64({tu:?},{t})"),
-        ValueRef::Interval { months, days, nanos } => {
+        ValueRef::Interval {
+            months,
+            days,
+            nanos,
+        } => {
             format!("Interval({months},{days},{nanos})")
         }
         ValueRef::HugeInt(i) => format!("HugeInt({i})"),
@@ -219,8 +219,7 @@ static ASYNC_POOL: std::sync::OnceLock<Arc<StdConnectionPool>> = std::sync::Once
 fn get_async_pool() -> Arc<StdConnectionPool> {
     ASYNC_POOL
         .get_or_init(|| {
-            let (db_path, max_conn, _) = POOL_CONFIG
-                .get_or_init(|| (":memory:".to_string(), 2, 0));
+            let (db_path, max_conn, _) = POOL_CONFIG.get_or_init(|| (":memory:".to_string(), 2, 0));
             Arc::new(StdConnectionPool::new(db_path.clone(), *max_conn))
         })
         .clone()
@@ -231,12 +230,18 @@ fn init_async_pool(db_path: String, max_connections: usize, timeout_secs: u64) -
     // ISSUE-013: timeout_secs stored in POOL_CONFIG for runtime access
     // ISSUE-013-FIX: cap at 4 UPFRONT so all code paths see the same value
     let capped = max_connections.min(4);
-    POOL_CONFIG.set((db_path.clone(), capped, timeout_secs)).map_err(|_| {
-        PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("Async pool already initialized".to_string())
-    })?;
+    POOL_CONFIG
+        .set((db_path.clone(), capped, timeout_secs))
+        .map_err(|_| {
+            PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(
+                "Async pool already initialized".to_string(),
+            )
+        })?;
     let pool = Arc::new(StdConnectionPool::new(db_path, capped));
     ASYNC_POOL.set(pool).map_err(|_| {
-        PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("Async pool already initialized".to_string())
+        PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(
+            "Async pool already initialized".to_string(),
+        )
     })?;
     Ok(())
 }
@@ -252,12 +257,11 @@ fn init_async_pool(db_path: String, max_connections: usize, timeout_secs: u64) -
 #[pyfunction]
 pub fn rust_async_query(sql: String) -> PyResult<Vec<Vec<String>>> {
     let pool = get_async_pool();
-    let timeout_secs = POOL_CONFIG
-        .get_or_init(|| (":memory:".to_string(), 2, 0))
-        .2;
+    let timeout_secs = POOL_CONFIG.get_or_init(|| (":memory:".to_string(), 2, 0)).2;
 
     if timeout_secs == 0 {
-        return pool.execute_query_sync(&sql)
+        return pool
+            .execute_query_sync(&sql)
             .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e));
     }
 
@@ -279,14 +283,15 @@ pub fn rust_async_query(sql: String) -> PyResult<Vec<Vec<String>>> {
         Ok(Ok(rows)) => Ok(rows),
         Ok(Err(e)) => Err(PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e)),
         Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
-            Err(PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(
-                format!("DuckDB query timeout after {}s: {}", timeout_secs, &sql)
-            ))
+            Err(PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!(
+                "DuckDB query timeout after {}s: {}",
+                timeout_secs, &sql
+            )))
         }
         Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {
             // Thread finished and disconnected before we could receive — get the result
             Err(PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(
-                "DuckDB thread disconnected unexpectedly".to_string()
+                "DuckDB thread disconnected unexpectedly".to_string(),
             ))
         }
     }
@@ -316,12 +321,11 @@ pub fn rust_async_query_with_params(
     });
 
     let pool = get_async_pool();
-    let timeout_secs = POOL_CONFIG
-        .get_or_init(|| (":memory:".to_string(), 2, 0))
-        .2;
+    let timeout_secs = POOL_CONFIG.get_or_init(|| (":memory:".to_string(), 2, 0)).2;
 
     if timeout_secs == 0 {
-        return pool.execute_query_sync_with_params(&sql, &param_strings)
+        return pool
+            .execute_query_sync_with_params(&sql, &param_strings)
             .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e));
     }
 
@@ -342,13 +346,14 @@ pub fn rust_async_query_with_params(
         Ok(Ok(rows)) => Ok(rows),
         Ok(Err(e)) => Err(PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e)),
         Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
-            Err(PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(
-                format!("DuckDB query timeout after {}s: {}", timeout_secs, &sql)
-            ))
+            Err(PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!(
+                "DuckDB query timeout after {}s: {}",
+                timeout_secs, &sql
+            )))
         }
         Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {
             Err(PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(
-                "DuckDB thread disconnected unexpectedly".to_string()
+                "DuckDB thread disconnected unexpectedly".to_string(),
             ))
         }
     }
@@ -374,8 +379,8 @@ pub fn rust_async_query_batch(sqls: Vec<String>) -> PyResult<Vec<Vec<Vec<String>
     let results: Vec<Result<Vec<Vec<String>>, String>> = sqls
         .par_iter()
         .map(|sql| {
-            let mut conn = duckdb::Connection::open(&db_path)
-                .map_err(|e| format!("open: {}", e))?;
+            let mut conn =
+                duckdb::Connection::open(&db_path).map_err(|e| format!("open: {}", e))?;
             execute_duckdb_query_sync(&mut conn, sql, &[])
         })
         .collect();
@@ -391,9 +396,11 @@ pub fn rust_async_query_batch(sqls: Vec<String>) -> PyResult<Vec<Vec<Vec<String>
     }
 
     if !py_errors.is_empty() {
-        return Err(PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(
-            format!("{} query errors: {}", py_errors.len(), py_errors.join("; "))
-        ));
+        return Err(PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!(
+            "{} query errors: {}",
+            py_errors.len(),
+            py_errors.join("; ")
+        )));
     }
 
     Ok(ok_results)
@@ -470,10 +477,7 @@ mod tests {
     fn test_query_with_params() {
         let pool = StdConnectionPool::new(":memory:".to_string(), 1);
         let params = vec!["hello".to_string(), "world".to_string()];
-        let result = pool.execute_query_sync_with_params(
-            "SELECT ?1 as a, ?2 as b",
-            &params,
-        );
+        let result = pool.execute_query_sync_with_params("SELECT ?1 as a, ?2 as b", &params);
         assert!(result.is_ok());
         let rows = result.unwrap();
         assert_eq!(rows.len(), 1);
@@ -493,8 +497,8 @@ mod tests {
         let results: Vec<Result<Vec<Vec<String>>, String>> = sqls
             .par_iter()
             .map(|sql| {
-                let mut conn = duckdb::Connection::open(&db_path)
-                    .map_err(|e| format!("open: {}", e))?;
+                let mut conn =
+                    duckdb::Connection::open(&db_path).map_err(|e| format!("open: {}", e))?;
                 execute_duckdb_query_sync(&mut conn, sql, &[])
             })
             .collect();

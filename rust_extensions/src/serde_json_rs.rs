@@ -1,7 +1,7 @@
 //! serde_json — Rust-powered JSON serialization for STIX export.
 
-use pyo3::prelude::*;
 use pyo3::prelude::Python;
+use pyo3::prelude::*;
 use rayon::prelude::*;
 
 use crate::gil::release_gil;
@@ -49,9 +49,7 @@ fn sort_object_keys(val: &Value) -> Value {
                 .collect();
             Value::Object(sorted_map)
         }
-        Value::Array(arr) => {
-            Value::Array(arr.iter().map(sort_object_keys).collect())
-        }
+        Value::Array(arr) => Value::Array(arr.iter().map(sort_object_keys).collect()),
         _ => val.clone(),
     }
 }
@@ -144,7 +142,10 @@ pub fn serde_json_compact_sorted(json_str: &str) -> String {
 /// # Returns
 /// Compact JSON bytes — empty Vec<u8> on error (caller falls back to Python)
 #[pyfunction]
-pub fn serde_json_dumps_compact_bytes(data: &Bound<'_, PyAny>, _py: Python<'_>) -> PyResult<Vec<u8>> {
+pub fn serde_json_dumps_compact_bytes(
+    data: &Bound<'_, PyAny>,
+    _py: Python<'_>,
+) -> PyResult<Vec<u8>> {
     let json_str = match data.call_method0("__str__") {
         Ok(s) => s.extract::<String>().unwrap_or_default(),
         Err(_) => return Ok(Vec::new()),
@@ -169,7 +170,11 @@ pub fn serde_json_dumps_compact_bytes(data: &Bound<'_, PyAny>, _py: Python<'_>) 
 /// # Returns
 /// Pretty-printed JSON bytes — empty Vec<u8> on error
 #[pyfunction]
-pub fn serde_json_dumps_pretty_bytes(data: &Bound<'_, PyAny>, sort_keys: bool, _py: Python<'_>) -> PyResult<Vec<u8>> {
+pub fn serde_json_dumps_pretty_bytes(
+    data: &Bound<'_, PyAny>,
+    sort_keys: bool,
+    _py: Python<'_>,
+) -> PyResult<Vec<u8>> {
     let json_str = match data.call_method0("__str__") {
         Ok(s) => s.extract::<String>().unwrap_or_default(),
         Err(_) => return Ok(Vec::new()),
@@ -245,7 +250,9 @@ pub fn batch_serde_json(items: Vec<(String, bool, bool)>) -> Vec<String> {
         release_gil(py, || {
             items
                 .par_iter()
-                .map(|(json_str, pretty, sort_keys)| serde_json_reexport(json_str, *pretty, *sort_keys))
+                .map(|(json_str, pretty, sort_keys)| {
+                    serde_json_reexport(json_str, *pretty, *sort_keys)
+                })
                 .collect()
         })
     })
@@ -369,7 +376,10 @@ mod tests {
         let input = r#"{"z":1,"a":2,"m":3}"#;
         let out = serde_json_reexport(input, false, true);
         // Keys should be sorted: a, m, z
-        assert!(out.starts_with("{\"a\":2,\"m\":3,\"z\":1}"), "keys should be sorted");
+        assert!(
+            out.starts_with("{\"a\":2,\"m\":3,\"z\":1}"),
+            "keys should be sorted"
+        );
     }
 
     #[test]
@@ -403,9 +413,9 @@ mod tests {
     #[test]
     fn test_batch() {
         let items = vec![
-            (r#"{"x":1}"#.to_string(), false, false),  // compact, no sort
-            (r#"{"y":2}"#.to_string(), true, false),   // pretty, no sort
-            (r#"{"z":1,"a":2}"#.to_string(), false, true),  // compact + sort
+            (r#"{"x":1}"#.to_string(), false, false), // compact, no sort
+            (r#"{"y":2}"#.to_string(), true, false),  // pretty, no sort
+            (r#"{"z":1,"a":2}"#.to_string(), false, true), // compact + sort
         ];
         let results = batch_serde_json(items);
         assert_eq!(results.len(), 3);
@@ -417,10 +427,7 @@ mod tests {
 
     #[test]
     fn test_batch_pretty() {
-        let items = vec![
-            r#"{"a":1}"#.to_string(),
-            r#"{"b":2}"#.to_string(),
-        ];
+        let items = vec![r#"{"a":1}"#.to_string(), r#"{"b":2}"#.to_string()];
         let results = batch_serde_json_pretty(items);
         assert_eq!(results.len(), 2);
         assert!(results[0].contains('\n'));
@@ -429,10 +436,7 @@ mod tests {
 
     #[test]
     fn test_batch_compact() {
-        let items = vec![
-            r#"{"a":1}"#.to_string(),
-            r#"{"b":2}"#.to_string(),
-        ];
+        let items = vec![r#"{"a":1}"#.to_string(), r#"{"b":2}"#.to_string()];
         let results = batch_serde_json_compact(items);
         assert_eq!(results.len(), 2);
         assert!(!results[0].contains('\n'));

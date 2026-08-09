@@ -58,7 +58,9 @@ pub fn sha256_hex(data: &[u8]) -> String {
 #[pyfunction]
 pub fn blake3_64(body: &[u8]) -> String {
     let hash = blake3::hash(body);
-    let bytes: [u8; 8] = hash.as_bytes()[..8].try_into().expect("blake3 outputs 32 bytes");
+    let bytes: [u8; 8] = hash.as_bytes()[..8]
+        .try_into()
+        .expect("blake3 outputs 32 bytes");
     format!("{:016x}", u64::from_le_bytes(bytes))
 }
 
@@ -213,14 +215,20 @@ mod tests {
     fn test_sha256_hex_known_vector() {
         // FIPS-180 SHA-256("abc") = ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad
         let h = sha256_hex(b"abc");
-        assert_eq!(h, "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad");
+        assert_eq!(
+            h,
+            "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
+        );
     }
 
     #[test]
     fn test_sha256_hex_empty() {
         // SHA-256("") = e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
         let h = sha256_hex(b"");
-        assert_eq!(h, "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855");
+        assert_eq!(
+            h,
+            "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        );
     }
 
     #[test]
@@ -243,7 +251,10 @@ mod tests {
     fn test_blake3_hex_known_vector() {
         // BLAKE3("") = af1349b9f5f9a1a6a0404dea36dcc9499bcb25c9adc112b7cc9a93cae41f3262
         let h = blake3_hex(b"");
-        assert_eq!(h, "af1349b9f5f9a1a6a0404dea36dcc9499bcb25c9adc112b7cc9a93cae41f3262");
+        assert_eq!(
+            h,
+            "af1349b9f5f9a1a6a0404dea36dcc9499bcb25c9adc112b7cc9a93cae41f3262"
+        );
     }
 
     #[test]

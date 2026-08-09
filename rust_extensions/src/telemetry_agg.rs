@@ -33,20 +33,32 @@ pub struct AtomicCounter {
 
 impl AtomicCounter {
     pub fn new() -> Self {
-        Self { count: AtomicU64::new(0), bytes: AtomicU64::new(0) }
+        Self {
+            count: AtomicU64::new(0),
+            bytes: AtomicU64::new(0),
+        }
     }
 
     #[inline]
-    pub fn inc(&self) { self.count.fetch_add(1, Ordering::Relaxed); }
+    pub fn inc(&self) {
+        self.count.fetch_add(1, Ordering::Relaxed);
+    }
 
     #[inline]
-    pub fn add(&self, n: u64) { self.count.fetch_add(n, Ordering::Relaxed); }
+    pub fn add(&self, n: u64) {
+        self.count.fetch_add(n, Ordering::Relaxed);
+    }
 
     #[inline]
-    pub fn add_bytes(&self, n: u64) { self.bytes.fetch_add(n, Ordering::Relaxed); }
+    pub fn add_bytes(&self, n: u64) {
+        self.bytes.fetch_add(n, Ordering::Relaxed);
+    }
 
     pub fn get(&self) -> (u64, u64) {
-        (self.count.load(Ordering::Relaxed), self.bytes.load(Ordering::Relaxed))
+        (
+            self.count.load(Ordering::Relaxed),
+            self.bytes.load(Ordering::Relaxed),
+        )
     }
 
     pub fn reset(&self) {
@@ -55,7 +67,11 @@ impl AtomicCounter {
     }
 }
 
-impl Default for AtomicCounter { fn default() -> Self { Self::new() } }
+impl Default for AtomicCounter {
+    fn default() -> Self {
+        Self::new()
+    }
+}
 
 // ============== HDR Histogram ==============
 
@@ -91,7 +107,9 @@ impl Histogram {
 
     #[inline]
     fn bucket_index(value_ns: u64) -> usize {
-        if value_ns <= 1_000 { return 0; }
+        if value_ns <= 1_000 {
+            return 0;
+        }
         let mut idx = 0;
         let base: f64 = 1.0;
         while idx < 127 && (base * 1.01_f64.powi(idx as i32)) < value_ns as f64 {
@@ -109,11 +127,15 @@ impl Histogram {
         // Update min/max with relaxed ordering (approximate is fine for histograms)
         let current_min = self.min.load(Ordering::Relaxed);
         if ns < current_min {
-            let _ = self.min.compare_exchange(current_min, ns, Ordering::Relaxed, Ordering::Relaxed);
+            let _ =
+                self.min
+                    .compare_exchange(current_min, ns, Ordering::Relaxed, Ordering::Relaxed);
         }
         let current_max = self.max.load(Ordering::Relaxed);
         if ns > current_max {
-            let _ = self.max.compare_exchange(current_max, ns, Ordering::Relaxed, Ordering::Relaxed);
+            let _ =
+                self.max
+                    .compare_exchange(current_max, ns, Ordering::Relaxed, Ordering::Relaxed);
         }
     }
 
@@ -124,7 +146,9 @@ impl Histogram {
 
     pub fn percentile(&self, pct: f64) -> Duration {
         let total = self.total.load(Ordering::Relaxed);
-        if total == 0 { return Duration::ZERO; }
+        if total == 0 {
+            return Duration::ZERO;
+        }
         let target = (total as f64 * pct) as u64;
         let mut cumulative = 0u64;
         for (idx, count) in self.counts.iter().enumerate() {
@@ -137,7 +161,11 @@ impl Histogram {
     }
 
     pub fn percentiles(&self) -> (Duration, Duration, Duration) {
-        (self.percentile(0.50), self.percentile(0.95), self.percentile(0.99))
+        (
+            self.percentile(0.50),
+            self.percentile(0.95),
+            self.percentile(0.99),
+        )
     }
 
     /// Extended percentiles for comprehensive latency tracking.
@@ -166,7 +194,9 @@ impl Histogram {
     }
 
     pub fn reset(&self) {
-        for count in &self.counts { count.store(0, Ordering::Relaxed); }
+        for count in &self.counts {
+            count.store(0, Ordering::Relaxed);
+        }
         self.total.store(0, Ordering::Relaxed);
         self.sum.store(0, Ordering::Relaxed);
         self.min.store(0, Ordering::Relaxed);
@@ -179,8 +209,16 @@ impl Histogram {
         let total = self.total.load(Ordering::Relaxed);
         let sum = self.sum.load(Ordering::Relaxed);
         let percs = self.extended_percentiles();
-        let min_val = if total > 0 { self.min.load(Ordering::Relaxed) } else { 0 };
-        let max_val = if total > 0 { self.max.load(Ordering::Relaxed) } else { 0 };
+        let min_val = if total > 0 {
+            self.min.load(Ordering::Relaxed)
+        } else {
+            0
+        };
+        let max_val = if total > 0 {
+            self.max.load(Ordering::Relaxed)
+        } else {
+            0
+        };
         ExtendedHistogramStats {
             count: total,
             mean_ns: if total > 0 { sum / total } else { 0 },
@@ -197,7 +235,11 @@ impl Histogram {
     }
 }
 
-impl Default for Histogram { fn default() -> Self { Self::new() } }
+impl Default for Histogram {
+    fn default() -> Self {
+        Self::new()
+    }
+}
 
 #[derive(Clone, Debug)]
 pub struct HistogramStats {
@@ -227,33 +269,60 @@ pub struct ExtendedHistogramStats {
 
 // ============== Gauge ==============
 
-/// Volatile gauge using Mutex<f64> for memory/CPU metrics.
-/// Note: AtomicF64 is not yet stable in Rust, using Mutex as fallback.
-pub struct Gauge { value: std::sync::Mutex<f64> }
+/// Volatile gauge using parking_lot::Mutex<f64> for memory/CPU metrics.
+/// 
+/// SAFE-1 FIX: Replaced std::sync::Mutex with parking_lot::Mutex.
+/// 
+/// Why parking_lot::Mutex:
+///   - std::sync::Mutex can "poison" on panic, requiring Err() handling
+///   - parking_lot::Mutex never poisons — lock() returns Guard directly
+///   - ~2x faster acquisition than std::sync::Mutex
+///   - parking_lot::Mutex is already imported at line 24
+pub struct Gauge {
+    value: Mutex<f64>, // parking_lot::Mutex — no poisoning, no unwrap needed
+}
 
 impl Gauge {
-    pub fn new(initial: f64) -> Self { Self { value: std::sync::Mutex::new(initial) } }
-    #[inline] pub fn set(&self, val: f64) {
-        // F265B: Handle poisoned lock gracefully instead of panicking
-        if let Ok(mut guard) = self.value.lock() {
-            *guard = val;
+    pub fn new(initial: f64) -> Self {
+        Self {
+            value: Mutex::new(initial),
         }
     }
-    #[inline] pub fn get(&self) -> f64 {
-        // F265B: Handle poisoned lock gracefully instead of panicking
-        self.value.lock().map(|g| *g).unwrap_or(0.0)
+    #[inline]
+    pub fn set(&self, val: f64) {
+        // SAFE-1 FIX: No poison handling needed — parking_lot::Mutex never poisons
+        *self.value.lock() = val;
+    }
+    #[inline]
+    pub fn get(&self) -> f64 {
+        // SAFE-1 FIX: No poison handling needed — parking_lot::Mutex never poisons
+        *self.value.lock()
     }
 }
 
-impl Default for Gauge { fn default() -> Self { Self::new(0.0) } }
+impl Default for Gauge {
+    fn default() -> Self {
+        Self::new(0.0)
+    }
+}
 
 // ============== Telemetry Aggregator ==============
 
 #[derive(Clone, Debug)]
 pub enum TelemetryEvent {
-    Counter { name: String, count: u64, bytes: u64 },
-    Histogram { name: String, duration_ns: u64 },
-    Gauge { name: String, value: f64 },
+    Counter {
+        name: String,
+        count: u64,
+        bytes: u64,
+    },
+    Histogram {
+        name: String,
+        duration_ns: u64,
+    },
+    Gauge {
+        name: String,
+        value: f64,
+    },
 }
 
 pub struct TelemetryAggregator {
@@ -282,7 +351,9 @@ impl TelemetryAggregator {
                         let mut c = counters_clone.lock();
                         let counter = c.entry(name).or_insert_with(AtomicCounter::new);
                         counter.add(count);
-                        if bytes > 0 { counter.add_bytes(bytes); }
+                        if bytes > 0 {
+                            counter.add_bytes(bytes);
+                        }
                     }
                     TelemetryEvent::Histogram { name, duration_ns } => {
                         let mut h = histograms_clone.lock();
@@ -298,59 +369,95 @@ impl TelemetryAggregator {
             }
         });
 
-        Self { counters, histograms, gauges, sender: tx, _handle: handle }
+        Self {
+            counters,
+            histograms,
+            gauges,
+            sender: tx,
+            _handle: handle,
+        }
     }
 
     #[inline]
     pub fn counter_inc(&self, name: &str) {
-        let _ = self.sender.send(TelemetryEvent::Counter { name: name.to_string(), count: 1, bytes: 0 });
+        let _ = self.sender.send(TelemetryEvent::Counter {
+            name: name.to_string(),
+            count: 1,
+            bytes: 0,
+        });
     }
 
     #[inline]
     pub fn counter_add(&self, name: &str, count: u64, bytes: u64) {
-        let _ = self.sender.send(TelemetryEvent::Counter { name: name.to_string(), count, bytes });
+        let _ = self.sender.send(TelemetryEvent::Counter {
+            name: name.to_string(),
+            count,
+            bytes,
+        });
     }
 
     #[inline]
     pub fn histogram_record(&self, name: &str, duration: Duration) {
-        let _ = self.sender.send(TelemetryEvent::Histogram { name: name.to_string(), duration_ns: duration.as_nanos() as u64 });
+        let _ = self.sender.send(TelemetryEvent::Histogram {
+            name: name.to_string(),
+            duration_ns: duration.as_nanos() as u64,
+        });
     }
 
     #[inline]
     pub fn histogram_record_ns(&self, name: &str, ns: u64) {
-        let _ = self.sender.send(TelemetryEvent::Histogram { name: name.to_string(), duration_ns: ns });
+        let _ = self.sender.send(TelemetryEvent::Histogram {
+            name: name.to_string(),
+            duration_ns: ns,
+        });
     }
 
     #[inline]
     pub fn gauge_set(&self, name: &str, value: f64) {
-        let _ = self.sender.send(TelemetryEvent::Gauge { name: name.to_string(), value });
+        let _ = self.sender.send(TelemetryEvent::Gauge {
+            name: name.to_string(),
+            value,
+        });
     }
 
     pub fn snapshot(&self) -> TelemetrySnapshot {
         let counters = self.counters.lock();
-        let counter_snap: HashMap<String, (u64, u64)> = counters.iter().map(|(k, v)| (k.clone(), v.get())).collect();
+        let counter_snap: HashMap<String, (u64, u64)> =
+            counters.iter().map(|(k, v)| (k.clone(), v.get())).collect();
 
         let histograms = self.histograms.lock();
-        let histogram_snap: HashMap<String, HistogramStats> = histograms.iter().map(|(k, v)| (k.clone(), v.stats())).collect();
+        let histogram_snap: HashMap<String, HistogramStats> = histograms
+            .iter()
+            .map(|(k, v)| (k.clone(), v.stats()))
+            .collect();
 
         let gauges = self.gauges.lock();
-        let gauge_snap: HashMap<String, f64> = gauges.iter().map(|(k, v)| (k.clone(), v.get())).collect();
+        let gauge_snap: HashMap<String, f64> =
+            gauges.iter().map(|(k, v)| (k.clone(), v.get())).collect();
 
-        TelemetrySnapshot { counters: counter_snap, histograms: histogram_snap, gauges: gauge_snap }
+        TelemetrySnapshot {
+            counters: counter_snap,
+            histograms: histogram_snap,
+            gauges: gauge_snap,
+        }
     }
 
     /// Export with extended histogram stats for OTel metrics bridge.
     /// Returns TelemetryExport with p50-p99.9 percentiles.
     pub fn export(&self) -> TelemetryExport {
         let counters = self.counters.lock();
-        let counter_snap: HashMap<String, (u64, u64)> = counters.iter().map(|(k, v)| (k.clone(), v.get())).collect();
+        let counter_snap: HashMap<String, (u64, u64)> =
+            counters.iter().map(|(k, v)| (k.clone(), v.get())).collect();
 
         let histograms = self.histograms.lock();
-        let histogram_snap: HashMap<String, ExtendedHistogramStats> =
-            histograms.iter().map(|(k, v)| (k.clone(), v.extended_stats())).collect();
+        let histogram_snap: HashMap<String, ExtendedHistogramStats> = histograms
+            .iter()
+            .map(|(k, v)| (k.clone(), v.extended_stats()))
+            .collect();
 
         let gauges = self.gauges.lock();
-        let gauge_snap: HashMap<String, f64> = gauges.iter().map(|(k, v)| (k.clone(), v.get())).collect();
+        let gauge_snap: HashMap<String, f64> =
+            gauges.iter().map(|(k, v)| (k.clone(), v.get())).collect();
 
         TelemetryExport {
             counters: counter_snap,
@@ -364,7 +471,11 @@ impl TelemetryAggregator {
     }
 }
 
-impl Default for TelemetryAggregator { fn default() -> Self { Self::new() } }
+impl Default for TelemetryAggregator {
+    fn default() -> Self {
+        Self::new()
+    }
+}
 
 #[derive(Clone, Debug)]
 pub struct TelemetrySnapshot {
@@ -403,20 +514,35 @@ pub struct TelemetryExport {
 // to_thread workers that hold GIL). The internal reducer thread receives
 // from a bounded MPSC channel — all sends are from GIL-held code.
 #[pyclass(unsendable)]
-pub struct PyTelemetryAggregator { inner: Arc<TelemetryAggregator> }
+pub struct PyTelemetryAggregator {
+    inner: Arc<TelemetryAggregator>,
+}
 
 #[pymethods]
 impl PyTelemetryAggregator {
     #[new]
-    fn new() -> Self { Self { inner: Arc::new(TelemetryAggregator::new()) } }
-
-    fn counter_inc(&self, name: String) { self.inner.counter_inc(&name); }
-    fn counter_add(&self, name: String, count: u64, bytes: u64) { self.inner.counter_add(&name, count, bytes); }
-    fn histogram_record(&self, name: String, duration_ms: f64) {
-        self.inner.histogram_record(&name, Duration::from_secs_f64(duration_ms / 1000.0));
+    fn new() -> Self {
+        Self {
+            inner: Arc::new(TelemetryAggregator::new()),
+        }
     }
-    fn histogram_record_ns(&self, name: String, ns: u64) { self.inner.histogram_record_ns(&name, ns); }
-    fn gauge_set(&self, name: String, value: f64) { self.inner.gauge_set(&name, value); }
+
+    fn counter_inc(&self, name: String) {
+        self.inner.counter_inc(&name);
+    }
+    fn counter_add(&self, name: String, count: u64, bytes: u64) {
+        self.inner.counter_add(&name, count, bytes);
+    }
+    fn histogram_record(&self, name: String, duration_ms: f64) {
+        self.inner
+            .histogram_record(&name, Duration::from_secs_f64(duration_ms / 1000.0));
+    }
+    fn histogram_record_ns(&self, name: String, ns: u64) {
+        self.inner.histogram_record_ns(&name, ns);
+    }
+    fn gauge_set(&self, name: String, value: f64) {
+        self.inner.gauge_set(&name, value);
+    }
 
     /// Snapshot with standard histogram stats (p50/p95/p99).
     fn snapshot(&self, py: Python<'_>) -> HashMap<String, Py<PyAny>> {
@@ -424,7 +550,10 @@ impl PyTelemetryAggregator {
         let mut result = HashMap::new();
 
         for (name, (count, bytes)) in snap.counters {
-            result.insert(format!("counter:{}", name), (count, bytes).into_pyobject(py).unwrap().into());
+            result.insert(
+                format!("counter:{}", name),
+                (count, bytes).into_pyobject(py).unwrap().into(),
+            );
         }
         for (name, stats) in snap.histograms {
             let py_dict: HashMap<&str, Py<PyAny>> = HashMap::from([
@@ -434,10 +563,16 @@ impl PyTelemetryAggregator {
                 ("p95_ns", stats.p95_ns.into_pyobject(py).unwrap().into()),
                 ("p99_ns", stats.p99_ns.into_pyobject(py).unwrap().into()),
             ]);
-            result.insert(format!("histogram:{}", name), py_dict.into_pyobject(py).unwrap().into());
+            result.insert(
+                format!("histogram:{}", name),
+                py_dict.into_pyobject(py).unwrap().into(),
+            );
         }
         for (name, value) in snap.gauges {
-            result.insert(format!("gauge:{}", name), value.into_pyobject(py).unwrap().into());
+            result.insert(
+                format!("gauge:{}", name),
+                value.into_pyobject(py).unwrap().into(),
+            );
         }
         result
     }
@@ -452,11 +587,12 @@ impl PyTelemetryAggregator {
         let counters: HashMap<String, (u64, u64)> = exp.counters;
         let counters_py: HashMap<String, Py<PyAny>> = counters
             .into_iter()
-            .map(|(k, v)| {
-                (k, (v.0, v.1).into_pyobject(py).unwrap().into())
-            })
+            .map(|(k, v)| (k, (v.0, v.1).into_pyobject(py).unwrap().into()))
             .collect();
-        result.insert("counters".into(), counters_py.into_pyobject(py).unwrap().into());
+        result.insert(
+            "counters".into(),
+            counters_py.into_pyobject(py).unwrap().into(),
+        );
 
         // Histograms: name → ExtendedHistogramStats
         let histograms: HashMap<String, ExtendedHistogramStats> = exp.histograms;
@@ -479,7 +615,10 @@ impl PyTelemetryAggregator {
                 (k, py_dict.into_pyobject(py).unwrap().into())
             })
             .collect();
-        result.insert("histograms".into(), histograms_py.into_pyobject(py).unwrap().into());
+        result.insert(
+            "histograms".into(),
+            histograms_py.into_pyobject(py).unwrap().into(),
+        );
 
         // Gauges: name → value
         let gauges: HashMap<String, f64> = exp.gauges;
@@ -490,14 +629,19 @@ impl PyTelemetryAggregator {
         result.insert("gauges".into(), gauges_py.into_pyobject(py).unwrap().into());
 
         // Timestamp
-        result.insert("timestamp_ms".into(), exp.timestamp_ms.into_pyobject(py).unwrap().into());
+        result.insert(
+            "timestamp_ms".into(),
+            exp.timestamp_ms.into_pyobject(py).unwrap().into(),
+        );
 
         result
     }
 }
 
 #[pyfunction]
-fn create_telemetry_aggregator() -> PyTelemetryAggregator { PyTelemetryAggregator::new() }
+fn create_telemetry_aggregator() -> PyTelemetryAggregator {
+    PyTelemetryAggregator::new()
+}
 
 pub fn register_functions(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(create_telemetry_aggregator, m)?)?;

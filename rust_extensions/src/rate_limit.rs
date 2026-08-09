@@ -9,8 +9,8 @@
 //! - Záložní Python asyncio.Semaphore pokud Rust není dostupný
 //! - Bez API key → rate=5, s API key → rate=50
 
-use pyo3::prelude::*;
 use crossbeam_channel::{bounded, Receiver, Sender};
+use pyo3::prelude::*;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -61,7 +61,12 @@ impl TokenBucketState {
         if current == 0 {
             return false;
         }
-        match self.tokens.compare_exchange(current, current - 1, Ordering::AcqRel, Ordering::Acquire) {
+        match self.tokens.compare_exchange(
+            current,
+            current - 1,
+            Ordering::AcqRel,
+            Ordering::Acquire,
+        ) {
             Ok(_) => true,
             Err(_) => false,
         }

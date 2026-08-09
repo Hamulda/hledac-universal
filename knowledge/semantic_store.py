@@ -119,6 +119,13 @@ class SemanticStore:
     # -------------------------------------------------------------------------
     # Fields
     # -------------------------------------------------------------------------
+    # SAFE-2.4/2.5: Embedding validation constants
+    _SAFE_EMBED_DIM: int = _EMBED_DIM  # Expected embedding dimension (256)
+    _SAFE_EMBED_DIM_TOLERANCE: int = 2  # Allow 2-dim tolerance for LanceDB schema
+    _SAFE_EMBED_VALUE_MAX: float = 100.0  # Max value to prevent NaN/Inf in vector DB
+    _SAFE_EMBED_VALUE_MIN: float = -100.0  # Min value
+    _SAFE_EMBED_NORM_MAX: float = 2.0  # Max L2 norm before renormalization
+
     __slots__ = (
         "_db_path",
         "_db",
@@ -137,6 +144,9 @@ class SemanticStore:
         "_embed_dim",
         "_initialized",
         "_multilingual_enabled",  # SWARM-002: multilingual feature flag
+        "_embed_validation_stats",  # SAFE-2.5: validation statistics
+        # SAFE-4: Buffer overflow observability
+        "_buffer_overflow_drops",
     )
 
     def __init__(self, db_path: Path) -> None:
@@ -159,6 +169,17 @@ class SemanticStore:
         self._lang_detector: LangDetector | None = None
         self._bge_m3_embedder: BGEM3Embedder | None = None
         self._multilingual_enabled: bool = False
+        # SAFE-2.5: Embedding validation statistics
+        self._embed_validation_stats = {
+            'total_checked': 0,
+            'dimension_errors': 0,
+            'nan_inf_errors': 0,
+            'value_outliers': 0,
+            'renormalized': 0,
+        }
+        # SAFE-4: Buffer overflow drop counter for observability
+        # Tracks OSINT evidence silently lost due to bounded buffer
+        self._buffer_overflow_drops: int = 0
 
     # -------------------------------------------------------------------------
     # Lifecycle
@@ -354,8 +375,15 @@ class SemanticStore:
         if not text.strip():
             return
         # Enforce bounded pending buffer (M1 8GB safety)
+        # SAFE-4 FIX: Changed from logger.debug to logger.warning + metrics
+        # Silent drops were causing invisible OSINT evidence loss
         if len(self._pending_texts) >= _MAX_PENDING:
-            logger.debug("SemanticStore: pending buffer full, dropping oldest")
+            self._buffer_overflow_drops += 1
+            # Log at WARNING level for visibility - this is data loss, not debug info
+            logger.warning(
+                f"[SEMSTORE] Buffer overflow: dropping oldest finding "
+                f"(drops_since_start={self._buffer_overflow_drops}, max={_MAX_PENDING})"
+            )
             self._pending_texts.popleft()
             self._pending_meta.popleft()
             self._pending_languages.popleft()
@@ -514,13 +542,23 @@ class SemanticStore:
         texts: list[str],
         meta: list[dict],
     ) -> int:
-        """Write English embeddings to LanceDB or sqlite-vec."""
+        """Write English embeddings to LanceDB or sqlite-vec.
+        
+        SAFE-2.4: Validates all embeddings before storage to prevent corrupted data.
+        """
         if embeddings_english is None or not english_indices:
+            return 0
+
+        # SAFE-2.4: Validate embeddings before writing
+        safe_embeddings, failed_indices = self._safe_validate_embeddings_batch(
+            embeddings_english, texts
+        )
+        if safe_embeddings is None:
             return 0
 
         if self._table is not None:
             records = [
-                self._build_lance_english_record(embeddings_english[i], english_indices[i], texts, meta)
+                self._build_lance_english_record(safe_embeddings[i], english_indices[i], texts, meta)
                 for i in range(len(english_indices))
             ]
             try:
@@ -532,7 +570,7 @@ class SemanticStore:
 
         elif self._vec_db is not None:
             rows = [
-                self._build_sqlite_vec_row(english_indices[i], texts, meta, embeddings_english[i])
+                self._build_sqlite_vec_row(english_indices[i], texts, meta, safe_embeddings[i])
                 for i in range(len(english_indices))
             ]
             try:
@@ -558,14 +596,24 @@ class SemanticStore:
         texts: list[str],
         meta: list[dict],
     ) -> int:
-        """Write multilingual embeddings to LanceDB or sqlite-vec."""
+        """Write multilingual embeddings to LanceDB or sqlite-vec.
+        
+        SAFE-2.4: Validates all embeddings before storage to prevent corrupted data.
+        """
         if embeddings_multilingual is None or not multilingual_indices:
+            return 0
+
+        # SAFE-2.4: Validate embeddings before writing
+        safe_embeddings, failed_indices = self._safe_validate_embeddings_batch(
+            embeddings_multilingual, texts
+        )
+        if safe_embeddings is None:
             return 0
 
         if self._table_multilingual is not None:
             records = [
                 self._build_lance_multilingual_record(
-                    embeddings_multilingual[i], multilingual_indices[i], texts, meta, multilingual_langs[i],
+                    safe_embeddings[i], multilingual_indices[i], texts, meta, multilingual_langs[i],
                 )
                 for i in range(len(multilingual_indices))
             ]
@@ -579,7 +627,7 @@ class SemanticStore:
         elif self._vec_db_multilingual is not None:
             rows = [
                 self._build_sqlite_vec_multilingual_row(
-                    multilingual_indices[i], texts, meta, embeddings_multilingual[i], multilingual_langs[i],
+                    multilingual_indices[i], texts, meta, safe_embeddings[i], multilingual_langs[i],
                 )
                 for i in range(len(multilingual_indices))
             ]
@@ -663,14 +711,23 @@ class SemanticStore:
             return self._hash_fallback_embeddings(texts)
 
     def _ensure_dim(self, embeddings: np.ndarray, target_dim: int) -> np.ndarray:
-        """Ensure embeddings have target dimension (truncate or pad)."""
+        """Ensure embeddings have target dimension (truncate or pad).
+
+        MRL-2 FIX: Truncation now includes L2 normalization to preserve semantic similarity.
+        MRL property: First target_dim dimensions contain most semantic information.
+        After truncation, L2 normalization ensures cosine similarity is consistent.
+        """
         if embeddings.shape[-1] == target_dim:
             return embeddings
 
         current_dim = embeddings.shape[-1]
         if current_dim > target_dim:
-            # Truncate
-            return embeddings[..., :target_dim]
+            # Truncate to target_dim (MRL prefix)
+            truncated = embeddings[..., :target_dim]
+            # MRL-2 FIX: Normalize after truncation to preserve similarity metrics
+            norms = np.linalg.norm(truncated, axis=-1, keepdims=True)
+            norms = np.where(norms > 1e-9, norms, 1.0)
+            return truncated / norms
         else:
             # Pad with zeros
             result = np.zeros((*embeddings.shape[:-1], target_dim), dtype=embeddings.dtype)
@@ -692,6 +749,162 @@ class SemanticStore:
             vec = vec / norm if norm > 1e-9 else vec
             embeddings.append(vec)
         return np.array(embeddings, dtype=np.float32)
+
+    def _safe_validate_embedding(self, emb: np.ndarray) -> np.ndarray | None:
+        """SAFE-2.4/2.5: Validate embedding before LanceDB storage.
+        
+        Prevents:
+        - Wrong-dimension embeddings corrupting LanceDB index
+        - NaN/Inf from propagating to vector similarity search
+        - Value outliers from causing numerical instability
+        
+        Returns validated embedding or None if unrecoverable.
+        """
+        import math
+        
+        self._embed_validation_stats['total_checked'] += 1
+        
+        # Dimension validation with tolerance
+        current_dim = emb.shape[-1] if emb.ndim > 0 else len(emb)
+        min_dim = self._SAFE_EMBED_DIM - self._SAFE_EMBED_DIM_TOLERANCE
+        max_dim = self._SAFE_EMBED_DIM + self._SAFE_EMBED_DIM_TOLERANCE
+        
+        if not (min_dim <= current_dim <= max_dim):
+            logger.warning(
+                "[SAFE-2.4] Embedding dim %d outside valid range [%d, %d]",
+                current_dim, min_dim, max_dim
+            )
+            self._embed_validation_stats['dimension_errors'] += 1
+            return None
+        
+        # SAFE-2.5: OOM guard - check memory footprint before store
+        # M1 8GB: max 1M embeddings * 256 * 4 bytes = ~1GB
+        if emb.nbytes > 1024 * 1024:  # > 1MB single embedding
+            logger.warning("[SAFE-2.5] Embedding size %d bytes exceeds safety threshold", emb.nbytes)
+            self._embed_validation_stats['dimension_errors'] += 1
+            return None
+        
+        # Check for NaN/Inf
+        if np.any(np.isnan(emb)) or np.any(np.isinf(emb)):
+            logger.warning("[SAFE-2.5] Embedding contains NaN/Inf")
+            self._embed_validation_stats['nan_inf_errors'] += 1
+            return None
+        
+        # Value range validation - prevent numerical instability
+        outliers_mask = (emb < self._SAFE_EMBED_VALUE_MIN) | (emb > self._SAFE_EMBED_VALUE_MAX)
+        if np.any(outliers_mask):
+            self._embed_validation_stats['value_outliers'] += 1
+            # Clamp outliers to prevent numerical instability
+            emb = np.clip(emb, self._SAFE_EMBED_VALUE_MIN, self._SAFE_EMBED_VALUE_MAX)
+        
+        # Ensure exact dimension
+        if current_dim != self._SAFE_EMBED_DIM:
+            if current_dim > self._SAFE_EMBED_DIM:
+                emb = emb[..., :self._SAFE_EMBED_DIM]
+            else:
+                # Pad with zeros
+                result = np.zeros((*emb.shape[:-1], self._SAFE_EMBED_DIM), dtype=emb.dtype)
+                result[..., :current_dim] = emb
+                emb = result
+        
+        # L2 normalize to prevent magnitude issues in cosine similarity
+        norm = np.linalg.norm(emb)
+        if norm > self._SAFE_EMBED_NORM_MAX or norm < 1e-6:
+            self._embed_validation_stats['renormalized'] += 1
+            emb = emb / (norm if norm > 1e-6 else 1.0)
+        
+        return emb
+
+    def _safe_validate_embeddings_batch(
+        self, embeddings: np.ndarray, texts: list[str]
+    ) -> tuple[np.ndarray | None, list[int]]:
+        """SAFE-2.4/2.5: Validate batch of embeddings before LanceDB storage.
+        
+        Returns (validated_embeddings, failed_indices) tuple.
+        failed_indices contains indices of embeddings that failed validation.
+        """
+        if embeddings is None or len(embeddings) == 0:
+            return None, []
+        
+        failed_indices = []
+        validated = []
+        
+        for i, emb in enumerate(embeddings):
+            safe_emb = self._safe_validate_embedding(np.asarray(emb))
+            if safe_emb is not None:
+                validated.append(safe_emb)
+            else:
+                failed_indices.append(i)
+                # Use zero embedding as fallback for failed ones
+                validated.append(np.zeros(self._SAFE_EMBED_DIM, dtype=np.float32))
+        
+        if failed_indices:
+            logger.warning(
+                "[SAFE-2.4] %d/%d embeddings failed validation",
+                len(failed_indices), len(embeddings)
+            )
+        
+        return np.array(validated, dtype=np.float32), failed_indices
+
+    def _validate_search_result(self, result: dict) -> dict | None:
+        """FIX-4: Validate LanceDB search result structure and values.
+        
+        Prevents:
+        - Missing required fields
+        - Invalid scores (NaN/Inf, out of range)
+        - Malformed text fields
+        
+        Returns validated result or None if invalid.
+        """
+        import math
+        
+        # Required fields
+        required_fields = ["text", "source_type", "finding_id", "ts", "ioc_types", "score"]
+        for field in required_fields:
+            if field not in result:
+                logger.debug("[FIX-4] Search result missing required field: %s", field)
+                return None
+        
+        # Validate score
+        score = result.get("score")
+        if score is None or not isinstance(score, (int, float)):
+            logger.debug("[FIX-4] Search result has invalid score type: %s", type(score))
+            return None
+        
+        if math.isnan(score) or math.isinf(score):
+            logger.debug("[FIX-4] Search result has NaN/Inf score")
+            return None
+        
+        # Score should be in [0, 1] for cosine similarity (after transformation)
+        # But allow some tolerance for floating point errors
+        if not (-0.01 <= score <= 1.01):
+            logger.debug("[FIX-4] Search result score out of range: %f", score)
+            return None
+        
+        # Validate text field
+        text = result.get("text")
+        if text is not None and len(text) > _MAX_TEXT_LEN * 2:  # Sanity check for text length
+            # Truncate to prevent memory issues
+            result["text"] = text[:_MAX_TEXT_LEN * 2]
+        
+        # Validate finding_id
+        fid = result.get("finding_id")
+        if not fid or not isinstance(fid, str) or len(fid) > 1024:
+            logger.debug("[FIX-4] Search result has invalid finding_id")
+            return None
+        
+        return result
+
+    def _validate_search_results_batch(self, results: list[dict]) -> list[dict]:
+        """FIX-4: Validate batch of search results, filtering out invalid ones."""
+        validated = []
+        for r in results:
+            safe_r = self._validate_search_result(r)
+            if safe_r is not None:
+                validated.append(safe_r)
+        if len(validated) < len(results):
+            logger.debug("[FIX-4] Filtered %d invalid search results", len(results) - len(validated))
+        return validated
 
     # -------------------------------------------------------------------------
     # Semantic pivot — ANN search
@@ -741,7 +954,7 @@ class SemanticStore:
             all_results.extend(multilingual_results)
 
         # Sort by score and return top-k
-        all_results.sort(key=attrgetter("get")("score", 0), reverse=True)
+        all_results.sort(key=itemgetter("score"), reverse=True)
         return all_results[:top_k]
 
     async def _embed_query_english(self, query: str) -> np.ndarray:
@@ -797,7 +1010,8 @@ class SemanticStore:
                     .limit(top_k)
                     .to_list()
                 )
-                return [
+                # FIX-4: Transform results before validation
+                transformed = [
                     {
                         "text": r["text"],
                         "source_type": r["source_type"],
@@ -809,6 +1023,8 @@ class SemanticStore:
                     }
                     for r in results
                 ]
+                # FIX-4: Validate all results
+                return self._validate_search_results_batch(transformed)
             except Exception as e:
                 logger.warning("[SEMSTORE] LanceDB English ANN search failed: %s", e)
                 return []
@@ -821,7 +1037,7 @@ class SemanticStore:
                     f"FROM {_TABLE_NAME} ORDER BY score DESC LIMIT ?",
                     [query_vector.tolist(), top_k],
                 ).fetchall()
-                return [
+                transformed = [
                     {
                         "text": r[1],
                         "source_type": r[2],
@@ -833,6 +1049,8 @@ class SemanticStore:
                     }
                     for r in rows
                 ]
+                # FIX-4: Validate all results
+                return self._validate_search_results_batch(transformed)
             except Exception as e:
                 logger.warning("[SEMSTORE] sqlite-vec English ANN search failed: %s", e)
                 return []
@@ -851,7 +1069,7 @@ class SemanticStore:
                     .limit(top_k)
                     .to_list()
                 )
-                return [
+                transformed = [
                     {
                         "text": r["text"],
                         "source_type": r["source_type"],
@@ -863,6 +1081,8 @@ class SemanticStore:
                     }
                     for r in results
                 ]
+                # FIX-4: Validate all results
+                return self._validate_search_results_batch(transformed)
             except Exception as e:
                 logger.warning("[SEMSTORE] LanceDB multilingual ANN search failed: %s", e)
                 return []
@@ -875,7 +1095,7 @@ class SemanticStore:
                     f"FROM {_TABLE_NAME_MULTILINGUAL} ORDER BY score DESC LIMIT ?",
                     [query_vector.tolist(), top_k],
                 ).fetchall()
-                return [
+                transformed = [
                     {
                         "text": r[1],
                         "source_type": r[2],
@@ -887,6 +1107,8 @@ class SemanticStore:
                     }
                     for r in rows
                 ]
+                # FIX-4: Validate all results
+                return self._validate_search_results_batch(transformed)
             except Exception as e:
                 logger.warning("[SEMSTORE] sqlite-vec multilingual ANN search failed: %s", e)
                 return []
@@ -922,6 +1144,27 @@ class SemanticStore:
     # -------------------------------------------------------------------------
     # Utility
     # -------------------------------------------------------------------------
+
+    def get_buffer_stats(self) -> dict[str, int]:
+        """
+        Return buffer statistics for observability.
+
+        SAFE-4: Exposes buffer overflow metrics to detect silent data loss.
+        Call this periodically or on flush to monitor OSINT evidence integrity.
+
+        Returns:
+            dict with keys:
+            - pending_count: current pending items in buffer
+            - max_pending: configured maximum buffer size
+            - overflow_drops: total items dropped due to buffer overflow since init
+            - embed_validation_stats: SAFE-2.5 validation metrics
+        """
+        return {
+            'pending_count': len(self._pending_texts),
+            'max_pending': _MAX_PENDING,
+            'overflow_drops': self._buffer_overflow_drops,
+            'embed_validation_stats': self._embed_validation_stats.copy(),
+        }
 
     async def close(self) -> None:
         """TEARDOWN — final flush + close connections."""

@@ -60,26 +60,25 @@ pub mod patterns {
 pub mod extract {
     // Re-export from ioc_extract_fast
     pub use crate::ioc_extract_fast::{
-        extract_structured_entities_py, batch_extract_structured_entities_py,
-        extract_structured_entities, batch_extract_structured_entities,
-        ioc_extract_unified, batch_ioc_extract_unified, batch_ioc_extract_unified_python,
-        extract_iocs_from_text,
+        batch_extract_structured_entities, batch_extract_structured_entities_py,
+        batch_ioc_extract_unified, batch_ioc_extract_unified_python, extract_iocs_from_text,
+        extract_structured_entities, extract_structured_entities_py, ioc_extract_unified,
     };
     // Re-export from ioc_extract
     pub use crate::ioc_extract::{
-        extract_iocs_flat, extract_iocs, batch_ioc_extract_fast,
-        batch_sha256, has_url, has_domain, has_email, has_ipv4, has_any_ioc,
+        batch_ioc_extract_fast, batch_sha256, extract_iocs, extract_iocs_flat, has_any_ioc,
+        has_domain, has_email, has_ipv4, has_url,
     };
     // Re-export from ioc_extract_simd
     pub use crate::ioc_extract_simd::{
-        extract_iocs_simd, batch_extract_iocs_simd, batch_extract_iocs_simd_indexed,
-        batch_extract_iocs_simd_python,
+        batch_extract_iocs_simd, batch_extract_iocs_simd_indexed, batch_extract_iocs_simd_python,
+        extract_iocs_simd,
     };
 }
 
 // IOC deduplication - delegates to root-level ioc_dedup
 pub mod dedup {
-    pub use crate::ioc_dedup::{IocType, IocDedupStore, MmapIocDedupStore};
+    pub use crate::ioc_dedup::{IocDedupStore, IocType, MmapIocDedupStore};
 }
 
 // IOC co-occurrence - delegates to root-level ioc_cooccurrence_rs

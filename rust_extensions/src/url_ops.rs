@@ -16,6 +16,11 @@ use url::Url;
 use super::adaptive_scheduler::get_adaptive_mixed_threshold;
 use blake3::Hasher;
 
+// SAFE-1 FIX: Use parking_lot::Mutex instead of std::sync::Mutex.
+// parking_lot::Mutex never poisons (no panic-based locking), is ~2x faster,
+// and .lock() returns Guard directly without Result<Guard, PoisonError>.
+use parking_lot::Mutex;
+
 // R24: tracing instrumentation — conditionally compiled when tracing feature is enabled
 #[cfg(feature = "otel")]
 use tracing::instrument;
@@ -173,7 +178,8 @@ pub fn batch_classify(urls: &Bound<'_, pyo3::types::PyList>) -> Vec<(String, Str
             .filter_map(|item| item.extract::<String>().ok())
             .collect();
         crate::mixed_pool(n).install(|| {
-            owned.par_iter()
+            owned
+                .par_iter()
                 .map(|u| classify_url(u))
                 .with_min_len(BATCH_PARALLEL_MIN_CHUNK)
                 .collect()
@@ -204,9 +210,7 @@ pub fn batch_classify(urls: &Bound<'_, pyo3::types::PyList>) -> Vec<(String, Str
 /// * Fail-soft: malformed URLs get ("malformed", "") kind, never panics.
 #[cfg_attr(feature = "otel", instrument(skip_all, fields(url_count = urls.len())))]
 #[pyfunction]
-pub fn priority_classify_urls(
-    urls: Vec<(String, f32)>,
-) -> Vec<(String, f32, String)> {
+pub fn priority_classify_urls(urls: Vec<(String, f32)>) -> Vec<(String, f32, String)> {
     if urls.is_empty() {
         return Vec::new();
     }
@@ -219,7 +223,8 @@ pub fn priority_classify_urls(
     // Stage 2: classify all URLs via mixed_pool (adaptive parallelism)
     // No intermediate Vec<String> allocation — rayon iterates sorted directly.
     let classifications: Vec<(String, String)> = crate::mixed_pool(n).install(|| {
-        sorted.par_iter()
+        sorted
+            .par_iter()
             .map(|(u, _)| classify_url(u))
             .with_min_len(BATCH_PARALLEL_MIN_CHUNK)
             .collect()
@@ -375,18 +380,20 @@ impl UrlClassifyCache {
 
         if !miss_urls.is_empty() {
             // Stage 2: rayon batch classify for misses (single GIL transition)
-            let classified: Vec<(String, String)> = if miss_urls.len() >= get_adaptive_mixed_threshold() {
-                // Large miss batch: parallel via rayon
-                crate::mixed_pool(miss_urls.len()).install(|| {
-                    miss_urls.par_iter()
-                        .map(|u| classify_url(u))
-                        .with_min_len(BATCH_PARALLEL_MIN_CHUNK)
-                        .collect()
-                })
-            } else {
-                // Small miss batch: serial
-                miss_urls.iter().map(|u| classify_url(u)).collect()
-            };
+            let classified: Vec<(String, String)> =
+                if miss_urls.len() >= get_adaptive_mixed_threshold() {
+                    // Large miss batch: parallel via rayon
+                    crate::mixed_pool(miss_urls.len()).install(|| {
+                        miss_urls
+                            .par_iter()
+                            .map(|u| classify_url(u))
+                            .with_min_len(BATCH_PARALLEL_MIN_CHUNK)
+                            .collect()
+                    })
+                } else {
+                    // Small miss batch: serial
+                    miss_urls.iter().map(|u| classify_url(u)).collect()
+                };
 
             // Stage 3: populate cache + fill results
             // (write-lock held only for this section)
@@ -408,7 +415,8 @@ impl UrlClassifyCache {
                 // LRU eviction if at cap
                 if self.map.len() >= 50_000 {
                     let evict_count = (self.map.len() / 10).max(100);
-                    let keys_to_remove: Vec<u64> = self.map.keys().take(evict_count).copied().collect();
+                    let keys_to_remove: Vec<u64> =
+                        self.map.keys().take(evict_count).copied().collect();
                     for k in keys_to_remove {
                         self.map.remove(&k);
                         self.evictions += 1;
@@ -426,7 +434,13 @@ impl UrlClassifyCache {
 
     /// Get cache statistics.
     fn stats(&self) -> (usize, usize, usize, usize, usize) {
-        (self.map.len(), self.hits, self.misses, self.evictions, 50_000)
+        (
+            self.map.len(),
+            self.hits,
+            self.misses,
+            self.evictions,
+            50_000,
+        )
     }
 
     /// Clear the cache.
@@ -446,9 +460,12 @@ impl UrlClassifyCache {
 ///
 /// Single GIL transition per batch call (vs N transitions for N cache lookups
 /// in the Python PyCacheDict approach).
+///
+/// SAFE-1 FIX: Uses parking_lot::Mutex instead of std::sync::Mutex.
+/// parking_lot::Mutex never poisons (no panic-based locking) and is ~2x faster.
 #[pyclass]
 pub struct UrlClassifyCachePy {
-    inner: std::sync::Mutex<UrlClassifyCache>,
+    inner: Mutex<UrlClassifyCache>, // parking_lot::Mutex — no poisoning, no unwrap needed
 }
 
 #[pymethods]
@@ -457,7 +474,7 @@ impl UrlClassifyCachePy {
     #[new]
     fn new(capacity: usize, ttl_s: f64) -> Self {
         Self {
-            inner: std::sync::Mutex::new(UrlClassifyCache {
+            inner: Mutex::new(UrlClassifyCache {
                 map: AHashMap::with_capacity(capacity),
                 ttl_s: ttl_s.max(0.0),
                 hits: 0,
@@ -482,22 +499,16 @@ impl UrlClassifyCachePy {
     ///     kind_str ∈ {"clearnet", "onion", "i2p", "freenet", "empty", "malformed"}
     ///     host_str is lowercase hostname or "" for empty/malformed
     fn classify_batch_cached(&self, urls: Vec<String>) -> Vec<(String, String)> {
-        let mut guard = match self.inner.lock() {
-            Ok(g) => g,
-            Err(_) => return urls.iter().map(|u| classify_url(u)).collect(),
-        };
+        // SAFE-1 FIX: No poison handling needed — parking_lot::Mutex never poisons
+        let mut guard = self.inner.lock();
         guard.classify_batch_impl(&urls)
     }
 
     /// Clear all cache entries and reset stats.
     fn clear(&self) -> bool {
-        match self.inner.lock() {
-            Ok(mut guard) => {
-                guard.clear();
-                true
-            }
-            Err(_) => false,
-        }
+        // SAFE-1 FIX: No poison handling needed — parking_lot::Mutex never poisons
+        self.inner.lock().clear();
+        true
     }
 
     /// Get cache statistics.
@@ -505,12 +516,14 @@ impl UrlClassifyCachePy {
     /// Returns:
     ///     dict with keys: size, hits, misses, evictions, capacity
     fn stats(&self) -> Option<(usize, usize, usize, usize, usize)> {
-        self.inner.lock().ok().map(|g| g.stats())
+        // SAFE-1 FIX: No poison handling needed — parking_lot::Mutex never poisons
+        Some(self.inner.lock().stats())
     }
 
     /// Get the number of entries currently in the cache.
     fn __len__(&self) -> usize {
-        self.inner.lock().map(|g| g.map.len()).unwrap_or(0)
+        // SAFE-1 FIX: No poison handling needed — parking_lot::Mutex never poisons
+        self.inner.lock().map.len()
     }
 }
 
@@ -612,7 +625,11 @@ fn matches_any_word(haystack: &str, needle: &str) -> bool {
     let mut start = 0;
     while start + nlen <= bytes.len() {
         // Find next '/' or string start.
-        if start > 0 && bytes[start - 1] != b'/' && bytes[start - 1] != b'-' && bytes[start - 1] != b'.' {
+        if start > 0
+            && bytes[start - 1] != b'/'
+            && bytes[start - 1] != b'-'
+            && bytes[start - 1] != b'.'
+        {
             start += 1;
             continue;
         }
@@ -637,8 +654,8 @@ fn matches_any_word(haystack: &str, needle: &str) -> bool {
 /// Covers utm_*, fbclid, gclid, mc_*, yclid, ref, and common ad/analytics params.
 const TRACKING_PARAM_PREFIXES: &[&str] = &["utm_"];
 const TRACKING_PARAMS: &[&str] = &[
-    "fbclid", "gclid", "gclsrc", "dclid", "msclkid", "twclid",
-    "mc_cid", "mc_eid", "_ga", "_gl", "ref", "yclid",
+    "fbclid", "gclid", "gclsrc", "dclid", "msclkid", "twclid", "mc_cid", "mc_eid", "_ga", "_gl",
+    "ref", "yclid",
 ];
 
 /// Returns true if `key` is a tracking parameter (prefix or exact match).
@@ -656,7 +673,9 @@ fn is_tracking_param(key: &str) -> bool {
     }
     // Prefix check: only utm_*, lowercuje jednou na stack.
     let key_lower = key.to_ascii_lowercase();
-    TRACKING_PARAM_PREFIXES.iter().any(|p| key_lower.starts_with(p))
+    TRACKING_PARAM_PREFIXES
+        .iter()
+        .any(|p| key_lower.starts_with(p))
 }
 
 /// Normalize a URL to canonical form for deduplication.
@@ -782,7 +801,7 @@ pub fn strip_tracking(url: &str) -> String {
 
     // If no query string, return URL unchanged (fast path).
     let Some(q) = parsed.query() else {
-        return trimmed.to_string()
+        return trimmed.to_string();
     };
 
     // Parse query params and filter out tracking ones.
@@ -976,7 +995,8 @@ pub fn canonical_url_batch(urls: &Bound<'_, pyo3::types::PyList>) -> Vec<String>
             .filter_map(|item| item.extract::<String>().ok())
             .collect();
         crate::mixed_pool(n).install(|| {
-            owned.par_iter()
+            owned
+                .par_iter()
                 .map(|u| canonical_url(u))
                 .with_min_len(BATCH_PARALLEL_MIN_CHUNK)
                 .collect()
@@ -1066,7 +1086,7 @@ mod tests {
         assert!(looks_like_feed_url("/feed/rss"));
         assert!(looks_like_feed_url("/news.atom"));
         assert!(!looks_like_feed_url("/news/article"));
-        assert!(!looks_like_feed_url("/api/feedback"));  // contains "feed" but not whole-word
+        assert!(!looks_like_feed_url("/api/feedback")); // contains "feed" but not whole-word
     }
 
     #[test]
@@ -1122,7 +1142,7 @@ mod tests {
 
         let urls = vec![
             "https://google.com".to_string(),
-            "https://google.com".to_string(),  // duplicate → cache hit
+            "https://google.com".to_string(), // duplicate → cache hit
             "https://github.com".to_string(),
             "http://abc.onion/path".to_string(),
         ];
@@ -1131,7 +1151,7 @@ mod tests {
         assert_eq!(results.len(), 4);
         assert_eq!(results[0].0, "clearnet");
         assert_eq!(results[0].1, "google.com");
-        assert_eq!(results[1].0, "clearnet");  // hit
+        assert_eq!(results[1].0, "clearnet"); // hit
         assert_eq!(results[1].1, "google.com");
         assert_eq!(results[2].0, "clearnet");
         assert_eq!(results[2].1, "github.com");
@@ -1147,7 +1167,7 @@ mod tests {
     fn test_cache_ttl_expired() {
         let mut cache = UrlClassifyCache {
             map: AHashMap::with_capacity(100),
-            ttl_s: 0.0,  // immediate expiry
+            ttl_s: 0.0, // immediate expiry
             hits: 0,
             misses: 0,
             evictions: 0,
@@ -1169,15 +1189,27 @@ mod tests {
     #[test]
     fn test_canonical_url_basic() {
         // Lowercase scheme and host.
-        assert_eq!(canonical_url("HTTPS://Example.COM/Path"), "https://example.com/path");
+        assert_eq!(
+            canonical_url("HTTPS://Example.COM/Path"),
+            "https://example.com/path"
+        );
     }
 
     #[test]
     fn test_canonical_url_strips_default_port() {
-        assert_eq!(canonical_url("http://example.com:80/path"), "http://example.com/path");
-        assert_eq!(canonical_url("https://example.com:443/path"), "https://example.com/path");
+        assert_eq!(
+            canonical_url("http://example.com:80/path"),
+            "http://example.com/path"
+        );
+        assert_eq!(
+            canonical_url("https://example.com:443/path"),
+            "https://example.com/path"
+        );
         // Non-default port kept.
-        assert_eq!(canonical_url("http://example.com:8080/path"), "http://example.com:8080/path");
+        assert_eq!(
+            canonical_url("http://example.com:8080/path"),
+            "http://example.com:8080/path"
+        );
     }
 
     #[test]
@@ -1203,8 +1235,14 @@ mod tests {
 
     #[test]
     fn test_canonical_url_trims_trailing_slash() {
-        assert_eq!(canonical_url("https://example.com/path///"), "https://example.com/path");
-        assert_eq!(canonical_url("https://example.com/"), "https://example.com/");
+        assert_eq!(
+            canonical_url("https://example.com/path///"),
+            "https://example.com/path"
+        );
+        assert_eq!(
+            canonical_url("https://example.com/"),
+            "https://example.com/"
+        );
     }
 
     #[test]
@@ -1265,7 +1303,7 @@ mod tests {
     fn test_url_dedup_key_different_urls_same_content() {
         // Two URLs with same canonical form should produce same key.
         let url1 = "https://example.com/path";
-        let url2 = "https://EXAMPLE.COM/path/";  // trailing slash should be trimmed
+        let url2 = "https://EXAMPLE.COM/path/"; // trailing slash should be trimmed
         let key1 = url_dedup_key(url1);
         let key2 = url_dedup_key(url2);
         assert_eq!(key1, key2, "same canonical form = same dedup key");
@@ -1274,7 +1312,10 @@ mod tests {
     #[test]
     fn test_url_dedup_key_hex_format() {
         let key = url_dedup_key("https://google.com");
-        assert!(key.chars().all(|c| c.is_ascii_hexdigit()), "key must be lowercase hex");
+        assert!(
+            key.chars().all(|c| c.is_ascii_hexdigit()),
+            "key must be lowercase hex"
+        );
         assert_eq!(key.len(), 16);
     }
 
@@ -1378,7 +1419,10 @@ mod tests {
     #[test]
     fn test_strip_tracking_fast_path() {
         // No query string → returns original unchanged.
-        assert_eq!(strip_tracking("https://example.com/page"), "https://example.com/page");
+        assert_eq!(
+            strip_tracking("https://example.com/page"),
+            "https://example.com/page"
+        );
         // No tracking params → returns original unchanged.
         assert_eq!(
             strip_tracking("https://example.com/page?q=test"),

@@ -432,7 +432,10 @@ impl DnsResolver {
     /// runtime if full multi-thread build fails (OOM on M1 8GB).
     pub fn new() -> Self {
         Self::try_new().unwrap_or_else(|e| {
-            eprintln!("dns_resolver: full 4-thread runtime failed ({}), falling back to 1-thread", e);
+            eprintln!(
+                "dns_resolver: full 4-thread runtime failed ({}), falling back to 1-thread",
+                e
+            );
             Self::new_fallback()
         })
     }
@@ -459,7 +462,9 @@ impl DnsResolver {
         let runtime = tokio::runtime::Builder::new_current_thread()
             .enable_all()
             .build()
-            .expect("dns_resolver: current-thread fallback runtime failed — this should never happen");
+            .expect(
+                "dns_resolver: current-thread fallback runtime failed — this should never happen",
+            );
         Self {
             runtime,
             cache: Arc::new(RwLock::new(DnsCache::new(1024))),
@@ -616,7 +621,9 @@ impl DnsResolver {
         match Arc::try_unwrap(results) {
             Ok(mutex) => mutex.into_inner(),
             Err(_) => {
-                eprintln!("dns_resolver::resolve_many: Arc::try_unwrap failed — references still held");
+                eprintln!(
+                    "dns_resolver::resolve_many: Arc::try_unwrap failed — references still held"
+                );
                 HashMap::new()
             }
         }

@@ -11,8 +11,7 @@
 
 /// IPv4 address pattern (RFC 791)
 /// Format: 4 octets 0-255 separated by dots
-pub static IPV4_PAT: &str =
-    r"\b(?:(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.){3}(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\b";
+pub static IPV4_PAT: &str = r"\b(?:(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.){3}(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\b";
 
 /// IPv6 address pattern (RFC 4291)
 /// Format: 8 groups of 4 hex digits separated by colons
@@ -38,8 +37,7 @@ pub static SHA256_PAT: &str = r"\b[a-fA-F0-9]{64}\b";
 
 /// Email address pattern (RFC 5321)
 /// Format: local@domain with allowed chars: .%+-
-pub static EMAIL_PAT: &str =
-    r"\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b";
+pub static EMAIL_PAT: &str = r"\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b";
 
 /// CVE identifier pattern
 /// Format: CVE-YYYY-NNNNN+ where YYYY is year, NNNNN+ is 4+ digit ID
@@ -71,8 +69,7 @@ pub static ENCODING_HEX_PAT: &str = r"^[0-9a-fA-F]+$";
 
 /// High entropy string pattern (mix of cases/digits)
 /// Detects potential encoded content in DNS queries
-pub static ENCODING_HIGH_ENTROPY_PAT: &str =
-    r"[a-z][A-Z]|[A-Z][a-z]|[a-zA-Z][0-9]|[0-9][a-zA-Z]";
+pub static ENCODING_HIGH_ENTROPY_PAT: &str = r"[a-z][A-Z]|[A-Z][a-z]|[a-zA-Z][0-9]|[0-9][a-zA-Z]";
 
 // Issue #4: MAC address, Bitcoin, Ethereum IOC patterns
 

@@ -451,7 +451,11 @@ pub fn batch_ioc_extract_unified(texts: Vec<String>) -> Vec<Vec<(String, String)
         release_gil(py, move || {
             // adaptive 1-2 threads: n < 64 → 1 thread (no pool overhead); n ≥ 64 → 2 threads (P-core ceiling)
             crate::mixed_pool(n).install(|| {
-                texts.iter().map(|x| x.clone()).collect::<Vec<_>>().par_iter()
+                texts
+                    .iter()
+                    .map(|x| x.clone())
+                    .collect::<Vec<_>>()
+                    .par_iter()
                     .map(|text| {
                         if text.len() > TEXT_MAX_BYTES {
                             extract_iocs_from_text(&text[..TEXT_MAX_BYTES])
@@ -525,20 +529,27 @@ mod tests {
     fn test_hash_extraction() {
         let text = r"MD5: d41d8cd98f00b204e9800998ecf8427e, SHA256: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
         let results = extract_iocs_from_text(text);
-        assert!(results.iter().any(|(v, t)| t == "md5" && v == "d41d8cd98f00b204e9800998ecf8427e"));
-        assert!(results.iter().any(|(v, t)| t == "sha256" && v == "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"));
+        assert!(results
+            .iter()
+            .any(|(v, t)| t == "md5" && v == "d41d8cd98f00b204e9800998ecf8427e"));
+        assert!(results.iter().any(|(v, t)| t == "sha256"
+            && v == "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"));
     }
 
     #[test]
     fn test_email_extraction() {
         let results = extract_iocs_from_text("Contact admin@example.com or support@test.org");
-        assert!(results.iter().any(|(v, t)| t == "email" && v == "admin@example.com"));
+        assert!(results
+            .iter()
+            .any(|(v, t)| t == "email" && v == "admin@example.com"));
     }
 
     #[test]
     fn test_cve_extraction() {
         let results = extract_iocs_from_text("CVE-2024-12345 vulnerability");
-        assert!(results.iter().any(|(v, t)| t == "cve" && v == "CVE-2024-12345"));
+        assert!(results
+            .iter()
+            .any(|(v, t)| t == "cve" && v == "CVE-2024-12345"));
     }
 
     #[test]

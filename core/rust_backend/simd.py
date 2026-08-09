@@ -3,6 +3,7 @@
 SIMD-accelerated cosine similarity for vector comparison.
 Used for semantic similarity calculations in MLX inference pipeline.
 
+[SAFE-3] FFI Circuit Breaker integration for simd_similarity module.
 """
 
 from __future__ import annotations
@@ -12,6 +13,17 @@ from typing import TYPE_CHECKING, Any
 if TYPE_CHECKING:
     from hledac_rust_extensions import hledac_rust_extensions
 
+# [SAFE-3] FFI Circuit Breaker
+try:
+    from hledac.universal.core.ffi_circuit_breaker import (
+        FFI_MODULE_SIMD_SIMILARITY,
+        get_ffi_circuit_breaker,
+    )
+    _FFI_CB_AVAILABLE = True
+except ImportError:
+    _FFI_CB_AVAILABLE = False
+    FFI_MODULE_SIMD_SIMILARITY = "simd_similarity"
+
 
 # =============================================================================
 # SIMD / Cosine Similarity Domain
@@ -19,17 +31,40 @@ if TYPE_CHECKING:
 
 
 class _RustSimdDomain:
-    __slots__ = ("_ext",)
+    """[SAFE-3] Rust SIMD domain with FFI circuit breaker."""
+    __slots__ = ("_ext", "_ffi_cb")
 
     def __init__(self, ext: hledac_rust_extensions) -> None:
         self._ext = ext
+        # [SAFE-3] Initialize FFI circuit breaker
+        self._ffi_cb = get_ffi_circuit_breaker() if _FFI_CB_AVAILABLE else None
 
     def cosine_similarity(self, a: list[float], b: list[float]) -> float:
-        """Compute cosine similarity between two vectors."""
+        """Compute cosine similarity between two vectors with circuit breaker."""
+        # [SAFE-3] Use circuit breaker for single vector similarity
+        if self._ffi_cb is not None:
+            def rust_call() -> float:
+                return self._ext.simd_cosine_similarity(a, b)
+            result = self._ffi_cb.call_or_fallback(
+                FFI_MODULE_SIMD_SIMILARITY, rust_call, a, b
+            )
+            if result.success:
+                return result.value  # type: ignore[return-value]
+            return _python_cosine_similarity(a, b)
         return self._ext.simd_cosine_similarity(a, b)
 
     def batch_cosine_similarity(self, vectors: list[list[float]], query: list[float]) -> list[float]:
-        """Compute cosine similarity between query and multiple vectors."""
+        """Compute cosine similarity between query and multiple vectors with circuit breaker."""
+        # [SAFE-3] Use circuit breaker for batch similarity
+        if self._ffi_cb is not None:
+            def rust_call() -> list[float]:
+                return self._ext.simd_batch_cosine_similarity(vectors, query)
+            result = self._ffi_cb.call_or_fallback(
+                FFI_MODULE_SIMD_SIMILARITY, rust_call, vectors, query
+            )
+            if result.success:
+                return result.value  # type: ignore[return-value]
+            return _python_batch_cosine_similarity(vectors, query)
         return self._ext.simd_batch_cosine_similarity(vectors, query)
 
 

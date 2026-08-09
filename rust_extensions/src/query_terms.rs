@@ -13,8 +13,8 @@
 //!
 //! M1 8GB: automaton built once per sprint, shared across entries.
 
-use pyo3::prelude::*;
 use aho_corasick::AhoCorasick;
+use pyo3::prelude::*;
 
 /// Scan text for query-context terms using Aho-Corasick.
 ///
@@ -161,11 +161,7 @@ pub fn extract_payload_context(
 
     // Trim right at whitespace (newline or space) after hit_end
     // ctx offset for hit_end
-    let ctx_offset = if start > 0 {
-        hit_end - start
-    } else {
-        hit_end
-    };
+    let ctx_offset = if start > 0 { hit_end - start } else { hit_end };
     if ctx_offset < ctx.len() {
         let post = &ctx[ctx_offset..];
         let first_nl = post.find('\n').unwrap_or(usize::MAX);

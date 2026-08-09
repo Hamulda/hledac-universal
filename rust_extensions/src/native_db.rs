@@ -226,8 +226,14 @@ fn bson_to_json(bytes: &[u8]) -> Option<String> {
                     return None;
                 }
                 let v = f64::from_le_bytes([
-                    bytes[pos], bytes[pos + 1], bytes[pos + 2], bytes[pos + 3],
-                    bytes[pos + 4], bytes[pos + 5], bytes[pos + 6], bytes[pos + 7],
+                    bytes[pos],
+                    bytes[pos + 1],
+                    bytes[pos + 2],
+                    bytes[pos + 3],
+                    bytes[pos + 4],
+                    bytes[pos + 5],
+                    bytes[pos + 6],
+                    bytes[pos + 7],
                 ]);
                 pos += 8;
                 if v == v && v.is_finite() {
@@ -241,7 +247,10 @@ fn bson_to_json(bytes: &[u8]) -> Option<String> {
                     return None;
                 }
                 let str_len = i32::from_le_bytes([
-                    bytes[pos], bytes[pos + 1], bytes[pos + 2], bytes[pos + 3],
+                    bytes[pos],
+                    bytes[pos + 1],
+                    bytes[pos + 2],
+                    bytes[pos + 3],
                 ]) as usize;
                 pos += 4;
                 if str_len == 0 || pos + str_len > bytes.len() {
@@ -258,7 +267,10 @@ fn bson_to_json(bytes: &[u8]) -> Option<String> {
                     return None;
                 }
                 let sub_len = i32::from_le_bytes([
-                    bytes[pos], bytes[pos + 1], bytes[pos + 2], bytes[pos + 3],
+                    bytes[pos],
+                    bytes[pos + 1],
+                    bytes[pos + 2],
+                    bytes[pos + 3],
                 ]) as usize;
                 pos += 4;
                 if element_type == bson_type::DOCUMENT {
@@ -284,7 +296,10 @@ fn bson_to_json(bytes: &[u8]) -> Option<String> {
                     return None;
                 }
                 let v = i32::from_le_bytes([
-                    bytes[pos], bytes[pos + 1], bytes[pos + 2], bytes[pos + 3],
+                    bytes[pos],
+                    bytes[pos + 1],
+                    bytes[pos + 2],
+                    bytes[pos + 3],
                 ]);
                 pos += 4;
                 json.push_str(&v.to_string());
@@ -294,8 +309,14 @@ fn bson_to_json(bytes: &[u8]) -> Option<String> {
                     return None;
                 }
                 let v = i64::from_le_bytes([
-                    bytes[pos], bytes[pos + 1], bytes[pos + 2], bytes[pos + 3],
-                    bytes[pos + 4], bytes[pos + 5], bytes[pos + 6], bytes[pos + 7],
+                    bytes[pos],
+                    bytes[pos + 1],
+                    bytes[pos + 2],
+                    bytes[pos + 3],
+                    bytes[pos + 4],
+                    bytes[pos + 5],
+                    bytes[pos + 6],
+                    bytes[pos + 7],
                 ]);
                 pos += 8;
                 json.push_str(&v.to_string());
@@ -396,9 +417,9 @@ fn build_op_msg(database: &str, command: &[(&str, BsonValue)]) -> Vec<u8> {
     msg.extend_from_slice(&0i32.to_le_bytes()); // requestID (0 = auto)
     msg.extend_from_slice(&0i32.to_le_bytes()); // responseTo (0)
     msg.extend_from_slice(&OP_MSG.to_le_bytes()); // opCode
-    // flagBits
+                                                  // flagBits
     msg.extend_from_slice(&0u32.to_le_bytes()); // no flags
-    // Section kind 0 (body)
+                                                // Section kind 0 (body)
     msg.push(0x00); // kind
     msg.extend_from_slice(&body);
 
@@ -470,7 +491,9 @@ fn read_resp_value(reader: &mut BufReader<&mut TcpStream>) -> Result<RespValue, 
             reader
                 .read_line(&mut line)
                 .map_err(|e| format!("read simple string: {}", e))?;
-            Ok(RespValue::SimpleString(line.trim_end_matches("\r\n").to_string()))
+            Ok(RespValue::SimpleString(
+                line.trim_end_matches("\r\n").to_string(),
+            ))
         }
         resp::ERROR => {
             let mut line = String::new();
@@ -585,29 +608,36 @@ impl MongoDumper {
     }
 
     /// List all databases on a MongoDB instance.
-    fn list_databases(&self, host: &str, port: u16, timeout_s: Option<f64>) -> PyResult<Vec<String>> {
+    fn list_databases(
+        &self,
+        host: &str,
+        port: u16,
+        timeout_s: Option<f64>,
+    ) -> PyResult<Vec<String>> {
         let timeout = Duration::from_secs_f64(timeout_s.unwrap_or(READ_TIMEOUT_S));
         let connect_timeout = Duration::from_secs_f64(CONNECT_TIMEOUT_S);
 
         let addr = resolve_addr(host, port)?;
-        let mut stream =
-            TcpStream::connect_timeout(&addr, connect_timeout).map_err(|e| {
-                PyErr::new::<pyo3::exceptions::PyConnectionError, _>(format!(
-                    "MongoDB connect failed {}:{}: {}",
-                    host, port, e
-                ))
-            })?;
-        stream
-            .set_read_timeout(Some(timeout))
-            .map_err(|e| PyErr::new::<pyo3::exceptions::PyIOError, _>(format!("set timeout: {}", e)))?;
-        stream
-            .set_write_timeout(Some(timeout))
-            .map_err(|e| PyErr::new::<pyo3::exceptions::PyIOError, _>(format!("set write timeout: {}", e)))?;
+        let mut stream = TcpStream::connect_timeout(&addr, connect_timeout).map_err(|e| {
+            PyErr::new::<pyo3::exceptions::PyConnectionError, _>(format!(
+                "MongoDB connect failed {}:{}: {}",
+                host, port, e
+            ))
+        })?;
+        stream.set_read_timeout(Some(timeout)).map_err(|e| {
+            PyErr::new::<pyo3::exceptions::PyIOError, _>(format!("set timeout: {}", e))
+        })?;
+        stream.set_write_timeout(Some(timeout)).map_err(|e| {
+            PyErr::new::<pyo3::exceptions::PyIOError, _>(format!("set write timeout: {}", e))
+        })?;
 
         // Send listDatabases command via OP_MSG
         let cmd = build_op_msg(
             "admin",
-            &[("listDatabases", bson_int32!(1)), ("nameOnly", bson_bool!(true))],
+            &[
+                ("listDatabases", bson_int32!(1)),
+                ("nameOnly", bson_bool!(true)),
+            ],
         );
         send_and_receive_mongo(&mut stream, &cmd, timeout)?;
 
@@ -634,7 +664,8 @@ impl MongoDumper {
         let addr = resolve_addr(host, port)?;
         let mut stream = TcpStream::connect_timeout(&addr, connect_timeout).map_err(|e| {
             PyErr::new::<pyo3::exceptions::PyConnectionError, _>(format!(
-                "MongoDB connect failed {}:{}: {}", host, port, e
+                "MongoDB connect failed {}:{}: {}",
+                host, port, e
             ))
         })?;
         stream.set_read_timeout(Some(timeout)).map_err(|e| {
@@ -676,7 +707,8 @@ impl MongoDumper {
         let addr = resolve_addr(host, port)?;
         let mut stream = TcpStream::connect_timeout(&addr, connect_timeout).map_err(|e| {
             PyErr::new::<pyo3::exceptions::PyConnectionError, _>(format!(
-                "MongoDB connect failed {}:{}: {}", host, port, e
+                "MongoDB connect failed {}:{}: {}",
+                host, port, e
             ))
         })?;
         stream.set_read_timeout(Some(timeout)).map_err(|e| {
@@ -803,16 +835,12 @@ fn resolve_addr(host: &str, port: u16) -> PyResult<SocketAddr> {
     let mut addrs = addr_str.to_socket_addrs().map_err(|e| {
         PyErr::new::<pyo3::exceptions::PyValueError, _>(format!("resolve {}: {}", addr_str, e))
     })?;
-    addrs
-        .next()
-        .ok_or_else(|| PyErr::new::<pyo3::exceptions::PyValueError, _>(format!("no address for {}", addr_str)))
+    addrs.next().ok_or_else(|| {
+        PyErr::new::<pyo3::exceptions::PyValueError, _>(format!("no address for {}", addr_str))
+    })
 }
 
-fn send_and_receive_mongo(
-    stream: &mut TcpStream,
-    msg: &[u8],
-    _timeout: Duration,
-) -> PyResult<()> {
+fn send_and_receive_mongo(stream: &mut TcpStream, msg: &[u8], _timeout: Duration) -> PyResult<()> {
     stream.write_all(msg).map_err(|e| {
         PyErr::new::<pyo3::exceptions::PyIOError, _>(format!("MongoDB write: {}", e))
     })?;
@@ -825,9 +853,9 @@ fn send_and_receive_mongo(
 fn read_all(stream: &mut TcpStream, max_bytes: usize) -> PyResult<Vec<u8>> {
     // First, read the 16-byte MsgHeader to get the total length
     let mut header = [0u8; 16];
-    stream.read_exact(&mut header).map_err(|e| {
-        PyErr::new::<pyo3::exceptions::PyIOError, _>(format!("read header: {}", e))
-    })?;
+    stream
+        .read_exact(&mut header)
+        .map_err(|e| PyErr::new::<pyo3::exceptions::PyIOError, _>(format!("read header: {}", e)))?;
 
     // messageLength is first 4 bytes, little-endian i32
     let msg_len = i32::from_le_bytes([header[0], header[1], header[2], header[3]]) as usize;
@@ -912,7 +940,7 @@ fn parse_list_databases(raw: &[u8]) -> Vec<String> {
 
             if pos < chars.len() && chars[pos] == ':' {
                 pos += 1; // skip ':'
-                      // skip whitespace
+                          // skip whitespace
                 while pos < chars.len() && chars[pos] == ' ' {
                     pos += 1;
                 }
@@ -928,7 +956,11 @@ fn parse_list_databases(raw: &[u8]) -> Vec<String> {
                     names.push(name);
                 } else if key == "name" {
                     // false/true/number value — skip
-                    while pos < chars.len() && chars[pos] != ',' && chars[pos] != '}' && chars[pos] != ']' {
+                    while pos < chars.len()
+                        && chars[pos] != ','
+                        && chars[pos] != '}'
+                        && chars[pos] != ']'
+                    {
                         pos += 1;
                     }
                 }
@@ -1041,10 +1073,7 @@ fn parse_find_response(raw: &[u8]) -> Vec<String> {
     // Find "firstBatch"
     while pos < chars.len() {
         if pos + 12 < chars.len()
-            && chars[pos..pos + 12]
-                .iter()
-                .collect::<String>()
-                == "\"firstBatch\""
+            && chars[pos..pos + 12].iter().collect::<String>() == "\"firstBatch\""
         {
             // Skip to the array
             while pos < chars.len() && chars[pos] != '[' {
@@ -1165,8 +1194,9 @@ impl RedisDumper {
         })?;
 
         let mut reader = BufReader::new(stream);
-        read_resp_value(&mut reader)
-            .map_err(|e| PyErr::new::<pyo3::exceptions::PyValueError, _>(format!("RESP parse: {}", e)))
+        read_resp_value(&mut reader).map_err(|e| {
+            PyErr::new::<pyo3::exceptions::PyValueError, _>(format!("RESP parse: {}", e))
+        })
     }
 }
 
@@ -1185,7 +1215,8 @@ impl RedisDumper {
         let addr = resolve_addr(host, port)?;
         let mut stream = TcpStream::connect_timeout(&addr, connect_timeout).map_err(|e| {
             PyErr::new::<pyo3::exceptions::PyConnectionError, _>(format!(
-                "Redis connect failed {}:{}: {}", host, port, e
+                "Redis connect failed {}:{}: {}",
+                host, port, e
             ))
         })?;
         stream.set_read_timeout(Some(timeout)).map_err(|e| {
@@ -1196,9 +1227,7 @@ impl RedisDumper {
         })?;
 
         match Self::redis_command(&mut stream, b"INFO\r\n", timeout)? {
-            RespValue::BulkString(Some(data)) => {
-                Ok(String::from_utf8_lossy(&data).to_string())
-            }
+            RespValue::BulkString(Some(data)) => Ok(String::from_utf8_lossy(&data).to_string()),
             RespValue::SimpleString(s) => Ok(s),
             other => Ok(format!("Unexpected INFO response: {:?}", other)),
         }
@@ -1225,7 +1254,8 @@ impl RedisDumper {
         let addr = resolve_addr(host, port)?;
         let mut stream = TcpStream::connect_timeout(&addr, connect_timeout).map_err(|e| {
             PyErr::new::<pyo3::exceptions::PyConnectionError, _>(format!(
-                "Redis connect failed {}:{}: {}", host, port, e
+                "Redis connect failed {}:{}: {}",
+                host, port, e
             ))
         })?;
         stream.set_read_timeout(Some(timeout)).map_err(|e| {
@@ -1292,7 +1322,8 @@ impl RedisDumper {
         let addr = resolve_addr(host, port)?;
         let mut stream = TcpStream::connect_timeout(&addr, connect_timeout).map_err(|e| {
             PyErr::new::<pyo3::exceptions::PyConnectionError, _>(format!(
-                "Redis connect failed {}:{}: {}", host, port, e
+                "Redis connect failed {}:{}: {}",
+                host, port, e
             ))
         })?;
         stream.set_read_timeout(Some(timeout)).map_err(|e| {
@@ -1311,20 +1342,15 @@ impl RedisDumper {
     }
 
     /// Get the TTL (time-to-live) of a key in seconds. -1 = no expiry, -2 = key doesn't exist.
-    fn key_ttl(
-        &self,
-        host: &str,
-        port: u16,
-        key: &str,
-        timeout_s: Option<f64>,
-    ) -> PyResult<i64> {
+    fn key_ttl(&self, host: &str, port: u16, key: &str, timeout_s: Option<f64>) -> PyResult<i64> {
         let timeout = Duration::from_secs_f64(timeout_s.unwrap_or(READ_TIMEOUT_S));
         let connect_timeout = Duration::from_secs_f64(CONNECT_TIMEOUT_S);
 
         let addr = resolve_addr(host, port)?;
         let mut stream = TcpStream::connect_timeout(&addr, connect_timeout).map_err(|e| {
             PyErr::new::<pyo3::exceptions::PyConnectionError, _>(format!(
-                "Redis connect failed {}:{}: {}", host, port, e
+                "Redis connect failed {}:{}: {}",
+                host, port, e
             ))
         })?;
         stream.set_read_timeout(Some(timeout)).map_err(|e| {
@@ -1355,7 +1381,8 @@ impl RedisDumper {
         let addr = resolve_addr(host, port)?;
         let mut stream = TcpStream::connect_timeout(&addr, connect_timeout).map_err(|e| {
             PyErr::new::<pyo3::exceptions::PyConnectionError, _>(format!(
-                "Redis connect failed {}:{}: {}", host, port, e
+                "Redis connect failed {}:{}: {}",
+                host, port, e
             ))
         })?;
         stream.set_read_timeout(Some(timeout)).map_err(|e| {
@@ -1388,7 +1415,8 @@ impl RedisDumper {
         let addr = resolve_addr(host, port)?;
         let mut stream = TcpStream::connect_timeout(&addr, connect_timeout).map_err(|e| {
             PyErr::new::<pyo3::exceptions::PyConnectionError, _>(format!(
-                "Redis connect failed {}:{}: {}", host, port, e
+                "Redis connect failed {}:{}: {}",
+                host, port, e
             ))
         })?;
         stream.set_read_timeout(Some(timeout)).map_err(|e| {
@@ -1427,7 +1455,8 @@ impl RedisDumper {
         let addr = resolve_addr(host, port)?;
         let mut stream = TcpStream::connect_timeout(&addr, connect_timeout).map_err(|e| {
             PyErr::new::<pyo3::exceptions::PyConnectionError, _>(format!(
-                "Redis connect failed {}:{}: {}", host, port, e
+                "Redis connect failed {}:{}: {}",
+                host, port, e
             ))
         })?;
         stream.set_read_timeout(Some(timeout)).map_err(|e| {
@@ -1511,12 +1540,10 @@ impl RedisDumper {
 
             // Get value based on type
             let value: Option<Vec<u8>> = match key_type.as_deref() {
-                Some("string") => {
-                    match self.get_value(host, port, &key, Some(timeout)) {
-                        Ok(v) => v,
-                        Err(_) => None,
-                    }
-                }
+                Some("string") => match self.get_value(host, port, &key, Some(timeout)) {
+                    Ok(v) => v,
+                    Err(_) => None,
+                },
                 Some("list") => {
                     // Serialize list as newline-separated for the value field
                     match self.get_list(host, port, &key, Some(10), Some(timeout)) {
@@ -1536,23 +1563,21 @@ impl RedisDumper {
                         Err(_) => None,
                     }
                 }
-                Some("hash") => {
-                    match self.get_hash(host, port, &key, Some(timeout)) {
-                        Ok(pairs) => {
-                            let mut buf = Vec::new();
-                            for (i, (field, val)) in pairs.iter().enumerate() {
-                                if i > 0 {
-                                    buf.extend_from_slice(b"\n");
-                                }
-                                buf.extend_from_slice(field.as_bytes());
-                                buf.extend_from_slice(b": ");
-                                buf.extend_from_slice(val);
+                Some("hash") => match self.get_hash(host, port, &key, Some(timeout)) {
+                    Ok(pairs) => {
+                        let mut buf = Vec::new();
+                        for (i, (field, val)) in pairs.iter().enumerate() {
+                            if i > 0 {
+                                buf.extend_from_slice(b"\n");
                             }
-                            Some(buf)
+                            buf.extend_from_slice(field.as_bytes());
+                            buf.extend_from_slice(b": ");
+                            buf.extend_from_slice(val);
                         }
-                        Err(_) => None,
+                        Some(buf)
                     }
-                }
+                    Err(_) => None,
+                },
                 Some("set") | Some("zset") => {
                     // For sets, use SMEMBERS (up to 100)
                     // Simplified: use SSCAN same pattern
@@ -1706,19 +1731,15 @@ impl ElasticsearchDumper {
     }
 
     /// List all indices.
-    fn list_indices(
-        &self,
-        host: &str,
-        port: u16,
-        timeout_s: Option<f64>,
-    ) -> PyResult<Vec<String>> {
+    fn list_indices(&self, host: &str, port: u16, timeout_s: Option<f64>) -> PyResult<Vec<String>> {
         let timeout = Duration::from_secs_f64(timeout_s.unwrap_or(READ_TIMEOUT_S));
         let connect_timeout = Duration::from_secs_f64(CONNECT_TIMEOUT_S);
 
         let addr = resolve_addr(host, port)?;
         let mut stream = TcpStream::connect_timeout(&addr, connect_timeout).map_err(|e| {
             PyErr::new::<pyo3::exceptions::PyConnectionError, _>(format!(
-                "ES connect failed {}:{}: {}", host, port, e
+                "ES connect failed {}:{}: {}",
+                host, port, e
             ))
         })?;
         stream.set_read_timeout(Some(timeout)).map_err(|e| {
@@ -1728,8 +1749,13 @@ impl ElasticsearchDumper {
             PyErr::new::<pyo3::exceptions::PyIOError, _>(format!("set write timeout: {}", e))
         })?;
 
-        let (_status, body) =
-            Self::es_request(&mut stream, "GET", "/_cat/indices?format=json", None, timeout)?;
+        let (_status, body) = Self::es_request(
+            &mut stream,
+            "GET",
+            "/_cat/indices?format=json",
+            None,
+            timeout,
+        )?;
 
         // Parse JSON array
         let body_str = String::from_utf8_lossy(&body);
@@ -1741,10 +1767,14 @@ impl ElasticsearchDumper {
 
         while pos < chars.len() {
             // Find "index":
-            if pos + 8 < chars.len() && chars[pos..pos + 8].iter().collect::<String>() == "\"index\"" {
+            if pos + 8 < chars.len()
+                && chars[pos..pos + 8].iter().collect::<String>() == "\"index\""
+            {
                 pos += 8;
                 // Skip ": "
-                while pos < chars.len() && (chars[pos] == ':' || chars[pos] == ' ' || chars[pos] == '"') {
+                while pos < chars.len()
+                    && (chars[pos] == ':' || chars[pos] == ' ' || chars[pos] == '"')
+                {
                     if chars[pos] == '"' {
                         pos += 1;
                         break;
@@ -1785,7 +1815,8 @@ impl ElasticsearchDumper {
         let addr = resolve_addr(host, port)?;
         let mut stream = TcpStream::connect_timeout(&addr, connect_timeout).map_err(|e| {
             PyErr::new::<pyo3::exceptions::PyConnectionError, _>(format!(
-                "ES connect failed {}:{}: {}", host, port, e
+                "ES connect failed {}:{}: {}",
+                host, port, e
             ))
         })?;
         stream.set_read_timeout(Some(timeout)).map_err(|e| {
@@ -1796,10 +1827,7 @@ impl ElasticsearchDumper {
         })?;
 
         let query = query_json.unwrap_or(r#"{"query":{"match_all":{}}}"#);
-        let body = format!(
-            r#"{{"query":{},"size":{},"_source":true}}"#,
-            query, size
-        );
+        let body = format!(r#"{{"query":{},"size":{},"_source":true}}"#, query, size);
 
         let path = format!("/{}/_search", index);
         let (_status, resp_body) =
@@ -1841,8 +1869,7 @@ impl ElasticsearchDumper {
                                 '}' => {
                                     depth -= 1;
                                     if depth == 0 {
-                                        let doc: String =
-                                            chars[doc_start..=pos].iter().collect();
+                                        let doc: String = chars[doc_start..=pos].iter().collect();
                                         docs.push(doc);
                                         break;
                                     }

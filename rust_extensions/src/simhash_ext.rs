@@ -63,10 +63,12 @@ fn tokenize(text: &str, ngram_size: usize) -> Vec<String> {
     // Remove punctuation, preserve spaces
     let clean: String = text
         .chars()
-        .map(|c| if c.is_alphanumeric() || c.is_whitespace() {
-            c
-        } else {
-            ' '
+        .map(|c| {
+            if c.is_alphanumeric() || c.is_whitespace() {
+                c
+            } else {
+                ' '
+            }
         })
         .collect();
 
@@ -99,7 +101,7 @@ fn compute_tf_weights(tokens: &[String]) -> Vec<WeightedToken> {
 
     // Collect and sort by token for deterministic iteration order
     let mut entries: Vec<(String, usize)> = freq.into_iter().collect();
-    entries.sort_by(|a, b| a.0.cmp(&b.0));  // Sort by token name for determinism
+    entries.sort_by(|a, b| a.0.cmp(&b.0)); // Sort by token name for determinism
 
     entries
         .into_iter()
@@ -421,7 +423,10 @@ mod tests {
         let fp1 = simhash("Hello world", 2);
         let fp2 = simhash("Hello world!", 2);
         let dist = hamming_distance(fp1, fp2);
-        assert!(dist <= 3, "Near-duplicate should have small Hamming distance");
+        assert!(
+            dist <= 3,
+            "Near-duplicate should have small Hamming distance"
+        );
     }
 
     #[test]
@@ -429,7 +434,10 @@ mod tests {
         let fp1 = simhash("Apple banana cherry", 2);
         let fp2 = simhash("Dog elephant frog", 2);
         let dist = hamming_distance(fp1, fp2);
-        assert!(dist >= 10, "Different texts should have large Hamming distance");
+        assert!(
+            dist >= 10,
+            "Different texts should have large Hamming distance"
+        );
     }
 
     #[test]
@@ -465,10 +473,17 @@ mod tests {
 
     #[test]
     fn test_batch_compute_simhash_matches_single() {
-        let texts = vec!["hello world".to_string(), "foo bar".to_string(), "".to_string()];
+        let texts = vec![
+            "hello world".to_string(),
+            "foo bar".to_string(),
+            "".to_string(),
+        ];
         let batched = batch_compute_simhash(texts.clone(), 2);
         let singles: Vec<u64> = texts.iter().map(|t| simhash(t, 2)).collect();
-        assert_eq!(batched, singles, "batch must produce same result as sequential");
+        assert_eq!(
+            batched, singles,
+            "batch must produce same result as sequential"
+        );
     }
 
     #[test]

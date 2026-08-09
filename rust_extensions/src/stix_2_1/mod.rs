@@ -36,10 +36,10 @@
 use pyo3::prelude::*;
 use pyo3::types::PyBytes;
 
-mod validation;
 mod encode;
-pub use validation::ValidationResult;
+mod validation;
 pub use encode::*;
+pub use validation::ValidationResult;
 
 /// Register STIX 2.1 functions in the Python module.
 ///

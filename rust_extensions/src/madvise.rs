@@ -57,7 +57,11 @@ unsafe impl Send for CachedMmap {}
 
 impl CachedMmap {
     fn new(file_size: usize, mapped_ptr: *mut libc::c_void, mapped_len: usize) -> Self {
-        Self { file_size, mapped_ptr, mapped_len }
+        Self {
+            file_size,
+            mapped_ptr,
+            mapped_len,
+        }
     }
 }
 
@@ -135,23 +139,26 @@ pub fn madvise_lmdb_mmap(path: &str, advice: i32) -> i32 {
     // FFI-01: catch_unwind guards CString::new panics and all unsafe libc calls.
     // On panic: returns -1 instead of SIGABRT (Python process survives).
     match ffi_safe!({
-        let madv_advice = if advice == 0 { MADV_FREE_REUSABLE } else { MADV_NOCACHE };
+        let madv_advice = if advice == 0 {
+            MADV_FREE_REUSABLE
+        } else {
+            MADV_NOCACHE
+        };
 
         // R4-06 FIX: Cache lookup first (hot path — zero syscalls).
         let cache = get_mmap_cache();
         if let Ok(mut cache) = cache.lock() {
             if let Some(cached) = cache.get(path) {
                 // Cache hit: apply madvise to the already-mapped region (LRU touch).
-                let result = unsafe {
-                    libc::madvise(cached.mapped_ptr, cached.mapped_len, madv_advice)
-                };
+                let result =
+                    unsafe { libc::madvise(cached.mapped_ptr, cached.mapped_len, madv_advice) };
                 return if result < 0 { -1 } else { 0 };
             }
         }
 
         // Cache miss: perform open/mmap/madvise, then cache the mmap (fd stays open).
-        let cpath = std::ffi::CString::new(path)
-            .unwrap_or_else(|_| std::ffi::CString::new("").unwrap());
+        let cpath =
+            std::ffi::CString::new(path).unwrap_or_else(|_| std::ffi::CString::new("").unwrap());
 
         let fd = unsafe { libc::open(cpath.as_ptr(), libc::O_RDWR) };
         let fd = if fd < 0 {
@@ -181,9 +188,8 @@ pub fn madvise_lmdb_mmap(path: &str, advice: i32) -> i32 {
         #[cfg(target_os = "macos")]
         let mmap_flags = mmap_flags | libc::MAP_NOCACHE;
 
-        let mapped_ptr = unsafe {
-            libc::mmap(null_mut(), mapped_len, mmap_prot, mmap_flags, fd, 0)
-        };
+        let mapped_ptr =
+            unsafe { libc::mmap(null_mut(), mapped_len, mmap_prot, mmap_flags, fd, 0) };
 
         if mapped_ptr == libc::MAP_FAILED {
             unsafe { libc::close(fd) };
@@ -191,9 +197,7 @@ pub fn madvise_lmdb_mmap(path: &str, advice: i32) -> i32 {
         }
 
         // Apply madvise to the mapped region.
-        let madv_result = unsafe {
-            libc::madvise(mapped_ptr, mapped_len, madv_advice)
-        };
+        let madv_result = unsafe { libc::madvise(mapped_ptr, mapped_len, madv_advice) };
 
         // R4-06: Do NOT unmap here — keep mmap alive in cache.
         // fd is kept open by Arc<File> equivalent (stored in CachedMmap).
@@ -243,7 +247,11 @@ pub fn madvise_on_mmap_region(addr: usize, length: usize, advice: i32) -> i32 {
             return 0i32;
         }
         let ptr = addr as *mut libc::c_void;
-        let madv_advice = if advice == 0 { MADV_FREE_REUSABLE } else { MADV_NOCACHE };
+        let madv_advice = if advice == 0 {
+            MADV_FREE_REUSABLE
+        } else {
+            MADV_NOCACHE
+        };
         let result = unsafe { libc::madvise(ptr, length, madv_advice) };
         result
     }) {
@@ -348,9 +356,7 @@ pub fn mmap_alloc_with_hugepage(size: usize, read_write: bool) -> (usize, usize)
         // madvise(MADV_HUGEPAGE) on the mapped region after allocation.
         let flags = libc::MAP_ANONYMOUS | libc::MAP_PRIVATE;
 
-        let mapped_ptr = unsafe {
-            libc::mmap(null_mut(), actual_size, prot, flags, -1, 0)
-        };
+        let mapped_ptr = unsafe { libc::mmap(null_mut(), actual_size, prot, flags, -1, 0) };
 
         if mapped_ptr == libc::MAP_FAILED {
             return (0usize, 0usize);
@@ -459,9 +465,7 @@ pub fn mmap_hugepage(path: &str, read_only: bool) -> (usize, usize) {
         // enabled via madvise(MADV_HUGEPAGE) after mmap succeeds.
         let flags = libc::MAP_PRIVATE;
 
-        let mapped_ptr = unsafe {
-            libc::mmap(null_mut(), mapped_len, prot, flags, fd, 0)
-        };
+        let mapped_ptr = unsafe { libc::mmap(null_mut(), mapped_len, prot, flags, fd, 0) };
 
         if mapped_ptr == libc::MAP_FAILED {
             unsafe { libc::close(fd) };
@@ -532,7 +536,11 @@ pub fn madvise_free_reusable(addr: usize, length: usize, advice: i32) -> i32 {
             return 0i32;
         }
         let ptr = addr as *mut libc::c_void;
-        let madv_advice = if advice == 0 { MADV_FREE_REUSABLE } else { MADV_DONTNEED };
+        let madv_advice = if advice == 0 {
+            MADV_FREE_REUSABLE
+        } else {
+            MADV_DONTNEED
+        };
         unsafe { libc::madvise(ptr, length, madv_advice) }
     }) {
         Ok(r) => r,
@@ -563,7 +571,10 @@ pub fn mlock_key_region(addr: usize, length: usize) -> i32 {
         let ret = unsafe { libc::mlock(ptr, length) };
         if ret != 0 {
             let err = std::io::Error::last_os_error();
-            eprintln!("mlock_key_region: mlock failed: {} (addr={}, len={})", err, addr, length);
+            eprintln!(
+                "mlock_key_region: mlock failed: {} (addr={}, len={})",
+                err, addr, length
+            );
         }
         ret
     }) {

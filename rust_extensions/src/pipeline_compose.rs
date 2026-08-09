@@ -193,10 +193,7 @@ where
         // Partition into chunks, fold each in parallel, then sum.
         source
             .par_iter()
-            .fold(
-                || initial.clone(),
-                |acc, item| fold_fn(acc, item.as_ref()),
-            )
+            .fold(|| initial.clone(), |acc, item| fold_fn(acc, item.as_ref()))
             .sum()
     })
 }
@@ -209,10 +206,7 @@ where
 /// let items: Vec<String> = ...;
 /// let http_count = pipeline_count_arc(&items, |s: &String| s.starts_with("http"));
 /// ```
-pub fn pipeline_count_arc<T: Send + Sync>(
-    source: &[ArcItem<T>],
-    predicate: fn(&T) -> bool,
-) -> usize
+pub fn pipeline_count_arc<T: Send + Sync>(source: &[ArcItem<T>], predicate: fn(&T) -> bool) -> usize
 where
     for<'a> fn(&'a T) -> bool: Send + Sync + Copy,
 {
@@ -222,7 +216,12 @@ where
     }
 
     let pool = mixed_pool(n);
-    pool.install(|| source.par_iter().filter(|item| predicate(item.as_ref())).count())
+    pool.install(|| {
+        source
+            .par_iter()
+            .filter(|item| predicate(item.as_ref()))
+            .count()
+    })
 }
 
 // ---------------------------------------------------------------------------
@@ -429,7 +428,9 @@ pub fn pipeline_map(
         .into_iter()
         .map(|s| {
             if fn_name == "len" {
-                s.parse::<usize>().map(|v| v.into_pyobject(_py).unwrap().into()).unwrap_or_else(|_| s.into_pyobject(_py).unwrap().into())
+                s.parse::<usize>()
+                    .map(|v| v.into_pyobject(_py).unwrap().into())
+                    .unwrap_or_else(|_| s.into_pyobject(_py).unwrap().into())
             } else {
                 s.into_pyobject(_py).unwrap().into()
             }
@@ -477,7 +478,9 @@ pub fn pipeline_filter(
             .map(|s| match fn_name.as_str() {
                 "not_empty" | "len_gt_0" => !s.is_empty(),
                 "has_at" => s.contains('@'),
-                "has_scheme" => s.starts_with("http://") || s.starts_with("https://") || s.starts_with("ftp://"),
+                "has_scheme" => {
+                    s.starts_with("http://") || s.starts_with("https://") || s.starts_with("ftp://")
+                }
                 "is_ascii" => s.is_ascii(),
                 "len_lt_2048" => s.len() < 2048,
                 _ => false,
@@ -539,7 +542,11 @@ pub fn pipeline_filter_map(
                 let passes = match filter_fn.as_str() {
                     "not_empty" | "len_gt_0" => !s.is_empty(),
                     "has_at" => s.contains('@'),
-                    "has_scheme" => s.starts_with("http://") || s.starts_with("https://") || s.starts_with("ftp://"),
+                    "has_scheme" => {
+                        s.starts_with("http://")
+                            || s.starts_with("https://")
+                            || s.starts_with("ftp://")
+                    }
                     "is_ascii" => s.is_ascii(),
                     "len_lt_2048" => s.len() < 2048,
                     _ => return None,
@@ -573,7 +580,9 @@ pub fn pipeline_filter_map(
         .into_iter()
         .map(|s| {
             if map_fn == "len" {
-                s.parse::<usize>().map(|v| v.into_pyobject(_py).unwrap().into()).unwrap_or_else(|_| s.into_pyobject(_py).unwrap().into())
+                s.parse::<usize>()
+                    .map(|v| v.into_pyobject(_py).unwrap().into())
+                    .unwrap_or_else(|_| s.into_pyobject(_py).unwrap().into())
             } else {
                 s.into_pyobject(_py).unwrap().into()
             }
@@ -613,9 +622,13 @@ pub fn pipeline_fold(
     let initial_str = initial.extract::<String>().unwrap_or_default();
 
     // Try numeric fold first — extract i64 values before pool
-    if let (Ok(initial_num), Ok(items_numeric)) =
-        (initial.extract::<i64>(), items.iter().map(|x| x.extract::<i64>()).collect::<Result<Vec<_>, _>>())
-    {
+    if let (Ok(initial_num), Ok(items_numeric)) = (
+        initial.extract::<i64>(),
+        items
+            .iter()
+            .map(|x| x.extract::<i64>())
+            .collect::<Result<Vec<_>, _>>(),
+    ) {
         let fold_fn = fold_fn.to_string();
         let result: i64 = pool.install(|| {
             items_numeric
@@ -645,15 +658,8 @@ pub fn pipeline_fold(
     // Handle them specially before the generic String fold path.
     let fold_fn_str = fold_fn.to_string();
     if fold_fn == "count" {
-        let result: i64 = pool.install(|| {
-            items_str
-                .par_iter()
-                .fold(
-                    || 0_i64,
-                    |acc, _s| acc + 1,
-                )
-                .sum()
-        });
+        let result: i64 =
+            pool.install(|| items_str.par_iter().fold(|| 0_i64, |acc, _s| acc + 1).sum());
         return Ok(result.into_pyobject(_py).unwrap().into());
     }
 
@@ -661,10 +667,7 @@ pub fn pipeline_fold(
         let result: i64 = pool.install(|| {
             items_str
                 .par_iter()
-                .fold(
-                    || 0_i64,
-                    |acc, s| acc + s.len() as i64,
-                )
+                .fold(|| 0_i64, |acc, s| acc + s.len() as i64)
                 .sum()
         });
         return Ok(result.into_pyobject(_py).unwrap().into());
@@ -731,19 +734,15 @@ pub fn pipeline_count(
     let count: usize = pool.install(|| {
         items_str
             .par_iter()
-            .filter(|s| {
-                match predicate_fn.as_str() {
-                    "not_empty" | "len_gt_0" => !s.is_empty(),
-                    "has_at" => s.contains('@'),
-                    "has_scheme" => {
-                        s.starts_with("http://")
-                            || s.starts_with("https://")
-                            || s.starts_with("ftp://")
-                    }
-                    "is_ascii" => s.is_ascii(),
-                    "len_lt_2048" => s.len() < 2048,
-                    _ => false,
+            .filter(|s| match predicate_fn.as_str() {
+                "not_empty" | "len_gt_0" => !s.is_empty(),
+                "has_at" => s.contains('@'),
+                "has_scheme" => {
+                    s.starts_with("http://") || s.starts_with("https://") || s.starts_with("ftp://")
                 }
+                "is_ascii" => s.is_ascii(),
+                "len_lt_2048" => s.len() < 2048,
+                _ => false,
             })
             .count()
     });
@@ -830,7 +829,9 @@ pub fn pipeline_compose_two(
         .map(|s| {
             // If stage1 was "len", it's a number string to convert back
             if stage1 == "len" {
-                s.parse::<usize>().map(|v| v.into_pyobject(_py).unwrap().into()).unwrap_or_else(|_| s.into_pyobject(_py).unwrap().into())
+                s.parse::<usize>()
+                    .map(|v| v.into_pyobject(_py).unwrap().into())
+                    .unwrap_or_else(|_| s.into_pyobject(_py).unwrap().into())
             } else {
                 s.into_pyobject(_py).unwrap().into()
             }
@@ -950,7 +951,10 @@ mod tests {
     fn test_pipeline_fold_count() {
         let inputs = vec!["a", "bb", "ccc"];
         let count: i64 = pipeline_fold_arc(
-            &inputs.iter().map(|s| Arc::new(s.to_string())).collect::<Vec<_>>(),
+            &inputs
+                .iter()
+                .map(|s| Arc::new(s.to_string()))
+                .collect::<Vec<_>>(),
             |acc: i64, s: &String| acc + 1,
             0,
         );
@@ -961,7 +965,10 @@ mod tests {
     fn test_pipeline_count() {
         let inputs = vec!["http://a.com", "ftp://b.com", "", "https://c.com"];
         let count = pipeline_count_arc(
-            &inputs.iter().map(|s| Arc::new(s.to_string())).collect::<Vec<_>>(),
+            &inputs
+                .iter()
+                .map(|s| Arc::new(s.to_string()))
+                .collect::<Vec<_>>(),
             |s: &String| s.starts_with("http") || s.starts_with("https"),
         );
         assert_eq!(count, 2);
@@ -971,7 +978,10 @@ mod tests {
     fn test_pipeline_fold_sum_len() {
         let inputs = vec!["hello", "world"];
         let sum_len: i64 = pipeline_fold_arc(
-            &inputs.iter().map(|s| Arc::new(s.to_string())).collect::<Vec<_>>(),
+            &inputs
+                .iter()
+                .map(|s| Arc::new(s.to_string()))
+                .collect::<Vec<_>>(),
             |acc: i64, s: &String| acc + s.len() as i64,
             0,
         );
@@ -990,11 +1000,7 @@ mod tests {
         let inputs = vec!["hello", "hi", "world"];
         // stage1: to_uppercase -> "HELLO", "HI", "WORLD"
         // stage2: len -> 5, 2, 5
-        let result = compose_two_map(
-            &inputs,
-            |s: &&str| s.to_uppercase(),
-            |s: &String| s.len(),
-        );
+        let result = compose_two_map(&inputs, |s: &&str| s.to_uppercase(), |s: &String| s.len());
         assert_eq!(result, vec![5, 2, 5]);
     }
 

@@ -155,10 +155,12 @@ fn fulltext_create_index(index_path: &str, documents: Vec<(String, String)>) -> 
     let doc_id_field = get_doc_id_field(&schema);
     let content_field = get_content_field(&schema);
 
-    let writer: IndexWriter = index.writer_with_num_threads(1, 15_000_000)
-        .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(
-            format!("Tantivy: failed to create writer: {}", e)
-        ))?;
+    let writer: IndexWriter = index.writer_with_num_threads(1, 15_000_000).map_err(|e| {
+        PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!(
+            "Tantivy: failed to create writer: {}",
+            e
+        ))
+    })?;
 
     // ISSUE-011: Chunked indexing — 1000 docs per commit.
     // Each commit flushes intermediate data to mmap, keeping heap < 15MB.
@@ -180,7 +182,8 @@ fn fulltext_create_index(index_path: &str, documents: Vec<(String, String)>) -> 
         }
         writer.commit().map_err(|e| {
             PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!(
-                "Tantivy: commit failed: {}", e
+                "Tantivy: commit failed: {}",
+                e
             ))
         })?;
     }
@@ -188,7 +191,8 @@ fn fulltext_create_index(index_path: &str, documents: Vec<(String, String)>) -> 
     // Final commit for any remaining docs
     writer.commit().map_err(|e| {
         PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!(
-            "Tantivy: final commit failed: {}", e
+            "Tantivy: final commit failed: {}",
+            e
         ))
     })?;
 
@@ -222,10 +226,12 @@ fn fulltext_add_documents(index_path: &str, documents: Vec<(String, String)>) ->
     let doc_id_field = get_doc_id_field(&schema);
     let content_field = get_content_field(&schema);
 
-    let writer: IndexWriter = index.writer_with_num_threads(1, 15_000_000)
-        .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(
-            format!("Tantivy: failed to create writer: {}", e)
-        ))?;
+    let writer: IndexWriter = index.writer_with_num_threads(1, 15_000_000).map_err(|e| {
+        PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!(
+            "Tantivy: failed to create writer: {}",
+            e
+        ))
+    })?;
 
     const CHUNK_SIZE: usize = 1000;
     for chunk in documents.chunks(CHUNK_SIZE) {
@@ -243,13 +249,15 @@ fn fulltext_add_documents(index_path: &str, documents: Vec<(String, String)>) ->
         }
         writer.commit().map_err(|e| {
             PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!(
-                "Tantivy: commit failed: {}", e
+                "Tantivy: commit failed: {}",
+                e
             ))
         })?;
     }
     writer.commit().map_err(|e| {
         PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!(
-            "Tantivy: final commit failed: {}", e
+            "Tantivy: final commit failed: {}",
+            e
         ))
     })?;
 
@@ -294,7 +302,8 @@ fn fulltext_search(index_path: &str, query: &str, top_k: u32) -> PyResult<Vec<(S
         .try_into()
         .map_err(|e| {
             PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!(
-                "Tantivy: failed to create reader: {}", e
+                "Tantivy: failed to create reader: {}",
+                e
             ))
         })?;
 
@@ -302,7 +311,8 @@ fn fulltext_search(index_path: &str, query: &str, top_k: u32) -> PyResult<Vec<(S
     let query_parser = QueryParser::for_index(&index, vec![content_field]);
     let query = query_parser.parse_query(query).map_err(|e| {
         PyErr::new::<pyo3::exceptions::PyValueError, _>(format!(
-            "Tantivy: query parse error: {}", e
+            "Tantivy: query parse error: {}",
+            e
         ))
     })?;
 
@@ -310,7 +320,8 @@ fn fulltext_search(index_path: &str, query: &str, top_k: u32) -> PyResult<Vec<(S
         .search(&query, &TopDocs::with_limit(top_k as usize))
         .map_err(|e| {
             PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!(
-                "Tantivy: search failed: {}", e
+                "Tantivy: search failed: {}",
+                e
             ))
         })?;
 
@@ -318,7 +329,8 @@ fn fulltext_search(index_path: &str, query: &str, top_k: u32) -> PyResult<Vec<(S
     for (score, doc_address) in top_docs {
         let retrieved_doc = searcher.doc(doc_address).map_err(|e| {
             PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!(
-                "Tantivy: failed to retrieve doc: {}", e
+                "Tantivy: failed to retrieve doc: {}",
+                e
             ))
         })?;
         if let Some(doc_id_value) = retrieved_doc.get_first(doc_id_field) {
@@ -375,7 +387,8 @@ fn fulltext_doc_count(index_path: &str) -> PyResult<u64> {
         .try_into()
         .map_err(|e| {
             PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!(
-                "Tantivy: failed to create reader: {}", e
+                "Tantivy: failed to create reader: {}",
+                e
             ))
         })?;
     let searcher = reader.searcher();
@@ -477,8 +490,8 @@ fn encode_fulltext_field(name: &str, type_code: i32) -> Vec<u8> {
 /// Build the schema body for 2-column fulltext results: doc_id:Utf8 + score:Float64.
 fn build_fulltext_schema_body() -> Vec<u8> {
     let mut body = Vec::new();
-    body.extend_from_slice(&encode_fulltext_field("doc_id", 4));   // Utf8
-    body.extend_from_slice(&encode_fulltext_field("score", 6));    // Float64
+    body.extend_from_slice(&encode_fulltext_field("doc_id", 4)); // Utf8
+    body.extend_from_slice(&encode_fulltext_field("score", 6)); // Float64
     body
 }
 
@@ -508,7 +521,7 @@ fn build_fulltext_ipc_bytes(
         result.extend_from_slice(&(schema_body.len() as u32).to_le_bytes());
         result.extend_from_slice(&schema_body);
         result.extend_from_slice(&(0u32).to_le_bytes()); // batch_count = 0
-        result.extend_from_slice(&0u32.to_le_bytes());   // footer = end marker
+        result.extend_from_slice(&0u32.to_le_bytes()); // footer = end marker
         return Ok(result);
     }
 
@@ -550,7 +563,12 @@ fn build_fulltext_ipc_bytes(
 /// Returns: Arrow IPC bytes (RecordBatchStream) or None on error.
 #[pyfunction]
 #[pyo3(signature = (index_path, query, top_k = 10))]
-fn fulltext_search_arrow(index_path: &str, query: &str, top_k: u32, py: Python<'_>) -> PyResult<Option<Bound<'_, PyBytes>>> {
+fn fulltext_search_arrow(
+    index_path: &str,
+    query: &str,
+    top_k: u32,
+    py: Python<'_>,
+) -> PyResult<Option<Bound<'_, PyBytes>>> {
     register_tokenizer();
 
     if query.trim().is_empty() {
@@ -571,9 +589,9 @@ fn fulltext_search_arrow(index_path: &str, query: &str, top_k: u32, py: Python<'
         .reader_builder()
         .reload_policy(ReloadPolicy::OnCommitWithDelay)
         .try_into()
-        .map_err(|_| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(
-            "Tantivy: failed to create reader"
-        ))?;
+        .map_err(|_| {
+            PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("Tantivy: failed to create reader")
+        })?;
 
     let searcher = reader.searcher();
     let query_parser = QueryParser::for_index(&index, vec![content_field]);

@@ -24,8 +24,8 @@
 //! Falls back to NORMAL_THRESHOLD (32) if MLX/Python probe is unavailable.
 
 use pyo3::prelude::*;
-use std::sync::atomic::{AtomicU8, Ordering};
 use std::cell::Cell;
+use std::sync::atomic::{AtomicU8, Ordering};
 use std::time::{Duration, Instant};
 
 // ---------------------------------------------------------------------------
@@ -76,16 +76,14 @@ const PRESSURE_THRESHOLD: usize = 64;
 ///
 /// Initialized once per process via OnceLock; the bound is stored as
 /// `Option<Bound<'static, PyModule>>` to allow None on failure.
-static MLX_CACHE_MODULE_PATH: std::sync::OnceLock<&'static str> =
-    std::sync::OnceLock::new();
+static MLX_CACHE_MODULE_PATH: std::sync::OnceLock<&'static str> = std::sync::OnceLock::new();
 
 /// Import mlx_cache module by name — avoids stale Bound<'static, PyModule> references
 /// and sidesteps Sync/Send issues with OnceLock<Bound<...>>.
 /// Uses lazy OnceLock to import only once per process.
 #[inline]
 fn get_mlx_cache_module<'py>(py: Python<'py>) -> Option<Bound<'py, PyModule>> {
-    let module_name =
-        MLX_CACHE_MODULE_PATH.get_or_init(|| "hledac.universal.utils.mlx_cache");
+    let module_name = MLX_CACHE_MODULE_PATH.get_or_init(|| "hledac.universal.utils.mlx_cache");
     py.import(*module_name).ok()
 }
 
@@ -154,8 +152,7 @@ fn get_metal_level_cached() -> u8 {
     }
 
     let now = Instant::now();
-    let (instant, level, _limit_bytes) =
-        METAL_CACHE.with(|cell| cell.get());
+    let (instant, level, _limit_bytes) = METAL_CACHE.with(|cell| cell.get());
     if now.duration_since(instant) < Duration::from_millis(METAL_CACHE_TTL_MS) {
         return level;
     }
@@ -189,9 +186,9 @@ pub fn mixed_threshold() -> usize {
     // Fast path: thread-local cache hit (no GIL).
     // Slow path: acquire GIL, probe Python, update cache.
     match get_metal_level_cached() {
-        0 => IDLE_THRESHOLD,       // 16: GPU idle, eager
-        1 => NORMAL_THRESHOLD,    // 32: normal
-        _ => PRESSURE_THRESHOLD,  // 64: GPU saturated
+        0 => IDLE_THRESHOLD,     // 16: GPU idle, eager
+        1 => NORMAL_THRESHOLD,   // 32: normal
+        _ => PRESSURE_THRESHOLD, // 64: GPU saturated
     }
 }
 
@@ -218,16 +215,16 @@ pub fn recommended_cpu_threads() -> usize {
     let pressure = MEMORY_PRESSURE.load(Ordering::Acquire);
     if pressure != PRESSURE_UNSET {
         return match pressure {
-            2 => 1,   // pressure: sequential
-            1 => 2,   // normal: 2 P-cores
-            _ => 4,   // idle: all P-cores
+            2 => 1, // pressure: sequential
+            1 => 2, // normal: 2 P-cores
+            _ => 4, // idle: all P-cores
         };
     }
     // Production: use thread-local metal cache.
     match get_metal_level_cached() {
-        2 => 1,   // pressure: sequential
-        1 => 2,   // normal: 2 P-cores
-        _ => 4,   // idle: all P-cores
+        2 => 1, // pressure: sequential
+        1 => 2, // normal: 2 P-cores
+        _ => 4, // idle: all P-cores
     }
 }
 
@@ -238,14 +235,14 @@ pub fn recommended_io_threads() -> usize {
     let pressure = MEMORY_PRESSURE.load(Ordering::Acquire);
     if pressure != PRESSURE_UNSET {
         return match pressure {
-            2 => 1,  // pressure: minimal
-            _ => 2,  // idle/normal: 2 threads
+            2 => 1, // pressure: minimal
+            _ => 2, // idle/normal: 2 threads
         };
     }
     // Production: use thread-local metal cache.
     match get_metal_level_cached() {
-        2 => 1,  // pressure: minimal
-        _ => 2,  // idle/normal: 2 threads
+        2 => 1, // pressure: minimal
+        _ => 2, // idle/normal: 2 threads
     }
 }
 
@@ -388,7 +385,7 @@ mod tests {
         // Explicit pressure=0 (idle) must bypass MLX probe and return 16.
         update_memory_pressure(0);
         assert_eq!(mixed_threshold(), IDLE_THRESHOLD); // 16
-        // Reset to default.
+                                                       // Reset to default.
         update_memory_pressure(1);
     }
 
@@ -407,7 +404,7 @@ mod tests {
         // Explicit pressure=2 (pressure) must bypass MLX probe and return 64.
         update_memory_pressure(2);
         assert_eq!(mixed_threshold(), PRESSURE_THRESHOLD); // 64
-        // Reset to default.
+                                                           // Reset to default.
         update_memory_pressure(1);
     }
 

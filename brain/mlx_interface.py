@@ -6,6 +6,8 @@ brain/mlx_interface.py — Sprint G2: Unified MLX Interface
 Centralizes all MLX imports and metal memory probing in one place.
 Replaces scattered lazy mlx imports in DeepHermes3Engine and other brain components.
 
+[SAFE-3] FFI Circuit Breaker integration for MLX inference module.
+
 Problem: MLX imports are scattered across 17+ locations in DeepHermes3Engine
 alone. This makes it hard to:
 - Mock MLX in tests
@@ -23,9 +25,43 @@ Usage:
 """
 from __future__ import annotations
 
+import logging
 import threading
 from dataclasses import dataclass
 from typing import Any
+
+logger = logging.getLogger(__name__)
+
+# [SAFE-3] FFI Circuit Breaker
+try:
+    from hledac.universal.core.ffi_circuit_breaker import (
+        FFI_MODULE_MLX_INFERENCE,
+        get_ffi_circuit_breaker,
+    )
+    _FFI_CB_AVAILABLE = True
+except ImportError:
+    _FFI_CB_AVAILABLE = False
+    FFI_MODULE_MLX_INFERENCE = "mlx_inference"
+
+# [SAFE-3] Public API exports
+__all__ = [
+    # Lazy singletons
+    "get_mlx",
+    "get_metal",
+    "get_mlx_lm",
+    # Availability
+    "is_mlx_available",
+    # Memory
+    "MetalMemoryInfo",
+    "get_active_memory",
+    "get_memory_info",
+    "metal_clear_cache",
+    # [SAFE-3] Circuit breaker wrapped functions
+    "generate_with_circuit_breaker",
+    "embed_with_circuit_breaker",
+    # Reset (testing only)
+    "reset_mlx_interface",
+]
 
 # ---------------------------------------------------------------------------
 # Module-level lazy singletons
@@ -35,6 +71,7 @@ _mlx_core: Any | None = None
 _mlx_metal: Any | None = None
 _mlx_lm_module: Any | None = None
 _mlx_available: bool = False
+_ffi_cb: Any | None = None
 _init_lock = threading.Lock()
 
 
@@ -54,6 +91,17 @@ def is_mlx_available() -> bool:
     except Exception:
         _mlx_available = False
     return _mlx_available
+
+
+def _get_ffi_cb() -> Any | None:
+    """[SAFE-3] Get FFI circuit breaker singleton (lazy init)."""
+    global _ffi_cb
+    if _ffi_cb is None and _FFI_CB_AVAILABLE:
+        try:
+            _ffi_cb = get_ffi_circuit_breaker()
+        except Exception as e:
+            logger.debug("[SAFE-3] FFI circuit breaker unavailable: %s", e)
+    return _ffi_cb
 
 
 # ---------------------------------------------------------------------------
@@ -78,6 +126,101 @@ def get_mlx() -> Any:
             except Exception as e:
                 raise RuntimeError(f"MLX not available: {e}")
     return _mlx_core
+
+
+# [SAFE-3] Circuit-breaker wrapped MLX generation
+def generate_with_circuit_breaker(
+    prompt: str,
+    max_tokens: int = 256,
+    temperature: float = 0.7,
+) -> str:
+    """
+    [SAFE-3] Generate text using MLX with circuit breaker fallback.
+    
+    Falls back to empty string if MLX is unavailable or fails.
+    """
+    ffi_cb = _get_ffi_cb()
+    if ffi_cb is None:
+        return _generate_mlx(prompt, max_tokens, temperature)
+    
+    def rust_call() -> str:
+        return _generate_mlx(prompt, max_tokens, temperature)
+    
+    result = ffi_cb.call_or_fallback(
+        FFI_MODULE_MLX_INFERENCE, rust_call,
+        prompt, max_tokens, temperature
+    )
+    if result.success:
+        return result.value  # type: ignore[return-value]
+    return ""
+
+
+def _generate_mlx(prompt: str, max_tokens: int = 256, temperature: float = 0.7) -> str:
+    """
+    [SAFE-3] Internal MLX generation without circuit breaker.
+    
+    Returns empty string if MLX is unavailable.
+    """
+    if not is_mlx_available():
+        logger.warning("[SAFE-3] MLX unavailable for generation")
+        return ""
+    
+    try:
+        mlx_lm = get_mlx_lm()
+        # mlx_lm.generate is the standard API
+        if hasattr(mlx_lm, 'generate'):
+            # Synchronous generate (may need to be wrapped in asyncio)
+            import mlx.core as mx
+            return mlx_lm.generate(prompt, max_tokens=max_tokens, temp=temperature)
+    except Exception as e:
+        logger.warning(f"[SAFE-3] MLX generation failed: {e}")
+    return ""
+
+
+# [SAFE-3] Circuit-breaker wrapped MLX embedding
+def embed_with_circuit_breaker(text: str) -> list[float]:
+    """
+    [SAFE-3] Generate embeddings using MLX with circuit breaker fallback.
+    
+    Falls back to zero vector if MLX is unavailable or fails.
+    """
+    ffi_cb = _get_ffi_cb()
+    if ffi_cb is None:
+        return _embed_mlx(text)
+    
+    def rust_call() -> list[float]:
+        return _embed_mlx(text)
+    
+    result = ffi_cb.call_or_fallback(
+        FFI_MODULE_MLX_INFERENCE, rust_call, text
+    )
+    if result.success:
+        return result.value  # type: ignore[return-value]
+    return [0.0] * 256  # Return zero vector on failure
+
+
+def _embed_mlx(text: str) -> list[float]:
+    """
+    [SAFE-3] Internal MLX embedding without circuit breaker.
+    
+    Returns zero vector if MLX is unavailable.
+    """
+    if not is_mlx_available():
+        logger.warning("[SAFE-3] MLX unavailable for embedding")
+        return [0.0] * 256
+    
+    try:
+        mlx_lm = get_mlx_lm()
+        # Check for embed method
+        if hasattr(mlx_lm, 'embed'):
+            embeddings = mlx_lm.embed(text)
+            # Convert to list if needed
+            if hasattr(embeddings, 'tolist'):
+                return embeddings.tolist()
+            return list(embeddings)
+    except Exception as e:
+        logger.warning(f"[SAFE-3] MLX embedding failed: {e}")
+    return [0.0] * 256
 
 
 def get_metal() -> Any:

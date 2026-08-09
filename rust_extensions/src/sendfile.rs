@@ -45,12 +45,12 @@ use std::path::Path;
 extern "C" {
     // sendfile(2) signature on Darwin
     fn sendfile(
-        fd: RawFd,           // file descriptor
-        s: RawFd,            // socket descriptor
-        offset: i64,         // starting offset in file
-        len: *mut i64,       // in: bytes to send, out: bytes sent
+        fd: RawFd,                   // file descriptor
+        s: RawFd,                    // socket descriptor
+        offset: i64,                 // starting offset in file
+        len: *mut i64,               // in: bytes to send, out: bytes sent
         hdtr: *mut std::ffi::c_void, // header/trailer (usually NULL)
-        flags: i32,          // SF_NOCACHE etc
+        flags: i32,                  // SF_NOCACHE etc
     ) -> i32;
 }
 
@@ -215,7 +215,11 @@ pub fn fallback_sendfile(
         while written < read {
             // SAFETY: socket_fd is a valid socket
             let sent = unsafe {
-                libc::write(socket_fd, buffer[written..].as_ptr() as *const _, read - written)
+                libc::write(
+                    socket_fd,
+                    buffer[written..].as_ptr() as *const _,
+                    read - written,
+                )
             };
 
             if sent < 0 {
@@ -272,8 +276,7 @@ mod py_bindings {
             return Err(SendFileError::FileNotFound.into());
         }
 
-        let mut file = std::fs::File::open(path)
-            .map_err(|_| SendFileError::FileNotFound)?;
+        let mut file = std::fs::File::open(path).map_err(|_| SendFileError::FileNotFound)?;
 
         // Seek to end to get file size
         let file_size = file
@@ -292,9 +295,8 @@ mod py_bindings {
         #[cfg(target_os = "macos")]
         {
             // Try sendfile first
-            let result = unsafe {
-                sendfile_to_socket(&mut file, raw_socket_fd, offset, send_count)
-            };
+            let result =
+                unsafe { sendfile_to_socket(&mut file, raw_socket_fd, offset, send_count) };
 
             match result {
                 Ok(sent) => Ok(sent),

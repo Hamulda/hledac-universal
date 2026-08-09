@@ -15,7 +15,7 @@
 //!   FARM_SEED = 0xDEADBEEF (konzistence napříč instancemi)
 
 use std::fs::{File, OpenOptions};
-use std::io::{Read, Write, BufWriter};
+use std::io::{BufWriter, Read, Write};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 
@@ -66,7 +66,8 @@ fn bump_instance() {
 /// This is constant per-instance (same for all DedupBloomFilter instances).
 fn compute_static_memory_bytes() -> u64 {
     // Bloom tiers: sum of bit array sizes
-    let tier_bytes: u64 = TIER_CAPACITIES.iter()
+    let tier_bytes: u64 = TIER_CAPACITIES
+        .iter()
         .zip(TIER_FPP.iter())
         .map(|(cap, fpp)| {
             let num_bits = (-(*cap as f64) * fpp.ln() / (2.0_f64.ln().powi(2))) as u64;
@@ -153,7 +154,8 @@ impl CountMinSketch {
 
     /// Estimate minimum frequency for an item
     fn estimate(&self, item: &[u8]) -> u32 {
-        self.seeds.iter()
+        self.seeds
+            .iter()
             .take(self.depth)
             .enumerate()
             .map(|(i, &seed)| {
@@ -269,17 +271,31 @@ impl BloomTier {
         let mut pos = 0;
         let read_u32 = |data: &[u8], pos: &mut usize| -> PyResult<u32> {
             if *pos + 4 > data.len() {
-                return Err(pyo3::exceptions::PyValueError::new_err("Unexpected end of data"));
+                return Err(pyo3::exceptions::PyValueError::new_err(
+                    "Unexpected end of data",
+                ));
             }
-            let val = u32::from_le_bytes([data[*pos], data[*pos+1], data[*pos+2], data[*pos+3]]);
+            let val =
+                u32::from_le_bytes([data[*pos], data[*pos + 1], data[*pos + 2], data[*pos + 3]]);
             *pos += 4;
             Ok(val)
         };
         let read_u64 = |data: &[u8], pos: &mut usize| -> PyResult<u64> {
             if *pos + 8 > data.len() {
-                return Err(pyo3::exceptions::PyValueError::new_err("Unexpected end of data"));
+                return Err(pyo3::exceptions::PyValueError::new_err(
+                    "Unexpected end of data",
+                ));
             }
-            let val = u64::from_le_bytes([data[*pos], data[*pos+1], data[*pos+2], data[*pos+3], data[*pos+4], data[*pos+5], data[*pos+6], data[*pos+7]]);
+            let val = u64::from_le_bytes([
+                data[*pos],
+                data[*pos + 1],
+                data[*pos + 2],
+                data[*pos + 3],
+                data[*pos + 4],
+                data[*pos + 5],
+                data[*pos + 6],
+                data[*pos + 7],
+            ]);
             *pos += 8;
             Ok(val)
         };
@@ -295,7 +311,13 @@ impl BloomTier {
             bits[i] = read_u64(data, &mut pos)?;
         }
 
-        Ok(Self { bits, num_bits, num_hashes, items_added, seed })
+        Ok(Self {
+            bits,
+            num_bits,
+            num_hashes,
+            items_added,
+            seed,
+        })
     }
 }
 
@@ -324,17 +346,31 @@ impl CountMinSketch {
         let mut pos = 0;
         let read_u32 = |data: &[u8], pos: &mut usize| -> PyResult<u32> {
             if *pos + 4 > data.len() {
-                return Err(pyo3::exceptions::PyValueError::new_err("Unexpected end of data"));
+                return Err(pyo3::exceptions::PyValueError::new_err(
+                    "Unexpected end of data",
+                ));
             }
-            let val = u32::from_le_bytes([data[*pos], data[*pos+1], data[*pos+2], data[*pos+3]]);
+            let val =
+                u32::from_le_bytes([data[*pos], data[*pos + 1], data[*pos + 2], data[*pos + 3]]);
             *pos += 4;
             Ok(val)
         };
         let read_u64 = |data: &[u8], pos: &mut usize| -> PyResult<u64> {
             if *pos + 8 > data.len() {
-                return Err(pyo3::exceptions::PyValueError::new_err("Unexpected end of data"));
+                return Err(pyo3::exceptions::PyValueError::new_err(
+                    "Unexpected end of data",
+                ));
             }
-            let val = u64::from_le_bytes([data[*pos], data[*pos+1], data[*pos+2], data[*pos+3], data[*pos+4], data[*pos+5], data[*pos+6], data[*pos+7]]);
+            let val = u64::from_le_bytes([
+                data[*pos],
+                data[*pos + 1],
+                data[*pos + 2],
+                data[*pos + 3],
+                data[*pos + 4],
+                data[*pos + 5],
+                data[*pos + 6],
+                data[*pos + 7],
+            ]);
             *pos += 8;
             Ok(val)
         };
@@ -357,7 +393,12 @@ impl CountMinSketch {
             table.push(row);
         }
 
-        Ok(Self { table, depth, width, seeds })
+        Ok(Self {
+            table,
+            depth,
+            width,
+            seeds,
+        })
     }
 }
 
@@ -370,7 +411,8 @@ pub struct DistributedBloomFilter {
 
 impl DistributedBloomFilter {
     fn new() -> Self {
-        let tiers: Vec<BloomTier> = TIER_CAPACITIES.iter()
+        let tiers: Vec<BloomTier> = TIER_CAPACITIES
+            .iter()
             .zip(TIER_FPP.iter())
             .map(|(cap, fpp)| BloomTier::new(*cap, *fpp))
             .collect();
@@ -415,9 +457,7 @@ impl DistributedBloomFilter {
 
     /// Get memory usage in bytes
     pub fn memory_bytes(&self) -> usize {
-        let tier_bytes: usize = self.tiers.iter()
-            .map(|t| t.bits.len() * 8)
-            .sum();
+        let tier_bytes: usize = self.tiers.iter().map(|t| t.bits.len() * 8).sum();
         let sketch_bytes = self.sketch.table.len() * self.sketch.table[0].len() * 4;
         tier_bytes + sketch_bytes
     }
@@ -431,36 +471,45 @@ impl DistributedBloomFilter {
             .create(true)
             .truncate(true)
             .open(&file_path)
-            .map_err(|e| pyo3::exceptions::PyIOError::new_err(format!("Cannot open file: {}", e)))?;
+            .map_err(|e| {
+                pyo3::exceptions::PyIOError::new_err(format!("Cannot open file: {}", e))
+            })?;
         let mut writer = BufWriter::new(file);
 
         // Write header
-        writer.write_all(&FILE_MAGIC.to_le_bytes()).map_err(|e|
-            pyo3::exceptions::PyIOError::new_err(format!("Write error: {}", e)))?;
-        writer.write_all(&[FILE_VERSION]).map_err(|e|
-            pyo3::exceptions::PyIOError::new_err(format!("Write error: {}", e)))?;
+        writer
+            .write_all(&FILE_MAGIC.to_le_bytes())
+            .map_err(|e| pyo3::exceptions::PyIOError::new_err(format!("Write error: {}", e)))?;
+        writer
+            .write_all(&[FILE_VERSION])
+            .map_err(|e| pyo3::exceptions::PyIOError::new_err(format!("Write error: {}", e)))?;
 
         // Write tier data
         for tier in &self.tiers {
             let tier_data = tier.to_bytes();
             let compressed = lz4_compress(&tier_data);
             let len_bytes = (compressed.len() as u32).to_le_bytes();
-            writer.write_all(&len_bytes).map_err(|e|
-                pyo3::exceptions::PyIOError::new_err(format!("Write error: {}", e)))?;
-            writer.write_all(&compressed).map_err(|e|
-                pyo3::exceptions::PyIOError::new_err(format!("Write error: {}", e)))?;
+            writer
+                .write_all(&len_bytes)
+                .map_err(|e| pyo3::exceptions::PyIOError::new_err(format!("Write error: {}", e)))?;
+            writer
+                .write_all(&compressed)
+                .map_err(|e| pyo3::exceptions::PyIOError::new_err(format!("Write error: {}", e)))?;
         }
 
         // Write sketch
         let sketch_data = self.sketch.to_bytes();
         let sketch_len = (sketch_data.len() as u32).to_le_bytes();
-        writer.write_all(&sketch_len).map_err(|e|
-            pyo3::exceptions::PyIOError::new_err(format!("Write error: {}", e)))?;
-        writer.write_all(&sketch_data).map_err(|e|
-            pyo3::exceptions::PyIOError::new_err(format!("Write error: {}", e)))?;
+        writer
+            .write_all(&sketch_len)
+            .map_err(|e| pyo3::exceptions::PyIOError::new_err(format!("Write error: {}", e)))?;
+        writer
+            .write_all(&sketch_data)
+            .map_err(|e| pyo3::exceptions::PyIOError::new_err(format!("Write error: {}", e)))?;
 
-        writer.flush().map_err(|e|
-            pyo3::exceptions::PyIOError::new_err(format!("Flush error: {}", e)))?;
+        writer
+            .flush()
+            .map_err(|e| pyo3::exceptions::PyIOError::new_err(format!("Flush error: {}", e)))?;
         Ok(())
     }
 
@@ -473,36 +522,41 @@ impl DistributedBloomFilter {
 
         // Read header
         let mut magic_buf = [0u8; 4];
-        file.read_exact(&mut magic_buf).map_err(|e|
-            pyo3::exceptions::PyIOError::new_err(format!("Read error: {}", e)))?;
+        file.read_exact(&mut magic_buf)
+            .map_err(|e| pyo3::exceptions::PyIOError::new_err(format!("Read error: {}", e)))?;
 
         let magic = u32::from_le_bytes(magic_buf);
         if magic != FILE_MAGIC {
-            return Err(pyo3::exceptions::PyValueError::new_err("Invalid file format"));
+            return Err(pyo3::exceptions::PyValueError::new_err(
+                "Invalid file format",
+            ));
         }
 
         let mut version_buf = [0u8; 1];
-        file.read_exact(&mut version_buf).map_err(|e|
-            pyo3::exceptions::PyIOError::new_err(format!("Read error: {}", e)))?;
+        file.read_exact(&mut version_buf)
+            .map_err(|e| pyo3::exceptions::PyIOError::new_err(format!("Read error: {}", e)))?;
 
         if version_buf[0] != FILE_VERSION {
-            return Err(pyo3::exceptions::PyValueError::new_err("Unsupported version"));
+            return Err(pyo3::exceptions::PyValueError::new_err(
+                "Unsupported version",
+            ));
         }
 
         // Read tiers
         let mut tiers = Vec::new();
         for _ in 0..NUM_TIERS {
             let mut len_buf = [0u8; 4];
-            file.read_exact(&mut len_buf).map_err(|e|
-                pyo3::exceptions::PyIOError::new_err(format!("Read error: {}", e)))?;
+            file.read_exact(&mut len_buf)
+                .map_err(|e| pyo3::exceptions::PyIOError::new_err(format!("Read error: {}", e)))?;
 
             let len = u32::from_le_bytes(len_buf) as usize;
             let mut compressed = vec![0u8; len];
-            file.read_exact(&mut compressed).map_err(|e|
-                pyo3::exceptions::PyIOError::new_err(format!("Read error: {}", e)))?;
+            file.read_exact(&mut compressed)
+                .map_err(|e| pyo3::exceptions::PyIOError::new_err(format!("Read error: {}", e)))?;
 
-            let decompressed = lz4_decompress(&compressed, len * 4)
-                .map_err(|e| pyo3::exceptions::PyValueError::new_err(format!("Decompress error: {}", e)))?;
+            let decompressed = lz4_decompress(&compressed, len * 4).map_err(|e| {
+                pyo3::exceptions::PyValueError::new_err(format!("Decompress error: {}", e))
+            })?;
 
             let tier = BloomTier::from_bytes(&decompressed)?;
             tiers.push(tier);
@@ -510,13 +564,13 @@ impl DistributedBloomFilter {
 
         // Read sketch
         let mut sketch_len_buf = [0u8; 4];
-        file.read_exact(&mut sketch_len_buf).map_err(|e|
-            pyo3::exceptions::PyIOError::new_err(format!("Read error: {}", e)))?;
+        file.read_exact(&mut sketch_len_buf)
+            .map_err(|e| pyo3::exceptions::PyIOError::new_err(format!("Read error: {}", e)))?;
 
         let sketch_len = u32::from_le_bytes(sketch_len_buf) as usize;
         let mut sketch_data = vec![0u8; sketch_len];
-        file.read_exact(&mut sketch_data).map_err(|e|
-            pyo3::exceptions::PyIOError::new_err(format!("Read error: {}", e)))?;
+        file.read_exact(&mut sketch_data)
+            .map_err(|e| pyo3::exceptions::PyIOError::new_err(format!("Read error: {}", e)))?;
 
         let sketch = CountMinSketch::from_bytes(&sketch_data)?;
 
@@ -562,19 +616,27 @@ impl DistributedBloomFilter {
 
         // Read header
         if pos + 4 > data.len() {
-            return Err(pyo3::exceptions::PyValueError::new_err("Unexpected end of data (magic)"));
+            return Err(pyo3::exceptions::PyValueError::new_err(
+                "Unexpected end of data (magic)",
+            ));
         }
-        let magic = u32::from_le_bytes([data[pos], data[pos+1], data[pos+2], data[pos+3]]);
+        let magic = u32::from_le_bytes([data[pos], data[pos + 1], data[pos + 2], data[pos + 3]]);
         if magic != FILE_MAGIC {
-            return Err(pyo3::exceptions::PyValueError::new_err("Invalid file format"));
+            return Err(pyo3::exceptions::PyValueError::new_err(
+                "Invalid file format",
+            ));
         }
         pos += 4;
 
         if pos + 1 > data.len() {
-            return Err(pyo3::exceptions::PyValueError::new_err("Unexpected end of data (version)"));
+            return Err(pyo3::exceptions::PyValueError::new_err(
+                "Unexpected end of data (version)",
+            ));
         }
         if data[pos] != FILE_VERSION {
-            return Err(pyo3::exceptions::PyValueError::new_err("Unsupported version"));
+            return Err(pyo3::exceptions::PyValueError::new_err(
+                "Unsupported version",
+            ));
         }
         pos += 1;
 
@@ -582,16 +644,22 @@ impl DistributedBloomFilter {
         let mut tiers = Vec::new();
         for _ in 0..NUM_TIERS {
             if pos + 4 > data.len() {
-                return Err(pyo3::exceptions::PyValueError::new_err("Unexpected end of data (tier len)"));
+                return Err(pyo3::exceptions::PyValueError::new_err(
+                    "Unexpected end of data (tier len)",
+                ));
             }
-            let len = u32::from_le_bytes([data[pos], data[pos+1], data[pos+2], data[pos+3]]) as usize;
+            let len = u32::from_le_bytes([data[pos], data[pos + 1], data[pos + 2], data[pos + 3]])
+                as usize;
             pos += 4;
 
             if pos + len > data.len() {
-                return Err(pyo3::exceptions::PyValueError::new_err("Unexpected end of data (tier data)"));
+                return Err(pyo3::exceptions::PyValueError::new_err(
+                    "Unexpected end of data (tier data)",
+                ));
             }
-            let decompressed = lz4_decompress(&data[pos..pos+len], len * 4)
-                .map_err(|e| pyo3::exceptions::PyValueError::new_err(format!("Decompress error: {}", e)))?;
+            let decompressed = lz4_decompress(&data[pos..pos + len], len * 4).map_err(|e| {
+                pyo3::exceptions::PyValueError::new_err(format!("Decompress error: {}", e))
+            })?;
             pos += len;
 
             let tier = BloomTier::from_bytes(&decompressed)?;
@@ -600,19 +668,28 @@ impl DistributedBloomFilter {
 
         // Read sketch
         if pos + 4 > data.len() {
-            return Err(pyo3::exceptions::PyValueError::new_err("Unexpected end of data (sketch len)"));
+            return Err(pyo3::exceptions::PyValueError::new_err(
+                "Unexpected end of data (sketch len)",
+            ));
         }
-        let sketch_len = u32::from_le_bytes([data[pos], data[pos+1], data[pos+2], data[pos+3]]) as usize;
+        let sketch_len =
+            u32::from_le_bytes([data[pos], data[pos + 1], data[pos + 2], data[pos + 3]]) as usize;
         pos += 4;
 
         if pos + sketch_len > data.len() {
-            return Err(pyo3::exceptions::PyValueError::new_err("Unexpected end of data (sketch data)"));
+            return Err(pyo3::exceptions::PyValueError::new_err(
+                "Unexpected end of data (sketch data)",
+            ));
         }
-        let sketch = CountMinSketch::from_bytes(&data[pos..pos+sketch_len])?;
+        let sketch = CountMinSketch::from_bytes(&data[pos..pos + sketch_len])?;
 
         let total_items = tiers.iter().map(|t| t.items_added).sum();
 
-        Ok(Self { tiers, sketch, total_items })
+        Ok(Self {
+            tiers,
+            sketch,
+            total_items,
+        })
     }
 }
 
@@ -653,8 +730,9 @@ impl PyDistributedBloomFilter {
     fn new(cache_dir: String) -> PyResult<Self> {
         let cache_dir = PathBuf::from(cache_dir);
         if let Some(parent) = cache_dir.parent() {
-            std::fs::create_dir_all(parent).map_err(|e|
-                pyo3::exceptions::PyIOError::new_err(format!("Cannot create dir: {}", e)))?;
+            std::fs::create_dir_all(parent).map_err(|e| {
+                pyo3::exceptions::PyIOError::new_err(format!("Cannot create dir: {}", e))
+            })?;
         }
         bump_instance();
         Ok(Self {
@@ -724,12 +802,30 @@ impl PyDistributedBloomFilter {
         dict.set_item("total_items", self.filter.total_items)?;
         dict.set_item("memory_bytes", self.filter.memory_bytes())?;
         dict.set_item("tier_count", NUM_TIERS)?;
-        dict.set_item("tier_0_fpp", tiers.get(0).map(|t| t.current_fpp()).unwrap_or(0.0))?;
-        dict.set_item("tier_0_items", tiers.get(0).map(|t| t.items_added).unwrap_or(0))?;
-        dict.set_item("tier_1_fpp", tiers.get(1).map(|t| t.current_fpp()).unwrap_or(0.0))?;
-        dict.set_item("tier_1_items", tiers.get(1).map(|t| t.items_added).unwrap_or(0))?;
-        dict.set_item("tier_2_fpp", tiers.get(2).map(|t| t.current_fpp()).unwrap_or(0.0))?;
-        dict.set_item("tier_2_items", tiers.get(2).map(|t| t.items_added).unwrap_or(0))?;
+        dict.set_item(
+            "tier_0_fpp",
+            tiers.get(0).map(|t| t.current_fpp()).unwrap_or(0.0),
+        )?;
+        dict.set_item(
+            "tier_0_items",
+            tiers.get(0).map(|t| t.items_added).unwrap_or(0),
+        )?;
+        dict.set_item(
+            "tier_1_fpp",
+            tiers.get(1).map(|t| t.current_fpp()).unwrap_or(0.0),
+        )?;
+        dict.set_item(
+            "tier_1_items",
+            tiers.get(1).map(|t| t.items_added).unwrap_or(0),
+        )?;
+        dict.set_item(
+            "tier_2_fpp",
+            tiers.get(2).map(|t| t.current_fpp()).unwrap_or(0.0),
+        )?;
+        dict.set_item(
+            "tier_2_items",
+            tiers.get(2).map(|t| t.items_added).unwrap_or(0),
+        )?;
         Ok(dict)
     }
 
@@ -739,7 +835,11 @@ impl PyDistributedBloomFilter {
         Python::attach(|py| {
             release_gil_py(py, || {
                 self.filter.save(&self.cache_dir)?;
-                Ok(self.cache_dir.join("dedup_bloom.bin").to_string_lossy().to_string())
+                Ok(self
+                    .cache_dir
+                    .join("dedup_bloom.bin")
+                    .to_string_lossy()
+                    .to_string())
             })
         })
     }
@@ -752,7 +852,10 @@ impl PyDistributedBloomFilter {
         let filter = Python::attach(|py| {
             release_gil_py(py, || DistributedBloomFilter::load(&cache_dir_path))
         })?;
-        Ok(Self { filter, cache_dir: cache_dir_path })
+        Ok(Self {
+            filter,
+            cache_dir: cache_dir_path,
+        })
     }
 
     fn reset(&mut self) {
@@ -762,9 +865,7 @@ impl PyDistributedBloomFilter {
     /// R4-03: GIL released for LZ4 compression (CPU-intensive).
     /// RUST-PANIC-001 FIX: release_gil_py wraps py.detach in catch_unwind.
     fn save_to_lmdb_bytes(&self) -> PyResult<Vec<u8>> {
-        Python::attach(|py| {
-            release_gil_py(py, || self.filter.to_bytes_compressed())
-        })
+        Python::attach(|py| release_gil_py(py, || self.filter.to_bytes_compressed()))
     }
 
     /// R4-03 + R4-08 FIX: GIL released for LZ4 decompression (CPU-intensive).
@@ -778,9 +879,14 @@ impl PyDistributedBloomFilter {
         // if we don't hold them explicitly.
         let owned_data: Vec<u8> = data.to_vec();
         let filter = Python::attach(|py| {
-            release_gil_py(py, || DistributedBloomFilter::from_bytes_compressed(&owned_data))
+            release_gil_py(py, || {
+                DistributedBloomFilter::from_bytes_compressed(&owned_data)
+            })
         })?;
-        Ok(Self { filter, cache_dir: PathBuf::new() })
+        Ok(Self {
+            filter,
+            cache_dir: PathBuf::new(),
+        })
     }
 }
 

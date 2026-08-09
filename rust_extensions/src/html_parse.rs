@@ -7,7 +7,7 @@
 //! Thread-safe: all extractors are `Send + Sync` (lol_html::send::HtmlRewriter).
 
 use lol_html::send::HtmlRewriter;
-use lol_html::{element, doc_text, text, Settings};
+use lol_html::{doc_text, element, text, Settings};
 use parking_lot::Mutex;
 use pyo3::prelude::*;
 use rayon::prelude::*;
@@ -15,7 +15,6 @@ use std::collections::{BTreeSet, HashSet};
 use std::sync::Arc;
 
 use crate::gil::release_gil;
-
 
 /// Maximum HTML document size for parsing (5 MB).
 /// OSINT-03: Prevents OOM on M1 8GB by bounding DOM node allocation in lol_html.
@@ -58,10 +57,19 @@ pub fn extract_links_zero_copy(html: &str, _base_url: &str) -> Vec<(usize, usize
 
     let mut i = 0;
     while i < n {
-        if i + 4 < n && html_bytes[i] == b'h' && html_bytes[i + 1] == b'r'
-            && html_bytes[i + 2] == b'e' && html_bytes[i + 3] == b'f' {
+        if i + 4 < n
+            && html_bytes[i] == b'h'
+            && html_bytes[i + 1] == b'r'
+            && html_bytes[i + 2] == b'e'
+            && html_bytes[i + 3] == b'f'
+        {
             let after_href = i + 4;
-            if after_href < n && matches!(html_bytes[after_href], b' ' | b'\t' | b'\n' | b'\r' | b'>' | b'=') {
+            if after_href < n
+                && matches!(
+                    html_bytes[after_href],
+                    b' ' | b'\t' | b'\n' | b'\r' | b'>' | b'='
+                )
+            {
                 if let Some(eqp) = find_byte(html_bytes, b'=', after_href, (i + 64).min(n)) {
                     if let Some((qs, qe)) = find_quote(html_bytes, eqp + 1, (eqp + 4096).min(n)) {
                         let vs = qs + 1;
@@ -72,10 +80,18 @@ pub fn extract_links_zero_copy(html: &str, _base_url: &str) -> Vec<(usize, usize
                     }
                 }
             }
-        } else if i + 3 < n && html_bytes[i] == b's' && html_bytes[i + 1] == b'r'
-            && html_bytes[i + 2] == b'c' {
+        } else if i + 3 < n
+            && html_bytes[i] == b's'
+            && html_bytes[i + 1] == b'r'
+            && html_bytes[i + 2] == b'c'
+        {
             let after_src = i + 3;
-            if after_src < n && matches!(html_bytes[after_src], b' ' | b'\t' | b'\n' | b'\r' | b'>' | b'=') {
+            if after_src < n
+                && matches!(
+                    html_bytes[after_src],
+                    b' ' | b'\t' | b'\n' | b'\r' | b'>' | b'='
+                )
+            {
                 if let Some(eqp) = find_byte(html_bytes, b'=', after_src, (i + 64).min(n)) {
                     if let Some((qs, qe)) = find_quote(html_bytes, eqp + 1, (eqp + 4096).min(n)) {
                         let vs = qs + 1;
@@ -160,7 +176,8 @@ pub fn extract_links(html: &str, base_url: &str) -> Vec<String> {
                 element!("a[href]", |el| {
                     if let Some(href) = el.get_attribute("href") {
                         if let Some(resolved) = base.join(&href).ok().map(|u| u.to_string()) {
-                            if resolved.starts_with("http://") || resolved.starts_with("https://")
+                            if resolved.starts_with("http://")
+                                || resolved.starts_with("https://")
                                 || resolved.starts_with("//")
                             {
                                 let url = resolved.strip_prefix("//").unwrap_or(&resolved);
@@ -247,8 +264,7 @@ pub fn extract_links_with_text(html: &str, base_url: &str) -> Vec<(String, Strin
 
     // Per-document link accumulator: URL → anchor text.
     // Uses BTreeSet for automatic sorted-dedup ordering.
-    let links: Arc<Mutex<BTreeSet<(String, String)>>> =
-        Arc::new(Mutex::new(BTreeSet::new()));
+    let links: Arc<Mutex<BTreeSet<(String, String)>>> = Arc::new(Mutex::new(BTreeSet::new()));
 
     // Active anchor state — set on <a> open, emitted on </a>.
     let anchor_url: Arc<Mutex<Option<String>>> = Arc::new(Mutex::new(None));
@@ -270,10 +286,7 @@ pub fn extract_links_with_text(html: &str, base_url: &str) -> Vec<(String, Strin
                     // Capture new URL and reset text
                     if let Some(href) = el.get_attribute("href") {
                         if let Some(resolved) = base.join(&href).ok().map(|u| u.to_string()) {
-                            let url = resolved
-                                .strip_prefix("//")
-                                .unwrap_or(&resolved)
-                                .to_string();
+                            let url = resolved.strip_prefix("//").unwrap_or(&resolved).to_string();
                             *anchor_url.lock() = Some(url);
                             anchor_text.lock().clear();
                         }
@@ -332,12 +345,11 @@ pub fn extract_links_with_text(html: &str, base_url: &str) -> Vec<(String, Strin
         ) {
             links.lock().insert((url, text));
         }
-    })).is_ok();
+    }))
+    .is_ok();
 
     // E0597 fix: explicit scope ensures MutexGuard is dropped before return
-    let result = {
-        links.lock().iter().cloned().collect::<Vec<_>>()
-    };
+    let result = { links.lock().iter().cloned().collect::<Vec<_>>() };
     result
 }
 
@@ -402,9 +414,7 @@ pub fn extract_emails(html: &str) -> Vec<String> {
         .map(|m| m.as_str().to_lowercase())
         .collect();
 
-    emails.retain(|e| {
-        e.contains('@') && e.split('@').nth(1).map_or(false, |d| d.contains('.'))
-    });
+    emails.retain(|e| e.contains('@') && e.split('@').nth(1).map_or(false, |d| d.contains('.')));
 
     let mut sorted: Vec<String> = emails.into_iter().collect();
     sorted.sort();
@@ -618,15 +628,18 @@ pub fn extract_title(html: &str) -> Option<String> {
 
     let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         let settings = Settings {
-            element_content_handlers: vec![text!("title", |tc: &mut lol_html::html_content::TextChunk| {
-                if result.is_none() {
-                    let s = tc.as_str().trim().to_string();
-                    if !s.is_empty() {
-                        result = Some(s);
+            element_content_handlers: vec![text!(
+                "title",
+                |tc: &mut lol_html::html_content::TextChunk| {
+                    if result.is_none() {
+                        let s = tc.as_str().trim().to_string();
+                        if !s.is_empty() {
+                            result = Some(s);
+                        }
                     }
+                    Ok(())
                 }
-                Ok(())
-            })],
+            )],
             ..Settings::new_send()
         };
 
@@ -815,9 +828,7 @@ fn _get_itemprop_value(el: &lol_html::html_content::Element) -> Option<String> {
 
     match tag.as_str() {
         "meta" => el.get_attribute("content"),
-        "img" | "audio" | "video" | "iframe" | "source" => {
-            el.get_attribute("src")
-        }
+        "img" | "audio" | "video" | "iframe" | "source" => el.get_attribute("src"),
         "a" | "link" | "area" => el.get_attribute("href"),
         "time" => el.get_attribute("datetime"),
         "data" => el.get_attribute("value"),
@@ -826,16 +837,15 @@ fn _get_itemprop_value(el: &lol_html::html_content::Element) -> Option<String> {
         "progress" => el.get_attribute("value"),
         // Elements with text content - lol_html 2.x Element has no text_contents/as_str
         // Return empty string and let callers handle it
-        "span" | "div" | "p" | "td" | "th" | "article" | "section" |
-        "header" | "footer" | "nav" | "aside" | "main" | "address" |
-        "blockquote" | "figure" | "figcaption" | "h1" | "h2" | "h3" |
-        "h4" | "h5" | "h6" | "li" | "dd" | "dt" => {
-            None  // lol_html 2.x: Element has no text accessor; use text! handler instead
+        "span" | "div" | "p" | "td" | "th" | "article" | "section" | "header" | "footer"
+        | "nav" | "aside" | "main" | "address" | "blockquote" | "figure" | "figcaption" | "h1"
+        | "h2" | "h3" | "h4" | "h5" | "h6" | "li" | "dd" | "dt" => {
+            None // lol_html 2.x: Element has no text accessor; use text! handler instead
         }
         // Empty-self-closing or void elements
-        "br" | "hr" | "input" | "embed" | "param" | "track" |
-        "wbr" | "keygen" | "base" | "col" | "command" => None,
-        _ => None  // lol_html 2.x: no Element text accessor
+        "br" | "hr" | "input" | "embed" | "param" | "track" | "wbr" | "keygen" | "base" | "col"
+        | "command" => None,
+        _ => None, // lol_html 2.x: no Element text accessor
     }
 }
 
@@ -926,11 +936,14 @@ mod tests {
     fn test_extract_links_sorted() {
         let html = r#"<a href="/c"></a><a href="/a"></a><a href="/b"></a>"#;
         let links = extract_links(html, "https://example.com/");
-        assert_eq!(links, vec![
-            "https://example.com/a",
-            "https://example.com/b",
-            "https://example.com/c",
-        ]);
+        assert_eq!(
+            links,
+            vec![
+                "https://example.com/a",
+                "https://example.com/b",
+                "https://example.com/c",
+            ]
+        );
     }
 
     #[test]
@@ -953,7 +966,10 @@ mod tests {
     #[test]
     fn test_extract_meta_description() {
         let html = r#"<meta name="description" content="  Hello world  ">"#;
-        assert_eq!(extract_meta_description(html), Some("Hello world".to_string()));
+        assert_eq!(
+            extract_meta_description(html),
+            Some("Hello world".to_string())
+        );
     }
 
     #[test]
@@ -993,8 +1009,14 @@ mod tests {
     #[test]
     fn test_batch_extract_links_basic() {
         let items = vec![
-            ("<a href=\"/a\">a</a>".to_string(), "https://x.com/".to_string()),
-            ("<a href=\"/b\">b</a>".to_string(), "https://y.com/".to_string()),
+            (
+                "<a href=\"/a\">a</a>".to_string(),
+                "https://x.com/".to_string(),
+            ),
+            (
+                "<a href=\"/b\">b</a>".to_string(),
+                "https://y.com/".to_string(),
+            ),
         ];
         let results = batch_extract_links(items);
         assert_eq!(results.len(), 2);
@@ -1079,8 +1101,14 @@ mod tests {
     #[test]
     fn test_batch_extract_links_with_text_basic() {
         let items = vec![
-            (r#"<a href="/a">Alpha</a>"#.to_string(), "https://x.com/".to_string()),
-            (r#"<a href="/b">Beta</a>"#.to_string(), "https://y.com/".to_string()),
+            (
+                r#"<a href="/a">Alpha</a>"#.to_string(),
+                "https://x.com/".to_string(),
+            ),
+            (
+                r#"<a href="/b">Beta</a>"#.to_string(),
+                "https://y.com/".to_string(),
+            ),
         ];
         let results = batch_extract_links_with_text(items);
         assert_eq!(results.len(), 2);
@@ -1093,7 +1121,12 @@ mod tests {
     #[test]
     fn test_batch_extract_links_with_text_cap() {
         let items: Vec<(String, String)> = (0..2000)
-            .map(|i| (format!("<a href=\"/{}\">text{}", i, i), "https://x.com/".to_string()))
+            .map(|i| {
+                (
+                    format!("<a href=\"/{}\">text{}", i, i),
+                    "https://x.com/".to_string(),
+                )
+            })
             .collect();
         let results = batch_extract_links_with_text(items);
         assert_eq!(results.len(), BATCH_EXTRACT_CAP);
@@ -1123,9 +1156,7 @@ mod tests {
 
     #[test]
     fn test_batch_extract_emails_cap() {
-        let items: Vec<String> = (0..2000)
-            .map(|i| format!("<p>a{}@b.com</p>", i))
-            .collect();
+        let items: Vec<String> = (0..2000).map(|i| format!("<p>a{}@b.com</p>", i)).collect();
         let results = batch_extract_emails(items);
         assert_eq!(results.len(), BATCH_EXTRACT_CAP);
     }

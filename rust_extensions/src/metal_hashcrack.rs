@@ -139,28 +139,21 @@ const MD5_KERNEL_SRC: &str = include_str!("../shaders/crack_md5_kernel.metal");
 fn cpu_md5(input: &[u8]) -> [u8; 16] {
     // MD5 constants
     const K: [u32; 64] = [
-        0xd76aa478, 0xe8c7b756, 0x242070db, 0xc1bdceee,
-        0xf57c0faf, 0x4787c62a, 0xa8304613, 0xfd469501,
-        0x698098d8, 0x8b44f7af, 0xffff5bb1, 0x895cd7be,
-        0x6b901122, 0xfd987193, 0xa679438e, 0x49b40821,
-        0xf61e2562, 0xc040b340, 0x265e5a51, 0xe9b6c7aa,
-        0xd62f105d, 0x02441453, 0xd8a1e681, 0xe7d3fbc8,
-        0x21e1cde6, 0xc33707d6, 0xf4d50d87, 0x455a14ed,
-        0xa9e3e905, 0xfcefa3f8, 0x676f02d9, 0x8d2a4c8a,
-        0xfffa3942, 0x8771f681, 0x6d9d6122, 0xfde5380c,
-        0xa4beea44, 0x4bdecfa9, 0xf6bb4b60, 0xbebfbc70,
-        0x289b7ec6, 0xeaa127fa, 0xd4ef3085, 0x04881d05,
-        0xd9d4d039, 0xe6db99e5, 0x1fa27cf8, 0xc4ac5665,
-        0xf4292244, 0x432aff97, 0xab9423a7, 0xfc93a039,
-        0x655b59c3, 0x8f0ccc92, 0xffeff47d, 0x85845dd1,
-        0x6fa87e4f, 0xfe2ce6e0, 0xa3014314, 0x4e0811a1,
-        0xf7537e82, 0xbd3af235, 0x2ad7d2bb, 0xeb86d391,
+        0xd76aa478, 0xe8c7b756, 0x242070db, 0xc1bdceee, 0xf57c0faf, 0x4787c62a, 0xa8304613,
+        0xfd469501, 0x698098d8, 0x8b44f7af, 0xffff5bb1, 0x895cd7be, 0x6b901122, 0xfd987193,
+        0xa679438e, 0x49b40821, 0xf61e2562, 0xc040b340, 0x265e5a51, 0xe9b6c7aa, 0xd62f105d,
+        0x02441453, 0xd8a1e681, 0xe7d3fbc8, 0x21e1cde6, 0xc33707d6, 0xf4d50d87, 0x455a14ed,
+        0xa9e3e905, 0xfcefa3f8, 0x676f02d9, 0x8d2a4c8a, 0xfffa3942, 0x8771f681, 0x6d9d6122,
+        0xfde5380c, 0xa4beea44, 0x4bdecfa9, 0xf6bb4b60, 0xbebfbc70, 0x289b7ec6, 0xeaa127fa,
+        0xd4ef3085, 0x04881d05, 0xd9d4d039, 0xe6db99e5, 0x1fa27cf8, 0xc4ac5665, 0xf4292244,
+        0x432aff97, 0xab9423a7, 0xfc93a039, 0x655b59c3, 0x8f0ccc92, 0xffeff47d, 0x85845dd1,
+        0x6fa87e4f, 0xfe2ce6e0, 0xa3014314, 0x4e0811a1, 0xf7537e82, 0xbd3af235, 0x2ad7d2bb,
+        0xeb86d391,
     ];
     const S: [u32; 64] = [
-        7, 12, 17, 22, 7, 12, 17, 22, 7, 12, 17, 22, 7, 12, 17, 22,
-        5,  9, 14, 20, 5,  9, 14, 20, 5,  9, 14, 20, 5,  9, 14, 20,
-        4, 11, 16, 23, 4, 11, 16, 23, 4, 11, 16, 23, 4, 11, 16, 23,
-        6, 10, 15, 21, 6, 10, 15, 21, 6, 10, 15, 21, 6, 10, 15, 21,
+        7, 12, 17, 22, 7, 12, 17, 22, 7, 12, 17, 22, 7, 12, 17, 22, 5, 9, 14, 20, 5, 9, 14, 20, 5,
+        9, 14, 20, 5, 9, 14, 20, 4, 11, 16, 23, 4, 11, 16, 23, 4, 11, 16, 23, 4, 11, 16, 23, 6, 10,
+        15, 21, 6, 10, 15, 21, 6, 10, 15, 21, 6, 10, 15, 21,
     ];
 
     let len = input.len();
@@ -169,7 +162,11 @@ fn cpu_md5(input: &[u8]) -> [u8; 16] {
     // Padding: append 0x80, zeros, then 64-bit length in LE
     // For len <= 55: single 512-bit block
     // For len > 55: two blocks
-    let pad_len = if len % 64 < 56 { 64 - (len % 64) } else { 128 - (len % 64) };
+    let pad_len = if len % 64 < 56 {
+        64 - (len % 64)
+    } else {
+        128 - (len % 64)
+    };
     let total_len = len + pad_len;
 
     let mut msg: Vec<u8> = Vec::with_capacity(total_len);
@@ -191,9 +188,7 @@ fn cpu_md5(input: &[u8]) -> [u8; 16] {
         let mut m: [u32; 16] = [0; 16];
         for i in 0..16 {
             let off = i * 4;
-            m[i] = u32::from_le_bytes([
-                block[off], block[off + 1], block[off + 2], block[off + 3],
-            ]);
+            m[i] = u32::from_le_bytes([block[off], block[off + 1], block[off + 2], block[off + 3]]);
         }
 
         let aa = a;
@@ -202,108 +197,116 @@ fn cpu_md5(input: &[u8]) -> [u8; 16] {
         let dd = d;
 
         // Round 1
-        macro_rules! op1 { ($aa:ident, $bb:ident, $cc:ident, $dd:ident, $k:expr, $s:expr, $i:expr) => {
-            $aa = $bb.wrapping_add(
-                ($aa.wrapping_add(($bb & $cc) | ((!$bb) & $dd))
-                    .wrapping_add(m[$k])
-                    .wrapping_add(K[$i]))
-                .rotate_left(S[$i])
-            );
-        }; }
-        op1!(a, b, c, d,  0,  7,  0);
-        op1!(d, a, b, c,  1, 12,  1);
-        op1!(c, d, a, b,  2, 17,  2);
-        op1!(b, c, d, a,  3, 22,  3);
-        op1!(a, b, c, d,  4,  7,  4);
-        op1!(d, a, b, c,  5, 12,  5);
-        op1!(c, d, a, b,  6, 17,  6);
-        op1!(b, c, d, a,  7, 22,  7);
-        op1!(a, b, c, d,  8,  7,  8);
-        op1!(d, a, b, c,  9, 12,  9);
+        macro_rules! op1 {
+            ($aa:ident, $bb:ident, $cc:ident, $dd:ident, $k:expr, $s:expr, $i:expr) => {
+                $aa = $bb.wrapping_add(
+                    ($aa.wrapping_add(($bb & $cc) | ((!$bb) & $dd))
+                        .wrapping_add(m[$k])
+                        .wrapping_add(K[$i]))
+                    .rotate_left(S[$i]),
+                );
+            };
+        }
+        op1!(a, b, c, d, 0, 7, 0);
+        op1!(d, a, b, c, 1, 12, 1);
+        op1!(c, d, a, b, 2, 17, 2);
+        op1!(b, c, d, a, 3, 22, 3);
+        op1!(a, b, c, d, 4, 7, 4);
+        op1!(d, a, b, c, 5, 12, 5);
+        op1!(c, d, a, b, 6, 17, 6);
+        op1!(b, c, d, a, 7, 22, 7);
+        op1!(a, b, c, d, 8, 7, 8);
+        op1!(d, a, b, c, 9, 12, 9);
         op1!(c, d, a, b, 10, 17, 10);
         op1!(b, c, d, a, 11, 22, 11);
-        op1!(a, b, c, d, 12,  7, 12);
+        op1!(a, b, c, d, 12, 7, 12);
         op1!(d, a, b, c, 13, 12, 13);
         op1!(c, d, a, b, 14, 17, 14);
         op1!(b, c, d, a, 15, 22, 15);
 
         // Round 2
-        macro_rules! op2 { ($aa:ident, $bb:ident, $cc:ident, $dd:ident, $k:expr, $s:expr, $i:expr) => {
-            $aa = $bb.wrapping_add(
-                ($aa.wrapping_add(($bb & $dd) | ($cc & (!$dd)))
-                    .wrapping_add(m[$k])
-                    .wrapping_add(K[$i]))
-                .rotate_left(S[$i])
-            );
-        }; }
-        op2!(a, b, c, d,  1,  5, 16);
-        op2!(d, a, b, c,  6,  9, 17);
+        macro_rules! op2 {
+            ($aa:ident, $bb:ident, $cc:ident, $dd:ident, $k:expr, $s:expr, $i:expr) => {
+                $aa = $bb.wrapping_add(
+                    ($aa.wrapping_add(($bb & $dd) | ($cc & (!$dd)))
+                        .wrapping_add(m[$k])
+                        .wrapping_add(K[$i]))
+                    .rotate_left(S[$i]),
+                );
+            };
+        }
+        op2!(a, b, c, d, 1, 5, 16);
+        op2!(d, a, b, c, 6, 9, 17);
         op2!(c, d, a, b, 11, 14, 18);
-        op2!(b, c, d, a,  0, 20, 19);
-        op2!(a, b, c, d,  5,  5, 20);
-        op2!(d, a, b, c, 10,  9, 21);
+        op2!(b, c, d, a, 0, 20, 19);
+        op2!(a, b, c, d, 5, 5, 20);
+        op2!(d, a, b, c, 10, 9, 21);
         op2!(c, d, a, b, 15, 14, 22);
-        op2!(b, c, d, a,  4, 20, 23);
-        op2!(a, b, c, d,  9,  5, 24);
-        op2!(d, a, b, c, 14,  9, 25);
-        op2!(c, d, a, b,  3, 14, 26);
-        op2!(b, c, d, a,  8, 20, 27);
-        op2!(a, b, c, d, 13,  5, 28);
-        op2!(d, a, b, c,  2,  9, 29);
-        op2!(c, d, a, b,  7, 14, 30);
+        op2!(b, c, d, a, 4, 20, 23);
+        op2!(a, b, c, d, 9, 5, 24);
+        op2!(d, a, b, c, 14, 9, 25);
+        op2!(c, d, a, b, 3, 14, 26);
+        op2!(b, c, d, a, 8, 20, 27);
+        op2!(a, b, c, d, 13, 5, 28);
+        op2!(d, a, b, c, 2, 9, 29);
+        op2!(c, d, a, b, 7, 14, 30);
         op2!(b, c, d, a, 12, 20, 31);
 
         // Round 3
-        macro_rules! op3 { ($aa:ident, $bb:ident, $cc:ident, $dd:ident, $k:expr, $s:expr, $i:expr) => {
-            $aa = $bb.wrapping_add(
-                ($aa.wrapping_add($bb ^ $cc ^ $dd)
-                    .wrapping_add(m[$k])
-                    .wrapping_add(K[$i]))
-                .rotate_left(S[$i])
-            );
-        }; }
-        op3!(a, b, c, d,  5,  4, 32);
-        op3!(d, a, b, c,  8, 11, 33);
+        macro_rules! op3 {
+            ($aa:ident, $bb:ident, $cc:ident, $dd:ident, $k:expr, $s:expr, $i:expr) => {
+                $aa = $bb.wrapping_add(
+                    ($aa.wrapping_add($bb ^ $cc ^ $dd)
+                        .wrapping_add(m[$k])
+                        .wrapping_add(K[$i]))
+                    .rotate_left(S[$i]),
+                );
+            };
+        }
+        op3!(a, b, c, d, 5, 4, 32);
+        op3!(d, a, b, c, 8, 11, 33);
         op3!(c, d, a, b, 11, 16, 34);
         op3!(b, c, d, a, 14, 23, 35);
-        op3!(a, b, c, d,  1,  4, 36);
-        op3!(d, a, b, c,  4, 11, 37);
-        op3!(c, d, a, b,  7, 16, 38);
+        op3!(a, b, c, d, 1, 4, 36);
+        op3!(d, a, b, c, 4, 11, 37);
+        op3!(c, d, a, b, 7, 16, 38);
         op3!(b, c, d, a, 10, 23, 39);
-        op3!(a, b, c, d, 13,  4, 40);
-        op3!(d, a, b, c,  0, 11, 41);
-        op3!(c, d, a, b,  3, 16, 42);
-        op3!(b, c, d, a,  6, 23, 43);
-        op3!(a, b, c, d,  9,  4, 44);
+        op3!(a, b, c, d, 13, 4, 40);
+        op3!(d, a, b, c, 0, 11, 41);
+        op3!(c, d, a, b, 3, 16, 42);
+        op3!(b, c, d, a, 6, 23, 43);
+        op3!(a, b, c, d, 9, 4, 44);
         op3!(d, a, b, c, 12, 11, 45);
         op3!(c, d, a, b, 15, 16, 46);
-        op3!(b, c, d, a,  2, 23, 47);
+        op3!(b, c, d, a, 2, 23, 47);
 
         // Round 4
-        macro_rules! op4 { ($aa:ident, $bb:ident, $cc:ident, $dd:ident, $k:expr, $s:expr, $i:expr) => {
-            $aa = $bb.wrapping_add(
-                ($aa.wrapping_add($cc ^ ($bb | (!$dd)))
-                    .wrapping_add(m[$k])
-                    .wrapping_add(K[$i]))
-                .rotate_left(S[$i])
-            );
-        }; }
-        op4!(a, b, c, d,  0,  6, 48);
-        op4!(d, a, b, c,  7, 10, 49);
+        macro_rules! op4 {
+            ($aa:ident, $bb:ident, $cc:ident, $dd:ident, $k:expr, $s:expr, $i:expr) => {
+                $aa = $bb.wrapping_add(
+                    ($aa.wrapping_add($cc ^ ($bb | (!$dd)))
+                        .wrapping_add(m[$k])
+                        .wrapping_add(K[$i]))
+                    .rotate_left(S[$i]),
+                );
+            };
+        }
+        op4!(a, b, c, d, 0, 6, 48);
+        op4!(d, a, b, c, 7, 10, 49);
         op4!(c, d, a, b, 14, 15, 50);
-        op4!(b, c, d, a,  5, 21, 51);
-        op4!(a, b, c, d, 12,  6, 52);
-        op4!(d, a, b, c,  3, 10, 53);
+        op4!(b, c, d, a, 5, 21, 51);
+        op4!(a, b, c, d, 12, 6, 52);
+        op4!(d, a, b, c, 3, 10, 53);
         op4!(c, d, a, b, 10, 15, 54);
-        op4!(b, c, d, a,  1, 21, 55);
-        op4!(a, b, c, d,  8,  6, 56);
+        op4!(b, c, d, a, 1, 21, 55);
+        op4!(a, b, c, d, 8, 6, 56);
         op4!(d, a, b, c, 15, 10, 57);
-        op4!(c, d, a, b,  6, 15, 58);
+        op4!(c, d, a, b, 6, 15, 58);
         op4!(b, c, d, a, 13, 21, 59);
-        op4!(a, b, c, d,  4,  6, 60);
+        op4!(a, b, c, d, 4, 6, 60);
         op4!(d, a, b, c, 11, 10, 61);
-        op4!(c, d, a, b,  2, 15, 62);
-        op4!(b, c, d, a,  9, 21, 63);
+        op4!(c, d, a, b, 2, 15, 62);
+        op4!(b, c, d, a, 9, 21, 63);
 
         a = a.wrapping_add(aa);
         b = b.wrapping_add(bb);
@@ -377,21 +380,19 @@ fn cpu_crack_md5(target_hex: &str, wordlist: &[String]) -> Option<String> {
 
     // Parallel for larger lists
     use rayon::prelude::*;
-    wordlist
-        .par_iter()
-        .find_map_any(|word| {
-            let hash = cpu_md5(word.as_bytes());
-            if hash == target_bytes {
-                Some(word.clone())
-            } else {
-                None
-            }
-        })
+    wordlist.par_iter().find_map_any(|word| {
+        let hash = cpu_md5(word.as_bytes());
+        if hash == target_bytes {
+            Some(word.clone())
+        } else {
+            None
+        }
+    })
 }
 
 /// Crack SHA-256 hash using sha2 crate + Rayon.
 fn cpu_crack_sha256(target_hex: &str, wordlist: &[String]) -> Option<String> {
-    use sha2::{Sha256, Digest};
+    use sha2::{Digest, Sha256};
 
     // Parse target — SHA-256 hex is 64 chars
     let hex = target_hex.trim().to_lowercase();
@@ -421,18 +422,16 @@ fn cpu_crack_sha256(target_hex: &str, wordlist: &[String]) -> Option<String> {
     }
 
     use rayon::prelude::*;
-    wordlist
-        .par_iter()
-        .find_map_any(|word| {
-            let mut hasher = Sha256::new();
-            hasher.update(word.as_bytes());
-            let hash: [u8; 32] = hasher.finalize().into();
-            if hash == target {
-                Some(word.clone())
-            } else {
-                None
-            }
-        })
+    wordlist.par_iter().find_map_any(|word| {
+        let mut hasher = Sha256::new();
+        hasher.update(word.as_bytes());
+        let hash: [u8; 32] = hasher.finalize().into();
+        if hash == target {
+            Some(word.clone())
+        } else {
+            None
+        }
+    })
 }
 
 // ─── GPU Backend (Metal, feature-gated) ───────────────────────────────────
@@ -471,11 +470,7 @@ mod gpu {
         }
 
         /// Crack MD5 hash on GPU. Returns matched word or None.
-        pub fn crack_md5_gpu(
-            &self,
-            target_hex: &str,
-            wordlist: &[String],
-        ) -> Option<String> {
+        pub fn crack_md5_gpu(&self, target_hex: &str, wordlist: &[String]) -> Option<String> {
             let target_words = parse_hex_target_u32(target_hex)?;
 
             // Filter: only words that fit in single MD5 block
@@ -493,11 +488,13 @@ mod gpu {
             let offsets_size = candidates.len() * std::mem::size_of::<u32>();
             let lengths_size = candidates.len() * std::mem::size_of::<u32>();
 
-            let total_alloc = (total_bytes + offsets_size + lengths_size
+            let total_alloc = (
+                total_bytes + offsets_size + lengths_size
                 + 16  // target (4 × u32)
                 + 4   // atomic flag
                 + 4   // match index
-                + 4   // total_candidates constant (buffer 6)
+                + 4
+                // total_candidates constant (buffer 6)
             ) as u64;
 
             if total_alloc > GPU_BUFFER_LIMIT || !track_alloc(total_alloc) {
@@ -505,11 +502,7 @@ mod gpu {
                 return None;
             }
 
-            let result = self._dispatch_md5(
-                &candidates,
-                &target_words,
-                total_alloc,
-            );
+            let result = self._dispatch_md5(&candidates, &target_words, total_alloc);
 
             track_free(total_alloc);
             result
@@ -583,7 +576,9 @@ mod gpu {
             );
 
             // Get optimized kernel function (v2: chunk-based + shared memory)
-            let function = self.md5_library.get_function("crack_md5_kernel", None)
+            let function = self
+                .md5_library
+                .get_function("crack_md5_kernel", None)
                 .expect("crack_md5_kernel not found in compiled library");
 
             let pipeline = self
@@ -631,7 +626,9 @@ mod gpu {
             let flag = unsafe { std::ptr::read_volatile(flag_ptr) };
 
             let elapsed = start.elapsed();
-            STATS.gpu_time_ns.fetch_add(elapsed.as_nanos() as u64, Ordering::Relaxed);
+            STATS
+                .gpu_time_ns
+                .fetch_add(elapsed.as_nanos() as u64, Ordering::Relaxed);
 
             if flag == 1 {
                 STATS.gpu_matches.fetch_add(1, Ordering::Relaxed);
@@ -731,7 +728,9 @@ impl MetalHashCracker {
     /// Returns:
     ///     Matched word or None
     fn crack_md5(&self, target_hex: &str, wordlist: Vec<String>) -> Option<String> {
-        STATS.total_candidates.fetch_add(wordlist.len() as u64, Ordering::Relaxed);
+        STATS
+            .total_candidates
+            .fetch_add(wordlist.len() as u64, Ordering::Relaxed);
 
         // Try GPU first if available and wordlist is large enough
         #[cfg(feature = "metal")]
@@ -749,7 +748,9 @@ impl MetalHashCracker {
         STATS.cpu_fallbacks.fetch_add(1, Ordering::Relaxed);
         let start = std::time::Instant::now();
         let result = cpu_crack_md5(target_hex, &wordlist);
-        STATS.cpu_time_ns.fetch_add(start.elapsed().as_nanos() as u64, Ordering::Relaxed);
+        STATS
+            .cpu_time_ns
+            .fetch_add(start.elapsed().as_nanos() as u64, Ordering::Relaxed);
         if result.is_some() {
             STATS.cpu_matches.fetch_add(1, Ordering::Relaxed);
         }
@@ -765,7 +766,9 @@ impl MetalHashCracker {
     /// Returns:
     ///     Matched word or None
     fn crack_sha256(&self, target_hex: &str, wordlist: Vec<String>) -> Option<String> {
-        STATS.total_candidates.fetch_add(wordlist.len() as u64, Ordering::Relaxed);
+        STATS
+            .total_candidates
+            .fetch_add(wordlist.len() as u64, Ordering::Relaxed);
 
         // SHA-256 on M1: ARMv8 crypto extensions via sha2 crate are already hardware-accelerated.
         // GPU path for SHA-256 is future work (MSL kernel would be ~200 lines).
@@ -773,7 +776,9 @@ impl MetalHashCracker {
         STATS.cpu_fallbacks.fetch_add(1, Ordering::Relaxed);
         let start = std::time::Instant::now();
         let result = cpu_crack_sha256(target_hex, &wordlist);
-        STATS.cpu_time_ns.fetch_add(start.elapsed().as_nanos() as u64, Ordering::Relaxed);
+        STATS
+            .cpu_time_ns
+            .fetch_add(start.elapsed().as_nanos() as u64, Ordering::Relaxed);
         if result.is_some() {
             STATS.cpu_matches.fetch_add(1, Ordering::Relaxed);
         }
@@ -792,23 +797,18 @@ impl MetalHashCracker {
         targets: Vec<String>,
         wordlist: Vec<String>,
     ) -> HashMap<String, Option<String>> {
-        STATS.total_candidates.fetch_add(
-            (wordlist.len() * targets.len()) as u64,
-            Ordering::Relaxed,
-        );
+        STATS
+            .total_candidates
+            .fetch_add((wordlist.len() * targets.len()) as u64, Ordering::Relaxed);
 
         let start = std::time::Instant::now();
 
         // Build hash set of targets for O(1) lookup
-        let target_set: Vec<[u8; 16]> = targets
-            .iter()
-            .filter_map(|t| parse_hex_target(t))
-            .collect();
+        let target_set: Vec<[u8; 16]> =
+            targets.iter().filter_map(|t| parse_hex_target(t)).collect();
 
-        let mut results: HashMap<String, Option<String>> = targets
-            .iter()
-            .map(|t| (t.clone(), None))
-            .collect();
+        let mut results: HashMap<String, Option<String>> =
+            targets.iter().map(|t| (t.clone(), None)).collect();
 
         if target_set.is_empty() {
             return results;
@@ -819,9 +819,8 @@ impl MetalHashCracker {
         // CPU is faster (single pass over wordlist). For ≤4 targets,
         // GPU's ~20× shared-memory speedup outweighs multi-launch overhead.
         #[cfg(feature = "metal")]
-        let gpu_used = self.gpu_available
-            && wordlist.len() >= GPU_MIN_CANDIDATES
-            && targets.len() <= 4;
+        let gpu_used =
+            self.gpu_available && wordlist.len() >= GPU_MIN_CANDIDATES && targets.len() <= 4;
         #[cfg(not(feature = "metal"))]
         let gpu_used = false;
 
@@ -837,10 +836,8 @@ impl MetalHashCracker {
                     }
                 }
                 // Remove found targets from CPU fallback set
-                let remaining: Vec<&String> = targets
-                    .iter()
-                    .filter(|t| results[*t].is_none())
-                    .collect();
+                let remaining: Vec<&String> =
+                    targets.iter().filter(|t| results[*t].is_none()).collect();
                 if remaining.is_empty() {
                     return results;
                 }
@@ -881,7 +878,9 @@ impl MetalHashCracker {
             }
         }
 
-        STATS.cpu_time_ns.fetch_add(start.elapsed().as_nanos() as u64, Ordering::Relaxed);
+        STATS
+            .cpu_time_ns
+            .fetch_add(start.elapsed().as_nanos() as u64, Ordering::Relaxed);
         STATS.cpu_fallbacks.fetch_add(1, Ordering::Relaxed);
         results
     }
@@ -893,16 +892,46 @@ impl MetalHashCracker {
     ///     oom_rejects, total_candidates, gpu_time_ns, cpu_time_ns
     fn get_stats(&self) -> HashMap<String, u64> {
         let mut result = HashMap::new();
-        result.insert("gpu_attempts".into(), STATS.gpu_attempts.load(Ordering::Relaxed));
-        result.insert("gpu_successes".into(), STATS.gpu_successes.load(Ordering::Relaxed));
-        result.insert("gpu_matches".into(), STATS.gpu_matches.load(Ordering::Relaxed));
-        result.insert("cpu_fallbacks".into(), STATS.cpu_fallbacks.load(Ordering::Relaxed));
-        result.insert("cpu_matches".into(), STATS.cpu_matches.load(Ordering::Relaxed));
-        result.insert("oom_rejects".into(), STATS.oom_rejects.load(Ordering::Relaxed));
-        result.insert("total_candidates".into(), STATS.total_candidates.load(Ordering::Relaxed));
-        result.insert("gpu_time_ns".into(), STATS.gpu_time_ns.load(Ordering::Relaxed));
-        result.insert("cpu_time_ns".into(), STATS.cpu_time_ns.load(Ordering::Relaxed));
-        result.insert("gpu_allocated_bytes".into(), GPU_ALLOCATED.load(Ordering::Relaxed));
+        result.insert(
+            "gpu_attempts".into(),
+            STATS.gpu_attempts.load(Ordering::Relaxed),
+        );
+        result.insert(
+            "gpu_successes".into(),
+            STATS.gpu_successes.load(Ordering::Relaxed),
+        );
+        result.insert(
+            "gpu_matches".into(),
+            STATS.gpu_matches.load(Ordering::Relaxed),
+        );
+        result.insert(
+            "cpu_fallbacks".into(),
+            STATS.cpu_fallbacks.load(Ordering::Relaxed),
+        );
+        result.insert(
+            "cpu_matches".into(),
+            STATS.cpu_matches.load(Ordering::Relaxed),
+        );
+        result.insert(
+            "oom_rejects".into(),
+            STATS.oom_rejects.load(Ordering::Relaxed),
+        );
+        result.insert(
+            "total_candidates".into(),
+            STATS.total_candidates.load(Ordering::Relaxed),
+        );
+        result.insert(
+            "gpu_time_ns".into(),
+            STATS.gpu_time_ns.load(Ordering::Relaxed),
+        );
+        result.insert(
+            "cpu_time_ns".into(),
+            STATS.cpu_time_ns.load(Ordering::Relaxed),
+        );
+        result.insert(
+            "gpu_allocated_bytes".into(),
+            GPU_ALLOCATED.load(Ordering::Relaxed),
+        );
         result.insert("gpu_buffer_limit".into(), GPU_BUFFER_LIMIT);
         result.insert("gpu_total_guard".into(), GPU_TOTAL_GUARD);
         result

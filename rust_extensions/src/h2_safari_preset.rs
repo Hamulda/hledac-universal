@@ -50,28 +50,27 @@
 
 use pyo3::prelude::*;
 
-
 // ============================================================================
 // Safari WebKit HTTP/2 SETTINGS Constants
 // ============================================================================
 
 /// HTTP/2 SETTINGS frame identifier types.
-pub const H2_SETTING_HEADER_TABLE_SIZE: u16 = 0x1;     // SETTINGS_HEADER_TABLE_SIZE
-pub const H2_SETTING_ENABLE_PUSH: u16 = 0x2;            // SETTINGS_ENABLE_PUSH
+pub const H2_SETTING_HEADER_TABLE_SIZE: u16 = 0x1; // SETTINGS_HEADER_TABLE_SIZE
+pub const H2_SETTING_ENABLE_PUSH: u16 = 0x2; // SETTINGS_ENABLE_PUSH
 pub const H2_SETTING_MAX_CONCURRENT_STREAMS: u16 = 0x3; // SETTINGS_MAX_CONCURRENT_STREAMS
-pub const H2_SETTING_INITIAL_WINDOW_SIZE: u16 = 0x4;    // SETTINGS_INITIAL_WINDOW_SIZE
-pub const H2_SETTING_MAX_FRAME_SIZE: u16 = 0x5;         // SETTINGS_MAX_FRAME_SIZE
-pub const H2_SETTING_MAX_HEADER_LIST_SIZE: u16 = 0x6;   // SETTINGS_MAX_HEADER_LIST_SIZE
+pub const H2_SETTING_INITIAL_WINDOW_SIZE: u16 = 0x4; // SETTINGS_INITIAL_WINDOW_SIZE
+pub const H2_SETTING_MAX_FRAME_SIZE: u16 = 0x5; // SETTINGS_MAX_FRAME_SIZE
+pub const H2_SETTING_MAX_HEADER_LIST_SIZE: u16 = 0x6; // SETTINGS_MAX_HEADER_LIST_SIZE
 
 /// Safari 18.0 (macOS Sequoia 15.4) HTTP/2 SETTINGS values.
 /// Key differentiator: INITIAL_WINDOW_SIZE = 4,194,304 (4 MiB).
 pub const SAFARI_18_SETTINGS: [(u16, u32); 6] = [
-    (H2_SETTING_HEADER_TABLE_SIZE, 65_536),          // 64 KiB HPACK table
-    (H2_SETTING_ENABLE_PUSH, 1),                      // Server push enabled
-    (H2_SETTING_MAX_CONCURRENT_STREAMS, 100),         // 100 concurrent streams
-    (H2_SETTING_INITIAL_WINDOW_SIZE, 4_194_304),     // 4 MiB initial window (KEY DIFFERENCE)
-    (H2_SETTING_MAX_FRAME_SIZE, 16_384),              // 16 KiB max frame
-    (H2_SETTING_MAX_HEADER_LIST_SIZE, 100_000),      // 100 KB max headers
+    (H2_SETTING_HEADER_TABLE_SIZE, 65_536),   // 64 KiB HPACK table
+    (H2_SETTING_ENABLE_PUSH, 1),              // Server push enabled
+    (H2_SETTING_MAX_CONCURRENT_STREAMS, 100), // 100 concurrent streams
+    (H2_SETTING_INITIAL_WINDOW_SIZE, 4_194_304), // 4 MiB initial window (KEY DIFFERENCE)
+    (H2_SETTING_MAX_FRAME_SIZE, 16_384),      // 16 KiB max frame
+    (H2_SETTING_MAX_HEADER_LIST_SIZE, 100_000), // 100 KB max headers
 ];
 
 /// Safari 17.4 (macOS Sonoma 14.4) HTTP/2 SETTINGS values.
@@ -80,9 +79,9 @@ pub const SAFARI_17_SETTINGS: [(u16, u32); 6] = [
     (H2_SETTING_HEADER_TABLE_SIZE, 65_536),
     (H2_SETTING_ENABLE_PUSH, 1),
     (H2_SETTING_MAX_CONCURRENT_STREAMS, 100),
-    (H2_SETTING_INITIAL_WINDOW_SIZE, 4_194_304),     // Same as 18.0
+    (H2_SETTING_INITIAL_WINDOW_SIZE, 4_194_304), // Same as 18.0
     (H2_SETTING_MAX_FRAME_SIZE, 16_384),
-    (H2_SETTING_MAX_HEADER_LIST_SIZE, 80_000),        // 80 KB (vs 100 KB in 18.0)
+    (H2_SETTING_MAX_HEADER_LIST_SIZE, 80_000), // 80 KB (vs 100 KB in 18.0)
 ];
 
 /// Safari 16.x HTTP/2 SETTINGS values (reference).
@@ -90,9 +89,9 @@ pub const SAFARI_16_SETTINGS: [(u16, u32); 6] = [
     (H2_SETTING_HEADER_TABLE_SIZE, 65_536),
     (H2_SETTING_ENABLE_PUSH, 1),
     (H2_SETTING_MAX_CONCURRENT_STREAMS, 100),
-    (H2_SETTING_INITIAL_WINDOW_SIZE, 2_097_152),     // 2 MiB in older versions
+    (H2_SETTING_INITIAL_WINDOW_SIZE, 2_097_152), // 2 MiB in older versions
     (H2_SETTING_MAX_FRAME_SIZE, 16_384),
-    (H2_SETTING_MAX_HEADER_LIST_SIZE, 65_536),       // 64 KB in older versions
+    (H2_SETTING_MAX_HEADER_LIST_SIZE, 65_536), // 64 KB in older versions
 ];
 
 /// curl_cffi default HTTP/2 SETTINGS (generic nghttp2).
@@ -101,7 +100,7 @@ pub const CURL_CFFI_DEFAULT_SETTINGS: [(u16, u32); 5] = [
     (H2_SETTING_HEADER_TABLE_SIZE, 65_536),
     (H2_SETTING_ENABLE_PUSH, 1),
     (H2_SETTING_MAX_CONCURRENT_STREAMS, 100),
-    (H2_SETTING_INITIAL_WINDOW_SIZE, 65_535),         // DIFFERENT from Safari (4 MiB)
+    (H2_SETTING_INITIAL_WINDOW_SIZE, 65_535), // DIFFERENT from Safari (4 MiB)
     (H2_SETTING_MAX_FRAME_SIZE, 16_384),
 ];
 

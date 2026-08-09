@@ -218,7 +218,8 @@ class MLXMultimodalEncoder:
                 features.extend(hist / hist.sum() if hist.sum() > 0 else hist)
         else:
             features = np.histogram(image, bins=48, range=(0, 255))[0]
-        embedding = np.random.randn(self.embedding_dim)
+        # IO-4 fix: Use deterministic fallback to avoid poisoning LanceDB ANN index
+        embedding = self._get_deterministic_embedding('vision_fallback', scale=1.0)
         embedding[:len(features)] = features[:self.embedding_dim]
         embedding = embedding / np.linalg.norm(embedding)
         return embedding
@@ -230,7 +231,8 @@ class MLXMultimodalEncoder:
         features = [np.mean(np.abs(audio)), np.std(audio), np.max(np.abs(audio))]
         fft = np.abs(np.fft.fft(audio[:min(len(audio), 1024)]))
         features.extend(fft[:10])
-        embedding = np.random.randn(self.embedding_dim)
+        # IO-4 fix: Use deterministic fallback to avoid poisoning LanceDB ANN index
+        embedding = self._get_deterministic_embedding('audio_fallback', scale=1.0)
         embedding[:len(features)] = features[:self.embedding_dim]
         embedding = embedding / np.linalg.norm(embedding)
         return embedding
@@ -243,6 +245,32 @@ class MLXMultimodalEncoder:
         for word in unique_words:
             word_hash = hash(word) % self.embedding_dim
             embedding[word_hash] += 1
+        norm = np.linalg.norm(embedding)
+        if norm > 0:
+            embedding = embedding / norm
+        return embedding
+
+    def _get_deterministic_embedding(self, seed: str | int, scale: float = 0.1) -> np.ndarray:
+        """
+        IO-4 fix: Deterministic fallback embedding using hash-based RNG.
+        
+        Replaces np.random.randn() fallbacks to avoid poisoning LanceDB ANN index
+        with non-deterministic vectors. Uses a stable hash of the seed to
+        produce reproducible embeddings for the same input.
+        
+        Args:
+            seed: String or int used to seed the RNG deterministically
+            scale: Scale factor for the random vector (default 0.1)
+            
+        Returns:
+            L2-normalized random vector of shape (embedding_dim,)
+        """
+        if isinstance(seed, str):
+            seed_val = hash(seed) & 0xFFFFFFFF
+        else:
+            seed_val = seed & 0xFFFFFFFF
+        rng = np.random.default_rng(seed_val)
+        embedding = rng.standard_normal(self.embedding_dim, dtype=np.float32) * scale
         norm = np.linalg.norm(embedding)
         if norm > 0:
             embedding = embedding / norm
@@ -457,7 +485,8 @@ class UniversalMultimodalCoordinator(UniversalCoordinator):
                 content = item
                 modality = await self.detect_modality(content)
             result = await self.process_content(content, modality)
-            output = ModalityOutput(modality=modality, embedding=np.random.randn(self.embedding_dim).astype(np.float32), confidence=result.get('confidence', 0.8))
+            # IO-4 fix: Use deterministic fallback to avoid poisoning LanceDB ANN index
+            output = ModalityOutput(modality=modality, embedding=self._get_deterministic_embedding(f'fuse_{modality.value}'), confidence=result.get('confidence', 0.8))
             outputs.append(output)
             modalities.append(modality)
         weights = {}
@@ -502,14 +531,17 @@ class UniversalMultimodalCoordinator(UniversalCoordinator):
                     confidence = 0.85
             elif isinstance(content, str):
                 features['format'] = 'path'
-                embedding = np.random.randn(self.embedding_dim).astype(np.float32) * 0.1
+                # IO-4 fix: Use deterministic fallback to avoid poisoning LanceDB ANN index
+                embedding = self._get_deterministic_embedding(f'image_path_{content}', scale=0.1)
                 confidence = 0.8
             else:
-                embedding = np.random.randn(self.embedding_dim).astype(np.float32) * 0.1
+                # IO-4 fix: Use deterministic fallback to avoid poisoning LanceDB ANN index
+                embedding = self._get_deterministic_embedding('image_unknown', scale=0.1)
                 confidence = 0.75
         except Exception as e:
             logger.warning(f'Image processing failed: {e}')
-            embedding = np.random.randn(self.embedding_dim).astype(np.float32) * 0.1
+            # IO-4 fix: Use deterministic fallback to avoid poisoning LanceDB ANN index
+            embedding = self._get_deterministic_embedding('image_error', scale=0.1)
             confidence = 0.7
         return ModalityOutput(modality=ModalityType.IMAGE, embedding=embedding, features=features, confidence=confidence)
 
@@ -589,8 +621,8 @@ class UniversalMultimodalCoordinator(UniversalCoordinator):
                         embedding = self._generate_text_embedding(text_for_embedding)
                         confidence = max(result.transcript_confidence, 0.75)
                     else:
-                        # No transcription — use audio embedding fallback
-                        embedding = np.random.randn(self.embedding_dim).astype(np.float32) * 0.1
+                        # IO-4 fix: Use deterministic fallback to avoid poisoning LanceDB ANN index
+                        embedding = self._get_deterministic_embedding('audio_no_transcript', scale=0.1)
                         confidence = 0.65
 
                     return ModalityOutput(
@@ -611,11 +643,13 @@ class UniversalMultimodalCoordinator(UniversalCoordinator):
                     embedding = self._generate_audio_embedding_fallback(content)
                     confidence = 0.78
             else:
-                embedding = np.random.randn(self.embedding_dim).astype(np.float32) * 0.1
+                # IO-4 fix: Use deterministic fallback to avoid poisoning LanceDB ANN index
+                embedding = self._get_deterministic_embedding('audio_non_array', scale=0.1)
                 confidence = 0.7
         except Exception as e:
             logger.warning(f'Audio processing failed: {e}')
-            embedding = np.random.randn(self.embedding_dim).astype(np.float32) * 0.1
+            # IO-4 fix: Use deterministic fallback to avoid poisoning LanceDB ANN index
+            embedding = self._get_deterministic_embedding('audio_error', scale=0.1)
             confidence = 0.7
         return ModalityOutput(
             modality=ModalityType.AUDIO,
@@ -690,7 +724,8 @@ class UniversalMultimodalCoordinator(UniversalCoordinator):
                         embedding = self._generate_text_embedding(text_for_embedding)
                         confidence = max(result.transcript_confidence, 0.6)
                     else:
-                        embedding = np.random.randn(self.embedding_dim).astype(np.float32) * 0.1
+                        # IO-4 fix: Use deterministic fallback to avoid poisoning LanceDB ANN index
+                        embedding = self._get_deterministic_embedding('video_no_text', scale=0.1)
                         confidence = 0.5
 
                     return ModalityOutput(
@@ -701,11 +736,13 @@ class UniversalMultimodalCoordinator(UniversalCoordinator):
                     )
 
             # Fallback: no valid video content
-            embedding = np.random.randn(self.embedding_dim).astype(np.float32) * 0.1
+            # IO-4 fix: Use deterministic fallback to avoid poisoning LanceDB ANN index
+            embedding = self._get_deterministic_embedding('video_no_content', scale=0.1)
             confidence = 0.65
         except Exception as e:
             logger.warning(f'Video processing failed: {e}')
-            embedding = np.random.randn(self.embedding_dim).astype(np.float32) * 0.1
+            # IO-4 fix: Use deterministic fallback to avoid poisoning LanceDB ANN index
+            embedding = self._get_deterministic_embedding('video_error', scale=0.1)
             confidence = 0.6
         return ModalityOutput(
             modality=ModalityType.VIDEO,
@@ -722,7 +759,8 @@ class UniversalMultimodalCoordinator(UniversalCoordinator):
         if audio:
             fft = np.abs(np.fft.fft(audio[:min(len(audio), 1024)]))
             features.extend(fft[:20])
-        embedding = np.random.randn(self.embedding_dim).astype(np.float32) * 0.05
+        # IO-4 fix: Use deterministic fallback to avoid poisoning LanceDB ANN index
+        embedding = self._get_deterministic_embedding('audio_features', scale=0.05)
         embedding[:len(features)] = np.array(features[:self.embedding_dim])
         norm = np.linalg.norm(embedding)
         if norm > 0:
@@ -731,11 +769,13 @@ class UniversalMultimodalCoordinator(UniversalCoordinator):
 
     async def _process_document(self, content: Any) -> ModalityOutput:
         """Process document content (placeholder)."""
-        return ModalityOutput(modality=ModalityType.DOCUMENT, embedding=np.random.randn(self.embedding_dim).astype(np.float32) * 0.1, features={'pages': 0, 'type': 'document'}, confidence=0.9)
+        # IO-4 fix: Use deterministic fallback to avoid poisoning LanceDB ANN index
+        return ModalityOutput(modality=ModalityType.DOCUMENT, embedding=self._get_deterministic_embedding('document', scale=0.1), features={'pages': 0, 'type': 'document'}, confidence=0.9)
 
     async def _process_chart(self, content: Any) -> ModalityOutput:
         """Process chart content (placeholder)."""
-        return ModalityOutput(modality=ModalityType.CHART, embedding=np.random.randn(self.embedding_dim).astype(np.float32) * 0.1, features={'type': 'chart', 'data_points': 0}, confidence=0.7)
+        # IO-4 fix: Use deterministic fallback to avoid poisoning LanceDB ANN index
+        return ModalityOutput(modality=ModalityType.CHART, embedding=self._get_deterministic_embedding('chart', scale=0.1), features={'type': 'chart', 'data_points': 0}, confidence=0.7)
 
     def _generate_text_embedding(self, text: str) -> Any:
         """Generate text embedding using MLX if available, fast hash fallback otherwise."""

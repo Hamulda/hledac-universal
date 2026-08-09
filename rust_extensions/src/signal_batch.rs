@@ -149,130 +149,153 @@ unsafe fn compute_scores_neon_inner(
     accepted: &[u32],
     current_weights: &[f32],
     novelty: &[bool],
-) -> Vec<f32> { unsafe {
-    use core::arch::aarch64::*;
+) -> Vec<f32> {
+    unsafe {
+        use core::arch::aarch64::*;
 
-    let n = fetched.len().min(accepted.len()).min(current_weights.len());
-    if n == 0 {
-        return Vec::new();
+        let n = fetched.len().min(accepted.len()).min(current_weights.len());
+        if n == 0 {
+            return Vec::new();
+        }
+
+        // We process 4 elements per iteration (128-bit / 32-bit = 4 floats).
+        let chunks = n / 4;
+
+        let mut results = Vec::with_capacity(n);
+
+        // Constant vectors for NEON operations.
+        // Delta thresholds: 0.7, 0.4, 0.15 (stored as f32).
+        let vd70 = vdupq_n_f32(0.7_f32);
+        let vd40 = vdupq_n_f32(0.4_f32);
+        let vd15 = vdupq_n_f32(0.15_f32);
+        let vdelta110 = vdupq_n_f32(1.10_f32);
+        let vdelta105 = vdupq_n_f32(1.05_f32);
+        let vdelta100 = vdupq_n_f32(1.00_f32);
+        let vdelta095 = vdupq_n_f32(0.95_f32);
+        let vclamp_lo = vdupq_n_f32(0.3_f32);
+        let vclamp_hi = vdupq_n_f32(2.5_f32);
+
+        // Chunked NEON processing.
+        for chunk in 0..chunks {
+            let base = chunk * 4;
+
+            // Load 4 fetched counts.
+            let f0 = *fetched.get(base).unwrap_or(&1_u32);
+            let f1 = *fetched.get(base + 1).unwrap_or(&1_u32);
+            let f2 = *fetched.get(base + 2).unwrap_or(&1_u32);
+            let f3 = *fetched.get(base + 3).unwrap_or(&1_u32);
+            let fetched_vec = core::arch::aarch64::vld1q_u32([f0, f1, f2, f3].as_ptr());
+
+            // Load 4 accepted counts.
+            let a0 = *accepted.get(base).unwrap_or(&0_u32);
+            let a1 = *accepted.get(base + 1).unwrap_or(&0_u32);
+            let a2 = *accepted.get(base + 2).unwrap_or(&0_u32);
+            let a3 = *accepted.get(base + 3).unwrap_or(&0_u32);
+            let accepted_vec = core::arch::aarch64::vld1q_u32([a0, a1, a2, a3].as_ptr());
+
+            // Compute ratios: accepted / max(fetched, 1).
+            // Create max(fetched, 1) mask.
+            let vone_u32 = vdupq_n_u32(1_u32);
+            let fetched_safe = vmaxq_u32(fetched_vec, vone_u32);
+            // Convert to f32 for division.
+            let fetched_f = vcvtq_f32_u32(fetched_safe);
+            let accepted_f = vcvtq_f32_u32(accepted_vec);
+            let ratio = vdivq_f32(accepted_f, fetched_f);
+
+            // Load current weights.
+            let w0 = *current_weights.get(base).unwrap_or(&1.0_f32);
+            let w1 = *current_weights.get(base + 1).unwrap_or(&1.0_f32);
+            let w2 = *current_weights.get(base + 2).unwrap_or(&1.0_f32);
+            let w3 = *current_weights.get(base + 3).unwrap_or(&1.0_f32);
+            let weight_vec = core::arch::aarch64::vld1q_f32([w0, w1, w2, w3].as_ptr());
+
+            // Load novelty flags (bool→f32 via if/else to avoid invalid cast).
+            let n0 = if *novelty.get(base).unwrap_or(&false) {
+                1.0_f32
+            } else {
+                0.0_f32
+            };
+            let n1 = if *novelty.get(base + 1).unwrap_or(&false) {
+                1.0_f32
+            } else {
+                0.0_f32
+            };
+            let n2 = if *novelty.get(base + 2).unwrap_or(&false) {
+                1.0_f32
+            } else {
+                0.0_f32
+            };
+            let n3 = if *novelty.get(base + 3).unwrap_or(&false) {
+                1.0_f32
+            } else {
+                0.0_f32
+            };
+            let novelty_vec = core::arch::aarch64::vld1q_f32([n0, n1, n2, n3].as_ptr());
+
+            // Determine delta based on ratio thresholds:
+            // delta = 1.10 if >= 0.7, 1.05 if >= 0.4, 1.00 if >= 0.15, else 0.95.
+            let mask_ge70: uint32x4_t = vcgeq_f32(ratio, vd70);
+            let mask_ge40: uint32x4_t = vcgeq_f32(ratio, vd40);
+            let mask_ge15: uint32x4_t = vcgeq_f32(ratio, vd15);
+
+            // Select delta using NEON bitwise select (vbslq).
+            // if ratio >= 0.7: delta = 1.10
+            let delta = vbslq_f32(
+                mask_ge70,
+                vdelta110,
+                // else if ratio >= 0.4: delta = 1.05
+                vbslq_f32(
+                    mask_ge40,
+                    vdelta105,
+                    // else if ratio >= 0.15: delta = 1.00, else 0.95
+                    vbslq_f32(mask_ge15, vdelta100, vdelta095),
+                ),
+            );
+
+            // new_weight = current_weight * delta * novelty (1.5 if novelty else 1.0).
+            // novelty bonus: 1.5 if novel, else 1.0.
+            let novelty_bonus = vaddq_f32(
+                vdupq_n_f32(1.0_f32),
+                vmulq_f32(novelty_vec, vdupq_n_f32(0.5_f32)),
+            );
+            let weighted = vmulq_f32(weight_vec, vmulq_f32(delta, novelty_bonus));
+
+            // Clamp to [0.3, 2.5].
+            let clamped = vmaxq_f32(weighted, vclamp_lo);
+            let clamped = vminq_f32(clamped, vclamp_hi);
+
+            // Store results.
+            let mut out = [0.0_f32; 4];
+            core::arch::aarch64::vst1q_f32(out.as_mut_ptr(), clamped);
+            results.extend_from_slice(&out);
+        }
+
+        // Scalar tail processing for remainder.
+        for i in (chunks * 4)..n {
+            let f = fetched.get(i).copied().unwrap_or(1).max(1);
+            let a = accepted.get(i).copied().unwrap_or(0);
+            let w = current_weights.get(i).copied().unwrap_or(1.0);
+            let nov = *novelty.get(i).unwrap_or(&false);
+
+            let ratio = (a as f32) / (f as f32);
+            let delta = if ratio >= 0.7 {
+                1.10_f32
+            } else if ratio >= 0.4 {
+                1.05_f32
+            } else if ratio >= 0.15 {
+                1.00_f32
+            } else {
+                0.95_f32
+            };
+            let novelty_bonus = if nov { 1.5 } else { 1.0 };
+            let weighted = w * delta * novelty_bonus;
+            let clamped = weighted.clamp(0.3, 2.5);
+            results.push(clamped);
+        }
+
+        results
     }
-
-    // We process 4 elements per iteration (128-bit / 32-bit = 4 floats).
-    let chunks = n / 4;
-
-    let mut results = Vec::with_capacity(n);
-
-    // Constant vectors for NEON operations.
-    // Delta thresholds: 0.7, 0.4, 0.15 (stored as f32).
-    let vd70 = vdupq_n_f32(0.7_f32);
-    let vd40 = vdupq_n_f32(0.4_f32);
-    let vd15 = vdupq_n_f32(0.15_f32);
-    let vdelta110 = vdupq_n_f32(1.10_f32);
-    let vdelta105 = vdupq_n_f32(1.05_f32);
-    let vdelta100 = vdupq_n_f32(1.00_f32);
-    let vdelta095 = vdupq_n_f32(0.95_f32);
-    let vclamp_lo = vdupq_n_f32(0.3_f32);
-    let vclamp_hi = vdupq_n_f32(2.5_f32);
-
-    // Chunked NEON processing.
-    for chunk in 0..chunks {
-        let base = chunk * 4;
-
-        // Load 4 fetched counts.
-        let f0 = *fetched.get(base).unwrap_or(&1_u32);
-        let f1 = *fetched.get(base + 1).unwrap_or(&1_u32);
-        let f2 = *fetched.get(base + 2).unwrap_or(&1_u32);
-        let f3 = *fetched.get(base + 3).unwrap_or(&1_u32);
-        let fetched_vec = core::arch::aarch64::vld1q_u32([f0, f1, f2, f3].as_ptr());
-
-        // Load 4 accepted counts.
-        let a0 = *accepted.get(base).unwrap_or(&0_u32);
-        let a1 = *accepted.get(base + 1).unwrap_or(&0_u32);
-        let a2 = *accepted.get(base + 2).unwrap_or(&0_u32);
-        let a3 = *accepted.get(base + 3).unwrap_or(&0_u32);
-        let accepted_vec = core::arch::aarch64::vld1q_u32([a0, a1, a2, a3].as_ptr());
-
-        // Compute ratios: accepted / max(fetched, 1).
-        // Create max(fetched, 1) mask.
-        let vone_u32 = vdupq_n_u32(1_u32);
-        let fetched_safe = vmaxq_u32(fetched_vec, vone_u32);
-        // Convert to f32 for division.
-        let fetched_f = vcvtq_f32_u32(fetched_safe);
-        let accepted_f = vcvtq_f32_u32(accepted_vec);
-        let ratio = vdivq_f32(accepted_f, fetched_f);
-
-        // Load current weights.
-        let w0 = *current_weights.get(base).unwrap_or(&1.0_f32);
-        let w1 = *current_weights.get(base + 1).unwrap_or(&1.0_f32);
-        let w2 = *current_weights.get(base + 2).unwrap_or(&1.0_f32);
-        let w3 = *current_weights.get(base + 3).unwrap_or(&1.0_f32);
-        let weight_vec = core::arch::aarch64::vld1q_f32([w0, w1, w2, w3].as_ptr());
-
-        // Load novelty flags (bool→f32 via if/else to avoid invalid cast).
-        let n0 = if *novelty.get(base).unwrap_or(&false) { 1.0_f32 } else { 0.0_f32 };
-        let n1 = if *novelty.get(base + 1).unwrap_or(&false) { 1.0_f32 } else { 0.0_f32 };
-        let n2 = if *novelty.get(base + 2).unwrap_or(&false) { 1.0_f32 } else { 0.0_f32 };
-        let n3 = if *novelty.get(base + 3).unwrap_or(&false) { 1.0_f32 } else { 0.0_f32 };
-        let novelty_vec = core::arch::aarch64::vld1q_f32([n0, n1, n2, n3].as_ptr());
-
-        // Determine delta based on ratio thresholds:
-        // delta = 1.10 if >= 0.7, 1.05 if >= 0.4, 1.00 if >= 0.15, else 0.95.
-        let mask_ge70: uint32x4_t = vcgeq_f32(ratio, vd70);
-        let mask_ge40: uint32x4_t = vcgeq_f32(ratio, vd40);
-        let mask_ge15: uint32x4_t = vcgeq_f32(ratio, vd15);
-
-        // Select delta using NEON bitwise select (vbslq).
-        // if ratio >= 0.7: delta = 1.10
-        let delta = vbslq_f32(
-            mask_ge70,
-            vdelta110,
-            // else if ratio >= 0.4: delta = 1.05
-            vbslq_f32(mask_ge40, vdelta105,
-                // else if ratio >= 0.15: delta = 1.00, else 0.95
-                vbslq_f32(mask_ge15, vdelta100, vdelta095)),
-        );
-
-        // new_weight = current_weight * delta * novelty (1.5 if novelty else 1.0).
-        // novelty bonus: 1.5 if novel, else 1.0.
-        let novelty_bonus = vaddq_f32(vdupq_n_f32(1.0_f32),
-            vmulq_f32(novelty_vec, vdupq_n_f32(0.5_f32)));
-        let weighted = vmulq_f32(weight_vec, vmulq_f32(delta, novelty_bonus));
-
-        // Clamp to [0.3, 2.5].
-        let clamped = vmaxq_f32(weighted, vclamp_lo);
-        let clamped = vminq_f32(clamped, vclamp_hi);
-
-        // Store results.
-        let mut out = [0.0_f32; 4];
-        core::arch::aarch64::vst1q_f32(out.as_mut_ptr(), clamped);
-        results.extend_from_slice(&out);
-    }
-
-    // Scalar tail processing for remainder.
-    for i in (chunks * 4)..n {
-        let f = fetched.get(i).copied().unwrap_or(1).max(1);
-        let a = accepted.get(i).copied().unwrap_or(0);
-        let w = current_weights.get(i).copied().unwrap_or(1.0);
-        let nov = *novelty.get(i).unwrap_or(&false);
-
-        let ratio = (a as f32) / (f as f32);
-        let delta = if ratio >= 0.7 {
-            1.10_f32
-        } else if ratio >= 0.4 {
-            1.05_f32
-        } else if ratio >= 0.15 {
-            1.00_f32
-        } else {
-            0.95_f32
-        };
-        let novelty_bonus = if nov { 1.5 } else { 1.0 };
-        let weighted = w * delta * novelty_bonus;
-        let clamped = weighted.clamp(0.3, 2.5);
-        results.push(clamped);
-    }
-
-    results
-}}
+}
 
 // ---------------------------------------------------------------------------
 // Scalar fallback
@@ -331,11 +354,7 @@ fn compute_scores_scalar(
 /// - Empty signals or weights → empty list
 /// - Weight sum = 0 → unweighted average
 /// - Mismatched vector lengths → truncate to shortest
-fn aggregate_signals_inner(
-    signals: &[Vec<f32>],
-    weights: &[f32],
-    normalize: bool,
-) -> Vec<f32> {
+fn aggregate_signals_inner(signals: &[Vec<f32>], weights: &[f32], normalize: bool) -> Vec<f32> {
     if signals.is_empty() || weights.is_empty() {
         return Vec::new();
     }
@@ -400,94 +419,92 @@ unsafe fn aggregate_signals_neon(
     signals: &[Vec<f32>],
     weights: &[f32],
     normalize: bool,
-) -> Vec<f32> { unsafe {
-    use core::arch::aarch64::*;
+) -> Vec<f32> {
+    unsafe {
+        use core::arch::aarch64::*;
 
-    let n_sources = signals.len().min(weights.len());
-    if n_sources == 0 || signals.is_empty() {
-        return Vec::new();
+        let n_sources = signals.len().min(weights.len());
+        if n_sources == 0 || signals.is_empty() {
+            return Vec::new();
+        }
+
+        let out_len = signals
+            .iter()
+            .take(n_sources)
+            .map(|v| v.len())
+            .min()
+            .unwrap_or(0);
+
+        if out_len == 0 {
+            return Vec::new();
+        }
+
+        let mut result = vec![0.0_f32; out_len];
+        let mut weight_sum = 0.0_f32;
+
+        let chunks = out_len / 4;
+
+        // Pre-compute per-source weight * novelty multipliers.
+        let weight_vecs: Vec<f32> = weights
+            .iter()
+            .take(n_sources)
+            .map(|&w| if w > 0.0 { w } else { 0.0 })
+            .collect();
+
+        for i in 0..n_sources {
+            let w = weight_vecs[i];
+            if w <= 0.0 {
+                continue;
+            }
+            weight_sum += w;
+
+            let sig = &signals[i];
+            let sig_slice = &sig[..out_len.min(sig.len())];
+
+            // NEON chunked processing of signal vector.
+            // M1 supports unaligned NEON loads — load directly from sig_slice.
+            for chunk in 0..chunks {
+                let base = chunk * 4;
+                let sig_vec = vld1q_f32(sig_slice.as_ptr().add(base));
+                let w_vec = vdupq_n_f32(w);
+                let weighted = vmulq_f32(sig_vec, w_vec);
+
+                // Accumulate into result.
+                let current = vld1q_f32(result.as_ptr().add(base));
+                let accumulated = vaddq_f32(current, weighted);
+                vst1q_f32(result.as_mut_ptr().add(base), accumulated);
+            }
+
+            // Scalar tail.
+            for j in (chunks * 4)..sig_slice.len() {
+                result[j] += sig_slice[j] * w;
+            }
+        }
+
+        if normalize && weight_sum > 0.0 {
+            let inv = 1.0_f32 / weight_sum;
+            let inv_vec = vdupq_n_f32(inv);
+
+            // NEON chunked normalization.
+            for chunk in 0..chunks {
+                let base = chunk * 4;
+                let r = vld1q_f32(result.as_ptr().add(base));
+                let normalized = vmulq_f32(r, inv_vec);
+                vst1q_f32(result.as_mut_ptr().add(base), normalized);
+            }
+
+            // Scalar tail normalization.
+            for i in (chunks * 4)..out_len {
+                result[i] *= inv;
+            }
+        }
+
+        result
     }
-
-    let out_len = signals
-        .iter()
-        .take(n_sources)
-        .map(|v| v.len())
-        .min()
-        .unwrap_or(0);
-
-    if out_len == 0 {
-        return Vec::new();
-    }
-
-    let mut result = vec![0.0_f32; out_len];
-    let mut weight_sum = 0.0_f32;
-
-    let chunks = out_len / 4;
-
-    // Pre-compute per-source weight * novelty multipliers.
-    let weight_vecs: Vec<f32> = weights
-        .iter()
-        .take(n_sources)
-        .map(|&w| if w > 0.0 { w } else { 0.0 })
-        .collect();
-
-    for i in 0..n_sources {
-        let w = weight_vecs[i];
-        if w <= 0.0 {
-            continue;
-        }
-        weight_sum += w;
-
-        let sig = &signals[i];
-        let sig_slice = &sig[..out_len.min(sig.len())];
-
-        // NEON chunked processing of signal vector.
-        // M1 supports unaligned NEON loads — load directly from sig_slice.
-        for chunk in 0..chunks {
-            let base = chunk * 4;
-            let sig_vec = vld1q_f32(sig_slice.as_ptr().add(base));
-            let w_vec = vdupq_n_f32(w);
-            let weighted = vmulq_f32(sig_vec, w_vec);
-
-            // Accumulate into result.
-            let current = vld1q_f32(result.as_ptr().add(base));
-            let accumulated = vaddq_f32(current, weighted);
-            vst1q_f32(result.as_mut_ptr().add(base), accumulated);
-        }
-
-        // Scalar tail.
-        for j in (chunks * 4)..sig_slice.len() {
-            result[j] += sig_slice[j] * w;
-        }
-    }
-
-    if normalize && weight_sum > 0.0 {
-        let inv = 1.0_f32 / weight_sum;
-        let inv_vec = vdupq_n_f32(inv);
-
-        // NEON chunked normalization.
-        for chunk in 0..chunks {
-            let base = chunk * 4;
-            let r = vld1q_f32(result.as_ptr().add(base));
-            let normalized = vmulq_f32(r, inv_vec);
-            vst1q_f32(result.as_mut_ptr().add(base), normalized);
-        }
-
-        // Scalar tail normalization.
-        for i in (chunks * 4)..out_len {
-            result[i] *= inv;
-        }
-    }
-
-    result
-}}
+}
 
 #[cfg(not(neon_available))]
-fn aggregate_signals_neon(
-    signals: &[Vec<f32>],
-    weights: &[f32],
-    normalize: bool,
-) -> Vec<f32> {
+fn aggregate_signals_neon(signals: &[Vec<f32>], weights: &[f32], normalize: bool) -> Vec<f32> {
     let _ = (signals, weights, normalize);
     Vec::new()
 }
@@ -634,9 +651,7 @@ pub fn batch_aggregate_signals(
     let result = Python::attach(|py| {
         release_gil(py, || {
             #[cfg(neon_available)]
-            let r = unsafe {
-                aggregate_signals_neon(&signal_vecs, &weight_vec, normalize)
-            };
+            let r = unsafe { aggregate_signals_neon(&signal_vecs, &weight_vec, normalize) };
             #[cfg(not(neon_available))]
             let r = aggregate_signals_inner(&signal_vecs, &weight_vec, normalize);
             r
@@ -645,7 +660,11 @@ pub fn batch_aggregate_signals(
 
     if result.is_empty() && !signal_vecs.is_empty() && !weight_vec.is_empty() {
         // Fallback to scalar if NEON returned empty erroneously.
-        return Ok(aggregate_signals_inner(&signal_vecs, &weight_vec, normalize));
+        return Ok(aggregate_signals_inner(
+            &signal_vecs,
+            &weight_vec,
+            normalize,
+        ));
     }
 
     Ok(result)
@@ -705,7 +724,12 @@ pub fn batch_quality_score(
         .collect();
 
     let texts_str: Vec<String> = (0..n)
-        .filter_map(|i| texts.get_item(i).ok().and_then(|v| v.str().ok().map(|s| s.to_string())))
+        .filter_map(|i| {
+            texts
+                .get_item(i)
+                .ok()
+                .and_then(|v| v.str().ok().map(|s| s.to_string()))
+        })
         .collect();
 
     let errors: Vec<Option<String>> = (0..n)
@@ -742,7 +766,8 @@ pub fn batch_quality_score(
                     let text_len = *lens.get(i).unwrap_or(&0);
                     let text = texts_str.get(i).map(|s| s.as_str()).unwrap_or("");
                     let fetch_error = errors.get(i).and_then(|e| e.as_ref()).map(|s| s.as_str());
-                    let failure_stage = failures.get(i).and_then(|f| f.as_ref()).map(|s| s.as_str());
+                    let failure_stage =
+                        failures.get(i).and_then(|f| f.as_ref()).map(|s| s.as_str());
 
                     _score_page_quality(text, text_len, fetch_error, failure_stage)
                 })
@@ -767,21 +792,39 @@ fn _score_page_quality(
     // Error case.
     if let Some(err) = fetch_error {
         let msg = format!("fetch_error:{}", &err[..err.len().min(50)]);
-        return (0.0_f32, "waste".to_string(), "error".to_string(),
-                String::new(), false, Some(msg));
+        return (
+            0.0_f32,
+            "waste".to_string(),
+            "error".to_string(),
+            String::new(),
+            false,
+            Some(msg),
+        );
     }
 
     // Empty page.
     if text.is_empty() || text_len < PRE_FETCH_TEXT_MIN_CHARS {
-        return (0.0_f32, "waste".to_string(), "signalless".to_string(),
-                "thin".to_string(), false, Some("text_too_short".to_string()));
+        return (
+            0.0_f32,
+            "waste".to_string(),
+            "signalless".to_string(),
+            "thin".to_string(),
+            false,
+            Some("text_too_short".to_string()),
+        );
     }
 
     // Failure stage.
     if let Some(stage) = failure_stage {
         let msg = format!("failure_stage:{}", stage);
-        return (0.0_f32, "waste".to_string(), "error".to_string(),
-                String::new(), false, Some(msg));
+        return (
+            0.0_f32,
+            "waste".to_string(),
+            "error".to_string(),
+            String::new(),
+            false,
+            Some(msg),
+        );
     }
 
     // Compute quality signal.
@@ -807,7 +850,14 @@ fn _score_page_quality(
         "dead"
     };
 
-    (signal, tier.to_string(), String::new(), structural.to_string(), false, None)
+    (
+        signal,
+        tier.to_string(),
+        String::new(),
+        structural.to_string(),
+        false,
+        None,
+    )
 }
 
 #[inline]

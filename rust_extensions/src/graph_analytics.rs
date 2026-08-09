@@ -17,8 +17,8 @@
 
 use std::collections::{HashMap, HashSet};
 
-use petgraph::graph::{DiGraph, NodeIndex, UnGraph};
 use petgraph::algo::kosaraju_scc;
+use petgraph::graph::{DiGraph, NodeIndex, UnGraph};
 use pyo3::prelude::*;
 use pyo3::types::{PyDict, PyList};
 
@@ -78,7 +78,8 @@ fn build_graph(
     edges: &[(u64, u64, f64)],
 ) -> (HashMap<u64, NodeIndex>, DiGraph<IOCNode, IOCEdge>) {
     let mut graph = DiGraph::new();
-    let mut node_indices: HashMap<u64, NodeIndex> = HashMap::with_capacity(nodes.len().min(MAX_NODES));
+    let mut node_indices: HashMap<u64, NodeIndex> =
+        HashMap::with_capacity(nodes.len().min(MAX_NODES));
 
     // Add nodes
     for (id, _value, node_type) in nodes {
@@ -117,7 +118,8 @@ fn build_undirected_graph(
     edges: &[(u64, u64, f64)],
 ) -> (HashMap<u64, NodeIndex>, UnGraph<IOCNode, IOCEdge>) {
     let mut graph = UnGraph::new_undirected();
-    let mut node_indices: HashMap<u64, NodeIndex> = HashMap::with_capacity(nodes.len().min(MAX_NODES));
+    let mut node_indices: HashMap<u64, NodeIndex> =
+        HashMap::with_capacity(nodes.len().min(MAX_NODES));
 
     // Add nodes
     for (id, _value, node_type) in nodes {
@@ -138,7 +140,11 @@ fn build_undirected_graph(
     for (from, to, weight) in edges {
         if let (Some(&from_idx), Some(&to_idx)) = (node_indices.get(from), node_indices.get(to)) {
             // Avoid duplicate undirected edges
-            let edge_key = if from < to { (*from, *to) } else { (*to, *from) };
+            let edge_key = if from < to {
+                (*from, *to)
+            } else {
+                (*to, *from)
+            };
             if !added_edges.contains(&edge_key) {
                 // Enforce degree limit (same as build_graph)
                 let from_degree = graph.edges(from_idx).count();
@@ -191,18 +197,12 @@ fn louvain_communities_impl(
     // Calculate total edge weight (m) and node degrees
     let m: f64 = graph.edge_references().map(|e| e.weight().weight).sum();
     if m == 0.0 {
-        return node_indices
-            .iter()
-            .map(|(&id, _)| (id, 0))
-            .collect();
+        return node_indices.iter().map(|(&id, _)| (id, 0)).collect();
     }
 
     let mut k_i: HashMap<NodeIndex, f64> = HashMap::new();
     for idx in graph.node_indices() {
-        let deg: f64 = graph
-            .edges(idx)
-            .map(|e| e.weight().weight)
-            .sum();
+        let deg: f64 = graph.edges(idx).map(|e| e.weight().weight).sum();
         k_i.insert(idx, deg);
         *community_weights.entry(community[&idx]).or_insert(0.0) += deg;
     }
@@ -243,7 +243,8 @@ fn louvain_communities_impl(
                     .sum();
 
                 let comm_weight = community_weights.get(&comm).copied().unwrap_or(0.0);
-                let delta_q = (sum_to_comm - resolution * k_i_val * comm_weight / (2.0 * m)) / (2.0 * m);
+                let delta_q =
+                    (sum_to_comm - resolution * k_i_val * comm_weight / (2.0 * m)) / (2.0 * m);
 
                 if delta_q > best_gain {
                     best_gain = delta_q;
@@ -265,7 +266,12 @@ fn louvain_communities_impl(
     }
 
     // Renumber communities to be consecutive starting from 0
-    let unique_communities: Vec<u32> = community.values().copied().collect::<HashSet<_>>().into_iter().collect();
+    let unique_communities: Vec<u32> = community
+        .values()
+        .copied()
+        .collect::<HashSet<_>>()
+        .into_iter()
+        .collect();
     let mut comm_map: HashMap<u32, u32> = HashMap::new();
     for (new_id, &old_id) in unique_communities.iter().enumerate() {
         comm_map.insert(old_id, new_id as u32);
@@ -322,7 +328,8 @@ pub fn rust_pagerank<'py>(
         let mut adj: Vec<Vec<(usize, f64)>> = vec![Vec::new(); n_usize];
 
         for (from, to, weight) in &edges {
-            if let (Some(&from_idx), Some(&to_idx)) = (node_indices.get(from), node_indices.get(to)) {
+            if let (Some(&from_idx), Some(&to_idx)) = (node_indices.get(from), node_indices.get(to))
+            {
                 let from_i = from_idx.index();
                 let to_i = to_idx.index();
                 if from_i < n_usize && to_i < n_usize {
@@ -502,7 +509,12 @@ pub fn rust_graph_analytics_all<'py>(
     let pr_scores = compute_pagerank_on_adj(&adj, damping, PAGERANK_TOLERANCE, PAGERANK_MAX_ITER);
 
     // Louvain on undirected graph
-    let communities = louvain_communities_impl(&node_indices_undir, &graph_undir, resolution, LOUVAIN_MAX_ITER);
+    let communities = louvain_communities_impl(
+        &node_indices_undir,
+        &graph_undir,
+        resolution,
+        LOUVAIN_MAX_ITER,
+    );
 
     // SCC on directed graph
     let sccs = compute_scc_impl(&node_indices, &graph_dir);
@@ -631,11 +643,12 @@ fn compute_scc_impl(
 
     let sccs: Vec<Vec<NodeIndex>> = kosaraju_scc(&pet_graph);
 
-    let reverse_map: HashMap<NodeIndex, u64> =
-        idx_map.iter().map(|(&k, &v)| (v, k.index() as u64)).collect();
+    let reverse_map: HashMap<NodeIndex, u64> = idx_map
+        .iter()
+        .map(|(&k, &v)| (v, k.index() as u64))
+        .collect();
 
-    sccs
-        .into_iter()
+    sccs.into_iter()
         .filter_map(|component| {
             let py_component: Vec<u64> = component
                 .iter()
@@ -670,7 +683,8 @@ mod tests {
     fn test_pagerank_empty() {
         let nodes: Vec<(u64, String, String)> = vec![];
         let edges: Vec<(u64, u64, f64)> = vec![];
-        let communities = louvain_communities_impl(&HashMap::new(), &UnGraph::new_undirected(), 1.0, 10);
+        let communities =
+            louvain_communities_impl(&HashMap::new(), &UnGraph::new_undirected(), 1.0, 10);
         assert!(communities.is_empty());
     }
 

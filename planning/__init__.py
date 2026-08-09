@@ -12,8 +12,28 @@ if TYPE_CHECKING:
     from .search import anytime_beam_search
     from .slm_decomposer import SLMDecomposer
     from .task_cache import TaskCache
+    from .step_reward_model import (
+        PRMFeatureExtractor,
+        PRMInference,
+        PRMInferenceContext,
+        CumulativePRMScorer,
+        create_default_prm_scorer,
+    )
 
-__all__ = ['HTNPlanner', 'AdaptiveCostModel', 'anytime_beam_search', 'SLMDecomposer', 'TaskCache', 'get_slm_decomposer']
+__all__ = [
+    'HTNPlanner',
+    'AdaptiveCostModel',
+    'anytime_beam_search',
+    'SLMDecomposer',
+    'TaskCache',
+    'get_slm_decomposer',
+    # PRM-1: Step-Level Process Reward Model
+    'PRMFeatureExtractor',
+    'PRMInference',
+    'PRMInferenceContext',
+    'CumulativePRMScorer',
+    'create_default_prm_scorer',
+]
 
 # ISSUE-2.4 FIX: Singleton factory — model loaded once, shared across sprints.
 # Prevents ~400MB-1GB per-sprint re-load + Metal active memory leak.
@@ -47,6 +67,22 @@ def __getattr__(name: str) -> Any:
     if name == 'AdaptiveCostModel':
         from .cost_model import AdaptiveCostModel as cls  # noqa: N813
         return cls
+    # PRM-1: Step-Level Process Reward Model lazy imports
+    if name == 'PRMFeatureExtractor':
+        from .step_reward_model import PRMFeatureExtractor as cls  # noqa: N813
+        return cls
+    if name == 'PRMInference':
+        from .step_reward_model import PRMInference as cls  # noqa: N813
+        return cls
+    if name == 'PRMInferenceContext':
+        from .step_reward_model import PRMInferenceContext as cls  # noqa: N813
+        return cls
+    if name == 'CumulativePRMScorer':
+        from .step_reward_model import CumulativePRMScorer as cls  # noqa: N813
+        return cls
+    if name == 'create_default_prm_scorer':
+        from .step_reward_model import create_default_prm_scorer as fn  # noqa: N813
+        return fn
     if name == 'anytime_beam_search':
         from .search import anytime_beam_search as fn
         return fn

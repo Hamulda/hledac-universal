@@ -38,15 +38,15 @@
 //! - Elastic resizing without restart
 
 pub mod cpu;
+pub mod elastic;
 pub mod io;
 pub mod mixed;
-pub mod elastic;
 
 // Re-export commonly used pool operations
-pub use cpu::{cpu_pool, resize_cpu_pool, cpu_pool_threads};
-pub use io::{io_pool, resize_io_pool, io_pool_threads};
+pub use cpu::{cpu_pool, cpu_pool_threads, resize_cpu_pool};
+pub use elastic::{get_pool_metrics, PoolMetrics, PoolPhase};
+pub use io::{io_pool, io_pool_threads, resize_io_pool};
 pub use mixed::{mixed_pool, mixed_threshold};
-pub use elastic::{PoolPhase, PoolMetrics, get_pool_metrics};
 
 // ============================================================================
 // Unified Pool Trait
@@ -87,9 +87,9 @@ impl PoolKind {
     /// Get default thread count for this pool kind.
     pub fn default_threads(&self) -> usize {
         match self {
-            PoolKind::Cpu => 4,      // P-core count
-            PoolKind::Io => 2,       // DuckDB ceiling
-            PoolKind::Mixed => 2,    // Adaptive
+            PoolKind::Cpu => 4,   // P-core count
+            PoolKind::Io => 2,    // DuckDB ceiling
+            PoolKind::Mixed => 2, // Adaptive
         }
     }
 

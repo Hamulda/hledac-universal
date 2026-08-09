@@ -143,8 +143,12 @@ fn extract_iocs_from_text(text: &str) -> Vec<(String, String)> {
             }
         } else {
             if let Some(start) = hex_start {
-                if (32..=32).contains(&hex_len) || (40..=40).contains(&hex_len) || (64..=64).contains(&hex_len) {
-                    let val = String::from_utf8_lossy(&bytes[start..start + hex_len]).to_lowercase();
+                if (32..=32).contains(&hex_len)
+                    || (40..=40).contains(&hex_len)
+                    || (64..=64).contains(&hex_len)
+                {
+                    let val =
+                        String::from_utf8_lossy(&bytes[start..start + hex_len]).to_lowercase();
                     if seen.insert(val.clone()) {
                         results.push((val, "hash".to_string()));
                     }
@@ -155,7 +159,10 @@ fn extract_iocs_from_text(text: &str) -> Vec<(String, String)> {
         }
     }
     if let Some(start) = hex_start {
-        if (32..=32).contains(&hex_len) || (40..=40).contains(&hex_len) || (64..=64).contains(&hex_len) {
+        if (32..=32).contains(&hex_len)
+            || (40..=40).contains(&hex_len)
+            || (64..=64).contains(&hex_len)
+        {
             let val = String::from_utf8_lossy(&bytes[start..start + hex_len]).to_lowercase();
             if seen.insert(val.clone()) {
                 results.push((val, "hash".to_string()));
@@ -174,7 +181,8 @@ fn extract_iocs_from_text(text: &str) -> Vec<(String, String)> {
                     && bytes[pos + 1] == b't'
                     && bytes[pos + 2] == b't'
                     && bytes[pos + 3] == b'p'
-                    && (bytes[pos + 4] == b':' || (pos + 7 < len && bytes[pos + 4] == b's' && bytes[pos + 5] == b':'))
+                    && (bytes[pos + 4] == b':'
+                        || (pos + 7 < len && bytes[pos + 4] == b's' && bytes[pos + 5] == b':'))
                 {
                     // Found http or https
                     let end_marker = memchr::memchr3(b' ', b'\n', b'\r', &bytes[pos..]);
@@ -194,7 +202,8 @@ fn extract_iocs_from_text(text: &str) -> Vec<(String, String)> {
 
     // Domain detection: HashSet TLD lookup — O(1) vs O(13) linear scan
     let tlds: std::collections::HashSet<&str> = [
-        "com", "org", "net", "io", "co", "ai", "ru", "cn", "de", "fr", "uk", "br", "info", "biz", "edu", "gov", "tv", "cc", "me", "xyz", "online", "site",
+        "com", "org", "net", "io", "co", "ai", "ru", "cn", "de", "fr", "uk", "br", "info", "biz",
+        "edu", "gov", "tv", "cc", "me", "xyz", "online", "site",
     ]
     .into();
     let mut domain_start: Option<usize> = None;
@@ -209,8 +218,10 @@ fn extract_iocs_from_text(text: &str) -> Vec<(String, String)> {
                         let remaining = &bytes[tld_check..];
                         let remaining_str = String::from_utf8_lossy(remaining);
                         for tld in &tlds {
-                            if remaining_str.starts_with(tld) && remaining_str.len() > tld.len()
-                                && !remaining_str[tld.len()..].starts_with('.') {
+                            if remaining_str.starts_with(tld)
+                                && remaining_str.len() > tld.len()
+                                && !remaining_str[tld.len()..].starts_with('.')
+                            {
                                 let full = format!("{}.{}", domain, tld);
                                 if seen.insert(full.clone()) && domain.len() > 3 {
                                     results.push((full, "domain".to_string()));
@@ -278,7 +289,13 @@ fn extract_email_candidate(data: &[u8]) -> Option<&[u8]> {
         if b == b'@' {
             return None; // Already at '@', not what we want
         }
-        if !b.is_ascii_alphanumeric() && b != b'.' && b != b'_' && b != b'-' && b != b'+' && b != b'@' {
+        if !b.is_ascii_alphanumeric()
+            && b != b'.'
+            && b != b'_'
+            && b != b'-'
+            && b != b'+'
+            && b != b'@'
+        {
             if i > 3 {
                 end = i;
             } else {
@@ -314,14 +331,18 @@ mod memchr {
 
 /// Compute co-occurrence edges from findings.
 /// Returns a list of edge tuples: (source_ioc, source_type, target_ioc, target_type, confidence, reason, priority)
-pub fn compute_cooccurrence_edges(findings: Vec<FindingInput>) -> Vec<(String, String, String, String, f64, String, i32)> {
+pub fn compute_cooccurrence_edges(
+    findings: Vec<FindingInput>,
+) -> Vec<(String, String, String, String, f64, String, i32)> {
     use std::collections::hash_map::Entry;
 
     // F265B: Reserve capacity to avoid rehashes as pairs grow
     let reserve_pairs = findings.len().saturating_mul(4);
     let reserve_iocs = findings.len().saturating_mul(2);
-    let mut pairs: HashMap<(String, String), CoOccurrencePair> = HashMap::with_capacity_and_hasher(reserve_pairs, Default::default());
-    let mut ioc_counts: HashMap<String, usize> = HashMap::with_capacity_and_hasher(reserve_iocs, Default::default());
+    let mut pairs: HashMap<(String, String), CoOccurrencePair> =
+        HashMap::with_capacity_and_hasher(reserve_pairs, Default::default());
+    let mut ioc_counts: HashMap<String, usize> =
+        HashMap::with_capacity_and_hasher(reserve_iocs, Default::default());
 
     // First pass: extract IOCs and count per-finding uniqueness
     let finding_iocs: Vec<Vec<(String, String)>> = findings
@@ -331,7 +352,9 @@ pub fn compute_cooccurrence_edges(findings: Vec<FindingInput>) -> Vec<(String, S
             let iocs = extract_iocs_from_text(text);
             // Deduplicate within finding
             let mut seen = std::collections::HashSet::new();
-            iocs.into_iter().filter(|(v, _)| seen.insert(v.clone())).collect()
+            iocs.into_iter()
+                .filter(|(v, _)| seen.insert(v.clone()))
+                .collect()
         })
         .collect();
 
@@ -533,7 +556,8 @@ pub fn batch_cooccurrence_edges_py(
         .collect();
 
     // Merge all edges
-    let mut merged: HashMap<(String, String), (String, String, String, String, f64, String, i32)> = HashMap::new();
+    let mut merged: HashMap<(String, String), (String, String, String, String, f64, String, i32)> =
+        HashMap::new();
     for batch_edges in all_edges {
         for edge in batch_edges {
             let key = (edge.0.clone(), edge.2.clone());
@@ -617,14 +641,15 @@ mod tests {
 
     #[test]
     fn test_cooccurrence_dedup_within_finding() {
-        let findings = vec![
-            FindingInput {
-                finding_id: "f1".to_string(),
-                payload_text: Some("IP 8.8.8.8 appears twice 8.8.8.8 and 8.8.8.8".to_string()),
-            },
-        ];
+        let findings = vec![FindingInput {
+            finding_id: "f1".to_string(),
+            payload_text: Some("IP 8.8.8.8 appears twice 8.8.8.8 and 8.8.8.8".to_string()),
+        }];
         let edges = compute_cooccurrence_edges(findings);
         // With dedup within finding, no pair from single-finding (no co-occurrence)
-        assert!(edges.is_empty(), "Single finding with same IOC repeated: {edges:?}");
+        assert!(
+            edges.is_empty(),
+            "Single finding with same IOC repeated: {edges:?}"
+        );
     }
 }

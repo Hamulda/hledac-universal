@@ -124,16 +124,14 @@ impl HealthInfo {
         let metal_bytes = memory::get_metal_active_memory_bytes(py);
 
         // DedupBloomFilter global stats
-        let (db_instances, db_items, db_cap) =
-            crate::dedup_bloom::global_stats();
+        let (db_instances, db_items, db_cap) = crate::dedup_bloom::global_stats();
         let db_mem_bytes = crate::dedup_bloom::global_memory_bytes();
 
         // URL set global stats
         let (us_instances, us_items) = url_set::global_stats();
 
         // Telemetry snapshot — grabs a copy of all counter values
-        let telemetry: Vec<(String, i64)> =
-            crate::telemetry_agg::telemetry_snapshot();
+        let telemetry: Vec<(String, i64)> = crate::telemetry_agg::telemetry_snapshot();
 
         // Wall-clock timestamp
         let now = std::time::SystemTime::now()
@@ -176,7 +174,6 @@ impl HealthInfo {
 fn bump_health_calls() {
     HEALTH_CALLS.fetch_add(1, Ordering::Relaxed);
 }
-
 
 /// `health_check() -> dict`
 ///
@@ -225,7 +222,10 @@ fn bump_health_calls() {
 /// assert isinstance(h["telemetry_counters"], list)
 /// ```
 #[pyfunction]
-pub fn health_check<'a>(py: Python<'a>, m: &'a Bound<'a, PyModule>) -> PyResult<Bound<'a, pyo3::types::PyDict>> {
+pub fn health_check<'a>(
+    py: Python<'a>,
+    m: &'a Bound<'a, PyModule>,
+) -> PyResult<Bound<'a, pyo3::types::PyDict>> {
     bump_health_calls();
 
     let info = HealthInfo::fill(py, m);
@@ -251,8 +251,7 @@ pub fn health_check<'a>(py: Python<'a>, m: &'a Bound<'a, PyModule>) -> PyResult<
 
     // Derived: capacity utilisation percentage, capped at 100
     let cap_pct = if info.dedup_bloom_capacity > 0 {
-        (info.dedup_bloom_items as f64 / info.dedup_bloom_capacity as f64 * 100.0)
-            .min(100.0)
+        (info.dedup_bloom_items as f64 / info.dedup_bloom_capacity as f64 * 100.0).min(100.0)
     } else {
         0.0
     };

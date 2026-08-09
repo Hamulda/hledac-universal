@@ -8,10 +8,7 @@
 //! It provides a cleaner API surface for the pools/ module group while
 //! maintaining backward compatibility with existing callers.
 
-pub use crate::elastic_pool::{
-    io_pool, get_io_pool, resize_io_pool, 
-    get_io_pool_threads,
-};
+pub use crate::elastic_pool::{get_io_pool, get_io_pool_threads, io_pool, resize_io_pool};
 
 /// Alias for get_io_pool_threads (common name).
 pub fn io_pool_threads() -> usize {

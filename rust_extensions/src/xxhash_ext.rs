@@ -46,10 +46,7 @@ pub fn content_hash_hex(data: &[u8]) -> String {
 /// Batch compute xxh3-64 hashes (sequential fallback).
 #[pyfunction]
 pub fn batch_content_hash(items: Vec<String>) -> Vec<u64> {
-    items
-        .iter()
-        .map(|b| xxh3_64(b.as_bytes()))
-        .collect()
+    items.iter().map(|b| xxh3_64(b.as_bytes())).collect()
 }
 
 /// Batch compute xxh3-64 hashes — rayon-parallel for large batches.
@@ -72,9 +69,7 @@ pub fn batch_content_hash_parallel(items: Vec<String>) -> Vec<u64> {
     }
     // Direct pool call — no Python::attach overhead
     // Worker threads don't hold GIL, xxh3_64 is pure Rust (no Python objects)
-    crate::cpu_pool().install(|| {
-        items.par_iter().map(|b| xxh3_64(b.as_bytes())).collect()
-    })
+    crate::cpu_pool().install(|| items.par_iter().map(|b| xxh3_64(b.as_bytes())).collect())
 }
 
 /// Batch compute xxh3-64 hashes as hex strings (sequential fallback).
@@ -102,7 +97,8 @@ pub fn batch_content_hash_hex_parallel(items: Vec<String>) -> Vec<String> {
     // Direct pool call — no Python::attach overhead
     // Worker threads don't hold GIL, xxh3_64 is pure Rust (no Python objects)
     crate::cpu_pool().install(|| {
-        items.par_iter()
+        items
+            .par_iter()
             .map(|b| format!("{:016x}", xxh3_64(b.as_bytes())))
             .collect()
     })
@@ -188,9 +184,7 @@ pub fn batch_xxh3_64_bytes<'py>(
     } else {
         // rayon CPU-bound — xxh3_64 is pure Rust, no Python objects accessed
         // GIL is NOT needed here, but we stay on cpu_pool() for P-core affinity
-        crate::cpu_pool().install(|| {
-            bytes_slice.par_iter().map(|b| xxh3_64(b)).collect()
-        })
+        crate::cpu_pool().install(|| bytes_slice.par_iter().map(|b| xxh3_64(b)).collect())
     };
 
     Ok(pyo3::types::PyList::new(py, &results)?)
@@ -234,9 +228,7 @@ unsafe impl Sync for StreamHasher64 {}
 impl StreamHasher64 {
     #[new]
     pub fn new() -> Self {
-        Self {
-            inner: Xxh3::new(),
-        }
+        Self { inner: Xxh3::new() }
     }
 
     /// Update hasher with additional data.

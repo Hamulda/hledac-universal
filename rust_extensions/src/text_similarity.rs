@@ -284,4 +284,3 @@ pub fn register_functions(m: &pyo3::Bound<'_, pyo3::types::PyModule>) -> pyo3::P
     m.add_function(pyo3::wrap_pyfunction!(group_similar_texts, m)?)?;
     Ok(())
 }
-

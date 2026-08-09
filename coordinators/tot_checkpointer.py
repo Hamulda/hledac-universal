@@ -1067,7 +1067,8 @@ class TransactionalToTCheckpointer:
             prefix = f"{self._sprint_id}_step"
             candidates = sorted(
                 [p for p in self._fs_dir.iterdir() if p.name.startswith(prefix)],
-                key=attrgetter("stat")().st_mtime,
+                # PRM-1 FIX: Use lambda instead of attrgetter()() which was calling attrgetter itself
+                key=lambda p: p.stat().st_mtime,
                 reverse=True,
             )
             if not candidates:

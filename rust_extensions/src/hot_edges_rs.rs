@@ -110,11 +110,7 @@ impl HotEdgeCounterRust {
         }
 
         // wrapping_add matches the semantics of the Python SoA layout.
-        let new_count = self
-            .counts
-            .entry(key)
-            .or_insert(0)
-            .wrapping_add(delta);
+        let new_count = self.counts.entry(key).or_insert(0).wrapping_add(delta);
 
         if is_new {
             self.dirty_count += 1;

@@ -13,7 +13,7 @@ use rayon::prelude::*;
 /// Compute SHA-256 using the sha2 crate (ARM NEON ASM on Apple Silicon).
 /// Returns 32-byte digest as Vec<u8>.
 pub fn sha256_hw(data: &[u8]) -> Vec<u8> {
-    use sha2::{Sha256, Digest};
+    use sha2::{Digest, Sha256};
     let mut hasher = Sha256::new();
     hasher.update(data);
     hasher.finalize().to_vec()
@@ -22,7 +22,7 @@ pub fn sha256_hw(data: &[u8]) -> Vec<u8> {
 /// Compute SHA-256 and return as hex string (64 chars).
 /// Not registered to Python — internal helper for batch_sha256_hw.
 pub fn sha256_hw_hex(data: &[u8]) -> String {
-    use sha2::{Sha256, Digest};
+    use sha2::{Digest, Sha256};
     let mut hasher = Sha256::new();
     hasher.update(data);
     format!("{:x}", hasher.finalize())
@@ -37,7 +37,10 @@ pub fn batch_sha256_hw(items: Vec<String>) -> Vec<String> {
         items.iter().map(|s| sha256_hw_hex(s.as_bytes())).collect()
     } else {
         crate::cpu_pool().install(|| {
-            items.par_iter().map(|s| sha256_hw_hex(s.as_bytes())).collect()
+            items
+                .par_iter()
+                .map(|s| sha256_hw_hex(s.as_bytes()))
+                .collect()
         })
     }
 }
@@ -53,7 +56,6 @@ pub fn batch_sha256_hw(items: Vec<String>) -> Vec<String> {
 /// - Key derivation via PBKDF2-HMAC-SHA256 (310,000 iterations, matching vault_manager.py)
 ///
 /// Encrypted output format: nonce (12 bytes) || tag (16 bytes) || ciphertext
-
 use aes_gcm::{
     aead::{Aead, KeyInit, OsRng},
     Aes256Gcm, Nonce,
@@ -91,9 +93,7 @@ fn decrypt_aes_gcm_single(key: &[u8; 32], encrypted: &[u8]) -> Result<Vec<u8>, S
     let cipher = Aes256Gcm::new_from_slice(key).map_err(|e| e.to_string())?;
     let nonce = Nonce::from_slice(&encrypted[..12]);
     let ciphertext = &encrypted[12..];
-    cipher
-        .decrypt(nonce, ciphertext)
-        .map_err(|e| e.to_string())
+    cipher.decrypt(nonce, ciphertext).map_err(|e| e.to_string())
 }
 
 /// Batch encrypt multiple plaintexts with AES-GCM-256.

@@ -187,6 +187,7 @@ class AdaptiveCostModel:
         return feat
 
     def predict(self, task_type: str, params: dict, system_state: dict) -> tuple[float, float, float, float, float | None]:
+        """Synchronous predict — use predict_async for async contexts."""
         x_raw = self._build_features(task_type, params, system_state)
         x_norm = self.normalizer.normalize(x_raw)
         if self.baseline_ready:
@@ -201,6 +202,42 @@ class AdaptiveCostModel:
             out = self.model(x_mlx).squeeze(0)
             resid = np.array(out)
             total = base + resid
+        if len(self._history) > 10:
+            recent = np.array([t[1] for t in list(self._history)[-10:]])
+            var = np.var(recent, axis=0)
+            uncertainty = float(np.mean(var))
+        return (float(total[0]), float(total[1]), float(total[2]), float(total[3]), uncertainty)
+
+    async def predict_async(self, task_type: str, params: dict, system_state: dict) -> tuple[float, float, float, float, float | None]:
+        """PRM-1: Async predict — runs MLX inference in thread pool to avoid blocking event loop.
+
+        This is critical for ToT search where MLX forward pass would otherwise
+        block the event loop during branch expansion.
+        """
+        import asyncio
+
+        x_raw = self._build_features(task_type, params, system_state)
+        x_norm = self.normalizer.normalize(x_raw)
+        if self.baseline_ready:
+            base = np.array([b.predict(x_norm) for b in self.baseline])
+        else:
+            base = np.zeros(4)
+        total = base
+        uncertainty = None
+        if self.ssm_ready:
+            # PRM-1 FIX: Run MLX operations in thread to avoid blocking event loop
+            def _mlx_forward():
+                import mlx.core as mx
+                x_mlx = mx.array(x_norm)[None, :]
+                out = self.model(x_mlx).squeeze(0)
+                return np.array(out)
+
+            try:
+                resid = await asyncio.to_thread(_mlx_forward)
+                total = base + resid
+            except Exception:
+                # Fallback to baseline if MLX fails
+                total = base
         if len(self._history) > 10:
             recent = np.array([t[1] for t in list(self._history)[-10:]])
             var = np.var(recent, axis=0)

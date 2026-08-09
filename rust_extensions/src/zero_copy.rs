@@ -91,7 +91,9 @@ impl<'py> Iterator for PyStrListIter<'py> {
     #[inline]
     fn next(&mut self) -> Option<Self::Item> {
         self.iter.next().and_then(|item| {
-            item.str().ok().map(|py_str| py_str.to_string_lossy().into_owned())
+            item.str()
+                .ok()
+                .map(|py_str| py_str.to_string_lossy().into_owned())
         })
     }
 
@@ -185,9 +187,8 @@ pub trait ZeroCopyBatch: Send + Sync {
         } else {
             Python::attach(|py| {
                 release_gil(py, || {
-                    mixed_pool(n).install(|| {
-                        texts.par_iter().map(|t| self.process_one(t)).collect()
-                    })
+                    mixed_pool(n)
+                        .install(|| texts.par_iter().map(|t| self.process_one(t)).collect())
                 })
             })
         };
@@ -254,7 +255,8 @@ pub fn buffer_entropy(input: &Bound<'_, PyAny>, py: Python<'_>) -> PyResult<f64>
         let result = Python::attach(|py| {
             release_gil(py, || {
                 pool.install(|| {
-                    texts.par_iter()
+                    texts
+                        .par_iter()
                         .map(|t| compute_entropy_zc(t.as_bytes()))
                         .sum()
                 })
@@ -263,7 +265,9 @@ pub fn buffer_entropy(input: &Bound<'_, PyAny>, py: Python<'_>) -> PyResult<f64>
         return Ok(result);
     }
 
-    Err(PyTypeError::new_err("Expected buffer, bytes, or list of strings"))
+    Err(PyTypeError::new_err(
+        "Expected buffer, bytes, or list of strings",
+    ))
 }
 
 /// Batch zero-copy entropy computation from a list of buffer-backed objects.
@@ -317,10 +321,7 @@ pub fn buffer_entropy_batched<'py>(
     // Compute entropies in parallel using rayon's par_iter
     // R4-09 FIX: Use adaptive threshold aligned with mixed_pool sizing.
     let results: Vec<f64> = if buffer_views.len() < adaptive_scheduler::mixed_threshold() {
-        buffer_views
-            .iter()
-            .map(|b| compute_entropy_zc(b))
-            .collect()
+        buffer_views.iter().map(|b| compute_entropy_zc(b)).collect()
     } else {
         Python::attach(|py| {
             release_gil(py, || {
@@ -464,7 +465,10 @@ pub fn batch_entropy_zc<'py>(
 
     // R4-09 FIX: Use adaptive threshold aligned with mixed_pool sizing.
     let results: Vec<f64> = if n < adaptive_scheduler::mixed_threshold() {
-        texts_slice.iter().map(|t| compute_entropy_zc(t.as_bytes())).collect()
+        texts_slice
+            .iter()
+            .map(|t| compute_entropy_zc(t.as_bytes()))
+            .collect()
     } else {
         Python::attach(|py| {
             release_gil(py, || {
@@ -557,7 +561,7 @@ pub fn sha256_buffer<'py>(
     data: Bound<'py, PyAny>,
     py: Python<'py>,
 ) -> PyResult<Bound<'py, PyBytes>> {
-    use sha2::{Sha256, Digest};
+    use sha2::{Digest, Sha256};
 
     let bytes = data
         .cast::<PyBytes>()
@@ -673,8 +677,14 @@ mod tests {
 
     #[test]
     fn test_batch_max_limit() {
-        assert!(ZERO_COPY_BATCH_MAX_ITEMS <= 10_000, "Batch max should be bounded for M1 8GB");
-        assert!(ZERO_COPY_BATCH_MAX_BYTES <= 100_000_000, "Byte max should be 100MB");
+        assert!(
+            ZERO_COPY_BATCH_MAX_ITEMS <= 10_000,
+            "Batch max should be bounded for M1 8GB"
+        );
+        assert!(
+            ZERO_COPY_BATCH_MAX_BYTES <= 100_000_000,
+            "Byte max should be 100MB"
+        );
     }
 
     // ISSUE-005: PyBuffer zero-copy tests
@@ -684,9 +694,16 @@ mod tests {
         assert_eq!(compute_entropy_zc(b""), 0.0);
         assert_eq!(compute_entropy_zc(b"a"), 0.0);
         assert_eq!(compute_entropy_zc(b"aa"), 0.0);
-        assert_eq!(compute_entropy_zc(b"ab"), 1.0, "Two equal-frequency symbols = 1 bit entropy");
+        assert_eq!(
+            compute_entropy_zc(b"ab"),
+            1.0,
+            "Two equal-frequency symbols = 1 bit entropy"
+        );
         let result = compute_entropy_zc(b"hello world");
-        assert!(result > 0.0 && result <= 4.0, "English text entropy should be between 0 and 4 bits");
+        assert!(
+            result > 0.0 && result <= 4.0,
+            "English text entropy should be between 0 and 4 bits"
+        );
     }
 
     #[test]

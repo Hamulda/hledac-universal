@@ -23,12 +23,12 @@
 //!
 //! Total file size = 64 + num_entries * 8 bytes.
 
+use parking_lot::RwLock;
 use pyo3::prelude::*;
+use std::collections::HashSet;
 use std::fs::OpenOptions;
 use std::io::{Read, Write};
 use std::path::Path;
-use parking_lot::RwLock;
-use std::collections::HashSet;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
 // ---------------------------------------------------------------------------
@@ -91,8 +91,8 @@ pub struct MmapUrlSet {
     // Issue #2 fix: parking_lot::RwLock is Send+Sync by default, no unsafe impl needed.
     // Properly reentrant for Python async/ThreadPoolExecutor contexts.
     hashes: RwLock<HashSet<u64>>,
-    total_seen: AtomicU64,          // atomic counter
-    dirty: AtomicBool,               // atomic dirty flag
+    total_seen: AtomicU64, // atomic counter
+    dirty: AtomicBool,     // atomic dirty flag
 }
 
 impl MmapUrlSet {
@@ -108,17 +108,26 @@ impl MmapUrlSet {
 
         let _file = if force_new || !p.exists() {
             OpenOptions::new()
-                .read(true).write(true).create(true).truncate(true)
+                .read(true)
+                .write(true)
+                .create(true)
+                .truncate(true)
                 .open(p)
                 .map_err(|e| pyo3::exceptions::PyIOError::new_err(format!("open failed: {}", e)))?
         } else {
-            OpenOptions::new().read(true).write(true).open(p)
+            OpenOptions::new()
+                .read(true)
+                .write(true)
+                .open(p)
                 .map_err(|e| pyo3::exceptions::PyIOError::new_err(format!("open failed: {}", e)))?
         };
 
         let mut store = Self {
             file_path: path.to_string(),
-            hashes: RwLock::new(HashSet::with_capacity_and_hasher(100_000, Default::default())),
+            hashes: RwLock::new(HashSet::with_capacity_and_hasher(
+                100_000,
+                Default::default(),
+            )),
             total_seen: AtomicU64::new(0),
             dirty: AtomicBool::new(false),
         };
@@ -130,7 +139,10 @@ impl MmapUrlSet {
     }
 
     fn load_from_file(&mut self) -> PyResult<()> {
-        let mut file = OpenOptions::new().read(true).write(true).open(&self.file_path)
+        let mut file = OpenOptions::new()
+            .read(true)
+            .write(true)
+            .open(&self.file_path)
             .map_err(|e| pyo3::exceptions::PyIOError::new_err(format!("open failed: {}", e)))?;
 
         let mut header = [0u8; MMAP_HEADER_SIZE];
@@ -146,7 +158,10 @@ impl MmapUrlSet {
         }
 
         let num_entries = u32::from_le_bytes([header[8], header[9], header[10], header[11]]);
-        let total = u64::from_le_bytes([header[12], header[13], header[14], header[15], header[16], header[17], header[18], header[19]]);
+        let total = u64::from_le_bytes([
+            header[12], header[13], header[14], header[15], header[16], header[17], header[18],
+            header[19],
+        ]);
         self.total_seen.store(total, Ordering::Relaxed);
 
         if num_entries == 0 {
@@ -163,8 +178,14 @@ impl MmapUrlSet {
         for i in 0..num_entries as usize {
             let offset = i * 8;
             let hash = u64::from_le_bytes([
-                byte_buf[offset], byte_buf[offset+1], byte_buf[offset+2], byte_buf[offset+3],
-                byte_buf[offset+4], byte_buf[offset+5], byte_buf[offset+6], byte_buf[offset+7]
+                byte_buf[offset],
+                byte_buf[offset + 1],
+                byte_buf[offset + 2],
+                byte_buf[offset + 3],
+                byte_buf[offset + 4],
+                byte_buf[offset + 5],
+                byte_buf[offset + 6],
+                byte_buf[offset + 7],
             ]);
             self.hashes.write().insert(hash);
         }
@@ -174,10 +195,17 @@ impl MmapUrlSet {
     }
 
     fn persist(&self) -> PyResult<()> {
-        if !self.dirty.load(Ordering::Relaxed) { return Ok(()); }
+        if !self.dirty.load(Ordering::Relaxed) {
+            return Ok(());
+        }
 
-        let file = OpenOptions::new().write(true).truncate(true).open(&self.file_path)
-            .map_err(|e| pyo3::exceptions::PyIOError::new_err(format!("open for write failed: {}", e)))?;
+        let file = OpenOptions::new()
+            .write(true)
+            .truncate(true)
+            .open(&self.file_path)
+            .map_err(|e| {
+                pyo3::exceptions::PyIOError::new_err(format!("open for write failed: {}", e))
+            })?;
 
         // Issue #2 fix: Collect hashes under parking_lot RwLock read lock
         let entries: Vec<u64> = self.hashes.read().iter().cloned().collect();
@@ -204,9 +232,8 @@ impl MmapUrlSet {
             pyo3::exceptions::PyIOError::new_err(format!("write hashes failed: {}", e))
         })?;
 
-        file.sync_all().map_err(|e| {
-            pyo3::exceptions::PyIOError::new_err(format!("sync failed: {}", e))
-        })?;
+        file.sync_all()
+            .map_err(|e| pyo3::exceptions::PyIOError::new_err(format!("sync failed: {}", e)))?;
 
         self.dirty.store(false, Ordering::Relaxed);
         Ok(())
@@ -270,7 +297,8 @@ impl MmapUrlSet {
             })
             .collect();
         if new_count > 0 {
-            self.total_seen.fetch_add(urls.len() as u64, Ordering::Relaxed);
+            self.total_seen
+                .fetch_add(urls.len() as u64, Ordering::Relaxed);
             self.dirty.store(true, Ordering::Relaxed);
             GLOBAL_URL_MMAP_ITEMS.fetch_add(new_count as u64, Ordering::Relaxed);
         }
@@ -303,9 +331,15 @@ impl MmapUrlSet {
         hashes.capacity() * std::mem::size_of::<u64>() + hashes.len() * entry_size
     }
 
-    pub fn msync(&self) -> PyResult<()> { self.persist() }
-    pub fn path(&self) -> String { self.file_path.clone() }
-    pub fn byte_size(&self) -> usize { MMAP_HEADER_SIZE + self.hashes.read().len() * 8 }
+    pub fn msync(&self) -> PyResult<()> {
+        self.persist()
+    }
+    pub fn path(&self) -> String {
+        self.file_path.clone()
+    }
+    pub fn byte_size(&self) -> usize {
+        MMAP_HEADER_SIZE + self.hashes.read().len() * 8
+    }
 }
 
 // ===========================================================================
@@ -374,11 +408,20 @@ impl UrlSet {
     }
 
     #[allow(unused)]
-    pub fn len(&self) -> usize { self.hashes.len() }
+    pub fn len(&self) -> usize {
+        self.hashes.len()
+    }
 
-    pub fn total_seen(&self) -> u64 { self.total_seen }
-    pub fn is_empty(&self) -> bool { self.hashes.is_empty() }
-    pub fn clear(&mut self) { self.hashes.clear(); self.total_seen = 0; }
+    pub fn total_seen(&self) -> u64 {
+        self.total_seen
+    }
+    pub fn is_empty(&self) -> bool {
+        self.hashes.is_empty()
+    }
+    pub fn clear(&mut self) {
+        self.hashes.clear();
+        self.total_seen = 0;
+    }
 
     pub fn memory_bytes(&self) -> usize {
         let entry_size = 16 + 8;
@@ -401,7 +444,9 @@ impl UrlSet {
 }
 
 impl Default for UrlSet {
-    fn default() -> Self { Self::new(0) }
+    fn default() -> Self {
+        Self::new(0)
+    }
 }
 
 #[cfg(test)]

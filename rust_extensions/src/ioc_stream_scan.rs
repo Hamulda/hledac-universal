@@ -39,10 +39,10 @@
 //! U+FFFD. This preserves IOC extraction accuracy for ASCII patterns
 //! (IPs, domains, hashes, emails) while being safe for mixed binary/text data.
 
-use pyo3::prelude::*;
 use aho_corasick::AhoCorasick;
 use memmap2::Mmap;
 use parking_lot::Mutex;
+use pyo3::prelude::*;
 use std::collections::HashMap;
 use std::fs::File;
 
@@ -266,17 +266,11 @@ impl StreamingIocScanner {
     ///     IOError: If the file cannot be opened or mmap'd.
     fn scan_mmap(&self, path: &str) -> PyResult<Vec<StreamPatternHit>> {
         let file = File::open(path).map_err(|e| {
-            pyo3::exceptions::PyIOError::new_err(format!(
-                "Failed to open file '{}': {}",
-                path, e
-            ))
+            pyo3::exceptions::PyIOError::new_err(format!("Failed to open file '{}': {}", path, e))
         })?;
 
         let mmap = unsafe { Mmap::map(&file) }.map_err(|e| {
-            pyo3::exceptions::PyIOError::new_err(format!(
-                "Failed to mmap file '{}': {}",
-                path, e
-            ))
+            pyo3::exceptions::PyIOError::new_err(format!("Failed to mmap file '{}': {}", path, e))
         })?;
 
         Ok(self._scan_slice(&mmap))
@@ -309,17 +303,11 @@ impl StreamingIocScanner {
         let chunk_size = chunk_size.unwrap_or(65536).max(4096);
 
         let file = File::open(path).map_err(|e| {
-            pyo3::exceptions::PyIOError::new_err(format!(
-                "Failed to open file '{}': {}",
-                path, e
-            ))
+            pyo3::exceptions::PyIOError::new_err(format!("Failed to open file '{}': {}", path, e))
         })?;
 
         let mmap = unsafe { Mmap::map(&file) }.map_err(|e| {
-            pyo3::exceptions::PyIOError::new_err(format!(
-                "Failed to mmap file '{}': {}",
-                path, e
-            ))
+            pyo3::exceptions::PyIOError::new_err(format!("Failed to mmap file '{}': {}", path, e))
         })?;
 
         let file_len = mmap.len();
@@ -383,17 +371,11 @@ impl StreamingIocScanner {
         length: usize,
     ) -> PyResult<Vec<StreamPatternHit>> {
         let file = File::open(path).map_err(|e| {
-            pyo3::exceptions::PyIOError::new_err(format!(
-                "Failed to open file '{}': {}",
-                path, e
-            ))
+            pyo3::exceptions::PyIOError::new_err(format!("Failed to open file '{}': {}", path, e))
         })?;
 
         let mmap = unsafe { Mmap::map(&file) }.map_err(|e| {
-            pyo3::exceptions::PyIOError::new_err(format!(
-                "Failed to mmap file '{}': {}",
-                path, e
-            ))
+            pyo3::exceptions::PyIOError::new_err(format!("Failed to mmap file '{}': {}", path, e))
         })?;
 
         let file_len = mmap.len();
@@ -438,17 +420,11 @@ impl StreamingIocScanner {
     /// this can be 100-1000x faster than collecting all hits.
     fn contains_any_mmap(&self, path: &str) -> PyResult<bool> {
         let file = File::open(path).map_err(|e| {
-            pyo3::exceptions::PyIOError::new_err(format!(
-                "Failed to open file '{}': {}",
-                path, e
-            ))
+            pyo3::exceptions::PyIOError::new_err(format!("Failed to open file '{}': {}", path, e))
         })?;
 
         let mmap = unsafe { Mmap::map(&file) }.map_err(|e| {
-            pyo3::exceptions::PyIOError::new_err(format!(
-                "Failed to mmap file '{}': {}",
-                path, e
-            ))
+            pyo3::exceptions::PyIOError::new_err(format!("Failed to mmap file '{}': {}", path, e))
         })?;
 
         Ok(self.automaton.is_match(&mmap))
@@ -465,17 +441,11 @@ impl StreamingIocScanner {
     /// Count total matches in an mmap'd file.
     fn count_matches_mmap(&self, path: &str) -> PyResult<usize> {
         let file = File::open(path).map_err(|e| {
-            pyo3::exceptions::PyIOError::new_err(format!(
-                "Failed to open file '{}': {}",
-                path, e
-            ))
+            pyo3::exceptions::PyIOError::new_err(format!("Failed to open file '{}': {}", path, e))
         })?;
 
         let mmap = unsafe { Mmap::map(&file) }.map_err(|e| {
-            pyo3::exceptions::PyIOError::new_err(format!(
-                "Failed to mmap file '{}': {}",
-                path, e
-            ))
+            pyo3::exceptions::PyIOError::new_err(format!("Failed to mmap file '{}': {}", path, e))
         })?;
 
         Ok(self.automaton.find_iter(&mmap).count())
@@ -528,7 +498,13 @@ impl StreamingIocScanner {
                 .and_then(|x| x)
                 .map(|s| s.to_owned());
 
-            results.push(StreamPatternHit::new(start, end, pattern_name, label, value));
+            results.push(StreamPatternHit::new(
+                start,
+                end,
+                pattern_name,
+                label,
+                value,
+            ));
         }
 
         results
@@ -561,7 +537,11 @@ mod tests {
                 "phishing".to_string(),
                 "192.168".to_string(),
             ],
-            vec!["threat".to_string(), "threat".to_string(), "network".to_string()],
+            vec![
+                "threat".to_string(),
+                "threat".to_string(),
+                "network".to_string(),
+            ],
         )
         .unwrap()
     }

@@ -37,17 +37,29 @@ pub struct ValidationResult {
 impl ValidationResult {
     /// Validation passed — fast path.
     pub fn valid() -> Self {
-        Self { is_valid: true, errors: Vec::new(), object_count: None }
+        Self {
+            is_valid: true,
+            errors: Vec::new(),
+            object_count: None,
+        }
     }
 
     /// Validation passed with object count.
     pub fn valid_with_count(count: usize) -> Self {
-        Self { is_valid: true, errors: Vec::new(), object_count: Some(count) }
+        Self {
+            is_valid: true,
+            errors: Vec::new(),
+            object_count: Some(count),
+        }
     }
 
     /// Validation failed — accumulate errors.
     pub fn invalid(errors: Vec<ValidationError>) -> Self {
-        Self { is_valid: false, errors, object_count: None }
+        Self {
+            is_valid: false,
+            errors,
+            object_count: None,
+        }
     }
 
     /// Parse error — input is not valid JSON.
@@ -157,7 +169,10 @@ fn validate_bundle(bundle: &serde_json::Map<String, Value>) -> ValidationResult 
     for (i, obj) in objects.iter().enumerate() {
         let path_prefix = format!("objects[{i}]");
 
-        let obj_type = obj.get("type").and_then(|v| v.as_str()).unwrap_or("unknown");
+        let obj_type = obj
+            .get("type")
+            .and_then(|v| v.as_str())
+            .unwrap_or("unknown");
         let obj_id = obj.get("id").and_then(|v| v.as_str());
 
         // Check ID uniqueness
@@ -222,7 +237,10 @@ fn validate_sdo(value: &Value) -> ValidationResult {
         }
     };
 
-    let obj_type = obj.get("type").and_then(|v| v.as_str()).unwrap_or("unknown");
+    let obj_type = obj
+        .get("type")
+        .and_then(|v| v.as_str())
+        .unwrap_or("unknown");
     let mut errors = Vec::new();
     let path_prefix = String::new();
 

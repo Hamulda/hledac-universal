@@ -21,7 +21,7 @@
 
 use parking_lot::{Mutex, RwLock};
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicU64, AtomicU32, Ordering};
+use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 
 // NOTE: This file uses parking_lot::Mutex and RwLock throughout.
 // parking_lot::Mutex has NO poisoning — lock() returns MutexGuard directly.
@@ -47,7 +47,7 @@ const AIMD_MAX_CONCURRENCY: f64 = 25.0;
 static AIMD_DECREASE_BY_STATE: std::sync::LazyLock<RwLock<HashMap<String, f64>>> =
     std::sync::LazyLock::new(|| {
         let mut m = HashMap::new();
-        m.insert("ok".to_string(), 0.75);      // healthy → reduce by 25%
+        m.insert("ok".to_string(), 0.75); // healthy → reduce by 25%
         m.insert("pressure".to_string(), 0.5); // memory pressure → halve
         m.insert("critical".to_string(), 0.25); // critical → quarter
         RwLock::new(m)
@@ -215,7 +215,10 @@ impl PyAIMDController {
         self.failures.fetch_add(1, Ordering::Relaxed);
 
         // Decrement active first
-        let active = self.active.fetch_sub(1, Ordering::Relaxed).saturating_sub(1);
+        let active = self
+            .active
+            .fetch_sub(1, Ordering::Relaxed)
+            .saturating_sub(1);
 
         // Get decrease factor from global map — SHORT hold, read lock only.
         // RwLock allows concurrent readers; no write contention on global.
@@ -247,7 +250,10 @@ impl PyAIMDController {
     ///
     /// Returns (window, active_count_after_decrement).
     pub fn record_release(&self) -> (f64, u32) {
-        let active = self.active.fetch_sub(1, Ordering::Relaxed).saturating_sub(1);
+        let active = self
+            .active
+            .fetch_sub(1, Ordering::Relaxed)
+            .saturating_sub(1);
         let window_bits = self.window.load(Ordering::Relaxed);
         (f64::from_bits(window_bits), active)
     }
@@ -325,7 +331,10 @@ impl PyAIMDController {
             "window".to_string(),
             f64::from_bits(self.window.load(Ordering::Relaxed)) as u64,
         );
-        result.insert("active".to_string(), self.active.load(Ordering::Relaxed) as u64);
+        result.insert(
+            "active".to_string(),
+            self.active.load(Ordering::Relaxed) as u64,
+        );
         result
     }
 }

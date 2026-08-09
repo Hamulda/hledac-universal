@@ -67,8 +67,38 @@ _MAX_AUDIO_BUFFER_SAMPLES = 50 * 1024 * 1024    # 50M samples (~12 min @ 16kHz m
 _KEYFRAME_INTERVAL_S = 10.0                     # extract I-frame every 10s
 _MAX_KEYFRAMES = 120                            # max 20 min of video
 _TARGET_SAMPLE_RATE = 16000                     # 16kHz mono for speech recognition
-_SPEECH_RECOGNITION_TIMEOUT_S = 600.0           # 10 min max for transcription
 _SPEECH_LOCALE = "en-US"                        # default recognition language
+
+# [SAFE-3] Adaptive timeout configuration
+# Base timeout: 60s for small files, scales with file size up to max
+_SPEECH_RECOGNITION_TIMEOUT_BASE_S = 60.0      # Base timeout: 60s
+_SPEECH_RECOGNITION_TIMEOUT_MAX_S = 300.0      # Max timeout: 5 min (reduced from 10 min)
+_SPEECH_TIMEOUT_SCALE_FACTOR = 1.0             # 1 second per MB
+
+# [SAFE-3] Video transcription aggregation deadline
+_VIDEO_TRANSCRIBE_DEADLINE_S = 180.0            # 3 min total for video transcription
+_MAX_OCR_FRAMES_PER_DEADLINE = 30              # Max frames to OCR within deadline
+
+
+def _compute_adaptive_speech_timeout(file_path: str) -> float:
+    """
+    [SAFE-3] Compute adaptive speech recognition timeout based on file size.
+    
+    Formula: min(BASE + file_size_mb * SCALE, MAX)
+    
+    Examples:
+      - 10 MB file: 60 + 10 = 70s
+      - 50 MB file: 60 + 50 = 110s
+      - 100 MB file: min(60 + 100, 300) = 160s
+      - 500 MB file: min(60 + 500, 300) = 300s (capped)
+    """
+    try:
+        file_size = os.path.getsize(file_path)
+        file_size_mb = file_size / (1024 * 1024)
+        timeout = _SPEECH_RECOGNITION_TIMEOUT_BASE_S + (file_size_mb * _SPEECH_TIMEOUT_SCALE_FACTOR)
+        return min(timeout, _SPEECH_RECOGNITION_TIMEOUT_MAX_S)
+    except OSError:
+        return _SPEECH_RECOGNITION_TIMEOUT_BASE_S
 
 # ── Audio/video extensions ────────────────────────────────────────────────────
 _AUDIO_EXTENSIONS: frozenset[str] = frozenset({
@@ -387,8 +417,9 @@ class MediaDecoder:
                     return None
 
                 track = audio_tracks[0]
-                reader_err = _AVFoundation.objc.nil  # NSError** placeholder
-                reader = _AVFoundation.AVAssetReader.alloc().initWithAsset_error_(asset, reader_err)
+                # PyObjC: initWithAsset_error_ takes (asset, error_out) where error_out is NSError**.
+                # Pass None for the out-param — PyObjC handles the conversion correctly.
+                reader = _AVFoundation.AVAssetReader.alloc().initWithAsset_error_(asset, None)
                 if reader is None:
                     log.debug("[SILICON-02] AVAssetReader init failed for %s", file_path)
                     return None
@@ -427,13 +458,24 @@ class MediaDecoder:
                         data_len = _AVFoundation.CMBlockBufferGetDataLength(block_buffer)
                         if data_len == 0:
                             continue
-                        # Read float32 samples
-                        raw = _AVFoundation.objc.PyObjC_ObjCToPython(
-                            _AVFoundation.objc._C_FLT,  # float32
-                            block_buffer,
-                            data_len // 4,  # num floats
-                        )
-                        arr = np.frombuffer(raw if isinstance(raw, bytes) else bytes(raw), dtype=np.float32)
+                        # Read float32 samples from CMBlockBuffer using CMBlockBufferCopyDataBytes.
+                        # This is the proper PyObjC way to extract data from a CMBlockBuffer.
+                        # The data is contiguous in memory, float32 format per output_settings.
+                        try:
+                            raw_bytes = _AVFoundation.CMBlockBufferCopyDataBytes(
+                                block_buffer,
+                                0,  # atOffset
+                                data_len  # totalLength
+                            )
+                            arr = np.frombuffer(bytes(raw_bytes), dtype=np.float32)
+                        except Exception:
+                            # Fallback: get data pointer directly (zero-copy when possible)
+                            raw_ptr = _AVFoundation.CMBlockBufferGetDataPointer(block_buffer, atOffset=0)
+                            if raw_ptr is not None:
+                                raw_bytes = bytes(raw_ptr)[:data_len]
+                                arr = np.frombuffer(raw_bytes, dtype=np.float32)
+                            else:
+                                continue
                         total_samples += len(arr)
                         if total_samples > _MAX_AUDIO_BUFFER_SAMPLES:
                             # Truncate at limit
@@ -591,12 +633,14 @@ class MediaDecoder:
                     # threading.Event.wait(timeout) releases the GIL while waiting —
                     # unlike time.sleep() which keeps the GIL held.
                     # Also: if the handler fires first, we wake immediately (no wasted sleep).
-                    deadline = _time.monotonic() + _SPEECH_RECOGNITION_TIMEOUT_S
+                    # [SAFE-3] Use adaptive timeout based on file size
+                    speech_timeout = _compute_adaptive_speech_timeout(source) if isinstance(source, str) else _SPEECH_RECOGNITION_TIMEOUT_BASE_S
+                    deadline = _time.monotonic() + speech_timeout
                     while not done_event.wait(timeout=0.05):
                         if _time.monotonic() > deadline:
                             task.cancel()
-                            log.debug("[SILICON-02] Transcription timed out after %.0fs",
-                                      _SPEECH_RECOGNITION_TIMEOUT_S)
+                            log.debug("[SILICON-02] Transcription timed out after %.0fs (adaptive)",
+                                      speech_timeout)
                             break
                         # loop continues on timeout; exit when done_event.set() was called
 
@@ -723,10 +767,18 @@ class MediaDecoder:
         M1 bounds:
           - Max _MAX_KEYFRAMES frames (120 total = 20 min at 10s interval)
           - Each frame ~200 KB JPEG → max ~24 MB total
+
+        SAFE-5: RAM guard check before frame extraction to prevent unbounded
+        memory accumulation on M1 8GB.
         """
         if not self._initialized:
             await self.initialize()
         if not _AVFoundation:
+            return []
+
+        # SAFE-5: RAM guard — prevent unbounded JPEG accumulation
+        if not self._check_ram_guard():
+            log.debug("[SILICON-02] RAM guard blocked extract_keyframes for %s", file_path)
             return []
 
         try:
@@ -761,9 +813,14 @@ class MediaDecoder:
                 time = 0.0
                 while time < dur_s and len(frames) < max_frames:
                     cm_time = _AVFoundation.CMTimeMakeWithSeconds(time, 600)
-                    err = _AVFoundation.objc.nil
-                    cg_image = generator.copyCGImageAtTime_actualTime_error_(cm_time, None, err)
-                    if cg_image is not None:
+                    # PyObjC: copyCGImageAtTime_actualTime_error_ returns (image, actualTime) tuple.
+                    result = generator.copyCGImageAtTime_actualTime_error_(cm_time, None, None)
+                    if result is not None:
+                        # PyObjC returns (CGImage, actualTime) tuple; extract CGImage
+                        if isinstance(result, tuple) and len(result) >= 1:
+                            cg_image = result[0]
+                        else:
+                            cg_image = result
                         # Convert CGImage to JPEG bytes via NSBitmapImageRep
                         rep = _AppKit.NSBitmapImageRep.alloc().initWithCGImage_(cg_image)
                         if rep is not None:
@@ -783,6 +840,433 @@ class MediaDecoder:
             log.debug("[SILICON-02] extract_keyframes failed for %s: %s", file_path, exc)
             return []
 
+    # ── [IO-4] Zero-copy CVPixelBuffer extraction ─────────────────────────────
+
+    async def extract_keyframes_zero_copy(
+        self,
+        file_path: str,
+        interval_s: float = _KEYFRAME_INTERVAL_S,
+        max_frames: int = _MAX_KEYFRAMES,
+        target_size: tuple[int, int] | None = (640, 360),
+    ) -> list[dict[str, Any]]:
+        """
+        [IO-4] Zero-copy keyframe extraction via AVAssetReader → CVPixelBuffer.
+
+        Returns list of dicts with CVPixelBuffer (not JPEG bytes) for:
+          - Zero-copy Vision OCR via CIImage(ioSurface:)
+          - Zero-copy CoreML inference via MLFeatureValue(pixelBuffer:)
+          - Zero-copy Rust Metal texture via IOSurfaceCreateMetalTexture
+
+        Pipeline: AVAssetReader → CVPixelBuffer → IOSurface (zero-copy)
+                  IOSurface → CIImage → Vision VNRecognizeTextRequest (zero-copy)
+                  IOSurface → MLFeatureValue → CoreML (zero-copy)
+
+        Fallback: If AVAssetReader fails, returns empty list (caller falls back
+                  to extract_keyframes() JPEG bytes path).
+
+        Args:
+            file_path: Path to video file
+            interval_s: Interval between frames in seconds
+            max_frames: Maximum number of frames to extract
+            target_size: Target (width, height) for pixel buffer. None = native resolution.
+
+        Returns:
+            List of dicts with keys:
+              - pixel_buffer: CVPixelBuffer (PyObjC object, zero-copy)
+              - timestamp_s: float (frame timestamp in seconds)
+              - width: int
+              - height: int
+              - bytes_per_row: int
+            Empty list on error.
+        """
+        if not self._initialized:
+            await self.initialize()
+        if not _AVFoundation:
+            return []
+
+        try:
+            file_size = os.path.getsize(file_path)
+            if file_size > _MAX_VIDEO_FILE_BYTES:
+                log.debug("[IO-4] Video file too large: %s (%d bytes)", file_path, file_size)
+                return []
+        except OSError as exc:
+            log.debug("[IO-4] stat failed for %s: %s", file_path, exc)
+            return []
+
+        try:
+            def _extract_sync() -> list[dict[str, Any]]:
+                """Extract frames as CVPixelBuffer via AVAssetReader."""
+                try:
+                    # Import CoreVideo lazily (needed for CVPixelBuffer)
+                    import CoreVideo as _CV
+                except ImportError:
+                    log.debug("[IO-4] CoreVideo not available — falling back to JPEG path")
+                    return []
+
+                ns_url = _AVFoundation.NSURL.fileURLWithPath_(file_path)
+                asset = _AVFoundation.AVAsset.assetWithURL_(ns_url)
+                dur = asset.duration()
+                dur_s = float(dur.value) / float(dur.timescale) if dur.timescale else 0.0
+
+                # Find video track
+                video_tracks = asset.tracksWithMediaType_(_AVFoundation.AVMediaTypeVideo)
+                if not video_tracks or len(video_tracks) == 0:
+                    log.debug("[IO-4] No video track in %s", file_path)
+                    return []
+
+                video_track = video_tracks[0]
+
+                # Determine output dimensions
+                if target_size is None:
+                    # Use native dimensions
+                    natural_size = video_track.naturalSize()
+                    width = int(natural_size.width)
+                    height = int(natural_size.height)
+                else:
+                    width, height = target_size
+
+                # Create AVAssetReader with CVPixelBuffer output
+                # PyObjC: initWithAsset_error_ takes (asset, error_out) where error_out is NSError**.
+                # Pass None for the out-param — PyObjC handles the conversion correctly.
+                reader = _AVFoundation.AVAssetReader.alloc().initWithAsset_error_(asset, None)
+                if reader is None:
+                    log.debug("[IO-4] AVAssetReader init failed for %s", file_path)
+                    return []
+
+                # Configure output: CVPixelBuffer (kCVPixelFormatType_32BGRA)
+                # CVPixelBuffer wraps IOSurface on Apple Silicon — zero-copy from VideoToolbox
+                # Use AVVideoPixelBufferAttributes for CVPixelBuffer output
+                # NOT AVVideoCodecKey — that specifies encoder output, not decoder output
+                try:
+                    from CoreVideo import kCVPixelBufferPixelFormatTypeKey
+                    from CoreVideo import kCVPixelBufferWidthKey
+                    from CoreVideo import kCVPixelBufferHeightKey
+                    from CoreVideo import kCVPixelBufferIOSurfacePropertiesKey
+                except ImportError:
+                    # Fallback: use string keys
+                    kCVPixelBufferPixelFormatTypeKey = 'PixelFormatType'
+                    kCVPixelBufferWidthKey = 'Width'
+                    kCVPixelBufferHeightKey = 'Height'
+                    kCVPixelBufferIOSurfacePropertiesKey = 'IOSurfaceProperties'
+
+                pixel_format = _CV.kCVPixelFormatType_32BGRA
+                # AVVideoSettings: Use AVVideoPixelBufferAttributes for CVPixelBuffer output
+                # NOT AVVideoCodecKey — that specifies encoder output, not decoder output
+                output_settings = {
+                    _AVFoundation.AVVideoPixelBufferAttributes: {
+                        kCVPixelBufferPixelFormatTypeKey: pixel_format,
+                        kCVPixelBufferWidthKey: width,
+                        kCVPixelBufferHeightKey: height,
+                        # Enable IOSurface backing (zero-copy on Apple Silicon)
+                        kCVPixelBufferIOSurfacePropertiesKey: {},
+                    }
+                }
+
+                reader_output = _AVFoundation.AVAssetReaderTrackOutput.alloc().initWithTrack_outputSettings_(
+                    video_track, output_settings
+                )
+
+                if not reader.canAddOutput_(reader_output):
+                    log.debug("[IO-4] Cannot add output for %s", file_path)
+                    return []
+
+                reader.addOutput_(reader_output)
+
+                if not reader.startReading():
+                    log.debug("[IO-4] startReading failed for %s: %s", file_path, reader.error())
+                    return []
+
+                frames: list[dict[str, Any]] = []
+
+                # AVAssetReader reads frames sequentially — collect all and sample at intervals
+                # SAFE-5: Bounded frame collection to prevent unbounded memory growth
+                # Maximum: 30fps * 600s video = 18000 frames → cap at 2000 (33s worth)
+                all_frames: list[dict[str, Any]] = []
+                max_all_frames = 2000  # SAFE-5: cap to prevent O(fps * duration) memory explosion
+                while True:
+                    # SAFE-5: Early exit when frame limit reached
+                    if len(all_frames) >= max_all_frames:
+                        break
+                        
+                    sample_buffer = reader_output.copyNextSampleBuffer()
+                    if sample_buffer is None:
+                        break
+                    try:
+                        # Get frame timestamp from CMSampleBuffer
+                        presentation_time = _AVFoundation.CMSampleBufferGetPresentationTimeStamp(sample_buffer)
+                        timestamp_s = float(presentation_time.value) / float(presentation_time.timescale) if presentation_time.timescale else 0.0
+
+                        # Extract CVPixelBuffer from CMSampleBuffer
+                        # CVPixelBufferGetImageBuffer returns IOSurface-backed CVPixelBuffer
+                        pixel_buffer = _CV.CVPixelBufferGetImageBuffer(sample_buffer)
+
+                        if pixel_buffer is not None:
+                            pb_width = int(_CV.CVPixelBufferGetWidth(pixel_buffer))
+                            pb_height = int(_CV.CVPixelBufferGetHeight(pixel_buffer))
+                            pb_bytes_per_row = int(_CV.CVPixelBufferGetBytesPerRow(pixel_buffer))
+
+                            all_frames.append({
+                                'pixel_buffer': pixel_buffer,
+                                'timestamp_s': timestamp_s,
+                                'width': pb_width,
+                                'height': pb_height,
+                                'bytes_per_row': pb_bytes_per_row,
+                            })
+                    finally:
+                        pass  # CMSampleBuffer is autoreleased
+
+                reader.cancelReading()
+
+                # Sample frames at specified interval (up to max_frames)
+                sampled_indices: set[int] = set()
+                # Use float arithmetic for time iteration to handle fractional intervals
+                num_intervals = int(dur_s / interval_s) + 1 if interval_s > 0 else 1
+                num_intervals = min(num_intervals, max_frames)
+                
+                for idx in range(num_intervals):
+                    target_time = idx * interval_s
+                    if target_time > dur_s:
+                        break
+                    # Find nearest frame to target time
+                    best_idx = 0
+                    best_diff = float('inf')
+                    for i, frame in enumerate(all_frames):
+                        if i not in sampled_indices:
+                            diff = abs(frame['timestamp_s'] - target_time)
+                            if diff < best_diff:
+                                best_diff = diff
+                                best_idx = i
+                    if best_idx not in sampled_indices:
+                        sampled_indices.add(best_idx)
+                        frames.append(all_frames[best_idx])
+
+                log.debug(
+                    "[IO-4] Extracted %d CVPixelBuffer frames from %s (%.1fs × %d frames)",
+                    len(frames), file_path, interval_s, max_frames
+                )
+                return frames
+
+            if _AVFoundation is not None:
+                return await asyncio.to_thread(_extract_sync)
+            return []
+        except Exception as exc:
+            log.debug("[IO-4] extract_keyframes_zero_copy failed for %s: %s", file_path, exc)
+            return []
+
+    async def ocr_pixelbuffer_frame(
+        self,
+        pixel_buffer: Any,
+        languages: list[str] | None = None,
+    ) -> tuple[str, float]:
+        """
+        [IO-4] Zero-copy Vision OCR on CVPixelBuffer via CIImage(ioSurface:).
+
+        CIImage can be created directly from IOSurface (CVPixelBuffer backing)
+        without copying pixel data. Vision VNRecognizeTextRequest then processes
+        the CIImage directly on ANE.
+
+        Pipeline: CVPixelBuffer → CIImage(ioSurface:) → Vision OCR (zero-copy)
+
+        Args:
+            pixel_buffer: CVPixelBuffer from extract_keyframes_zero_copy()
+            languages: List of language codes (e.g., ['en-US']). None = default.
+
+        Returns:
+            (recognized_text: str, average_confidence: float)
+        """
+        if _Vision is None:
+            return "", 0.0
+
+        languages = languages or ['en-US']
+
+        try:
+            import CoreImage as _CI
+
+            def _ocr_sync() -> tuple[str, float]:
+                # Create CIImage from IOSurface (zero-copy)
+                # CVPixelBuffer wraps IOSurface, so CIImage(ioSurface:) shares memory
+                try:
+                    ci_image = _CI.CIImage.imageWithCVPixelBuffer_(pixel_buffer)
+                except Exception:
+                    log.debug("[IO-4] Failed to create CIImage from CVPixelBuffer")
+                    return "", 0.0
+
+                if ci_image is None:
+                    return "", 0.0
+
+                # Perform Vision OCR on CIImage (zero-copy, ANE-accelerated)
+                results_holder: list = []
+
+                class Handler:
+                    __slots__ = ('_results',)
+                    def __init__(self):
+                        self._results = results_holder
+                    def __call__(self, request, error):
+                        if error is not None:
+                            return
+                        self._results.append(request.results())
+
+                handler = Handler()
+                vn_request = _Vision.VNRecognizeTextRequest.alloc().initWithCompletionHandler_(handler)
+                vn_request.setRecognitionLevel_(_Vision.VNRequestTextRecognitionLevelAccurate)
+                vn_request.setRecognitionLanguages_(languages)
+                vn_request.setUsesLanguageCorrection_(True)
+
+                try:
+                    # VNImageRequestHandler with CIImage (zero-copy)
+                    handler_obj = _Vision.VNImageRequestHandler.alloc().initWithCVPixelBuffer_options_(
+                        pixel_buffer,
+                        {_Vision.VNImageOptionApplyOrientationCorrection: True}
+                    )
+                    handler_obj.performRequests_error_([vn_request], None)
+                except Exception:
+                    return "", 0.0
+
+                if not results_holder or not results_holder[0]:
+                    return "", 0.0
+
+                texts = []
+                confidences = []
+                for obs in results_holder[0]:
+                    txt = str(obs.text())
+                    conf = float(obs.confidence())
+                    if conf > 0.3:  # filter low-confidence OCR
+                        texts.append(txt)
+                        confidences.append(conf)
+
+                full_text = '\n'.join(texts)
+                avg_conf = sum(confidences) / len(confidences) if confidences else 0.0
+                return full_text, avg_conf
+
+            return await asyncio.to_thread(_ocr_sync)
+        except Exception as exc:
+            log.debug("[IO-4] ocr_pixelbuffer_frame failed: %s", exc)
+            return "", 0.0
+
+    async def transcribe_video_zero_copy(
+        self,
+        file_path: str,
+        ocr_languages: list[str] | None = None,
+    ) -> VideoTranscriptionResult:
+        """
+        [IO-4] Full video intelligence via zero-copy CVPixelBuffer pipeline.
+        
+        [SAFE-3] Aggregation deadline enforcement:
+          - Total transcription bounded to _VIDEO_TRANSCRIBE_DEADLINE_S
+          - OCR frames limited to _MAX_OCR_FRAMES_PER_DEADLINE
+
+        Pipeline:
+          1. AVAssetReader → CVPixelBuffer (zero-copy IOSurface)
+          2. CVPixelBuffer → CIImage → Vision OCR (zero-copy)
+          3. CVPixelBuffer → MLFeatureValue → CoreML (zero-copy, future)
+
+        Eliminates 2-3 copies per frame vs extract_keyframes() + _ocr_frame():
+          - No CGImage → JPEG bytes copy
+          - No JPEG bytes → NSData → CGImage copy for OCR
+          - CVPixelBuffer directly feeds Vision ANE
+
+        Args:
+            file_path: Path to video file
+            ocr_languages: Language codes for OCR (None = ['en-US'])
+
+        Returns:
+            VideoTranscriptionResult with audio transcript + frame OCR
+        """
+        if not self._initialized:
+            await self.initialize()
+
+        # [SAFE-3] Track overall deadline for video transcription
+        overall_start = _time.monotonic()
+        remaining_deadline = _VIDEO_TRANSCRIBE_DEADLINE_S
+
+        # Audio path
+        audio_start = _time.monotonic()
+        transcript = await self.transcribe(file_path)
+        audio_elapsed = _time.monotonic() - audio_start
+        remaining_deadline -= audio_elapsed
+        
+        audio_text = transcript.text
+        audio_confidence = transcript.confidence
+        dur_s = transcript.duration_s
+
+        # Frame path (zero-copy CVPixelBuffer) with deadline enforcement
+        frame_texts: list[str] = []
+        frame_timestamps: list[float] = []
+        frame_count = 0
+
+        # [SAFE-3] Check deadline before starting OCR
+        if remaining_deadline <= 0:
+            log.debug("[IO-4] Video transcription deadline exceeded after audio, skipping OCR")
+            return VideoTranscriptionResult(
+                audio_transcript=audio_text,
+                audio_confidence=audio_confidence,
+                duration_s=dur_s,
+                frame_texts=[],
+                frame_timestamps=[],
+                frame_count=0,
+            )
+
+        frames = await self.extract_keyframes_zero_copy(file_path)
+        
+        # [SAFE-3] Limit frames to process within deadline
+        estimated_ocr_per_frame = 2.0  # seconds
+        max_frames_by_deadline = max(1, int(remaining_deadline / estimated_ocr_per_frame))
+        max_frames_to_process = min(len(frames), _MAX_OCR_FRAMES_PER_DEADLINE, max_frames_by_deadline)
+        
+        if not frames:
+            # Fallback to JPEG path
+            log.debug("[IO-4] Zero-copy extraction failed, falling back to JPEG path")
+            frames_jpeg = await self.extract_keyframes(file_path)
+            for i in range(min(max_frames_to_process, len(frames_jpeg))):
+                frame_bytes = frames_jpeg[i]
+                ts = i * _KEYFRAME_INTERVAL_S
+                frame_start = _time.monotonic()
+                ocr_text = await self._ocr_frame(frame_bytes)
+                frame_elapsed = _time.monotonic() - frame_start
+                if ocr_text:
+                    frame_texts.append(ocr_text)
+                    frame_timestamps.append(ts)
+                frame_count += 1
+                remaining_deadline -= frame_elapsed
+                if remaining_deadline <= 0:
+                    log.debug("[IO-4] Video transcription deadline exceeded during JPEG OCR")
+                    break
+        else:
+            # Zero-copy OCR path
+            for i in range(min(max_frames_to_process, len(frames))):
+                frame_data = frames[i]
+                ts = frame_data['timestamp_s']
+                pixel_buffer = frame_data['pixel_buffer']
+                
+                frame_start = _time.monotonic()
+                ocr_text, _ = await self.ocr_pixelbuffer_frame(pixel_buffer, ocr_languages)
+                frame_elapsed = _time.monotonic() - frame_start
+                
+                if ocr_text:
+                    frame_texts.append(ocr_text)
+                    frame_timestamps.append(ts)
+                frame_count += 1
+                
+                remaining_deadline -= frame_elapsed
+                if remaining_deadline <= 0:
+                    log.debug("[IO-4] Video transcription deadline exceeded during zero-copy OCR")
+                    break
+
+        overall_elapsed = _time.monotonic() - overall_start
+        log.debug(
+            "[IO-4] Video transcription (zero-copy) completed in %.1fs (deadline: %.1fs)",
+            overall_elapsed, _VIDEO_TRANSCRIBE_DEADLINE_S
+        )
+
+        return VideoTranscriptionResult(
+            audio_transcript=audio_text,
+            audio_confidence=audio_confidence,
+            duration_s=dur_s,
+            frame_texts=frame_texts,
+            frame_timestamps=frame_timestamps,
+            frame_count=frame_count,
+        )
+
     # ── Video transcription (audio + frames) ────────────────────────────────
 
     async def transcribe_video(self, file_path: str) -> VideoTranscriptionResult:
@@ -794,29 +1278,87 @@ class MediaDecoder:
           - frame_texts: Vision OCR on each keyframe
 
         Fail-safe: partial results returned even if one path fails.
+        
+        [SAFE-3] Aggregation deadline:
+          - Total transcription bounded to _VIDEO_TRANSCRIBE_DEADLINE_S
+          - OCR frames limited to _MAX_OCR_FRAMES_PER_DEADLINE
+          - Prevents worker blocking on large video files
         """
         if not self._initialized:
             await self.initialize()
 
+        # [SAFE-3] Track overall deadline for video transcription
+        overall_start = _time.monotonic()
+        remaining_deadline = _VIDEO_TRANSCRIBE_DEADLINE_S
+
         # Audio path
+        audio_start = _time.monotonic()
         transcript = await self.transcribe(file_path)
+        audio_elapsed = _time.monotonic() - audio_start
+        remaining_deadline -= audio_elapsed
+        
         audio_text = transcript.text
         audio_confidence = transcript.confidence
         dur_s = transcript.duration_s
 
-        # Frame path
+        # Frame path with deadline enforcement
         frame_texts: list[str] = []
         frame_timestamps: list[float] = []
         frame_count = 0
 
+        # [SAFE-3] Check deadline before starting OCR
+        if remaining_deadline <= 0:
+            log.debug("[SILICON-02] Video transcription deadline exceeded after audio, skipping OCR")
+            return VideoTranscriptionResult(
+                audio_transcript=audio_text,
+                audio_confidence=audio_confidence,
+                duration_s=dur_s,
+                frame_texts=[],
+                frame_timestamps=[],
+                frame_count=0,
+            )
+
         frames = await self.extract_keyframes(file_path)
-        for i, frame_bytes in enumerate(frames):
+        
+        # [SAFE-3] Limit frames to process within deadline
+        # Estimate ~2s per OCR frame, so estimate how many we can process
+        estimated_ocr_per_frame = 2.0  # seconds
+        max_frames_by_deadline = max(1, int(remaining_deadline / estimated_ocr_per_frame))
+        max_frames_to_process = min(len(frames), _MAX_OCR_FRAMES_PER_DEADLINE, max_frames_by_deadline)
+        
+        log.debug(
+            "[SILICON-02] Video OCR: %d frames available, processing max %d within deadline (%.1fs remaining)",
+            len(frames), max_frames_to_process, remaining_deadline
+        )
+        
+        for i in range(min(max_frames_to_process, len(frames))):
+            frame_bytes = frames[i]
             ts = i * _KEYFRAME_INTERVAL_S
+            
+            # [SAFE-3] Check deadline before each OCR call
+            frame_start = _time.monotonic()
             ocr_text = await self._ocr_frame(frame_bytes)
+            frame_elapsed = _time.monotonic() - frame_start
+            
             if ocr_text:
                 frame_texts.append(ocr_text)
                 frame_timestamps.append(ts)
             frame_count += 1
+            
+            # [SAFE-3] Update remaining deadline and check if we should continue
+            remaining_deadline -= frame_elapsed
+            if remaining_deadline <= 0:
+                log.debug(
+                    "[SILICON-02] Video transcription deadline exceeded after %d frames, stopping OCR",
+                    frame_count
+                )
+                break
+
+        overall_elapsed = _time.monotonic() - overall_start
+        log.debug(
+            "[SILICON-02] Video transcription completed in %.1fs (deadline: %.1fs)",
+            overall_elapsed, _VIDEO_TRANSCRIBE_DEADLINE_S
+        )
 
         return VideoTranscriptionResult(
             audio_transcript=audio_text,

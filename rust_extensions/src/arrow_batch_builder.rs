@@ -255,7 +255,15 @@ fn build_ipc_bytes(
     }
 
     let schema_body = make_schema_body();
-    let batch_body = make_batch_body(&ids, &queries, &source_types, &confidences, &timestamps, &provenance_jsons, &payload_texts);
+    let batch_body = make_batch_body(
+        &ids,
+        &queries,
+        &source_types,
+        &confidences,
+        &timestamps,
+        &provenance_jsons,
+        &payload_texts,
+    );
 
     // IPC stream: magic(8) + schema_size(4) + schema + batch_count(4) + batch_size(4) + batch + footer(4)
     let mut result = Vec::with_capacity(24 + schema_body.len() + batch_body.len());
@@ -274,7 +282,17 @@ fn build_ipc_bytes(
 // Column builders (serial + parallel)
 // ---------------------------------------------------------------------------
 
-fn build_columns(rows: &[FindingsRow]) -> (Vec<String>, Vec<String>, Vec<String>, Vec<f64>, Vec<f64>, Vec<String>, Vec<String>) {
+fn build_columns(
+    rows: &[FindingsRow],
+) -> (
+    Vec<String>,
+    Vec<String>,
+    Vec<String>,
+    Vec<f64>,
+    Vec<f64>,
+    Vec<String>,
+    Vec<String>,
+) {
     let n = rows.len();
     let mut ids = Vec::with_capacity(n);
     let mut queries = Vec::with_capacity(n);
@@ -292,13 +310,31 @@ fn build_columns(rows: &[FindingsRow]) -> (Vec<String>, Vec<String>, Vec<String>
         provenance_jsons.push(row.provenance_json.clone());
         payload_texts.push(row.payload_text.clone());
     }
-    (ids, queries, source_types, confidences, timestamps, provenance_jsons, payload_texts)
+    (
+        ids,
+        queries,
+        source_types,
+        confidences,
+        timestamps,
+        provenance_jsons,
+        payload_texts,
+    )
 }
 
 /// Single-pass columnar transpose via par_chunks + reduce.
 /// Replaces 6× par_iter() (6 Rayon scopes → 1 scope).
 /// Chunking by 1024 improves cache locality vs flat par_iter.
-fn build_columns_parallel(rows: &[FindingsRow]) -> (Vec<String>, Vec<String>, Vec<String>, Vec<f64>, Vec<f64>, Vec<String>, Vec<String>) {
+fn build_columns_parallel(
+    rows: &[FindingsRow],
+) -> (
+    Vec<String>,
+    Vec<String>,
+    Vec<String>,
+    Vec<f64>,
+    Vec<f64>,
+    Vec<String>,
+    Vec<String>,
+) {
     const CHUNK_SIZE: usize = 1024;
 
     rows.par_chunks(CHUNK_SIZE)
@@ -321,10 +357,28 @@ fn build_columns_parallel(rows: &[FindingsRow]) -> (Vec<String>, Vec<String>, Ve
                 payload_texts.push(row.payload_text.clone());
             }
 
-            (ids, queries, source_types, confidences, timestamps, provenance_jsons, payload_texts)
+            (
+                ids,
+                queries,
+                source_types,
+                confidences,
+                timestamps,
+                provenance_jsons,
+                payload_texts,
+            )
         })
         .reduce(
-            || (Vec::new(), Vec::new(), Vec::new(), Vec::new(), Vec::new(), Vec::new(), Vec::new()),
+            || {
+                (
+                    Vec::new(),
+                    Vec::new(),
+                    Vec::new(),
+                    Vec::new(),
+                    Vec::new(),
+                    Vec::new(),
+                    Vec::new(),
+                )
+            },
             |(mut a_ids, mut a_q, mut a_st, mut a_c, mut a_ts, mut a_p, mut a_pl),
              (b_ids, b_q, b_st, b_c, b_ts, b_p, b_pl)| {
                 a_ids.extend(b_ids);
@@ -383,7 +437,16 @@ pub fn build_arrow_batch_from_findings<'py>(
         };
 
     // Serialize to IPC
-    let ipc_bytes = match build_ipc_bytes(ids, queries, source_types, confidences, timestamps, provenance_jsons, payload_texts, n) {
+    let ipc_bytes = match build_ipc_bytes(
+        ids,
+        queries,
+        source_types,
+        confidences,
+        timestamps,
+        provenance_jsons,
+        payload_texts,
+        n,
+    ) {
         Ok(bytes) => bytes,
         Err(_) => return Ok(None),
     };
@@ -555,29 +618,46 @@ pub fn build_record_batch_from_structs<'py>(
     let mut payload_texts_iter = payload_texts.iter();
 
     loop {
-        match (ids_iter.next(), queries_iter.next(), source_types_iter.next(),
-               confidences_iter.next(), timestamps_iter.next(),
-               provenance_jsons_iter.next(), payload_texts_iter.next()) {
-            (Some(id_item), Some(query_item), Some(st_item),
-             Some(conf_item), Some(ts_item),
-             Some(prov_item), Some(payload_item)) => {
+        match (
+            ids_iter.next(),
+            queries_iter.next(),
+            source_types_iter.next(),
+            confidences_iter.next(),
+            timestamps_iter.next(),
+            provenance_jsons_iter.next(),
+            payload_texts_iter.next(),
+        ) {
+            (
+                Some(id_item),
+                Some(query_item),
+                Some(st_item),
+                Some(conf_item),
+                Some(ts_item),
+                Some(prov_item),
+                Some(payload_item),
+            ) => {
                 // Jeden .str() na item místo dvou .and_then() call chain.
-                let id_val = id_item.str()
+                let id_val = id_item
+                    .str()
                     .map(|s| s.to_string_lossy().into_owned())
                     .unwrap_or_default();
-                let query_val = query_item.str()
+                let query_val = query_item
+                    .str()
                     .map(|s| s.to_string_lossy().into_owned())
                     .unwrap_or_default();
-                let st_val = st_item.str()
+                let st_val = st_item
+                    .str()
                     .map(|s| s.to_string_lossy().into_owned())
                     .unwrap_or_default();
                 // Přímá extrakce — žádné dvojí get_item().
                 let conf_val = conf_item.extract::<f64>().unwrap_or(0.0);
                 let ts_val = ts_item.extract::<f64>().unwrap_or(0.0);
-                let prov_val = prov_item.str()
+                let prov_val = prov_item
+                    .str()
                     .map(|s| s.to_string_lossy().into_owned())
                     .unwrap_or_default();
-                let payload_val = payload_item.str()
+                let payload_val = payload_item
+                    .str()
                     .map(|s| s.to_string_lossy().into_owned())
                     .unwrap_or_default();
 
@@ -787,7 +867,10 @@ pub fn build_record_batch_from_findings<'py>(
 
 pub fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(build_arrow_batch_from_findings, m)?)?;
-    m.add_function(wrap_pyfunction!(build_compressed_arrow_batch_from_findings, m)?)?;
+    m.add_function(wrap_pyfunction!(
+        build_compressed_arrow_batch_from_findings,
+        m
+    )?)?;
     m.add_function(wrap_pyfunction!(build_findings_from_iocs, m)?)?;
     m.add_function(wrap_pyfunction!(build_record_batch_from_structs, m)?)?;
     m.add_function(wrap_pyfunction!(build_record_batch_from_findings, m)?)?;

@@ -12,7 +12,8 @@
 pub static IPV4_PAT: &str = r"\b(?:(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.){3}(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\b";
 
 /// Domain pattern — index 1 in build_many.
-pub static DOMAIN_PAT: &str = r"\b(?:[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?\.)+[a-zA-Z]{2,}\b";
+pub static DOMAIN_PAT: &str =
+    r"\b(?:[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?\.)+[a-zA-Z]{2,}\b";
 
 /// MD5 pattern — index 2 in build_many.
 pub static MD5_PAT: &str = r"\b[a-fA-F0-9]{32}\b";

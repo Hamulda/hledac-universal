@@ -154,11 +154,12 @@ pub fn batch_centrality_all<'py>(
             .collect();
 
         // Normalize: divide by (n-1)*(n-2) for undirected
-        let norm = if n > 2 { 2.0 / ((n_f - 1.0) * (n_f - 2.0)) } else { 1.0 };
-        bet_scores
-            .into_iter()
-            .map(|b| b * norm)
-            .collect()
+        let norm = if n > 2 {
+            2.0 / ((n_f - 1.0) * (n_f - 2.0))
+        } else {
+            1.0
+        };
+        bet_scores.into_iter().map(|b| b * norm).collect()
     } else {
         // Sampling approximation for large graphs (10% of nodes, min 50, max 500)
         let sample_size = (n as f64 * 0.1).ceil() as usize;
@@ -224,10 +225,7 @@ pub fn batch_centrality_all<'py>(
         } else {
             1.0
         };
-        betweenness
-            .into_iter()
-            .map(|b| b * norm)
-            .collect()
+        betweenness.into_iter().map(|b| b * norm).collect()
     };
 
     // --- Closeness centrality (parallel BFS-based, O(n*m)) ---
@@ -423,7 +421,11 @@ pub fn betweenness_single(
     }
 
     let result = if s < n { delta[s] } else { 0.0 };
-    let norm = if n > 2 { 2.0 / ((n_f - 1.0) * (n_f - 2.0)) } else { 1.0 };
+    let norm = if n > 2 {
+        2.0 / ((n_f - 1.0) * (n_f - 2.0))
+    } else {
+        1.0
+    };
 
     Ok(result * norm)
 }
@@ -457,7 +459,11 @@ pub fn betweenness_batch<'py>(
         .collect();
 
     let n_f = n as f64;
-    let norm = if n > 2 { 2.0 / ((n_f - 1.0) * (n_f - 2.0)) } else { 1.0 };
+    let norm = if n > 2 {
+        2.0 / ((n_f - 1.0) * (n_f - 2.0))
+    } else {
+        1.0
+    };
 
     // Map source nodes to indices, deduplicate
     let unique_sources: Vec<usize> = source_nodes

@@ -51,7 +51,16 @@ const MMAP_VERSION: u8 = 1;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum IocType {
-    Ip, Ipv6, Domain, Url, Md5, Sha1, Sha256, Email, Cve, Unknown,
+    Ip,
+    Ipv6,
+    Domain,
+    Url,
+    Md5,
+    Sha1,
+    Sha256,
+    Email,
+    Cve,
+    Unknown,
 }
 
 impl IocType {
@@ -99,18 +108,20 @@ impl IocType {
 ///   - No `format!("{}:{}", ...)` (String alloc)
 /// Key = TYPE_PREFIX_HASH[type_idx] ⊕ xxh3_64(normalized.as_bytes())
 /// (⊕ = wrapping_add — xxh3_64 is fast and uniform enough for non-crypto use)
-static TYPE_PREFIX_HASH: LazyLock<[u64; 10]> = LazyLock::new(|| [
-    xxh3_64(b"ip:"),       // 0: Ip
-    xxh3_64(b"ipv6:"),     // 1: Ipv6
-    xxh3_64(b"domain:"),    // 2: Domain
-    xxh3_64(b"url:"),       // 3: Url
-    xxh3_64(b"md5:"),       // 4: Md5
-    xxh3_64(b"sha1:"),      // 5: Sha1
-    xxh3_64(b"sha256:"),    // 6: Sha256
-    xxh3_64(b"email:"),     // 7: Email
-    xxh3_64(b"cve:"),       // 8: Cve
-    0,                      // 9: Unknown — no prefix, key = just value hash
-]);
+static TYPE_PREFIX_HASH: LazyLock<[u64; 10]> = LazyLock::new(|| {
+    [
+        xxh3_64(b"ip:"),     // 0: Ip
+        xxh3_64(b"ipv6:"),   // 1: Ipv6
+        xxh3_64(b"domain:"), // 2: Domain
+        xxh3_64(b"url:"),    // 3: Url
+        xxh3_64(b"md5:"),    // 4: Md5
+        xxh3_64(b"sha1:"),   // 5: Sha1
+        xxh3_64(b"sha256:"), // 6: Sha256
+        xxh3_64(b"email:"),  // 7: Email
+        xxh3_64(b"cve:"),    // 8: Cve
+        0,                   // 9: Unknown — no prefix, key = just value hash
+    ]
+});
 
 /// R4-05: Build a composite key from type index + normalized value (no string allocs).
 #[inline]
@@ -120,7 +131,9 @@ fn make_ioc_key(ioc_type: &IocType, normalized: &str) -> u64 {
 }
 
 fn normalize_ioc(value: &str, ioc_type: &IocType) -> String {
-    if value.is_empty() { return String::new(); }
+    if value.is_empty() {
+        return String::new();
+    }
     match ioc_type {
         IocType::Domain => {
             let lower = value.to_lowercase();
@@ -128,9 +141,16 @@ fn normalize_ioc(value: &str, ioc_type: &IocType) -> String {
         }
         IocType::Md5 | IocType::Sha1 | IocType::Sha256 => value.to_lowercase(),
         IocType::Cve => value.to_uppercase(),
-        IocType::Ip => value.split('.').map(|octet| {
-            octet.parse::<u8>().map(|n| n.to_string()).unwrap_or_else(|_| octet.to_string())
-        }).collect::<Vec<_>>().join("."),
+        IocType::Ip => value
+            .split('.')
+            .map(|octet| {
+                octet
+                    .parse::<u8>()
+                    .map(|n| n.to_string())
+                    .unwrap_or_else(|_| octet.to_string())
+            })
+            .collect::<Vec<_>>()
+            .join("."),
         IocType::Ipv6 => value.to_lowercase(),
         _ => value.to_string(),
     }
@@ -178,11 +198,17 @@ impl MmapIocDedupStore {
 
         let file = if force_new || !p.exists() {
             OpenOptions::new()
-                .read(true).write(true).create(true).truncate(true)
+                .read(true)
+                .write(true)
+                .create(true)
+                .truncate(true)
                 .open(p)
                 .map_err(|e| pyo3::exceptions::PyIOError::new_err(format!("open failed: {}", e)))?
         } else {
-            OpenOptions::new().read(true).write(true).open(p)
+            OpenOptions::new()
+                .read(true)
+                .write(true)
+                .open(p)
                 .map_err(|e| pyo3::exceptions::PyIOError::new_err(format!("open failed: {}", e)))?
         };
 
@@ -214,9 +240,8 @@ impl MmapIocDedupStore {
         };
         let file_ref = unsafe { &*file_raw };
 
-        let mmap = unsafe {
-            Mmap::map(file_ref)
-        }.map_err(|e| pyo3::exceptions::PyIOError::new_err(format!("mmap failed: {}", e)))?;
+        let mmap = unsafe { Mmap::map(file_ref) }
+            .map_err(|e| pyo3::exceptions::PyIOError::new_err(format!("mmap failed: {}", e)))?;
 
         let file_len = mmap.len();
         if file_len < MMAP_HEADER_SIZE {
@@ -235,8 +260,12 @@ impl MmapIocDedupStore {
 
         let num_entries = u32::from_le_bytes([data[8], data[9], data[10], data[11]]);
         self.current_sprint = u32::from_le_bytes([data[12], data[13], data[14], data[15]]);
-        self.total_seen = u64::from_le_bytes([data[16], data[17], data[18], data[19], data[20], data[21], data[22], data[23]]);
-        self.total_deduped = u64::from_le_bytes([data[24], data[25], data[26], data[27], data[28], data[29], data[30], data[31]]);
+        self.total_seen = u64::from_le_bytes([
+            data[16], data[17], data[18], data[19], data[20], data[21], data[22], data[23],
+        ]);
+        self.total_deduped = u64::from_le_bytes([
+            data[24], data[25], data[26], data[27], data[28], data[29], data[30], data[31],
+        ]);
 
         if num_entries == 0 || file_len == MMAP_HEADER_SIZE {
             return Ok(());
@@ -275,34 +304,81 @@ impl MmapIocDedupStore {
         let mut pos = 0;
 
         for _ in 0..num_entries {
-            if pos + 8 > data.len() { break; }
-            let k = u64::from_le_bytes([data[pos], data[pos+1], data[pos+2], data[pos+3], data[pos+4], data[pos+5], data[pos+6], data[pos+7]]);
+            if pos + 8 > data.len() {
+                break;
+            }
+            let k = u64::from_le_bytes([
+                data[pos],
+                data[pos + 1],
+                data[pos + 2],
+                data[pos + 3],
+                data[pos + 4],
+                data[pos + 5],
+                data[pos + 6],
+                data[pos + 7],
+            ]);
             pos += 8;
 
-            if pos + 4 > data.len() { break; }
-            let val_len = u32::from_le_bytes([data[pos], data[pos+1], data[pos+2], data[pos+3]]) as usize;
+            if pos + 4 > data.len() {
+                break;
+            }
+            let val_len =
+                u32::from_le_bytes([data[pos], data[pos + 1], data[pos + 2], data[pos + 3]])
+                    as usize;
             pos += 4;
 
-            if pos + val_len > data.len() { break; }
-            let normalized = String::from_utf8_lossy(&data[pos..pos+val_len]).to_string();
+            if pos + val_len > data.len() {
+                break;
+            }
+            let normalized = String::from_utf8_lossy(&data[pos..pos + val_len]).to_string();
             pos += val_len;
 
-            if pos >= data.len() { break; }
-            let ioc_type_byte = data[pos]; pos += 1;
+            if pos >= data.len() {
+                break;
+            }
+            let ioc_type_byte = data[pos];
+            pos += 1;
             let ioc_type = match ioc_type_byte {
-                0 => IocType::Ip, 1 => IocType::Ipv6, 2 => IocType::Domain,
-                3 => IocType::Url, 4 => IocType::Md5, 5 => IocType::Sha1,
-                6 => IocType::Sha256, 7 => IocType::Email, 8 => IocType::Cve, _ => IocType::Unknown,
+                0 => IocType::Ip,
+                1 => IocType::Ipv6,
+                2 => IocType::Domain,
+                3 => IocType::Url,
+                4 => IocType::Md5,
+                5 => IocType::Sha1,
+                6 => IocType::Sha256,
+                7 => IocType::Email,
+                8 => IocType::Cve,
+                _ => IocType::Unknown,
             };
 
-            if pos + 16 > data.len() { break; }
-            let first = u32::from_le_bytes([data[pos], data[pos+1], data[pos+2], data[pos+3]]);
-            let last = u32::from_le_bytes([data[pos+4], data[pos+5], data[pos+6], data[pos+7]]);
-            let occurrence = u32::from_le_bytes([data[pos+8], data[pos+9], data[pos+10], data[pos+11]]);
-            let confidence = f32::from_le_bytes([data[pos+12], data[pos+13], data[pos+14], data[pos+15]]);
+            if pos + 16 > data.len() {
+                break;
+            }
+            let first =
+                u32::from_le_bytes([data[pos], data[pos + 1], data[pos + 2], data[pos + 3]]);
+            let last =
+                u32::from_le_bytes([data[pos + 4], data[pos + 5], data[pos + 6], data[pos + 7]]);
+            let occurrence =
+                u32::from_le_bytes([data[pos + 8], data[pos + 9], data[pos + 10], data[pos + 11]]);
+            let confidence = f32::from_le_bytes([
+                data[pos + 12],
+                data[pos + 13],
+                data[pos + 14],
+                data[pos + 15],
+            ]);
             pos += 16;
 
-            local_map.insert(k, Arc::new(RwLock::new(IocEntry { normalized_value: normalized, ioc_type, first_seen_sprint: first, last_seen_sprint: last, occurrence_count: occurrence, confidence_max: confidence })));
+            local_map.insert(
+                k,
+                Arc::new(RwLock::new(IocEntry {
+                    normalized_value: normalized,
+                    ioc_type,
+                    first_seen_sprint: first,
+                    last_seen_sprint: last,
+                    occurrence_count: occurrence,
+                    confidence_max: confidence,
+                })),
+            );
         }
 
         // Single atomic swap — one lock acquisition instead of num_entries.
@@ -310,7 +386,9 @@ impl MmapIocDedupStore {
     }
 
     fn persist(&mut self) -> PyResult<()> {
-        if !self.dirty { return Ok(()); }
+        if !self.dirty {
+            return Ok(());
+        }
 
         // ISSUE-1 FIX: Single RwLock read — get entries.len() and state bytes together.
         // Previously called entries.read() twice: once for len() and once in get_state_bytes().
@@ -326,9 +404,13 @@ impl MmapIocDedupStore {
         // This prevents data loss if the process crashes between open() and write_all().
         let temp_path = format!("{}.tmp.{}", self.file_path, std::process::id());
         let mut tmp_file = OpenOptions::new()
-            .write(true).create(true).truncate(true)
+            .write(true)
+            .create(true)
+            .truncate(true)
             .open(&temp_path)
-            .map_err(|e| pyo3::exceptions::PyIOError::new_err(format!("open temp file failed: {}", e)))?;
+            .map_err(|e| {
+                pyo3::exceptions::PyIOError::new_err(format!("open temp file failed: {}", e))
+            })?;
 
         // Write header
         let mut header = [0u8; MMAP_HEADER_SIZE];
@@ -348,33 +430,32 @@ impl MmapIocDedupStore {
             pyo3::exceptions::PyIOError::new_err(format!("write entries failed: {}", e))
         })?;
 
-        tmp_file.sync_all().map_err(|e| {
-            pyo3::exceptions::PyIOError::new_err(format!("sync failed: {}", e))
-        })?;
+        tmp_file
+            .sync_all()
+            .map_err(|e| pyo3::exceptions::PyIOError::new_err(format!("sync failed: {}", e)))?;
 
         drop(tmp_file);
 
         // Atomic rename — on POSIX this is atomic for same-filesystem renames.
-        std::fs::rename(&temp_path, &self.file_path).map_err(|e| {
-            pyo3::exceptions::PyIOError::new_err(format!("rename failed: {}", e))
-        })?;
+        std::fs::rename(&temp_path, &self.file_path)
+            .map_err(|e| pyo3::exceptions::PyIOError::new_err(format!("rename failed: {}", e)))?;
 
         // ISSUE-2 FIX: fsync parent directory on macOS for true durability.
         // Without this, rename() commits to directory but data may not survive a crash.
         #[cfg(target_os = "macos")]
         if let Some(parent) = Path::new(&self.file_path).parent() {
             if !parent.as_os_str().is_empty() {
-                if let Ok(dir_file) = std::fs::OpenOptions::new()
-                    .write(true)
-                    .open(parent)
-                {
+                if let Ok(dir_file) = std::fs::OpenOptions::new().write(true).open(parent) {
                     let _ = dir_file.sync_all();
                 }
             }
         }
 
         // Re-open file handle after atomic rename.
-        let new_file = OpenOptions::new().read(true).write(true).open(&self.file_path)
+        let new_file = OpenOptions::new()
+            .read(true)
+            .write(true)
+            .open(&self.file_path)
             .map_err(|e| pyo3::exceptions::PyIOError::new_err(format!("re-open failed: {}", e)))?;
         self.file = Arc::new(new_file);
 
@@ -418,7 +499,9 @@ impl MmapIocDedupStore {
     #[pyo3(signature = (value, ioc_type_str, confidence = 0.5))]
     pub fn add(&mut self, value: &str, ioc_type_str: &str, confidence: f32) -> bool {
         self.total_seen += 1;
-        if value.is_empty() { return false; }
+        if value.is_empty() {
+            return false;
+        }
         let ioc_type = IocType::from_str(ioc_type_str);
         let normalized = normalize_ioc(value, &ioc_type);
         // R4-05 FIX: no string alloc — make_ioc_key uses pre-computed type hashes
@@ -430,16 +513,24 @@ impl MmapIocDedupStore {
             let mut e = existing.write();
             e.last_seen_sprint = self.current_sprint;
             e.occurrence_count += 1;
-            if confidence > e.confidence_max { e.confidence_max = confidence; }
+            if confidence > e.confidence_max {
+                e.confidence_max = confidence;
+            }
             self.total_deduped += 1;
             self.dirty = true;
             false
         } else {
-            entries.insert(key, Arc::new(RwLock::new(IocEntry {
-                normalized_value: normalized, ioc_type,
-                first_seen_sprint: self.current_sprint, last_seen_sprint: self.current_sprint,
-                occurrence_count: 1, confidence_max: confidence,
-            })));
+            entries.insert(
+                key,
+                Arc::new(RwLock::new(IocEntry {
+                    normalized_value: normalized,
+                    ioc_type,
+                    first_seen_sprint: self.current_sprint,
+                    last_seen_sprint: self.current_sprint,
+                    occurrence_count: 1,
+                    confidence_max: confidence,
+                })),
+            );
             self.dirty = true;
             true
         }
@@ -455,17 +546,18 @@ impl MmapIocDedupStore {
         }
         // Phase 1: parallel xxhash3-64 normalization + hashing — GIL released for Rayon workers.
         // R4-05 FIX: make_ioc_key avoids 2 string allocs per item.
-        let prepped: Vec<(usize, u64, String, IocType, f32)> = crate::gil::release_gil(py, move || {
-            items
-                .par_iter()
-                .map(|(value, ioc_type_str, confidence)| {
-                    let ioc_type = IocType::from_str(ioc_type_str);
-                    let normalized = normalize_ioc(value, &ioc_type);
-                    let key = make_ioc_key(&ioc_type, &normalized);
-                    (value.len(), key, normalized, ioc_type, *confidence)
-                })
-                .collect()
-        });
+        let prepped: Vec<(usize, u64, String, IocType, f32)> =
+            crate::gil::release_gil(py, move || {
+                items
+                    .par_iter()
+                    .map(|(value, ioc_type_str, confidence)| {
+                        let ioc_type = IocType::from_str(ioc_type_str);
+                        let normalized = normalize_ioc(value, &ioc_type);
+                        let key = make_ioc_key(&ioc_type, &normalized);
+                        (value.len(), key, normalized, ioc_type, *confidence)
+                    })
+                    .collect()
+            });
 
         // Phase 2: sequential insert under write lock.
         let mut results = Vec::with_capacity(prepped.len());
@@ -483,14 +575,17 @@ impl MmapIocDedupStore {
                 self.dirty = true;
                 results.push(false);
             } else {
-                entries.insert(key, Arc::new(RwLock::new(IocEntry {
-                    normalized_value: normalized,
-                    ioc_type,
-                    first_seen_sprint: self.current_sprint,
-                    last_seen_sprint: self.current_sprint,
-                    occurrence_count: 1,
-                    confidence_max: confidence,
-                })));
+                entries.insert(
+                    key,
+                    Arc::new(RwLock::new(IocEntry {
+                        normalized_value: normalized,
+                        ioc_type,
+                        first_seen_sprint: self.current_sprint,
+                        last_seen_sprint: self.current_sprint,
+                        occurrence_count: 1,
+                        confidence_max: confidence,
+                    })),
+                );
                 self.dirty = true;
                 results.push(true);
             }
@@ -504,7 +599,9 @@ impl MmapIocDedupStore {
     }
 
     pub fn contains(&self, value: &str, ioc_type_str: &str) -> bool {
-        if value.is_empty() { return false; }
+        if value.is_empty() {
+            return false;
+        }
         let ioc_type = IocType::from_str(ioc_type_str);
         let normalized = normalize_ioc(value, &ioc_type);
         // R4-05 FIX: no string alloc
@@ -558,9 +655,19 @@ impl MmapIocDedupStore {
         self.dirty = true;
     }
 
-    pub fn len(&self) -> usize { self.entries.read().len() }
-    pub fn is_empty(&self) -> bool { self.entries.read().is_empty() }
-    pub fn stats(&self) -> (u64, u64, u64) { (self.total_seen, self.total_deduped, self.entries.read().len() as u64) }
+    pub fn len(&self) -> usize {
+        self.entries.read().len()
+    }
+    pub fn is_empty(&self) -> bool {
+        self.entries.read().is_empty()
+    }
+    pub fn stats(&self) -> (u64, u64, u64) {
+        (
+            self.total_seen,
+            self.total_deduped,
+            self.entries.read().len() as u64,
+        )
+    }
 
     pub fn stats_dict<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyDict>> {
         let dict = PyDict::new(py);
@@ -569,7 +676,11 @@ impl MmapIocDedupStore {
         dict.set_item("unique_count", self.entries.read().len() as i64)?;
         dict.set_item("current_sprint", self.current_sprint as i64)?;
         let total = self.total_seen as f64;
-        let hit_rate_bp = if total > 0.0 { ((self.total_deduped as f64) / total * 10_000.0).round() as i64 } else { 0 };
+        let hit_rate_bp = if total > 0.0 {
+            ((self.total_deduped as f64) / total * 10_000.0).round() as i64
+        } else {
+            0
+        };
         dict.set_item("hit_rate_bp", hit_rate_bp)?;
         Ok(dict)
     }
@@ -577,7 +688,8 @@ impl MmapIocDedupStore {
     pub fn get_by_type(&self, ioc_type_str: &str) -> Vec<String> {
         let target_type = IocType::from_str(ioc_type_str);
         let entries = self.entries.read();
-        entries.iter()
+        entries
+            .iter()
             .filter(|(_k, e)| e.read().ioc_type == target_type)
             .map(|(_k, e)| e.read().normalized_value.clone())
             .collect()
@@ -586,32 +698,58 @@ impl MmapIocDedupStore {
     pub fn get_entries_by_type(&self, ioc_type_str: &str) -> Vec<(String, u32, u32, u32, f32)> {
         let target_type = IocType::from_str(ioc_type_str);
         let entries = self.entries.read();
-        entries.iter().filter(|(_k, e)| e.read().ioc_type == target_type)
+        entries
+            .iter()
+            .filter(|(_k, e)| e.read().ioc_type == target_type)
             .map(|(_k, e)| {
                 let entry = e.read();
-                (entry.normalized_value.clone(), entry.first_seen_sprint, entry.last_seen_sprint, entry.occurrence_count, entry.confidence_max)
+                (
+                    entry.normalized_value.clone(),
+                    entry.first_seen_sprint,
+                    entry.last_seen_sprint,
+                    entry.occurrence_count,
+                    entry.confidence_max,
+                )
             })
             .collect()
     }
 
-    pub fn msync(&mut self) -> PyResult<()> { self.persist() }
+    pub fn msync(&mut self) -> PyResult<()> {
+        self.persist()
+    }
     pub fn close(&mut self) -> PyResult<()> {
         // F267: Atomic write — persist first (fsync), then re-open file handle.
         // Provides deterministic persist + fd release vs relying on GC/Drop.
         // On Unix, the previous Arc<File> fd is closed when refcount hits 0.
         self.persist()?;
         let new_file = OpenOptions::new()
-            .read(true).write(true).create(true).truncate(true)
+            .read(true)
+            .write(true)
+            .create(true)
+            .truncate(true)
             .open(&self.file_path)
             .map_err(|e| pyo3::exceptions::PyIOError::new_err(format!("re-open failed: {}", e)))?;
         self.file = Arc::new(new_file);
         Ok(())
     }
-    pub fn clear(&mut self) { self.entries.write().clear(); self.total_seen = 0; self.total_deduped = 0; self.dirty = true; }
-    pub fn get_sprint(&self) -> u32 { self.current_sprint }
-    pub fn path(&self) -> String { self.file_path.clone() }
-    pub fn byte_size(&self) -> usize { MMAP_HEADER_SIZE + Self::_serialize_entries(&self.entries.read()).len() }
-    pub fn get_state_bytes(&self) -> Vec<u8> { Self::_serialize_entries(&self.entries.read()) }
+    pub fn clear(&mut self) {
+        self.entries.write().clear();
+        self.total_seen = 0;
+        self.total_deduped = 0;
+        self.dirty = true;
+    }
+    pub fn get_sprint(&self) -> u32 {
+        self.current_sprint
+    }
+    pub fn path(&self) -> String {
+        self.file_path.clone()
+    }
+    pub fn byte_size(&self) -> usize {
+        MMAP_HEADER_SIZE + Self::_serialize_entries(&self.entries.read()).len()
+    }
+    pub fn get_state_bytes(&self) -> Vec<u8> {
+        Self::_serialize_entries(&self.entries.read())
+    }
 }
 
 // Legacy in-memory IocDedupStore (kept for compat + tests)
@@ -629,13 +767,20 @@ impl IocDedupStore {
     #[new]
     #[pyo3(signature = (sprint_id = 0))]
     pub fn new(sprint_id: u32) -> Self {
-        Self { entries: AHashMap::with_capacity(50_000), current_sprint: sprint_id, total_seen: 0, total_deduped: 0 }
+        Self {
+            entries: AHashMap::with_capacity(50_000),
+            current_sprint: sprint_id,
+            total_seen: 0,
+            total_deduped: 0,
+        }
     }
 
     #[pyo3(signature = (value, ioc_type_str, confidence = 0.5))]
     pub fn add(&mut self, value: &str, ioc_type_str: &str, confidence: f32) -> bool {
         self.total_seen += 1;
-        if value.is_empty() { return false; }
+        if value.is_empty() {
+            return false;
+        }
         let ioc_type = IocType::from_str(ioc_type_str);
         let normalized = normalize_ioc(value, &ioc_type);
         // R4-05 FIX: no string alloc
@@ -643,11 +788,23 @@ impl IocDedupStore {
         if let Some(entry) = self.entries.get_mut(&key) {
             entry.last_seen_sprint = self.current_sprint;
             entry.occurrence_count += 1;
-            if confidence > entry.confidence_max { entry.confidence_max = confidence; }
+            if confidence > entry.confidence_max {
+                entry.confidence_max = confidence;
+            }
             self.total_deduped += 1;
             false
         } else {
-            self.entries.insert(key, IocEntry { normalized_value: normalized, ioc_type, first_seen_sprint: self.current_sprint, last_seen_sprint: self.current_sprint, occurrence_count: 1, confidence_max: confidence });
+            self.entries.insert(
+                key,
+                IocEntry {
+                    normalized_value: normalized,
+                    ioc_type,
+                    first_seen_sprint: self.current_sprint,
+                    last_seen_sprint: self.current_sprint,
+                    occurrence_count: 1,
+                    confidence_max: confidence,
+                },
+            );
             true
         }
     }
@@ -678,11 +835,23 @@ impl IocDedupStore {
             if let Some(entry) = self.entries.get_mut(&key) {
                 entry.last_seen_sprint = self.current_sprint;
                 entry.occurrence_count += 1;
-                if confidence > entry.confidence_max { entry.confidence_max = confidence; }
+                if confidence > entry.confidence_max {
+                    entry.confidence_max = confidence;
+                }
                 self.total_deduped += 1;
                 results.push(false);
             } else {
-                self.entries.insert(key, IocEntry { normalized_value: normalized, ioc_type, first_seen_sprint: self.current_sprint, last_seen_sprint: self.current_sprint, occurrence_count: 1, confidence_max: confidence });
+                self.entries.insert(
+                    key,
+                    IocEntry {
+                        normalized_value: normalized,
+                        ioc_type,
+                        first_seen_sprint: self.current_sprint,
+                        last_seen_sprint: self.current_sprint,
+                        occurrence_count: 1,
+                        confidence_max: confidence,
+                    },
+                );
                 results.push(true);
             }
         }
@@ -695,7 +864,9 @@ impl IocDedupStore {
     }
 
     pub fn contains(&self, value: &str, ioc_type_str: &str) -> bool {
-        if value.is_empty() { return false; }
+        if value.is_empty() {
+            return false;
+        }
         let ioc_type = IocType::from_str(ioc_type_str);
         let normalized = normalize_ioc(value, &ioc_type);
         // R4-05 FIX: no string alloc
@@ -743,10 +914,22 @@ impl IocDedupStore {
             .collect()
     }
 
-    pub fn advance_sprint(&mut self, new_sprint_id: u32) { self.current_sprint = new_sprint_id; }
-    pub fn len(&self) -> usize { self.entries.len() }
-    pub fn is_empty(&self) -> bool { self.entries.is_empty() }
-    pub fn stats(&self) -> (u64, u64, u64) { (self.total_seen, self.total_deduped, self.entries.len() as u64) }
+    pub fn advance_sprint(&mut self, new_sprint_id: u32) {
+        self.current_sprint = new_sprint_id;
+    }
+    pub fn len(&self) -> usize {
+        self.entries.len()
+    }
+    pub fn is_empty(&self) -> bool {
+        self.entries.is_empty()
+    }
+    pub fn stats(&self) -> (u64, u64, u64) {
+        (
+            self.total_seen,
+            self.total_deduped,
+            self.entries.len() as u64,
+        )
+    }
 
     pub fn stats_dict<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyDict>> {
         let dict = PyDict::new(py);
@@ -755,20 +938,38 @@ impl IocDedupStore {
         dict.set_item("unique_count", self.entries.len() as i64)?;
         dict.set_item("current_sprint", self.current_sprint as i64)?;
         let total = self.total_seen as f64;
-        let hit_rate_bp = if total > 0.0 { ((self.total_deduped as f64) / total * 10_000.0).round() as i64 } else { 0 };
+        let hit_rate_bp = if total > 0.0 {
+            ((self.total_deduped as f64) / total * 10_000.0).round() as i64
+        } else {
+            0
+        };
         dict.set_item("hit_rate_bp", hit_rate_bp)?;
         Ok(dict)
     }
 
     pub fn get_by_type(&self, ioc_type_str: &str) -> Vec<String> {
         let target_type = IocType::from_str(ioc_type_str);
-        self.entries.iter().filter(|(_k, e)| e.ioc_type == target_type).map(|(_k, e)| e.normalized_value.clone()).collect()
+        self.entries
+            .iter()
+            .filter(|(_k, e)| e.ioc_type == target_type)
+            .map(|(_k, e)| e.normalized_value.clone())
+            .collect()
     }
 
     pub fn get_entries_by_type(&self, ioc_type_str: &str) -> Vec<(String, u32, u32, u32, f32)> {
         let target_type = IocType::from_str(ioc_type_str);
-        self.entries.iter().filter(|(_k, e)| e.ioc_type == target_type)
-            .map(|(_k, e)| (e.normalized_value.clone(), e.first_seen_sprint, e.last_seen_sprint, e.occurrence_count, e.confidence_max))
+        self.entries
+            .iter()
+            .filter(|(_k, e)| e.ioc_type == target_type)
+            .map(|(_k, e)| {
+                (
+                    e.normalized_value.clone(),
+                    e.first_seen_sprint,
+                    e.last_seen_sprint,
+                    e.occurrence_count,
+                    e.confidence_max,
+                )
+            })
             .collect()
     }
 
@@ -793,61 +994,145 @@ impl IocDedupStore {
     }
 
     pub fn set_state_from_bytes(&mut self, data: &[u8]) -> bool {
-        if data.len() < 4 { return false; }
+        if data.len() < 4 {
+            return false;
+        }
         let mut pos = 0;
         let count = u32::from_le_bytes([data[0], data[1], data[2], data[3]]);
         pos += 4;
         for _ in 0..count {
-            if pos + 4 > data.len() { return false; }
-            let k = u64::from_le_bytes([data[pos], data[pos+1], data[pos+2], data[pos+3], data[pos+4], data[pos+5], data[pos+6], data[pos+7]]);
+            if pos + 4 > data.len() {
+                return false;
+            }
+            let k = u64::from_le_bytes([
+                data[pos],
+                data[pos + 1],
+                data[pos + 2],
+                data[pos + 3],
+                data[pos + 4],
+                data[pos + 5],
+                data[pos + 6],
+                data[pos + 7],
+            ]);
             pos += 8;
-            if pos + 4 > data.len() { return false; }
-            let val_len = u32::from_le_bytes([data[pos], data[pos+1], data[pos+2], data[pos+3]]) as usize;
+            if pos + 4 > data.len() {
+                return false;
+            }
+            let val_len =
+                u32::from_le_bytes([data[pos], data[pos + 1], data[pos + 2], data[pos + 3]])
+                    as usize;
             pos += 4;
-            if pos + val_len > data.len() { return false; }
-            let normalized = String::from_utf8_lossy(&data[pos..pos+val_len]).to_string();
+            if pos + val_len > data.len() {
+                return false;
+            }
+            let normalized = String::from_utf8_lossy(&data[pos..pos + val_len]).to_string();
             pos += val_len;
-            if pos >= data.len() { return false; }
-            let ioc_type_byte = data[pos]; pos += 1;
+            if pos >= data.len() {
+                return false;
+            }
+            let ioc_type_byte = data[pos];
+            pos += 1;
             let ioc_type = match ioc_type_byte {
-                0 => IocType::Ip, 1 => IocType::Ipv6, 2 => IocType::Domain,
-                3 => IocType::Url, 4 => IocType::Md5, 5 => IocType::Sha1,
-                6 => IocType::Sha256, 7 => IocType::Email, 8 => IocType::Cve, _ => IocType::Unknown,
+                0 => IocType::Ip,
+                1 => IocType::Ipv6,
+                2 => IocType::Domain,
+                3 => IocType::Url,
+                4 => IocType::Md5,
+                5 => IocType::Sha1,
+                6 => IocType::Sha256,
+                7 => IocType::Email,
+                8 => IocType::Cve,
+                _ => IocType::Unknown,
             };
-            if pos + 16 > data.len() { return false; }
-            let first = u32::from_le_bytes([data[pos], data[pos+1], data[pos+2], data[pos+3]]);
-            let last = u32::from_le_bytes([data[pos+4], data[pos+5], data[pos+6], data[pos+7]]);
-            let occurrence = u32::from_le_bytes([data[pos+8], data[pos+9], data[pos+10], data[pos+11]]);
-            let confidence = f32::from_le_bytes([data[pos+12], data[pos+13], data[pos+14], data[pos+15]]);
+            if pos + 16 > data.len() {
+                return false;
+            }
+            let first =
+                u32::from_le_bytes([data[pos], data[pos + 1], data[pos + 2], data[pos + 3]]);
+            let last =
+                u32::from_le_bytes([data[pos + 4], data[pos + 5], data[pos + 6], data[pos + 7]]);
+            let occurrence =
+                u32::from_le_bytes([data[pos + 8], data[pos + 9], data[pos + 10], data[pos + 11]]);
+            let confidence = f32::from_le_bytes([
+                data[pos + 12],
+                data[pos + 13],
+                data[pos + 14],
+                data[pos + 15],
+            ]);
             pos += 16;
-            self.entries.insert(k, IocEntry { normalized_value: normalized, ioc_type, first_seen_sprint: first, last_seen_sprint: last, occurrence_count: occurrence, confidence_max: confidence });
+            self.entries.insert(
+                k,
+                IocEntry {
+                    normalized_value: normalized,
+                    ioc_type,
+                    first_seen_sprint: first,
+                    last_seen_sprint: last,
+                    occurrence_count: occurrence,
+                    confidence_max: confidence,
+                },
+            );
         }
-        if pos + 12 > data.len() { return false; }
-        self.current_sprint = u32::from_le_bytes([data[pos], data[pos+1], data[pos+2], data[pos+3]]);
-        self.total_seen = u64::from_le_bytes([data[pos+4], data[pos+5], data[pos+6], data[pos+7], data[pos+8], data[pos+9], data[pos+10], data[pos+11]]);
-        self.total_deduped = u64::from_le_bytes([data[pos+12], data[pos+13], data[pos+14], data[pos+15], data[pos+16], data[pos+17], data[pos+18], data[pos+19]]);
+        if pos + 12 > data.len() {
+            return false;
+        }
+        self.current_sprint =
+            u32::from_le_bytes([data[pos], data[pos + 1], data[pos + 2], data[pos + 3]]);
+        self.total_seen = u64::from_le_bytes([
+            data[pos + 4],
+            data[pos + 5],
+            data[pos + 6],
+            data[pos + 7],
+            data[pos + 8],
+            data[pos + 9],
+            data[pos + 10],
+            data[pos + 11],
+        ]);
+        self.total_deduped = u64::from_le_bytes([
+            data[pos + 12],
+            data[pos + 13],
+            data[pos + 14],
+            data[pos + 15],
+            data[pos + 16],
+            data[pos + 17],
+            data[pos + 18],
+            data[pos + 19],
+        ]);
         true
     }
 
     #[allow(clippy::incorrect_clone_on_copy)]
-    pub fn __getstate__<'py>(&self, py: Python<'py>) -> Py<PyBytes> { PyBytes::new(py, &self.get_state_bytes()).into() }
+    pub fn __getstate__<'py>(&self, py: Python<'py>) -> Py<PyBytes> {
+        PyBytes::new(py, &self.get_state_bytes()).into()
+    }
     pub fn __setstate__(&mut self, _py: Python<'_>, state: &Bound<'_, PyBytes>) -> PyResult<()> {
         if !self.set_state_from_bytes(state.as_bytes()) {
-            return Err(pyo3::exceptions::PyValueError::new_err("Invalid state data"));
+            return Err(pyo3::exceptions::PyValueError::new_err(
+                "Invalid state data",
+            ));
         }
         Ok(())
     }
 
-    pub fn clear(&mut self) { self.entries.clear(); self.total_seen = 0; self.total_deduped = 0; }
-    pub fn get_sprint(&self) -> u32 { self.current_sprint }
-    pub fn to_bytes(&self) -> Vec<u8> { self.get_state_bytes() }
+    pub fn clear(&mut self) {
+        self.entries.clear();
+        self.total_seen = 0;
+        self.total_deduped = 0;
+    }
+    pub fn get_sprint(&self) -> u32 {
+        self.current_sprint
+    }
+    pub fn to_bytes(&self) -> Vec<u8> {
+        self.get_state_bytes()
+    }
 }
 
 #[pyfunction]
 pub fn ioc_dedup_from_bytes(data: Vec<u8>) -> PyResult<IocDedupStore> {
     let mut store = IocDedupStore::new(0);
     if !store.set_state_from_bytes(&data) {
-        return Err(pyo3::exceptions::PyValueError::new_err("Invalid state data"));
+        return Err(pyo3::exceptions::PyValueError::new_err(
+            "Invalid state data",
+        ));
     }
     Ok(store)
 }
@@ -865,19 +1150,31 @@ mod tests {
 
     #[test]
     fn test_domain_normalization() {
-        assert_eq!(normalize_ioc("WWW.EXAMPLE.COM", &IocType::Domain), "example.com");
-        assert_eq!(normalize_ioc("www.example.org", &IocType::Domain), "example.org");
+        assert_eq!(
+            normalize_ioc("WWW.EXAMPLE.COM", &IocType::Domain),
+            "example.com"
+        );
+        assert_eq!(
+            normalize_ioc("www.example.org", &IocType::Domain),
+            "example.org"
+        );
     }
 
     #[test]
     fn test_hash_normalization() {
         assert_eq!(normalize_ioc("ABC123DEF456", &IocType::Md5), "abc123def456");
-        assert_eq!(normalize_ioc("cve-2024-12345", &IocType::Cve), "CVE-2024-12345");
+        assert_eq!(
+            normalize_ioc("cve-2024-12345", &IocType::Cve),
+            "CVE-2024-12345"
+        );
     }
 
     #[test]
     fn test_ip_normalization() {
-        assert_eq!(normalize_ioc("192.168.001.001", &IocType::Ip), "192.168.1.1");
+        assert_eq!(
+            normalize_ioc("192.168.001.001", &IocType::Ip),
+            "192.168.1.1"
+        );
     }
 
     #[test]

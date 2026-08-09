@@ -8,11 +8,8 @@
 //! for seamless runtime replacement.
 
 pub use crate::elastic_pool::{
-    resize_cpu_pool, resize_io_pool,
-    get_cpu_pool, get_io_pool,
-    get_cpu_pool_threads, get_io_pool_threads,
-    get_total_active_threads,
-    init_default_pools,
+    get_cpu_pool, get_cpu_pool_threads, get_io_pool, get_io_pool_threads, get_total_active_threads,
+    init_default_pools, resize_cpu_pool, resize_io_pool,
 };
 
 /// Pool phase for adaptive sizing.
@@ -65,7 +62,7 @@ pub struct PoolMetrics {
 pub fn get_pool_metrics() -> PoolMetrics {
     let cpu_threads = get_cpu_pool_threads();
     let io_threads = get_io_pool_threads();
-    
+
     PoolMetrics {
         cpu_threads,
         io_threads,

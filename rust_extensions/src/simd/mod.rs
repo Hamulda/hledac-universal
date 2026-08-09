@@ -19,7 +19,7 @@
 
 pub mod neon;
 
-pub use neon::{EmbeddingError, cosine_scalar, cosine_simd, normalize_scalar, normalize_simd};
+pub use neon::{cosine_scalar, cosine_simd, normalize_scalar, normalize_simd, EmbeddingError};
 
 use pyo3::prelude::*;
 

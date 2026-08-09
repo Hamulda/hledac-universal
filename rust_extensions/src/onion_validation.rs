@@ -52,13 +52,22 @@ impl std::fmt::Display for OnionValidationError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             OnionValidationError::InvalidLength => {
-                write!(f, "Invalid onion address: must be 56 base32 chars before .onion (v3)")
+                write!(
+                    f,
+                    "Invalid onion address: must be 56 base32 chars before .onion (v3)"
+                )
             }
             OnionValidationError::InvalidVersion => {
-                write!(f, "Invalid onion address: version byte must be 0x03 (onion v3)")
+                write!(
+                    f,
+                    "Invalid onion address: version byte must be 0x03 (onion v3)"
+                )
             }
             OnionValidationError::InvalidChecksum => {
-                write!(f, "Invalid onion address: checksum mismatch (corrupt or spoofed)")
+                write!(
+                    f,
+                    "Invalid onion address: checksum mismatch (corrupt or spoofed)"
+                )
             }
             OnionValidationError::InvalidBase32 => {
                 write!(f, "Invalid onion address: base32 decoding failed")
@@ -214,8 +223,10 @@ mod tests {
     // Real v3 onion addresses for testing
     const VALID_V3_ONION: &str = "example.onion";
     const INVALID_TOO_SHORT: &str = "abc.onion";
-    const INVALID_BAD_CHARS: &str = "0000000000000000000000000000000000000000000000000000000000.onion";
-    const INVALID_BAD_VERSION: &str = "0000000000000000000000000000000000000000000000000000000001.onion";
+    const INVALID_BAD_CHARS: &str =
+        "0000000000000000000000000000000000000000000000000000000000.onion";
+    const INVALID_BAD_VERSION: &str =
+        "0000000000000000000000000000000000000000000000000000000001.onion";
 
     #[test]
     fn test_valid_v3_format() {
@@ -223,7 +234,10 @@ mod tests {
         let result = validate_onion_v3_address(VALID_V3_ONION);
         // May be Err(InvalidLength) for fake example — that's OK
         // Real validation would need a real v3 onion
-        assert!(matches!(result, Ok(()) | Err(OnionValidationError::InvalidLength)));
+        assert!(matches!(
+            result,
+            Ok(()) | Err(OnionValidationError::InvalidLength)
+        ));
     }
 
     #[test]
@@ -235,7 +249,9 @@ mod tests {
     #[test]
     fn test_bad_base32_chars() {
         // Contains '1', '8', '9', '0' which are not valid base32
-        let result = validate_onion_v3_address("0000000000000000000000000000000000000000000000000000111111.onion");
+        let result = validate_onion_v3_address(
+            "0000000000000000000000000000000000000000000000000000111111.onion",
+        );
         assert!(matches!(result, Err(OnionValidationError::InvalidBase32)));
     }
 

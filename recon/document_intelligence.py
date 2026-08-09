@@ -449,6 +449,146 @@ class VisionOCREngine:
         loop = asyncio.get_running_loop()
         return await loop.run_in_executor(None, self.recognize_bytes, image_bytes)
 
+    # ── [IO-4] Zero-copy CVPixelBuffer OCR ─────────────────────────────────────
+
+    def recognize_pixelbuffer(self, pixel_buffer: Any, recognition_level: str = "accurate") -> tuple[str, float]:
+        """[IO-4] Recognize text from CVPixelBuffer using zero-copy CIImage pipeline.
+
+        Uses CIImage(ioSurface:) for zero-copy IOSurface access, then feeds
+        VNRecognizeTextRequest directly — no CGImage creation, no bytes copy.
+
+        Pipeline:
+            CVPixelBuffer → CIImage(ioSurface:) → VNRecognizeTextRequest (zero-copy)
+
+        Args:
+            pixel_buffer: CVPixelBuffer from AVAssetReader (e.g., from media_engine)
+            recognition_level: "fast" or "accurate" (default "accurate")
+
+        Returns:
+            (recognized_text: str, average_confidence: float)
+        """
+        try:
+            import Vision  # type: ignore[import-not-found, no-redef]
+        except Exception:
+            return '', 0.0
+
+        try:
+            # Configure recognition level
+            if recognition_level == "fast":
+                req_level = Vision.VNRequestTextRecognitionLevelFast  # type: ignore[attr-defined]
+            else:
+                req_level = Vision.VNRequestTextRecognitionLevelAccurate  # type: ignore[attr-defined]
+
+            # Vision request must run on the same thread
+            results: list = []
+
+            class _ResultHandler:
+                __slots__ = tuple(('_results'))
+                def __init__(self):
+                    self._results = results
+                def __call__(self, request, error):
+                    if error is not None:
+                        return
+                    self._results.append(request.results())
+
+            handler = _ResultHandler()
+            vn_request = Vision.VNRecognizeTextRequest.alloc().initWithCompletionHandler_(handler)  # type: ignore[attr-defined]
+            vn_request.setRecognitionLevel_(req_level)
+            vn_request.setRecognitionLanguages_(self.DEFAULT_LANGUAGES)
+            vn_request.setUsesLanguageCorrection_(True)
+
+            try:
+                # Use VNImageRequestHandler with CVPixelBuffer directly
+                Vision.VNImageRequestHandler.alloc().initWithCVPixelBuffer_options_(  # type: ignore[attr-defined]
+                    pixel_buffer,
+                    {'VNImageOptionApplyOrientationCorrection': True}
+                ).performRequests_error_([vn_request], None)
+            except Exception:
+                return '', 0.0
+
+            if not results or not results[0]:
+                return '', 0.0
+
+            observations = results[0]
+            texts = []
+            confidences = []
+            for obs in observations:
+                txt = str(obs.text())  # type: ignore[attr-defined]
+                conf = float(obs.confidence())  # type: ignore[attr-defined]
+                texts.append(txt)
+                confidences.append(conf)
+
+            full_text = '\n'.join(texts)
+            avg_conf = sum(confidences) / len(confidences) if confidences else 0.0
+            return full_text, avg_conf
+
+        except Exception:
+            return '', 0.0
+
+    def recognize_batch_from_pixelbuffer(self, pixel_buffers: list[Any], recognition_level: str = "accurate") -> list[tuple[str, float]]:
+        """[IO-4] Batch OCR from CVPixelBuffer list with ANE parallelization.
+
+        Uses a dedicated ThreadPoolExecutor (max_workers=_BATCH_MAX_WORKERS)
+        to submit concurrent Vision Framework requests. Each request processes
+        a different CVPixelBuffer, which is thread-safe.
+
+        Args:
+            pixel_buffers: List of CVPixelBuffer objects from extract_keyframes_zero_copy()
+            recognition_level: "fast" or "accurate" (default "accurate")
+
+        Returns:
+            List of (recognized_text, avg_confidence) tuples, same order as input.
+        """
+        if not pixel_buffers:
+            return []
+        if len(pixel_buffers) == 1:
+            return [self.recognize_pixelbuffer(pixel_buffers[0], recognition_level)]
+
+        executor = self._get_batch_executor()
+        futures: list[concurrent.futures.Future] = [
+            executor.submit(self.recognize_pixelbuffer, pb, recognition_level)
+            for pb in pixel_buffers
+        ]
+
+        results: list[tuple[str, float]] = []
+        for future in futures:
+            try:
+                results.append(future.result())
+            except Exception:
+                results.append(('', 0.0))
+        return results
+
+    async def recognize_pixelbuffer_async(self, pixel_buffer: Any, recognition_level: str = "accurate") -> tuple[str, float]:
+        """[IO-4] Async wrapper for zero-copy CVPixelBuffer OCR.
+
+        Runs sync Vision OCR in thread pool to avoid blocking event loop.
+        """
+        loop = asyncio.get_running_loop()
+        return await loop.run_in_executor(
+            None, self.recognize_pixelbuffer, pixel_buffer, recognition_level
+        )
+
+    async def recognize_batch_from_pixelbuffer_async(
+        self,
+        pixel_buffers: list[Any],
+        recognition_level: str = "accurate"
+    ) -> list[tuple[str, float]]:
+        """[IO-4] Async batch wrapper for CVPixelBuffer OCR.
+
+        Args:
+            pixel_buffers: List of CVPixelBuffer objects
+            recognition_level: "fast" or "accurate" (default "accurate")
+
+        Returns:
+            List of (recognized_text, avg_confidence) tuples.
+        """
+        if not pixel_buffers:
+            return []
+        loop = asyncio.get_running_loop()
+        return await loop.run_in_executor(
+            None, self.recognize_batch_from_pixelbuffer, pixel_buffers, recognition_level
+        )
+
     async def recognize_batch_async(self, images: list[bytes]) -> list[tuple[str, float]]:
         """Async wrapper for batch OCR — runs recognize_batch in thread pool.
 
@@ -1693,6 +1833,73 @@ class ImageAnalyzer:
         metadata = DocumentMetadata(file_hash_md5=md5_hash, file_hash_sha1=sha1_hash, file_hash_sha256=sha256_hash, file_size_bytes=len(content), file_type=DocumentType.IMAGE, file_extension='.unknown')
         return DocumentAnalysis(metadata=metadata)
 
+
+# ─── Standalone ELA Functions for ProcessPool (Picklable) ───────────────────────
+#
+# These module-level functions are picklable and can be safely passed to
+# ProcessPoolExecutor with spawn context. They replace the bound methods
+# self._ela_analysis_mps_sync and self._ela_analysis_cpu_sync which cannot
+# be pickled on macOS with spawn context.
+#
+# ISSUE IO-4 fix: Bound methods capture self which is not serializable.
+
+def _ela_mps_sync(content: bytes) -> float:
+    """
+    Synchronous MPS implementation of ELA for ProcessPool.
+    
+    This is a module-level function (not a bound method) so it can be
+    pickled and sent to ProcessPoolExecutor workers.
+    """
+    import torch
+    from PIL import Image
+    import io
+    try:
+        with Image.open(io.BytesIO(content)) as img:
+            img = img.convert('RGB')
+            if img.width > MAX_IMAGE_SIZE or img.height > MAX_IMAGE_SIZE:
+                ratio = min(MAX_IMAGE_SIZE / img.width, MAX_IMAGE_SIZE / img.height)
+                new_size = (int(img.width * ratio), int(img.height * ratio))
+                img = img.resize(new_size, Image.Resampling.LANCZOS)
+            tensor = torch.from_numpy(np.array(img)).float().permute(2, 0, 1).unsqueeze(0) / 255.0
+            tensor = tensor.to('mps')
+            with torch.no_grad():
+                compressed = torch.nn.functional.avg_pool2d(tensor, 2)
+                upscaled = torch.nn.functional.interpolate(compressed, scale_factor=2, mode='nearest')
+                diff = torch.abs(tensor - upscaled)
+                ela_score = diff.mean().item()
+            return ela_score
+    except Exception as e:
+        # Fallback to CPU
+        return _ela_cpu_sync(content)
+    finally:
+        if hasattr(torch.mps, 'empty_cache'):
+            try:
+                torch.mps.empty_cache()
+            except Exception:
+                pass
+
+
+def _ela_cpu_sync(content: bytes) -> float:
+    """
+    Synchronous CPU implementation of ELA for ProcessPool.
+    
+    This is a module-level function (not a bound method) so it can be
+    pickled and sent to ProcessPoolExecutor workers.
+    """
+    from PIL import Image, ImageChops
+    import io
+    import numpy as np
+    with Image.open(io.BytesIO(content)) as img:
+        tmp = io.BytesIO()
+        img.save(tmp, format='JPEG', quality=95)
+        tmp.seek(0)
+        with Image.open(tmp) as compressed:
+            diff = ImageChops.difference(img, compressed)
+            diff_np = np.array(diff.convert('L'))
+        ela_score = np.mean(diff_np) / 255.0
+        return ela_score
+
+
 class DeepForensicsAnalyzer:
     """Advanced forensics for images - EXIF, ELA, steganography detection.
 
@@ -1828,57 +2035,15 @@ class DeepForensicsAnalyzer:
         """MPS-accelerated ELA analysis (runs sync MPS in ProcessPool to avoid GIL)."""
         loop = asyncio.get_running_loop()
         pool = _get_forensics_pool()
-        return await loop.run_in_executor(pool, self._ela_analysis_mps_sync, content)
-
-    def _ela_analysis_mps_sync(self, content: bytes) -> float:
-        """Synchronous MPS implementation of ELA."""
-        import torch
-        from PIL import Image
-        try:
-            with Image.open(io.BytesIO(content)) as img:
-                img = img.convert('RGB')
-                if img.width > MAX_IMAGE_SIZE or img.height > MAX_IMAGE_SIZE:
-                    ratio = min(MAX_IMAGE_SIZE / img.width, MAX_IMAGE_SIZE / img.height)
-                    new_size = (int(img.width * ratio), int(img.height * ratio))
-                    img = img.resize(new_size, Image.Resampling.LANCZOS)
-                    logger.debug(f'Image resized to {new_size} for MPS ELA')
-                tensor = torch.from_numpy(np.array(img)).float().permute(2, 0, 1).unsqueeze(0) / 255.0
-                tensor = tensor.to('mps')
-                with torch.no_grad():
-                    compressed = torch.nn.functional.avg_pool2d(tensor, 2)
-                    upscaled = torch.nn.functional.interpolate(compressed, scale_factor=2, mode='nearest')
-                    diff = torch.abs(tensor - upscaled)
-                    ela_score = diff.mean().item()
-                return ela_score
-        except Exception as e:
-            logger.warning(f'MPS ELA failed, falling back to CPU: {e}')
-            # Fallback: run CPU sync directly (single thread, no pool needed for error path)
-            return self._ela_analysis_cpu_sync(content)
-        finally:
-            if hasattr(torch.mps, 'empty_cache'):
-                try:
-                    torch.mps.empty_cache()
-                except Exception:  # noqa: BLE001
-                    pass
+        # Use module-level function instead of bound method for ProcessPool pickling
+        return await loop.run_in_executor(pool, _ela_mps_sync, content)
 
     async def _ela_analysis_cpu(self, content: bytes) -> float:
         """CPU-based ELA analysis (runs in ProcessPool to avoid blocking MLX workers)."""
         loop = asyncio.get_running_loop()
         pool = _get_forensics_pool()
-        return await loop.run_in_executor(pool, self._ela_analysis_cpu_sync, content)
-
-    def _ela_analysis_cpu_sync(self, content: bytes) -> float:
-        """Synchronous CPU implementation of ELA."""
-        from PIL import Image, ImageChops
-        with Image.open(io.BytesIO(content)) as img:
-            tmp = io.BytesIO()
-            img.save(tmp, format='JPEG', quality=95)
-            tmp.seek(0)
-            with Image.open(tmp) as compressed:
-                diff = ImageChops.difference(img, compressed)
-                diff_np = np.array(diff.convert('L'))
-            ela_score = np.mean(diff_np) / 255.0
-            return ela_score
+        # Use module-level function instead of bound method for ProcessPool pickling
+        return await loop.run_in_executor(pool, _ela_cpu_sync, content)
 
     async def _stegdetect(self, content: bytes) -> float:
         """Run stegdetect on image using persistent server."""

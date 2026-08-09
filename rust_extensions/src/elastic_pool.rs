@@ -88,7 +88,10 @@ fn build_cpu_pool(num_threads: usize) -> Result<ThreadPool, String> {
                 #[cfg(target_os = "macos")]
                 {
                     unsafe {
-                        libc::pthread_set_qos_class_self_np(libc::qos_class_t::QOS_CLASS_USER_INITIATED, 0);
+                        libc::pthread_set_qos_class_self_np(
+                            libc::qos_class_t::QOS_CLASS_USER_INITIATED,
+                            0,
+                        );
                     }
                 }
                 #[cfg(all(target_os = "linux", not(target_env = "musl")))]
@@ -117,7 +120,10 @@ fn build_io_pool(num_threads: usize) -> Result<ThreadPool, String> {
                 #[cfg(target_os = "macos")]
                 {
                     unsafe {
-                        libc::pthread_set_qos_class_self_np(libc::qos_class_t::QOS_CLASS_USER_INITIATED, 0);
+                        libc::pthread_set_qos_class_self_np(
+                            libc::qos_class_t::QOS_CLASS_USER_INITIATED,
+                            0,
+                        );
                     }
                 }
                 #[cfg(all(target_os = "linux", not(target_env = "musl")))]
@@ -171,7 +177,10 @@ pub fn resize_cpu_pool(num_threads: usize) {
             *guard = Some(new_pool);
         }
         Err(e) => {
-            eprintln!("elastic_pool: resize_cpu_pool failed ({}) — keeping existing pool", e);
+            eprintln!(
+                "elastic_pool: resize_cpu_pool failed ({}) — keeping existing pool",
+                e
+            );
         }
     }
 }
@@ -203,7 +212,10 @@ pub fn resize_io_pool(num_threads: usize) {
             *guard = Some(new_pool);
         }
         Err(e) => {
-            eprintln!("elastic_pool: resize_io_pool failed ({}) — keeping existing pool", e);
+            eprintln!(
+                "elastic_pool: resize_io_pool failed ({}) — keeping existing pool",
+                e
+            );
         }
     }
 }
@@ -258,7 +270,10 @@ pub fn get_cpu_pool() -> Arc<ThreadPool> {
     let pool = match build_cpu_pool(4) {
         Ok(p) => Arc::new(p),
         Err(e) => {
-            eprintln!("elastic_pool: get_cpu_pool initial build failed ({}) — falling back to 1-thread", e);
+            eprintln!(
+                "elastic_pool: get_cpu_pool initial build failed ({}) — falling back to 1-thread",
+                e
+            );
             Arc::new(build_cpu_pool(1).expect("fallback 1-thread pool should always succeed"))
         }
     };
@@ -287,7 +302,10 @@ pub fn get_io_pool() -> Arc<ThreadPool> {
     let pool = match build_io_pool(2) {
         Ok(p) => Arc::new(p),
         Err(e) => {
-            eprintln!("elastic_pool: get_io_pool initial build failed ({}) — falling back to 1-thread", e);
+            eprintln!(
+                "elastic_pool: get_io_pool initial build failed ({}) — falling back to 1-thread",
+                e
+            );
             Arc::new(build_io_pool(1).expect("fallback 1-thread pool should always succeed"))
         }
     };

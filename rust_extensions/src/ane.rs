@@ -58,14 +58,24 @@
 //! Enabled via `ane = []` feature flag in Cargo.toml.
 //! No external dependencies — pure Rust std + PyO3.
 
+use parking_lot::RwLock;
 use pyo3::prelude::*;
 use std::collections::{BTreeMap, HashMap};
 use std::sync::LazyLock;
-use parking_lot::RwLock;
+
+// GNN-3: Logging via standard log crate
+#[macro_use]
+extern crate log;
 
 /// ANE hardware constraints
 const ANE_MAX_MODELS: usize = 2;
 const ANE_MAX_BATCH_SIZE: usize = 4096;
+
+/// GNN-3: GraphSAGE ANE constraints (M1 8GB safe)
+const GNN_MAX_BATCH_NODES: usize = 10_000; // Max nodes per batch
+const GNN_DEFAULT_IN_DIM: usize = 81; // 17 (IOC type) + 64 (embedding)
+const GNN_DEFAULT_HIDDEN_DIM: usize = 64;
+const GNN_DEFAULT_OUT_DIM: usize = 32; // Output embedding dimension
 
 /// ANE compute unit preference for CoreML
 ///
@@ -248,16 +258,187 @@ impl std::fmt::Display for ANEError {
             }
             ANEError::CoreMLNotAvailable => write!(f, "CoreML not available on this system"),
             ANEError::InferenceFailed(msg) => write!(f, "ANE inference failed: {}", msg),
-            ANEError::ComputeUnitNotSupported => write!(f, "Neural Engine compute unit not supported"),
+            ANEError::ComputeUnitNotSupported => {
+                write!(f, "Neural Engine compute unit not supported")
+            }
         }
     }
 }
 
 impl std::error::Error for ANEError {}
 
+/// GNN-3: GraphSAGE model metadata
+#[derive(Debug, Clone)]
+pub struct GNNModelMeta {
+    pub model_id: String,
+    pub model_path: String,
+    pub in_dim: usize,
+    pub hidden_dim: usize,
+    pub out_dim: usize,
+    pub num_layers: usize,
+}
+
+/// GNN-3: Node embedding storage
+#[derive(Debug, Clone)]
+pub struct NodeEmbedding {
+    pub kuzu_id: String,     // Kuzu string ID (type:xxh64hex)
+    pub gnn_index: usize,    // Internal GNN index (0..N-1)
+    pub embedding: Vec<f32>, // Embedding vector
+    pub updated_at: std::time::SystemTime,
+}
+
+/// GNN-3: Edge list for adjacency
+#[derive(Debug, Clone)]
+pub struct GNNEdge {
+    pub src_index: usize,
+    pub dst_index: usize,
+    pub weight: f32,
+}
+
 /// Global ANE registry — process-wide singleton
 static ANE_GLOBAL_REGISTRY: LazyLock<RwLock<ANERegistry>> =
     LazyLock::new(|| RwLock::new(ANERegistry::new()));
+
+/// GNN-3: GraphSAGE model registry (separate from embedding models)
+static GNN_REGISTRY: LazyLock<RwLock<GNNRegistry>> =
+    LazyLock::new(|| RwLock::new(GNNRegistry::new()));
+
+/// GNN-3: In-memory embedding storage (bounded to GNN_MAX_BATCH_NODES)
+static EMBEDDING_STORE: LazyLock<RwLock<EmbeddingStore>> =
+    LazyLock::new(|| RwLock::new(EmbeddingStore::new(GNN_MAX_BATCH_NODES)));
+
+/// GNN-3: GraphSAGE model registry
+pub struct GNNRegistry {
+    models: HashMap<String, GNNModelMeta>,
+    active_model: Option<String>,
+}
+
+impl GNNRegistry {
+    pub fn new() -> Self {
+        Self {
+            models: HashMap::new(),
+            active_model: None,
+        }
+    }
+
+    pub fn register(&mut self, model_id: String, meta: GNNModelMeta) -> Result<(), String> {
+        if self.models.contains_key(&model_id) {
+            return Err(format!("GNN model '{}' already registered", model_id));
+        }
+        self.models.insert(model_id.clone(), meta);
+        Ok(())
+    }
+
+    pub fn get(&self, model_id: &str) -> Option<&GNNModelMeta> {
+        self.models.get(model_id)
+    }
+
+    pub fn set_active(&mut self, model_id: &str) -> Result<(), String> {
+        if !self.models.contains_key(model_id) {
+            return Err(format!("GNN model '{}' not found", model_id));
+        }
+        self.active_model = Some(model_id.to_string());
+        Ok(())
+    }
+
+    pub fn active(&self) -> Option<&String> {
+        self.active_model.as_ref()
+    }
+
+    pub fn list(&self) -> Vec<String> {
+        self.models.keys().cloned().collect()
+    }
+}
+
+impl Default for GNNRegistry {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+/// GNN-3: Bounded embedding storage with LRU eviction
+pub struct EmbeddingStore {
+    embeddings: HashMap<String, NodeEmbedding>, // kuzu_id -> embedding
+    index_map: HashMap<usize, String>,          // gnn_index -> kuzu_id
+    next_index: usize,
+    max_size: usize,
+}
+
+impl EmbeddingStore {
+    pub fn new(max_size: usize) -> Self {
+        Self {
+            embeddings: HashMap::new(),
+            index_map: HashMap::new(),
+            next_index: 0,
+            max_size,
+        }
+    }
+
+    pub fn store(&mut self, kuzu_id: String, embedding: Vec<f32>) -> usize {
+        // Evict if at capacity
+        while self.embeddings.len() >= self.max_size {
+            if let Some((old_id, _)) = self.embeddings.pop_first() {
+                // Find and remove the index mapping
+                if let Some(idx) = self
+                    .index_map
+                    .iter()
+                    .find(|(_, v)| *v == &old_id)
+                    .map(|(k, _)| *k)
+                {
+                    self.index_map.remove(&idx);
+                }
+            }
+        }
+
+        // Get or assign index
+        let gnn_index = if let Some(existing) = self.embeddings.get(&kuzu_id) {
+            existing.gnn_index
+        } else {
+            let idx = self.next_index;
+            self.next_index += 1;
+            idx
+        };
+
+        // Store embedding
+        let emb = NodeEmbedding {
+            kuzu_id: kuzu_id.clone(),
+            gnn_index,
+            embedding,
+            updated_at: std::time::SystemTime::now(),
+        };
+        self.embeddings.insert(kuzu_id, emb);
+        self.index_map.insert(gnn_index, kuzu_id);
+
+        gnn_index
+    }
+
+    pub fn get(&self, kuzu_id: &str) -> Option<&NodeEmbedding> {
+        self.embeddings.get(kuzu_id)
+    }
+
+    pub fn get_by_index(&self, gnn_index: usize) -> Option<&NodeEmbedding> {
+        self.index_map
+            .get(&gnn_index)
+            .and_then(|id| self.embeddings.get(id))
+    }
+
+    pub fn len(&self) -> usize {
+        self.embeddings.len()
+    }
+
+    pub fn clear(&mut self) {
+        self.embeddings.clear();
+        self.index_map.clear();
+        self.next_index = 0;
+    }
+
+    pub fn get_all_embeddings(&self) -> Vec<(usize, String, Vec<f32>)> {
+        self.embeddings
+            .values()
+            .map(|e| (e.ggn_index, e.kuzu_id.clone(), e.embedding.clone()))
+            .collect()
+    }
+}
 
 /// Telemetry for ANE operations
 static ANE_TELEMETRY: LazyLock<RwLock<ANETelemetry>> =
@@ -320,7 +501,12 @@ pub fn get_status() -> (bool, usize, usize) {
 ///
 /// Returns: Ok(model_id) or Error message
 #[pyfunction]
-pub fn load_model(model_id: String, model_path: String, hidden_dim: usize, max_seq_len: usize) -> Result<String, PyErr> {
+pub fn load_model(
+    model_id: String,
+    model_path: String,
+    hidden_dim: usize,
+    max_seq_len: usize,
+) -> Result<String, PyErr> {
     let mut registry = ANE_GLOBAL_REGISTRY.write();
     registry
         .register_model(model_id, model_path, hidden_dim, max_seq_len)
@@ -408,16 +594,22 @@ pub fn validate_batch(batch_size: usize, seq_len: usize, max_seq_len: usize) -> 
 ///
 /// Returns: Embeddings as flattened f32 array, or error
 #[pyfunction]
-pub fn run_inference(model_id: String, input_ids: Vec<i64>, attention_mask: Vec<i64>) -> Result<Vec<f32>, PyErr> {
+pub fn run_inference(
+    model_id: String,
+    input_ids: Vec<i64>,
+    attention_mask: Vec<i64>,
+) -> Result<Vec<f32>, PyErr> {
     let registry = ANE_GLOBAL_REGISTRY.read();
 
-    let meta = registry
-        .get_model(&model_id)
-        .ok_or_else(|| pyo3::exceptions::PyValueError::new_err(format!("ANE model not found: {}", model_id)))?;
+    let meta = registry.get_model(&model_id).ok_or_else(|| {
+        pyo3::exceptions::PyValueError::new_err(format!("ANE model not found: {}", model_id))
+    })?;
 
     // Guard against division by zero
     if input_ids.is_empty() {
-        return Err(pyo3::exceptions::PyValueError::new_err("input_ids cannot be empty"));
+        return Err(pyo3::exceptions::PyValueError::new_err(
+            "input_ids cannot be empty",
+        ));
     }
     let seq_len = meta.max_seq_len.max(1);
     let batch_size = input_ids.len() / seq_len;
@@ -431,7 +623,9 @@ pub fn run_inference(model_id: String, input_ids: Vec<i64>, attention_mask: Vec<
     {
         let mut telemetry = ANE_TELEMETRY.write();
         telemetry.embed_calls += 1;
-        telemetry.embed_tokens = telemetry.embed_tokens.saturating_add(input_ids.len() as u64);
+        telemetry.embed_tokens = telemetry
+            .embed_tokens
+            .saturating_add(input_ids.len() as u64);
     }
 
     // SILICON-06: Delegate to Python ANEInferenceEngine for actual inference.
@@ -457,7 +651,11 @@ pub fn run_inference(model_id: String, input_ids: Vec<i64>, attention_mask: Vec<
 ///
 /// Rust-native path (future): coreml crate → MLModel::prediction_from_features()
 #[pyfunction]
-pub fn embed_tokens(model_id: String, token_ids: Vec<i64>, attention_mask: Vec<i64>) -> Result<Vec<f32>, PyErr> {
+pub fn embed_tokens(
+    model_id: String,
+    token_ids: Vec<i64>,
+    attention_mask: Vec<i64>,
+) -> Result<Vec<f32>, PyErr> {
     run_inference(model_id, token_ids, attention_mask)
 }
 
@@ -517,6 +715,376 @@ pub fn is_ane_available() -> bool {
     false
 }
 
+// ─── GNN-3: GraphSAGE ANE Functions ─────────────────────────────────────────────
+
+/// GNN-3: Load GraphSAGE model into registry.
+///
+/// Args:
+///     model_id: Unique identifier for the model
+///     model_path: Path to CoreML .mlmodel file
+///     in_dim: Input feature dimension (default: 81 = 17 type + 64 embedding)
+///     hidden_dim: Hidden layer dimension (default: 64)
+///     out_dim: Output embedding dimension (default: 32)
+///     num_layers: Number of GraphSAGE layers (default: 2)
+///
+/// Returns: Ok(model_id) or Error
+#[pyfunction]
+pub fn gnn_load_model(
+    model_id: String,
+    model_path: String,
+    in_dim: Option<usize>,
+    hidden_dim: Option<usize>,
+    out_dim: Option<usize>,
+    num_layers: Option<usize>,
+) -> Result<String, PyErr> {
+    let in_dim = in_dim.unwrap_or(GNN_DEFAULT_IN_DIM);
+    let hidden_dim = hidden_dim.unwrap_or(GNN_DEFAULT_HIDDEN_DIM);
+    let out_dim = out_dim.unwrap_or(GNN_DEFAULT_OUT_DIM);
+    let num_layers = num_layers.unwrap_or(2);
+
+    let meta = GNNModelMeta {
+        model_id: model_id.clone(),
+        model_path,
+        in_dim,
+        hidden_dim,
+        out_dim,
+        num_layers,
+    };
+
+    let mut registry = GNN_REGISTRY.write();
+    registry
+        .register(model_id.clone(), meta)
+        .map_err(|e| pyo3::exceptions::PyValueError::new_err(e))?;
+
+    logger::info!("[ANE-GNN] Registered GraphSAGE model: {}", model_id);
+    Ok(model_id)
+}
+
+/// GNN-3: Validate GNN batch dimensions.
+///
+/// Args:
+///     batch_size: Number of nodes in batch
+///     in_dim: Feature dimension per node
+///
+/// Returns: Ok(()) or Error
+#[pyfunction]
+pub fn gnn_validate_batch(batch_size: usize, in_dim: usize) -> Result<(), PyErr> {
+    if batch_size == 0 {
+        return Err(pyo3::exceptions::PyValueError::new_err(
+            "batch_size must be > 0",
+        ));
+    }
+    if batch_size > GNN_MAX_BATCH_NODES {
+        return Err(pyo3::exceptions::PyValueError::new_err(format!(
+            "batch_size {} exceeds GNN_MAX_BATCH_NODES {}",
+            batch_size, GNN_MAX_BATCH_NODES
+        )));
+    }
+    if in_dim == 0 {
+        return Err(pyo3::exceptions::PyValueError::new_err(
+            "in_dim must be > 0",
+        ));
+    }
+    if in_dim > 1024 {
+        return Err(pyo3::exceptions::PyValueError::new_err(format!(
+            "in_dim {} exceeds maximum (1024)",
+            in_dim
+        )));
+    }
+    Ok(())
+}
+
+/// GNN-3: Store node embeddings in memory.
+///
+/// Args:
+///     embeddings: List of (kuzu_id, embedding_vector) tuples
+///
+/// Returns: Count of stored embeddings
+#[pyfunction]
+pub fn gnn_store_embeddings(embeddings: Vec<(String, Vec<f32>)>) -> Result<usize, PyErr> {
+    let mut store = EMBEDDING_STORE.write();
+    let count = embeddings.len();
+
+    for (kuzu_id, emb) in embeddings {
+        if emb.len() > 512 {
+            return Err(pyo3::exceptions::PyValueError::new_err(format!(
+                "Embedding dimension {} exceeds maximum (512)",
+                emb.len()
+            )));
+        }
+        store.store(kuzu_id, emb);
+    }
+
+    Ok(count)
+}
+
+/// GNN-3: Get stored embeddings for batch of nodes.
+///
+/// Args:
+///     kuzu_ids: List of Kuzu string IDs
+///
+/// Returns: Vec of (kuzu_id, embedding) tuples (missing nodes return empty vec)
+#[pyfunction]
+pub fn gnn_get_embeddings(kuzu_ids: Vec<String>) -> Vec<(String, Vec<f32>)> {
+    let store = EMBEDDING_STORE.read();
+
+    kuzu_ids
+        .into_iter()
+        .map(|id| {
+            let emb = store
+                .get(&id)
+                .map(|e| e.embedding.clone())
+                .unwrap_or_default();
+            (id, emb)
+        })
+        .collect()
+}
+
+/// GNN-3: Run GNN inference on node batch (stub — delegates to Python).
+///
+/// This function validates batch and updates telemetry.
+/// Actual inference is done via Python ANEGNNEngine or MLX.
+///
+/// Args:
+///     model_id: Registered GNN model identifier
+///     node_ids: List of Kuzu string IDs
+///     features: Flattened feature matrix (n_nodes * in_dim)
+///     edges: List of (src_idx, dst_idx) edges
+///
+/// Returns: Vec of embedding vectors, or Error
+#[pyfunction]
+pub fn gnn_run_inference(
+    model_id: String,
+    node_ids: Vec<String>,
+    features: Vec<f32>,
+    edges: Vec<(usize, usize)>,
+) -> Result<Vec<Vec<f32>>, PyErr> {
+    let registry = GNN_REGISTRY.read();
+
+    let meta = registry.get(&model_id).ok_or_else(|| {
+        pyo3::exceptions::PyValueError::new_err(format!(
+            "GNN model '{}' not found. Load with gnn_load_model() first.",
+            model_id
+        ))
+    })?;
+
+    let n_nodes = node_ids.len();
+    if n_nodes == 0 {
+        return Ok(Vec::new());
+    }
+
+    if n_nodes > GNN_MAX_BATCH_NODES {
+        return Err(pyo3::exceptions::PyValueError::new_err(format!(
+            "Batch size {} exceeds GNN_MAX_BATCH_NODES {}",
+            n_nodes, GNN_MAX_BATCH_NODES
+        )));
+    }
+
+    // Validate feature dimensions
+    let expected_len = n_nodes * meta.in_dim;
+    if features.len() != expected_len {
+        return Err(pyo3::exceptions::PyValueError::new_err(format!(
+            "Feature vector length {} != expected {} (n_nodes {} * in_dim {})",
+            features.len(),
+            expected_len,
+            n_nodes,
+            meta.in_dim
+        )));
+    }
+
+    // FIX-3: Validate edge indices to prevent out-of-bounds access
+    for (i, &(src_idx, dst_idx)) in edges.iter().enumerate() {
+        if src_idx >= n_nodes {
+            return Err(pyo3::exceptions::PyValueError::new_err(format!(
+                "Edge {} src_idx {} >= n_nodes {} (model: {})",
+                i, src_idx, n_nodes, model_id
+            )));
+        }
+        if dst_idx >= n_nodes {
+            return Err(pyo3::exceptions::PyValueError::new_err(format!(
+                "Edge {} dst_idx {} >= n_nodes {} (model: {})",
+                i, dst_idx, n_nodes, model_id
+            )));
+        }
+    }
+
+    // GNN-3: This is a stub — actual inference requires CoreML + ANE
+    // For now, return normalized mean of input features as a placeholder
+    // In production, this would call the CoreML model via PyO3 callback
+    // or direct coreml crate FFI (future work)
+    let mut output: Vec<Vec<f32>> = Vec::with_capacity(n_nodes);
+
+    for i in 0..n_nodes {
+        let start = i * meta.in_dim;
+        let end = start + meta.in_dim;
+        let node_features = &features[start..end];
+
+        // Simple mean pooling as placeholder
+        let sum: f32 = node_features.iter().sum();
+        let mean = sum / meta.in_dim as f32;
+
+        // Output: repeated mean (placeholder for actual GNN forward pass)
+        let mut emb = vec![0.0; meta.out_dim];
+        for j in 0..meta.out_dim {
+            emb[j] = mean;
+        }
+        output.push(emb);
+    }
+
+    // Update telemetry
+    {
+        let mut telemetry = ANE_TELEMETRY.write();
+        telemetry.embed_calls += 1;
+        telemetry.embed_tokens += n_nodes as u64;
+    }
+
+    logger::info!(
+        "[ANE-GNN] Inference stub for {} nodes (model={})",
+        n_nodes,
+        model_id
+    );
+
+    Ok(output)
+}
+
+/// GNN-3: Predict links using GNN embeddings and heuristics.
+///
+/// Combines GNN cosine similarity with traditional heuristics
+/// (Adamic-Adar, Jaccard, Preferential Attachment).
+///
+/// Args:
+///     embeddings: Vec of (kuzu_id, embedding) pairs
+///     edges: Vec of (src_idx, dst_idx) for adjacency
+///     candidate_pairs: Vec of (src_idx, dst_idx) to score
+///     gnn_weight: Weight for GNN score (default: 0.6)
+///     min_score: Minimum combined score threshold
+///
+/// Returns: Vec of (src_idx, dst_idx, gnn_score, heuristic_score, combined_score, method)
+#[pyfunction]
+pub fn gnn_predict_links(
+    embeddings: Vec<(String, Vec<f32>)>,
+    edges: Vec<(usize, usize)>,
+    candidate_pairs: Vec<(usize, usize)>,
+    gnn_weight: Option<f32>,
+    min_score: Option<f32>,
+) -> Vec<(usize, usize, f32, f32, f32, String)> {
+    let gnn_weight = gnn_weight.unwrap_or(0.6);
+    let min_score = min_score.unwrap_or(0.1);
+
+    // Build adjacency list
+    let mut adjacency: std::collections::HashMap<usize, Vec<usize>> =
+        std::collections::HashMap::new();
+    let mut degrees: std::collections::HashMap<usize, usize> = std::collections::HashMap::new();
+
+    for &(src, dst) in &edges {
+        adjacency.entry(src).or_default().push(dst);
+        adjacency.entry(dst).or_default().push(src);
+        *degrees.entry(src).or_insert(0) += 1;
+        *degrees.entry(dst).or_insert(0) += 1;
+    }
+
+    // Build embedding map
+    let emb_map: std::collections::HashMap<_, _> = embeddings.into_iter().collect();
+
+    let mut results: Vec<(usize, usize, f32, f32, f32, String)> = Vec::new();
+
+    for &(src, dst) in &candidate_pairs {
+        // Get embeddings
+        let src_emb = match emb_map.get(&src) {
+            Some(e) => e,
+            None => continue,
+        };
+        let dst_emb = match emb_map.get(&dst) {
+            Some(e) => e,
+            None => continue,
+        };
+
+        // GNN score: cosine similarity
+        let gnn_score = cosine_similarity(src_emb, dst_emb);
+
+        // Heuristic scores
+        let src_neighbors = adjacency.get(&src).cloned().unwrap_or_default();
+        let dst_neighbors = adjacency.get(&dst).cloned().unwrap_or_default();
+
+        let common: Vec<_> = src_neighbors
+            .iter()
+            .filter(|n| dst_neighbors.contains(n))
+            .collect();
+        let common_count = common.len();
+
+        // Adamic-Adar
+        let mut adamic_adar = 0.0f32;
+        for &z in &common {
+            if let Some(&deg) = degrees.get(z) {
+                if deg > 1 {
+                    adamic_adar += 1.0 / (deg as f32).ln();
+                }
+            }
+        }
+
+        // Jaccard
+        let union_count = src_neighbors.len() + dst_neighbors.len() - common_count;
+        let jaccard = if union_count > 0 {
+            common_count as f32 / union_count as f32
+        } else {
+            0.0
+        };
+
+        // Preferential Attachment
+        let deg_src = degrees.get(&src).copied().unwrap_or(0);
+        let deg_dst = degrees.get(&dst).copied().unwrap_or(0);
+        let pref_attach = (deg_src * deg_dst) as f32;
+
+        // Combined heuristic score
+        let aa_norm = (adamic_adar / 10.0).min(1.0).max(0.0);
+        let pa_norm = (pref_attach / 1000.0).min(1.0).max(0.0);
+        let heur_score = 0.5 * aa_norm + 0.3 * jaccard + 0.2 * pa_norm;
+
+        // Combined score
+        let combined = gnn_weight * gnn_score + (1.0 - gnn_weight) * heur_score;
+
+        if combined >= min_score {
+            let method = if gnn_score > 0.7 {
+                "gnn"
+            } else if heur_score > 0.5 {
+                "heuristic"
+            } else {
+                "hybrid"
+            };
+            results.push((
+                src,
+                dst,
+                gnn_score,
+                heur_score,
+                combined,
+                method.to_string(),
+            ));
+        }
+    }
+
+    // Sort by combined score descending
+    results.sort_by(|a, b| b.4.partial_cmp(&a.4).unwrap_or(std::cmp::Ordering::Equal));
+
+    results
+}
+
+/// Helper: cosine similarity between two vectors
+fn cosine_similarity(a: &[f32], b: &[f32]) -> f32 {
+    if a.len() != b.len() || a.is_empty() {
+        return 0.0;
+    }
+
+    let dot: f32 = a.iter().zip(b.iter()).map(|(x, y)| x * y).sum();
+    let norm_a: f32 = a.iter().map(|x| x * x).sum::<f32>().sqrt();
+    let norm_b: f32 = b.iter().map(|x| x * x).sum::<f32>().sqrt();
+
+    if norm_a == 0.0 || norm_b == 0.0 {
+        0.0
+    } else {
+        (dot / (norm_a * norm_b)).clamp(-1.0, 1.0)
+    }
+}
+
 // ─── Module registration ──────────────────────────────────────────────────────
 
 /// Register ANE module functions with PyO3 module.
@@ -534,9 +1102,21 @@ pub fn register_functions(m: &Bound<'_, PyModule>) -> Result<(), PyErr> {
     m.add_function(wrap_pyfunction!(get_supported_compute_units, m)?)?;
     m.add_function(wrap_pyfunction!(is_ane_available, m)?)?;
 
+    // GNN-3: GraphSAGE ANE functions
+    m.add_function(wrap_pyfunction!(gnn_load_model, m)?)?;
+    m.add_function(wrap_pyfunction!(gnn_run_inference, m)?)?;
+    m.add_function(wrap_pyfunction!(gnn_store_embeddings, m)?)?;
+    m.add_function(wrap_pyfunction!(gnn_get_embeddings, m)?)?;
+    m.add_function(wrap_pyfunction!(gnn_predict_links, m)?)?;
+    m.add_function(wrap_pyfunction!(gnn_validate_batch, m)?)?;
+
     // Constants
     m.add("ANE_MAX_MODELS", ANE_MAX_MODELS)?;
     m.add("ANE_MAX_BATCH_SIZE", ANE_MAX_BATCH_SIZE)?;
+    m.add("GNN_MAX_BATCH_NODES", GNN_MAX_BATCH_NODES)?;
+    m.add("GNN_DEFAULT_IN_DIM", GNN_DEFAULT_IN_DIM)?;
+    m.add("GNN_DEFAULT_HIDDEN_DIM", GNN_DEFAULT_HIDDEN_DIM)?;
+    m.add("GNN_DEFAULT_OUT_DIM", GNN_DEFAULT_OUT_DIM)?;
 
     Ok(())
 }
@@ -610,8 +1190,12 @@ mod tests {
         let mut registry = ANERegistry::new();
 
         // Load two models (max)
-        assert!(registry.register_model("m1".to_string(), "/p1".to_string(), 768, 512).is_ok());
-        assert!(registry.register_model("m2".to_string(), "/p2".to_string(), 384, 256).is_ok());
+        assert!(registry
+            .register_model("m1".to_string(), "/p1".to_string(), 768, 512)
+            .is_ok());
+        assert!(registry
+            .register_model("m2".to_string(), "/p2".to_string(), 384, 256)
+            .is_ok());
         assert_eq!(registry.model_count(), 2);
         assert!(!registry.can_load());
 

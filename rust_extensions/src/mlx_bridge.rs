@@ -355,11 +355,7 @@ impl Clone for MLXBridge {
 impl MLXBridge {
     #[new]
     #[pyo3(signature = (engine, tokenizer, config=None))]
-    fn new(
-        engine: Py<PyAny>,
-        tokenizer: Py<PyAny>,
-        config: Option<MLXBridgeConfig>,
-    ) -> Self {
+    fn new(engine: Py<PyAny>, tokenizer: Py<PyAny>, config: Option<MLXBridgeConfig>) -> Self {
         let cfg = config.unwrap_or_default();
         Self {
             engine,
@@ -429,13 +425,25 @@ impl MLXBridge {
     /// Get configuration as a dict.
     fn get_config(&self, py: Python<'_>) -> Py<PyDict> {
         let stats = PyDict::new(py);
-        stats.set_item("max_tokens", self.config.max_tokens).unwrap();
-        stats.set_item("temperature", self.config.temperature).unwrap();
+        stats
+            .set_item("max_tokens", self.config.max_tokens)
+            .unwrap();
+        stats
+            .set_item("temperature", self.config.temperature)
+            .unwrap();
         stats.set_item("chunk_size", self.get_chunk_size()).unwrap();
-        stats.set_item("adaptive_chunk", self.config.adaptive_chunk).unwrap();
-        stats.set_item("stream_buffer_size", self.config.stream_buffer_size).unwrap();
-        stats.set_item("pressure_warning", self.config.pressure_warning).unwrap();
-        stats.set_item("pressure_critical", self.config.pressure_critical).unwrap();
+        stats
+            .set_item("adaptive_chunk", self.config.adaptive_chunk)
+            .unwrap();
+        stats
+            .set_item("stream_buffer_size", self.config.stream_buffer_size)
+            .unwrap();
+        stats
+            .set_item("pressure_warning", self.config.pressure_warning)
+            .unwrap();
+        stats
+            .set_item("pressure_critical", self.config.pressure_critical)
+            .unwrap();
         stats.into()
     }
 
@@ -446,7 +454,9 @@ impl MLXBridge {
         stats.set_item("cancelled", self.cancelled).unwrap();
         stats.set_item("chunk_size", self.get_chunk_size()).unwrap();
         stats.set_item("pressure", self.get_pressure()).unwrap();
-        stats.set_item("max_tokens", self.config.max_tokens).unwrap();
+        stats
+            .set_item("max_tokens", self.config.max_tokens)
+            .unwrap();
         stats.into()
     }
 

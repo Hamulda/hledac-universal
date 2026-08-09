@@ -44,10 +44,10 @@
 //!   - Provides vDSP functions: dotpr, normalize, maxmg
 //!   - Same ABI as Apple C implementation
 
+use parking_lot::RwLock;
 use pyo3::prelude::*;
 use std::collections::HashMap;
 use std::sync::LazyLock;
-use parking_lot::RwLock;
 
 /// Runtime-detected vDSP availability.
 ///
@@ -101,7 +101,11 @@ impl std::fmt::Display for AccelerateError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             AccelerateError::DimensionMismatch { expected, actual } => {
-                write!(f, "Dimension mismatch: expected {}, got {}", expected, actual)
+                write!(
+                    f,
+                    "Dimension mismatch: expected {}, got {}",
+                    expected, actual
+                )
             }
             AccelerateError::EmptyInput => write!(f, "Input arrays cannot be empty"),
             AccelerateError::BackendNotAvailable => {
@@ -244,14 +248,7 @@ fn vDSP_cosine(a: &[f32], b: &[f32], normalize: bool) -> Result<f32, AccelerateE
     } else {
         // Direct dot product
         unsafe {
-            vDSP_ffi::vDSP_dotpr(
-                a.as_ptr(),
-                1,
-                b.as_ptr(),
-                1,
-                result.as_mut_ptr(),
-                n,
-            );
+            vDSP_ffi::vDSP_dotpr(a.as_ptr(), 1, b.as_ptr(), 1, result.as_mut_ptr(), n);
         }
         Ok(result[0])
     }
@@ -279,7 +276,11 @@ fn scalar_cosine(a: &[f32], b: &[f32], normalize: bool) -> Result<f32, Accelerat
         let b_norm = b_norm.sqrt().recip();
 
         // Dot product of normalized vectors
-        let sum: f32 = a.iter().zip(b.iter()).map(|(x, y)| x * a_norm * y * b_norm).sum();
+        let sum: f32 = a
+            .iter()
+            .zip(b.iter())
+            .map(|(x, y)| x * a_norm * y * b_norm)
+            .sum();
         Ok(sum)
     } else {
         // Direct dot product
@@ -363,7 +364,11 @@ pub fn init() -> (bool, String, Option<String>) {
     if available {
         (true, backend.to_string(), None)
     } else {
-        (false, backend.to_string(), Some("Accelerate vDSP not available".to_string()))
+        (
+            false,
+            backend.to_string(),
+            Some("Accelerate vDSP not available".to_string()),
+        )
     }
 }
 
@@ -435,7 +440,9 @@ pub fn batch_cosine_similarity(
     normalize: bool,
 ) -> Result<Vec<f32>, PyErr> {
     if queries.is_empty() || candidates.is_empty() {
-        return Err(pyo3::exceptions::PyValueError::new_err("Input arrays cannot be empty"));
+        return Err(pyo3::exceptions::PyValueError::new_err(
+            "Input arrays cannot be empty",
+        ));
     }
 
     let expected_queries = num_queries * hidden_dim;
@@ -444,14 +451,16 @@ pub fn batch_cosine_similarity(
     if queries.len() != expected_queries {
         return Err(pyo3::exceptions::PyValueError::new_err(format!(
             "Queries size mismatch: expected {}, got {}",
-            expected_queries, queries.len()
+            expected_queries,
+            queries.len()
         )));
     }
 
     if candidates.len() != expected_candidates {
         return Err(pyo3::exceptions::PyValueError::new_err(format!(
             "Candidates size mismatch: expected {}, got {}",
-            expected_candidates, candidates.len()
+            expected_candidates,
+            candidates.len()
         )));
     }
 
@@ -459,9 +468,9 @@ pub fn batch_cosine_similarity(
     {
         let mut telemetry = ACCELERATE_TELEMETRY.write();
         telemetry.cosine_calls += 1;
-        telemetry.cosine_pairs = telemetry.cosine_pairs.saturating_add(
-            (num_queries * num_candidates) as u64
-        );
+        telemetry.cosine_pairs = telemetry
+            .cosine_pairs
+            .saturating_add((num_queries * num_candidates) as u64);
     }
 
     let mut results = vec![0.0_f32; num_queries * num_candidates];
@@ -567,14 +576,17 @@ pub fn batch_normalize(
     hidden_dim: usize,
 ) -> Result<Vec<f32>, PyErr> {
     if vectors.is_empty() {
-        return Err(pyo3::exceptions::PyValueError::new_err("Input array cannot be empty"));
+        return Err(pyo3::exceptions::PyValueError::new_err(
+            "Input array cannot be empty",
+        ));
     }
 
     let expected = batch_size * hidden_dim;
     if vectors.len() != expected {
         return Err(pyo3::exceptions::PyValueError::new_err(format!(
             "Vectors size mismatch: expected {}, got {}",
-            expected, vectors.len()
+            expected,
+            vectors.len()
         )));
     }
 
@@ -596,13 +608,7 @@ pub fn batch_normalize(
             let slice_out = &mut result[start..end];
             let n = hidden_dim as libc::c_long;
             unsafe {
-                vDSP_ffi::vDSP_normalize(
-                    slice_in.as_ptr(),
-                    1,
-                    slice_out.as_mut_ptr(),
-                    1,
-                    n,
-                );
+                vDSP_ffi::vDSP_normalize(slice_in.as_ptr(), 1, slice_out.as_mut_ptr(), 1, n);
             }
         }
     }
@@ -639,7 +645,10 @@ pub fn get_telemetry() -> HashMap<String, u64> {
     result.insert("cosine_calls".to_string(), telemetry.cosine_calls);
     result.insert("cosine_pairs".to_string(), telemetry.cosine_pairs);
     result.insert("normalize_calls".to_string(), telemetry.normalize_calls);
-    result.insert("v_dsp_fallback_scalar".to_string(), telemetry.v_dsp_fallback_scalar);
+    result.insert(
+        "v_dsp_fallback_scalar".to_string(),
+        telemetry.v_dsp_fallback_scalar,
+    );
     result.insert("errors".to_string(), telemetry.errors);
     result
 }

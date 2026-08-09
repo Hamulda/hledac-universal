@@ -21,6 +21,7 @@
 //! on macOS APFS (vs ~0 µs for `Vec<u64>`). For dedup, use the in-memory
 //! filter. For cross-restart persistence, use the mmap filter.
 use libc;
+use parking_lot::RwLock;
 use pyo3::prelude::*;
 use std::ffi::{c_int, c_void};
 use std::fs::OpenOptions;
@@ -28,7 +29,6 @@ use std::os::unix::fs::OpenOptionsExt;
 use std::os::unix::io::IntoRawFd;
 use std::path::Path;
 use std::ptr::NonNull;
-use parking_lot::RwLock;
 use xxhash_rust::xxh3::{xxh3_64, xxh3_64_with_seed};
 
 use crate::gil::release_gil;
@@ -316,9 +316,7 @@ impl BloomFilter {
             release_gil(py, || {
                 items
                     .par_iter()
-                    .map(|item| {
-                        self.__contains__(item)
-                    })
+                    .map(|item| self.__contains__(item))
                     .collect()
             })
         })
@@ -425,8 +423,8 @@ struct MmapBloomFilter {
     ptr: RwLock<usize>,
     fd: c_int,
     file_path: String,
-    num_u64s: usize,    // = ceil(num_bits / 64)
-    byte_len: usize,    // MMAP_HEADER_SIZE + num_u64s * 8
+    num_u64s: usize, // = ceil(num_bits / 64)
+    byte_len: usize, // MMAP_HEADER_SIZE + num_u64s * 8
     num_bits: usize,
     num_hashes: usize,
     capacity: usize,
@@ -517,7 +515,9 @@ impl MmapBloomFilter {
             )
         };
         if map_ptr.is_null() || map_ptr == libc::MAP_FAILED {
-            unsafe { libc::close(fd); }
+            unsafe {
+                libc::close(fd);
+            }
             return Err(pyo3::exceptions::PyIOError::new_err(format!(
                 "MmapBloomFilter: mmap({} bytes) failed",
                 byte_len
@@ -536,20 +536,16 @@ impl MmapBloomFilter {
         {
             let bp = unsafe { ptr.as_ptr().add(MMAP_HEADER_SIZE / 8) };
             for i in 0..num_u64s {
-                unsafe { std::ptr::read_volatile(bp.add(i)); }
+                unsafe {
+                    std::ptr::read_volatile(bp.add(i));
+                }
             }
             let bitmap_byte_len = num_u64s * 8;
-            let _ = unsafe {
-                libc::madvise(
-                    bp as *mut c_void,
-                    bitmap_byte_len,
-                    MADV_NOCACHE,
-                )
-            };
+            let _ = unsafe { libc::madvise(bp as *mut c_void, bitmap_byte_len, MADV_NOCACHE) };
         }
 
         let instance = Self {
-            ptr: RwLock::new(ptr.as_ptr() as usize),  // usize is Send+Sync
+            ptr: RwLock::new(ptr.as_ptr() as usize), // usize is Send+Sync
             fd,
             file_path: path.to_string(),
             num_u64s,
@@ -743,7 +739,11 @@ impl MmapBloomFilter {
         }
         // MS_ASYNC: durable later, not blocking.
         unsafe {
-            let _ = libc::msync(self.bitmap_ptr() as *mut c_void, self.num_u64s * 8, libc::MS_ASYNC);
+            let _ = libc::msync(
+                self.bitmap_ptr() as *mut c_void,
+                self.num_u64s * 8,
+                libc::MS_ASYNC,
+            );
         }
         is_new
     }
@@ -810,7 +810,11 @@ impl MmapBloomFilter {
 
         // Single msync for the whole batch — amortizes sync overhead.
         unsafe {
-            let _ = libc::msync(self.bitmap_ptr() as *mut c_void, self.num_u64s * 8, libc::MS_ASYNC);
+            let _ = libc::msync(
+                self.bitmap_ptr() as *mut c_void,
+                self.num_u64s * 8,
+                libc::MS_ASYNC,
+            );
         }
 
         results.into_iter().map(|(_, is_new)| is_new).collect()
@@ -875,9 +879,7 @@ impl MmapBloomFilter {
             release_gil(py, || {
                 items
                     .par_iter()
-                    .map(|item| {
-                        self.check_indices(self.indices(item))
-                    })
+                    .map(|item| self.check_indices(self.indices(item)))
                     .collect()
             })
         })
@@ -956,7 +958,11 @@ impl MmapBloomFilter {
 
         // Single msync for the whole batch.
         unsafe {
-            let _ = libc::msync(self.bitmap_ptr() as *mut c_void, self.num_u64s * 8, libc::MS_ASYNC);
+            let _ = libc::msync(
+                self.bitmap_ptr() as *mut c_void,
+                self.num_u64s * 8,
+                libc::MS_ASYNC,
+            );
         }
 
         results
@@ -978,7 +984,13 @@ impl MmapBloomFilter {
     /// Force durable sync to disk. Cheap (kernel coalesces msyncs).
     fn sync(&self) -> bool {
         let _guard = self.ptr.read();
-        unsafe { libc::msync(self.bitmap_ptr() as *mut c_void, self.byte_len, libc::MS_SYNC) == 0 }
+        unsafe {
+            libc::msync(
+                self.bitmap_ptr() as *mut c_void,
+                self.byte_len,
+                libc::MS_SYNC,
+            ) == 0
+        }
     }
 
     /// Reset the filter to empty (in-place, file remains mapped).
@@ -1040,22 +1052,25 @@ pub struct RotatingMmapBloomFilter {
 
 impl RotatingMmapBloomFilter {
     /// Open or create a two-generation rotating filter.
-    fn open_or_create(
-        path_a: &str,
-        path_b: &str,
-        capacity: usize,
-        fp_rate: f64,
-    ) -> PyResult<Self> {
+    fn open_or_create(path_a: &str, path_b: &str, capacity: usize, fp_rate: f64) -> PyResult<Self> {
         // force_new only if NEITHER file exists
         let force_new = !Path::new(path_a).exists() && !Path::new(path_b).exists();
 
         // Unwrap Results — errors propagate
         let filter_a = MmapBloomFilter::open_or_create(path_a, capacity, fp_rate, force_new)
-            .map_err(|e| pyo3::exceptions::PyIOError::new_err(format!(
-                "RotatingMmapBloomFilter: open path_a failed: {}", e)))?;
+            .map_err(|e| {
+                pyo3::exceptions::PyIOError::new_err(format!(
+                    "RotatingMmapBloomFilter: open path_a failed: {}",
+                    e
+                ))
+            })?;
         let filter_b = MmapBloomFilter::open_or_create(path_b, capacity, fp_rate, force_new)
-            .map_err(|e| pyo3::exceptions::PyIOError::new_err(format!(
-                "RotatingMmapBloomFilter: open path_b failed: {}", e)))?;
+            .map_err(|e| {
+                pyo3::exceptions::PyIOError::new_err(format!(
+                    "RotatingMmapBloomFilter: open path_b failed: {}",
+                    e
+                ))
+            })?;
 
         // Use filter with more items as "active" (the newer one); equal → path_a active
         let (filters, current) = if filter_a.items_added() >= filter_b.items_added() {
@@ -1072,11 +1087,17 @@ impl RotatingMmapBloomFilter {
     }
 
     #[inline]
-    fn active(&self) -> &MmapBloomFilter { &self.filters[self.current] }
+    fn active(&self) -> &MmapBloomFilter {
+        &self.filters[self.current]
+    }
     #[inline]
-    fn active_mut(&mut self) -> &mut MmapBloomFilter { &mut self.filters[self.current] }
+    fn active_mut(&mut self) -> &mut MmapBloomFilter {
+        &mut self.filters[self.current]
+    }
     #[inline]
-    fn previous(&self) -> &MmapBloomFilter { &self.filters[1 - self.current] }
+    fn previous(&self) -> &MmapBloomFilter {
+        &self.filters[1 - self.current]
+    }
 }
 
 #[pymethods]
@@ -1094,10 +1115,14 @@ impl RotatingMmapBloomFilter {
     }
 
     /// Add to active generation only.
-    fn add(&mut self, item: &str) -> bool { self.active_mut().add(item) }
+    fn add(&mut self, item: &str) -> bool {
+        self.active_mut().add(item)
+    }
 
     /// Bulk add to active generation.
-    fn add_batch(&mut self, items: Vec<String>) -> Vec<bool> { self.active_mut().add_batch(items) }
+    fn add_batch(&mut self, items: Vec<String>) -> Vec<bool> {
+        self.active_mut().add_batch(items)
+    }
 
     /// Bulk contains check — rayon-parallel, checks both generations.
     ///
@@ -1143,22 +1168,45 @@ impl RotatingMmapBloomFilter {
             self.filters[self.current].capacity,
             self.filters[self.current].fp_rate,
             true, // force_new — truncate to fresh
-        ).map_err(|e| pyo3::exceptions::PyIOError::new_err(format!(
-            "RotatingMmapBloomFilter: rotate failed: {}", e)))?;
+        )
+        .map_err(|e| {
+            pyo3::exceptions::PyIOError::new_err(format!(
+                "RotatingMmapBloomFilter: rotate failed: {}",
+                e
+            ))
+        })?;
         self.filters[prev_idx] = fresh;
         self.current = prev_idx;
         Ok(())
     }
 
-    fn sync(&self) -> bool { self.filters[0].sync() && self.filters[1].sync() }
-    fn reset_active(&mut self) { self.active_mut().reset(); }
-    fn __len__(&self) -> usize { self.active().__len__() }
-    fn previous_len(&self) -> usize { self.previous().__len__() }
-    fn capacity(&self) -> usize { self.active().capacity }
-    fn fp_rate(&self) -> f64 { self.active().fp_rate }
-    fn active_path(&self) -> String { self.paths[self.current].clone() }
-    fn previous_path(&self) -> String { self.paths[1 - self.current].clone() }
-    fn current_index(&self) -> usize { self.current }
+    fn sync(&self) -> bool {
+        self.filters[0].sync() && self.filters[1].sync()
+    }
+    fn reset_active(&mut self) {
+        self.active_mut().reset();
+    }
+    fn __len__(&self) -> usize {
+        self.active().__len__()
+    }
+    fn previous_len(&self) -> usize {
+        self.previous().__len__()
+    }
+    fn capacity(&self) -> usize {
+        self.active().capacity
+    }
+    fn fp_rate(&self) -> f64 {
+        self.active().fp_rate
+    }
+    fn active_path(&self) -> String {
+        self.paths[self.current].clone()
+    }
+    fn previous_path(&self) -> String {
+        self.paths[1 - self.current].clone()
+    }
+    fn current_index(&self) -> usize {
+        self.current
+    }
 }
 
 /// Register MmapBloomFilter in the parent module.

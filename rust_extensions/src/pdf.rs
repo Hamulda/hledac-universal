@@ -41,13 +41,16 @@ pub fn extract_text(path: &str) -> PyResult<String> {
     let path = Path::new(path);
 
     // Check file size before loading
-    let metadata = std::fs::metadata(path)
-        .map_err(|e| pyo3::exceptions::PyIOError::new_err(format!("Failed to read file metadata: {e}")))?;
+    let metadata = std::fs::metadata(path).map_err(|e| {
+        pyo3::exceptions::PyIOError::new_err(format!("Failed to read file metadata: {e}"))
+    })?;
 
     if metadata.len() > MAX_PDF_SIZE as u64 {
-        return Err(pyo3::exceptions::PyValueError::new_err(
-            format!("PDF file too large: {} bytes (max: {} bytes)", metadata.len(), MAX_PDF_SIZE)
-        ));
+        return Err(pyo3::exceptions::PyValueError::new_err(format!(
+            "PDF file too large: {} bytes (max: {} bytes)",
+            metadata.len(),
+            MAX_PDF_SIZE
+        )));
     }
 
     // Load PDF document
@@ -71,13 +74,16 @@ pub fn extract_text(path: &str) -> PyResult<String> {
 #[pyfunction]
 pub fn extract_text_from_bytes(data: &[u8]) -> PyResult<String> {
     if data.len() > MAX_PDF_SIZE {
-        return Err(pyo3::exceptions::PyValueError::new_err(
-            format!("PDF data too large: {} bytes (max: {} bytes)", data.len(), MAX_PDF_SIZE)
-        ));
+        return Err(pyo3::exceptions::PyValueError::new_err(format!(
+            "PDF data too large: {} bytes (max: {} bytes)",
+            data.len(),
+            MAX_PDF_SIZE
+        )));
     }
 
-    let doc = lopdf::Document::load_mem(data)
-        .map_err(|e| pyo3::exceptions::PyIOError::new_err(format!("Failed to parse PDF bytes: {e}")))?;
+    let doc = lopdf::Document::load_mem(data).map_err(|e| {
+        pyo3::exceptions::PyIOError::new_err(format!("Failed to parse PDF bytes: {e}"))
+    })?;
 
     extract_text_from_doc(&doc)
 }
@@ -87,9 +93,10 @@ fn extract_text_from_doc(doc: &lopdf::Document) -> PyResult<String> {
     let page_count = doc.get_pages().len() as u32;
 
     if page_count > MAX_PAGES {
-        return Err(pyo3::exceptions::PyValueError::new_err(
-            format!("PDF has too many pages: {} (max: {})", page_count, MAX_PAGES)
-        ));
+        return Err(pyo3::exceptions::PyValueError::new_err(format!(
+            "PDF has too many pages: {} (max: {})",
+            page_count, MAX_PAGES
+        )));
     }
 
     let mut text = String::new();
@@ -110,9 +117,9 @@ fn extract_text_from_doc(doc: &lopdf::Document) -> PyResult<String> {
                 }
             }
             if text.is_empty() {
-                return Err(pyo3::exceptions::PyIOError::new_err(
-                    format!("Failed to extract text from PDF: {e}")
-                ));
+                return Err(pyo3::exceptions::PyIOError::new_err(format!(
+                    "Failed to extract text from PDF: {e}"
+                )));
             }
         }
     }
@@ -214,7 +221,10 @@ fn parse_pdf_date(date_str: &str) -> Option<String> {
     let hour = &s[8..10];
     let minute = &s[10..12];
     let second = &s[12..14];
-    Some(format!("{}-{}-{}T{}:{}:{}", year, month, day, hour, minute, second))
+    Some(format!(
+        "{}-{}-{}T{}:{}:{}",
+        year, month, day, hour, minute, second
+    ))
 }
 
 /// Internal: get a string value from a lopdf Dictionary by key.
@@ -239,12 +249,10 @@ fn extract_metadata_from_doc(doc: &lopdf::Document) -> PdfMetadata {
     if let Ok(info_ref) = doc.trailer.get(b"Info") {
         // info_ref is &Object — follow Reference if needed
         let info_obj: &lopdf::Object = match info_ref {
-            lopdf::Object::Reference(id) => {
-                match doc.get_object(*id) {
-                    Ok(obj) => obj,
-                    Err(_) => &lopdf::Object::Null,
-                }
-            }
+            lopdf::Object::Reference(id) => match doc.get_object(*id) {
+                Ok(obj) => obj,
+                Err(_) => &lopdf::Object::Null,
+            },
             other => other,
         };
         if let lopdf::Object::Dictionary(info_dict) = info_obj {
@@ -280,13 +288,16 @@ fn extract_metadata_from_doc(doc: &lopdf::Document) -> PdfMetadata {
 pub fn extract_metadata(path: &str) -> PyResult<PdfMetadata> {
     let path_obj = std::path::Path::new(path);
 
-    let metadata = std::fs::metadata(path_obj)
-        .map_err(|e| pyo3::exceptions::PyIOError::new_err(format!("Failed to read file metadata: {e}")))?;
+    let metadata = std::fs::metadata(path_obj).map_err(|e| {
+        pyo3::exceptions::PyIOError::new_err(format!("Failed to read file metadata: {e}"))
+    })?;
 
     if metadata.len() > MAX_PDF_SIZE as u64 {
-        return Err(pyo3::exceptions::PyValueError::new_err(
-            format!("PDF file too large: {} bytes (max: {} bytes)", metadata.len(), MAX_PDF_SIZE)
-        ));
+        return Err(pyo3::exceptions::PyValueError::new_err(format!(
+            "PDF file too large: {} bytes (max: {} bytes)",
+            metadata.len(),
+            MAX_PDF_SIZE
+        )));
     }
 
     let doc = lopdf::Document::load(path_obj)
@@ -309,13 +320,16 @@ pub fn extract_metadata(path: &str) -> PyResult<PdfMetadata> {
 #[pyfunction]
 pub fn extract_metadata_from_bytes(data: &[u8]) -> PyResult<PdfMetadata> {
     if data.len() > MAX_PDF_SIZE {
-        return Err(pyo3::exceptions::PyValueError::new_err(
-            format!("PDF data too large: {} bytes (max: {} bytes)", data.len(), MAX_PDF_SIZE)
-        ));
+        return Err(pyo3::exceptions::PyValueError::new_err(format!(
+            "PDF data too large: {} bytes (max: {} bytes)",
+            data.len(),
+            MAX_PDF_SIZE
+        )));
     }
 
-    let doc = lopdf::Document::load_mem(data)
-        .map_err(|e| pyo3::exceptions::PyIOError::new_err(format!("Failed to parse PDF bytes: {e}")))?;
+    let doc = lopdf::Document::load_mem(data).map_err(|e| {
+        pyo3::exceptions::PyIOError::new_err(format!("Failed to parse PDF bytes: {e}"))
+    })?;
 
     Ok(extract_metadata_from_doc(&doc))
 }
@@ -411,7 +425,10 @@ fn extract_ocg_layers(doc: &lopdf::Document) -> Vec<(String, String, bool)> {
 }
 
 /// Extract a single OCG layer's information.
-fn extract_single_ocg(doc: &lopdf::Document, ocg_ref: lopdf::ObjectId) -> Option<(String, String, bool)> {
+fn extract_single_ocg(
+    doc: &lopdf::Document,
+    ocg_ref: lopdf::ObjectId,
+) -> Option<(String, String, bool)> {
     let ocg_dict = match doc.get_object(ocg_ref) {
         Ok(lopdf::Object::Dictionary(d)) => d,
         _ => return None,
@@ -426,7 +443,13 @@ fn extract_single_ocg(doc: &lopdf::Document, ocg_ref: lopdf::ObjectId) -> Option
         Ok(lopdf::Object::Array(arr)) => {
             // Array of intents - take first
             arr.first()
-                .and_then(|o| if let lopdf::Object::Name(n) = o { Some(String::from_utf8_lossy(n).to_string()) } else { None })
+                .and_then(|o| {
+                    if let lopdf::Object::Name(n) = o {
+                        Some(String::from_utf8_lossy(n).to_string())
+                    } else {
+                        None
+                    }
+                })
                 .unwrap_or_else(|| "View".to_string())
         }
         _ => "View".to_string(),
@@ -434,27 +457,19 @@ fn extract_single_ocg(doc: &lopdf::Document, ocg_ref: lopdf::ObjectId) -> Option
 
     // Check visibility from /Usage/View/ViewState or default to true
     let is_visible = match ocg_dict.get(b"Usage") {
-        Ok(lopdf::Object::Reference(r)) => {
-            match doc.get_object(*r) {
-                Ok(lopdf::Object::Dictionary(usage)) => {
-                    match usage.get(b"View") {
-                        Ok(lopdf::Object::Reference(vr)) => {
-                            match doc.get_object(*vr) {
-                                Ok(lopdf::Object::Dictionary(view)) => {
-                                    match view.get(b"ViewState") {
-                                        Ok(lopdf::Object::Name(n)) => n.as_slice() != b"OFF",
-                                        _ => true,
-                                    }
-                                }
-                                _ => true,
-                            }
-                        }
+        Ok(lopdf::Object::Reference(r)) => match doc.get_object(*r) {
+            Ok(lopdf::Object::Dictionary(usage)) => match usage.get(b"View") {
+                Ok(lopdf::Object::Reference(vr)) => match doc.get_object(*vr) {
+                    Ok(lopdf::Object::Dictionary(view)) => match view.get(b"ViewState") {
+                        Ok(lopdf::Object::Name(n)) => n.as_slice() != b"OFF",
                         _ => true,
-                    }
-                }
+                    },
+                    _ => true,
+                },
                 _ => true,
-            }
-        }
+            },
+            _ => true,
+        },
         _ => true,
     };
 
@@ -492,12 +507,10 @@ fn detect_redaction_failures(doc: &lopdf::Document) -> Vec<String> {
 
         // Get annotations array
         let annots = match page_dict.get(b"Annots") {
-            Ok(lopdf::Object::Reference(r)) => {
-                match doc.get_object(*r) {
-                    Ok(lopdf::Object::Array(arr)) => arr.clone(),
-                    _ => continue,
-                }
-            }
+            Ok(lopdf::Object::Reference(r)) => match doc.get_object(*r) {
+                Ok(lopdf::Object::Array(arr)) => arr.clone(),
+                _ => continue,
+            },
             Ok(lopdf::Object::Array(arr)) => arr.clone(),
             _ => continue,
         };
@@ -531,13 +544,14 @@ fn detect_redaction_failures(doc: &lopdf::Document) -> Vec<String> {
             // Get the redaction rectangle
             let rect = match annot_dict.get(b"Rect") {
                 Ok(lopdf::Object::Array(arr)) if arr.len() == 4 => {
-                    let coords: Vec<f64> = arr.iter().filter_map(|o| {
-                        match o {
+                    let coords: Vec<f64> = arr
+                        .iter()
+                        .filter_map(|o| match o {
                             lopdf::Object::Integer(i) => Some(*i as f64),
                             lopdf::Object::Real(r) => Some(*r),
                             _ => None,
-                        }
-                    }).collect();
+                        })
+                        .collect();
                     if coords.len() == 4 {
                         Some((coords[0], coords[1], coords[2], coords[3]))
                     } else {
@@ -594,12 +608,10 @@ fn extract_suppressed_annotations(doc: &lopdf::Document) -> Vec<(u32, String, St
         };
 
         let annots = match page_dict.get(b"Annots") {
-            Ok(lopdf::Object::Reference(r)) => {
-                match doc.get_object(*r) {
-                    Ok(lopdf::Object::Array(arr)) => arr.clone(),
-                    _ => continue,
-                }
-            }
+            Ok(lopdf::Object::Reference(r)) => match doc.get_object(*r) {
+                Ok(lopdf::Object::Array(arr)) => arr.clone(),
+                _ => continue,
+            },
             Ok(lopdf::Object::Array(arr)) => arr.clone(),
             _ => continue,
         };
@@ -640,9 +652,7 @@ fn extract_suppressed_annotations(doc: &lopdf::Document) -> Vec<(u32, String, St
 
             // Get annotation content
             let content = match annot_dict.get(b"Contents") {
-                Ok(lopdf::Object::String(bytes, _)) => {
-                    String::from_utf8_lossy(bytes).to_string()
-                }
+                Ok(lopdf::Object::String(bytes, _)) => String::from_utf8_lossy(bytes).to_string(),
                 _ => String::new(),
             };
 
@@ -669,13 +679,16 @@ fn extract_suppressed_annotations(doc: &lopdf::Document) -> Vec<(u32, String, St
 pub fn extract_pdf_forensics(path: &str) -> PyResult<PdfForensics> {
     let path = Path::new(path);
 
-    let metadata = std::fs::metadata(path)
-        .map_err(|e| pyo3::exceptions::PyIOError::new_err(format!("Failed to read file metadata: {e}")))?;
+    let metadata = std::fs::metadata(path).map_err(|e| {
+        pyo3::exceptions::PyIOError::new_err(format!("Failed to read file metadata: {e}"))
+    })?;
 
     if metadata.len() > MAX_PDF_SIZE as u64 {
-        return Err(pyo3::exceptions::PyValueError::new_err(
-            format!("PDF file too large: {} bytes (max: {} bytes)", metadata.len(), MAX_PDF_SIZE)
-        ));
+        return Err(pyo3::exceptions::PyValueError::new_err(format!(
+            "PDF file too large: {} bytes (max: {} bytes)",
+            metadata.len(),
+            MAX_PDF_SIZE
+        )));
     }
 
     let doc = lopdf::Document::load(path)
@@ -702,13 +715,16 @@ pub fn extract_pdf_forensics(path: &str) -> PyResult<PdfForensics> {
 #[pyfunction]
 pub fn extract_pdf_forensics_from_bytes(data: &[u8]) -> PyResult<PdfForensics> {
     if data.len() > MAX_PDF_SIZE {
-        return Err(pyo3::exceptions::PyValueError::new_err(
-            format!("PDF data too large: {} bytes (max: {} bytes)", data.len(), MAX_PDF_SIZE)
-        ));
+        return Err(pyo3::exceptions::PyValueError::new_err(format!(
+            "PDF data too large: {} bytes (max: {} bytes)",
+            data.len(),
+            MAX_PDF_SIZE
+        )));
     }
 
-    let doc = lopdf::Document::load_mem(data)
-        .map_err(|e| pyo3::exceptions::PyIOError::new_err(format!("Failed to parse PDF bytes: {e}")))?;
+    let doc = lopdf::Document::load_mem(data).map_err(|e| {
+        pyo3::exceptions::PyIOError::new_err(format!("Failed to parse PDF bytes: {e}"))
+    })?;
 
     Ok(PdfForensics {
         ocg_layers: extract_ocg_layers(&doc),
@@ -732,7 +748,10 @@ mod tests {
             parse_pdf_date("D:20240115123000+05'00'"),
             Some("2024-01-15T12:30:00".to_string())
         );
-        assert_eq!(parse_pdf_date("D:20240301120000"), Some("2024-03-01T12:00:00".to_string()));
+        assert_eq!(
+            parse_pdf_date("D:20240301120000"),
+            Some("2024-03-01T12:00:00".to_string())
+        );
         assert_eq!(parse_pdf_date("invalid"), None);
         assert_eq!(parse_pdf_date(""), None);
     }
