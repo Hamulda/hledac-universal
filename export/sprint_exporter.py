@@ -1,35 +1,35 @@
-# Sprint 8VX §A: Export plane finish-up
+# Sprint 8VX Section  A: Export plane finish-up
 # - ExportHandoff confirmed as primary handoff surface (wired in __main__.py:2343)
 # - compat fallback documented with explicit removal conditions
 # - No new framework, no new store API
 """
-Sprint 8VI §A: EXPORT fáze — export_sprint() + _generate_next_sprint_seeds()
-Sprint 8VJ §C: ExportHandoff | dict → typed handoff spotřeba
-Sprint 8VX §A: Finish-up — removal conditions tightened, comments aligned with reality
+Sprint 8VI Section  A: EXPORT fáze  --  export_sprint() + _generate_next_sprint_seeds()
+Sprint 8VJ Section  C: ExportHandoff | dict -> typed handoff spotřeba
+Sprint 8VX Section  A: Finish-up  --  removal conditions tightened, comments aligned with reality
 
 
 
-Sprint F150I: product_value_summary — přenáší do exportu to, co runtime už ví:
+Sprint F150I: product_value_summary  --  přenáší do exportu to, co runtime už ví:
   - accepted/stored reality z dedup status
   - reject breakdown (low-info / duplicate / fail-open)
   - circuit breaker state pokud je k dispozici
   - gnn_predictions signal
   - phase_durations timing truth
-  - robustnější seed derivation (divný input → skip, ne pád)
+  - robustnější seed derivation (divný input -> skip, ne pád)
 Sprint F150J: Enhanced next-seed derivation driven by product_value_summary:
   - 4 seed categories: ioc_followup, query_suggestion, source_revisit, low_signal_recommendation
-  - signal_quality → query direction (refine/broaden/narrow/new_approach)
-  - reject_breakdown → query strategy (low_info_ratio → narrow scope)
-  - cb_open_domains → source_revisit with backoff
-  - depleted signal → retry_known_sources or new_approach
+  - signal_quality -> query direction (refine/broaden/narrow/new_approach)
+  - reject_breakdown -> query strategy (low_info_ratio -> narrow scope)
+  - cb_open_domains -> source_revisit with backoff
+  - depleted signal -> retry_known_sources or new_approach
   - Bounded output: max 12 seeds total, sorted by priority
-Sprint F150K: Next-action package — praktický follow-up balíček:
+Sprint F150K: Next-action package  --  praktický follow-up balíček:
   - hypothesis_engine.suggest_next_queries() jako bounded seam (fail-soft, lazy load)
   - human-readable sprint_summary block (co found / co nevyšlo / co dělat dál)
   - priority-based next actions (max 10, deduped, signal-derived)
   - focus/expand recommendations derived from signal_quality
   - NO new persistence, NO new planner, NO new write-back path
-Sprint F150L: Operator finish layer — derived seams integrated:
+Sprint F150L: Operator finish layer  --  derived seams integrated:
   - branch_value z scorecard (feed vs public branch analysis)
   - sprint_trend z store (poslední sprinty, fail-soft)
   - source_leaderboard z store (top zdroje, fail-soft)
@@ -39,7 +39,7 @@ Sprint F150L: Operator finish layer — derived seams integrated:
   - Rozhraní mezi feed/public branch recommendation
   - enriched next seeds z branch_value + sprint_trend
   - VŠECHNO derived only, žádný new business engine
-Sprint F150P: Finish-layer truth fields — canonical surfaces from scheduler/core:
+Sprint F150P: Finish-layer truth fields  --  canonical surfaces from scheduler/core:
   - runtime_truth, feed_verdict, public_verdict, signal_path, hypothesis_pack
     z ExportHandoff.scorecard (compute_sprint_intelligence output)
   - run_truth_note: operator-facing sprint characterization (meaningful vs smoke)
@@ -61,7 +61,7 @@ import os
 import pathlib
 from typing import TYPE_CHECKING, Any
 
-import aiofiles  # F350M-R: ISSUE-045 — native async file I/O, no thread pool overhead
+import aiofiles  # F350M-R: ISSUE-045  --  native async file I/O, no thread pool overhead
 
 # ISSUE [FINAL]-019-04: Max WARC snippets for dashboard export
 MAX_WARC_SNIPPETS = 20
@@ -70,7 +70,7 @@ MAX_WARC_SNIPPETS = 20
 # compat. narrative_builder.py holds TEMPORARY stubs (Sprint F232A) for
 # functions that will be re-implemented in the components package. Until then
 # the dispatcher in export/formatters.py imports them by name from
-# sprint_exporter — keep the contract intact here.
+# sprint_exporter  --  keep the contract intact here.
 from hledac.universal.export.components.narrative_builder import (  # noqa: F401
     _build_operator_brief,
     _build_sprint_summary,
@@ -92,11 +92,11 @@ from hledac.universal.core.feature_flags import FeatureFlags, FeatureFlag  # noq
 
 
 def _json_dumps(obj: Any, *, indent: int | None = None, default: Any = None) -> str:
-    """Sprint F285: Delegates to canonical codec. R13 — migrated from inline orjson."""
+    """Sprint F285: Delegates to canonical codec. R13  --  migrated from inline orjson."""
     from hledac.universal.utils.codec import encode_pretty, encode_str
 
     if default is not None:
-        # codec doesn't support custom default= handlers — use orjson/stdlib fallback
+        # codec doesn't support custom default= handlers  --  use orjson/stdlib fallback
         try:
             import orjson
 
@@ -119,7 +119,7 @@ logger = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------------------
-# Sprint F232A: Component imports — narrative, scorecard, pivot, signal, hypothesis
+# Sprint F232A: Component imports  --  narrative, scorecard, pivot, signal, hypothesis
 # ---------------------------------------------------------------------------
 from hledac.universal.export.components.hypothesis_builder import (  # noqa: E402
     _derive_hypothesis_queries,
@@ -151,7 +151,7 @@ from hledac.universal.runtime.investigation_planner import (  # noqa: E402
 import itertools  # for JSONFormatter.render_investigation_packet_markdown
 
 # ---------------------------------------------------------------------------
-# Sprint F214Z: JSONFormatter — moved from formatters.py to break circular import
+# Sprint F214Z: JSONFormatter  --  moved from formatters.py to break circular import
 # ---------------------------------------------------------------------------
 
 
@@ -163,7 +163,7 @@ class JSONFormatter:
     Thin: calls private helpers from sprint_exporter module directly.
 
     The 44 private helpers (seed generation, truth derivation, capability synthesis,
-    operator brief assembly) live in sprint_exporter.py — they are NOT moved here.
+    operator brief assembly) live in sprint_exporter.py  --  they are NOT moved here.
     """
 
     async def format(
@@ -204,7 +204,7 @@ class JSONFormatter:
         _sprint_id = eh.sprint_id if eh.sprint_id != "unknown" else (sprint_id or "unknown")
         report_path = get_sprint_json_report_path(_sprint_id)
 
-        # Sprint 8VZ §C: F10 runtime boundary — sanitize_outbound
+        # Sprint 8VZ Section  C: F10 runtime boundary  --  sanitize_outbound
         boundary_content = _make_serializable(eh.scorecard)
         boundary_text = orjson.dumps(boundary_content, option=orjson.OPT_INDENT_2).decode()
 
@@ -219,7 +219,7 @@ class JSONFormatter:
                 if "sanitized" in gate_result:
                     sanitized_str = gate_result["sanitized"]
                 else:
-                    logger.warning("[EXPORT] sanitize_outbound returned no 'sanitized' key — using degraded structure")
+                    logger.warning("[EXPORT] sanitize_outbound returned no 'sanitized' key  --  using degraded structure")
                     degraded = {
                         "_sanitize_failure": True,
                         "sprint_id": _sprint_id,
@@ -246,8 +246,8 @@ class JSONFormatter:
         else:
             sanitized_str = boundary_text
 
-        # Sprint F234: Parse once — boundary_content stays as dict, sanitize works on JSON string.
-        # No dict→str→dict→str roundtrip. All downstream ops on dict.
+        # Sprint F234: Parse once  --  boundary_content stays as dict, sanitize works on JSON string.
+        # No dict->str->dict->str roundtrip. All downstream ops on dict.
         try:
             sanitized_obj = orjson.loads(sanitized_str)
         except (orjson.JSONDecodeError, TypeError) as parse_err:
@@ -257,7 +257,7 @@ class JSONFormatter:
             )
             sanitized_obj = boundary_content if isinstance(boundary_content, dict) else {}
 
-        # Sprint F150I §2: Build product_value_summary
+        # Sprint F150I Section  2: Build product_value_summary
         pvs = _build_product_value_summary(store, eh, _sprint_id)
 
         # Sprint F229A: Reconcile terminal truth BEFORE capability_synthesis
@@ -271,7 +271,7 @@ class JSONFormatter:
             pvs = reconciled_pvs
             logger.info(f"[EXPORT] F229A truth reconciliation: {truth_recon_reason}")
 
-        # Sprint F225F/F228D: capability_synthesis — use cached truths
+        # Sprint F225F/F228D: capability_synthesis  --  use cached truths
         acquisition_report = _cached_acq_truth.get("acquisition_report") if isinstance(_cached_acq_truth, dict) else None
         capability_runtime_truth = _cached_runtime_truth
         capability_research_depth = _compute_research_depth(eh, pvs, None, None, None)
@@ -279,7 +279,7 @@ class JSONFormatter:
             pvs, eh.analyst_brief, capability_runtime_truth, acquisition_report, capability_research_depth
         )
 
-        # 1. JSON report — canonical path
+        # 1. JSON report  --  canonical path
         _pq_encrypted_path: str | None = None
         try:
             if isinstance(sanitized_obj, dict):
@@ -309,7 +309,7 @@ class JSONFormatter:
             elif isinstance(sanitized_obj, list):
                 sanitized_obj = {"_truncated_content": sanitized_obj, "product_value_summary": pvs, "capability_synthesis": capability_synthesis}
 
-            # PHYSICS-08: Serialize ONCE — all three writers share the same bytes.
+            # PHYSICS-08: Serialize ONCE  --  all three writers share the same bytes.
             # Eliminates triple orjson.dumps() (~1-3s per 200MB dict on M1 8GB).
             # SOVEREIGN-009: Sign forensic JSON report before serialization.
             from hledac.universal.brain.report_signer import sign_forensic_json
@@ -329,7 +329,7 @@ class JSONFormatter:
                             _report_bytes_written += len(_chunk)
 
                     # PHYSICS-08: Write streaming zstd sidecar asynchronously
-                    # compression.zstd (Python 3.14 stdlib) — streaming compressor
+                    # compression.zstd (Python 3.14 stdlib)  --  streaming compressor
                     _zst_path = Path(str(report_path) + ".zst")
                     try:
                         import compression.zstd as _zstd
@@ -341,14 +341,14 @@ class JSONFormatter:
                             _zst_f.write(_zst_compressor.flush())
                         _zst_size = _zst_path.stat().st_size
                         logger.info(
-                            f"[EXPORT] JSON report → {report_path} "
+                            f"[EXPORT] JSON report -> {report_path} "
                             f"({_report_bytes_written / 1024 / 1024:.1f} MiB) + "
-                            f"zstd sidecar → {_zst_path} "
+                            f"zstd sidecar -> {_zst_path} "
                             f"({_zst_size / 1024:.1f} KiB, "
                             f"{_zst_size / max(_report_bytes_written, 1) * 100:.1f}%)"
                         )
                     except ImportError:
-                        logger.debug("[EXPORT] compression.zstd not available — skipping zstd sidecar")
+                        logger.debug("[EXPORT] compression.zstd not available  --  skipping zstd sidecar")
                     except Exception as _zst_err:
                         logger.warning(f"[EXPORT] zstd sidecar failed (non-fatal): {_zst_err}")
                     return str(report_path)
@@ -367,7 +367,7 @@ class JSONFormatter:
             # Phase 2: PQ + Vault run in parallel (both read from pre-serialized bytes or file)
             async def _write_pq_encrypted() -> str | None:
                 """Post-process: PQ encrypt JSON report if enabled.
-                PHYSICS-08: Uses pre-serialized _json_bytes — no re-serialization."""
+                PHYSICS-08: Uses pre-serialized _json_bytes  --  no re-serialization."""
                 try:
                     # SWARM-010: Use FeatureFlags for registry compliance
                     from hledac.universal.core.feature_flags import FeatureFlags, FeatureFlag
@@ -398,7 +398,7 @@ class JSONFormatter:
                         }
                         with open(pq_path, "wb") as f:
                             f.write(orjson.dumps(encrypted_bundle))
-                        logger.info(f"[EXPORT] PQ-encrypted report → {pq_path}")
+                        logger.info(f"[EXPORT] PQ-encrypted report -> {pq_path}")
                         return pq_path
                     return None
                 except Exception as _pq_err:
@@ -427,7 +427,7 @@ class JSONFormatter:
                             archive_name=_archive_name,
                         )
                         if _enc_path:
-                            logger.info(f"[EXPORT] Vault encrypted → {_enc_path}")
+                            logger.info(f"[EXPORT] Vault encrypted -> {_enc_path}")
                             return _enc_path
                         return None
                 except Exception as _vault_err:
@@ -435,7 +435,7 @@ class JSONFormatter:
                     return None
 
             # Phase 2: PQ + Vault run in parallel (both read from pre-serialized bytes or file)
-            # ISSUE ASYNC-001: asyncio.gather → parallel() with bounded concurrency
+            # ISSUE ASYNC-001: asyncio.gather -> parallel() with bounded concurrency
             if report_path is not None:
                 _export_result = await parallel(
                     _write_pq_encrypted(),
@@ -598,7 +598,7 @@ class JSONFormatter:
                 from hledac.universal.export.dashboard_builder import WASMDashboardBuilder
 
                 # [META]-009/010: Get graph data via DuckDBGraphAttachment.export_graph_topology()
-                # Canonical path: _graph_attachment.export_graph_topology() → rich dict
+                # Canonical path: _graph_attachment.export_graph_topology() -> rich dict
                 # Fallback: DuckPGQGraph.export_edge_list() + get_top_nodes_by_degree()
                 graph_data: dict[str, Any] = {"nodes": [], "edges": []}
                 if store is not None:
@@ -675,7 +675,7 @@ class JSONFormatter:
                 # ISSUE [FINAL]-019-05: Extract WARC snippets for dashboard WARC replay panel.
                 # Primary: warc_snippets @property from EvidenceLog (populated during fetching).
                 # warc_snippets is an @property returning list[dict], so getattr() calls the
-                # getter and returns the list directly — no callable check needed.
+                # getter and returns the list directly  --  no callable check needed.
                 # Fallback: global singleton for cases where evidence_log is not injected.
                 warc_snippets: list[dict[str, Any]] = []
                 _snippets_candidates: list[dict[str, Any]] = []
@@ -688,7 +688,7 @@ class JSONFormatter:
                     except Exception:  # noqa: BLE001
                         pass
 
-                # ISSUE [FINAL]-019-05: Global fallback — when EvidenceLog is not injected,
+                # ISSUE [FINAL]-019-05: Global fallback  --  when EvidenceLog is not injected,
                 # use the global singleton populated by archive_http_response_cached().
                 if not _snippets_candidates:
                     try:
@@ -1228,7 +1228,7 @@ def reconcile_terminal_truth(
 
 
 # ---------------------------------------------------------------------------
-# Sprint F192F §1: PVS helper — type-safe numeric coercion for scorecard reads
+# Sprint F192F Section  1: PVS helper  --  type-safe numeric coercion for scorecard reads
 # Consolidates isinstance guard pattern used throughout _build_product_value_summary.
 # Guards against MagicMock / non-numeric values in test or degraded scenarios.
 # ---------------------------------------------------------------------------
@@ -1251,7 +1251,7 @@ async def export_partial_sprint(
     finding_count: int = 0,
 ) -> dict:
     """
-    PARTIAL EXPORT — recovery-grade JSON artifact written during aggressive-mode runs.
+    PARTIAL EXPORT  --  recovery-grade JSON artifact written during aggressive-mode runs.
 
     Triggered every N findings (default 10) in aggressive mode, and on early
     windup / immediate abort so the latest partial artifact remains available.
@@ -1261,7 +1261,7 @@ async def export_partial_sprint(
 
     Derived from the SAME canonical truth surfaces used by export_sprint():
     runtime_truth, scorecard, branch_mix.  Final export (export_sprint) is the
-    canonical terminal artifact — it does NOT read or delete the partial file;
+    canonical terminal artifact  --  it does NOT read or delete the partial file;
     the partial is purely a recovery surface.
 
     Never raises. Fail-soft: write errors are logged but do not crash the sprint.
@@ -1297,7 +1297,7 @@ async def export_partial_sprint(
     if _sc_rt is None:
         _sc_rt = scorecard.get("run_truth")
     if not runtime_truth and _sc_rt is not None and isinstance(_sc_rt, dict):
-        # F230B: filter raw_evidence — evidence lives only in LMDB, not JSON surfaces
+        # F230B: filter raw_evidence  --  evidence lives only in LMDB, not JSON surfaces
         _filtered_rt = {k: v for k, v in _sc_rt.items() if k != "raw_evidence"}
         runtime_truth = _filtered_rt
 
@@ -1312,7 +1312,7 @@ async def export_partial_sprint(
 
     try:
         # F214OPT314: compress transient artifact with zstd (10-18% size reduction, 1.3-1.5x faster)
-        # Written as NEW sidecar (.json.zst) — existing .json path untouched for backward compat
+        # Written as NEW sidecar (.json.zst)  --  existing .json path untouched for backward compat
         _text_data = _json_dumps(partial_artifact, indent=2, default=str)
         import compression.zstd
 
@@ -1320,9 +1320,9 @@ async def export_partial_sprint(
         partial_path_zst = partial_path.with_suffix(".json.zst")
         async with aiofiles.open(partial_path_zst, "wb") as f:
             await f.write(compressed)
-        logger.info(f"[PARTIAL-EXPORT] {partial_path_zst} — findings={finding_count} (zstd sidecar)")
+        logger.info(f"[PARTIAL-EXPORT] {partial_path_zst}  --  findings={finding_count} (zstd sidecar)")
         # Always write .json for backward compatibility with existing readers
-        # F350M-R ISSUE-045: aiofiles — true async I/O, no thread pool overhead
+        # F350M-R ISSUE-045: aiofiles  --  true async I/O, no thread pool overhead
         async with aiofiles.open(partial_path, "w", encoding="utf-8") as f:
             await f.write(_text_data)
     except Exception as ex:
@@ -1341,22 +1341,22 @@ async def export_sprint(
     evidence_log: Any = None,  # ISSUE [FINAL]-019-04: EvidenceLog for WARC provenance extraction
 ) -> dict:
     """
-    EXPORT fáze — JSON report, seed tasky pro příští sprint.
+    EXPORT fáze  --  JSON report, seed tasky pro příští sprint.
 
     Voláno z _print_scorecard_report() v __main__.py EXPORT fázi.
     Nikdy nevyhodí výjimku.
 
     Canonical input: typed ExportHandoff from __main__._print_scorecard_report().
-    The handoff parameter is declared as ExportHandoff — the canonical producer
+    The handoff parameter is declared as ExportHandoff  --  the canonical producer
     always passes typed ExportHandoff. The dict/None compat paths in
     ensure_export_handoff() are preserved for backward compat but are NOT
     exercised by the canonical producer path.
 
     export_mode (default "slim"):
-      slim — M1-safe minimal export. JSON report + next seeds + canonical runtime
+      slim  --  M1-safe minimal export. JSON report + next seeds + canonical runtime
              truth. No security enrichment, no stealth engine, no evidence chains,
              no hypothesis engine, no background monitoring.
-      full — Full export with all enrichment layers. Enables evidence_chain
+      full  --  Full export with all enrichment layers. Enables evidence_chain
              (igraph) and hypothesis_engine (numpy/mlx) when explicitly requested.
              Security enrichment (enable_security_enrichment=True) also requires
              full mode.
@@ -1370,25 +1370,25 @@ async def export_sprint(
       1. JSON report do ~/.hledac/reports/{sprint_id}_report.json
          Canonical path owner: paths.get_sprint_json_report_path() (post-F500B)
       2. Seed tasky pro příští sprint z top IOC graph nodes
-      3. Sprint F150I: product_value_summary — decisions有用的 pro další sprinty
+      3. Sprint F150I: product_value_summary  --  decisions有用的 pro další sprinty
 
     PRIMARY HANDOFF SURFACE (Sprint 8VX):
-      - ExportHandoff.top_nodes — kanonický zdroj pro seed generation
-      - ExportHandoff.scorecard — kanonický zdroj pro JSON report
+      - ExportHandoff.top_nodes  --  kanonický zdroj pro seed generation
+      - ExportHandoff.scorecard  --  kanonický zdroj pro JSON report
 
-    ACCEPTED COMPAT SEAM — store-facing fallback:
+    ACCEPTED COMPAT SEAM  --  store-facing fallback:
       - Pokud top_nodes prázdné (non-main caller passoval prázdný seznam),
-        zkusí store.get_top_seed_nodes(n=5) — store-facing seam.
-      - REMOVAL CONDITION: žádný — oba kanoničtí producenti (__main__._print_scorecard_report
+        zkusí store.get_top_seed_nodes(n=5)  --  store-facing seam.
+      - REMOVAL CONDITION: žádný  --  oba kanoničtí producenti (__main__._print_scorecard_report
         i core.__main__.run_sprint) vždy plní top_nodes z store.get_top_seed_nodes() PŘED
         konstrukcí ExportHandoff. Tento fallback je legacy defense pro ne-kanonické volající.
       - OBRAZ: __main__ řádek 2576: _top_nodes = store.get_top_seed_nodes(n=10)
         core.__main__ řádek 969: top_seed_nodes = store.get_top_seed_nodes(n=5)
-        → oba canonical producers už volaj store PŘED export_sprint(), fallback se nikdy netrefí.
+        -> oba canonical producers už volaj store PŘED export_sprint(), fallback se nikdy netrefí.
 
     Sparrow Principle: export_sprint is a thin dispatcher. The actual logic lives in
     JSONFormatter.format() (formatters.py). This module still contains all 44 private
-    helpers — they are NOT moved, just organized under the formatter class hierarchy.
+    helpers  --  they are NOT moved, just organized under the formatter class hierarchy.
     """
     from .formatters import JSONFormatter
 
@@ -1412,7 +1412,7 @@ def _action_to_seed(action: dict) -> dict | None:
     Bounds:
       max 12 total seeds (enforced by caller)
       stable ordering: priority desc, then action order
-      dedupe by (action, lane, target) — caller dedupes via _dedup_seeds
+      dedupe by (action, lane, target)  --  caller dedupes via _dedup_seeds
       no raw HTML, no raw evidence, no model imports, no network
 
     Returns None when action has no meaningful seed (e.g. stop_enough_evidence
@@ -1447,7 +1447,7 @@ def _action_to_seed(action: dict) -> dict | None:
                 "source": "investigation_packet.planner_actions",
             }
         case "run_wayback_on_url":
-            # target may be "https://example.com" — pass as-is, lane knows it's URL
+            # target may be "https://example.com"  --  pass as-is, lane knows it's URL
             return {
                 "seed_type": "lane_action",
                 "action": "run_wayback_on_url",
@@ -1474,7 +1474,7 @@ def _action_to_seed(action: dict) -> dict | None:
                 "source": "investigation_packet.planner_actions",
             }
         case "public_bootstrap_from_seed":
-            # target is plain query text — NOT an IOC. Do not fabricate ioc_type.
+            # target is plain query text  --  NOT an IOC. Do not fabricate ioc_type.
             return {
                 "seed_type": "public_bootstrap_seed",
                 "action": "public_bootstrap_from_seed",
@@ -1568,7 +1568,7 @@ def _planner_actions_to_seeds(planner_actions: list[dict]) -> tuple[list[dict], 
 
 def _derive_ioc_followup_seeds(top_nodes: list) -> list[dict[str, Any]]:
     """
-    Sprint F150J §1: IOC follow-up seeds from top graph nodes.
+    Sprint F150J Section  1: IOC follow-up seeds from top graph nodes.
     Extracted from _generate_next_sprint_seeds to reduce cyclomatic complexity.
     """
     seeds: list[dict[str, Any]] = []
@@ -1782,12 +1782,12 @@ async def _generate_next_sprint_seeds(
         seeds_zst = seeds_path.with_suffix(".json.zst")
         async with aiofiles.open(seeds_zst, "wb") as f:
             await f.write(compression.zstd.compress(_seeds_bytes, level=3))
-        logger.info(f"[EXPORT] {len(seeds)} seeds ({next_seeds_source}) → {seeds_zst} (zstd sidecar)")
-        # F350M-R ISSUE-045: aiofiles — true async I/O, no thread pool overhead
+        logger.info(f"[EXPORT] {len(seeds)} seeds ({next_seeds_source}) -> {seeds_zst} (zstd sidecar)")
+        # F350M-R ISSUE-045: aiofiles  --  true async I/O, no thread pool overhead
         async with aiofiles.open(seeds_path, "w", encoding="utf-8") as f:
             await f.write(_seeds_text)
         logger.info(
-            f"[EXPORT] {len(seeds)} seeds ({next_seeds_source}) ({', '.join(_seed_type_counts(seeds))}) → {seeds_path}"
+            f"[EXPORT] {len(seeds)} seeds ({next_seeds_source}) ({', '.join(_seed_type_counts(seeds))}) -> {seeds_path}"
         )  # noqa: E501
     except Exception as e:
         logger.warning(f"[EXPORT] Enhanced seed generation failed: {e}")
@@ -1802,7 +1802,7 @@ async def _generate_next_sprint_seeds(
         seeds_zst = seeds_path.with_suffix(".json.zst")
         async with aiofiles.open(seeds_zst, "wb") as f:
             await f.write(compression.zstd.compress(_empty_text.encode("utf-8"), level=3))
-        # F350M-R ISSUE-045: aiofiles — true async I/O, no thread pool overhead
+        # F350M-R ISSUE-045: aiofiles  --  true async I/O, no thread pool overhead
         async with aiofiles.open(seeds_path, "w", encoding="utf-8") as f:
             await f.write(_empty_text)
 
@@ -1820,15 +1820,15 @@ def _seed_type_counts(seeds: list[dict[str, Any]]) -> dict[str, int]:
 
 def _derive_query_seeds(pvs: dict[str, Any]) -> list[dict[str, Any]]:
     """
-    Sprint F150J: query_suggestion — derive next query seeds from sprint signal.
+    Sprint F150J: query_suggestion  --  derive next query seeds from sprint signal.
 
     Reads: signal_quality, reject_breakdown, accepted, ioc_density.
 
     Logic:
-      - high_density + accepted > 0 → suggest more of the same queries (query refinement)
-      - medium_density → suggest broadening scope
-      - low_density / slow_novelty → suggest different query strategy
-      - depleted → no query seeds (already tried hard, switch approach)
+      - high_density + accepted > 0 -> suggest more of the same queries (query refinement)
+      - medium_density -> suggest broadening scope
+      - low_density / slow_novelty -> suggest different query strategy
+      - depleted -> no query seeds (already tried hard, switch approach)
     """
     signal = pvs.get("_signal_quality_classification", "unknown")
     accepted = pvs.get("accepted", 0)
@@ -1838,7 +1838,7 @@ def _derive_query_seeds(pvs: dict[str, Any]) -> list[dict[str, Any]]:
 
     seeds: list[dict[str, Any]] = []
 
-    # Low-information rejection ratio — if most rejects were low-info, queries may be too broad
+    # Low-information rejection ratio  --  if most rejects were low-info, queries may be too broad
     total_rejected = pvs.get("total_rejected", 0)
     low_info_rejected = reject_breakdown.get("low_information", 0)
     low_info_ratio = low_info_rejected / total_rejected if total_rejected > 0 else 0.0
@@ -1896,13 +1896,13 @@ def _derive_query_seeds(pvs: dict[str, Any]) -> list[dict[str, Any]]:
 
 def _derive_source_revisit_seeds(pvs: dict[str, Any]) -> list[dict[str, Any]]:
     """
-    Sprint F150J: source_revisit — domains/hosts that need re-visiting.
+    Sprint F150J: source_revisit  --  domains/hosts that need re-visiting.
 
     Reads: cb_open_domains (circuit breaker open domains), signal_quality.
 
     Logic:
-      - cb_open_domains → retry with longer backoff
-      - depleted signal → revisit domains that previously timed out
+      - cb_open_domains -> retry with longer backoff
+      - depleted signal -> revisit domains that previously timed out
     """
     seeds: list[dict[str, Any]] = []
     cb_open: list[str] = pvs.get("cb_open_domains") or []
@@ -1920,7 +1920,7 @@ def _derive_source_revisit_seeds(pvs: dict[str, Any]) -> list[dict[str, Any]]:
                 }
             )
     elif signal == "depleted":
-        # No cb state but depleted — suggest retrying known sources with backoff
+        # No cb state but depleted  --  suggest retrying known sources with backoff
         seeds.append(
             {
                 "task_type": "source_revisit",
@@ -1935,7 +1935,7 @@ def _derive_source_revisit_seeds(pvs: dict[str, Any]) -> list[dict[str, Any]]:
 
 def _derive_low_signal_seeds(pvs: dict[str, Any]) -> list[dict[str, Any]]:
     """
-    Sprint F150J: low_signal_recommendation — when sprint found almost nothing.
+    Sprint F150J: low_signal_recommendation  --  when sprint found almost nothing.
 
     Reads: accepted, total_rejected, findings_per_minute.
 
@@ -1951,7 +1951,7 @@ def _derive_low_signal_seeds(pvs: dict[str, Any]) -> list[dict[str, Any]]:
     seeds: list[dict[str, Any]] = []
 
     if accepted <= 2 and findings_per_minute < 0.5 and total_rejected > 0:
-        # Sprint was nearly empty — offer practical restart suggestions
+        # Sprint was nearly empty  --  offer practical restart suggestions
         seeds.append(
             {
                 "task_type": "low_signal_recommendation",
@@ -1975,7 +1975,7 @@ def _derive_low_signal_seeds(pvs: dict[str, Any]) -> list[dict[str, Any]]:
 
 
 # ---------------------------------------------------------------------------
-# Sprint F226D §1: capability_synthesis-driven seeds
+# Sprint F226D Section  1: capability_synthesis-driven seeds
 # ---------------------------------------------------------------------------
 
 
@@ -1984,11 +1984,11 @@ def _derive_capability_seeds(capability_synthesis: dict[str, Any] | None) -> lis
     Sprint F226D: Derive seeds from capability_synthesis signals.
 
     Reads:
-      - feed_noise_summary → nonfeed seed if feed_noisy_no_nonfeed_signal
-      - source_diversity_summary → source diversity seed if weak
-      - corroboration_summary → corroboration seed if weak/none
-      - useful_evidence_present → quality seed if False
-      - next_investigation_action → investigation seed
+      - feed_noise_summary -> nonfeed seed if feed_noisy_no_nonfeed_signal
+      - source_diversity_summary -> source diversity seed if weak
+      - corroboration_summary -> corroboration seed if weak/none
+      - useful_evidence_present -> quality seed if False
+      - next_investigation_action -> investigation seed
 
     All seeds have seed_source="capability_synthesis" for traceability.
     Bounded: max 4 capability-derived seeds.
@@ -2006,7 +2006,7 @@ def _derive_capability_seeds(capability_synthesis: dict[str, Any] | None) -> lis
     next_action = capability_synthesis.get("next_investigation_action", "")
     next_engineering = capability_synthesis.get("next_engineering_action", "")
 
-    # 1. Feed noise → nonfeed evidence seed
+    # 1. Feed noise -> nonfeed evidence seed
     if feed_noise in ("feed_noisy_no_nonfeed_signal", "feed_dominant"):
         seeds.append(
             {
@@ -2019,7 +2019,7 @@ def _derive_capability_seeds(capability_synthesis: dict[str, Any] | None) -> lis
             }
         )
 
-    # 2. Weak source diversity → PUBLIC/CT/Wayback seed
+    # 2. Weak source diversity -> PUBLIC/CT/Wayback seed
     if source_diversity in ("single_source_feed_only", "single_source_niche", "unknown_source"):
         seeds.append(
             {
@@ -2032,7 +2032,7 @@ def _derive_capability_seeds(capability_synthesis: dict[str, Any] | None) -> lis
             }
         )
 
-    # 3. Weak corroboration → corroboration seed
+    # 3. Weak corroboration -> corroboration seed
     if corroboration in ("none", "noisy"):
         seeds.append(
             {
@@ -2045,7 +2045,7 @@ def _derive_capability_seeds(capability_synthesis: dict[str, Any] | None) -> lis
             }
         )
 
-    # 4. Weak evidence quality → quality improvement seed
+    # 4. Weak evidence quality -> quality improvement seed
     if not evidence_present:
         seeds.append(
             {
@@ -2058,7 +2058,7 @@ def _derive_capability_seeds(capability_synthesis: dict[str, Any] | None) -> lis
             }
         )
 
-    # 5. Next investigation action → top-priority investigation seed
+    # 5. Next investigation action -> top-priority investigation seed
     if next_action and isinstance(next_action, str) and len(next_action) > 3:
         seeds.append(
             {
@@ -2088,7 +2088,7 @@ def _derive_capability_seeds(capability_synthesis: dict[str, Any] | None) -> lis
 
 
 # ---------------------------------------------------------------------------
-# Sprint F226D §2: analyst_brief-driven seeds
+# Sprint F226D Section  2: analyst_brief-driven seeds
 # ---------------------------------------------------------------------------
 
 
@@ -2104,9 +2104,9 @@ def _derive_analyst_brief_seeds(analyst_brief: dict[str, Any] | None) -> list[di
     Sprint F226D: Derive seeds from analyst_brief fields.
 
     Reads:
-      - pivot_recommendations → pivot seeds (max 2)
-      - evidence_gaps → gap-filling seeds (max 1)
-      - risk_hypotheses → risk-investigation seeds (max 1)
+      - pivot_recommendations -> pivot seeds (max 2)
+      - evidence_gaps -> gap-filling seeds (max 1)
+      - risk_hypotheses -> risk-investigation seeds (max 1)
 
     All seeds have seed_source="analyst_brief".
     Bounded: max 4 analyst-brief-derived seeds total.
@@ -2165,7 +2165,7 @@ def _derive_analyst_brief_seeds(analyst_brief: dict[str, Any] | None) -> list[di
 
 
 # ---------------------------------------------------------------------------
-# Sprint F226D §3: seed deduplication
+# Sprint F226D Section  3: seed deduplication
 # ---------------------------------------------------------------------------
 
 
@@ -2194,9 +2194,9 @@ def _dedup_seeds(seeds: list[dict[str, Any]]) -> list[dict[str, Any]]:
 
 def _type_aware_seeds(value: str, ioc_type: str, reason: str = "top_graph_node") -> list[dict[str, Any]]:
     """
-    Sprint F500G §H2: Type-aware seed generation.
+    Sprint F500G Section  H2: Type-aware seed generation.
 
-    Truthful mapping — generates seeds JEN kde typu odpovídá task_type.
+    Truthful mapping  --  generates seeds JEN kde typu odpovídá task_type.
 
     | ioc_type  | rdap_lookup | domain_to_ct | dht_infohash_lookup |
     |-----------|-------------|--------------|---------------------|
@@ -2209,7 +2209,7 @@ def _type_aware_seeds(value: str, ioc_type: str, reason: str = "top_graph_node")
     | md5/sha*  | NO          | NO           | NO                  |
     | unknown   | NO          | NO           | NO                  |
 
-    Truthful skip: CVE, hash, unknown — žádné seed tasky, není co generovat.
+    Truthful skip: CVE, hash, unknown  --  žádné seed tasky, není co generovat.
     Willing to SKIP: není false-positive seed generation.
     """
     # Normalize ioc_type lowercase for matching
@@ -2239,7 +2239,7 @@ def _type_aware_seeds(value: str, ioc_type: str, reason: str = "top_graph_node")
                 },
             ]
         case "url":
-            # URL has host component — RDAP lookup makes sense
+            # URL has host component  --  RDAP lookup makes sense
             # domain_to_ct makes NO sense (URL is not a domain)
             return [
                 {
@@ -2259,9 +2259,9 @@ def _type_aware_seeds(value: str, ioc_type: str, reason: str = "top_graph_node")
                 },
             ]
         case "onion":
-            # Onion is not a DNS domain — no domain_to_ct
+            # Onion is not a DNS domain  --  no domain_to_ct
             # DHT lookup is marginally relevant (some Tor research uses DHT)
-            # but skip entirely to be safe — no strong signal
+            # but skip entirely to be safe  --  no strong signal
             return []
         case (
             "cve"
@@ -2283,14 +2283,14 @@ def _type_aware_seeds(value: str, ioc_type: str, reason: str = "top_graph_node")
             | "xmpp"
             | "jabber"
         ):
-            # Truthful skip — these types have no meaningful follow-up seed
+            # Truthful skip  --  these types have no meaningful follow-up seed
             # CVE: vuln ID not a network observable
             # Hashes: not domains, not infohashes, not IPs
             # Unknown: no valid seeds possible
             return []
         case _:
             # Catch-all for any other type not explicitly handled:
-            # generate NO seeds — better to skip than to generate falsy task
+            # generate NO seeds  --  better to skip than to generate falsy task
             return []
 
 
@@ -2453,7 +2453,7 @@ def _build_product_value_summary(
     sprint_id: str,
 ) -> dict[str, Any]:
     """
-    Sprint F150I §1: product_value_summary — agreguje truth surfaces do jednoho
+    Sprint F150I Section  1: product_value_summary  --  agreguje truth surfaces do jednoho
     rozhodovacího balíčku pro další sprinty.
     """
     scorecard = eh.scorecard if eh.scorecard else {}
@@ -2502,7 +2502,7 @@ def _build_product_value_summary(
     ioc_density = _pvs_n(scorecard, "ioc_density", 0.0)
     summary: dict[str, Any] = {
         "sprint_id": sprint_id,
-        # FACTS — raw data from scorecard/store
+        # FACTS  --  raw data from scorecard/store
         # [F223D] Renamed+aliased: accepted was ambiguous (FEED-lane-only in scorecard).
         # runtime_accepted_findings is the authoritative full-truth total at windup
         # (all lanes + ct_log_stored). accepted is kept as alias for backward compat.
@@ -2511,7 +2511,7 @@ def _build_product_value_summary(
         "reject_breakdown": reject_breakdown,
         "total_rejected": total_rejected,
         # [F223D] runtime_findings_per_minute is computed from runtime_accepted_findings
-        # and actual WINDUP/TEARDOWN phase duration — matches runtime truth rate.
+        # and actual WINDUP/TEARDOWN phase duration  --  matches runtime truth rate.
         # findings_per_minute reflects the scorecard field which may be 0.0 when scorecard
         # only captured FEED-lane findings; runtime_findings_per_minute is the trustworthy
         # per-minute rate based on all lanes.
@@ -2548,7 +2548,7 @@ def _build_product_value_summary(
         # F214-ACQ: Feed dominance and nonfeed diagnostic signals
         "feed_dominance_ratio": round(feed_dominance_ratio, 4) if feed_dominance_ratio is not None else None,
         "should_recommend_nonfeed_diagnostic": should_recommend_nonfeed_diagnostic,
-        # DERIVED — computed from facts (prefix _ = classification, not raw fact)
+        # DERIVED  --  computed from facts (prefix _ = classification, not raw fact)
         "_signal_quality_classification": signal_quality,
         # F229B: Lane corroboration score from src_family_outcomes
         "corroboration_score": _corroboration_score_value(scorecard),
@@ -2561,7 +2561,7 @@ def _build_product_value_summary(
         "terminal_coverage_reason": _terminal_coverage_reason_str(scorecard),
         # F232C: Provider yield signals from existing provider debug surfaces
         **_compute_provider_yield_signals(scorecard),
-        # F251E: Enrichment value delta — sidecar IOC yield measurement
+        # F251E: Enrichment value delta  --  sidecar IOC yield measurement
         **_build_enrichment_value_delta(scorecard, accepted),
     }
 
@@ -2573,7 +2573,7 @@ def _build_product_value_summary(
 # ---------------------------------------------------------------------------
 # F251E: Enrichment Value Delta
 # Measures how much new IOC value sidecars added vs. raw input findings.
-# Canonical read-only seam — no network, no model, no new store API.
+# Canonical read-only seam  --  no network, no model, no new store API.
 # ---------------------------------------------------------------------------
 
 
@@ -2690,7 +2690,7 @@ def _build_enrichment_value_delta(scorecard: dict, input_accepted: int) -> dict:
 # F254C: Engineering Action Map
 # Maps provider_yield_diagnosis + enrichment_value_delta to a deterministic
 # engineering action recommendation for the sprint report.
-# Canonical read-only seam — no network, no model, no new store API.
+# Canonical read-only seam  --  no network, no model, no new store API.
 # ---------------------------------------------------------------------------
 
 
@@ -2706,27 +2706,27 @@ def _apply_engineering_rule(
     """Apply engineering action rules in priority order. Returns action dict or None."""
     # Rule 1: no_positive_nonfeed_yield + no_input verdict
     if pyd_overall == "no_positive_nonfeed_yield" and evd_verdict == "no_input" and public_status != "error_or_zero":
-        return {"primary_action": "improve_nonfeed_provider_yield", "reason": "zero nonfeed yield with no input accepted — provider yield is the bottleneck", "target_area": "provider_yield", "confidence": 0.85}
+        return {"primary_action": "improve_nonfeed_provider_yield", "reason": "zero nonfeed yield with no input accepted  --  provider yield is the bottleneck", "target_area": "provider_yield", "confidence": 0.85}
 
     # Rule 2: public no_provider_selected
     if public_status == "error_or_zero" and "no_provider_selected" in str(public_reason):
-        return {"primary_action": "fix_public_provider_selection", "reason": "public provider was selected but returned zero — check provider bootstrap", "target_area": "provider_selection", "confidence": 0.90}
+        return {"primary_action": "fix_public_provider_selection", "reason": "public provider was selected but returned zero  --  check provider bootstrap", "target_area": "provider_selection", "confidence": 0.90}
 
     # Rule 3: provider returned zero or unavailable
     if public_status == "error_or_zero" and ("provider_returned_zero" in str(public_reason) or "provider_unavailable" in str(public_reason)):
-        return {"primary_action": "add_or_use_provider_replay_fixture", "reason": "provider returned zero or unavailable — replay fixture needed for diagnostics", "target_area": "provider_yield", "confidence": 0.80}
+        return {"primary_action": "add_or_use_provider_replay_fixture", "reason": "provider returned zero or unavailable  --  replay fixture needed for diagnostics", "target_area": "provider_yield", "confidence": 0.80}
 
     # Rule 4: useful enrichment yield
     if evd_verdict == "useful_enrichment_yield":
-        return {"primary_action": "continue_pivot_expansion", "reason": "enrichment sidecars produced unique IOCs — pivot expansion is working", "target_area": "enrichment", "confidence": 0.80}
+        return {"primary_action": "continue_pivot_expansion", "reason": "enrichment sidecars produced unique IOCs  --  pivot expansion is working", "target_area": "enrichment", "confidence": 0.80}
 
     # Rule 5: nonfeed successful but no enrichment yield
     if pyd_overall == "nonfeed_successful" and evd_verdict in ("no_enrichment_yield", "low_enrichment_yield"):
-        return {"primary_action": "improve_sidecar_input_or_mapping", "reason": "nonfeed lanes succeeded but sidecars yielded no unique IOCs — improve input mapping", "target_area": "enrichment", "confidence": 0.75}
+        return {"primary_action": "improve_sidecar_input_or_mapping", "reason": "nonfeed lanes succeeded but sidecars yielded no unique IOCs  --  improve input mapping", "target_area": "enrichment", "confidence": 0.75}
 
     # Rule 6: no enrichment yield with input accepted
     if evd_verdict == "no_enrichment_yield" and evd_input > 0:
-        return {"primary_action": "improve_sidecar_input_or_mapping", "reason": "input accepted but sidecars stored zero — improve sidecar input or IOC mapping", "target_area": "enrichment", "confidence": 0.75}
+        return {"primary_action": "improve_sidecar_input_or_mapping", "reason": "input accepted but sidecars stored zero  --  improve sidecar input or IOC mapping", "target_area": "enrichment", "confidence": 0.75}
 
     return None
 
@@ -2746,18 +2746,18 @@ def _build_engineering_action_map(
 
     Rules (in priority order):
       1. pyd.overall == "no_positive_nonfeed_yield" and evd.verdict == "no_input"
-         → improve_nonfeed_provider_yield / provider_yield
+         -> improve_nonfeed_provider_yield / provider_yield
       2. pyd.public.status == "error_or_zero" and "no_provider_selected" in pyd.public.reason
-         → fix_public_provider_selection / provider_selection
+         -> fix_public_provider_selection / provider_selection
       3. provider returned zero but was selected (non-skipped)
-         → add_or_use_provider_replay_fixture / provider_yield
+         -> add_or_use_provider_replay_fixture / provider_yield
       4. evd.verdict == "useful_enrichment_yield"
-         → continue_pivot_expansion / enrichment
+         -> continue_pivot_expansion / enrichment
       5. pyd.overall == "nonfeed_successful" and evd.verdict in ("no_enrichment_yield", "low_enrichment_yield")
-         → improve_sidecar_input_or_mapping / enrichment
+         -> improve_sidecar_input_or_mapping / enrichment
       6. evd.verdict == "no_enrichment_yield" and input_accepted > 0
-         → improve_sidecar_input_or_mapping / enrichment
-      7. Otherwise → none / none
+         -> improve_sidecar_input_or_mapping / enrichment
+      7. Otherwise -> none / none
 
     Bounds:
       - action names: improve_nonfeed_provider_yield | fix_public_provider_selection |
@@ -2799,7 +2799,7 @@ def _build_engineering_action_map(
 # ---------------------------------------------------------------------------
 # F260A: Expected Evidence Contract
 # Compares provider_yield_diagnosis against what was expected for the
-# mission intent + seed classes. Read-only seam — no network, no model.
+# mission intent + seed classes. Read-only seam  --  no network, no model.
 # ---------------------------------------------------------------------------
 
 
@@ -2952,7 +2952,7 @@ def _build_expected_evidence(
         minimum: any yields blockchain-adjacent indicators
 
       unknown / other:
-        no_strict_expectation — pass through
+        no_strict_expectation - pass through
 
     Bounds:
       - expected_families: bounded set per intent (see above)
@@ -2960,7 +2960,7 @@ def _build_expected_evidence(
       - contract_status: met | partial | unmet | no_strict_expectation
       - All lists bounded; empty lists when nothing missing.
     """
-    # Guard: fail-soft for None/non-dict pyd (empty families dict is valid — processes as unmet)
+    # Guard: fail-soft for None/non-dict pyd (empty families dict is valid  --  processes as unmet)
     if pyd is None or not isinstance(pyd, dict):
         return _handle_no_strict_expectation(intent)
 
@@ -2979,7 +2979,7 @@ def _build_expected_evidence(
     if handler is not None:
         return handler(families)
 
-    # Unknown intent — no strict expectation
+    # Unknown intent  --  no strict expectation
     return _handle_no_strict_expectation(intent)
 
 
@@ -3127,10 +3127,10 @@ def _corroboration_penalties_list(scorecard: dict) -> list:
 
 # F231A: Terminal coverage helpers (distinct from positive corroboration)
 def _terminal_coverage_score(scorecard: dict) -> float:
-    """Compute terminal coverage score (0.0–1.0) from lane outcomes.
+    """Compute terminal coverage score (0.0 - 1.0) from lane outcomes.
 
     Terminal coverage counts ATTEMPTED_ERROR / ATTEMPTED_TIMEOUT as "covered"
-    because the lane was planned and attempted — it is not absent/silent.
+    because the lane was planned and attempted  --  it is not absent/silent.
     This is separate from corroboration_score which only rewards positive outcomes.
     """
     from hledac.universal.runtime.corroboration_score import compute_terminal_coverage
@@ -3213,7 +3213,7 @@ def _compute_provider_yield_signals(
         ]  # noqa: E501
         _feed_only = (feed_entry is not None and (feed_entry.get("accepted_count") or 0) > 0) and not nonfeed_attempted  # noqa: E501
 
-    # 1. dependency_gap_families — from doh_provider_errors
+    # 1. dependency_gap_families  --  from doh_provider_errors
     _dep_gaps: list[str] = []
     for e in errors:
         if isinstance(e, str) and "dependency_missing" in e:
@@ -3227,7 +3227,7 @@ def _compute_provider_yield_signals(
                 if fam and fam not in _dep_gaps:
                     _dep_gaps.append(fam)
 
-    # 2. timeout_families — from terminal_state containing "timeout" or public_provider_errors
+    # 2. timeout_families  --  from terminal_state containing "timeout" or public_provider_errors
     _timeout_fams: list[str] = []
     for pe in pub_errors:
         if isinstance(pe, dict):
@@ -3245,7 +3245,7 @@ def _compute_provider_yield_signals(
                 if fam and fam not in _timeout_fams:
                     _timeout_fams.append(fam)
 
-    # 3. low_yield_families — families that attempted but produced minimal/no findings
+    # 3. low_yield_families  --  families that attempted but produced minimal/no findings
     _low_yield: list[str] = []
     for entry in sfo_list:
         if isinstance(entry, dict) and entry.get("attempted"):
@@ -3279,19 +3279,19 @@ def _compute_provider_yield_signals(
     corrob_score = _corroboration_score_value(scorecard)
 
     # High terminal coverage (all families reached terminal) + low corroboration
-    # → provider quality improvement recommended
+    # -> provider quality improvement recommended
     if terminal_score >= 0.75 and corrob_score < 0.3 and not _feed_only:
         _actions.append("improve_provider_quality")
 
-    # Feed-only with missing nonfeed lanes → scheduling recommendation, not provider quality
+    # Feed-only with missing nonfeed lanes -> scheduling recommendation, not provider quality
     if _feed_only and missing:
         _actions.append("expand_scheduling_coverage")
 
-    # Dependency gaps detected → fix dependencies
+    # Dependency gaps detected -> fix dependencies
     if _dep_gaps:
         _actions.append("resolve_provider_dependencies")
 
-    # Timeouts detected → improve provider reliability
+    # Timeouts detected -> improve provider reliability
     if _timeout_fams:
         _actions.append("improve_provider_reliability")
 
@@ -3319,12 +3319,12 @@ def _compute_provider_yield_signals(
 
 async def _get_sprint_trend(store: Any, last_n: int = 5) -> list[dict]:
     """
-    Sprint F183D §2: FAIL-SOFT async read seam — sprint trend.
+    Sprint F183D Section  2: FAIL-SOFT async read seam  --  sprint trend.
 
     READ SEAM PRIORITY (truth order):
-      1. async_query_sprint_trend(last_n) — PRIMARY: async DuckDB read
+      1. async_query_sprint_trend(last_n)  --  PRIMARY: async DuckDB read
          REMOVAL CONDITION: store migration to fully-typed async pipeline
-      2. get_sprint_trend(last_n) — COMPAT: sync wrapper fallback (deprecated)
+      2. get_sprint_trend(last_n)  --  COMPAT: sync wrapper fallback (deprecated)
          REMOVAL CONDITION: all callers use async path
 
     Both paths return same shape: list[dict] with sprint_id, new_findings, ioc_nodes.
@@ -3332,18 +3332,18 @@ async def _get_sprint_trend(store: Any, last_n: int = 5) -> list[dict]:
     The sync wrapper is retained as COMPAT fallback for callers that have not
     yet migrated to async context (e.g., sync report printing paths).
 
-    NOTE: This function is intentionally FAIL-SOFT — returns [] on any error.
+    NOTE: This function is intentionally FAIL-SOFT  --  returns [] on any error.
     Sprint trend is a nice-to-have in export output, never a blocker.
     """
     if store is None:
         return []
     try:
         if hasattr(store, "async_query_sprint_trend"):
-            # PRIMARY: async read seam — preferred for async export context
+            # PRIMARY: async read seam  --  preferred for async export context
             return await store.async_query_sprint_trend(last_n=last_n) or []
     except Exception:  # noqa: BLE001
         pass
-    # COMPAT FALLBACK: sync wrapper (deprecated — use async path above)
+    # COMPAT FALLBACK: sync wrapper (deprecated  --  use async path above)
     try:
         if hasattr(store, "get_sprint_trend"):
             # Run sync wrapper in executor to avoid blocking event loop
@@ -3356,12 +3356,12 @@ async def _get_sprint_trend(store: Any, last_n: int = 5) -> list[dict]:
 
 async def _get_source_leaderboard(store: Any, days: int = 7) -> list[dict]:
     """
-    Sprint F183D §2: FAIL-SOFT async read seam — source leaderboard.
+    Sprint F183D Section  2: FAIL-SOFT async read seam  --  source leaderboard.
 
     READ SEAM PRIORITY (truth order):
-      1. async_query_source_leaderboard(days) — PRIMARY: async DuckDB read
+      1. async_query_source_leaderboard(days)  --  PRIMARY: async DuckDB read
          REMOVAL CONDITION: store migration to fully-typed async pipeline
-      2. get_source_leaderboard(days) — COMPAT: sync wrapper fallback (deprecated)
+      2. get_source_leaderboard(days)  --  COMPAT: sync wrapper fallback (deprecated)
          REMOVAL CONDITION: all callers use async path
 
     Both paths return same shape: list[dict] with source_type, total_findings.
@@ -3369,18 +3369,18 @@ async def _get_source_leaderboard(store: Any, days: int = 7) -> list[dict]:
     The sync wrapper is retained as COMPAT fallback for callers that have not
     yet migrated to async context (e.g., sync report printing paths).
 
-    NOTE: This function is intentionally FAIL-SOFT — returns [] on any error.
+    NOTE: This function is intentionally FAIL-SOFT  --  returns [] on any error.
     Source leaderboard is a nice-to-have in export output, never a blocker.
     """
     if store is None:
         return []
     try:
         if hasattr(store, "async_query_source_leaderboard"):
-            # PRIMARY: async read seam — preferred for async export context
+            # PRIMARY: async read seam  --  preferred for async export context
             return await store.async_query_source_leaderboard(days=days) or []
     except Exception:  # noqa: BLE001
         pass
-    # COMPAT FALLBACK: sync wrapper (deprecated — use async path above)
+    # COMPAT FALLBACK: sync wrapper (deprecated  --  use async path above)
     try:
         if hasattr(store, "get_source_leaderboard"):
             # Run sync wrapper in executor to avoid blocking event loop
@@ -3411,7 +3411,7 @@ def _extract_field(
 
 def _get_acquisition_truth(eh: ExportHandoff) -> dict[str, Any]:
     """
-    Sprint F208J-C: Acquisition truth pass-through — handoff-first truth order.
+    Sprint F208J-C: Acquisition truth pass-through  --  handoff-first truth order.
 
     Priority for each field (fail-soft, no store access):
       acquisition_report:
@@ -3597,7 +3597,7 @@ def _get_feed_verdict(eh: ExportHandoff) -> dict[str, Any] | None:  # type: igno
     Sprint F150P: feed_verdict z ExportHandoff.scorecard.
 
     Aggregated feed economics verdict across sprint cycles.
-    Produced by compute_sprint_intelligence() → scorecard["feed_verdict"].
+    Produced by compute_sprint_intelligence() -> scorecard["feed_verdict"].
 
     Seam: scorecard["feed_verdict"]
     Fail-soft: returns None when not present.
@@ -3614,7 +3614,7 @@ def _get_public_verdict(eh: ExportHandoff) -> dict[str, Any] | None:  # type: ig
     Sprint F150P: public_verdict z ExportHandoff.scorecard.
 
     Aggregated public branch verdict across sprint cycles.
-    Produced by compute_sprint_intelligence() → scorecard["public_verdict"].
+    Produced by compute_sprint_intelligence() -> scorecard["public_verdict"].
 
     Seam: scorecard["public_verdict"]
     Fail-soft: returns None when not present.
@@ -3631,7 +3631,7 @@ def _get_signal_path(eh: ExportHandoff) -> dict[str, Any] | None:  # type: ignor
     Sprint F150P: signal_path z ExportHandoff.scorecard.
 
     Dominant signal path, next pivot recommendation, corroboration health.
-    Produced by compute_sprint_intelligence() → scorecard["signal_path"].
+    Produced by compute_sprint_intelligence() -> scorecard["signal_path"].
 
     Seam: scorecard["signal_path"]
     Fail-soft: returns None when not present.
@@ -3648,7 +3648,7 @@ def _get_hypothesis_pack(eh: ExportHandoff) -> dict[str, Any] | None:  # type: i
     Sprint F150P: hypothesis_pack z ExportHandoff.scorecard.
 
     Operator shortlist + actionability summary z hypothesis_engine.
-    Produced by compute_sprint_intelligence() → scorecard["hypothesis_pack"].
+    Produced by compute_sprint_intelligence() -> scorecard["hypothesis_pack"].
 
     Seam: scorecard["hypothesis_pack"]
     Fail-soft: returns None when not present.
@@ -3662,11 +3662,11 @@ def _get_hypothesis_pack(eh: ExportHandoff) -> dict[str, Any] | None:  # type: i
 
 def _get_canonical_run_summary(eh: ExportHandoff) -> dict[str, Any] | None:  # type: ignore[name-defined]
     """
-    Sprint F150P §2 + F157: canonical_run_summary — handoff-first truth order.
+    Sprint F150P Section  2 + F157: canonical_run_summary  --  handoff-first truth order.
 
     Truth order (priority):
-      1. eh.top_level["canonical_run_summary"] — primary canonical surface
-      2. eh.scorecard["canonical_run_summary"] — fallback pro scorecard-only builds
+      1. eh.top_level["canonical_run_summary"]  --  primary canonical surface
+      2. eh.scorecard["canonical_run_summary"]  --  fallback pro scorecard-only builds
 
     High-level sprint characterization produced by compute_sprint_intelligence().
     Contains: sprint_id, total_cycles, accepted_findings, signal_verdict,
@@ -3688,14 +3688,14 @@ def _get_canonical_run_summary(eh: ExportHandoff) -> dict[str, Any] | None:  # t
 
 def _get_sprint_verdict(eh: ExportHandoff) -> dict[str, Any] | None:  # type: ignore[name-defined]
     """
-    Sprint F150P §2 + F157: sprint_verdict — handoff-first truth order.
+    Sprint F150P Section  2 + F157: sprint_verdict  --  handoff-first truth order.
 
     Truth order (priority):
-      1. eh.top_level["sprint_verdict"] — primary canonical surface
-      2. eh.scorecard["sprint_verdict"] — fallback pro scorecard-only builds
+      1. eh.top_level["sprint_verdict"]  --  primary canonical surface
+      2. eh.scorecard["sprint_verdict"]  --  fallback pro scorecard-only builds
 
     Aggregated sprint quality verdict: success / partial / failed / degraded.
-    Produced by compute_sprint_intelligence() → scorecard["sprint_verdict"].
+    Produced by compute_sprint_intelligence() -> scorecard["sprint_verdict"].
 
     Fail-soft: returns None when not present.
     """
@@ -3713,11 +3713,11 @@ def _get_sprint_verdict(eh: ExportHandoff) -> dict[str, Any] | None:  # type: ig
 
 def _get_synthesis_outcome_payload(eh: ExportHandoff) -> dict[str, Any] | None:  # type: ignore[name-defined]
     """
-    Sprint F157: synthesis_outcome_payload — handoff-first truth order.
+    Sprint F157: synthesis_outcome_payload  --  handoff-first truth order.
 
     Truth order (priority):
-      1. eh.top_level["synthesis_outcome_payload"] — primary canonical surface
-      2. eh.scorecard["synthesis_outcome_payload"] — fallback pro scorecard-only builds
+      1. eh.top_level["synthesis_outcome_payload"]  --  primary canonical surface
+      2. eh.scorecard["synthesis_outcome_payload"]  --  fallback pro scorecard-only builds
 
     Serialized SynthesisOutcome seam from synthesis_runner.
     Fail-soft: returns None when not present (synthesis not run, or older builds).
@@ -3735,14 +3735,14 @@ def _get_synthesis_outcome_payload(eh: ExportHandoff) -> dict[str, Any] | None: 
 
 
 # Sprint F192H: Research Depth Metric
-# Source type depth tiers — higher tier = harder to reach = deeper research
+# Source type depth tiers  --  higher tier = harder to reach = deeper research
 #
 # Taxonomy normalization (Sprint F192H):
 #   - ct_log (ct_log_client.py:273) and ct_log_pipeline share tier 1
-#   - onion_discovery (live_public_pipeline.py:1785) → tier 2 (dark/deep web)
-#   - ipfs (ti_feed_adapter.py:1367) → tier 1 (structured TI)
-#   - shodan_search (shodan_wrapper.py:204) → tier 1 (structured TI)
-#   - bgp_monitor (ti_feed_adapter.py:1742) → tier 1 (structured TI)
+#   - onion_discovery (live_public_pipeline.py:1785) -> tier 2 (dark/deep web)
+#   - ipfs (ti_feed_adapter.py:1367) -> tier 1 (structured TI)
+#   - shodan_search (shodan_wrapper.py:204) -> tier 1 (structured TI)
+#   - bgp_monitor (ti_feed_adapter.py:1742) -> tier 1 (structured TI)
 #   - academic_discovery, pastebin_monitor, github_secret_scanner already present
 _SOURCE_TIER: dict[str, int] = {
     # Tier 0: indexed/surface (high availability, low depth)
@@ -3856,7 +3856,7 @@ def _compute_research_depth(
     hypothesis_pack: dict[str, Any] | None,
     correlation: dict[str, Any] | None,
 ) -> dict[str, Any]:
-    """Sprint F192H: research_depth_metric — derived from canonical surfaces only."""
+    """Sprint F192H: research_depth_metric  --  derived from canonical surfaces only."""
     scorecard = eh.scorecard if eh.scorecard else {}
     runtime_truth = _get_runtime_truth(eh)
 
@@ -3929,7 +3929,7 @@ def _determine_capability_verdict(
     Sprint FXXX: Determine capability verdict from truth surfaces.
     Returns (verdict, confidence).
     """
-    # Low corroboration with feed-only penalty → weak_capability
+    # Low corroboration with feed-only penalty -> weak_capability
     if _corrob_score < 0.3 and "feed_only_no_nonfeed" in _corrob_penalties:
         return "weak_capability", 0.70
 
@@ -3937,11 +3937,11 @@ def _determine_capability_verdict(
     if is_meaningful is False:
         return "smoke_capability", 0.85
 
-    # Runtime has accepted findings + terminality satisfied → useful_capability
+    # Runtime has accepted findings + terminality satisfied -> useful_capability
     if runtime_accepted > 0 and truth_recon_applied and terminality_satisfied:
         return "useful_capability", 0.80
 
-    # Terminality not satisfied → invalid_capability
+    # Terminality not satisfied -> invalid_capability
     if not terminality_satisfied:
         return "invalid_capability", 0.95
 
@@ -4133,7 +4133,7 @@ def _build_capability_synthesis(
     research_depth: dict[str, Any] | None,
 ) -> dict[str, Any]:
     """
-    Sprint F225F: capability_synthesis — did this run improve actual OSINT capability?
+    Sprint F225F: capability_synthesis  --  did this run improve actual OSINT capability?
 
     Answers:
       - Did this run produce useful OSINT capability?
@@ -4141,7 +4141,7 @@ def _build_capability_synthesis(
       - What is still weak?
       - What is the next high-value engineering action?
 
-    DERIVED ONLY — reads from existing canonical surfaces, NO new store reads,
+    DERIVED ONLY  --  reads from existing canonical surfaces, NO new store reads,
     NO network, NO MLX load. Fail-soft: returns "unknown" verdicts when data
     is missing (smoke runs, legacy sprints).
 
@@ -4238,14 +4238,14 @@ def _derive_run_truth_note(
     pvs: dict[str, Any] | None,
 ) -> str:
     """
-    Sprint F176D: run_truth_note — operator-facing sprint characterization.
+    Sprint F176D: run_truth_note  --  operator-facing sprint characterization.
 
     Tightened for fast operator triage: meaningful vs smoke vs degraded.
 
     Priority order:
-      1. runtime_truth["is_meaningful"] — primary empirical signal
-      2. sprint_verdict["verdict" / "sprint_status"] — synthesized verdict
-      3. pvs.signal_quality — last resort fallback
+      1. runtime_truth["is_meaningful"]  --  primary empirical signal
+      2. sprint_verdict["verdict" / "sprint_status"]  --  synthesized verdict
+      3. pvs.signal_quality  --  last resort fallback
 
     Labels are short for operator glance:
       - meaningful_run, smoke_run, slow_signal_run, mixed_run, degraded_run, unknown_run
@@ -4261,7 +4261,7 @@ def _derive_run_truth_note(
         elif isinstance(is_meaningful, str):
             return f"{is_meaningful}" + (f": {evidence_note}" if evidence_note else "")
 
-    # Priority 2: sprint_verdict — degraded/failed checked before general verdict
+    # Priority 2: sprint_verdict  --  degraded/failed checked before general verdict
     if sprint_verdict:
         status = sprint_verdict.get("sprint_status") or sprint_verdict.get("verdict") or ""
         if status in ("degraded", "failed"):
@@ -4304,7 +4304,7 @@ def _derive_branch_truth(  # noqa: F811
     branch_value: dict[str, Any] | None,
 ) -> str:
     """
-    Sprint F150P §1: branch_truth — definitive feed/public balance summary.
+    Sprint F150P Section  1: branch_truth  --  definitive feed/public balance summary.
 
     Combines feed_verdict + public_verdict + branch_value into single sentence.
 
@@ -4373,7 +4373,7 @@ def _check_degraded_health(
     if sprint_verdict:
         status = sprint_verdict.get("sprint_status") or sprint_verdict.get("verdict") or ""
         if status in ("degraded", "failed"):
-            return f"degraded sprint ({status}) — investigate root cause"
+            return f"degraded sprint ({status})  --  investigate root cause"
     return None
 
 def _check_high_risk_state(correlation: dict[str, Any] | None) -> str | None:
@@ -4381,7 +4381,7 @@ def _check_high_risk_state(correlation: dict[str, Any] | None) -> str | None:
     if correlation:
         high_risk = correlation.get("high_risk_branch") or correlation.get("high_risk") or []
         if high_risk:
-            return "investigate high-risk branch — critical findings present"
+            return "investigate high-risk branch  --  critical findings present"
     return None
 
 def _get_sprint_verdict_move(sprint_verdict: dict[str, Any] | None) -> str | None:

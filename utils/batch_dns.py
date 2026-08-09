@@ -472,6 +472,33 @@ class BatchDNSResolver:
                 result[host] = ips
         return result
 
+    def _normalize_hosts(self, hosts: list[str]) -> list[str]:
+        """Normalize hosts: strip, lowercase, dedupe while preserving first-seen order."""
+        seen: set[str] = set()
+        unique: list[str] = []
+        for h in hosts:
+            if not h:
+                continue
+            h_norm = h.strip().lower()
+            if h_norm and h_norm not in seen:
+                seen.add(h_norm)
+                unique.append(h_norm)
+        return unique
+
+    def _extract_ip_literals(self, hosts: list[str]) -> tuple[dict[str, list[str]], list[str]]:
+        """Extract IP literals from hosts. Returns (literal_results, non_literal_hosts)."""
+        import ipaddress
+        result: dict[str, list[str]] = {}
+        non_literal: list[str] = []
+        for host in hosts:
+            try:
+                ipaddress.ip_address(host)
+                result[host] = [host]
+                self._stats.cache_hits += 1
+            except ValueError:  # noqa: BLE001
+                non_literal.append(host)
+        return result, non_literal
+
     async def resolve_many(
         self,
         hosts: list[str],
@@ -499,63 +526,39 @@ class BatchDNSResolver:
             IPv4-literal hosts are returned as a single-element list
             (no DNS lookup) so the caller can treat the result uniformly.
         """
-        if not hosts:
-            return {}
-
-        if self._is_disabled():
+        if not hosts or self._is_disabled():
             return {}
 
         self._ensure_async_primitives()
         assert self._semaphore is not None
         assert self._lock is not None
-
         self._stats.batch_calls += 1
 
-        # Normalize input: drop empties, strip, dedupe while preserving
-        # first-seen order.
-        seen: set[str] = set()
-        unique_hosts: list[str] = []
-        for h in hosts:
-            if not h:
-                continue
-            h_norm = h.strip().lower()
-            if h_norm and h_norm not in seen:
-                seen.add(h_norm)
-                unique_hosts.append(h_norm)
-
+        unique_hosts = self._normalize_hosts(hosts)
         if not unique_hosts:
             return {}
 
-        # Split into cache hits (synchronous) and misses (async resolve).
-        result: dict[str, list[str]] = {}
         now = time.monotonic()
-        misses: list[str] = []
-        use_aiodns = self._ensure_aiodns()
+        result: dict[str, list[str]] = {}
 
-        # Use helper to check cache (excludes IPv4 literals)
+        # Check cache (excludes IPv4 literals)
         result, misses = await self._check_cached_results(unique_hosts, now)
-
-        # IPv4/IPv6 literal short-circuit
-        for host in list(misses):
-            try:
-                import ipaddress
-                ipaddress.ip_address(host)
-                result[host] = [host]
-                self._stats.cache_hits += 1
-                misses.remove(host)
-            except ValueError:  # noqa: BLE001
-                pass
-
         if not misses:
             return result
 
-        # Use helper to resolve misses
+        # IPv4/IPv6 literal short-circuit
+        literal_results, misses = self._extract_ip_literals(misses)
+        result.update(literal_results)
+        if not misses:
+            return result
+
+        # Resolve misses in parallel
+        use_aiodns = self._ensure_aiodns()
         ok_results = await self._resolve_unresolved(misses, timeout, use_aiodns)
 
-        # Update caches and build result using helper
+        # Update caches and build result
         new_results = await self._update_cache_entries(ok_results, now)
         result.update(new_results)
-
         return result
 
     def cache_size(self) -> int:

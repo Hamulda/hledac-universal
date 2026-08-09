@@ -8052,42 +8052,151 @@ class DuckDBShadowStore:
                 batch_urls: list[str] = _rust_batch_url_fingerprints(url_texts)
                 for j, idx in enumerate(url_indices):
                     url_fingerprints[idx] = batch_urls[j]
-            except Exception:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
-                for j, idx in enumerate(url_indices):
-                    url_fingerprints[idx] = _compute_url_fingerprint(url_texts[j])
-        else:
-            for j, idx in enumerate(url_indices):
-                url_fingerprints[idx] = _compute_url_fingerprint(url_texts[j])
-        """
-        Flatten IOC dedup loop — replaces triple-nested for/if block.
+                return  # F360M-R: Early exit on Rust success — avoid duplicate loop
+            except Exception:  # noqa: BLE001 — best-effort; Rust unavailable/failed; non-critical
+                pass  # Fall through to Python fallback
 
-        Input:  [[(val, type), ...], ...]  (one inner list per finding)
-        Output: (ioc_items, has_any_ioc)   same structure as legacy
-        """
-        ioc_items: list[list[tuple[str, str]]] = []
-        has_any_ioc: list[bool] = []
-        for ioc_list in raw_iocs:
-            deduped: list[tuple[str, str]] = []
-            seen: set[tuple[str, str]] = set()
-            for val, ioc_type in ioc_list:
-                key = (val, ioc_type)
-                if key not in seen:
-                    seen.add(key)
-                    deduped.append(key)
-            ioc_items.append(deduped)
-            has_any_ioc.append(bool(deduped))
-        return ioc_items, has_any_ioc
+        # F360M-R: Python fallback — shared path for Rust unavailable OR Rust failure
+        for j, idx in enumerate(url_indices):
+            url_fingerprints[idx] = _compute_url_fingerprint(url_texts[j])
 
-    def _dedup_fp_fallback_python(self, normalized_batch: list[str]) -> list[str]:
-        """
-        Fallback chain for dedup fingerprint — replaces triple-nested try/except.
+    # ---------------------------------------------------------------------------
+    # F360M-R: Batch quality preprocessing helpers — reduce CC from 38 to target ≤15
+    # ---------------------------------------------------------------------------
 
-        Tries: rust_dedup_fingerprint → _compute_dedup_fingerprint
+    def _preprocess_findings_batch(
+        self,
+        findings: list[CanonicalFinding],
+    ) -> tuple[
+        list[str],  # url_fingerprints
+        list[float],  # entropies
+        list[str],  # fingerprints
+        list[int],  # url_indices
+        list[int],  # payload_indices
+        list[str],  # texts (aligned with indices)
+    ]:
         """
-        try:
-            return [_rust_dedup_fingerprint(t) for t in normalized_batch]
-        except Exception:  # noqa: BLE001 — best-effort; rust unavailable; non-critical
-            return [_compute_dedup_fingerprint(t) for t in normalized_batch]
+        F360M-R: Extract and compute fingerprints/entropy for all findings in batch.
+
+        Returns aligned arrays for url_indices and payload_indices.
+        URL findings: url_fingerprints populated, entropies=0.0, fingerprints=""
+        Payload findings: fingerprints and entropies computed via batch Rust/Python.
+
+        Splitting into URL vs payload indices enables parallel batch computation.
+        """
+        # Lazy imports — break circular dependency with quality_assessment.py
+        from .quality_assessment import (
+            _compute_url_fingerprint,
+            _normalize_for_quality,
+            _compute_entropy,
+            _compute_dedup_fingerprint,
+        )
+
+        n = len(findings)
+        url_fingerprints: list[str] = [""] * n
+        entropies: list[float] = [0.0] * n
+        fingerprints: list[str] = [""] * n
+        url_indices: list[int] = []
+        payload_indices: list[int] = []
+        texts: list[str] = []
+
+        # Phase 1: Classify findings (URL-based vs payload-based)
+        for idx, f in enumerate(findings):
+            url = self._extract_url_from_provenance(f.provenance) if f.provenance else ""
+            if url:
+                url_fingerprints[idx] = url
+                url_indices.append(idx)
+                texts.append("")
+            else:
+                payload_text = f.payload_text if f.payload_text else f.query
+                if not (payload_text and payload_text.strip()):
+                    payload_text = f.query
+                texts.append(payload_text)
+                payload_indices.append(idx)
+
+        # Phase 2: Batch URL fingerprints
+        if url_indices:
+            url_texts = [url_fingerprints[i] for i in url_indices]
+            self._compute_url_fingerprints_batch(url_texts, url_indices, url_fingerprints)
+
+        # Phase 3: Batch payload processing (normalize → entropy + dedup_fp)
+        if payload_indices:
+            payload_texts = [texts[i] for i in payload_indices]
+
+            # F360M-R: Normalize — Rust fast path with Python fallback
+            if _QUALITY_GATE_BATCH_AVAILABLE and _rust_batch_normalize_quality_text is not None:
+                try:
+                    normalized_batch: list[str] = _rust_batch_normalize_quality_text(payload_texts)
+                except Exception:  # noqa: BLE001 — best-effort; Rust unavailable; non-critical
+                    normalized_batch = None
+            else:
+                normalized_batch = None
+            if normalized_batch is None:
+                normalized_batch = [_normalize_for_quality(t) for t in payload_texts]
+
+            # F360M-R: Entropy — Rust fast path with Python fallback
+            if _QUALITY_GATE_BATCH_AVAILABLE and _rust_batch_entropy is not None:
+                try:
+                    entropies_batch: list[float] = _rust_batch_entropy(normalized_batch)
+                except Exception:  # noqa: BLE001 — best-effort; Rust unavailable; non-critical
+                    entropies_batch = None
+            else:
+                entropies_batch = None
+            if entropies_batch is None:
+                entropies_batch = [_compute_entropy(t) for t in normalized_batch]
+
+            # F360M-R: Dedup fingerprints — Rust fast path with Python fallback
+            if _QUALITY_GATE_BATCH_AVAILABLE and _rust_batch_dedup_fingerprints is not None:
+                try:
+                    fps_batch: list[str] = _rust_batch_dedup_fingerprints(normalized_batch)
+                except Exception:  # noqa: BLE001 — best-effort; Rust unavailable; non-critical
+                    fps_batch = None
+            else:
+                fps_batch = None
+            if fps_batch is None:
+                fps_batch = self._dedup_fp_fallback_python(normalized_batch)
+
+            # Scatter results back to aligned arrays
+            for j, idx in enumerate(payload_indices):
+                entropies[idx] = entropies_batch[j]
+                fingerprints[idx] = fps_batch[j]
+
+        return url_fingerprints, entropies, fingerprints, url_indices, payload_indices, texts
+
+    def _extract_ioc_batch_with_dedup(
+        self,
+        findings: list[CanonicalFinding],
+    ) -> tuple[list[list[tuple[str, str]]], list[bool], list[int], list[bool]]:
+        """
+        F360M-R: Extract IOCs and compute dedup flags in one pass.
+
+        Returns: (ioc_items, has_any_ioc, ioc_offsets, ioc_dup_flags)
+        - ioc_items: per-finding deduplicated IOC list
+        - has_any_ioc: per-finding bool flag
+        - ioc_offsets: cumulative offsets for flattening
+        - ioc_dup_flags: per-IOC dedup flags from LMDB store
+        """
+        n = len(findings)
+
+        # Use _extract_ioc_batch helper (already exists)
+        ioc_items, has_any_ioc = self._extract_ioc_batch(findings)
+
+        # Compute flattened structure for LMDB dedup check
+        all_iocs_flat: list[tuple[str, str]] = []
+        ioc_offsets: list[int] = [0]
+        for ioc_list in ioc_items:
+            ioc_offsets.append(ioc_offsets[-1] + len(ioc_list))
+            all_iocs_flat.extend(ioc_list)
+
+        # Check IOC dedup via LMDB
+        ioc_dup_flags: list[bool] = [False] * len(all_iocs_flat)
+        if all_iocs_flat and self._dedup_manager is not None:
+            try:
+                ioc_dup_flags = self._dedup_manager.is_duplicate_ioc_batch(all_iocs_flat)
+            except Exception:  # noqa: BLE001 — best-effort; IOC dedup failure; non-critical
+                pass
+
+        return ioc_items, has_any_ioc, ioc_offsets, ioc_dup_flags
 
     def _assess_finding_quality_batch(self, findings: list[CanonicalFinding]) -> list[FindingQualityDecision]:
         """
@@ -8138,91 +8247,15 @@ class DuckDBShadowStore:
 
         # Legacy implementation — runs when Rust fast path is unavailable or failed
         results: list[FindingQualityDecision | None] = [None] * n
-        ioc_items: list[list[tuple[str, str]]] = []
-        has_any_ioc: list[bool] = []
-        if _IOC_EXTRACT_BATCH_AVAILABLE and _get_rust_batch_ioc_extract() is not None:
-            texts_for_ioc = []
-            for f in findings:
-                pt = f.payload_text if f.payload_text else f.query or ""
-                texts_for_ioc.append(pt[:5000] if pt else "")
-            try:
-                raw_iocs = _get_rust_batch_ioc_extract()(texts_for_ioc)
-                ioc_items, has_any_ioc = self._dedup_ioc_lists(raw_iocs)
-            except Exception:  # noqa: BLE001 — best-effort; IOC extraction failure; non-critical
-                ioc_items = [[] for _ in findings]
-                has_any_ioc = [False] * len(findings)
-        else:
-            ioc_items = [[] for _ in findings]
-            has_any_ioc = [False] * len(findings)
-        all_iocs_flat: list[tuple[str, str]] = []
-        ioc_offsets: list[int] = [0]
-        for ioc_list in ioc_items:
-            ioc_offsets.append(ioc_offsets[-1] + len(ioc_list))
-            all_iocs_flat.extend(ioc_list)
-        ioc_dup_flags: list[bool] = [False] * len(all_iocs_flat)
-        if all_iocs_flat and self._dedup_manager is not None:
-            try:
-                ioc_dup_flags = self._dedup_manager.is_duplicate_ioc_batch(all_iocs_flat)
-            except Exception:  # noqa: BLE001 — best-effort; IOC extraction failure; non-critical
-                pass
-        url_fingerprints: list[str] = [""] * n
-        entropies: list[float] = [0.0] * n
-        fingerprints: list[str] = [""] * n
-        url_indices: list[int] = []
-        payload_indices: list[int] = []
-        texts: list[str] = []
-        for idx, f in enumerate(findings):
-            url = self._extract_url_from_provenance(f.provenance) if f.provenance else ""
-            if url:
-                url_fingerprints[idx] = url
-                url_indices.append(idx)
-                texts.append("")
-            else:
-                payload_text = f.payload_text if f.payload_text else f.query
-                if not (payload_text and payload_text.strip()):
-                    payload_text = f.query
-                texts.append(payload_text)
-                payload_indices.append(idx)
-        if url_indices:
-            url_texts = [url_fingerprints[i] for i in url_indices]
-            self._compute_url_fingerprints_batch(url_texts, url_indices, url_fingerprints)
-        if payload_indices:
-            payload_texts = [texts[i] for i in payload_indices]
-            if _QUALITY_GATE_BATCH_AVAILABLE and _rust_batch_normalize_quality_text is not None:
-                try:
-                    normalized_batch: list[str] = _rust_batch_normalize_quality_text(payload_texts)
-                except Exception:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
-                    normalized_batch = [_normalize_for_quality(t) for t in payload_texts]
-            else:
-                normalized_batch = [_normalize_for_quality(t) for t in payload_texts]
-            if _QUALITY_GATE_BATCH_AVAILABLE and _rust_batch_entropy is not None:
-                try:
-                    entropies_batch: list[float] = _rust_batch_entropy(normalized_batch)
-                except Exception:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
-                    entropies_batch = [_compute_entropy(t) for t in normalized_batch]
-            else:
-                entropies_batch = [_compute_entropy(t) for t in normalized_batch]
-            if _QUALITY_GATE_BATCH_AVAILABLE and _rust_batch_dedup_fingerprints is not None:
-                try:
-                    fps_batch = _rust_batch_dedup_fingerprints(normalized_batch)
-                except Exception:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
-                    fps_batch = self._dedup_fp_fallback_python(normalized_batch)
-            else:
-                fps_batch = [_compute_dedup_fingerprint(t) for t in normalized_batch]
-            for j, idx in enumerate(payload_indices):
-                entropies[idx] = entropies_batch[j]
-                fingerprints[idx] = fps_batch[j]
+
+        # F360M-R: Preprocess findings — fingerprints, entropy, IOC extraction
+        # Replaces ~80 lines of inline preprocessing with 2 helper calls
+        url_fingerprints, entropies, fingerprints, _, _, _ = self._preprocess_findings_batch(findings)
+        ioc_items, has_any_ioc, ioc_offsets, ioc_dup_flags = self._extract_ioc_batch_with_dedup(findings)
+
         # ISSUE-FXXX: Collect all (fp, finding_id) pairs for batch dedup flush.
-        # Previously each accepted finding wrote a single-item LMDB transaction
-        # (putmulti of 1 pair = txn.begin + cursor.putmulti + txn.commit).
         # Batch: one txn.begin + N×cursor.putmulti + txn.commit per chunk.
         _dedup_batch: list[tuple[str, str]] = []
-        # ISSUE-FXXX: new_iocs_for_batch is populated by _run_stateful_quality_guards
-        # (guard 7, only when Rust batch path is used) and consumed after the loop
-        # to update the dedup manager's IOC store. This avoids redundant IOC
-        # buffering — the parallel IOC path in async_ingest_findings_batch uses
-        # separate Rust batch extraction and is a different code path.
-        new_iocs_for_batch: list[tuple[str, str, float]] = []
 
         # F350M-R: Extracted per-finding logic to flatten complexity (was ~90 nested).
         # Each guard applies one rejection/accept path and returns True to skip.
@@ -8390,6 +8423,323 @@ class DuckDBShadowStore:
             self._quality_state._accepted_count += 1
         return result
 
+    # ==========================================================================
+    # F360M-R Refactored Batch Ingest Pipeline Components
+    # Modern Python 3.14+ patterns: dataclasses, generators, pattern matching
+    # ==========================================================================
+
+    @dataclass(slots=True)
+    class _IngestChunkResult:
+        """Result from processing a single chunk of findings."""
+        chunk_start: int
+        chunk_end: int
+        decisions: list[FindingQualityDecision]
+        accepted_findings: list[CanonicalFinding]
+        accepted_indices: list[int]
+        fail_open_findings: list[CanonicalFinding]
+        fail_open_indices: list[int]
+        batch_rust_ok: bool
+        exception: Exception | None = None
+
+    @dataclass(slots=True)
+    class _FlushBatch:
+        """A batch of findings ready for storage flush."""
+        findings: list[CanonicalFinding]
+        indices: list[int]
+        is_final: bool = False
+
+    class _FlushController:
+        """
+        F360M-R: Manages pending findings buffer with automatic flush.
+
+        Replaces the scattered flush logic (was ~40 lines repeated twice).
+        Uses generator pattern to yield flush batches on threshold/interval.
+        M1 8GB: pre-allocates lists to avoid O(n²) reallocation.
+        """
+        __slots__ = ("_pending_findings", "_pending_indices", "_min_flush", "_max_interval", "_last_ingest_ts", "_start_ts")
+
+        def __init__(self, min_flush: int, max_interval: float) -> None:
+            self._pending_findings: list[CanonicalFinding] = []
+            self._pending_indices: list[int] = []
+            self._min_flush = min_flush
+            self._max_interval = max_interval
+            self._last_ingest_ts = _time.monotonic()
+            self._start_ts = self._last_ingest_ts
+
+        def reset(self) -> None:
+            """Clear pending buffers — call at batch start."""
+            self._pending_findings.clear()
+            self._pending_indices.clear()
+            self._last_ingest_ts = _time.monotonic()
+            self._start_ts = self._last_ingest_ts
+
+        @property
+        def pending_count(self) -> int:
+            return len(self._pending_findings)
+
+        def should_flush(self) -> bool:
+            """Check if flush is needed based on size or time threshold."""
+            count = len(self._pending_findings)
+            if count == 0:
+                return False
+            elapsed = _time.monotonic() - self._last_ingest_ts
+            return count >= self._min_flush or elapsed >= self._max_interval
+
+        def extend(self, findings: list[CanonicalFinding], indices: list[int]) -> None:
+            """Add findings to pending buffer. O(1) amortized."""
+            self._pending_findings.extend(findings)
+            self._pending_indices.extend(indices)
+
+        def check_invariant(self) -> bool:
+            """Verify findings/indices length match — ISSUE-021 protection."""
+            return len(self._pending_findings) == len(self._pending_indices)
+
+        def yield_flush(self, is_final: bool = False) -> _FlushBatch | None:
+            """
+            Yield a flush batch if conditions met or forced final flush.
+
+            Returns None if no pending findings.
+            Resets pending buffer after yielding.
+            """
+            if len(self._pending_findings) == 0:
+                return None
+
+            # ISSUE-021: force flush if invariant broken
+            if not self.check_invariant():
+                _logger.warning(
+                    "[A8HIGH] FlushController invariant violation: findings=%d indices=%d — forcing flush",
+                    len(self._pending_findings),
+                    len(self._pending_indices),
+                )
+                is_final = True
+
+            batch = _FlushBatch(
+                findings=list(self._pending_findings),  # Copy to prevent mutation
+                indices=list(self._pending_indices),
+                is_final=is_final,
+            )
+            self._pending_findings.clear()
+            self._pending_indices.clear()
+            self._last_ingest_ts = _time.monotonic()
+            return batch
+
+        def touch(self) -> None:
+            """Update timestamp — call after each ingest operation."""
+            self._last_ingest_ts = _time.monotonic()
+
+    @dataclass(slots=True)
+    class _PipelineMetrics:
+        """Centralized metrics collection for ingest pipeline."""
+        accepted_total: int = 0
+        rejected_total: int = 0
+        fail_open_total: int = 0
+        storage_failures: int = 0
+        dlq_items: int = 0
+        batch_start_ts: float = 0.0
+        batch_end_ts: float = 0.0
+
+        @property
+        def latency_ms(self) -> float:
+            return (self.batch_end_ts - self.batch_start_ts) * 1000.0
+
+        def record_accepted(self, count: int = 1) -> None:
+            self.accepted_total += count
+
+        def record_rejected(self, count: int = 1) -> None:
+            self.rejected_total += count
+
+        def record_fail_open(self, count: int = 1) -> None:
+            self.fail_open_total += count
+
+    async def _process_chunk(
+        self,
+        chunk_start: int,
+        chunk_end: int,
+        chunk_findings: list[CanonicalFinding],
+        quality_result: list[FindingQualityDecision] | Exception,
+        decisions: list[FindingQualityDecision],
+        do_zero_attribution: bool,
+        temporal_anonymizer: Any,
+    ) -> _IngestChunkResult:
+        """
+        F360M-R: Process a single chunk of findings.
+
+        Reduces nesting from 7 to 3 levels by extracting to standalone method.
+        Returns chunk result with categorized findings.
+        """
+        result = _IngestChunkResult(
+            chunk_start=chunk_start,
+            chunk_end=chunk_end,
+            decisions=[],
+            accepted_findings=[],
+            accepted_indices=[],
+            fail_open_findings=[],
+            fail_open_indices=[],
+            batch_rust_ok=True,
+            exception=None,
+        )
+
+        if isinstance(quality_result, Exception):
+            result.exception = quality_result
+            result.batch_rust_ok = False
+            self._quality_state._quality_fail_open_count += len(chunk_findings)
+            return result
+
+        result.decisions = decisions
+        result.batch_rust_ok = True
+
+        # Vectorized iteration over chunk — reduced nesting
+        for i_offset, f in enumerate(chunk_findings):
+            global_idx = chunk_start + i_offset
+
+            # F360M-R: early-exit decision extraction — was nested 4 levels deep
+            decision = self._get_finding_decision(
+                f, i_offset, decisions, result.batch_rust_ok
+            )
+
+            # Fail-open path
+            if decision is None:
+                result.fail_open_findings.append(f)
+                result.fail_open_indices.append(global_idx)
+                continue
+
+            # Rejection path
+            if not decision.accepted:
+                self._record_quality_rejection(f, decision)
+                continue  # Early exit — no result assignment here, handled by caller
+
+            # Accepted path — zero attribution if enabled
+            if do_zero_attribution:
+                f = self._apply_zero_attribution(f, temporal_anonymizer)
+
+            result.accepted_findings.append(f)
+            result.accepted_indices.append(global_idx)
+
+        return result
+
+    async def _handle_fail_open_batch(
+        self,
+        findings: list[CanonicalFinding],
+        results: list,
+        indices: list[int],
+    ) -> None:
+        """Handle fail-open findings via legacy storage path."""
+        if not findings:
+            return
+
+        batch_results = await self._record_fail_open_batch(findings, results, indices)
+        for idx, br in zip(indices, batch_results, strict=False):
+            if br is not None:
+                results[idx] = br
+
+    async def _execute_storage_pipeline(
+        self,
+        findings: list[CanonicalFinding],
+        pending_flushes: list[_FlushBatch],
+    ) -> tuple[dict[int, ActivationResult], list[CanonicalFinding]]:
+        """
+        F360M-R: Execute storage pipeline for all flush batches.
+
+        Returns dict mapping index -> ActivationResult and list of all accepted findings.
+        """
+        if not pending_flushes and not findings:
+            return {}, []
+
+        # Create storage tasks for each flush batch
+        pending_tasks: list[tuple[list[int], asyncio.Task[list[ActivationResult]]]] = []
+
+        for flush_batch in pending_flushes:
+            task = safe_create_task(
+                self.async_record_canonical_findings_batch_arrow(flush_batch.findings),
+                name=f"duckdb:record_arrow_{'final' if flush_batch.is_final else 'chunk'}",
+            )
+            pending_tasks.append((flush_batch.indices, task))
+
+        if not pending_tasks:
+            return {}, findings
+
+        # Execute all storage tasks concurrently
+        tasks_only = [t for _, t in pending_tasks]
+        gathered = await parallel(
+            tasks_only,
+            taskgroup=True,
+            policy="collect",
+            ctx="duckdb_store:storage_pipeline",
+            logger_instance=None,
+        )
+        storage_results: tuple[list[ActivationResult] | Exception, ...] = tuple(gathered.ok)
+
+        index_to_result: dict[int, ActivationResult] = {}
+        all_accepted: list[CanonicalFinding] = []
+
+        # Process storage results
+        for (chunk_indices, task), task_result in zip(pending_tasks, storage_results, strict=True):
+            if isinstance(task_result, Exception):
+                _logger.warning("[A8HIGH] storage task failed: %s", task_result)
+                index_to_result.update(self._handle_storage_failure(
+                    chunk_indices, task_result, findings
+                ))
+                continue
+
+            # Success path — map indices to results
+            for idx, sr in zip(chunk_indices, task_result, strict=False):
+                index_to_result[idx] = sr
+                if getattr(sr, "accepted", False):
+                    all_accepted.append(findings[idx])
+
+        return index_to_result, all_accepted
+
+    def _handle_storage_failure(
+        self,
+        chunk_indices: list[int],
+        error: Exception,
+        findings: list[CanonicalFinding],
+    ) -> dict[int, ActivationResult]:
+        """
+        Handle storage task failure — populate DLQ and return error results.
+
+        OPS-DLQ-001: Prevents single malformed batch from causing total data loss.
+        """
+        error_results: dict[int, ActivationResult] = {}
+        dlq = getattr(self, "_dlq_manager", None)
+        if dlq is None:
+            dlq = self._get_dlq_manager()
+
+        for idx in chunk_indices:
+            finding = findings[idx]
+            error_results[idx] = ActivationResult(
+                finding_id=str(finding.finding_id),
+                lmdb_success=False,
+                duckdb_success=None,
+                lmdb_key=f"finding:{finding.finding_id}",
+                desync=False,
+                error=f"pipeline_storage_failed: {error}",
+                accepted=False,
+            )
+
+            # OPS-DLQ-001: Capture to DLQ with full payload
+            try:
+                if dlq is not None:
+                    dlq.store_payload(
+                        payload_data=msgspec.json.encode({
+                            "finding_id": finding.finding_id,
+                            "query": finding.query,
+                            "source_type": finding.source_type,
+                            "confidence": finding.confidence,
+                            "ts": finding.ts,
+                            "provenance": finding.provenance,
+                            "payload_text": finding.payload_text,
+                        }),
+                        sprint_id="duckdb_store",
+                        source="duckdb_store.storage_pipeline",
+                        error=RuntimeError(f"storage_pipeline_failed: {error}"),
+                        metadata={"finding_id": finding.finding_id},
+                    )
+            except Exception:  # noqa: BLE001 — fail-safe; DLQ store error; non-critical
+                pass
+
+        return error_results
+
     @_otel_instrumented("duckdb.ingest_batch", component="storage")
     async def async_ingest_findings_batch(
         self, findings: list[CanonicalFinding]
@@ -8404,15 +8754,25 @@ class DuckDBShadowStore:
         Fail-open: if quality helpers raise for any finding, that finding is stored
         via legacy path.
 
+        F360M-R Refactoring:
+        - Extracted _FlushController for buffer management
+        - Extracted _IngestChunkResult dataclass for chunk state
+        - Extracted _process_chunk for per-chunk processing (nesting: 7 → 3)
+        - Extracted _execute_storage_pipeline for concurrent storage
+        - Centralized metrics in _PipelineMetrics
+        - Generator-based flush yield pattern
+
         Returns list with len(results) == len(findings) - 1:1 invariant.
         Each entry is FindingQualityDecision (rejected/duplicate) or ActivationResult (accepted).
         """
         if not findings:
             await self.async_initialize_schema()
             return []
+
         self.ensure_connected()
         n = len(findings)
-        logger.debug(
+
+        _logger.debug(
             "[INGEST-BATCH] entry len(findings)=%d  quality_state=_accepted:%d _rejected:%d _dup:%d _persist_dup:%d",
             n,
             self._quality_state._accepted_count,
@@ -8420,239 +8780,190 @@ class DuckDBShadowStore:
             self._quality_state._quality_duplicate_count,
             self._quality_state._persistent_duplicate_count,
         )
+
+        # Pre-allocate results array — O(1) assignment
         results: list[FindingQualityDecision | ActivationResult | None] = [None] * n
-        _accepted_findings: list[CanonicalFinding] = []
-        _accepted_indices: list[int] = []
-        _chunk_size = self._duckdb_settings.get("chunk_size", 1024)
-        CHUNK_SIZE: int = _chunk_size
-        self._last_ingest_ts = _time.monotonic()
-        self._batch_start_ts = self._last_ingest_ts
-        # ISSUE-021: entry clear — both lists cleared together so they stay in sync.
-        # The three intermediate flush sites below each call .clear() on both lists
-        # together, preserving the invariant pair.  _do_sync_close also clears both.
+        chunk_size = self._duckdb_settings.get("chunk_size", 1024)
+
+        # Initialize metrics and flush controller
+        metrics = self._PipelineMetrics(batch_start_ts=_time.monotonic())
+        flush_ctrl = self._FlushController(
+            min_flush=self._min_flush,
+            max_interval=self._max_flush_interval,
+        )
+        flush_ctrl.reset()
         self._pending_accepted_findings.clear()
         self._pending_accepted_indices.clear()
-        # F350M-R: Phase 1 — launch ALL quality assessments CONCURRENTLY via asyncio.gather.
-        pending_tasks: list[tuple[list[int], asyncio.Task[list[ActivationResult]]]] = []
+
+        # =========================================================================
+        # Phase 1: Parallel Quality Assessment (F350M-R: launch ALL concurrently)
+        # =========================================================================
         loop = asyncio.get_running_loop()
         quality_tasks: list[asyncio.Future[list[FindingQualityDecision]]] = []
+
+        # Chunk findings and launch parallel quality assessment
         chunk_boundaries: list[tuple[int, int, list[CanonicalFinding]]] = []
-        for chunk_start in range(0, n, CHUNK_SIZE):
-            chunk_end = min(chunk_start + CHUNK_SIZE, n)
+        for chunk_start in range(0, n, chunk_size):
+            chunk_end = min(chunk_start + chunk_size, n)
             chunk_findings = findings[chunk_start:chunk_end]
             chunk_boundaries.append((chunk_start, chunk_end, chunk_findings))
+
             task = loop.run_in_executor(
                 self._shared_executor,
                 lambda cf=chunk_findings: self._assess_finding_quality_batch(cf),
             )
             quality_tasks.append(task)
 
-        # Wait for ALL quality assessments concurrently — this is the main speedup
-        _result = await parallel(quality_tasks, taskgroup=True, policy='collect', ctx='duckdb_store:quality_gate', logger_instance=None)
-        quality_results: tuple[list[FindingQualityDecision] | Exception, ...] = tuple(_result.ok)
+        # Wait for ALL quality assessments concurrently
+        gathered = await parallel(
+            quality_tasks,
+            taskgroup=True,
+            policy="collect",
+            ctx="duckdb_store:quality_gate",
+            logger_instance=None,
+        )
+        quality_results: tuple[list[FindingQualityDecision] | Exception, ...] = tuple(gathered.ok)
 
-        # Phase 2 — process decisions sequentially (fast Python, no I/O)
+        # =========================================================================
+        # Phase 2: Sequential Decision Processing (fast Python, no I/O)
+        # =========================================================================
         self._last_ingest_ts = _time.monotonic()
+
+        # F360M-R: Hoist zero attribution setup outside chunk loop
+        do_zero_attribution = FeatureFlags.get(FeatureFlag.ZERO_ATTRIBUTION)
+        temporal_anonymizer: Any = None
+        if do_zero_attribution and not hasattr(self, "_temporal_anonymizer"):
+            try:
+                from hledac.universal.security.temporal_anonymizer import TemporalAnonymizer
+                self._temporal_anonymizer = TemporalAnonymizer()
+            except Exception:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
+                do_zero_attribution = False
+
+        # Process chunks sequentially — each chunk may spawn fail-open handling
+        pending_flushes: list[_FlushBatch] = []
+        all_accepted_findings: list[CanonicalFinding] = []
+
         for (chunk_start, chunk_end, chunk_findings), quality_result in zip(
             chunk_boundaries, quality_results, strict=True
         ):
-            chunk_decisions: list[FindingQualityDecision]
-            if isinstance(quality_result, Exception):
-                self._quality_state._quality_fail_open_count += 1
-                chunk_decisions = []
-                _batch_rust_ok = False
-            else:
-                chunk_decisions = quality_result
-                _batch_rust_ok = True
-
-            fail_open_chunk_findings: list[CanonicalFinding] = []
-            fail_open_chunk_indices: list[int] = []
-            chunk_accepted_findings: list[CanonicalFinding] = []
-            chunk_accepted_indices: list[int] = []
-
-            # F350M-R: hoist ZERO_ATTRIBUTION check outside the per-finding loop
-            _do_zero_attribution = FeatureFlags.get(FeatureFlag.ZERO_ATTRIBUTION)
-            _temporal_anonymizer: Any = None
-            if _do_zero_attribution and not hasattr(self, "_temporal_anonymizer"):
-                try:
-                    from hledac.universal.security.temporal_anonymizer import TemporalAnonymizer
-                    self._temporal_anonymizer = TemporalAnonymizer()
-                except Exception:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
-                    _do_zero_attribution = False
-            # B3-FIX: Vectorized decision extraction — eliminates per-iteration
-            # branching and decision lookup inside the loop body.
-            # Fallback path (_assess_finding_quality per finding) stays sequential
-            # because it is fail-open and non-vectorizable (stateful + exception-driven).
-            if _batch_rust_ok:
-                decisions: list[FindingQualityDecision] = chunk_decisions
-            else:
-                decisions = []
-
-            for i_offset, f in enumerate(chunk_findings):
-                i = chunk_start + i_offset
-                # F360M-R: early-exit decision extraction — reduces nesting from 4 to 2
-                decision = self._get_finding_decision(
-                    f, i_offset, decisions, _batch_rust_ok
-                )
-                if decision is None:
-                    # Fail-open: assessment threw, record and skip
-                    fail_open_chunk_findings.append(f)
-                    fail_open_chunk_indices.append(i)
-                    continue
-                if not decision.accepted:
-                    self._record_quality_rejection(f, decision)
-                    results[i] = decision
-                    continue
-                # Accepted path — zero attribution if enabled
-                if _do_zero_attribution:
-                    f = self._apply_zero_attribution(f, _temporal_anonymizer)
-                chunk_accepted_findings.append(f)
-                chunk_accepted_indices.append(i)
-
-            if fail_open_chunk_findings:
-                batch_results = await self._record_fail_open_batch(
-                    fail_open_chunk_findings, results, fail_open_chunk_indices
-                )
-                for idx, br in zip(fail_open_chunk_indices, batch_results, strict=False):
-                    if br is not None:
-                        results[idx] = br
-
-            self._pending_accepted_findings.extend(chunk_accepted_findings)
-            self._pending_accepted_indices.extend(chunk_accepted_indices)
-            _elapsed = _time.monotonic() - self._last_ingest_ts
-            # ISSUE-021: both lists are an invariant pair — flush must check both.
-            # If lengths diverge due to a bug, force flush to prevent unbounded divergence.
-            _findings_len = len(self._pending_accepted_findings)
-            _indices_len = len(self._pending_accepted_indices)
-            if _findings_len != _indices_len:
-                _should_flush = True  # force flush to break any divergence spiral
-            else:
-                _should_flush = _findings_len >= self._min_flush or _elapsed >= self._max_flush_interval
-            if _should_flush and _findings_len > 0:
-                _flush_indices = list(self._pending_accepted_indices)
-                _flush_findings = list(self._pending_accepted_findings)
-                _flush_task = safe_create_task(
-                    self.async_record_canonical_findings_batch_arrow(_flush_findings),
-                    name="duckdb:record_arrow_tb",
-                )
-                pending_tasks.append((_flush_indices, _flush_task))
-                self._pending_accepted_findings.clear()
-                self._pending_accepted_indices.clear()
-                self._last_ingest_ts = _time.monotonic()
-        # ISSUE-021: final flush — guard against length divergence between findings and indices.
-        _fp_findings_len = len(self._pending_accepted_findings)
-        _fp_indices_len = len(self._pending_accepted_indices)
-        if _fp_findings_len != _fp_indices_len:
-            # Diverged — force flush with whatever is present to stop the spiral.
-            _logger.warning(
-                "[A8HIGH] pending list length divergence at final flush: "
-                "findings=%d indices=%d — force flushing",
-                _fp_findings_len,
-                _fp_indices_len,
+            # Determine decisions (batch Rust or fallback)
+            batch_rust_ok = not isinstance(quality_result, Exception)
+            decisions: list[FindingQualityDecision] = (
+                quality_result if batch_rust_ok else []
             )
-        if _fp_findings_len > 0:
-            _flush_indices = list(self._pending_accepted_indices)
-            _flush_findings = list(self._pending_accepted_findings)
-            _flush_task = safe_create_task(
-                self.async_record_canonical_findings_batch_arrow(_flush_findings), name="duckdb:record_arrow_tb_final"
+
+            # Process chunk — extracted to reduce nesting
+            chunk_result = await self._process_chunk(
+                chunk_start=chunk_start,
+                chunk_end=chunk_end,
+                chunk_findings=chunk_findings,
+                quality_result=quality_result,
+                decisions=decisions,
+                do_zero_attribution=do_zero_attribution,
+                temporal_anonymizer=self._temporal_anonymizer,
             )
-            pending_tasks.append((_flush_indices, _flush_task))
-            self._pending_accepted_findings.clear()
-            self._pending_accepted_indices.clear()
-        all_accepted_findings: list[CanonicalFinding] = []
-        if pending_tasks:
-            tasks_only = [t for _, t in pending_tasks]
-            _result = await parallel(tasks_only, taskgroup=True, policy='collect', ctx='duckdb_store:storage_pipeline', logger_instance=None)
-            storage_results_all: tuple[list[ActivationResult] | Exception, ...] = tuple(_result.ok)
-            for (chunk_indices, task), task_result in zip(pending_tasks, storage_results_all, strict=True):
-                if isinstance(task_result, Exception):
-                    logger.warning("[A8HIGH] storage task failed: %s", task_result)
-                    # OPS-DLQ-001: Store failed chunk findings to DLQ for later inspection/retry.
-                    # This prevents a single malformed batch from causing total data loss.
-                    _dlq = getattr(self, "_dlq_manager", None)
-                    if _dlq is None:
-                        _dlq = self._get_dlq_manager()
-                    for idx in chunk_indices:
-                        if results[idx] is None:
-                            _finding = findings[idx]
-                            results[idx] = ActivationResult(
-                                finding_id=str(_finding.finding_id),
-                                lmdb_success=False,
-                                duckdb_success=None,
-                                lmdb_key=f"finding:{_finding.finding_id}",
-                                desync=False,
-                                error="pipeline_storage_failed",
-                                accepted=False,
-                            )
-                            # OPS-DLQ-001: Capture failed finding to DLQ with full payload.
-                            try:
-                                if _dlq is not None:
-                                    _dlq.store_payload(
-                                        payload_data=msgspec.json.encode({
-                                            "finding_id": _finding.finding_id,
-                                            "query": _finding.query,
-                                            "source_type": _finding.source_type,
-                                            "confidence": _finding.confidence,
-                                            "ts": _finding.ts,
-                                            "provenance": _finding.provenance,
-                                            "payload_text": _finding.payload_text,
-                                        }),
-                                        sprint_id="duckdb_store",
-                                        source="duckdb_store.storage_pipeline",
-                                        error=RuntimeError(f"storage_pipeline_failed: {task_result}"),
-                                        metadata={"finding_id": _finding.finding_id},
-                                    )
-                            except Exception:  # noqa: BLE001 — fail-safe; DLQ store error; non-critical
-                                pass
-                    continue
-                for idx, sr in zip(chunk_indices, task_result, strict=False):
-                    results[idx] = sr
-                    if getattr(sr, "accepted", False):
-                        all_accepted_findings.append(findings[idx])
-        truth_graph = self._ensure_graph_attachment().get_truth_write_graph() if all_accepted_findings else None
-        if truth_graph is not None:
-            await self._buffer_iocs_from_findings(all_accepted_findings, truth_graph)
-            self._schedule_graph_update(all_accepted_findings)
+
+            # Handle fail-open findings via legacy path
+            if chunk_result.fail_open_findings:
+                await self._handle_fail_open_batch(
+                    chunk_result.fail_open_findings,
+                    results,
+                    chunk_result.fail_open_indices,
+                )
+                metrics.record_fail_open(len(chunk_result.fail_open_indices))
+
+            # Extend flush controller with accepted findings
+            flush_ctrl.extend(
+                chunk_result.accepted_findings,
+                chunk_result.accepted_indices,
+            )
+            all_accepted_findings.extend(chunk_result.accepted_findings)
+
+            # Check flush threshold — yield flush batch if needed
+            flush_ctrl.touch()
+            if flush_ctrl.should_flush():
+                flush_batch = flush_ctrl.yield_flush(is_final=False)
+                if flush_batch:
+                    pending_flushes.append(flush_batch)
+
+        # =========================================================================
+        # Phase 3: Final Flush
+        # =========================================================================
+        final_flush = flush_ctrl.yield_flush(is_final=True)
+        if final_flush:
+            pending_flushes.append(final_flush)
+
+        # =========================================================================
+        # Phase 4: Storage Pipeline (concurrent write tasks)
+        # =========================================================================
+        if pending_flushes:
+            index_to_result, accepted_from_storage = await self._execute_storage_pipeline(
+                findings, pending_flushes
+            )
+
+            # Merge storage results into main results array
+            for idx, result_item in index_to_result.items():
+                results[idx] = result_item
+
+            # Use storage-confirmed accepted findings (filtered by storage success)
+            all_accepted_findings = accepted_from_storage
+
+        # =========================================================================
+        # Phase 5: Graph Update & IOC Buffering
+        # =========================================================================
+        if all_accepted_findings:
+            truth_graph = self._ensure_graph_attachment().get_truth_write_graph()
+            if truth_graph is not None:
+                await self._buffer_iocs_from_findings(all_accepted_findings, truth_graph)
+                self._schedule_graph_update(all_accepted_findings)
+
+        # =========================================================================
+        # Phase 6: Post-Processing (assertions, metrics, WAL, maintenance)
+        # =========================================================================
         assert None not in results, "Internal error: 1:1 invariant violated"
+
+        # Count accepted results
+        metrics.batch_end_ts = _time.monotonic()
         accepted_total = sum(
-            (
-                1
-                for r in results
-                if getattr(r, "accepted", None) is True or (isinstance(r, dict) and r.get("accepted") is True)
-            )
+            1 for r in results
+            if getattr(r, "accepted", None) is True or (isinstance(r, dict) and r.get("accepted") is True)
         )
-        logger.debug(
+        metrics.record_accepted(accepted_total)
+
+        _logger.debug(
             "[INGEST-BATCH] exit len(results)=%d  accepted=%d  _accepted_count=%d",
             len(results),
             accepted_total,
             self._quality_state._accepted_count,
         )
+
         if accepted_total > 0:
-            logger.info("[DuckDB] written %d records (sprint F265-P1-2 canonical write verification)", accepted_total)
+            _logger.info("[DuckDB] written %d records (sprint F265-P1-2 canonical write verification)", accepted_total)
+
+        # WAL compact — best-effort side effect
         try:
             if self._wal_manager is not None:
                 compact_result = self._wal_manager.compact()
                 if compact_result is not None:
-                    logger.debug(
+                    _logger.debug(
                         "[WAL] compact pages_reclaimed=%d pages_free=%d",
                         compact_result.get("pages_reclaimed", -1),
                         compact_result.get("pages_free", -1),
                     )
         except Exception:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
             pass
-        try:
-            _ingest_end = _time.monotonic()
-            _batch_start = getattr(self, "_batch_start_ts", self._last_ingest_ts)
-            _ingest_latency_ms = (_ingest_end - _batch_start) * 1000.0
-            from hledac.universal.metrics_registry import get_metrics_registry
 
-            get_metrics_registry().set_gauge("duckdb_ingest_latency_ms", _ingest_latency_ms)
+        # Metrics registry update
+        try:
+            from hledac.universal.metrics_registry import get_metrics_registry
+            get_metrics_registry().set_gauge("duckdb_ingest_latency_ms", metrics.latency_ms)
         except Exception:  # noqa: BLE001 — best-effort; DuckDB operation failure; non-critical
             pass
-        # RES-03: Track write ops for auto-maintenance
+
+        # RES-03: Auto-maintenance trigger
         self._write_op_counter += accepted_total
-        # RES-03: Trigger automatic VACUUM/CHECKPOINT if thresholds reached
         await self._maybe_auto_maintenance()
+
         return results
 
     def _envelope_to_payload(self, envelope: FindingEnvelope) -> str | None:

@@ -155,6 +155,154 @@ def _clonefile_or_copy(src: Path, dst: Path) -> bool:
             return False
 
 
+def _auto_detect_evidence_path(sprint_id: str) -> Path | None:
+    """Auto-detect evidence path from EVIDENCE_ROOT."""
+    from hledac.universal.paths import EVIDENCE_ROOT
+    evidence_candidates = list(EVIDENCE_ROOT.glob(f"*{sprint_id}*.jsonl"))
+    return evidence_candidates[0] if evidence_candidates else None
+
+def _add_file_artifact(
+    artifacts: dict[str, bytes],
+    manifest_entries: list[dict[str, str]],
+    path: Path,
+    name: str,
+    optional: bool = False,
+) -> None:
+    """Add a file artifact to bundle. Logs warning if optional and not found."""
+    if not path or not path.exists():
+        if not optional:
+            logger.warning(f"[BUNDLER] {name} not found: {path}")
+        else:
+            logger.debug(f"[BUNDLER] {name} not found: {path}")
+        return
+    try:
+        data = path.read_bytes()
+        artifacts[name] = data
+        manifest_entries.append({
+            "file": name,
+            "sha256": _compute_sha256(data),
+            "size": str(len(data)),
+        })
+        logger.debug(f"[BUNDLER] Added {name} ({len(data)} bytes)")
+    except Exception as e:
+        logger.warning(f"[BUNDLER] Failed to read {name}: {e}")
+
+def _add_compressed_evidence(
+    artifacts: dict[str, bytes],
+    manifest_entries: list[dict[str, str]],
+    evidence_path: Path,
+) -> None:
+    """Add evidence file with optional zstd compression."""
+    try:
+        evidence_bytes = evidence_path.read_bytes()
+        try:
+            import compression.zstd
+            evidence_compressed = compression.zstd.compress(evidence_bytes, level=9)
+            artifacts["evidence.jsonl.zst"] = evidence_compressed
+            manifest_entries.append({
+                "file": "evidence.jsonl.zst",
+                "sha256": _compute_sha256(evidence_compressed),
+                "size": str(len(evidence_compressed)),
+            })
+            ratio = len(evidence_compressed) / len(evidence_bytes)
+            logger.debug(
+                f"[BUNDLER] Added evidence.jsonl.zst "
+                f"({len(evidence_bytes)} → {len(evidence_compressed)} bytes, "
+                f"ratio={ratio:.2%})"
+            )
+        except ImportError:
+            artifacts["evidence.jsonl"] = evidence_bytes
+            manifest_entries.append({
+                "file": "evidence.jsonl",
+                "sha256": _compute_sha256(evidence_bytes),
+                "size": str(len(evidence_bytes)),
+            })
+            logger.warning("[BUNDLER] compression.zstd not available, storing uncompressed")
+    except Exception as e:
+        logger.warning(f"[BUNDLER] Failed to read evidence: {e}")
+
+def _add_dashboard_artifact(
+    artifacts: dict[str, bytes],
+    manifest_entries: list[dict[str, str]],
+    dashboard_html: Path,
+    output_path: Path,
+) -> None:
+    """Add dashboard HTML artifact and copy alongside bundle."""
+    try:
+        html_bytes = dashboard_html.read_bytes()
+        artifacts["dashboard.html"] = html_bytes
+        manifest_entries.append({
+            "file": "dashboard.html",
+            "sha256": _compute_sha256(html_bytes),
+            "size": str(len(html_bytes)),
+        })
+        logger.debug(f"[BUNDLER] Added dashboard.html ({len(html_bytes)} bytes)")
+        try:
+            import shutil as _shutil
+            _shutil.copy2(dashboard_html, output_path.with_suffix(".html"))
+        except Exception:  # noqa: BLE001
+            pass  # Non-fatal
+    except Exception as e:
+        logger.warning(f"[BUNDLER] Failed to read dashboard: {e}")
+
+def _create_bundle_archive(
+    artifacts: dict[str, bytes],
+    output_path: Path,
+    sprint_id: str,
+    timestamp: str,
+) -> Path | None:
+    """Create tar archive, compress with zstd, and write to disk."""
+    # Build manifest
+    manifest_lines = [
+        "# SHA-256 manifest for .hledac-sprint bundle",
+        f"# Sprint: {sprint_id}",
+        f"# Timestamp: {timestamp}",
+        "# Format: <sha256>  <filename>",
+        "",
+    ]
+    for entry in _collect_manifest_entries(artifacts):
+        manifest_lines.append(f"{entry['sha256']}  {entry['file']}")
+    manifest_text = "\n".join(manifest_lines) + "\n"
+    manifest_bytes = manifest_text.encode("utf-8")
+    artifacts["manifest.sha256"] = manifest_bytes
+
+    # Create tar in memory
+    try:
+        tar_buffer = io.BytesIO()
+        with tarfile.open(fileobj=tar_buffer, mode="w") as tar:
+            for filename, data in artifacts.items():
+                info = tarfile.TarInfo(name=filename)
+                info.size = len(data)
+                info.mtime = datetime.now(UTC).timestamp()
+                tar.addfile(info, io.BytesIO(data))
+        tar_bytes = tar_buffer.getvalue()
+
+        # Compress with zstd
+        try:
+            import compression.zstd
+            bundle_bytes = compression.zstd.compress(tar_bytes, level=9)
+            ratio = len(bundle_bytes) / len(tar_bytes)
+            logger.debug(f"[BUNDLER] tar.zst: {len(tar_bytes)} → {len(bundle_bytes)} bytes ({ratio:.2%})")
+        except ImportError:
+            bundle_bytes = tar_bytes
+            output_path = output_path.with_suffix(".tar")
+            logger.warning("[BUNDLER] compression.zstd not available, storing as .tar")
+
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        output_path.write_bytes(bundle_bytes)
+        logger.info(f"[BUNDLER] Bundle created: {output_path} ({len(bundle_bytes)} bytes)")
+        return output_path
+    except Exception as e:
+        logger.error(f"[BUNDLER] Failed to create bundle: {e}", exc_info=True)
+        return None
+
+def _collect_manifest_entries(artifacts: dict[str, bytes]) -> list[dict[str, str]]:
+    """Collect manifest entries from artifacts dict."""
+    return [
+        {"file": filename, "sha256": _compute_sha256(data), "size": str(len(data))}
+        for filename, data in artifacts.items()
+    ]
+
 async def bundle_sprint(
     sprint_id: str,
     report_path: Path | None = None,
@@ -175,9 +323,6 @@ async def bundle_sprint(
         output_path: Output bundle path (optional, auto-generated)
         metadata: Additional metadata to include in bundle
         dashboard_html: [META]-009: Path to pre-generated dashboard.html.
-                       When set, the dashboard is included as dashboard.html
-                       in the tar.zst archive AND stored alongside the bundle
-                       as {sprint_id}.html for direct browser opening.
 
     Returns:
         Path to created bundle, or None on failure
@@ -188,7 +333,6 @@ async def bundle_sprint(
         get_sprint_bundle_path,
         get_sprint_json_report_path,
         get_sprint_next_seeds_path,
-        EVIDENCE_ROOT,
     )
 
     # Auto-detect paths if not provided
@@ -197,11 +341,7 @@ async def bundle_sprint(
     if seeds_path is None:
         seeds_path = get_sprint_next_seeds_path(sprint_id)
     if evidence_path is None:
-        # Evidence is stored as {run_id}.jsonl in EVIDENCE_ROOT
-        # Try to find evidence for this sprint
-        evidence_candidates = list(EVIDENCE_ROOT.glob(f"*{sprint_id}*.jsonl"))
-        if evidence_candidates:
-            evidence_path = evidence_candidates[0]
+        evidence_path = _auto_detect_evidence_path(sprint_id)
     if output_path is None:
         output_path = get_sprint_bundle_path(sprint_id)
 
@@ -213,10 +353,11 @@ async def bundle_sprint(
     manifest_entries: list[dict[str, str]] = []
 
     # 1. Metadata
+    timestamp = datetime.now(UTC).isoformat()
     bundle_metadata = {
         "sprint_id": sprint_id,
         "format_version": BUNDLE_FORMAT_VERSION,
-        "timestamp": datetime.now(UTC).isoformat(),
+        "timestamp": timestamp,
         "created_by": "hledac.universal.export.sprint_bundler",
     }
     if metadata:
@@ -230,144 +371,21 @@ async def bundle_sprint(
     })
 
     # 2. Report JSON
-    if report_path and report_path.exists():
-        try:
-            report_bytes = report_path.read_bytes()
-            artifacts["report.json"] = report_bytes
-            manifest_entries.append({
-                "file": "report.json",
-                "sha256": _compute_sha256(report_bytes),
-                "size": str(len(report_bytes)),
-            })
-            logger.debug(f"[BUNDLER] Added report.json ({len(report_bytes)} bytes)")
-        except Exception as e:
-            logger.warning(f"[BUNDLER] Failed to read report: {e}")
-    else:
-        logger.warning(f"[BUNDLER] Report not found: {report_path}")
+    _add_file_artifact(artifacts, manifest_entries, report_path, "report.json")
 
     # 3. Seeds JSON
-    if seeds_path and seeds_path.exists():
-        try:
-            seeds_bytes = seeds_path.read_bytes()
-            artifacts["seeds.json"] = seeds_bytes
-            manifest_entries.append({
-                "file": "seeds.json",
-                "sha256": _compute_sha256(seeds_bytes),
-                "size": str(len(seeds_bytes)),
-            })
-            logger.debug(f"[BUNDLER] Added seeds.json ({len(seeds_bytes)} bytes)")
-        except Exception as e:
-            logger.warning(f"[BUNDLER] Failed to read seeds: {e}")
-    else:
-        logger.warning(f"[BUNDLER] Seeds not found: {seeds_path}")
+    _add_file_artifact(artifacts, manifest_entries, seeds_path, "seeds.json")
 
     # 4. Evidence JSONL (compress with zstd)
     if evidence_path and evidence_path.exists():
-        try:
-            evidence_bytes = evidence_path.read_bytes()
-            # Compress with zstd level 9
-            try:
-                import compression.zstd
-                evidence_compressed = compression.zstd.compress(evidence_bytes, level=9)
-                artifacts["evidence.jsonl.zst"] = evidence_compressed
-                manifest_entries.append({
-                    "file": "evidence.jsonl.zst",
-                    "sha256": _compute_sha256(evidence_compressed),
-                    "size": str(len(evidence_compressed)),
-                })
-                logger.debug(
-                    f"[BUNDLER] Added evidence.jsonl.zst "
-                    f"({len(evidence_bytes)} → {len(evidence_compressed)} bytes, "
-                    f"ratio={len(evidence_compressed)/len(evidence_bytes):.2%})"
-                )
-            except ImportError:
-                # Fallback: store uncompressed
-                artifacts["evidence.jsonl"] = evidence_bytes
-                manifest_entries.append({
-                    "file": "evidence.jsonl",
-                    "sha256": _compute_sha256(evidence_bytes),
-                    "size": str(len(evidence_bytes)),
-                })
-                logger.warning("[BUNDLER] compression.zstd not available, storing uncompressed")
-        except Exception as e:
-            logger.warning(f"[BUNDLER] Failed to read evidence: {e}")
-    else:
-        logger.debug(f"[BUNDLER] Evidence not found: {evidence_path}")
+        _add_compressed_evidence(artifacts, manifest_entries, evidence_path)
 
-    # 6. [META]-009: Dashboard HTML — standalone investigator dashboard
+    # 5. [META]-009: Dashboard HTML
     if dashboard_html and dashboard_html.exists():
-        try:
-            html_bytes = dashboard_html.read_bytes()
-            artifacts["dashboard.html"] = html_bytes
-            manifest_entries.append({
-                "file": "dashboard.html",
-                "sha256": _compute_sha256(html_bytes),
-                "size": str(len(html_bytes)),
-            })
-            logger.debug(f"[BUNDLER] Added dashboard.html ({len(html_bytes)} bytes)")
-            # Also store alongside the bundle for direct browser opening
-            try:
-                import shutil as _shutil
+        _add_dashboard_artifact(artifacts, manifest_entries, dashboard_html, output_path)
 
-                _shutil.copy2(dashboard_html, output_path.with_suffix(".html"))
-            except Exception:  # noqa: BLE001
-                pass  # Non-fatal
-        except Exception as e:
-            logger.warning(f"[BUNDLER] Failed to read dashboard: {e}")
-
-    # 7. Generate manifest
-    manifest_lines = [
-        "# SHA-256 manifest for .hledac-sprint bundle",
-        f"# Sprint: {sprint_id}",
-        f"# Timestamp: {bundle_metadata['timestamp']}",
-        "# Format: <sha256>  <filename>",
-        "",
-    ]
-    for entry in manifest_entries:
-        manifest_lines.append(f"{entry['sha256']}  {entry['file']}")
-    manifest_text = "\n".join(manifest_lines) + "\n"
-    manifest_bytes = manifest_text.encode("utf-8")
-    artifacts["manifest.sha256"] = manifest_bytes
-
-    # 8. Create tar.zst archive
-    try:
-        # Create tar in memory (streaming for large bundles)
-        tar_buffer = io.BytesIO()
-        with tarfile.open(fileobj=tar_buffer, mode="w") as tar:
-            for filename, data in artifacts.items():
-                info = tarfile.TarInfo(name=filename)
-                info.size = len(data)
-                info.mtime = datetime.now(UTC).timestamp()
-                tar.addfile(info, io.BytesIO(data))
-
-        tar_bytes = tar_buffer.getvalue()
-        tar_buffer.close()
-
-        # Compress with zstd level 9
-        try:
-            import compression.zstd
-            bundle_bytes = compression.zstd.compress(tar_bytes, level=9)
-            logger.debug(
-                f"[BUNDLER] tar.zst compression: "
-                f"{len(tar_bytes)} → {len(bundle_bytes)} bytes "
-                f"(ratio={len(bundle_bytes)/len(tar_bytes):.2%})"
-            )
-        except ImportError:
-            # Fallback: store as .tar (uncompressed)
-            bundle_bytes = tar_bytes
-            output_path = output_path.with_suffix(".tar")
-            logger.warning("[BUNDLER] compression.zstd not available, storing as .tar")
-
-        # Write bundle to disk
-        output_path.parent.mkdir(parents=True, exist_ok=True)
-        output_path.write_bytes(bundle_bytes)
-
-        logger.info(f"[BUNDLER] Bundle created: {output_path} ({len(bundle_bytes)} bytes)")
-        return output_path
-
-    except Exception as e:
-        logger.error(f"[BUNDLER] Failed to create bundle: {e}", exc_info=True)
-        return None
+    # 6. Create archive
+    return _create_bundle_archive(artifacts, output_path, sprint_id, timestamp)
 
 
 async def verify_bundle(bundle_path: Path) -> dict[str, Any]:

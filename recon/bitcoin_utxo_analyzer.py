@@ -674,6 +674,8 @@ class UTXOGraph:
 
         Returns list of UTXOCluster objects.
         """
+        if not self._initialized or self._graph is None:
+            return []
         return self._cluster_by_connected_components_impl()
 
     def _build_tx_to_inputs(self) -> dict[int, list[int]]:
@@ -770,10 +772,24 @@ class UTXOGraph:
             confidence = min(0.95, confidence + 0.1)
         return confidence
 
-    def _cluster_by_connected_components_impl(self) -> list[UTXOCluster]:
-        if not self._initialized or self._graph is None:
-            return []
+    def _run_connected_components(self, addr_count: int, projection_edges: list) -> Any:
+        """Run connected components on projection graph."""
+        try:
+            projection_graph = _igraph.Graph(n=addr_count, edges=projection_edges, directed=False)
+            return projection_graph.components(mode=_igraph.WEAK)
+        except Exception as e:
+            logger.error(f"Failed to build projection graph: {e}")
+            return None
 
+    def _log_clustering_results(self, clusters: list, start_time: float) -> None:
+        """Log clustering results."""
+        elapsed = (time.monotonic() - start_time) * 1000
+        logger.info(
+            f"UTXO clustering: {len(clusters)} clusters found "
+            f"({sum(len(c.addresses) for c in clusters)} addresses) in {elapsed:.1f}ms"
+        )
+
+    def _cluster_by_connected_components_impl(self) -> list[UTXOCluster]:
         start_time = time.monotonic()
 
         # Step 1: Build address co-input projection
@@ -788,30 +804,16 @@ class UTXOGraph:
             logger.info("No projection edges created — addresses do not share inputs")
             return []
 
-        # Step 3: Build igraph projection and run connected components
-        try:
-            projection_graph = _igraph.Graph(
-                n=len(addr_to_pid),
-                edges=projection_edges,
-                directed=False,
-            )
-        except Exception as e:
-            logger.error(f"Failed to build projection graph: {e}")
+        # Step 3: Run connected components
+        components = self._run_connected_components(len(addr_to_pid), projection_edges)
+        if components is None:
             return []
-
-        # Connected components via igraph C-core
-        components = projection_graph.components(mode=_igraph.WEAK)
         logger.info(f"Connected components: {len(components)}")
 
         # Step 4: Build cluster objects (sorted by size)
         clusters = self._build_clusters_from_components(components, pid_to_addr)
         self._clusters = clusters
-
-        elapsed = (time.monotonic() - start_time) * 1000
-        logger.info(
-            f"UTXO clustering: {len(clusters)} clusters found "
-            f"({sum(len(c.addresses) for c in clusters)} addresses) in {elapsed:.1f}ms"
-        )
+        self._log_clustering_results(clusters, start_time)
         return clusters
 
     # ------------------------------------------------------------------

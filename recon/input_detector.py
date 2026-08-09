@@ -287,6 +287,18 @@ class IntelligentInputDetector:
             logger.error(f'Error detecting file type: {e}')
             return None
 
+    def _check_magic_match(self, content: bytes, file_type: str, magic_list: tuple) -> str | None:
+        """Check if content matches magic bytes for a file type."""
+        for magic in magic_list:
+            if content.startswith(magic):
+                # Handle RIFF-based formats (webp, wav)
+                if file_type == 'webp' and b'WEBP' in content[:12]:
+                    return 'webp'
+                if file_type == 'wav' and b'WAVE' in content[:12]:
+                    return 'wav'
+                return file_type
+        return None
+
     def _detect_file_type_from_bytes(self, content: bytes) -> str | None:
         """Detect file type from byte content.
 
@@ -299,17 +311,9 @@ class IntelligentInputDetector:
         if len(content) < 4:
             return None
         for file_type, magic_list in MAGIC_BYTES.items():
-            for magic in magic_list:
-                if content.startswith(magic):
-                    if file_type == 'webp' and b'WEBP' in content[:12]:
-                        return 'webp'
-                    elif file_type == 'wav' and b'WAVE' in content[:12]:
-                        return 'wav'
-                    elif file_type == 'webp':
-                        continue
-                    elif file_type == 'wav':
-                        continue
-                    return file_type
+            result = self._check_magic_match(content, file_type, magic_list)
+            if result is not None:
+                return result
         return None
 
     def _detect_content_type(self, content: bytes) -> str:

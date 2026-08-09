@@ -270,105 +270,24 @@ class DuckDBWriteCoordinator:
         except Exception as e:
             return (0, str(e))
 
-    async def ingest_batch_arrow(
-        self, findings: list[CanonicalFinding]
-    ) -> list[ActivationResult]:
-        """
-        Sprint P0-4: Arrow zero-copy batch ingest.
-
-        10-stupňový fallback na legacy path:
-          1. HLEDAC_ARROW_INGEST == "0" -> legacy
-          2. len(findings) < _ARROW_MIN_BATCH -> legacy
-          3. pyarrow unavailable -> legacy
-          4. store not initialized -> legacy
-          5. startup barrier timeout -> legacy
-          6. WAL executor error -> legacy
-          7. WAL phase failed -> legacy
-          8. DuckDB executor threw -> legacy
-          9. sync helper returned empty -> legacy
-          10. all duckdb_success=False -> legacy
-
-        Returns list[ActivationResult].
-        """
-        # Lazy imports pro M1 RAM úsporu
+    def _check_arrow_conditions(self, findings: list) -> tuple[bool, str | None]:
+        """Check early exit conditions for arrow path. Returns (should_use_arrow, reason)."""
         import os as _os
 
         _ARROW_INGEST_ENABLED = _os.getenv("HLEDAC_ARROW_INGEST", "1") != "0"
         _ARROW_MIN_BATCH = 5
 
         if not findings:
-            return []
+            return False, "empty_findings"
         if not _ARROW_INGEST_ENABLED:
-            self._arrow_metrics["arrow_fallback_env"] += len(findings)
-            logger.debug(
-                f"[WriteCoordinator-arrow-fallback] HLEDAC_ARROW_INGEST=0, "
-                f"using legacy path for {len(findings)} findings"
-            )
-            return await self.ingest_batch_legacy(findings)
+            return False, "env_disabled"
         if len(findings) < _ARROW_MIN_BATCH:
-            self._arrow_metrics["arrow_fallback_batch"] += len(findings)
-            return await self.ingest_batch_legacy(findings)
-        if not await self._try_arrow_direct(findings):
-            self._arrow_metrics["arrow_fallback_batch"] += len(findings)
-            logger.debug(
-                f"[WriteCoordinator-arrow-fallback] batch size {len(findings)} < "
-                f"_ARROW_MIN_BATCH({_ARROW_MIN_BATCH}), using legacy path"
-            )
-            return await self.ingest_batch_legacy(findings)
+            return False, "batch_too_small"
+        return True, None
 
-        # Pyarrow check (cached)
-        try:
-            import pyarrow as _pa  # noqa: F401
-        except ImportError:
-            self._arrow_metrics["arrow_fallback_pyarrow"] += len(findings)
-            logger.debug(
-                f"[WriteCoordinator-arrow-fallback] pyarrow not available, "
-                f"using legacy path for {len(findings)} findings"
-            )
-            return await self.ingest_batch_legacy(findings)
-
-        # Startup barrier
-        if not self._startup_ready.is_set():
-            try:
-                async with asyncio.timeout(30.0):
-                    await self._startup_ready.wait()
-            except TimeoutError:
-                self._arrow_metrics["arrow_fallback_init"] += len(findings)
-                return await self.ingest_batch_legacy(findings)
-
-        # Circuit breaker check
-        if not self._check_circuit_breaker():
-            logger.warning("[WriteCoordinator] Circuit breaker open, using legacy path")
-            return await self.ingest_batch_legacy(findings)
-
-        # WAL first (parallel s DuckDB)
-        wal_ok = await self._try_wal_fallback(findings)
-        if not wal_ok:
-            logger.error(
-                "[D7] Arrow WAL phase failed for %d findings - falling back to legacy executemany.",
-                len(findings),
-            )
-            return await self.ingest_batch_legacy(findings)
-
-        # DuckDB Arrow insert (parallel s WAL, ale čekáme na WAL first)
-        duckdb_count = 0
-        duckdb_err: str | None = None
-        duckdb_count, duckdb_err = await self._try_duckdb_basic(findings)
-
-        if duckdb_err is not None:
-            logger.error(f"[WriteCoordinator] DuckDB Arrow bulk failed: {duckdb_err}")
-            duckdb_all_ok = False
-        elif duckdb_count < len(findings):
-            self._arrow_metrics["arrow_partial_duplicates"] += 1
-            logger.debug(
-                f"[WriteCoordinator-arrow] DuckDB MERGE: {duckdb_count}/{len(findings)} "
-                f"inserted (rest deduplicated)"
-            )
-            duckdb_all_ok = True
-        else:
-            duckdb_all_ok = True
-
-        results = [
+    def _build_arrow_results(self, findings: list, wal_ok: bool, duckdb_all_ok: bool, duckdb_err: str | None) -> list[dict]:
+        """Build result dicts for arrow path."""
+        return [
             {
                 "finding_id": f.finding_id,
                 "lmdb_success": wal_ok,
@@ -378,10 +297,9 @@ class DuckDBWriteCoordinator:
             for f in findings
         ]
 
-        # Build ActivationResult list
-        activation_results = self._build_activation_results(results)
-
-        # Graph + semantic buffer pro accepted findings
+    async def _handle_arrow_post_process(self, results: list[dict], findings: list) -> None:
+        """Handle post-processing after arrow ingest: graph, semantic buffer, quality state, metrics."""
+        # Graph + semantic buffer for accepted findings
         if results and any(r.get("lmdb_success") for r in results):
             if self._duckdb.truth_write_graph_supports_buffered_writes():
                 await self._graph_ingest_findings(findings)
@@ -405,9 +323,10 @@ class DuckDBWriteCoordinator:
             self._last_checkpoint_time = now
             self._duckdb.trigger_checkpoint_if_needed()
 
-        # Metrics
-        self._arrow_metrics["arrow_selected"] += len(findings)
-        self._arrow_metrics["arrow_success_count"] += len(findings)
+    def _update_arrow_metrics(self, results: list[dict], duckdb_all_ok: bool) -> None:
+        """Update arrow metrics."""
+        self._arrow_metrics["arrow_selected"] += len(results)
+        self._arrow_metrics["arrow_success_count"] += len(results)
         lmdb_ok_count = sum(1 for r in results if r.get("lmdb_success"))
         duckdb_ok_count = sum(1 for r in results if r.get("duckdb_success"))
         self._arrow_metrics["arrow_success_lmdb_count"] += lmdb_ok_count
@@ -419,11 +338,70 @@ class DuckDBWriteCoordinator:
         else:
             self._record_failure()
 
+    async def ingest_batch_arrow(
+        self, findings: list[CanonicalFinding]
+    ) -> list[ActivationResult]:
+        """
+        Sprint P0-4: Arrow zero-copy batch ingest.
+
+        Returns list[ActivationResult].
+        """
+        if not findings:
+            return []
+
+        should_use_arrow, reason = self._check_arrow_conditions(findings)
+        if not should_use_arrow:
+            self._arrow_metrics[f"arrow_fallback_{reason}"] += len(findings)
+            logger.debug(f"[WriteCoordinator-arrow-fallback] {reason}, using legacy path")
+            return await self.ingest_batch_legacy(findings)
+
+        if not await self._try_arrow_direct(findings):
+            self._arrow_metrics["arrow_fallback_batch"] += len(findings)
+            return await self.ingest_batch_legacy(findings)
+
+        # Pyarrow check (cached)
+        try:
+            import pyarrow as _pa  # noqa: F401
+        except ImportError:
+            self._arrow_metrics["arrow_fallback_pyarrow"] += len(findings)
+            return await self.ingest_batch_legacy(findings)
+
+        # Startup barrier
+        if not self._startup_ready.is_set():
+            try:
+                async with asyncio.timeout(30.0):
+                    await self._startup_ready.wait()
+            except TimeoutError:
+                self._arrow_metrics["arrow_fallback_init"] += len(findings)
+                return await self.ingest_batch_legacy(findings)
+
+        # Circuit breaker check
+        if not self._check_circuit_breaker():
+            return await self.ingest_batch_legacy(findings)
+
+        # WAL first (parallel s DuckDB)
+        wal_ok = await self._try_wal_fallback(findings)
+        if not wal_ok:
+            logger.error(f"[D7] Arrow WAL phase failed - falling back to legacy.")
+            return await self.ingest_batch_legacy(findings)
+
+        # DuckDB Arrow insert
+        duckdb_count, duckdb_err = await self._try_duckdb_basic(findings)
+        duckdb_all_ok = duckdb_err is None or duckdb_count >= len(findings)
+        if duckdb_count < len(findings):
+            self._arrow_metrics["arrow_partial_duplicates"] += 1
+
+        results = self._build_arrow_results(findings, wal_ok, duckdb_all_ok, duckdb_err)
+        await self._handle_arrow_post_process(results, findings)
+        self._update_arrow_metrics(results, duckdb_all_ok)
+
+        lmdb_ok_count = sum(1 for r in results if r.get("lmdb_success"))
+        duckdb_ok_count = sum(1 for r in results if r.get("duckdb_success"))
         logger.info(
             f"[WriteCoordinator-arrow] path=arrow batch={len(findings)} "
             f"lmdb_ok={lmdb_ok_count} duckdb_ok={duckdb_ok_count}"
         )
-        return activation_results
+        return self._build_activation_results(results)
 
     async def ingest_batch_legacy(
         self, findings: list[CanonicalFinding]

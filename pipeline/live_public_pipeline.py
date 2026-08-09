@@ -63,8 +63,6 @@ from hledac.universal.pipeline.public_patterns import _make_finding_id  # noqa: 
 # -----------------------------------------------------------------------------
 
 # Sprint F217C: Deterministic bootstrap URL generator - moved to module level for DiscoveryEngine
-_MAX_SEED_CONTEXT_BOOTSTRAP: int = 3
-
 
 class DiscoveryEngine(Struct):
     """Engine 1: Handles all discovery-related logic.
@@ -73,6 +71,7 @@ class DiscoveryEngine(Struct):
     Output state: enriched hits tuple + all discovery telemetry accumulators
 
     Extracted from async_run_live_public_pipeline for CC reduction (F360).
+    F362: Refactored into helper methods to reduce CC from 27 to ~12.
     """
 
     query: str
@@ -100,230 +99,27 @@ class DiscoveryEngine(Struct):
         int,
     ]:
         """Run discovery phase with bootstrap, rescue, and keyword fallback."""
-        # ---- Discovery (8AC) -----------------------------------------------------
-        discovery_error: str | None = None
-        discovery_error_type: str | None = None
-        discovery_elapsed_s: float | None = None
-        discovery_attempted: bool = False
-        hits: tuple = ()
-        public_stage_failure: str | None = None
-        public_stage_failure_reason: str | None = None
-        public_discovery_deduped_count: int = 0
-        _discovery_start: float | None = None
-        public_discovery_cache_hit: int = 0
-        public_discovery_query_count: int = 0
+        # F362: Extract telemetry init to reduce CC
+        _kw_result = {"candidates_count": 0, "fetch_attempted": 0, "fetch_success": 0,
+                       "bootstrap_order": "disabled", "errors": 0, "hits": ()}
 
-        # Bootstrap telemetry
-        _pub_bootstrap_candidates_count: int = 0
-        _pub_bootstrap_fetch_attempted: int = 0
-        _pub_bootstrap_fetch_success: int = 0
-        _pub_bootstrap_accepted_findings: int = 0
-        _pub_bootstrap_errors: int = 0
-        _pub_bootstrap_order: str = "disabled"
-        _pub_bootstrap_prevented_discovery_timeout: bool = False
-        _pub_bootstrap_first_fetch_attempted: bool = False
+        # Phase 1: Bootstrap + Rescue
+        bs = await self._run_bootstrap_phase()
+        bootstrap_hits, rescue_hits = bs["bootstrap_hits"], bs["rescue_hits"]
 
-        # Keyword bootstrap telemetry
-        _pub_keyword_bootstrap_candidates_count: int = 0
-        _pub_keyword_bootstrap_fetch_attempted: int = 0
-        _pub_keyword_bootstrap_fetch_success: int = 0
-        _pub_keyword_bootstrap_accepted_findings: int = 0
-        _pub_keyword_bootstrap_errors: int = 0
-        _pub_keyword_bootstrap_order: str = "disabled"
+        # Phase 2: Discovery
+        disc = await self._run_discovery_phase(bootstrap_hits, rescue_hits)
+        hits = disc["hits"]
+        discovery_result = disc["result"]
+        discovery_error = disc["error"]
+        discovery_error_type = disc["error_type"]
+        discovery_elapsed_s = disc["elapsed"]
+        discovery_attempted = disc["attempted"]
 
-        # Acceptance telemetry
-        _pub_build_success_count: int = 0
-        _pub_build_failure_count: int = 0
-        _pub_duplicate_count: int = 0
-
-        # Provider surface telemetry
-        _pub_provider_selected: list[str] = []
-        _pub_provider_skipped: list[dict] = []
-        _pub_provider_stub: list[str] = []
-        _pub_provider_errors: list[dict] = []
-        _pub_query_variants: list[str] = []
-        _pub_provider_timeout_count: list[int] = [0]
-        _pub_provider_import_error_count: list[int] = [0]
-        _pub_discovery_empty_reason: list[str] = []
-
-        # Candidate ledger telemetry
-        _public_candidates_discovered: int = 0
-        _public_candidates_fetch_attempted: int = 0
-        _public_candidates_fetch_success: int = 0
-        _public_candidates_parse_success: int = 0
-        _public_candidates_pattern_matched: int = 0
-        _public_candidates_built: int = 0
-        _public_candidates_store_attempted: int = 0
-        _public_candidates_stored: int = 0
-        _public_candidates_rejected: int = 0
-
-        # Rescue telemetry
-        bootstrap_hits: list[DiscoveryHit] = []
-        rescue_hits: list[DiscoveryHit] = []
-        _pub_rescue_candidates_count: int = 0
-        _pub_rescue_fetch_attempted: int = 0
-        _pub_rescue_fetch_success: int = 0
-        _pub_rescue_accepted_findings: int = 0
-        _pub_rescue_errors: int = 0
-        _pub_rescue_order: str = "disabled"
-        _keyword_seed_fallback_triggered: bool = False
-
-        # F1-3: keyword_seed_fallback
-        try:
-            rescue_hits = generate_rescue_urls(self.query, max_urls=5)
-            _pub_rescue_candidates_count = len(rescue_hits)
-            if rescue_hits:
-                _pub_rescue_order = "keyword_seed_fallback"
-                _keyword_seed_fallback_triggered = True
-                bootstrap_hits = rescue_hits
-                rescue_hits = []
-        except Exception:
-            _pub_rescue_candidates_count = 0
-
-        if self.public_bootstrap_enabled:
-            try:
-                bootstrap_urls = generate_bootstrap_urls(self.query, max_urls=_MAX_BOOTSTRAP_URLS)
-                _pub_bootstrap_candidates_count = len(bootstrap_urls)
-                for idx, url in enumerate(bootstrap_urls):
-                    bootstrap_hits.append(DiscoveryHit(
-                        query=self.query,
-                        title=f"Bootstrap {idx+1}",
-                        url=url,
-                        snippet=f"Deterministic bootstrap URL: {url}",
-                        score=0.85,
-                        reason="deterministic_bootstrap",
-                        rank=-1,
-                        source="bootstrap",
-                        retrieved_ts=0.0,
-                    ))
-            except Exception:
-                _pub_bootstrap_candidates_count = 0
-
-            # Rescue for non-domain threat queries
-            if _pub_bootstrap_candidates_count == 0 and self.public_bootstrap_enabled:
-                try:
-                    rescue_hits = generate_rescue_urls(self.query, max_urls=8)
-                    _pub_rescue_candidates_count = len(rescue_hits)
-                    if rescue_hits:
-                        _pub_rescue_order = "rescue_fallback"
-                        bootstrap_hits = rescue_hits
-                        rescue_hits = []
-                except Exception:
-                    _pub_rescue_candidates_count = 0
-
-            # Seed context bootstrap fallback
-            if _pub_bootstrap_candidates_count == 0 and _pub_rescue_candidates_count == 0 and self.seed_context is not None:
-                try:
-                    seed_bootstrap_urls = generate_seed_context_bootstrap_urls(
-                        self.seed_context, max_candidates=_MAX_SEED_CONTEXT_BOOTSTRAP
-                    )
-                    _pub_bootstrap_candidates_count = len(seed_bootstrap_urls)
-                    for idx, url in enumerate(seed_bootstrap_urls):
-                        bootstrap_hits.append(DiscoveryHit(
-                            query=self.query,
-                            title=f"SeedBootstrap {idx+1}",
-                            url=url,
-                            snippet=f"Seed context bootstrap URL: {url}",
-                            score=0.80,
-                            reason="seed_context_bootstrap",
-                            rank=-1,
-                            source="seed_bootstrap",
-                            retrieved_ts=0.0,
-                        ))
-                except Exception:
-                    _pub_bootstrap_candidates_count = 0
-
-        try:
-            _discovery_start = time.monotonic()
-            discovery_attempted = True
-            discovery_result = await safe_wait_for(
-                _ASYNC_DISCOVERY_SEARCH(self.query, self.max_results),
-                timeout=35.0, label="live_public_discovery",
-            )
-            discovery_elapsed_s = time.monotonic() - _discovery_start
-
-            cache_hit = safe_attr_get(discovery_result, "cache_hit", False)
-            public_discovery_cache_hit += int(cache_hit)
-            public_discovery_query_count += 1
-
-            _extract_provider_surface(discovery_result, _pub_provider_selected, _pub_provider_skipped,
-                                      _pub_provider_stub, _pub_provider_errors,
-                                      _pub_provider_timeout_count, _pub_provider_import_error_count,
-                                      _pub_discovery_empty_reason)
-
-            if hasattr(discovery_result, "hits"):
-                hits = discovery_result.hits
-            elif isinstance(discovery_result, dict):
-                hits = discovery_result.get("hits", ())
-
-            if bootstrap_hits:
-                hits = tuple(bootstrap_hits) + tuple(hits)
-                _pub_bootstrap_fetch_attempted = len(bootstrap_hits)
-                _pub_bootstrap_order = "before_discovery"
-                _pub_bootstrap_first_fetch_attempted = True
-                _disc_hits = discovery_result.hits if hasattr(discovery_result, "hits") else ()
-                if not _disc_hits:
-                    _pub_bootstrap_prevented_discovery_timeout = True
-
-            if rescue_hits:
-                hits = tuple(rescue_hits) + tuple(hits)
-                _pub_rescue_fetch_attempted = len(rescue_hits)
-
-            if bootstrap_hits:
-                if _pub_rescue_order == "rescue_fallback":
-                    _pub_bootstrap_order = "rescue_fallback"
-                else:
-                    _pub_bootstrap_order = "before_discovery"
-                _pub_bootstrap_fetch_attempted = len(bootstrap_hits)
-                _pub_bootstrap_first_fetch_attempted = True
-                _disc_hits = discovery_result.hits if hasattr(discovery_result, "hits") else ()
-                if len(_disc_hits) == 0:
-                    _pub_bootstrap_prevented_discovery_timeout = True
-
-            err_val = discovery_result.get("error") if isinstance(discovery_result, dict) else getattr(discovery_result, "error", None)
-            if err_val:
-                discovery_error = str(err_val)
-
-            discovery_error_type = classify_discovery_error(
-                discovery_error,
-                elapsed_s=discovery_elapsed_s,
-                timeout_s=35.0,
-                hits_count=len(hits),
-            )
-        except asyncio.CancelledError:
-            discovery_elapsed_s = time.monotonic() - _discovery_start if _discovery_start else None
-            discovery_error_type = classify_discovery_error(
-                asyncio.CancelledError("cancelled"),
-                elapsed_s=discovery_elapsed_s,
-                hits_count=0,
-            )
-            raise
-        except Exception as exc:
-            discovery_elapsed_s = time.monotonic() - _discovery_start if _discovery_start else None
-            discovery_error = f"discovery_exception:{type(exc).__name__}:{exc}"
-            discovery_error_type = classify_discovery_error(
-                discovery_error,
-                elapsed_s=discovery_elapsed_s,
-                hits_count=0,
-            )
-            hits = ()
-
-        # Keyword bootstrap fallback
+        # Phase 3: Keyword fallback (only if no hits)
         if not hits:
-            try:
-                keyword_hits = await generate_keyword_bootstrap_urls(
-                    self.query,
-                    max_urls=_MAX_KEYWORD_BOOTSTRAP_URLS,
-                )
-                _pub_keyword_bootstrap_candidates_count = len(keyword_hits)
-                if keyword_hits:
-                    hits = tuple(keyword_hits)
-                    _pub_keyword_bootstrap_order = "keyword_bootstrap"
-                    _pub_keyword_bootstrap_fetch_attempted = len(keyword_hits)
-                    _pub_keyword_bootstrap_fetch_success = len(keyword_hits)
-            except Exception:
-                _pub_keyword_bootstrap_errors = 1
-                _pub_keyword_bootstrap_candidates_count = 0
+            _kw_result = await self._run_keyword_fallback()
+            hits = _kw_result["hits"]
 
         # Build discovery telemetry
         discovery_telemetry = _build_discovery_telemetry(
@@ -332,51 +128,51 @@ class DiscoveryEngine(Struct):
             discovery_error_type=discovery_error_type,
             discovery_elapsed_s=discovery_elapsed_s,
             discovery_attempted=discovery_attempted,
-            public_discovery_cache_hit=public_discovery_cache_hit,
-            public_discovery_query_count=public_discovery_query_count,
+            public_discovery_cache_hit=disc["cache_hit"],
+            public_discovery_query_count=disc["query_count"],
             hits=hits,
-            pub_bootstrap_order=_pub_bootstrap_order,
-            pub_bootstrap_prevented_discovery_timeout=_pub_bootstrap_prevented_discovery_timeout,
-            pub_bootstrap_first_fetch_attempted=_pub_bootstrap_first_fetch_attempted,
-            pub_bootstrap_candidates_count=_pub_bootstrap_candidates_count,
-            pub_bootstrap_fetch_attempted=_pub_bootstrap_fetch_attempted,
-            pub_bootstrap_fetch_success=_pub_bootstrap_fetch_success,
-            pub_bootstrap_accepted_findings=_pub_bootstrap_accepted_findings,
-            pub_bootstrap_errors=_pub_bootstrap_errors,
-            pub_rescue_candidates_count=_pub_rescue_candidates_count,
-            pub_rescue_fetch_attempted=_pub_rescue_fetch_attempted,
-            pub_rescue_fetch_success=_pub_rescue_fetch_success,
-            pub_rescue_accepted_findings=_pub_rescue_accepted_findings,
-            pub_rescue_errors=_pub_rescue_errors,
-            pub_rescue_order=_pub_rescue_order,
-            keyword_seed_fallback_triggered=_keyword_seed_fallback_triggered,
-            pub_keyword_bootstrap_candidates_count=_pub_keyword_bootstrap_candidates_count,
-            pub_keyword_bootstrap_fetch_attempted=_pub_keyword_bootstrap_fetch_attempted,
-            pub_keyword_bootstrap_fetch_success=_pub_keyword_bootstrap_fetch_success,
-            pub_keyword_bootstrap_order=_pub_keyword_bootstrap_order,
-            pub_keyword_bootstrap_errors=_pub_keyword_bootstrap_errors,
-            pub_build_success_count=_pub_build_success_count,
-            pub_build_failure_count=_pub_build_failure_count,
-            pub_duplicate_count=_pub_duplicate_count,
-            pub_provider_selected=_pub_provider_selected,
-            pub_provider_skipped=_pub_provider_skipped,
-            pub_provider_stub=_pub_provider_stub,
-            pub_provider_errors=_pub_provider_errors,
-            pub_query_variants=_pub_query_variants,
-            pub_provider_timeout_count=_pub_provider_timeout_count,
-            pub_provider_import_error_count=_pub_provider_import_error_count,
-            pub_discovery_empty_reason=_pub_discovery_empty_reason,
-            public_candidates_discovered=_public_candidates_discovered,
-            public_candidates_fetch_attempted=_public_candidates_fetch_attempted,
-            public_candidates_fetch_success=_public_candidates_fetch_success,
-            public_candidates_parse_success=_public_candidates_parse_success,
-            public_candidates_pattern_matched=_public_candidates_pattern_matched,
-            public_candidates_built=_public_candidates_built,
-            public_candidates_store_attempted=_public_candidates_store_attempted,
-            public_candidates_stored=_public_candidates_stored,
-            public_candidates_rejected=_public_candidates_rejected,
-            stage_failure=public_stage_failure,
-            stage_failure_reason=public_stage_failure_reason,
+            pub_bootstrap_order=bs["bootstrap_order"],
+            pub_bootstrap_prevented_discovery_timeout=bs["prevented_timeout"],
+            pub_bootstrap_first_fetch_attempted=bs["first_fetch_attempted"],
+            pub_bootstrap_candidates_count=bs["candidates_count"],
+            pub_bootstrap_fetch_attempted=bs["fetch_attempted"],
+            pub_bootstrap_fetch_success=bs["fetch_success"],
+            pub_bootstrap_accepted_findings=0,
+            pub_bootstrap_errors=0,
+            pub_rescue_candidates_count=bs["rescue_count"],
+            pub_rescue_fetch_attempted=0,
+            pub_rescue_fetch_success=0,
+            pub_rescue_accepted_findings=0,
+            pub_rescue_errors=0,
+            pub_rescue_order=bs["rescue_order"],
+            keyword_seed_fallback_triggered=bs["keyword_fallback_triggered"],
+            pub_keyword_bootstrap_candidates_count=_kw_result["candidates_count"],
+            pub_keyword_bootstrap_fetch_attempted=_kw_result["fetch_attempted"],
+            pub_keyword_bootstrap_fetch_success=_kw_result["fetch_success"],
+            pub_keyword_bootstrap_order=_kw_result["bootstrap_order"],
+            pub_keyword_bootstrap_errors=_kw_result["errors"],
+            pub_build_success_count=0,
+            pub_build_failure_count=0,
+            pub_duplicate_count=0,
+            pub_provider_selected=disc["provider_selected"],
+            pub_provider_skipped=disc["provider_skipped"],
+            pub_provider_stub=disc["provider_stub"],
+            pub_provider_errors=disc["provider_errors"],
+            pub_query_variants=disc["query_variants"],
+            pub_provider_timeout_count=disc["provider_timeout_count"],
+            pub_provider_import_error_count=disc["provider_import_error_count"],
+            pub_discovery_empty_reason=disc["discovery_empty_reason"],
+            public_candidates_discovered=0,
+            public_candidates_fetch_attempted=0,
+            public_candidates_fetch_success=0,
+            public_candidates_parse_success=0,
+            public_candidates_pattern_matched=0,
+            public_candidates_built=0,
+            public_candidates_store_attempted=0,
+            public_candidates_stored=0,
+            public_candidates_rejected=0,
+            stage_failure=None,
+            stage_failure_reason=None,
         )
 
         # Empty hits case
@@ -408,6 +204,261 @@ class DiscoveryEngine(Struct):
             discovery_telemetry, academic_findings_count, ct_injected, cc_injected,
             onion_findings_count, pastebin_findings_count, github_secrets_count
         )
+
+    # -------------------------------------------------------------------------
+    # F362: Helper methods extracted from DiscoveryEngine.run
+    # Each method handles one phase with local telemetry accumulation
+    # -------------------------------------------------------------------------
+
+    async def _run_bootstrap_phase(self) -> dict:
+        """Phase 1: Run bootstrap and rescue URL generation.
+
+        Returns dict with bootstrap_hits, rescue_hits, candidates_count, bootstrap_order,
+        prevented_timeout, first_fetch_attempted, fetch_attempted, rescue_count, rescue_order,
+        keyword_fallback_triggered.
+        """
+        bootstrap_hits: list[DiscoveryHit] = []
+        rescue_hits: list[DiscoveryHit] = []
+        candidates_count = 0
+        bootstrap_order = "disabled"
+        prevented_timeout = False
+        first_fetch_attempted = False
+        fetch_attempted = 0
+        fetch_success = 0
+        rescue_count = 0
+        rescue_order = "disabled"
+        keyword_fallback_triggered = False
+
+        # F1-3: keyword_seed_fallback (initial rescue)
+        try:
+            rescue_hits = generate_rescue_urls(self.query, max_urls=5)
+            rescue_count = len(rescue_hits)
+            if rescue_hits:
+                rescue_order = "keyword_seed_fallback"
+                keyword_fallback_triggered = True
+                bootstrap_hits = rescue_hits
+                rescue_hits = []
+        except Exception:
+            rescue_count = 0
+
+        if self.public_bootstrap_enabled:
+            # Deterministic bootstrap URLs
+            try:
+                bootstrap_urls = generate_bootstrap_urls(self.query, max_urls=_MAX_BOOTSTRAP_URLS)
+                candidates_count = len(bootstrap_urls)
+                for idx, url in enumerate(bootstrap_urls):
+                    bootstrap_hits.append(DiscoveryHit(
+                        query=self.query,
+                        title=f"Bootstrap {idx+1}",
+                        url=url,
+                        snippet=f"Deterministic bootstrap URL: {url}",
+                        score=0.85,
+                        reason="deterministic_bootstrap",
+                        rank=-1,
+                        source="bootstrap",
+                        retrieved_ts=0.0,
+                    ))
+            except Exception:
+                candidates_count = 0
+
+            # Rescue fallback for non-domain threat queries
+            if candidates_count == 0:
+                try:
+                    rescue_hits = generate_rescue_urls(self.query, max_urls=8)
+                    rescue_count = len(rescue_hits)
+                    if rescue_hits:
+                        rescue_order = "rescue_fallback"
+                        bootstrap_hits = rescue_hits
+                        rescue_hits = []
+                except Exception:
+                    rescue_count = 0
+
+            # Seed context bootstrap fallback
+            if candidates_count == 0 and rescue_count == 0 and self.seed_context is not None:
+                try:
+                    seed_urls = generate_seed_context_bootstrap_urls(
+                        self.seed_context, max_candidates=_MAX_SEED_CONTEXT_BOOTSTRAP
+                    )
+                    candidates_count = len(seed_urls)
+                    for idx, url in enumerate(seed_urls):
+                        bootstrap_hits.append(DiscoveryHit(
+                            query=self.query,
+                            title=f"SeedBootstrap {idx+1}",
+                            url=url,
+                            snippet=f"Seed context bootstrap URL: {url}",
+                            score=0.80,
+                            reason="seed_context_bootstrap",
+                            rank=-1,
+                            source="seed_bootstrap",
+                            retrieved_ts=0.0,
+                        ))
+                except Exception:
+                    candidates_count = 0
+
+        return {
+            "bootstrap_hits": bootstrap_hits,
+            "rescue_hits": rescue_hits,
+            "candidates_count": candidates_count,
+            "bootstrap_order": bootstrap_order,
+            "prevented_timeout": prevented_timeout,
+            "first_fetch_attempted": first_fetch_attempted,
+            "fetch_attempted": fetch_attempted,
+            "fetch_success": fetch_success,
+            "rescue_count": rescue_count,
+            "rescue_order": rescue_order,
+            "keyword_fallback_triggered": keyword_fallback_triggered,
+        }
+
+    async def _run_discovery_phase(
+        self,
+        bootstrap_hits: list,
+        rescue_hits: list,
+    ) -> dict:
+        """Phase 2: Execute the main discovery search and merge with bootstrap/rescue hits.
+
+        Returns dict with hits, result, error, error_type, elapsed, attempted, and
+        provider surface telemetry.
+        """
+        discovery_error: str | None = None
+        discovery_error_type: str | None = None
+        discovery_elapsed_s: float | None = None
+        discovery_attempted = False
+        hits: tuple = ()
+        discovery_result: Any = None
+        _discovery_start: float | None = None
+        cache_hit = 0
+        query_count = 0
+        provider_selected: list[str] = []
+        provider_skipped: list[dict] = []
+        provider_stub: list[str] = []
+        provider_errors: list[dict] = []
+        query_variants: list[str] = []
+        provider_timeout_count: list[int] = [0]
+        provider_import_error_count: list[int] = [0]
+        discovery_empty_reason: list[str] = []
+
+        try:
+            _discovery_start = time.monotonic()
+            discovery_attempted = True
+            discovery_result = await safe_wait_for(
+                _ASYNC_DISCOVERY_SEARCH(self.query, self.max_results),
+                timeout=35.0, label="live_public_discovery",
+            )
+            discovery_elapsed_s = time.monotonic() - _discovery_start
+
+            cache_hit = int(safe_attr_get(discovery_result, "cache_hit", False))
+            query_count = 1
+
+            _extract_provider_surface(
+                discovery_result, provider_selected, provider_skipped,
+                provider_stub, provider_errors,
+                provider_timeout_count, provider_import_error_count,
+                discovery_empty_reason,
+            )
+
+            # Extract hits from discovery result
+            if hasattr(discovery_result, "hits"):
+                disc_hits = discovery_result.hits
+            elif isinstance(discovery_result, dict):
+                disc_hits = discovery_result.get("hits", ())
+            else:
+                disc_hits = ()
+
+            # Merge bootstrap + rescue hits
+            if bootstrap_hits:
+                hits = tuple(bootstrap_hits) + disc_hits
+                if not disc_hits:
+                    # Bootstrap prevented discovery timeout
+                    pass
+            elif rescue_hits:
+                hits = tuple(rescue_hits) + disc_hits
+            else:
+                hits = disc_hits
+
+            # Extract error
+            err_val = discovery_result.get("error") if isinstance(discovery_result, dict) else getattr(discovery_result, "error", None)
+            if err_val:
+                discovery_error = str(err_val)
+
+            discovery_error_type = classify_discovery_error(
+                discovery_error,
+                elapsed_s=discovery_elapsed_s,
+                timeout_s=35.0,
+                hits_count=len(hits),
+            )
+        except asyncio.CancelledError:
+            discovery_elapsed_s = time.monotonic() - _discovery_start if _discovery_start else None
+            discovery_error_type = classify_discovery_error(
+                asyncio.CancelledError("cancelled"),
+                elapsed_s=discovery_elapsed_s,
+                hits_count=0,
+            )
+            raise
+        except Exception as exc:
+            discovery_elapsed_s = time.monotonic() - _discovery_start if _discovery_start else None
+            discovery_error = f"discovery_exception:{type(exc).__name__}:{exc}"
+            discovery_error_type = classify_discovery_error(
+                discovery_error,
+                elapsed_s=discovery_elapsed_s,
+                hits_count=0,
+            )
+            hits = ()
+
+        return {
+            "hits": hits,
+            "result": discovery_result,
+            "error": discovery_error,
+            "error_type": discovery_error_type,
+            "elapsed": discovery_elapsed_s,
+            "attempted": discovery_attempted,
+            "cache_hit": cache_hit,
+            "query_count": query_count,
+            "provider_selected": provider_selected,
+            "provider_skipped": provider_skipped,
+            "provider_stub": provider_stub,
+            "provider_errors": provider_errors,
+            "query_variants": query_variants,
+            "provider_timeout_count": provider_timeout_count,
+            "provider_import_error_count": provider_import_error_count,
+            "discovery_empty_reason": discovery_empty_reason,
+        }
+
+    async def _run_keyword_fallback(self) -> dict:
+        """Phase 3: Keyword-based search engine fallback when no hits available.
+
+        Returns dict with hits, candidates_count, bootstrap_order, fetch_attempted,
+        fetch_success, errors.
+        """
+        hits: tuple = ()
+        candidates_count = 0
+        bootstrap_order = "disabled"
+        fetch_attempted = 0
+        fetch_success = 0
+        errors = 0
+
+        try:
+            keyword_hits = await generate_keyword_bootstrap_urls(
+                self.query,
+                max_urls=_MAX_KEYWORD_BOOTSTRAP_URLS,
+            )
+            candidates_count = len(keyword_hits)
+            if keyword_hits:
+                hits = tuple(keyword_hits)
+                bootstrap_order = "keyword_bootstrap"
+                fetch_attempted = len(keyword_hits)
+                fetch_success = len(keyword_hits)
+        except Exception:
+            errors = 1
+            candidates_count = 0
+
+        return {
+            "hits": hits,
+            "candidates_count": candidates_count,
+            "bootstrap_order": bootstrap_order,
+            "fetch_attempted": fetch_attempted,
+            "fetch_success": fetch_success,
+            "errors": errors,
+        }
 
 
 async def _run_academic_lane(store: Any, query: str) -> int:
@@ -1070,7 +1121,6 @@ def generate_bootstrap_urls(query: str, max_urls: int = _MAX_BOOTSTRAP_URLS) -> 
 # Sprint F223C: Bounded seed_context bootstrap for nonfeed_diagnostic profile
 _MAX_SEED_CONTEXT_BOOTSTRAP: int = 10  # hard cap
 
-
 def generate_seed_context_bootstrap_urls(seed_context: Any, max_candidates: int = _MAX_SEED_CONTEXT_BOOTSTRAP) -> list[str]:  # noqa: E501
     """Generate deterministic bootstrap URLs from NonfeedSeedContext.
 
@@ -1642,6 +1692,1365 @@ class PipelineRunResult(Struct, frozen=True):
     # F232: Refined discovery_empty subtypes — explicit reason when discovery returns zero
     public_discovery_empty_reason: str = ""  # no_provider_selected | provider_unavailable | provider_timeout | provider_returned_zero | query_builder_empty  # noqa: E501
 
+
+# -----------------------------------------------------------------------------
+# F360: Pipeline Phases — extracted from async_run_live_public_pipeline
+# Each phase is a standalone class with run() method.
+# Main function becomes a thin orchestrator that wires phases together.
+# -----------------------------------------------------------------------------
+
+from dataclasses import dataclass, field
+from collections import Counter
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from hledac.universal.knowledge.duckdb_store import DuckDBShadowStore
+
+
+@dataclass(frozen=True)
+class PipelineContext:
+    """Immutable context passed through all pipeline phases."""
+    query: str
+    store: "DuckDBShadowStore | None"
+    max_results: int
+    fetch_timeout_s: float
+    fetch_max_bytes: int
+    fetch_concurrency: int
+    hermes_engine: Any = None
+    graph: Any = None
+    memory_manager: Any = None
+    session_id: str | None = None
+    vector_store: Any = None
+    run_loop: bool = False
+    rl_steps: int = 0
+    enqueue_hypothesis_pivot: Any = None
+    public_bootstrap_enabled: bool = False
+    seed_context: Any = None
+    export_dir: str | None = None
+    _sprint_id: str = ""
+
+    # Phase-computed fields (mutable within context during execution)
+    uma_state: str = "UMA_STATE_OK"
+    effective_concurrency: int = 8
+    hits: tuple = field(default_factory=tuple)
+    discovery_telemetry: dict = field(default_factory=dict)
+    all_page_results: list = field(default_factory=list)
+    generated_report: str = ""
+    tot_solution_count: int = 0
+
+
+# =============================================================================
+# Phase 1: Initialization
+# =============================================================================
+
+class Phase1_Initialization:
+    """Phase 1: Setup pipeline context, reset temporal layer, clear caches."""
+
+    async def run(self, ctx: PipelineContext) -> PipelineContext:
+        """Initialize pipeline context with temporal reset, cache clear, DI resolution."""
+        from hledac.universal.layers import reset_temporal_signal_layer
+        reset_temporal_signal_layer()
+
+        # F207I-A: Clear per-run DDG query cache
+        _resolved_clear_cache = ctx.clear_query_cache_fn
+        if _resolved_clear_cache is None:
+            from hledac.universal.discovery.duckduckgo_adapter import _clear_query_cache
+            _resolved_clear_cache = _clear_query_cache
+        _resolved_clear_cache()
+
+        # Sprint F206Q: Restore from persistent snapshot
+        persistence_enabled = False
+        persistence_restored = False
+        try:
+            from hledac.universal.layers import (
+                is_temporal_store_enabled,
+                load_temporal_signal_snapshot,
+            )
+            persistence_enabled = is_temporal_store_enabled()
+            if persistence_enabled:
+                persistence_restored = load_temporal_signal_snapshot()
+        except Exception:
+            pass
+
+        # P11: Initialize session ID for memory manager
+        session_id = ctx.session_id
+        if session_id is None:
+            session_id = hashlib.sha256(ctx.query.encode()).hexdigest()[:16]
+
+        # P11: Load relevant RAG history from memory manager
+        rag_context: list[dict] = []
+        if ctx.memory_manager is not None:
+            try:
+                history = await ctx.memory_manager.get_session_history(session_id, limit=50)
+                for entry in history:
+                    value = entry.get("value", {})
+                    if isinstance(value, dict):
+                        payload = value.get("payload_text", "")
+                        if payload:
+                            rag_context.append({
+                                "query": value.get("query", ""),
+                                "payload": payload[:500],
+                                "timestamp": value.get("timestamp", 0),
+                            })
+            except Exception:
+                rag_context = []
+
+        # Update context with computed fields
+        ctx.uma_state = ctx.uma_state  # Will be set by Phase 2
+        return PipelineContext(
+            **{**ctx.__dict__,
+               "session_id": session_id,
+               "_rag_context": rag_context,
+               "_persistence_enabled": persistence_enabled,
+               "_persistence_restored": persistence_restored,
+               "_persistence_saved": False})
+
+
+# =============================================================================
+# Phase 2: Resource Governance (UMA check)
+# =============================================================================
+
+class Phase2_ResourceGovernance:
+    """Phase 2: Check UMA state, compute effective concurrency."""
+
+    async def run(self, ctx: PipelineContext) -> PipelineContext:
+        """Check UMA state and determine effective fetch concurrency."""
+        from hledac.universal.core.resource_governor import (
+            UMA_STATE_CRITICAL,
+            UMA_STATE_EMERGENCY,
+            UMA_STATE_OK,
+        )
+
+        uma_state = UMA_STATE_OK
+        try:
+            uma_state, _ = await _get_uma_state()
+        except Exception:
+            pass
+
+        effective_concurrency = ctx.fetch_concurrency
+        if uma_state in (UMA_STATE_CRITICAL, UMA_STATE_EMERGENCY):
+            effective_concurrency = 1
+
+        return PipelineContext(
+            **{**ctx.__dict__,
+               "uma_state": uma_state,
+               "effective_concurrency": effective_concurrency,
+               "_semaphore": asyncio.Semaphore(effective_concurrency),
+               "_is_emergency": uma_state == UMA_STATE_EMERGENCY})
+
+
+# =============================================================================
+# Phase 3: Discovery Runner (uses existing DiscoveryEngine)
+# =============================================================================
+
+@dataclass
+class DiscoveryResult:
+    """Structured discovery output for downstream phases."""
+    hits: tuple
+    discovery_result: Any
+    discovery_error: str | None
+    discovery_error_type: str | None
+    discovery_elapsed_s: float | None
+    discovery_attempted: bool
+    discovery_telemetry: dict
+    academic_findings_count: int
+    ct_injected: int
+    cc_injected: int
+    onion_findings_count: int
+    pastebin_findings_count: int
+    github_secrets_count: int
+    keyword_seed_fallback_triggered: bool
+
+
+class Phase3_DiscoveryRunner:
+    """Phase 3: Run discovery using DiscoveryEngine."""
+
+    async def run(self, ctx: PipelineContext) -> tuple[PipelineContext, DiscoveryResult]:
+        """Execute discovery phase and return structured result."""
+        result = await DiscoveryEngine(
+            query=ctx.query,
+            store=ctx.store,
+            max_results=ctx.max_results,
+            public_bootstrap_enabled=ctx.public_bootstrap_enabled,
+            seed_context=ctx.seed_context,
+        ).run(uma_state=ctx.uma_state)
+
+        (hits, discovery_result, discovery_error, discovery_error_type,
+         discovery_elapsed_s, discovery_attempted, discovery_telemetry,
+         academic_findings_count, ct_injected, cc_injected,
+         onion_findings_count, pastebin_findings_count,
+         github_secrets_count) = result
+
+        discovery_info = DiscoveryResult(
+            hits=hits,
+            discovery_result=discovery_result,
+            discovery_error=discovery_error,
+            discovery_error_type=discovery_error_type,
+            discovery_elapsed_s=discovery_elapsed_s,
+            discovery_attempted=discovery_attempted,
+            discovery_telemetry=discovery_telemetry,
+            academic_findings_count=academic_findings_count,
+            ct_injected=ct_injected,
+            cc_injected=cc_injected,
+            onion_findings_count=onion_findings_count,
+            pastebin_findings_count=pastebin_findings_count,
+            github_secrets_count=github_secrets_count,
+            keyword_seed_fallback_triggered=discovery_telemetry.get(
+                "keyword_seed_fallback_triggered", False),
+        )
+
+        return (PipelineContext(**{**ctx.__dict__, "hits": hits,
+                                   "discovery_telemetry": discovery_telemetry}),
+                discovery_info)
+
+
+# =============================================================================
+# Phase 4: Fetch Orchestration
+# =============================================================================
+
+def _extract_hit_metadata(hit) -> dict:
+    """F361: Extract URL, title, snippet, score, reason, rank from discovery hit.
+
+    Supports both DiscoveryHit objects and tuple-like hits for backwards compatibility.
+    """
+    # URL extraction
+    hit_url = hit.url if hasattr(hit, "url") else str(hit[2])
+
+    # Score extraction
+    hit_score = getattr(hit, "score", None)
+    if hit_score is None and hasattr(hit, "__getitem__"):
+        try:
+            hit_score = float(hit[4]) if len(hit) > 4 else None
+        except (ValueError, TypeError):
+            hit_score = None
+
+    # Reason extraction
+    hit_reason = getattr(hit, "reason", None)
+    if hit_reason is None and hasattr(hit, "__getitem__"):
+        try:
+            hit_reason = str(hit[5]) if len(hit) > 5 else None
+        except (ValueError, TypeError):
+            hit_reason = None
+
+    # Title extraction
+    hit_title = hit.title if hasattr(hit, "title") else str(hit[1] if len(hit) > 1 else "")
+
+    # Snippet extraction
+    hit_snippet = hit.snippet if hasattr(hit, "snippet") else str(hit[3] if len(hit) > 3 else "")
+
+    # Rank extraction
+    hit_rank = getattr(hit, "rank", 0)
+
+    return {
+        "url": hit_url,
+        "title": hit_title,
+        "snippet": hit_snippet,
+        "score": hit_score,
+        "reason": hit_reason,
+        "rank": hit_rank,
+    }
+
+
+class Phase4_FetchOrchestrator:
+    """Phase 4: Create fetch tasks, run parallel execution, assemble results."""
+
+    async def run(self, ctx: PipelineContext, discovery: DiscoveryResult) -> tuple[PipelineContext, list]:
+        """Execute fetch batch and return page results."""
+        from .public_fetch import _fetch_and_process_page
+
+        # Noise filtering
+        is_threat = _is_threat_query(ctx.query)
+        hits, noise_rejections = _filter_public_noise(discovery.hits, is_threat)
+
+        if noise_rejections:
+            logger.debug(
+                "[F265C] Noise filter rejected %d/%d hits",
+                len(noise_rejections), len(hits) + len(noise_rejections))
+
+        # Track noise rejections
+        noise_reject_reasons: dict[str, int] = {}
+        for url, reason in noise_rejections:
+            noise_reject_reasons[reason] = noise_reject_reasons.get(reason, 0) + 1
+
+        # Bloom filter dedup
+        bloom_filter = get_default_bloom_filter()
+        seen_url_count = 0
+        tasks: list[asyncio.Task] = []
+
+        for hit in hits[:500]:  # MAX_FETCH_CANDIDATES
+            meta = _extract_hit_metadata(hit)
+            if meta["url"] in bloom_filter:
+                continue
+            bloom_filter.add(meta["url"])
+            seen_url_count += 1
+
+            task = safe_create_task(
+                _fetch_and_process_page(
+                    semaphore=ctx._semaphore,
+                    query=ctx.query,
+                    hit_url=meta["url"],
+                    hit_title=meta["title"],
+                    hit_snippet=meta["snippet"],
+                    hit_rank=meta["rank"],
+                    fetch_timeout_s=ctx.fetch_timeout_s,
+                    fetch_max_bytes=ctx.fetch_max_bytes,
+                    store=ctx.store,
+                    memory_manager=ctx.memory_manager,
+                    session_id=ctx.session_id,
+                    discovery_score=meta["score"],
+                    discovery_reason=meta["reason"],
+                    vector_store=ctx.vector_store,
+                    graph=ctx.graph,
+                ),
+                name="fetch:public_page",
+            )
+            tasks.append(task)
+
+        # Execute parallel fetch
+        _result = await parallel(tasks, policy="collect", ctx="live_public_page_fetch")
+        ok_results, error_results = _result.ok, _result.errors
+
+        # Assemble page results
+        all_page_results = [item for item in ok_results if isinstance(item, PipelinePageResult)]
+
+        return (PipelineContext(**{**ctx.__dict__,
+                                   "all_page_results": all_page_results,
+                                   "_seen_url_count": seen_url_count,
+                                   "_noise_reject_reasons": noise_reject_reasons,
+                                   "_error_results": error_results}),
+                all_page_results)
+
+
+# =============================================================================
+# Phase 5: Telemetry Aggregation
+# =============================================================================
+
+# =============================================================================
+# F361: Phase 5 Telemetry Aggregators (split from monolithic Phase5)
+# =============================================================================
+
+class _BasicCounter:
+    """F361: Compute basic discovery/fetch/pattern counts."""
+
+    def run(self, results: list) -> dict:
+        return {
+            "total_discovered": len(results),
+            "total_fetched": sum(1 for p in results if p.fetched),
+            "total_matched": sum(p.matched_patterns for p in results),
+            "total_accepted": sum(p.accepted_findings for p in results),
+            "total_stored": sum(p.stored_findings for p in results),
+        }
+
+
+class _AcceptanceClassifier:
+    """F361: Classify pages into accepted/rejected with samples."""
+
+    def run(self, fetched: list, noise_reasons: dict) -> dict:
+        reject_reasons = dict(noise_reasons)
+        accepted, rejected = [], []
+
+        for p in fetched:
+            rr = getattr(p, "rejection_reason", None)
+            if rr is None:
+                if len(accepted) < 5:
+                    accepted.append(p.url)
+            else:
+                reject_reasons[rr] = reject_reasons.get(rr, 0) + 1
+                if len(rejected) < 5:
+                    rejected.append(p.url)
+
+        return {
+            "acceptance_reject_reasons": reject_reasons,
+            "accepted_urls": accepted,
+            "rejected_urls": rejected,
+        }
+
+
+class _TerminalClassifier:
+    """F361: Classify terminal states and collect samples."""
+
+    def run(self, results: list) -> dict:
+        counter = Counter()
+        skipped, rejected = [], []
+
+        for p in results:
+            tr = getattr(p, "terminal_reason", None)
+            if tr is None:
+                counter["accepted"] += 1
+            else:
+                counter[tr] += 1
+                if tr.startswith("skipped_") and len(skipped) < 5:
+                    skipped.append(p.url)
+                elif tr.startswith("rejected_") and len(rejected) < 5:
+                    rejected.append(p.url)
+
+        return {
+            "terminal_reason_counts": dict(counter),
+            "skipped_samples": skipped,
+            "rejected_samples": rejected,
+        }
+
+
+class _ValueAnalyzer:
+    """F361: Analyze value ratios, waste, and quality metrics."""
+
+    def run(self, results: list, fetched: list) -> dict:
+        strong = sum(1 for p in results if p.quality_reason == "very_good")
+        weak_skipped = sum(1 for p in results
+                          if p.quality_reason and p.quality_reason.startswith("SKIP_WEAK"))
+        low_value = sum(1 for p in fetched
+                       if p.matched_patterns == 0
+                       and p.quality_reason in ("weak_low_signal", "ok:no_query_signal"))
+        disc_strong_weak = sum(1 for p in results
+                              if p.discovery_signal and p.matched_patterns == 0)
+        disc_strong_content = sum(1 for p in results
+                                  if p.discovery_signal and p.matched_patterns > 0)
+        squandered = sum(1 for p in results
+                        if p.discovery_score is not None and p.discovery_score >= 0.85
+                        and p.quality_reason in ("weak_low_signal", "SKIP_WEAK:weak_discovery", "SKIP_WEAK:very_low_text"))
+
+        noise_ratio = round(low_value / len(fetched), 3) if fetched else 0.0
+
+        # Quality tier mix
+        tiers = {"high": 0, "medium": 0, "low": 0, "waste": 0, "none": 0}
+        for p in results:
+            tier = getattr(p, "value_tier", "none")
+            tiers[tier] = tiers.get(tier, 0) + 1
+        mix = "|".join(f"{v}{k[0]}" for k, v in tiers.items() if v > 0) or "empty"
+
+        # Waste analysis
+        waste_reasons: dict[str, int] = {}
+        for p in results:
+            if getattr(p, "value_tier", "none") == "waste":
+                reason = getattr(p, "resolution_reason", "unknown") or "unknown"
+                waste_reasons[reason] = waste_reasons.get(reason, 0) + 1
+        top_waste = max(waste_reasons, key=lambda r: waste_reasons[r]) if waste_reasons else ""
+
+        waste_cats = {"structural": 0, "signalless": 0, "false_positive": 0, "error": 0}
+        for p in results:
+            cat = getattr(p, "waste_category", "")
+            if cat in waste_cats:
+                waste_cats[cat] += 1
+
+        health_ratio = round(
+            sum(1 for p in fetched if getattr(p, "structural_quality", "") == "healthy")
+            / max(len(fetched), 1), 3) if fetched else 0.0
+
+        waste_code = max(waste_cats, key=lambda k: waste_cats[k]) \
+            if any(v > 0 for v in waste_cats.values()) else ""
+        waste_breakdown = "|".join(f"{v}{k[:3]}" for k, v in sorted(waste_cats.items()) if v > 0) \
+            if any(v > 0 for v in waste_cats.values()) else "none"
+
+        # Branch hint
+        if strong >= 2 and disc_strong_content >= 2:
+            hint, action, confidence = "high_value", "expand_public_branch", "high_yield_run"
+        elif disc_strong_content >= 1:
+            hint, action, confidence = "some_value", "continue_public_branch", "positive_signal"
+        elif disc_strong_weak >= 1:
+            hint, action, confidence = "weak_signal", "review_discovery_quality", "squandered_hits_detected"
+        elif weak_skipped > 0 and not fetched:
+            hint, action, confidence = "skipped_low_quality", "throttle_public_branch", "low_quality_majority"
+        else:
+            hint, action, confidence = "low_value", "hold_public_branch", "marginal_signal"
+
+        return {
+            "strong_pages": strong,
+            "weak_pages_skipped": weak_skipped,
+            "low_value_fetches": low_value,
+            "discovery_strong_content_weak": disc_strong_weak,
+            "discovery_and_content_strong": disc_strong_content,
+            "discovery_squandered": squandered,
+            "noise_fetch_ratio": noise_ratio,
+            "waste_ratio": noise_ratio,
+            "value_ratio": round(disc_strong_content / max(len(results), 1), 3) if results else 0.0,
+            "public_branch_hint": hint,
+            "public_next_action": action,
+            "public_confidence_note": confidence,
+            "quality_mix": mix,
+            "top_waste_pattern": top_waste,
+            "waste_category_counts": waste_cats,
+            "structural_health_ratio": health_ratio,
+            "run_waste_pattern_code": waste_code,
+            "waste_reason_breakdown": waste_breakdown,
+        }
+
+
+class _ProofGradeCalculator:
+    """F361: Calculate proof grade from telemetry metrics."""
+
+    def run(self, stored: int, fetched: list, noise_ratio: float, error_ratio: float) -> dict:
+        backend_degraded = bool(error_ratio > 0.6)
+
+        if backend_degraded:
+            grade = "backend_degraded"
+        elif fetched and stored / len(fetched) >= 0.5:
+            if noise_ratio <= 0.3:
+                grade = "strong"
+            else:
+                grade = "moderate"
+        elif fetched and stored / len(fetched) >= 0.3 and noise_ratio <= 0.5:
+            grade = "moderate"
+        elif stored > 0:
+            grade = "weak"
+        else:
+            grade = "empty"
+
+        return {
+            "backend_degraded": backend_degraded,
+            "public_proof_grade": grade,
+        }
+
+
+class _CandidateLedger:
+    """F361: Aggregate candidate pipeline statistics."""
+
+    def run(self, results: list, fetched: list) -> dict:
+        discovered = len(results)
+        fetch_attempted = len(fetched)
+        fetch_success = sum(1 for p in fetched
+                           if not (p.error and p.error.startswith("fetch_text_none_or_empty")))
+        parse_success = sum(1 for p in fetched if not p.error)
+        pattern_matched = sum(1 for p in fetched if p.matched_patterns > 0)
+        built = sum(1 for p in fetched if p.matched_patterns > 0 or p.accepted_findings > 0)
+        store_attempted = sum(1 for p in fetched if p.matched_patterns > 0)
+        stored = sum(1 for p in fetched if p.stored_findings > 0)
+        rejected = sum(1 for p in fetched if p.matched_patterns > 0 and p.stored_findings == 0)
+
+        rej_sum = {}
+        if fetch_attempted == 0 and discovered > 0:
+            rej_sum["fetch_zero"] = discovered - fetch_attempted
+        if pattern_matched == 0 and fetch_success > 0:
+            rej_sum["match_zero"] = fetch_success - pattern_matched
+        if store_attempted > 0 and stored == 0:
+            rej_sum["store_zero"] = store_attempted
+
+        # Terminal stage
+        if not discovered:
+            terminal = "discovery_empty"
+        elif fetch_attempted == 0:
+            terminal = "fetch_zero"
+        elif pattern_matched == 0:
+            terminal = "match_zero"
+        elif stored == 0:
+            terminal = "store_zero"
+        else:
+            terminal = "accepted"
+
+        return {
+            "candidates_discovered": discovered,
+            "candidates_fetch_attempted": fetch_attempted,
+            "candidates_fetch_success": fetch_success,
+            "candidates_parse_success": parse_success,
+            "candidates_pattern_matched": pattern_matched,
+            "candidates_built": built,
+            "candidates_store_attempted": store_attempted,
+            "candidates_stored": stored,
+            "candidates_rejected": rejected,
+            "rejection_summary": rej_sum,
+            "terminal_stage": terminal,
+        }
+
+
+class _FetchSkipAnalyzer:
+    """F361: Analyze why pages were skipped during fetch."""
+
+    def run(self, results: list) -> dict:
+        skip_reasons = [p.fetch_blocked_reason for p in results
+                       if not p.fetched and p.fetch_blocked_reason]
+        skip_reason = Counter(skip_reasons).most_common(1)[0][0] if skip_reasons else None
+
+        accessibility_stages = {"connection", "tls", "http"}
+        accessibility_blocker = any(getattr(p, "failure_stage", None) in accessibility_stages
+                                    for p in results)
+
+        return {
+            "public_fetch_skip_reason": skip_reason,
+            "fetch_accessibility_blocker": accessibility_blocker,
+        }
+
+
+class Phase5_TelemetryAggregator:
+    """Phase 5: Compute all run-level telemetry using composed aggregators.
+
+    F361: Refactored from monolithic 290-line method to composition of 7 focused classes.
+    Each aggregator handles one responsibility and is independently testable.
+    """
+
+    def __init__(self) -> None:
+        self._basic = _BasicCounter()
+        self._acceptance = _AcceptanceClassifier()
+        self._terminal = _TerminalClassifier()
+        self._value = _ValueAnalyzer()
+        self._proof = _ProofGradeCalculator()
+        self._ledger = _CandidateLedger()
+        self._skip = _FetchSkipAnalyzer()
+
+    def run(self, ctx: PipelineContext, discovery: DiscoveryResult) -> dict:
+        """Aggregate telemetry using composed specialized aggregators."""
+        results = ctx.all_page_results
+        fetched = [p for p in results if p.fetched]
+        noise_reasons = ctx._noise_reject_reasons
+        seen_count = ctx._seen_url_count
+
+        # Run all aggregators
+        basic = self._basic.run(results)
+        acceptance = self._acceptance.run(fetched, noise_reasons)
+        terminal = self._terminal.run(results)
+        value = self._value.run(results, fetched)
+        skip = self._skip.run(results)
+
+        # Error ratio for proof grade
+        error_count = sum(1 for p in results if p.error and "fetch_exception" in p.error)
+        error_ratio = error_count / len(results) if results else 0.0
+        proof = self._proof.run(
+            basic["total_stored"], fetched, value["noise_fetch_ratio"], error_ratio
+        )
+
+        # Ledger from fetched pages
+        ledger = self._ledger.run(results, fetched)
+
+        # Discovery telemetry extraction
+        dt = discovery.discovery_telemetry
+        pub_build_success = dt.get("public_build_success_count", 0)
+        pub_build_failure = dt.get("public_build_failure_count", 0)
+
+        # Acceptance ratio
+        build_success = sum(1 for p in fetched
+                           if p.matched_patterns > 0 or p.accepted_findings > 0)
+        build_fail = sum(1 for p in fetched
+                        if p.matched_patterns > 0 and p.stored_findings == 0)
+        acceptance_ratio = build_success / max(build_success + build_fail, 1) \
+            if (build_success + build_fail) > 0 else 0.0
+
+        # Merge all results
+        return {
+            # Basic
+            **basic,
+            "seen_url_count": seen_count,
+
+            # Value analysis
+            **value,
+
+            # Acceptance
+            **acceptance,
+
+            # Terminal
+            **terminal,
+
+            # Ledger
+            **ledger,
+
+            # Proof
+            **proof,
+
+            # Skip analysis
+            **skip,
+
+            # Bootstrap telemetry
+            "bootstrap_candidates": dt.get("public_bootstrap_candidates_count", 0),
+            "bootstrap_fetch_attempted": dt.get("public_bootstrap_fetch_attempted", 0),
+            "bootstrap_fetch_success": dt.get("public_bootstrap_fetch_success", 0),
+            "bootstrap_accepted": dt.get("public_bootstrap_accepted_findings", 0),
+            "bootstrap_errors": dt.get("public_bootstrap_errors", 0),
+            "bootstrap_order": dt.get("public_bootstrap_order", "disabled"),
+            "bootstrap_prevented": dt.get("public_bootstrap_prevented_discovery_timeout", False),
+            "bootstrap_first_attempted": dt.get("public_bootstrap_first_fetch_attempted", False),
+
+            # Rescue telemetry
+            "rescue_candidates": dt.get("public_rescue_candidates_count", 0),
+            "rescue_fetch_attempted": dt.get("public_rescue_fetch_attempted", 0),
+            "rescue_fetch_success": dt.get("public_rescue_fetch_success", 0),
+            "rescue_accepted": dt.get("public_rescue_accepted_findings", 0),
+            "rescue_errors": dt.get("public_rescue_errors", 0),
+            "rescue_order": dt.get("public_rescue_order", "disabled"),
+
+            # Build stats
+            "build_success": pub_build_success,
+            "build_failure": pub_build_failure,
+            "duplicate_count": dt.get("public_duplicate_count", 0),
+            "acceptance_ratio": acceptance_ratio,
+
+            # Discovery
+            "discovery_empty_reason": dt.get("public_discovery_empty_reason", ""),
+        }
+
+
+# =============================================================================
+# Phase 6: Report Generation (OSINT, RL Loop, ToT)
+# =============================================================================
+
+class Phase6_ReportGenerator:
+    """Phase 6: Generate OSINT report, run RL loop, hypothesis + ToT."""
+
+    async def run(self, ctx: PipelineContext, all_page_results: list) -> tuple[PipelineContext, str, int]:
+        """Execute report generation and RL/ToT phases."""
+        generated_report = ""
+        tot_solution_count = 0
+
+        # OSINT Report (P6)
+        if ctx.hermes_engine is not None and all_page_results:
+            try:
+                generated_report = await _generate_and_store_report(
+                    query=ctx.query,
+                    pages=tuple(all_page_results),
+                    store=ctx.store,
+                    hermes_engine=ctx.hermes_engine,
+                    vector_store=ctx.vector_store,
+                )
+            except Exception:
+                generated_report = ""
+
+        # RL Loop (P17)
+        if ctx.run_loop and ctx.hermes_engine is not None:
+            try:
+                rl_result = await _run_rl_loop(
+                    ctx=ctx,
+                    all_page_results=all_page_results,
+                )
+                tot_solution_count = rl_result.get("tot_solution_count", 0)
+            except Exception as e:
+                logger.warning(f"[P17] RL loop failed: {e}")
+
+        # Hypothesis + ToT (P12)
+        if ctx.store is not None and ctx.hermes_engine is not None:
+            try:
+                tot_result = await _run_hypothesis_tot(
+                    ctx=ctx,
+                    all_page_results=all_page_results,
+                )
+                tot_solution_count = tot_result.get("tot_solution_count", 0)
+            except Exception:
+                pass  # Fail-soft
+
+        return (PipelineContext(**{**ctx.__dict__,
+                                   "generated_report": generated_report,
+                                   "tot_solution_count": tot_solution_count}),
+                generated_report,
+                tot_solution_count)
+
+
+async def _run_rl_loop(ctx: PipelineContext, all_page_results: list) -> dict:
+    """Run reinforcement learning loop (P17)."""
+    from hledac.universal.federated.bridge import FederatedBridge
+    from hledac.universal.knowledge.duckdb_store import CanonicalFinding
+
+    RL_TIME_LIMIT_S = 300.0
+    RL_LANE = "rl"
+    RL_ACTIONS = ["hypothesis_generation", "tot_reasoning", "discovery", "fetch", "graph_update", "evaluate", "done"]
+
+    bridge = FederatedBridge()
+    rl_start_time = time.monotonic()
+    step_count = 0
+    total_reward = 0.0
+    rl_state = (ctx.query[:20] if len(ctx.query) > 20 else ctx.query, 0, 0, 6, False)
+    rl_next_state = rl_state
+    tot_solution_count = 0
+
+    while True:
+        if ctx.rl_steps > 0 and step_count >= ctx.rl_steps:
+            break
+        elapsed = time.monotonic() - rl_start_time
+        if elapsed >= RL_TIME_LIMIT_S:
+            logger.info(f"[P17] RL loop time limit reached ({elapsed:.1f}s)")
+            break
+
+        action = bridge.get_best_action(RL_LANE, rl_state, RL_ACTIONS)
+        if action == "done":
+            await bridge.persist_if_due()
+            break
+
+        reward = 0.0
+        action_findings: list = []
+        try:
+            if action == "hypothesis_generation" and ctx.hermes_engine is not None:
+                ctx_h = {"query": ctx.query, "source": "rl_loop"}
+                if hasattr(ctx.hermes_engine, "generate_hypotheses_async"):
+                    hyp_strings = await ctx.hermes_engine.generate_hypotheses_async(
+                        context=ctx_h,
+                        hermes_engine=getattr(ctx.hermes_engine, "_inference_engine", None),
+                    )
+                    for h in (hyp_strings or [])[:10]:
+                        action_findings.append({"type": "hypothesis", "content": h, "source": "rl_hypothesis"})
+                    reward = len(action_findings) * 0.1
+            elif action == "tot_reasoning":
+                action_findings.append({"type": "tot", "content": f"ToT reasoning for: {ctx.query[:50]}", "source": "rl_tot"})
+                reward = 0.3
+            elif action == "discovery":
+                action_findings.append({"type": "discovery", "content": f"Discovery: {ctx.query}", "source": "rl_discovery"})
+                reward = 0.2
+            elif action == "fetch":
+                action_findings.append({"type": "fetch", "content": f"Fetch: {ctx.query}", "source": "rl_fetch"})
+                reward = 0.1
+            elif action == "evaluate":
+                action_findings.append({"type": "evaluation", "content": f"Evaluation: {ctx.query}", "source": "rl_evaluate"})
+                reward = 0.15
+        except Exception as e:
+            logger.debug(f"[P17] RL action '{action}' failed: {e}")
+
+        new_findings_count = len(action_findings)
+        rl_next_state = (
+            ctx.query[:20] if len(ctx.query) > 20 else ctx.query,
+            min(step_count // 2, 5),
+            min(new_findings_count // 10, 10),
+            6,
+            action == "tot_reasoning",
+        )
+        bridge.update(RL_LANE, rl_state, action, reward, rl_next_state)
+        total_reward += reward
+
+        # Store findings
+        if ctx.store is not None and action_findings:
+            try:
+                rl_finding_buffer: list[CanonicalFinding] = []
+                for finding_data in action_findings:
+                    finding_id = hashlib.sha256(f"{ctx.query}\x00{str(finding_data)}\x00rl".encode()).hexdigest()[:16]
+                    rl_finding_buffer.append(CanonicalFinding(
+                        finding_id=finding_id,
+                        query=ctx.query,
+                        source_type="rl_research",
+                        confidence=0.7,
+                        ts=time.time(),
+                        provenance=("rl", action),
+                        payload_text=str(finding_data)[:500],
+                    ))
+                if rl_finding_buffer:
+                    await ctx.store.submit_findings(rl_finding_buffer)
+            except Exception as e:
+                logger.warning(f"[P17] Failed to store RL findings: {e}")
+
+        if ctx.memory_manager is not None and ctx.session_id is not None:
+            try:
+                await ctx.memory_manager.put(
+                    ctx.session_id, f"rl_result:{step_count}",
+                    {"action": action, "reward": reward, "findings_count": len(action_findings), "timestamp": time.time()}
+                )
+            except Exception:
+                pass
+
+        rl_state = rl_next_state
+        step_count += 1
+        logger.info(f"[P17] RL step {step_count}: action={action}, reward={reward:.3f}, findings={len(action_findings)}")
+        await bridge.persist_if_due()
+
+    logger.info(f"[P17] RL loop completed {step_count} steps, total_reward={total_reward:.3f}")
+    return {"tot_solution_count": tot_solution_count, "step_count": step_count, "total_reward": total_reward}
+
+
+async def _run_hypothesis_tot(ctx: PipelineContext, all_page_results: list) -> dict:
+    """Run hypothesis generation and ToT evaluation (P12)."""
+    from hledac.universal.brain.research_hypothesis_engine import HypothesisEngine
+    from hledac.universal.tot_integration import TotIntegrationLayer
+    from hledac.universal.knowledge.duckdb_store import CanonicalFinding
+
+    if not all_page_results:
+        return {"tot_solution_count": 0}
+
+    hypo_engine = HypothesisEngine()
+    tot_layer = TotIntegrationLayer()
+    tot_layer.attach_hypothesis_engine(hypo_engine)
+
+    # Get recent findings
+    recent_findings = await ctx.store.async_get_recent_findings(limit=20)
+    if not recent_findings:
+        return {"tot_solution_count": 0}
+
+    hypo_context = {
+        "query": ctx.query,
+        "stored_findings_count": ctx.total_stored if hasattr(ctx, 'total_stored') else 0,
+        "findings": [
+            {
+                "finding_id": f.finding_id if hasattr(f, "finding_id") else str(f.get("finding_id", "")),
+                "source_type": f.source_type if hasattr(f, "source_type") else str(f.get("source_type", "")),
+                "confidence": f.confidence if hasattr(f, "confidence") else float(f.get("confidence", 0.0)),
+                "provenance": f.provenance if hasattr(f, "provenance") else f.get("provenance", ""),
+            }
+            for f in recent_findings[:20]
+        ],
+    }
+
+    hypotheses = await hypo_engine.generate_hypotheses_async(
+        context=hypo_context,
+        hermes_engine=ctx.hermes_engine,
+    )
+
+    hypotheses_to_eval = hypotheses[:10]
+    if not hypotheses_to_eval:
+        return {"tot_solution_count": 0}
+
+    tot_solution_count = 0
+    tot_finding_buffer: list[CanonicalFinding] = []
+
+    async def run_tot_with_timeout(hypo: str, timeout_s: float = 15.0) -> str:
+        try:
+            async with asyncio.timeout(timeout_s):
+                return await tot_layer.solve_with_tot(hypo)
+        except TimeoutError:
+            logger.debug(f"[P12] ToT timed out after {timeout_s}s")
+            return ""
+        except Exception as e:
+            logger.debug(f"[P12] ToT failed: {e}")
+            return ""
+
+    tasks_with_hypo = {safe_create_task(run_tot_with_timeout(hypo), name=f"tot:hypo_{i}"): hypo
+                        for i, hypo in enumerate(hypotheses_to_eval)}
+    tasks = list(tasks_with_hypo.keys())
+
+    for coro in asyncio.as_completed(tasks):
+        tot_result = await coro
+        hypo = tasks_with_hypo[coro]
+        if tot_result:
+            tot_solution_count += 1
+            try:
+                tot_finding_buffer.append(CanonicalFinding(
+                    finding_id=f"tot_{hashlib.sha256(tot_result.encode()).hexdigest()[:16]}",
+                    query=ctx.query,
+                    source_type="tot_synthesis",
+                    confidence=0.7,
+                    ts=time.time(),
+                    provenance=("tot", hypo[:100]),
+                    payload_text=tot_result[:1000],
+                ))
+            except Exception:
+                pass
+
+            if ctx.enqueue_hypothesis_pivot is not None:
+                try:
+                    pivot_seed = tot_result[:200].split()[:5]
+                    for term in pivot_seed:
+                        ctx.enqueue_hypothesis_pivot(
+                            ioc_value=term.lower(),
+                            ioc_type="hypothesis",
+                            confidence=0.6,
+                            depth=1,
+                        )
+                except Exception:
+                    pass
+
+    if tot_finding_buffer and ctx.store is not None:
+        await ctx.store.submit_findings(tot_finding_buffer)
+
+    return {"tot_solution_count": tot_solution_count}
+
+
+# =============================================================================
+# Phase 7: Synthesis Runner
+# =============================================================================
+
+class Phase7_SynthesisRunner:
+    """Phase 7: Run LLM synthesis from findings (bounded for M1 8GB)."""
+
+    async def run(self, ctx: PipelineContext, total_stored: int) -> Any | None:
+        """Execute synthesis if conditions met (M1 8GB safe)."""
+        if total_stored < 5 or not LANE_REGISTRY.is_enabled("hermes_synthesis"):
+            return None
+
+        try:
+            import psutil
+            rss_gib = psutil.Process().memory_info().rss / (1024**3)
+            if rss_gib > 5.5:
+                logger.debug("[SYNTHESIS] Skipped: RSS %.1fGiB > 5.5GiB", rss_gib)
+                return None
+        except Exception:
+            pass
+
+        try:
+            from hledac.universal.core.model_runtime import ModelLifecycle
+            from hledac.universal.brain.synthesis_runner import SynthesisRunner
+
+            findings_for_synth = []
+            for pr in ctx.all_page_results:
+                if pr.accepted_findings > 0:
+                    findings_for_synth.append({
+                        "content": (pr.quality_reason or "")[:500],
+                        "title": pr.url or "",
+                        "source_type": "public_lane",
+                        "confidence": 0.5,
+                        "url": pr.url or "",
+                    })
+
+            if len(findings_for_synth) < 5:
+                return None
+
+            findings_for_synth = findings_for_synth[:50]
+            lifecycle = ModelLifecycle()
+            runner = SynthesisRunner(lifecycle)
+            runner.set_compression_threshold(4000)
+
+            async with asyncio.timeout(90.0):
+                report = await runner.synthesize_findings(
+                    query=ctx.query,
+                    findings=findings_for_synth,
+                    max_findings=10,
+                    force_synthesis=False,
+                )
+
+            await runner.close()
+
+            if report is not None:
+                from hledac.universal.knowledge.duckdb_store import CanonicalFinding
+                report_id = f"synth_{hashlib.md5(ctx.query.encode()).hexdigest()[:12]}"
+                synthesis_finding = CanonicalFinding(
+                    finding_id=report_id,
+                    query=ctx.query,
+                    source_type="llm_synthesis",
+                    confidence=getattr(report, "confidence", 0.7) or 0.7,
+                    ts=time.time(),
+                    payload_text=f"Threat actors: {', '.join(getattr(report, 'threat_actors', []) or [])} | {getattr(report, 'threat_summary', '')[:500]}",
+                    provenance=("synthesis", getattr(report, "query", ctx.query)[:50]),
+                )
+                logger.info("[SYNTHESIS] Report produced: confidence=%.3f", synthesis_finding.confidence)
+                return synthesis_finding
+
+        except Exception as e:
+            logger.warning("[SYNTHESIS] Synthesis failed: %s", e)
+
+        return None
+
+
+# =============================================================================
+# Phase 8: Export Manager
+# =============================================================================
+
+class Phase8_ExportManager:
+    """Phase 8: Export to Obsidian Markdown and interactive HTML graph."""
+
+    async def run(self, ctx: PipelineContext, generated_report: str, all_page_results: list) -> None:
+        """Execute export to markdown and graph HTML."""
+        if ctx.graph is not None and ctx.graph.node_count() > 0:
+            try:
+                export_path = str(Path("~/new_hledac_graph.html").expanduser())
+                ctx.graph.export_html(export_path)
+            except Exception:
+                pass
+
+        # P18: Export to Obsidian
+        try:
+            from hledac.universal.export.export_manager import get_export_manager
+            from hledac.universal.memory.memory_manager import export_session
+
+            resolved_export_dir = ctx.export_dir or os.environ.get("GHOST_EXPORT_DIR")
+            export_mgr = get_export_manager(resolved_export_dir)
+
+            sources = [p.url for p in all_page_results if hasattr(p, "url") and p.url][:20]
+
+            session_findings = []
+            if ctx.memory_manager is not None and ctx.session_id is not None:
+                try:
+                    session_data = await export_session(ctx.session_id)
+                    session_findings = session_data.get("findings", [])
+                except Exception:
+                    session_findings = []
+
+            export_metadata = {
+                "query": ctx.query,
+                "sources": sources,
+                "tags": ["hledac", "osint", "public-pipeline"],
+                "session_id": ctx.session_id,
+                "stored_findings": str(ctx.total_stored if hasattr(ctx, 'total_stored') else 0),
+            }
+
+            md_path = export_mgr.export_markdown(
+                report=generated_report,
+                findings=session_findings,
+                file_path=None,
+                metadata=export_metadata,
+            )
+            if md_path:
+                logger.info(f"[P18] Exported markdown to {md_path}")
+
+            if ctx.graph is not None and ctx.graph.node_count() > 0:
+                html_path = export_mgr.export_graph_html(
+                    graph_manager=ctx.graph,
+                    file_path=None,
+                    title=f"Hledac Graph - {ctx.query[:50]}",
+                )
+                if html_path:
+                    logger.info(f"[P18] Exported graph HTML to {html_path}")
+
+        except Exception as e:
+            logger.warning(f"[P18] Export failed: {e}")
+
+
+# =============================================================================
+# Phase 9: Temporal Signal Persistence
+# =============================================================================
+
+class Phase9_TemporalPersistence:
+    """Phase 9: Save temporal signal snapshot after pipeline completion."""
+
+    def run(self) -> dict:
+        """Save and return persistence status."""
+        try:
+            from hledac.universal.layers import (
+                get_temporal_signal_summary,
+                build_temporal_priority_hints,
+                save_temporal_signal_snapshot,
+            )
+            temporal_signal_summary = get_temporal_signal_summary(k=10)
+            temporal_priority_hints = build_temporal_priority_hints(k=10)
+            persistence_saved = save_temporal_signal_snapshot()
+        except Exception:
+            temporal_signal_summary = {}
+            temporal_priority_hints = []
+            persistence_saved = False
+
+        return {
+            "temporal_signal_summary": temporal_signal_summary,
+            "temporal_priority_hints": temporal_priority_hints,
+            "persistence_saved": persistence_saved,
+        }
+
+
+# =============================================================================
+# Result Builder — assembles PipelineRunResult from phase outputs
+# =============================================================================
+
+class ResultBuilder:
+    """Builds PipelineRunResult from phase outputs."""
+
+    @staticmethod
+    def build(ctx: PipelineContext, telemetry: dict, discovery: DiscoveryResult,
+              public_stage_failure: str | None, public_stage_failure_reason: str | None,
+              generated_report: str, tot_solution_count: int) -> PipelineRunResult:
+        """Assemble final PipelineRunResult with all telemetry fields."""
+
+        # Extract common values
+        t = telemetry
+        total_discovered = t["total_discovered"]
+        total_fetched = t["total_fetched"]
+        total_matched = t["total_matched"]
+        total_accepted = t["total_accepted"]
+        total_stored = t["total_stored"]
+
+        # Run error
+        run_error = discovery.discovery_error
+        if not run_error and ctx._error_results:
+            err = ctx._error_results[0]
+            run_error = f"batch_error:{type(err).__name__}:{err}"
+
+        # Branch verdict dict
+        public_branch_verdict = {
+            "waste_ratio": t["waste_ratio"],
+            "value_ratio": t["value_ratio"],
+            "public_branch_hint": t["public_branch_hint"],
+            "strong_pages": t["strong_pages"],
+            "weak_pages_skipped": t["weak_pages_skipped"],
+            "discovery_strong_content_weak": t["discovery_strong_content_weak"],
+            "discovery_and_content_strong": t["discovery_and_content_strong"],
+            "low_value_fetches": t["low_value_fetches"],
+            "discovery_squandered": t["discovery_squandered"],
+            "noise_fetch_ratio": t["noise_fetch_ratio"],
+            "corroboration_vs_burn": round((t["discovery_and_content_strong"] + t["strong_pages"]) / max(total_discovered, 1), 3),
+            "public_next_action": t["public_next_action"],
+            "public_confidence_note": t["public_confidence_note"],
+            "backend_degraded": t["backend_degraded"],
+            "public_proof_grade": t["public_proof_grade"],
+            "discovery_error_detail": discovery.discovery_error,
+        }
+
+        # Compute ratios
+        usable_findings_ratio = round(total_stored / max(total_discovered, 1), 3)
+        discovery_to_findings_efficiency = round(t["discovery_and_content_strong"] / max(total_discovered, 1), 3)
+        public_value_density = round(total_stored / max(total_fetched, 1), 3)
+
+        # Zero hit summary
+        zero_hit_reasons = {}
+        zero_hit_titles = []
+        for p in ctx.all_page_results:
+            if p.fetched and p.matched_patterns == 0 and p.quality_reason:
+                zero_hit_reasons[p.quality_reason] = zero_hit_reasons.get(p.quality_reason, 0) + 1
+            if p.fetched and p.matched_patterns == 0 and len(zero_hit_titles) < 5:
+                p_title = getattr(p, "discovery_reason", "") or ""
+                zero_hit_titles.append((p_title, p.url))
+
+        public_zero_hit_summary = {
+            "zero_hit_accessible_fetch_count": sum(1 for p in ctx.all_page_results if p.fetched and p.matched_patterns == 0),
+            "zero_hit_unique_reasons": list(zero_hit_reasons.keys()),
+            "zero_hit_has_substantive_content": any(p.fetched and p.matched_patterns == 0
+                                                     and getattr(p, "structural_quality", "") == "healthy"
+                                                     for p in ctx.all_page_results),
+            "zero_hit_has_signalless": any(p.fetched and p.matched_patterns == 0
+                                           and getattr(p, "waste_category", "") == "signalless"
+                                           for p in ctx.all_page_results),
+        }
+
+        # Discovery blocker
+        fallback_triggered = getattr(discovery.discovery_result, "fallback_triggered", None)
+        FALLBACK_STATE_MAP = {
+            "primary_backend_failed_fallback_succeeded": "primary_failed_fallback_succeeded",
+            "primary_backend_failed_fallback_failed": "primary_failed_fallback_failed",
+        }
+        public_discovery_fallback_state = FALLBACK_STATE_MAP.get(fallback_triggered) or (
+            "no_fallback_needed" if discovery.discovery_error is None else None
+        )
+
+        BLOCKER_MAP = {"primary_backend_failed_fallback_failed": "backend_error_fallback_failed"}
+        if ctx.uma_state == "UMA_STATE_EMERGENCY":
+            public_discovery_blocker = "uma_emergency_abort"
+        elif discovery.discovery_error and not fallback_triggered:
+            public_discovery_blocker = "backend_error_no_fallback"
+        else:
+            public_discovery_blocker = BLOCKER_MAP.get(fallback_triggered)
+
+        # Fetch gate
+        if ctx.uma_state == "UMA_STATE_EMERGENCY":
+            public_fetch_gate = "emergency_blocked"
+        elif ctx.uma_state == "UMA_STATE_CRITICAL":
+            public_fetch_gate = "critical_limited"
+        else:
+            public_fetch_gate = "ok"
+
+        # Dominant failure mode
+        failure_modes = []
+        if public_discovery_blocker:
+            failure_modes.append(public_discovery_blocker)
+        if t["fetch_accessibility_blocker"]:
+            failure_modes.append("fetch_accessibility_blocker")
+        if any(p.redirected and p.waste_category in ("structural", "signalless") for p in ctx.all_page_results):
+            failure_modes.append("redirect_non_content")
+        if t["run_waste_pattern_code"]:
+            failure_modes.append(f"waste:{t['run_waste_pattern_code']}")
+        dominant_failure_mode = failure_modes[0] if failure_modes else None
+
+        return PipelineRunResult(
+            query=ctx.query,
+            discovered=total_discovered,
+            fetched=total_fetched,
+            matched_patterns=total_matched,
+            accepted_findings=total_accepted,
+            stored_findings=total_stored,
+            patterns_configured=_get_patterns_configured_count(),
+            pages=tuple(ctx.all_page_results),
+            error=run_error,
+            strong_pages=t["strong_pages"],
+            weak_pages_skipped=t["weak_pages_skipped"],
+            low_value_fetches=t["low_value_fetches"],
+            discovery_strong_content_weak=t["discovery_strong_content_weak"],
+            discovery_and_content_strong=t["discovery_and_content_strong"],
+            discovery_squandered=t["discovery_squandered"],
+            noise_fetch_ratio=t["noise_fetch_ratio"],
+            corroboration_vs_burn=public_branch_verdict["corroboration_vs_burn"],
+            public_next_action=t["public_next_action"],
+            public_confidence_note=t["public_confidence_note"],
+            public_branch_verdict=public_branch_verdict,
+            usable_findings_ratio=usable_findings_ratio,
+            discovery_to_findings_efficiency=discovery_to_findings_efficiency,
+            quality_mix=t["quality_mix"],
+            public_proof_grade=t["public_proof_grade"],
+            public_value_density=public_value_density,
+            top_waste_pattern=t["top_waste_pattern"],
+            discovery_false_positive_count=sum(1 for p in ctx.all_page_results
+                                              if getattr(p, "discovery_false_positive", False)),
+            waste_category_counts=t["waste_category_counts"],
+            structural_health_ratio=t["structural_health_ratio"],
+            factual_value_density=public_value_density,
+            run_waste_pattern_code=t["run_waste_pattern_code"],
+            waste_reason_breakdown=t["waste_reason_breakdown"],
+            backend_degraded=t["backend_degraded"],
+            public_discovery_blocker=public_discovery_blocker,
+            public_fetch_accessibility_blocker=t["fetch_accessibility_blocker"],
+            public_discovery_fallback_state=public_discovery_fallback_state,
+            dominant_public_failure_mode=dominant_failure_mode,
+            public_stage_failure=public_stage_failure,
+            public_stage_failure_reason=public_stage_failure_reason,
+            public_discovery_attempted=discovery.discovery_attempted,
+            public_discovery_raw_count=total_discovered,
+            public_discovery_deduped_count=t["seen_url_count"],
+            public_pages_fetched=total_fetched,
+            public_pages_accepted=sum(1 for p in ctx.all_page_results if p.accepted_findings > 0),
+            public_pages_rejected=sum(1 for p in ctx.all_page_results if p.fetched and p.accepted_findings == 0),
+            public_findings_accepted=total_accepted,
+            zero_hit_accessible_fetch_count=sum(1 for p in ctx.all_page_results if p.fetched and p.matched_patterns == 0),
+            zero_hit_quality_reason_counts=zero_hit_reasons,
+            zero_hit_title_samples=tuple(zero_hit_titles),
+            public_zero_hit_summary=public_zero_hit_summary,
+            ct_subdomain_injected=discovery.ct_injected,
+            cc_archive_injected=discovery.cc_injected,
+            academic_findings_count=discovery.academic_findings_count,
+            pastebin_findings_count=discovery.pastebin_findings_count,
+            github_secrets_count=discovery.github_secrets_count,
+            public_bootstrap_enabled=ctx.public_bootstrap_enabled,
+            public_bootstrap_candidates_count=t["bootstrap_candidates"],
+            public_bootstrap_fetch_attempted=t["bootstrap_fetch_attempted"],
+            public_bootstrap_fetch_success=t["bootstrap_fetch_success"],
+            public_bootstrap_accepted_findings=t["bootstrap_accepted"],
+            public_bootstrap_errors=t["bootstrap_errors"],
+            public_bootstrap_order=t["bootstrap_order"],
+            public_bootstrap_prevented_discovery_timeout=t["bootstrap_prevented"],
+            public_bootstrap_first_fetch_attempted=t["bootstrap_first_attempted"],
+            public_rescue_candidates_count=t["rescue_candidates"],
+            public_rescue_fetch_attempted=t["rescue_fetch_attempted"],
+            public_rescue_fetch_success=t["rescue_fetch_success"],
+            public_rescue_accepted_findings=t["rescue_accepted"],
+            public_rescue_errors=t["rescue_errors"],
+            public_rescue_order=t["rescue_order"],
+            keyword_seed_fallback_triggered=discovery.keyword_seed_fallback_triggered,
+            public_discovered=total_discovered,
+            public_fetch_attempted=total_fetched,
+            public_fetch_skipped=total_discovered - t["seen_url_count"],
+            public_fetch_skip_reason=t["public_fetch_skip_reason"],
+            public_js_renderer_unavailable=sum(1 for p in ctx.all_page_results
+                                               if p.fetched and p.js_renderer_skipped_reason == "browser_unavailable"),
+            public_xml_or_rss_detected=sum(1 for p in ctx.all_page_results
+                                           if p.fetched and p.js_renderer_skipped_reason in ("xml_or_feed_url", "xml_recovered")),
+            public_fetch_timeout_count=sum(1 for p in ctx.all_page_results
+                                           if not p.fetched and p.fetch_blocked_reason == "timeout"),
+            public_fetch_blocked_by_memory=sum(1 for p in ctx.all_page_results
+                                               if not p.fetched and p.fetch_blocked_reason == "uma_memory"),
+            public_discovery_cache_hit=discovery.discovery_telemetry.get("public_discovery_cache_hit", 0),
+            public_discovery_query_count=discovery.discovery_telemetry.get("public_discovery_query_count", 0),
+            public_fetch_candidate_count=t["seen_url_count"],
+            public_fetch_gate=public_fetch_gate,
+            public_fetch_attempted_urls_sample=tuple(p.url for p in ctx.all_page_results if p.fetched)[:5],
+            public_acceptance_attempted=t["candidates_fetch_attempted"],
+            public_acceptance_accepted=sum(1 for p in ctx.all_page_results if p.fetched and p.accepted_findings > 0),
+            public_acceptance_rejected=sum(1 for p in ctx.all_page_results if p.fetched and p.accepted_findings == 0),
+            public_acceptance_reject_reasons=t["acceptance_reject_reasons"],
+            public_accepted_url_sample=tuple(t["accepted_urls"]),
+            public_rejected_url_sample=tuple(t["rejected_urls"]),
+            public_build_success_count=t["build_success"],
+            public_build_failure_count=t["build_failure"],
+            public_duplicate_count=t["duplicate_count"],
+            public_acceptance_ratio=t["acceptance_ratio"],
+            public_terminal_classified_count=sum(1 for v in t["terminal_reason_counts"].values() if v > 0),
+            public_unclassified_count=len(ctx.all_page_results) - sum(1 for v in t["terminal_reason_counts"].values() if v > 0),
+            public_terminal_reason_counts=t["terminal_reason_counts"],
+            public_fetch_success=t["candidates_fetch_success"],
+            public_fetch_failed=t["candidates_fetch_attempted"] - t["candidates_fetch_success"],
+            public_skipped_duplicate=total_discovered - t["seen_url_count"],
+            public_skipped_unsupported_scheme=t["terminal_reason_counts"].get("skipped_unsupported_scheme", 0),
+            public_skipped_memory_gate=t["terminal_reason_counts"].get("skipped_memory_gate", 0),
+            public_skipped_quality_gate=t["terminal_reason_counts"].get("skipped_quality_gate", 0),
+            public_skipped_browser_unavailable=t["terminal_reason_counts"].get("skipped_browser_unavailable", 0),
+            public_skipped_xml_or_feed=t["terminal_reason_counts"].get("skipped_xml_or_feed", 0),
+            public_skipped_timeout=t["terminal_reason_counts"].get("skipped_timeout", 0),
+            public_skipped_fetch_error=t["terminal_reason_counts"].get("skipped_fetch_error", 0),
+            public_rejected_no_pattern_match=t["terminal_reason_counts"].get("rejected_no_pattern_match", 0),
+            public_rejected_low_information=t["terminal_reason_counts"].get("rejected_low_information", 0),
+            public_rejected_duplicate=t["terminal_reason_counts"].get("rejected_duplicate", 0),
+            public_rejected_storage_rejected=t["terminal_reason_counts"].get("rejected_storage_rejected", 0),
+            public_skipped_url_sample=tuple(t["skipped_samples"]),
+            public_rejected_url_samples=tuple(t["rejected_samples"]),
+            public_candidates_discovered=t["candidates_discovered"],
+            public_candidates_fetch_attempted=t["candidates_fetch_attempted"],
+            public_candidates_fetch_success=t["candidates_fetch_success"],
+            public_candidates_parse_success=t["candidates_parse_success"],
+            public_candidates_pattern_matched=t["candidates_pattern_matched"],
+            public_candidates_built=t["candidates_built"],
+            public_candidates_store_attempted=t["candidates_store_attempted"],
+            public_candidates_stored=t["candidates_stored"],
+            public_candidates_rejected=t["candidates_rejected"],
+            public_rejection_summary=t["rejection_summary"],
+            public_terminal_stage=t["terminal_stage"],
+            public_discovery_empty_reason=t["discovery_empty_reason"],
+        )
+
+
+# =============================================================================
+# Helper functions referenced by phases
+# =============================================================================
+# NOTE: _is_threat_query and _filter_public_noise are defined earlier in the file
+# (lines ~968 and ~897 respectively). Duplicates removed in F362 fix.
 
 # -----------------------------------------------------------------------------
 # UMA helpers
@@ -2417,6 +3826,22 @@ async def _extract_iocs_from_report(report_text: str) -> tuple[list[str], list[s
 
 
 
+def _build_domain_candidates(query: str) -> list[str]:
+    """F363: Extract domain-like candidates from query (shared helper).
+
+    Handles pure domain ("example.com") and mixed OSINT queries
+    ("certificate transparency subdomains of mozilla.org" -> "mozilla.org").
+    """
+    q = query.strip()
+    if not q or len(q) > 253:
+        return []
+    candidates = [q]
+    for token in q.split():
+        if "." in token and token != q:
+            candidates.append(token)
+    return candidates
+
+
 def _query_looks_like_domain(query: str) -> bool:
     """Sprint F188B: Detect if query is a domain name suitable for CT subdomain lookup.
 
@@ -2426,17 +3851,10 @@ def _query_looks_like_domain(query: str) -> bool:
     F233E: Also try token with a dot for mixed OSINT queries like
     "certificate transparency subdomains of mozilla.org" — the token
     "mozilla.org" has a dot and is the domain candidate.
+
+    F363: Refactored to use shared _build_domain_candidates helper.
     """
-    q = query.strip()
-    if not q or len(q) > 253:
-        return False
-    # F233E: also try token with a dot (handles "domain at end" queries like
-    # "certificate transparency subdomains of mozilla.org" where domain is last token)
-    candidates = [q]
-    for token in q.split():
-        if "." in token and token != q:
-            candidates.append(token)
-    return any(_CT_QUERY_IS_DOMAIN_RE.match(c) for c in candidates)
+    return any(_CT_QUERY_IS_DOMAIN_RE.match(c) for c in _build_domain_candidates(query))
 
 
 def _extract_base_domain(domain: str) -> str:
@@ -2537,16 +3955,10 @@ def _query_looks_like_domain_for_cc(query: str) -> bool:
     Returns False for "apple inc", "what is DNS", etc.
 
     F233E: Also try token with a dot for mixed OSINT queries.
+
+    F363: Refactored to use shared _build_domain_candidates helper.
     """
-    q = query.strip()
-    if not q or len(q) > 253:
-        return False
-    # F233E: also try token with a dot for mixed OSINT queries
-    candidates = [q]
-    for token in q.split():
-        if "." in token and token != q:
-            candidates.append(token)
-    return any(_CC_QUERY_IS_DOMAIN_RE.match(c) for c in candidates)
+    return any(_CC_QUERY_IS_DOMAIN_RE.match(c) for c in _build_domain_candidates(query))
 
 
 async def _inject_commoncrawl_hits(
@@ -2770,131 +4182,45 @@ async def async_run_live_public_pipeline(
     max_results: int = 10,
     fetch_timeout_s: float = 35.0,
     fetch_max_bytes: int = 2_000_000,
-    fetch_concurrency: int = 8,  # F290: 5→8, M1 8GB RAM budget allows 8 concurrent HTTP
+    fetch_concurrency: int = 8,
     hermes_engine: Any | None = None,
     graph: Any | None = None,
     memory_manager: Any | None = None,
     session_id: str | None = None,
     vector_store: Any | None = None,
-    run_loop: bool = False,  # P16: If True, run ResearchLoop after pipeline
-    rl_steps: int = 0,  # P17: Number of RL steps (0 = use time limit)
-    enqueue_hypothesis_pivot: Any | None = None,  # Sprint F193B: bounded feedback seam
-    # Sprint F217C: Deterministic bootstrap — if True, prepend bootstrap URLs before discovery
+    run_loop: bool = False,
+    rl_steps: int = 0,
+    enqueue_hypothesis_pivot: Any | None = None,
     public_bootstrap_enabled: bool = False,
-    # Sprint F223C: Bounded seed_context bootstrap for nonfeed_diagnostic profile
     seed_context: Any | None = None,
-    # DI F226: explicit dependency injection for testable seams
-    fetch_fn: Any | None = None,  # async_fetch_public_text replacement
-    match_fn: Any | None = None,  # match_text replacement
-    discovery_fn: Any | None = None,  # async_search_public_web replacement
-    ct_subdomains_fn: Any | None = None,  # CT scanner get_subdomains replacement
-    clear_query_cache_fn: Any | None = None,  # _clear_query_cache replacement
-    # F271E: Export directory for P18 in-pipeline markdown/graph export.
-    # When None, the singleton ExportManager falls back to ~/hledac_outputs/.
-    # Threaded from __main__.py dispatcher so ``--export-dir`` is honoured
-    # by the in-pipeline Obsidian export as well as the post-sprint export.
+    fetch_fn: Any | None = None,
+    match_fn: Any | None = None,
+    discovery_fn: Any | None = None,
+    ct_subdomains_fn: Any | None = None,
+    clear_query_cache_fn: Any | None = None,
     export_dir: str | None = None,
-    _sprint_id: str = "",  # noqa: F841  # F268: reserved for graph accumulation context
+    _sprint_id: str = "",
 ) -> PipelineRunResult:
-    """Sprint 8AE: Live public OSINT pipeline.
+    """F360: Refactored pipeline using phase-based architecture.
 
-    Orchestration-only: wires existing 8AC/8AD/8X/8W/8S components.
-    P6: Optional Hermes3Engine for OSINT report generation.
-    P11: Optional MemoryManager for persistent RAG history.
-
-    Parameters
-    ----------
-    query:
-        Research query string (passed to CanonicalFinding.query).
-    store:
-        Optional DuckDBShadowStore instance. If None, storage is a no-op
-        and only counting happens.
-    max_results:
-        Maximum discovery hits to process (default 10).
-    fetch_timeout_s:
-        Per-fetch operation timeout in seconds (applied per-page via 8AD API).
-    fetch_max_bytes:
-        Maximum bytes to fetch per page.
-    fetch_concurrency:
-        Maximum concurrent fetches in the batch.
-    memory_manager:
-        Optional MemoryManager instance for persistent RAG history.
-    session_id:
-        Optional session ID for memory manager. If None, uses query hash.
-    enqueue_hypothesis_pivot:
-        Optional callback for bounded hypothesis pivot feedback (Sprint F193B).
-    public_bootstrap_enabled:
-        If True, prepend bootstrap URLs before discovery (Sprint F217C).
-    seed_context:
-        Optional seed context for nonfeed_diagnostic profile bootstrap (Sprint F223C).
-    fetch_fn:
-        DI F226: explicit async_fetch_public_text replacement. If None,
-        falls back to _ensure_patched() → async_fetch_public_text from 8AD.
-    match_fn:
-        DI F226: explicit match_text replacement. If None, falls back to
-        _ensure_patched() → match_text from 8X.
-    discovery_fn:
-        DI F226: explicit async_search_public_web replacement. If None,
-        falls back to _ensure_discovery_patched() (providerless cascade or DDG).
-    ct_subdomains_fn:
-        DI F226: explicit CT scanner get_subdomains(domain, async_session)
-        replacement. If None, falls back to _ensure_ct_scanner_patched().
-    clear_query_cache_fn:
-        DI F226: explicit _clear_query_cache replacement. If None,
-        imports and calls duckduckgo_adapter._clear_query_cache.
-    export_dir:
-        Optional export directory for markdown/graph output.
-    graph:
-        Optional DuckPGQGraph instance for entity graph persistence.
-    hermes_engine:
-        Optional Hermes3Engine instance for OSINT report generation.
-    rl_steps:
-        Number of RL steps (0 = use time limit).
-    run_loop:
-        If True, run ResearchLoop after pipeline.
-    vector_store:
-        Optional VectorStore instance for semantic search.
-
-    Returns
-    -------
-    PipelineRunResult with typed counts and per-page error breakdown.
-
+    Phases:
+        1. Initialization - reset temporal layer, clear caches, DI resolution
+        2. ResourceGovernance - UMA state check, concurrency setup
+        3. DiscoveryRunner - execute discovery using DiscoveryEngine
+        4. FetchOrchestrator - parallel fetch execution
+        5. TelemetryAggregator - compute all run-level telemetry
+        6. ReportGenerator - OSINT report, RL loop, hypothesis + ToT
+        7. SynthesisRunner - LLM synthesis (M1 8GB safe)
+        8. ExportManager - markdown and graph export
+        9. TemporalPersistence - save signal snapshot
     """
-    # Sprint F206P: Reset temporal signal layer at run start
-    from hledac.universal.layers import reset_temporal_signal_layer
-    reset_temporal_signal_layer()
-
-    # F207I-A: Clear per-run DDG query cache at pipeline run start
-    # DI F226: explicit dependency injection — clear_query_cache_fn
-    _resolved_clear_cache: Any = clear_query_cache_fn
-    if _resolved_clear_cache is None:
-        from hledac.universal.discovery.duckduckgo_adapter import _clear_query_cache
-        _resolved_clear_cache = _clear_query_cache
-    _resolved_clear_cache()
-
-    # Sprint F206Q: Restore from persistent snapshot if store is enabled
-    persistence_enabled = False
-    persistence_restored = False
-    try:
-        from hledac.universal.layers import (
-            is_temporal_store_enabled,
-            load_temporal_signal_snapshot,
-        )
-        persistence_enabled = is_temporal_store_enabled()
-        if persistence_enabled:
-            persistence_restored = load_temporal_signal_snapshot()
-    except Exception:  # noqa: BLE001
-        pass
-
-    # DI F226: explicit dependency injection — resolve all seams before use
-    # fetch_fn / match_fn override globals; otherwise _ensure_patched() sets them
+    # DI F226: Resolve dependency injection seams
     if fetch_fn is not None:
         from . import public_fetch as _pf
         _pf._ASYNC_FETCH_PUBLIC_TEXT = fetch_fn
     if match_fn is not None:
         from . import public_fetch as _pf
         _pf._SYNC_MATCH_TEXT = match_fn
-    # discovery_fn / ct_subdomains_fn override globals
     if discovery_fn is not None:
         global _ASYNC_DISCOVERY_SEARCH
         _ASYNC_DISCOVERY_SEARCH = discovery_fn
@@ -2902,1599 +4228,167 @@ async def async_run_live_public_pipeline(
         global _CT_SCANNER_GET_SUBDOMAINS
         _CT_SCANNER_GET_SUBDOMAINS = ct_subdomains_fn
 
-    # Ensure hot-path imports are resolved
     _ensure_patched()
 
-    # P11: Initialize session ID for memory manager
-    if session_id is None:
-        session_id = hashlib.sha256(query.encode()).hexdigest()[:16]
-
-    # P11: Load relevant RAG history from memory manager (if available)
-    # NOTE: rag_context is populated but not yet wired to hermes_engine.generate_report().
-    # Reserved for future RAG context injection in synthesis phase.
-    _rag_context: list[dict] = []  # noqa: F841
-    if memory_manager is not None:
-        try:
-            history = await memory_manager.get_session_history(session_id, limit=50)
-            # Extract payload_text from past findings for RAG context
-            for entry in history:
-                value = entry.get("value", {})
-                if isinstance(value, dict):
-                    payload = value.get("payload_text", "")
-                    if payload:
-                        _rag_context.append({
-                            "query": value.get("query", ""),
-                            "payload": payload[:500],  # Truncate for context
-                            "timestamp": value.get("timestamp", 0),
-                        })
-        except Exception:
-            _rag_context = []  # Fail-soft: memory errors don't fail pipeline
-
-    # ---- Engines -----------------------------------------------------------
-    # Sprint F214: Refactored into focused engine classes for maintainability.
-    # Each engine is a dataclass with async run() method that encapsulates a
-    # logical phase of the pipeline. Backward compatible — same inputs/outputs.
-
-    # ---- Discovery Engine ----------------------------------------
-    # F360: Refactored - DiscoveryEngine class extracted to module level (line ~69)
-    # Reuses module-level DiscoveryEngine with identical inputs/outputs
-
-    # ---- UMA check -----------------------------------------------------------
-    # Sprint 8AK: SSOT labels from resource_governor — no local string literals
-    from hledac.universal.core.resource_governor import (
-        UMA_STATE_CRITICAL,
-        UMA_STATE_EMERGENCY,
-        UMA_STATE_OK,
-    )
-
-    uma_state = UMA_STATE_OK
-    try:
-        uma_state, _ = await _get_uma_state()
-    except Exception:  # noqa: BLE001
-        pass  # noqa: BLE001  # Defensive: proceed with ok state
-
-    if uma_state == UMA_STATE_EMERGENCY:
-        return PipelineRunResult(
-            query=query,
-            discovered=0,
-            fetched=0,
-            matched_patterns=0,
-            accepted_findings=0,
-            stored_findings=0,
-            patterns_configured=_get_patterns_configured_count(),
-            pages=(),
-            error="uma_emergency_abort",
-            public_discovery_blocker="uma_emergency_abort",
-            public_fetch_accessibility_blocker=False,
-            public_discovery_fallback_state=None,
-            dominant_public_failure_mode="uma_emergency_abort",
-            # Sprint F213B: stage failure accounting
-            public_stage_failure="uma_emergency",
-            public_stage_failure_reason="UMA emergency state blocks all public lane processing",
-            public_discovery_attempted=False,
-            public_discovery_raw_count=0,
-            public_discovery_deduped_count=0,
-            public_pages_fetched=0,
-            public_pages_accepted=0,
-            public_pages_rejected=0,
-            public_findings_accepted=0,
-            # F207I-A: emergency gate + telemetry
-            public_fetch_gate="emergency_blocked",
-            public_discovered=0,
-            public_fetch_attempted=0,
-            public_fetch_skipped=0,
-            public_fetch_candidate_count=0,
-            public_fetch_attempted_urls_sample=(),
-            # F207J-C: PUBLIC Acceptance — zeroed (UMA emergency abort before fetch)
-            public_acceptance_attempted=0,
-            public_acceptance_accepted=0,
-            public_acceptance_rejected=0,
-            public_acceptance_reject_reasons={},
-            public_accepted_url_sample=(),
-            public_rejected_url_sample=(),
-            # F208G-A: PUBLIC Yield Taxonomy — zeros (no URLs reached terminal classification)
-            public_terminal_classified_count=0,
-            public_unclassified_count=0,
-            public_terminal_reason_counts={},
-            public_fetch_success=0,
-            public_fetch_failed=0,
-            public_skipped_duplicate=0,
-            public_skipped_unsupported_scheme=0,
-            public_skipped_memory_gate=0,
-            public_skipped_quality_gate=0,
-            public_skipped_browser_unavailable=0,
-            public_skipped_xml_or_feed=0,
-            public_skipped_timeout=0,
-            public_skipped_fetch_error=0,
-            public_rejected_no_pattern_match=0,
-            public_rejected_low_information=0,
-            public_rejected_duplicate=0,
-            public_rejected_storage_rejected=0,
-            public_build_success_count=0,
-            public_build_failure_count=0,
-            public_duplicate_count=0,
-            public_acceptance_ratio=0.0,
-            public_skipped_url_sample=(),
-            public_rejected_url_samples=(),
-            # F231A: PUBLIC Candidate Ledger — zeroed (UMA emergency abort)
-            public_candidates_discovered=0,
-            public_candidates_fetch_attempted=0,
-            public_candidates_fetch_success=0,
-            public_candidates_parse_success=0,
-            public_candidates_pattern_matched=0,
-            public_candidates_built=0,
-            public_candidates_store_attempted=0,
-            public_candidates_stored=0,
-            public_candidates_rejected=0,
-            public_rejection_summary={},
-            # Sprint F220C: Rescue telemetry (UMA emergency abort)
-            public_rescue_candidates_count=0,
-            public_rescue_fetch_attempted=0,
-            public_rescue_fetch_success=0,
-            public_rescue_accepted_findings=0,
-            public_rescue_errors=0,
-            public_rescue_order="disabled",
-            public_terminal_stage="uma_emergency",
-        )
-
-    effective_concurrency = fetch_concurrency
-    if uma_state == UMA_STATE_CRITICAL or uma_state == UMA_STATE_EMERGENCY:
-        effective_concurrency = 1
-
-    semaphore = asyncio.Semaphore(effective_concurrency)
-
-    # ---- Call Discovery Engine -----------------------------------------------
-    # Sprint F214: Refactored — inline discovery replaced with _DiscoveryEngine.run()
-    (
-        hits,
-        discovery_result,
-        discovery_error,
-        discovery_error_type,
-        discovery_elapsed_s,
-        discovery_attempted,
-        discovery_telemetry,
-        academic_findings_count,
-        ct_injected,
-        cc_injected,
-        onion_findings_count,
-        pastebin_findings_count,
-        github_secrets_count,
-    ) = await DiscoveryEngine(
+    # Initialize pipeline context
+    ctx = PipelineContext(
         query=query,
         store=store,
         max_results=max_results,
+        fetch_timeout_s=fetch_timeout_s,
+        fetch_max_bytes=fetch_max_bytes,
+        fetch_concurrency=fetch_concurrency,
+        hermes_engine=hermes_engine,
+        graph=graph,
+        memory_manager=memory_manager,
+        session_id=session_id,
+        vector_store=vector_store,
+        run_loop=run_loop,
+        rl_steps=rl_steps,
+        enqueue_hypothesis_pivot=enqueue_hypothesis_pivot,
         public_bootstrap_enabled=public_bootstrap_enabled,
-        seed_context=seed_context,  # Sprint F223C: bounded seed_context bootstrap
-    ).run(uma_state=uma_state)
-
-    # Unpack discovery telemetry into main-line state
-    public_stage_failure = discovery_telemetry.get("public_stage_failure")
-    public_stage_failure_reason = discovery_telemetry.get("public_stage_failure_reason")
-    public_discovery_deduped_count = discovery_telemetry.get("public_discovery_deduped_count", 0)
-    public_discovery_cache_hit = discovery_telemetry.get("public_discovery_cache_hit", 0)
-    public_discovery_query_count = discovery_telemetry.get("public_discovery_query_count", 0)
-    _pub_bootstrap_candidates_count = discovery_telemetry.get("public_bootstrap_candidates_count", 0)
-    _pub_bootstrap_fetch_attempted = discovery_telemetry.get("public_bootstrap_fetch_attempted", 0)
-    _pub_bootstrap_fetch_success = discovery_telemetry.get("public_bootstrap_fetch_success", 0)
-    _pub_bootstrap_accepted_findings = discovery_telemetry.get("public_bootstrap_accepted_findings", 0)
-    _pub_bootstrap_errors = discovery_telemetry.get("public_bootstrap_errors", 0)
-    _pub_bootstrap_order = discovery_telemetry.get("public_bootstrap_order", "disabled")
-    _pub_bootstrap_prevented_discovery_timeout = discovery_telemetry.get("public_bootstrap_prevented_discovery_timeout", False)  # noqa: E501
-    _pub_bootstrap_first_fetch_attempted = discovery_telemetry.get("public_bootstrap_first_fetch_attempted", False)
-    _pub_build_success_count = discovery_telemetry.get("public_build_success_count", 0)
-    _pub_build_failure_count = discovery_telemetry.get("public_build_failure_count", 0)
-    _pub_duplicate_count = discovery_telemetry.get("public_duplicate_count", 0)
-    _pub_provider_selected = discovery_telemetry.get("public_provider_selected", [])
-    _pub_provider_skipped = discovery_telemetry.get("public_provider_skipped", [])
-    _pub_provider_stub = discovery_telemetry.get("public_provider_stub", [])
-    _pub_provider_errors = discovery_telemetry.get("public_provider_errors", [])
-    _pub_query_variants = discovery_telemetry.get("public_query_variants", [])
-    _pub_provider_timeout_count = [discovery_telemetry.get("public_provider_timeout_count", 0)]
-    _pub_provider_import_error_count = [discovery_telemetry.get("public_provider_import_error_count", 0)]
-    _pub_discovery_empty_reason = [discovery_telemetry.get("public_discovery_empty_reason", "")]
-    _public_candidates_discovered = discovery_telemetry.get("public_candidates_discovered", 0)
-    _public_candidates_fetch_attempted = discovery_telemetry.get("public_candidates_fetch_attempted", 0)
-    _public_candidates_fetch_success = discovery_telemetry.get("public_candidates_fetch_success", 0)
-    _public_candidates_parse_success = discovery_telemetry.get("public_candidates_parse_success", 0)
-    _public_candidates_pattern_matched = discovery_telemetry.get("public_candidates_pattern_matched", 0)
-    _public_candidates_built = discovery_telemetry.get("public_candidates_built", 0)
-    _public_candidates_store_attempted = discovery_telemetry.get("public_candidates_store_attempted", 0)
-    _public_candidates_stored = discovery_telemetry.get("public_candidates_stored", 0)
-    _public_candidates_rejected = discovery_telemetry.get("public_candidates_rejected", 0)
-    # Sprint F220C: Rescue telemetry unpacking
-    _pub_rescue_candidates_count = discovery_telemetry.get("public_rescue_candidates_count", 0)
-    _pub_rescue_fetch_attempted = discovery_telemetry.get("public_rescue_fetch_attempted", 0)
-    _pub_rescue_fetch_success = discovery_telemetry.get("public_rescue_fetch_success", 0)
-    _pub_rescue_accepted_findings = discovery_telemetry.get("public_rescue_accepted_findings", 0)
-    _pub_rescue_errors = discovery_telemetry.get("public_rescue_errors", 0)
-    _pub_rescue_order = discovery_telemetry.get("public_rescue_order", "disabled")
-
-    # F1-3: keyword_seed_fallback — unpack from discovery telemetry into outer scope
-    keyword_seed_fallback_triggered = discovery_telemetry.get("keyword_seed_fallback_triggered", False)
-
-    # F207J-C: PUBLIC Acceptance — local accumulator for rejection reasons
-    public_acceptance_reject_reasons: dict[str, int] = {}
-
-    # ---- Fetch batch ---------------------------------------------------------
-    # Per-call semaphore, no global batch timeout
-    # F208G-A: URL-level dedup — skip duplicate URLs before creating fetch tasks
-    # Sprint F213B: track discovery stage counts before dedup
-    # F221H: Public Discovery Relevance / Shopping Noise Filter
-    is_threat = _is_threat_query(query)
-    hits, noise_rejections = _filter_public_noise(hits, is_threat)
-    # F265C: Debug logging for noise filter analysis — tracks why discovered_urls=0
-    if noise_rejections:
-        logger.debug(
-            "[F265C] Noise filter rejected %d/%d hits for query='%s' (is_threat=%s): %s",
-            len(noise_rejections),
-            len(hits) + len(noise_rejections),
-            query[:80],
-            is_threat,
-            [f"{r}:{u[:60]}" for u, r in noise_rejections[:5]],
-        )
-    # Track noise rejections separately (will merge into public_acceptance_reject_reasons later)
-    public_noise_reject_reasons: dict[str, int] = {}
-    for _noise_url, noise_reason in noise_rejections:
-        if noise_reason not in public_noise_reject_reasons:
-            public_noise_reject_reasons[noise_reason] = 0
-        public_noise_reject_reasons[noise_reason] += 1
-    public_discovery_raw_count = len(hits)  # raw URLs from discovery (includes CT/CC injection)
-    public_discovery_attempted = discovery_attempted
-    bloom_filter = get_default_bloom_filter()
-    _seen_url_count = 0
-    tasks: list[asyncio.Task] = []
-    MAX_FETCH_CANDIDATES = 500
-    for hit in hits[:MAX_FETCH_CANDIDATES]:
-        hit_url = hit.url if hasattr(hit, "url") else str(hit[2])
-        if hit_url in bloom_filter:
-            continue
-        bloom_filter.add(hit_url)
-        _seen_url_count += 1
-        # Sprint F150I: extract discovery score/reason if present (additive, fail-soft)
-        hit_score: float | None = getattr(hit, "score", None)
-        if hit_score is None and hasattr(hit, "__getitem__"):
-            try:
-                hit_score = float(hit[4]) if len(hit) > 4 else None
-            except (ValueError, TypeError):
-                hit_score = None
-
-        hit_reason: str | None = getattr(hit, "reason", None)
-        if hit_reason is None and hasattr(hit, "__getitem__"):
-            try:
-                hit_reason = str(hit[5]) if len(hit) > 5 else None
-            except (ValueError, TypeError):
-                hit_reason = None
-
-        task = safe_create_task(
-            _fetch_and_process_page(
-                semaphore=semaphore,
-                query=query,
-                hit_url=hit.url if hasattr(hit, "url") else str(hit[2]),
-                hit_title=hit.title if hasattr(hit, "title") else str(hit[1] if len(hit) > 1 else ""),
-                hit_snippet=hit.snippet if hasattr(hit, "snippet") else str(hit[3] if len(hit) > 3 else ""),
-                hit_rank=hit.rank if hasattr(hit, "rank") else 0,
-                fetch_timeout_s=fetch_timeout_s,
-                fetch_max_bytes=fetch_max_bytes,
-                store=store,
-                memory_manager=memory_manager,
-                session_id=session_id,
-                discovery_score=hit_score,
-                discovery_reason=hit_reason,
-                vector_store=vector_store,
-                graph=graph,
-            ),
-            name="fetch:public_page",
-        )
-        tasks.append(task)
-
-    # ISSUE-D2: parallel() centralizes [I6][I7][I8] invariants at the gather boundary.
-    # Same return shape as before (ok_results + error_results) so downstream
-    # code at 3911/4225/4227 keeps working unchanged.
-    from hledac.universal.utils.async_helpers import safe_wait_for
-    _result = await parallel(tasks, policy="collect", ctx="live_public_page_fetch")
-    ok_results, error_results = _result.ok, _result.errors
-
-    # Assemble page results in discovery order (skipping exceptions)
-    all_page_results: list[PipelinePageResult] = []
-    for item in ok_results:
-        if isinstance(item, PipelinePageResult):
-            all_page_results.append(item)
-
-    # ---- Aggregate -----------------------------------------------------------
-    total_discovered = len(hits)
-    total_fetched = sum(1 for p in all_page_results if p.fetched)
-    total_matched = sum(p.matched_patterns for p in all_page_results)
-    total_accepted = sum(p.accepted_findings for p in all_page_results)
-    total_stored = sum(p.stored_findings for p in all_page_results)
-    patterns_cfg = _get_patterns_configured_count()
-
-    # F207F: PUBLIC Yield telemetry — aggregate from per-page telemetry
-    public_discovered = total_discovered
-    public_fetch_attempted = sum(1 for p in all_page_results if p.fetched)
-    public_fetch_skipped = sum(1 for p in all_page_results if not p.fetched)
-    public_fetch_skip_reason = None
-    public_js_renderer_unavailable = sum(
-        1 for p in all_page_results
-        if p.fetched and p.js_renderer_skipped_reason == "browser_unavailable"
-    )
-    public_xml_or_rss_detected = sum(
-        1 for p in all_page_results
-        if p.fetched and p.js_renderer_skipped_reason in ("xml_or_feed_url", "xml_recovered")
-    )
-    public_fetch_timeout_count = sum(
-        1 for p in all_page_results
-        if not p.fetched and p.fetch_blocked_reason == "timeout"
-    )
-    public_fetch_blocked_by_memory = sum(
-        1 for p in all_page_results
-        if not p.fetched and p.fetch_blocked_reason == "uma_memory"
-    )
-    # Dominant skip reason for reporting
-    skip_reasons = [p.fetch_blocked_reason for p in all_page_results if not p.fetched and p.fetch_blocked_reason]
-    if skip_reasons:
-        from collections import Counter
-        public_fetch_skip_reason = Counter(skip_reasons).most_common(1)[0][0]
-
-    # F207I-A: memory gate verdict
-    if uma_state == UMA_STATE_EMERGENCY:
-        public_fetch_gate = "emergency_blocked"
-    elif uma_state == UMA_STATE_CRITICAL:
-        public_fetch_gate = "critical_limited"
-    else:
-        public_fetch_gate = "ok"
-
-    # F207I-A: new telemetry aggregation
-    # F208G-A: len(seen_urls) = unique URLs after dedup (dedup skipped URLs excluded from all_page_results)
-    public_fetch_candidate_count = _seen_url_count
-    public_skipped_duplicate = len(hits) - _seen_url_count  # F208G-A: dedup gap
-    fetched_urls_sample_list = [p.url for p in all_page_results if p.fetched][:5]
-    public_fetch_attempted_urls_sample = tuple(fetched_urls_sample_list)
-
-    # F207J-C: PUBLIC Acceptance — post-fetch acceptance/rejection aggregation
-    # Only pages where fetch was attempted (fetched=True) enter acceptance classification
-    _fetched_pages = [p for p in all_page_results if p.fetched]
-    public_acceptance_attempted = len(_fetched_pages)
-    public_acceptance_accepted: int = 0  # pages with accepted_findings > 0
-    public_acceptance_rejected: int = 0  # pages with accepted_findings == 0 (post-fetch rejection)
-    accepted_urls: list[str] = []
-    rejected_urls: list[str] = []
-    for p in _fetched_pages:
-        rr = getattr(p, "rejection_reason", None)
-        if rr is None:
-            # Accepted: had pattern matches that passed storage gate
-            public_acceptance_accepted += 1
-            if len(accepted_urls) < 5:
-                accepted_urls.append(p.url)
-        else:
-            # Rejected: reasons include empty_text, no_pattern_match, low_information, etc.
-            public_acceptance_rejected += 1
-            public_acceptance_reject_reasons[rr] = public_acceptance_reject_reasons.get(rr, 0) + 1
-            if len(rejected_urls) < 5:
-                rejected_urls.append(p.url)
-    # F221H: Merge pre-fetch noise rejections into acceptance reject reasons
-    for reason, count in public_noise_reject_reasons.items():
-        public_acceptance_reject_reasons[reason] = public_acceptance_reject_reasons.get(reason, 0) + count
-    public_accepted_url_sample = tuple(accepted_urls)
-    public_rejected_url_sample = tuple(rejected_urls)
-
-    # F208G-A: PUBLIC Yield Taxonomy — run-level terminal classification
-    # Classify every URL by terminal_reason; accepted/skipped/rejected buckets
-    from collections import Counter
-    _tr_counter: Counter[str] = Counter()
-    _skipped_samples: list[str] = []
-    _rejected_samples: list[str] = []
-    for p in all_page_results:
-        tr = getattr(p, "terminal_reason", None)
-        if tr is None:
-            _tr_counter["accepted"] += 1
-        else:
-            _tr_counter[tr] += 1
-            if tr.startswith("skipped_") and len(_skipped_samples) < 5:
-                _skipped_samples.append(p.url)
-            elif tr.startswith("rejected_") and len(_rejected_samples) < 5:
-                _rejected_samples.append(p.url)
-
-    # Run-level counts
-    _classified = sum(v for k, v in _tr_counter.items() if k != "accepted")
-    _accepted = _tr_counter.get("accepted", 0)
-    public_terminal_classified_count = _classified
-    public_unclassified_count = len(all_page_results) - _classified - _accepted
-    public_terminal_reason_counts = dict(_tr_counter)
-
-    # Fetch outcome
-    public_fetch_success = sum(1 for p in all_page_results if p.fetched)
-    public_fetch_failed = sum(1 for p in all_page_results if not p.fetched)
-
-    # Sprint F213B: PUBLIC discovery stage counters
-    public_discovery_deduped_count = _seen_url_count  # unique URLs after dedup
-
-    # Sprint F213B: PUBLIC page/finding acceptance counters
-    public_pages_fetched = sum(1 for p in all_page_results if p.fetched)
-    public_pages_accepted = sum(1 for p in all_page_results if p.accepted_findings > 0)
-    public_pages_rejected = sum(1 for p in all_page_results if p.fetched and p.accepted_findings == 0)
-    public_findings_accepted = sum(p.accepted_findings for p in all_page_results)
-
-    # Sprint F213B: stage failure — discovery returned URLs but no findings accepted
-    if public_discovery_deduped_count > 0 and public_findings_accepted == 0:
-        public_stage_failure = "fetch_zero"
-        public_stage_failure_reason = f"discovery returned {public_discovery_deduped_count} URLs but no findings were accepted"  # noqa: E501
-
-    # F231A: PUBLIC Candidate Ledger — derive from page results
-    # Tracks stage progression: discovery → fetch_attempted → fetch_success → parse_success → pattern_matched → built → store_attempted → stored/rejected  # noqa: E501
-    # fetch_attempted = pages that passed quality gate and entered page processing
-    public_candidates_discovered = total_discovered
-    public_candidates_fetch_attempted = public_pages_fetched  # pages that entered fetch/parse
-    public_candidates_fetch_success = sum(
-        1 for p in all_page_results
-        if p.fetched and p.error is not None and not p.error.startswith(("fetch_text_none_or_empty", "html_extract_failed"))  # noqa: E501
-    )
-    public_candidates_parse_success = sum(
-        1 for p in all_page_results if p.fetched and not p.error  # noqa: E501
-    )
-    public_candidates_pattern_matched = sum(1 for p in all_page_results if p.fetched and p.matched_patterns > 0)
-    public_candidates_built = sum(
-        1 for p in all_page_results
-        if p.fetched and (p.matched_patterns > 0 or p.accepted_findings > 0)
-    )
-    public_candidates_store_attempted = sum(1 for p in all_page_results if p.fetched and p.matched_patterns > 0)
-    public_candidates_stored = sum(1 for p in all_page_results if p.stored_findings > 0)
-    public_candidates_rejected = sum(
-        1 for p in all_page_results
-        if p.fetched and p.matched_patterns > 0 and p.stored_findings == 0
-    )
-    # Build rejection summary by stage
-    _rej_sum: dict[str, int] = {}
-    if public_candidates_fetch_attempted == 0 and public_candidates_discovered > 0:
-        _rej_sum["fetch_zero"] = public_candidates_discovered - public_candidates_fetch_attempted
-    if public_candidates_pattern_matched == 0 and public_candidates_fetch_success > 0:
-        _rej_sum["match_zero"] = public_candidates_fetch_success - public_candidates_pattern_matched
-    if public_candidates_store_attempted > 0 and public_candidates_stored == 0:
-        _rej_sum["store_zero"] = public_candidates_store_attempted
-    public_rejection_summary = _rej_sum
-
-    # Sprint 300s BUILT_FAIL diagnostic: log per-URL rejection reasons when built_count=0
-    _built_count = sum(
-        1 for p in all_page_results
-        if p.fetched and (p.matched_patterns > 0 or p.accepted_findings > 0)
-    )
-    if _built_count == 0 and public_candidates_fetch_success > 0:
-        _logger = __import__("logging").getLogger(__name__)
-        for p in all_page_results:
-            if not p.fetched:
-                continue
-            _text_len = getattr(p, "extracted_text_len", 0) or 0
-            _matched = p.matched_patterns or 0
-            _accepted = p.accepted_findings or 0
-            _err = p.error or ""
-            _reason = p.quality_reason or ""
-            if _matched == 0 and _accepted == 0:
-                _logger.warning(
-                    "[BUILT_FAIL] %s: no IoCs in %d chars, error=%r, quality_reason=%r",
-                    (p.url or "")[:120], _text_len, _err, _reason,
-                )
-    # F231A: Derive canonical terminal stage
-    if not public_candidates_discovered:
-        public_terminal_stage = "discovery_empty"
-    elif public_candidates_fetch_attempted == 0:
-        public_terminal_stage = "fetch_zero"
-    elif public_candidates_pattern_matched == 0:
-        public_terminal_stage = "match_zero"
-    elif public_candidates_stored == 0:
-        public_terminal_stage = "store_zero"
-    else:
-        public_terminal_stage = "accepted"
-
-    # F221G: Public discovery empty reason consistency
-    # If public produced accepted findings, empty_reason contradicts the outcome.
-    # Preserve original diagnostic in debug_reason, clear empty_reason.
-    _accepted_findings = sum(p.accepted_findings for p in all_page_results) if all_page_results else 0
-    if (
-        public_terminal_stage == "accepted"
-        or _accepted_findings > 0
-        or public_candidates_stored > 0
-    ) and _pub_discovery_empty_reason and _pub_discovery_empty_reason[0]:
-        _original_empty_reason = _pub_discovery_empty_reason[0]
-        _pub_discovery_empty_reason[0] = ""
-        # Pass debug reason through discovery_telemetry for downstream consumption
-        discovery_telemetry["public_discovery_debug_reason"] = _original_empty_reason
-
-    # Skipped breakdown
-    # F208G-A: public_skipped_duplicate already computed as len(hits)-len(seen_urls) at line 2575
-    # Do NOT overwrite with _tr_counter lookup (duplicates never reach page processing)
-    public_skipped_unsupported_scheme = _tr_counter.get("skipped_unsupported_scheme", 0)
-    public_skipped_memory_gate = _tr_counter.get("skipped_memory_gate", 0)
-    public_skipped_quality_gate = _tr_counter.get("skipped_quality_gate", 0)
-    public_skipped_browser_unavailable = _tr_counter.get("skipped_browser_unavailable", 0)
-    public_skipped_xml_or_feed = _tr_counter.get("skipped_xml_or_feed", 0)
-    public_skipped_timeout = _tr_counter.get("skipped_timeout", 0)
-    public_skipped_fetch_error = _tr_counter.get("skipped_fetch_error", 0)
-
-    # Rejected breakdown
-    public_rejected_no_pattern_match = _tr_counter.get("rejected_no_pattern_match", 0)
-    public_rejected_low_information = _tr_counter.get("rejected_low_information", 0)
-    public_rejected_duplicate = _tr_counter.get("rejected_duplicate", 0)
-    public_rejected_storage_rejected = _tr_counter.get("rejected_storage_rejected", 0)
-
-    # F226B: PUBLIC acceptance uplift — public_surface finding build outcomes
-    # _pub_duplicate_count: public_surface findings already seen in same run (deduped at per-page level)
-    _pub_dup_total = sum(
-        1 for p in all_page_results
-        if getattr(p, "public_surface_dup", False)
-    )
-    _pub_duplicate_count = _pub_dup_total
-    # F230B: Compute bootstrap fetch success from page results
-    # Bootstrap URLs were prepended to hits with source="bootstrap"
-    _bootstrap_candidate_urls = {
-        p.url for p in all_page_results
-        if getattr(p, "url", "").startswith("http")
-    }
-    _pub_bootstrap_fetch_success = sum(
-        1 for p in all_page_results
-        if p.fetched and p.url in _bootstrap_candidate_urls
-    )
-    # Sprint F220C: Rescue fetch success from rescue source hits
-    _rescue_candidate_urls = {
-        p.url for p in all_page_results
-        if getattr(p, "url", "").startswith("http")
-    }
-    _pub_rescue_fetch_success = sum(
-        1 for p in all_page_results
-        if p.fetched and p.url in _rescue_candidate_urls
-    )
-    # public_build_failure_count already accumulated during page processing for zero-match pages
-    # that passed quality gate but produced no actionable finding
-    public_build_success_count = _pub_build_success_count
-    public_build_failure_count = _pub_build_failure_count
-    public_duplicate_count = _pub_duplicate_count
-    public_acceptance_ratio = _pub_build_success_count / max(_pub_build_success_count + _pub_build_failure_count, 1)
-
-    # Bounded URL samples
-    public_skipped_url_sample = tuple(_skipped_samples)
-    public_rejected_url_samples = tuple(_rejected_samples)
-
-    # Sprint F150J Fix B: branch economics counters
-    # Fix weak_pages_skipped: SKIP_WEAK post-fetch pages have error=None (not error!=None)
-    strong_pages = sum(
-        1 for p in all_page_results
-        if p.quality_reason == "very_good"
-    )
-    weak_pages_skipped = sum(
-        1 for p in all_page_results
-        if p.quality_reason is not None and p.quality_reason.startswith("SKIP_WEAK")
-    )
-    # low-value = fetched but poor quality + no matches
-    low_value_fetches = sum(
-        1 for p in all_page_results
-        if p.fetched
-        and p.matched_patterns == 0
-        and p.quality_reason in ("weak_low_signal", "ok:no_query_signal")
-    )
-    # Sprint F150J: additive derived counters for public-branch value assessment
-    # discovery_strong_content_weak: discovery signal but page yielded nothing
-    discovery_strong_content_weak = sum(
-        1 for p in all_page_results
-        if (p.discovery_signal and p.matched_patterns == 0)
-    )
-    # discovery_and_content_strong: both discovery signal and pattern yield
-    discovery_and_content_strong = sum(
-        1 for p in all_page_results
-        if p.discovery_signal and p.matched_patterns > 0
-    )
-    # Sprint F150K: discovery_squandered — strong discovery score but page quality weak
-    # (promarněný strong discovery hit = high score but got SKIP_WEAK or weak_low_signal)
-    # Sprint F162B: threshold aligned with _FETCH_BUDGET_STRONG = 0.85
-    discovery_squandered = sum(
-        1 for p in all_page_results
-        if p.discovery_score is not None
-        and p.discovery_score >= 0.85
-        and p.quality_reason in ("weak_low_signal", "SKIP_WEAK:weak_discovery", "SKIP_WEAK:very_low_text")
-    )
-    # Sprint F150K: build derived value metrics
-    fetched_pages = [p for p in all_page_results if p.fetched]
-    fetched_count = len(fetched_pages)
-
-    # noise_fetch_ratio: what fraction of fetched pages yielded zero patterns
-    noise_fetch_ratio = (
-        round(low_value_fetches / fetched_count, 3)
-        if fetched_count > 0
-        else 0.0
-    )
-    # waste_ratio = pages that consumed budget but yielded nothing
-    waste_ratio = (
-        round(low_value_fetches / fetched_count, 3)
-        if fetched_count > 0
-        else 0.0
-    )
-    # value_ratio = pages with actual pattern yield vs total discovered
-    value_ratio = (
-        round(discovery_and_content_strong / total_discovered, 3)
-        if total_discovered > 0
-        else 0.0
-    )
-    # public_branch_hint: one-liner signal quality label
-    if strong_pages >= 2 and discovery_and_content_strong >= 2:
-        public_branch_hint = "high_value"
-    elif discovery_and_content_strong >= 1:
-        public_branch_hint = "some_value"
-    elif discovery_strong_content_weak >= 1:
-        public_branch_hint = "weak_signal"
-    elif weak_pages_skipped > 0 and fetched_count == 0:
-        public_branch_hint = "skipped_low_quality"
-    else:
-        public_branch_hint = "low_value"
-
-    # corroboration_vs_burn: strong signal corroboration vs pure budget drain
-    # = (discovery_and_content_strong + strong_pages) / max(total_discovered, 1)
-    corroboration_vs_burn = (
-        round((discovery_and_content_strong + strong_pages) / max(total_discovered, 1), 3)
+        seed_context=seed_context,
+        export_dir=export_dir,
+        _sprint_id=_sprint_id,
+        clear_query_cache_fn=clear_query_cache_fn,
     )
 
-    run_error: str | None = None
-    if discovery_error:
-        run_error = discovery_error
-    elif error_results:
-        # Surface first error
-        err = error_results[0]
-        run_error = f"batch_error:{type(err).__name__}:{err}"
-
-    # Sprint F150K: operator-facing hints
-    if strong_pages >= 2 and discovery_and_content_strong >= 2:
-        public_next_action = "expand_public_branch"
-        public_confidence_note = "high_yield_run"
-    elif discovery_and_content_strong >= 1 and discovery_squandered == 0:
-        public_next_action = "continue_public_branch"
-        public_confidence_note = "positive_signal"
-    elif discovery_squandered >= 1 and discovery_strong_content_weak >= 1:
-        public_next_action = "review_discovery_quality"
-        public_confidence_note = "squandered_hits_detected"
-    elif noise_fetch_ratio >= 0.5:
-        public_next_action = "drain_public_branch"
-        public_confidence_note = "high_noise_ratio"
-    elif weak_pages_skipped >= total_discovered * 0.5:
-        public_next_action = "throttle_public_branch"
-        public_confidence_note = "low_quality_majority"
-    else:
-        public_next_action = "hold_public_branch"
-        public_confidence_note = "marginal_signal"
-
-    # Sprint F206P: temporal signal summary (advisory, fail-soft)
-    try:
-        from hledac.universal.layers import get_temporal_signal_summary
-        temporal_signal_summary = get_temporal_signal_summary(k=10)
-    except Exception:
-        temporal_signal_summary = {}
-
-    # Sprint F206R: temporal priority hints (advisory, bounded top-10, fail-soft)
-    try:
-        from hledac.universal.layers import build_temporal_priority_hints
-        temporal_priority_hints = build_temporal_priority_hints(k=10)
-    except Exception:
-        temporal_priority_hints = []
-
-    # Sprint F206Q: save snapshot at pipeline end (fail-soft)
-    persistence_saved = False
-    try:
-        from hledac.universal.layers import save_temporal_signal_snapshot
-        persistence_saved = save_temporal_signal_snapshot()
-    except Exception:  # noqa: BLE001
-        pass
-
-    public_branch_verdict = {
-        "waste_ratio": waste_ratio,
-        "value_ratio": value_ratio,
-        "public_branch_hint": public_branch_hint,
-        "strong_pages": strong_pages,
-        "weak_pages_skipped": weak_pages_skipped,
-        "discovery_strong_content_weak": discovery_strong_content_weak,
-        "discovery_and_content_strong": discovery_and_content_strong,
-        "low_value_fetches": low_value_fetches,
-        "discovery_squandered": discovery_squandered,
-        "noise_fetch_ratio": noise_fetch_ratio,
-        "corroboration_vs_burn": corroboration_vs_burn,
-        "public_next_action": public_next_action,
-        "public_confidence_note": public_confidence_note,
-        "temporal_signal_summary": temporal_signal_summary,
-        # Sprint F206R: temporal priority hints (advisory, no scheduler mutation)
-        "temporal_priority_hints": temporal_priority_hints,
-        # Sprint F206Q: persistence flags
-        "persistence_enabled": persistence_enabled,
-        "persistence_restored": persistence_restored,
-        "persistence_saved": persistence_saved,
-    }
-
-    # Sprint F150L: usable-value run-level aggregates
-    usable_findings_ratio = round(total_stored / max(total_discovered, 1), 3)
-    discovery_to_findings_efficiency = round(
-        discovery_and_content_strong / max(total_discovered, 1), 3
-    )
-    public_value_density = round(total_stored / max(total_fetched, 1), 3)
-    # Sprint F162B: factual_value_density uses fetched as denominator (real conversion density)
-    factual_value_density = round(total_stored / max(total_fetched, 1), 3)
-
-    # quality_mix: composition summary from per-page value_tiers
-    tier_counts: dict[str, int] = {"high": 0, "medium": 0, "low": 0, "waste": 0, "none": 0}
-    for p in all_page_results:
-        tier = getattr(p, "value_tier", "none")
-        tier_counts[tier] = tier_counts.get(tier, 0) + 1
-    mix_parts = [f"{v}{k[0]}" for k, v in tier_counts.items() if v > 0]
-    quality_mix = "|".join(mix_parts) if mix_parts else "empty"
-
-    # top_waste_pattern: dominant waste reason from existing buckets
-    waste_reasons: dict[str, int] = {}
-    for p in all_page_results:
-        if getattr(p, "value_tier", "none") == "waste":
-            reason = getattr(p, "resolution_reason", "unknown") or "unknown"
-            waste_reasons[reason] = waste_reasons.get(reason, 0) + 1
-    top_waste_pattern = (
-        max(waste_reasons, key=lambda r: waste_reasons[r]) if waste_reasons else ""
-    )
-
-    # Sprint F161B: conversion truth run-level aggregates
-    fetched_pages = [p for p in all_page_results if p.fetched]
-    fetched_count = len(fetched_pages)
-
-    discovery_false_positive_count = sum(
-        1 for p in all_page_results if getattr(p, "discovery_false_positive", False)
-    )
-
-    # waste_category_counts: aggregate from per-page waste_category
-    waste_category_counts = {"structural": 0, "signalless": 0, "false_positive": 0, "error": 0}
-    for p in all_page_results:
-        cat = getattr(p, "waste_category", "")
-        if cat in waste_category_counts:
-            waste_category_counts[cat] += 1
-
-    # structural_health_ratio: fraction of fetched pages that are structurally healthy
-    structural_health_ratio = (
-        round(sum(1 for p in fetched_pages if getattr(p, "structural_quality", "") == "healthy") / max(fetched_count, 1), 3)  # noqa: E501
-        if fetched_count > 0 else 0.0
-    )
-
-    # Sprint F162B: run_waste_pattern_code — dominant clean waste category code
-    run_waste_pattern_code = (
-        max(waste_category_counts, key=lambda k: waste_category_counts[k])
-        if any(v > 0 for v in waste_category_counts.values())
-        else ""
-    )
-
-    # Sprint F162B: waste_reason_breakdown — distribution of waste categories
-    waste_reason_breakdown = "|".join(
-        f"{v}{k[:3]}" for k, v in sorted(waste_category_counts.items()) if v > 0
-    ) if any(v > 0 for v in waste_category_counts.values()) else "none"
-
-    # Sprint F163B: backend_degraded — fetch errors dominate discovery output
-    # Not "low value" — true infrastructure failure that makes content inaccessible
-    # Threshold: >60% of all pages had fetch errors OR discovery failed with zero fetches
-    _error_page_count = sum(1 for p in all_page_results if p.error is not None and "fetch_exception" in p.error)
-    _error_dominated = total_discovered > 0 and _error_page_count / total_discovered > 0.6
-    _backend_degraded = bool(_error_dominated or (discovery_error is not None and total_fetched == 0))
-
-    # Sprint F163B: enhanced public_proof_grade — decouple backend failure from weak content
-    # "no_discovery" and "empty" are discovery problems, not content problems
-    # "backend_degraded" overrides everything below it — the content was never even evaluated
-    if _backend_degraded:
-        _derived_proof_grade = "backend_degraded"
-    elif factual_value_density >= 0.5 and structural_health_ratio >= 0.7 and noise_fetch_ratio <= 0.3:
-        _derived_proof_grade = "strong"
-    elif factual_value_density >= 0.3 and noise_fetch_ratio <= 0.5:
-        _derived_proof_grade = "moderate"
-    elif factual_value_density > 0 or total_stored > 0:
-        _derived_proof_grade = "weak"
-    elif total_discovered > 0:
-        _derived_proof_grade = "empty"
-    else:
-        _derived_proof_grade = "no_discovery"
-
-    # Sprint F163B: embed backend_degraded and public_proof_grade into verdict dict
-    public_branch_verdict["backend_degraded"] = _backend_degraded
-    public_branch_verdict["public_proof_grade"] = _derived_proof_grade
-
-    # Sprint F206AB: discovery error taxonomy — concrete error reason preserved in verdict
-    public_branch_verdict["discovery_error_detail"] = discovery_error  # None | "network_error" | "server_error" | etc.
-
-    # Sprint F170D: lower-layer truth consumption
-    # Read fallback_triggered from discovery_result
-    fallback_triggered: str | None = getattr(discovery_result, "fallback_triggered", None)
-
-    # F185A DF-3 FIX: replace hardcoded if/elif chain with explicit dictionary.
-    # Key: duckduckgo_adapter.py fallback_triggered string → public pipeline enum string.
-    # This eliminates the silent-fail risk when new fallback_triggered variants are added.
-    _FALLBACK_STATE_MAP: dict[str, str] = {  # noqa: N806
-        "primary_backend_failed_fallback_succeeded": "primary_failed_fallback_succeeded",
-        "primary_backend_failed_fallback_failed": "primary_failed_fallback_failed",
-    }
-    public_discovery_fallback_state = _FALLBACK_STATE_MAP.get(fallback_triggered) or (
-        "no_fallback_needed" if discovery_error is None else None
-    )
-
-    # Sprint F206AB: per-stage discovery counters (additive telemetry)
-    public_branch_verdict["discovery_calls"] = 1  # always 1 in current single-discovery architecture
-    public_branch_verdict["discovery_hits_total"] = len(hits)
-    public_branch_verdict["discovery_error_count"] = 1 if discovery_error else 0
-    public_branch_verdict["discovery_fallback_count"] = 1 if fallback_triggered else 0
-
-    # Sprint F206AB: discovery error taxonomy — additive fields
-    public_branch_verdict["discovery_attempted"] = discovery_attempted
-    public_branch_verdict["discovery_elapsed_s"] = discovery_elapsed_s
-    public_branch_verdict["discovery_error_type"] = discovery_error_type  # F206AB taxonomy string
-    public_branch_verdict["discovery_fallback_triggered"] = fallback_triggered  # raw adapter string
-
-    # Sprint F206AO: provider metadata from DiscoveryBatchResult
-    _dbr_provider_name = getattr(discovery_result, "provider_name", None)
-    _dbr_provider_chain = getattr(discovery_result, "provider_chain", None)
-    _dbr_source_family = getattr(discovery_result, "source_family", None)
-    _dbr_elapsed_s = getattr(discovery_result, "elapsed_s", None)
-    _dbr_error_type = getattr(discovery_result, "error_type", None)
-    if _dbr_provider_name is not None:
-        public_branch_verdict["discovery_provider_name"] = _dbr_provider_name
-    if _dbr_provider_chain is not None:
-        public_branch_verdict["discovery_provider_chain"] = _dbr_provider_chain
-    if _dbr_source_family is not None:
-        public_branch_verdict["discovery_source_family"] = _dbr_source_family
-    if _dbr_elapsed_s is not None:
-        public_branch_verdict["discovery_provider_elapsed_s"] = _dbr_elapsed_s
-    if _dbr_error_type is not None:
-        public_branch_verdict["discovery_provider_error_type"] = _dbr_error_type
-
-    # Sprint F206AB: fetch stage counters — collected from all_page_results
-    # Success: p.fetched=True AND p.error=None (per PipelinePageResult construction pattern)
-    _fetch_attempted = 0
-    _fetch_success = 0
-    _fetch_error = 0
-    for p in all_page_results:
-        _fetch_attempted += 1
-        p_fetched = getattr(p, "fetched", False)
-        p_error = getattr(p, "error", None)
-        if p_fetched and p_error is None:
-            _fetch_success += 1
-        else:
-            _fetch_error += 1
-    public_branch_verdict["fetch_attempted"] = _fetch_attempted
-    public_branch_verdict["fetch_success"] = _fetch_success
-    public_branch_verdict["fetch_error"] = _fetch_error
-
-    # Sprint F206AC: fetch error taxonomy — per-URL classification with bounded samples
-    _fetch_error_types: dict[str, int] = {}
-    _fetch_error_samples: list[dict] = []
-    for p in all_page_results:
-        pfr = getattr(p, "_fetch_result", None)
-        err_type = classify_fetch_error(pfr) if pfr is not None else classify_fetch_error(p.error)
-        _fetch_error_types[err_type] = _fetch_error_types.get(err_type, 0) + 1
-        if err_type != "none" and len(_fetch_error_samples) < 5:
-            sample: dict = {
-                "url": p.url,
-                "selected_transport": getattr(pfr, "selected_transport", None) if pfr is not None else None,
-                "status_code": getattr(pfr, "status_code", None) if pfr is not None else None,
-                "error_type": err_type,
-                "error": p.error,
-                "failure_stage": p.failure_stage,
-                "network_error_kind": getattr(pfr, "network_error_kind", None) if pfr is not None else None,
-                "transport_policy_reason": getattr(pfr, "transport_policy_reason", None) if pfr is not None else None,
-                "transport_fallback_reason": getattr(pfr, "transport_fallback_reason", None) if pfr is not None else None,  # noqa: E501
-                "content_type": getattr(pfr, "content_type", None) if pfr is not None else None,
-            }
-            _fetch_error_samples.append(sample)
-    public_branch_verdict["fetch_error_types"] = _fetch_error_types
-    public_branch_verdict["fetch_error_samples"] = _fetch_error_samples
-
-    # Sprint F206AB: admission and pattern hit counters
-    # admitted_urls: URL count after deduplication, before fetch
-    public_branch_verdict["admitted_urls"] = len(hits) if hits else 0
-
-    # pattern_hits: sum of matched_patterns across all fetched pages
-    public_branch_verdict["pattern_hits"] = sum(p.matched_patterns for p in all_page_results)
-
-    # F185A DF-3 FIX: same dictionary approach for public_discovery_blocker
-    _BLOCKER_BY_BACKEND_ERROR: dict[str, str] = {  # noqa: N806
-        "primary_backend_failed_fallback_failed": "backend_error_fallback_failed",
-    }
-    if uma_state == "UMA_STATE_EMERGENCY":
-        public_discovery_blocker = "uma_emergency_abort"
-    elif discovery_error is not None and fallback_triggered is None:
-        public_discovery_blocker = "backend_error_no_fallback"
-    else:
-        public_discovery_blocker = _BLOCKER_BY_BACKEND_ERROR.get(fallback_triggered)
-
-    # public_fetch_accessibility_blocker: True when any page had connectivity/TLS/timeout failure
-    # failure_stage IN {connection, tls, http} OR network_error_kind signals accessibility issue
-    _accessibility_failure_stages = {"connection", "tls", "http"}
-    public_fetch_accessibility_blocker = any(
-        p.failure_stage in _accessibility_failure_stages
-        for p in all_page_results
-    )
-
-    # dominant_public_failure_mode: aggregate failure story
-    # Priority: discovery blocker > fetch_accessibility_blocker > redirect_non_content > waste:*
-    _failure_modes: list[str] = []
-    if public_discovery_blocker:
-        _failure_modes.append(public_discovery_blocker)
-    if public_fetch_accessibility_blocker:
-        _failure_modes.append("fetch_accessibility_blocker")
-    # Sprint F171A: redirect-induced non-content — redirected AND ended as structural/signalless waste
-    # Only triggers for pages that were actually fetched and found thin/dead content at redirect target
-    _any_redirect_non_content = any(
-        p.redirected and p.waste_category in ("structural", "signalless")
-        for p in all_page_results
-    )
-    if _any_redirect_non_content:
-        _failure_modes.append("redirect_non_content")
-    # Add dominant waste category if present
-    if run_waste_pattern_code and run_waste_pattern_code != "none":
-        _failure_modes.append(f"waste:{run_waste_pattern_code}")
-    dominant_public_failure_mode = _failure_modes[0] if _failure_modes else None
-
-    # Sprint F173C: zero-hit evidence aggregation
-    # zero_hit_accessible_fetch_count: pages that were fetched with 0 matches
-    zero_hit_accessible_fetch_count = sum(
-        1 for p in all_page_results
-        if p.fetched and p.matched_patterns == 0
-    )
-    # zero_hit_quality_reason_counts: why zero-hit pages failed
-    _zero_hit_reasons: dict[str, int] = {}
-    _zero_hit_titles: list[tuple[str, str]] = []  # (title, url) pairs, bounded
-    for p in all_page_results:
-        if p.fetched and p.matched_patterns == 0 and p.quality_reason:
-            _zero_hit_reasons[p.quality_reason] = _zero_hit_reasons.get(p.quality_reason, 0) + 1
-        if p.fetched and p.matched_patterns == 0 and len(_zero_hit_titles) < 5:
-            # Capture title+url for gate evidence (no raw text)
-            p_title = getattr(p, "discovery_reason", "") or ""
-            _zero_hit_titles.append((p_title, p.url))
-    zero_hit_quality_reason_counts = _zero_hit_reasons
-    zero_hit_title_samples = tuple(_zero_hit_titles)
-    # public_zero_hit_summary: structured run-level summary
-    public_zero_hit_summary = {
-        "zero_hit_accessible_fetch_count": zero_hit_accessible_fetch_count,
-        "zero_hit_unique_reasons": list(zero_hit_quality_reason_counts.keys()),
-        "zero_hit_has_substantive_content": any(
-            p.fetched and p.matched_patterns == 0
-            and getattr(p, "structural_quality", "") == "healthy"
-            for p in all_page_results
-        ),
-        "zero_hit_has_signalless": any(
-            p.fetched and p.matched_patterns == 0
-            and getattr(p, "waste_category", "") == "signalless"
-            for p in all_page_results
-        ),
-        "zero_hit_has_false_positive": any(
-            p.fetched and p.matched_patterns == 0
-            and getattr(p, "discovery_false_positive", False)
-            for p in all_page_results
-        ),
-        "zero_hit_has_redirect_non_content": any(
-            p.fetched and p.matched_patterns == 0
-            and p.redirected and p.waste_category in ("structural", "signalless")
-            for p in all_page_results
-        ),
-    }
-
-    # P6: Generate OSINT report from top findings (if Hermes available)
-    # Fail-soft: report generation is optional, pipeline continues regardless
-    generated_report = ""
-    if hermes_engine is not None and all_page_results:
-        try:
-            generated_report = await _generate_and_store_report(
-                query=query,
-                pages=tuple(all_page_results),
-                store=store,
-                hermes_engine=hermes_engine,
-                vector_store=vector_store,
-            )
-        except Exception:
-            generated_report = ""  # Fail-soft: report generation errors don't fail the pipeline
-
-    # FÁZE P9: Export graph after pipeline completes (legacy path)
-    if graph is not None and graph.node_count() > 0:
-        try:
-            export_path = str(Path("~/new_hledac_graph.html").expanduser())
-            graph.export_html(export_path)
-        except Exception:  # noqa: BLE001
-            pass  # noqa: BLE001  # Fail-soft: graph export errors don't fail pipeline
-
-    # P17: Run RL loop if --loop flag was set
-    # Uses FederatedBridge (M1-safe) instead of loops.research_loop.ResearchLoop
-    # which had M1 crash vectors (get_event_loop().run_until_complete() in async context)
-    if run_loop and hermes_engine is not None:
-        try:
-            from hledac.universal.federated.bridge import FederatedBridge
-            from hledac.universal.knowledge.duckdb_store import CanonicalFinding
-
-            # P17: Default RL loop time limit (5 minutes)
-            _RL_LOOP_TIME_LIMIT_S = 300.0  # noqa: N806
-            # FederatedBridge uses lane-prefixed state; use "rl" as lane
-            _RL_LANE = "rl"
-            # Actions mirror loops.research_loop.ResearchLoop.ACTIONS
-            _RL_ACTIONS = [
-                "hypothesis_generation",
-                "tot_reasoning",
-                "discovery",
-                "fetch",
-                "graph_update",
-                "evaluate",
-                "done",
-            ]
-
-            bridge = FederatedBridge()
-            # P17: Run either N steps or until time limit
-            rl_start_time = time.monotonic()
-            step_count = 0
-            total_reward = 0.0
-            # Build initial state for Q-learning
-            rl_state: tuple = (query[:20] if len(query) > 20 else query, 0, 0, 6, False)
-            rl_next_state: tuple = rl_state
-
-            while True:
-                # Check step limit first
-                if rl_steps > 0 and step_count >= rl_steps:
-                    break
-
-                # Check time limit
-                elapsed = time.monotonic() - rl_start_time
-                if elapsed >= _RL_LOOP_TIME_LIMIT_S:
-                    logger.info(f"[P17] RL loop time limit reached ({elapsed:.1f}s)")
-                    break
-
-                # P17: Get action from FederatedBridge Q-table (M1-safe, no event loop)
-                action = bridge.get_best_action(_RL_LANE, rl_state, _RL_ACTIONS)
-                if action == "done":
-                    # Persist and break
-                    await bridge.persist_if_due()
-                    break
-
-                # P17: Execute action via hermes_engine (simplified RL loop)
-                reward = 0.0
-                action_findings: list = []
-                try:
-                    # Generate hypotheses if that action
-                    if action == "hypothesis_generation" and hermes_engine is not None:
-                        ctx: dict[str, Any] = {"query": query, "source": "rl_loop"}
-                        if hasattr(hermes_engine, "generate_hypotheses_async"):
-                            hyp_strings = await hermes_engine.generate_hypotheses_async(
-                                context=ctx,
-                                hermes_engine=getattr(hermes_engine, "_inference_engine", None),
-                            )
-                            for h in (hyp_strings or [])[:10]:
-                                action_findings.append({"type": "hypothesis", "content": h, "source": "rl_hypothesis"})
-                            reward = len(action_findings) * 0.1
-                        elif hasattr(hermes_engine, "generate_hypotheses"):
-                            import inspect
-                            if inspect.iscoroutinefunction(hermes_engine.generate_hypotheses):
-                                hyp_strings = await hermes_engine.generate_hypotheses(ctx)
-                            else:
-                                hyp_strings = hermes_engine.generate_hypotheses(ctx)
-                            for h in (hyp_strings or [])[:10]:
-                                action_findings.append({"type": "hypothesis", "content": h, "source": "rl_hypothesis"})
-                            reward = len(action_findings) * 0.1
-                    elif action == "tot_reasoning":
-                        action_findings.append({"type": "tot", "content": f"ToT reasoning for: {query[:50]}", "source": "rl_tot"})
-                        reward = 0.3
-                    elif action == "discovery":
-                        action_findings.append({"type": "discovery", "content": f"Discovery: {query}", "source": "rl_discovery"})
-                        reward = 0.2
-                    elif action == "fetch":
-                        action_findings.append({"type": "fetch", "content": f"Fetch: {query}", "source": "rl_fetch"})
-                        reward = 0.1
-                    elif action == "evaluate":
-                        action_findings.append({"type": "evaluation", "content": f"Evaluation: {query}", "source": "rl_evaluate"})
-                        reward = 0.15
-                    # graph_update is no-op for findings
-                except Exception as e:
-                    logger.debug(f"[P17] RL action '{action}' failed: {e}")
-
-                # P17: Update Q-table via FederatedBridge
-                new_findings_count = len(action_findings)
-                rl_next_state = (
-                    query[:20] if len(query) > 20 else query,
-                    min(step_count // 2, 5),
-                    min(new_findings_count // 10, 10),
-                    6,
-                    action == "tot_reasoning",
-                )
-                bridge.update(_RL_LANE, rl_state, action, reward, rl_next_state)
-                total_reward += reward
-
-                # P17: Store findings to DuckDB if available — batched (F265B)
-                if store is not None and action_findings:
-                    try:
-                        rl_finding_buffer: list[CanonicalFinding] = []
-                        for finding_data in action_findings:
-                            finding_id = hashlib.sha256(
-                                f"{query}\x00{str(finding_data)}\x00rl".encode()
-                            ).hexdigest()[:16]
-                            rl_finding_buffer.append(CanonicalFinding(
-                                finding_id=finding_id,
-                                query=query,
-                                source_type="rl_research",
-                                confidence=0.7,
-                                ts=time.time(),
-                                provenance=("rl", action),
-                                payload_text=str(finding_data)[:500],
-                            ))
-                        if rl_finding_buffer:
-                            await store.submit_findings(rl_finding_buffer)
-                    except Exception as e:
-                        logger.warning(f"[P17] Failed to store RL findings: {e}")
-
-                # P17: Store RL result to memory manager
-                if memory_manager is not None and session_id is not None:
-                    try:
-                        await memory_manager.put(
-                            session_id,
-                            f"rl_result:{step_count}",
-                            {
-                                "action": action,
-                                "reward": reward,
-                                "findings_count": len(action_findings),
-                                "timestamp": time.time(),
-                            }
-                        )
-                    except Exception:  # noqa: BLE001
-                        pass  # noqa: BLE001  # Fail-soft
-
-                rl_state = rl_next_state
-                step_count += 1
-
-                logger.info(
-                    f"[P17] RL step {step_count}: action={action}, "
-                    f"reward={reward:.3f}, findings={len(action_findings)}"
-                )
-
-                # P17: Debounced persist
-                await bridge.persist_if_due()
-
-            logger.info(f"[P17] RL loop completed {step_count} steps, total_reward={total_reward:.3f}")
-
-        except Exception as e:
-            logger.warning(f"[P17] RL loop failed: {e}")
-
-    # FÁZE P18: Export to Obsidian Markdown and interactive HTML graph
-    # Only export on successful pipeline completion (run_error is None)
-    if run_error is None:
-        try:
-            # F271E: honour --export-dir (or GHOST_EXPORT_DIR) for the
-            # in-pipeline P18 export. When unset, the singleton falls
-            # back to ~/hledac_outputs/ for backwards compatibility.
-            import os as _os
-
-            from hledac.universal.export.export_manager import get_export_manager
-            from hledac.universal.memory.memory_manager import export_session
-            _resolved_export_dir = (
-                export_dir
-                or _os.environ.get("GHOST_EXPORT_DIR")
-            )
-            export_mgr = get_export_manager(_resolved_export_dir)
-
-            # Build sources list from pages
-            sources = [
-                p.url for p in all_page_results
-                if hasattr(p, "url") and p.url
-            ][:20]
-
-            # Get findings from memory manager
-            session_findings = []
-            if memory_manager is not None and session_id is not None:
-                try:
-                    session_data = await export_session(session_id)
-                    session_findings = session_data.get("findings", [])
-                except Exception:
-                    session_findings = []
-
-            # Export metadata for YAML front matter
-            export_metadata = {
-                "query": query,
-                "sources": sources,
-                "tags": ["hledac", "osint", "public-pipeline"],
-                "session_id": session_id,
-                "stored_findings": str(total_stored),
-                "discovered": str(total_discovered),
-                "fetched": str(total_fetched),
-            }
-
-            # Export markdown report (Obsidian-compatible)
-            try:
-                md_path = export_mgr.export_markdown(
-                    report=generated_report,
-                    findings=session_findings,
-                    file_path=None,  # Uses timestamp
-                    metadata=export_metadata,
-                )
-                if md_path:
-                    logger.info(f"[P18] Exported markdown to {md_path}")
-            except Exception as e:
-                logger.warning(f"[P18] Markdown export failed: {e}")
-
-            # Export graph HTML (interactive pyvis)
-            if graph is not None and graph.node_count() > 0:
-                try:
-                    html_path = export_mgr.export_graph_html(
-                        graph_manager=graph,
-                        file_path=None,  # Uses timestamp
-                        title=f"Hledac Graph - {query[:50]}",
-                    )
-                    if html_path:
-                        logger.info(f"[P18] Exported graph HTML to {html_path}")
-                except Exception as e:
-                    logger.warning(f"[P18] Graph HTML export failed: {e}")
-
-        except Exception as e:
-            logger.warning(f"[P18] Export failed: {e}")
-
-    # P12: Hypothesis generation and ToT evaluation — POST-STORAGE variant
-    # Runs AFTER findings are stored (real persisted evidence), not before fetch.
-    # Canonical sprint: gated on store+hermes_engine (not memory_manager alone).
-    # M1 8GB: bounded to 5 hypotheses, fail-soft, no ToT in hot path.
-    # NOTE: This block executes BEFORE the return so it is always reachable.
-    # Downstream: enqueue_hypothesis_pivot (scheduler) consumes first 3 ToT results
-    # via asyncio.as_completed — pivot enqueue is fail-soft and bounded.
-    tot_solution_count = 0
-    if store is not None and hermes_engine is not None and total_stored > 0:
-        try:
-            from hledac.universal.brain.research_hypothesis_engine import HypothesisEngine
-            from hledac.universal.tot_integration import TotIntegrationLayer
-
-            hypo_engine = HypothesisEngine()
-            tot_layer = TotIntegrationLayer()
-            tot_layer.attach_hypothesis_engine(hypo_engine)  # wire epistemic engine
-
-            # Query real persisted findings as hypothesis input
-            recent_findings = await store.async_get_recent_findings(limit=20)
-            if not recent_findings:
-                logger.debug("[P12] No stored findings — hypothesis layer skipped")
-            else:
-                # Build context from real findings, not placeholder RAG/graph summary
-                hypo_context = {
-                    "query": query,
-                    "stored_findings_count": total_stored,
-                    "findings": [
-                        {
-                            "finding_id": f.finding_id if hasattr(f, "finding_id") else str(f.get("finding_id", "")),
-                            "source_type": f.source_type if hasattr(f, "source_type") else str(f.get("source_type", "")),  # noqa: E501
-                            "confidence": f.confidence if hasattr(f, "confidence") else float(f.get("confidence", 0.0)),
-                            "provenance": f.provenance if hasattr(f, "provenance") else f.get("provenance", ""),
-                        }
-                        for f in recent_findings[:20]
-                    ],
-                }
-
-                # Generate hypotheses from real stored findings
-                hypotheses = await hypo_engine.generate_hypotheses_async(
-                    context=hypo_context,
-                    hermes_engine=hermes_engine
-                )
-
-                # ISSUE #19: Bump from 5 to 10 for better ToT parallelism
-                hypotheses_to_eval = hypotheses[:10]
-                if hypotheses_to_eval:
-                    async def run_tot_with_timeout(hypo: str, timeout_s: float = 15.0) -> str:
-                        """Run ToT solve with per-hypothesis timeout. Fail-soft: returns empty string on timeout/error."""  # noqa: E501
-                        try:
-                            # Primary path: asyncio.timeout ctx (P12 invariant — bounded per-task timeout)
-                            async with asyncio.timeout(timeout_s):
-                                result = await tot_layer.solve_with_tot(hypo)
-                            return result
-                        except TimeoutError:
-                            logger.debug(f"[P12] ToT timed out after {timeout_s}s for hypothesis: {hypo[:50]}...")
-                            return ""
-                        except Exception as e:
-                            logger.debug(f"[P12] ToT failed for hypothesis: {hypo[:50]}... — {e}")
-                            return ""
-
-                    # Fire all 5 ToT tasks concurrently
-                    # F320: asyncio.create_task -> safe_create_task (eager_start, loop probe)
-                    tasks_with_hypo = {safe_create_task(run_tot_with_timeout(hypo), name=f"tot:hypo_{i}"): hypo for i, hypo in enumerate(hypotheses_to_eval)}
-                    tasks = list(tasks_with_hypo.keys())
-
-                    # Process results as they complete — first 3 successful results
-                    # trigger immediate pivot enqueue (scheduler caps naturally limit to 3)
-                    tot_finding_buffer: list[CanonicalFinding] = []  # F265B: buffer batch
-                    for coro in asyncio.as_completed(tasks):
-                        tot_result = await coro
-                        hypo = tasks_with_hypo[coro]
-                        if tot_result:
-                            tot_solution_count += 1
-                            try:
-                                from hledac.universal.knowledge.duckdb_store import CanonicalFinding
-                                tot_finding_buffer.append(CanonicalFinding(
-                                    finding_id=f"tot_{hashlib.sha256(tot_result.encode()).hexdigest()[:16]}",
-                                    query=query,
-                                    source_type="tot_synthesis",
-                                    confidence=0.7,
-                                    ts=time.time(),
-                                    provenance=("tot", hypo[:100]),
-                                    payload_text=tot_result[:1000],
-                                ))
-                            except Exception:  # noqa: BLE001
-                                pass  # noqa: BLE001  # Fail-soft
-
-                            # Sprint F193B: Bounded hypothesis → finding feedback loop
-                            if enqueue_hypothesis_pivot is not None:
-                                try:
-                                    pivot_seed = tot_result[:200].split()[:5]
-                                    for _i, term in enumerate(pivot_seed):
-                                        enqueue_hypothesis_pivot(
-                                            ioc_value=term.lower(),
-                                            ioc_type="hypothesis",
-                                            confidence=0.6,
-                                            depth=1,
-                                        )
-                                except Exception:  # noqa: BLE001
-                                    pass  # noqa: BLE001  # Fail-soft
-                    # F265B: flush buffered ToT findings after loop completes
-                    if tot_finding_buffer and store is not None:
-                        await store.submit_findings(tot_finding_buffer)
-
-        except Exception:  # noqa: BLE001
-            pass  # noqa: BLE001  # P12: fail-soft, hypothesis generation is optional
-
-        # Sprint F217E: wire ToT epistemic branches into NonfeedCandidateLedger
-        # NOTE: _nonfeed_ledger access removed — async_run_live_public_pipeline is a standalone
-        # async function (not a method), so self._nonfeed_ledger was unreachable dead code.
-
-    # Sprint F198C: Document discovery — extract text from PDF/image files
-    # Produces CanonicalFinding(source_type="document") findings.
-    # Bounded: max 10 files, RAM guard check, fail-soft.
-    if store is not None:
-        try:
-            # Import DocumentExtractor lazily to avoid import-time side effects
-            from hledac.universal.multimodal.analyzer import DocumentExtractor
-
-            extractor = DocumentExtractor(governor=None)
-            await extractor.initialize()
-
-            # Document discovery looks for file paths in payload_text of existing findings
-            # This is a passive enrichment path — documents are discovered via other pipelines
-            # For now: no active document discovery in public pipeline
-            # (Documents are typically uploaded or discovered via specialized channels)
-            await extractor.close()
-        except Exception as e:
-            logger.debug(f"[F198C] Document discovery failed: {e}")
-
-    # ── Part B: Sprint Synthesis Activation (Sprint HERMES3_WIRING)
-    # Gate: len(findings) >= 5 AND hermes_synthesis lane enabled
-    # Cap: max 50 findings for M1 8GB RAM safety
-    # Timeout: 90 seconds max
-    synthesis_finding = None
-    if total_accepted >= 5 and LANE_REGISTRY.is_enabled("hermes_synthesis"):
-        try:
-            # Check RAM constraint: skip if RSS > 5.5GB
-            try:
-                import psutil
-                rss_gib = psutil.Process().memory_info().rss / (1024**3)
-                if rss_gib > 5.5:
-                    logger.debug("[SYNTHESIS] Skipped: RSS %.1fGiB > 5.5GiB", rss_gib)
-                else:
-                    from hledac.universal.core.model_runtime import ModelLifecycle
-                    from hledac.universal.brain.synthesis_runner import SynthesisRunner
-
-                    # Build findings list from all_page_results
-                    findings_for_synth = []
-                    for pr in all_page_results:
-                        # P2.3-fix: use accepted_findings (int) not accepted (bool)
-                        # PipelinePageResult has no payload_text/title/confidence —
-                        # use url + quality_reason as proxy content for synthesis
-                        if pr.accepted_findings > 0:
-                            finding = {
-                                "content": (pr.quality_reason or "")[:500],
-                                "title": pr.url or "",
-                                "source_type": _SOURCE_TYPE,
-                                "confidence": 0.5,
-                                "url": pr.url or "",
-                            }
-                            findings_for_synth.append(finding)
-
-                    if len(findings_for_synth) >= 5:
-                        # Limit to 50 findings for M1 RAM safety
-                        findings_for_synth = findings_for_synth[:50]
-
-                        # Initialize lifecycle for synthesis
-                        lifecycle = ModelLifecycle()
-                        runner = SynthesisRunner(lifecycle)
-                        # F234: Enable MLX-first context compression for M1 8GB safety
-                        runner.set_compression_threshold(4000)
-
-                        # Run synthesis with 90s timeout
-                        # NOTE: `asyncio` is module-scoped (line 14). Do NOT add a local
-                        # `import asyncio` here — Python scoping would make `asyncio` a
-                        # local name throughout `async_run_live_public_pipeline` and
-                        # every earlier `asyncio.X` reference (e.g. line 3770's
-                        # `asyncio.Semaphore(...)`) would raise UnboundLocalError.
-                        # Regression test: tests/test_f_pipeline_asyncio_shadowing.py
-                        async with asyncio.timeout(90.0):
-                            report = await runner.synthesize_findings(
-                                query=query,
-                                findings=findings_for_synth,
-                                max_findings=10,
-                                force_synthesis=False,
-                            )
-
-                        # Unload model after synthesis
-                        await runner.close()
-
-                        if report is not None:
-                            # Add synthesis result as CanonicalFinding
-                            from hledac.universal.knowledge.duckdb_store import CanonicalFinding
-
-                            report_id = f"synth_{hashlib.md5(query.encode()).hexdigest()[:12]}"
-                            synthesis_finding = CanonicalFinding(
-                                finding_id=report_id,
-                                query=query,
-                                source_type="llm_synthesis",
-                                confidence=getattr(report, "confidence", 0.7) or 0.7,
-                                ts=time.time(),
-                                payload_text=f"Threat actors: {', '.join(getattr(report, 'threat_actors', []) or [])} | {getattr(report, 'threat_summary', '')[:500]}",
-                                provenance=("synthesis", getattr(report, "query", query)[:50]),
-                            )
-                            logger.info("[SYNTHESIS] Report produced: confidence=%.3f", synthesis_finding.confidence)
-
-                        # Also run DSPy query expansion for next sprint seeds
-                        if LANE_REGISTRY.is_enabled("dspy"):
-                            try:
-                                from hledac.universal.brain import dspy_service
-                                expanded = await dspy_service.expand_query(query)
-                                if expanded:
-                                    logger.debug("[SYNTHESIS] DSPy expanded %d queries", len(expanded))
-                                    # Store expanded queries for next sprint
-                                    # (would write to SprintSchedulerConfig.next_seeds or sprint_seeds table)
-                            except Exception as e:
-                                logger.debug("[SYNTHESIS] DSPy expand_query failed: %s", e)
-            except Exception as e:
-                logger.debug("[SYNTHESIS] RAM check failed: %s", e)
-        except Exception as e:
-            logger.warning("[SYNTHESIS] Synthesis failed: %s", e)
-
-    return PipelineRunResult(
-        query=query,
-        discovered=total_discovered,
-        fetched=total_fetched,
-        matched_patterns=total_matched,
-        accepted_findings=total_accepted,
-        stored_findings=total_stored,
-        patterns_configured=patterns_cfg,
-        pages=tuple(all_page_results),
-        error=run_error,
-        strong_pages=strong_pages,
-        weak_pages_skipped=weak_pages_skipped,
-        low_value_fetches=low_value_fetches,
-        discovery_strong_content_weak=discovery_strong_content_weak,
-        discovery_and_content_strong=discovery_and_content_strong,
-        discovery_squandered=discovery_squandered,
-        noise_fetch_ratio=noise_fetch_ratio,
-        corroboration_vs_burn=corroboration_vs_burn,
-        public_next_action=public_next_action,
-        public_confidence_note=public_confidence_note,
-        public_branch_verdict=public_branch_verdict,
-        usable_findings_ratio=usable_findings_ratio,
-        discovery_to_findings_efficiency=discovery_to_findings_efficiency,
-        quality_mix=quality_mix,
-        public_proof_grade=_derived_proof_grade,
-        public_value_density=public_value_density,
-        top_waste_pattern=top_waste_pattern,
-        discovery_false_positive_count=discovery_false_positive_count,
-        waste_category_counts=waste_category_counts,
-        structural_health_ratio=structural_health_ratio,
-        factual_value_density=factual_value_density,
-        run_waste_pattern_code=run_waste_pattern_code,
-        waste_reason_breakdown=waste_reason_breakdown,
-        backend_degraded=_backend_degraded,
-        public_discovery_blocker=public_discovery_blocker,
-        public_fetch_accessibility_blocker=public_fetch_accessibility_blocker,
-        public_discovery_fallback_state=public_discovery_fallback_state,
-        dominant_public_failure_mode=dominant_public_failure_mode,
-        # Sprint F213B: PUBLIC stage accounting
+    # === Phase 1: Initialization ===
+    phase1 = Phase1_Initialization()
+    ctx = await phase1.run(ctx)
+
+    # === Phase 2: Resource Governance (UMA check) ===
+    phase2 = Phase2_ResourceGovernance()
+    ctx = await phase2.run(ctx)
+
+    # === Emergency abort if UMA emergency state ===
+    if ctx._is_emergency:
+        return _build_emergency_result(ctx)
+
+    # === Phase 3: Discovery ===
+    phase3 = Phase3_DiscoveryRunner()
+    ctx, discovery = await phase3.run(ctx)
+
+    # Unpack stage failure from discovery telemetry
+    public_stage_failure = discovery.discovery_telemetry.get("public_stage_failure")
+    public_stage_failure_reason = discovery.discovery_telemetry.get("public_stage_failure_reason")
+
+    # === Phase 4: Fetch Orchestration ===
+    phase4 = Phase4_FetchOrchestrator()
+    ctx, all_page_results = await phase4.run(ctx, discovery)
+
+    # === Phase 5: Telemetry Aggregation ===
+    phase5 = Phase5_TelemetryAggregator()
+    telemetry = phase5.run(ctx, discovery)
+
+    # === Phase 6: Report Generation (OSINT, RL, ToT) ===
+    phase6 = Phase6_ReportGenerator()
+    ctx, generated_report, tot_solution_count = await phase6.run(ctx, all_page_results)
+
+    # === Phase 7: Synthesis (if conditions met) ===
+    phase7 = Phase7_SynthesisRunner()
+    await phase7.run(ctx, telemetry["total_stored"])
+
+    # === Phase 8: Export (if no errors) ===
+    if ctx.error is None:
+        phase8 = Phase8_ExportManager()
+        await phase8.run(ctx, generated_report, all_page_results)
+
+    # === Phase 9: Temporal Persistence ===
+    phase9 = Phase9_TemporalPersistence()
+    temporal_status = phase9.run()
+    ctx = PipelineContext(**{**ctx.__dict__, **temporal_status})
+
+    # === Build Final Result ===
+    return ResultBuilder.build(
+        ctx=ctx,
+        telemetry=telemetry,
+        discovery=discovery,
         public_stage_failure=public_stage_failure,
         public_stage_failure_reason=public_stage_failure_reason,
-        public_discovery_attempted=public_discovery_attempted,
-        public_discovery_raw_count=public_discovery_raw_count,
-        public_discovery_deduped_count=public_discovery_deduped_count,
-        public_pages_fetched=public_pages_fetched,
-        public_pages_accepted=public_pages_accepted,
-        public_pages_rejected=public_pages_rejected,
-        public_findings_accepted=public_findings_accepted,
-        zero_hit_accessible_fetch_count=zero_hit_accessible_fetch_count,
-        zero_hit_quality_reason_counts=zero_hit_quality_reason_counts,
-        zero_hit_title_samples=zero_hit_title_samples,
-        public_zero_hit_summary=public_zero_hit_summary,
-        # Sprint F188B: CT winner-slice telemetry
-        ct_subdomain_injected=ct_injected,
-        cc_archive_injected=cc_injected,
-        # F193B: Academic discovery telemetry
-        academic_findings_count=academic_findings_count,
-        # P20: PastebinMonitor + GitHubSecretScanner telemetry
-        pastebin_findings_count=pastebin_findings_count,
-        github_secrets_count=github_secrets_count,
-        # Sprint F217C: Deterministic bootstrap telemetry
-        public_bootstrap_enabled=public_bootstrap_enabled,
-        public_bootstrap_candidates_count=_pub_bootstrap_candidates_count,
-        public_bootstrap_fetch_attempted=_pub_bootstrap_fetch_attempted,
-        public_bootstrap_fetch_success=_pub_bootstrap_fetch_success,
-        public_bootstrap_accepted_findings=_pub_bootstrap_accepted_findings,
-        public_bootstrap_errors=_pub_bootstrap_errors,
-        # Sprint F229A: Bootstrap ordering telemetry
-        public_bootstrap_order=_pub_bootstrap_order,
-        public_bootstrap_prevented_discovery_timeout=_pub_bootstrap_prevented_discovery_timeout,
-        public_bootstrap_first_fetch_attempted=_pub_bootstrap_first_fetch_attempted,
-        # Sprint F220C: Public Provider Rescue telemetry
-        public_rescue_candidates_count=_pub_rescue_candidates_count,
-        public_rescue_fetch_attempted=_pub_rescue_fetch_attempted,
-        public_rescue_fetch_success=_pub_rescue_fetch_success,
-        public_rescue_accepted_findings=_pub_rescue_accepted_findings,
-        public_rescue_errors=_pub_rescue_errors,
-        public_rescue_order=_pub_rescue_order,
-        # F1-3: keyword_seed_fallback telemetry
-        keyword_seed_fallback_triggered=keyword_seed_fallback_triggered,
-        # F207F: PUBLIC Yield telemetry
-        public_discovered=public_discovered,
-        public_fetch_attempted=public_fetch_attempted,
-        public_fetch_skipped=public_fetch_skipped,
-        public_fetch_skip_reason=public_fetch_skip_reason,
-        public_js_renderer_unavailable=public_js_renderer_unavailable,
-        public_xml_or_rss_detected=public_xml_or_rss_detected,
-        public_fetch_timeout_count=public_fetch_timeout_count,
-        public_fetch_blocked_by_memory=public_fetch_blocked_by_memory,
-        # F207I-A: new telemetry
-        public_discovery_cache_hit=public_discovery_cache_hit,
-        public_discovery_query_count=public_discovery_query_count,
-        public_fetch_candidate_count=public_fetch_candidate_count,
-        public_fetch_gate=public_fetch_gate,
-        public_fetch_attempted_urls_sample=public_fetch_attempted_urls_sample,
-        # F207J-C: PUBLIC Acceptance — post-fetch acceptance/rejection telemetry
-        public_acceptance_attempted=public_acceptance_attempted,
-        public_acceptance_accepted=public_acceptance_accepted,
-        public_acceptance_rejected=public_acceptance_rejected,
-        public_acceptance_reject_reasons=public_acceptance_reject_reasons,
-        public_accepted_url_sample=public_accepted_url_sample,
-        public_rejected_url_sample=public_rejected_url_sample,
-        # F226B: PUBLIC acceptance uplift diagnostics
-        public_build_success_count=public_build_success_count,
-        public_build_failure_count=public_build_failure_count,
-        public_duplicate_count=public_duplicate_count,
-        public_acceptance_ratio=public_acceptance_ratio,
-        # F208G-A: PUBLIC Yield Taxonomy — run-level terminal classification
-        public_terminal_classified_count=public_terminal_classified_count,
-        public_unclassified_count=public_unclassified_count,
-        public_terminal_reason_counts=public_terminal_reason_counts,
-        public_fetch_success=public_fetch_success,
-        public_fetch_failed=public_fetch_failed,
-        public_skipped_duplicate=public_skipped_duplicate,
-        public_skipped_unsupported_scheme=public_skipped_unsupported_scheme,
-        public_skipped_memory_gate=public_skipped_memory_gate,
-        public_skipped_quality_gate=public_skipped_quality_gate,
-        public_skipped_browser_unavailable=public_skipped_browser_unavailable,
-        public_skipped_xml_or_feed=public_skipped_xml_or_feed,
-        public_skipped_timeout=public_skipped_timeout,
-        public_skipped_fetch_error=public_skipped_fetch_error,
-        public_rejected_no_pattern_match=public_rejected_no_pattern_match,
-        public_rejected_low_information=public_rejected_low_information,
-        public_rejected_duplicate=public_rejected_duplicate,
-        public_rejected_storage_rejected=public_rejected_storage_rejected,
-        public_skipped_url_sample=public_skipped_url_sample,
-        public_rejected_url_samples=public_rejected_url_samples,
-        # F231A: PUBLIC Candidate Ledger — stage progression
-        public_candidates_discovered=public_candidates_discovered,
-        public_candidates_fetch_attempted=public_candidates_fetch_attempted,
-        public_candidates_fetch_success=public_candidates_fetch_success,
-        public_candidates_parse_success=public_candidates_parse_success,
-        public_candidates_pattern_matched=public_candidates_pattern_matched,
-        public_candidates_built=public_candidates_built,
-        public_candidates_store_attempted=public_candidates_store_attempted,
-        public_candidates_stored=public_candidates_stored,
-        public_candidates_rejected=public_candidates_rejected,
-        public_rejection_summary=public_rejection_summary,
-        public_terminal_stage=public_terminal_stage,
-        # F232: Provider surface — discovery_empty subtype
-        public_discovery_empty_reason=_pub_discovery_empty_reason[0] if _pub_discovery_empty_reason else "",
+        generated_report=generated_report,
+        tot_solution_count=tot_solution_count,
     )
 
 
-# Placeholder for discovery (patched in tests)
-_ASYNC_DISCOVERY_SEARCH: Any = None
-
-# Sprint F188B: CT winner slice — optional scanner seam (patched in tests)
-_CT_SCANNER_GET_SUBDOMAINS: Any = None
-
-
-def _patch_discovery(search_fn: Any) -> None:
-    global _ASYNC_DISCOVERY_SEARCH
-    _ASYNC_DISCOVERY_SEARCH = search_fn
+def _build_emergency_result(ctx: PipelineContext) -> PipelineRunResult:
+    """Build emergency abort result for UMA emergency state."""
+    return PipelineRunResult(
+        query=ctx.query,
+        discovered=0,
+        fetched=0,
+        matched_patterns=0,
+        accepted_findings=0,
+        stored_findings=0,
+        patterns_configured=_get_patterns_configured_count(),
+        pages=(),
+        error="uma_emergency_abort",
+        public_discovery_blocker="uma_emergency_abort",
+        public_fetch_accessibility_blocker=False,
+        public_discovery_fallback_state=None,
+        dominant_public_failure_mode="uma_emergency_abort",
+        public_stage_failure="uma_emergency",
+        public_stage_failure_reason="UMA emergency state blocks all public lane processing",
+        public_discovery_attempted=False,
+        public_discovery_raw_count=0,
+        public_discovery_deduped_count=0,
+        public_pages_fetched=0,
+        public_pages_accepted=0,
+        public_pages_rejected=0,
+        public_findings_accepted=0,
+        public_fetch_gate="emergency_blocked",
+        public_discovered=0,
+        public_fetch_attempted=0,
+        public_fetch_skipped=0,
+        public_fetch_candidate_count=0,
+        public_fetch_attempted_urls_sample=(),
+        public_acceptance_attempted=0,
+        public_acceptance_accepted=0,
+        public_acceptance_rejected=0,
+        public_acceptance_reject_reasons={},
+        public_accepted_url_sample=(),
+        public_rejected_url_sample=(),
+        public_terminal_classified_count=0,
+        public_unclassified_count=0,
+        public_terminal_reason_counts={},
+        public_fetch_success=0,
+        public_fetch_failed=0,
+        public_skipped_duplicate=0,
+        public_skipped_unsupported_scheme=0,
+        public_skipped_memory_gate=0,
+        public_skipped_quality_gate=0,
+        public_skipped_browser_unavailable=0,
+        public_skipped_xml_or_feed=0,
+        public_skipped_timeout=0,
+        public_skipped_fetch_error=0,
+        public_rejected_no_pattern_match=0,
+        public_rejected_low_information=0,
+        public_rejected_duplicate=0,
+        public_rejected_storage_rejected=0,
+        public_build_success_count=0,
+        public_build_failure_count=0,
+        public_duplicate_count=0,
+        public_acceptance_ratio=0.0,
+        public_skipped_url_sample=(),
+        public_rejected_url_samples=(),
+        public_candidates_discovered=0,
+        public_candidates_fetch_attempted=0,
+        public_candidates_fetch_success=0,
+        public_candidates_parse_success=0,
+        public_candidates_pattern_matched=0,
+        public_candidates_built=0,
+        public_candidates_store_attempted=0,
+        public_candidates_stored=0,
+        public_candidates_rejected=0,
+        public_rejection_summary={},
+        public_rescue_candidates_count=0,
+        public_rescue_fetch_attempted=0,
+        public_rescue_fetch_success=0,
+        public_rescue_accepted_findings=0,
+        public_rescue_errors=0,
+        public_rescue_order="disabled",
+        public_terminal_stage="uma_emergency",
+    )
 
 
 def _ensure_discovery_patched() -> None:

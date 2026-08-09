@@ -81,76 +81,98 @@ def _has_fallback_schema_marker(report: ProbeReport) -> bool:
     text = json.dumps(report.data)
     return any((marker in text for marker in _FALLBACK_SCHEMA_MARKERS))
 
-def _is_pass(report: ProbeReport) -> bool:
-    """
-    Check if a probe report passes.
-    Supports multiple schemas:
-      - {"status": "PASS"|"FAIL"|"PASSED"|"COMPLETE"}
-      - {"test_results": {"probe_XXX": {"status": "PASS"|"FAIL"}}}
-      - {"tests": {"all_passed": true}}
-      - {"tests": {"all_passing": true}}       (F225B schema)
-      - {"verification": {"passed": true}}
-      - {"verification": {"status": "PASS"|"PASSED"|"COMPLETE"}}
-      - {"all_passed": true}
-      - {"passed": true}
-      - {"ready_for_controlled_smoke": true}
-      - {"verdict": "SANITY_PASS"}  (zero-findings sanity: PASS means no crash)
-    Fail-closed: explicit FAIL/FAILED status wins over weaker pass fields.
-    """
-    if not report.found:
-        return False
-    if report.parse_error:
-        return False
-    d = report.data
+def _check_status_field(d: dict) -> bool | None:
+    """Check top-level status field."""
     status = d.get('status', '')
-    if isinstance(status, str) and status.upper() in ('FAIL', 'FAILED'):
-        return False
-    if isinstance(status, str) and status.upper() in ('PASS', 'PASSED', 'COMPLETE'):
-        return True
+    if isinstance(status, str):
+        if status.upper() in ('FAIL', 'FAILED'):
+            return False
+        if status.upper() in ('PASS', 'PASSED', 'COMPLETE'):
+            return True
+    return None
+
+
+def _check_test_results(d: dict) -> bool | None:
+    """Check nested test_results schema."""
     test_results = d.get('test_results', {})
-    if isinstance(test_results, dict):
-        for probe_data in test_results.values():
-            if isinstance(probe_data, dict):
-                s = probe_data.get('status', '')
-                if isinstance(s, str) and s.upper() == 'FAIL':
+    if not isinstance(test_results, dict):
+        return None
+    for probe_data in test_results.values():
+        if isinstance(probe_data, dict):
+            s = probe_data.get('status', '')
+            if isinstance(s, str):
+                if s.upper() == 'FAIL':
                     return False
-                if isinstance(s, str) and s.upper() == 'PASS':
+                if s.upper() == 'PASS':
                     return True
+    return None
+
+
+def _check_tests_nested(d: dict) -> bool | None:
+    """Check nested tests.{all_passed, all_passing} schema."""
     tests = d.get('tests', {})
-    if isinstance(tests, dict):
-        all_passed = tests.get('all_passed')
-        if isinstance(all_passed, bool) and all_passed is False:
-            return False
-        if isinstance(all_passed, bool) and all_passed is True:
-            return True
-        all_passing = tests.get('all_passing')
-        if isinstance(all_passing, bool) and all_passing is True:
-            return True
+    if not isinstance(tests, dict):
+        return None
+    all_passed = tests.get('all_passed')
+    if isinstance(all_passed, bool):
+        return all_passed
+    all_passing = tests.get('all_passing')
+    if isinstance(all_passing, bool) and all_passing is True:
+        return True
+    return None
+
+
+def _check_verification_nested(d: dict) -> bool | None:
+    """Check nested verification.{passed, status} schema."""
     verification = d.get('verification', {})
-    if isinstance(verification, dict):
-        vp = verification.get('passed')
-        if isinstance(vp, bool) and vp is False:
+    if not isinstance(verification, dict):
+        return None
+    vp = verification.get('passed')
+    if isinstance(vp, bool):
+        return vp
+    vs = verification.get('status', '')
+    if isinstance(vs, str):
+        if vs.upper() in ('FAIL', 'FAILED'):
             return False
-        if isinstance(vp, bool) and vp is True:
+        if vs.upper() in ('PASS', 'PASSED', 'COMPLETE'):
             return True
-        vs = verification.get('status', '')
-        if isinstance(vs, str) and vs.upper() in ('FAIL', 'FAILED'):
-            return False
-        if isinstance(vs, str) and vs.upper() in ('PASS', 'PASSED', 'COMPLETE'):
-            return True
-    all_passed = d.get('all_passed')
-    if isinstance(all_passed, bool) and all_passed is False:
-        return False
-    if isinstance(all_passed, bool) and all_passed is True:
-        return True
-    passed = d.get('passed')
-    if isinstance(passed, bool) and passed is False:
-        return False
-    if isinstance(passed, bool) and passed is True:
-        return True
+    return None
+
+
+def _check_top_level_bool_fields(d: dict) -> bool | None:
+    """Check top-level boolean pass indicators."""
+    for key in ('all_passed', 'passed'):
+        val = d.get(key)
+        if isinstance(val, bool):
+            return val
     ready = d.get('ready_for_controlled_smoke')
     if isinstance(ready, bool):
         return ready
+    return None
+
+
+def _is_pass(report: ProbeReport) -> bool:
+    """
+    Check if a probe report passes.
+    Fail-closed: explicit FAIL/FAILED status wins over weaker pass fields.
+    """
+    if not report.found or report.parse_error:
+        return False
+    d = report.data
+
+    # Schema checks in priority order
+    checks = [
+        _check_status_field,        # top-level status
+        _check_test_results,         # test_results nested
+        _check_tests_nested,        # tests nested
+        _check_verification_nested, # verification nested
+        _check_top_level_bool_fields, # top-level booleans
+    ]
+
+    for check in checks:
+        result = check(d)
+        if result is not None:
+            return result
     return False
 
 def _zero_findings_quality_sane(report: ProbeReport) -> tuple[bool, str]:
@@ -420,199 +442,494 @@ def _resolve_next_action_capability(live_cmd: str, capability_live_allowed: bool
         return 'run missing probe lanes to restore capability'
     return 'fix_provider_surface'
 
+@dataclass(frozen=True, slots=True)
+class _ContractProbeState:
+    """Result of required contract probe checks."""
+    mig_report: ProbeReport
+    nrg_report: ProbeReport
+    zf_sane: bool
+    zf_detail: str
+    fallback_blocked: bool
+
+
+@dataclass(frozen=True, slots=True)
+class _OptionalProbeState:
+    """Result of optional probe checks."""
+    ct_cooldown: tuple[bool, str, ProbeReport | None]
+    surface_contract: tuple[bool, str, ProbeReport | None]
+    hermes_metal: tuple[bool, str, ProbeReport | None]
+    public_session_seal: tuple[bool, str, ProbeReport | None]
+    ledger_pass: bool
+    ledger_detail: str
+
+
+@dataclass(frozen=True, slots=True)
+class _ArtifactState:
+    """Result of F224/F231 artifact checks."""
+    f224_core_ready: bool
+    f224_warnings: list[str]
+    missing_f224: list[str]
+    f231_core_ready: bool
+    f231_warnings: list[str]
+    missing_f231: list[str]
+    is_nonfeed_blocking: bool
+
+
+@dataclass(frozen=True, slots=True)
+class _MemoryState:
+    """UMA and swap policy state."""
+    uma: dict
+    swap_policy_tier: str
+    swap_gate_reason: str
+    hardware_constrained: bool
+    uma_state: str
+
+
+@dataclass(frozen=True, slots=True)
+class _GateAccumulator:
+    """Accumulates reasons, warnings, and block classifications."""
+    reasons: list[str]
+    warnings: list[str]
+    missing_required: list[str]
+    missing_optional: list[str]
+    checked: dict[str, dict]
+
+    def add_reason(self, reason: str) -> '_GateAccumulator':
+        return _GateAccumulator(
+            reasons=[*self.reasons, reason],
+            warnings=self.warnings,
+            missing_required=self.missing_required,
+            missing_optional=self.missing_optional,
+            checked=self.checked,
+        )
+
+    def add_warning(self, warning: str) -> '_GateAccumulator':
+        return _GateAccumulator(
+            reasons=self.reasons,
+            warnings=[*self.warnings, warning],
+            missing_required=self.missing_required,
+            missing_optional=self.missing_optional,
+            checked=self.checked,
+        )
+
+    def add_required(self, probe: str) -> '_GateAccumulator':
+        return _GateAccumulator(
+            reasons=self.reasons,
+            warnings=self.warnings,
+            missing_required=[*self.missing_required, probe],
+            missing_optional=self.missing_optional,
+            checked=self.checked,
+        )
+
+    def add_optional(self, probe: str) -> '_GateAccumulator':
+        return _GateAccumulator(
+            reasons=self.reasons,
+            warnings=self.warnings,
+            missing_required=self.missing_required,
+            missing_optional=[*self.missing_optional, probe],
+            checked=self.checked,
+        )
+
+    def update_checked(self, updates: dict) -> '_GateAccumulator':
+        new_checked = {**self.checked, **updates}
+        return _GateAccumulator(
+            reasons=self.reasons,
+            warnings=self.warnings,
+            missing_required=self.missing_required,
+            missing_optional=self.missing_optional,
+            checked=new_checked,
+        )
+
+    def extend_warnings(self, more: list[str]) -> '_GateAccumulator':
+        return _GateAccumulator(
+            reasons=self.reasons,
+            warnings=[*self.warnings, *more],
+            missing_required=self.missing_required,
+            missing_optional=self.missing_optional,
+            checked=self.checked,
+        )
+
+
+def _collect_required_probes(repo_root: Path, acc: _GateAccumulator) -> tuple[_GateAccumulator, _ContractProbeState]:
+    """Phase 1: Collect required contract probe results."""
+    mig_report = _load_report(repo_root, 'probe_m218e_memory_integration_guard', 'memory_integration_guard.json')
+    mig_pass = _is_pass(mig_report)
+    mig_manifest = _load_report(repo_root, 'probe_m218e_memory_integration_guard', 'memory_integration_manifest.json')
+    zf_sanity = _load_report(repo_root, 'probe_f216i_zero_findings_quality', 'sanity_zero_findings.json')
+    zf_quality = _load_report(repo_root, 'probe_f216i_zero_findings_quality', 'zero_findings_quality.json')
+    zf_sane, zf_detail = _zero_findings_quality_sane(zf_sanity)
+    nrg_report = _load_report(repo_root, 'probe_f216h_nonfeed_recovery_guard', 'nonfeed_recovery_guard.json')
+    nrg_pass = _is_pass(nrg_report)
+
+    checked = {
+        'probe_m218e_memory_integration_guard': {
+            'found': mig_report.found, 'parse_error': mig_report.parse_error,
+            'pass': mig_pass, 'status': mig_report.data.get('status') if mig_report.found else None
+        },
+        'probe_m218e_memory_integration_guard_manifest': {
+            'found': mig_manifest.found, 'parse_error': mig_manifest.parse_error
+        },
+        'probe_f216i_zero_findings_quality_sanity': {
+            'found': zf_sanity.found, 'parse_error': zf_sanity.parse_error,
+            'sane': zf_sane, 'detail': zf_detail,
+            'verdict': zf_sanity.data.get('verdict') if zf_sanity.found else None
+        },
+        'probe_f216i_zero_findings_quality': {
+            'found': zf_quality.found, 'parse_error': zf_quality.parse_error,
+            'detail': zf_quality.data.get('confirmation_zero_findings_stay_failed', {}).get('grade') if zf_quality.found else None
+        },
+        'probe_f216h_nonfeed_recovery_guard': {
+            'found': nrg_report.found, 'parse_error': nrg_report.parse_error,
+            'pass': nrg_pass, 'ready_for_smoke': nrg_report.data.get('ready_for_controlled_smoke') if nrg_report.found else None,
+            'status': nrg_report.data.get('status') if nrg_report.found else None
+        },
+        'probe_f216h_nonfeed_recovery_guard_manifest': {'found': True},
+    }
+
+    acc = acc.update_checked(checked)
+
+    # Memory integration guard
+    if not mig_report.found:
+        acc = acc.add_required('probe_m218e_memory_integration_guard').add_reason('BLOCKED_BY_CONTRACT: memory integration guard missing')
+    elif not mig_pass:
+        acc = acc.add_reason('BLOCKED_BY_CONTRACT: memory integration guard FAILED')
+
+    # Zero findings quality
+    if not zf_sane:
+        acc = acc.add_reason(f'BLOCKED_BY_UNKNOWN: zero-findings quality crashed or wrong verdict — {zf_detail}')
+
+    # Nonfeed recovery guard
+    if not nrg_report.found:
+        acc = acc.add_required('probe_f216h_nonfeed_recovery_guard').add_reason('BLOCKED_BY_CONTRACT: nonfeed recovery guard missing')
+    elif not nrg_pass:
+        acc = acc.add_reason('BLOCKED_BY_CONTRACT: nonfeed recovery guard FAILED')
+
+    # Fallback schema marker detection
+    fallback_reports = [mig_report, mig_manifest, nrg_report, zf_sanity, zf_quality]
+    fallback_blocked = False
+    for r in fallback_reports:
+        if r is not None and _has_fallback_schema_marker(r):
+            fallback_blocked = True
+            acc = acc.add_reason('BLOCKED_BY_UNKNOWN: fallback acquisition schema marker detected')
+            break
+    acc = acc.update_checked({'fallback_schema_marker': {'blocked': fallback_blocked}})
+
+    contract_state = _ContractProbeState(
+        mig_report=mig_report, nrg_report=nrg_report,
+        zf_sane=zf_sane, zf_detail=zf_detail, fallback_blocked=fallback_blocked
+    )
+    return acc, contract_state
+
+
+def _collect_optional_probes(repo_root: Path, acc: _GateAccumulator) -> tuple[_GateAccumulator, _OptionalProbeState]:
+    """Phase 2: Collect optional probe results."""
+    # Provider surface
+    surf_missing, surf_warnings, surf_checked = _check_provider_surface(repo_root)
+    acc = acc.update_checked(surf_checked).extend_warnings(surf_warnings)
+    for old_probe in surf_missing:
+        acc = acc.add_required(old_probe)
+        if 'bootstrap' in old_probe:
+            acc = acc.add_reason('BLOCKED_BY_PROVIDER_SURFACE: public bootstrap missing (no passing F219H/F219D alias)')
+        else:
+            acc = acc.add_reason('BLOCKED_BY_PROVIDER_SURFACE: CT provider resilience missing (no passing F219E alias)')
+
+    # CT cooldown
+    ct_cooldown = _check_ct_cooldown(repo_root)
+    ct_cooldown_report = ct_cooldown[2]
+    acc = acc.update_checked({'probe_f219e_ct_provider_cooldown': {
+        'found': ct_cooldown_report.found if ct_cooldown_report else False,
+        'pass': ct_cooldown[0], 'detail': ct_cooldown[1]
+    }})
+    if ct_cooldown_report and not ct_cooldown_report.found:
+        acc = acc.add_optional('probe_f219e_ct_provider_cooldown').add_warning('optional CT cooldown report absent — skipped')
+    elif ct_cooldown_report and not ct_cooldown[0]:
+        acc = acc.add_reason(f'BLOCKED_BY_PROVIDER_SURFACE: CT cooldown FAILED — {ct_cooldown[1]}')
+
+    # Ledger
+    ledger_pass, ledger_detail = _check_nonfeed_candidate_ledger(repo_root)
+    acc = acc.update_checked({'probe_f217e_nonfeed_candidate_ledger': {'pass': ledger_pass, 'detail': ledger_detail}})
+    if not ledger_pass:
+        acc = acc.add_warning(f'nonfeed candidate ledger issue: {ledger_detail}')
+
+    # Surface contract
+    sc_pass, sc_detail, sc_report = _check_surface_contract(repo_root)
+    acc = acc.update_checked({'probe_f219a_surface_contract': {
+        'found': sc_report.found if sc_report else False, 'pass': sc_pass, 'detail': sc_detail
+    }})
+    if sc_report and not sc_report.found:
+        acc = acc.add_optional('probe_f219a_surface_contract').add_warning('optional surface contract absent — skipped')
+    elif sc_report and not sc_pass:
+        acc = acc.add_reason(f'BLOCKED_BY_CONTRACT: surface contract FAILED — {sc_detail}')
+
+    # Hermes metal finalizer
+    hmf_pass, hmf_detail, hmf_report = _check_hermes_metal_finalizer(repo_root)
+    acc = acc.update_checked({'probe_f219b_hermes_metal_finalizer': {
+        'found': hmf_report.found if hmf_report else False, 'pass': hmf_pass, 'detail': hmf_detail
+    }})
+    if hmf_report and not hmf_report.found:
+        acc = acc.add_optional('probe_f219b_hermes_metal_finalizer').add_warning('optional Hermes Metal finalizer absent — skipped')
+    elif hmf_report and not hmf_pass:
+        acc = acc.add_reason(f'BLOCKED_BY_CONTRACT: Hermes Metal finalizer FAILED — {hmf_detail}')
+
+    # Public session seal
+    pss_pass, pss_detail, pss_report = _check_public_session_seal(repo_root)
+    acc = acc.update_checked({'probe_f219d_public_session_seal': {
+        'found': pss_report.found if pss_report else False, 'pass': pss_pass, 'detail': pss_detail
+    }})
+    if pss_report and not pss_report.found:
+        acc = acc.add_optional('probe_f219d_public_session_seal').add_warning('optional public session seal absent — skipped')
+    elif pss_report and not pss_pass:
+        acc = acc.add_reason(f'BLOCKED_BY_PROVIDER_SURFACE: public session seal FAILED — {pss_detail}')
+
+    # Load fallback alias reports
+    for old_probe, alias_list in _PROVIDER_SURFACE_ALIASES.items():
+        for new_probe, report_filename in alias_list:
+            _load_report(repo_root, new_probe, report_filename)
+
+    optional_state = _OptionalProbeState(
+        ct_cooldown=ct_cooldown, surface_contract=(sc_pass, sc_detail, sc_report),
+        hermes_metal=(hmf_pass, hmf_detail, hmf_report),
+        public_session_seal=(pss_pass, pss_detail, pss_report),
+        ledger_pass=ledger_pass, ledger_detail=ledger_detail
+    )
+    return acc, optional_state
+
+
+def _collect_artifacts(repo_root: Path, profile: str, acc: _GateAccumulator) -> tuple[_GateAccumulator, _ArtifactState]:
+    """Phase 3: Collect F224/F231 artifact check results."""
+    is_nonfeed_blocking = profile in ('active300', 'nonfeed_diagnostic')
+
+    f224_core_ready, f224_warnings, missing_f224, f224_checked = _check_f224_artifacts(repo_root, profile)
+    acc = acc.update_checked(f224_checked).extend_warnings(f224_warnings)
+    if not f224_core_ready:
+        for probe in missing_f224:
+            acc = acc.add_reason(f'BLOCKED_BY_CONTRACT: {probe} missing — required for {profile}')
+
+    f231_core_ready, f231_warnings, missing_f231, f231_checked = _check_f231_artifacts(repo_root, profile)
+    acc = acc.update_checked(f231_checked).extend_warnings(f231_warnings)
+    if not f231_core_ready:
+        for probe in missing_f231:
+            acc = acc.add_reason(f'BLOCKED_BY_CONTRACT: {probe} missing — required evidence lift pack for {profile}')
+
+    artifact_state = _ArtifactState(
+        f224_core_ready=f224_core_ready, f224_warnings=f224_warnings, missing_f224=missing_f224,
+        f231_core_ready=f231_core_ready, f231_warnings=f231_warnings, missing_f231=missing_f231,
+        is_nonfeed_blocking=is_nonfeed_blocking
+    )
+    return acc, artifact_state
+
+
+def _classify_blocks(acc: _GateAccumulator, artifact_state: _ArtifactState) -> dict:
+    """Classify block types from accumulated reasons."""
+    reasons = acc.reasons
+    f224_blocks = not artifact_state.f224_core_ready and artifact_state.is_nonfeed_blocking
+    f231_blocks = not artifact_state.f231_core_ready and artifact_state.is_nonfeed_blocking
+
+    has_provider_surface = any('BLOCKED_BY_PROVIDER_SURFACE' in r for r in reasons)
+    has_contract = any('BLOCKED_BY_CONTRACT' in r for r in reasons)
+    has_memory = any('BLOCKED_BY_MEMORY' in r for r in reasons)
+    has_unknown = any('BLOCKED_BY_UNKNOWN' in r for r in reasons)
+
+    return {
+        'has_provider_surface': has_provider_surface,
+        'has_contract': has_contract,
+        'has_memory': has_memory,
+        'has_unknown': has_unknown,
+        'f224_blocks': f224_blocks,
+        'f231_blocks': f231_blocks,
+    }
+
+
+def _derive_decision(
+    memory: _MemoryState,
+    artifact_state: _ArtifactState,
+    contract_state: _ContractProbeState,
+    blocks: dict,
+) -> tuple[Decision, bool, list[str], list[str]]:
+    """
+    Derive final decision using flat dispatch logic.
+    Returns (decision, live_allowed, reasons, warnings).
+    """
+    reasons: list[str] = []
+    warnings: list[str] = []
+    live_allowed = False
+    decision = Decision.BLOCKED_BY_UNKNOWN
+
+    # Memory override states take precedence
+    if memory.uma_state in ('critical', 'emergency'):
+        return (
+            Decision.BLOCKED_BY_MEMORY, False,
+            [f'BLOCKED_BY_MEMORY: uma_state={memory.uma_state} (override)'],
+            warnings
+        )
+
+    if memory.swap_policy_tier == 'hard_block':
+        return (
+            Decision.BLOCKED_BY_MEMORY, False,
+            [f'BLOCKED_BY_MEMORY: {memory.swap_gate_reason}'],
+            warnings
+        )
+
+    # Decision dispatch based on block classification
+    if blocks['f224_blocks'] or blocks['f231_blocks']:
+        decision = Decision.BLOCKED_BY_CONTRACT
+        reasons = []
+        if blocks['f224_blocks']:
+            reasons.append('BLOCKED_BY_CONTRACT: F224 blocking artifacts missing for nonfeed profile')
+        if blocks['f231_blocks']:
+            reasons.append('BLOCKED_BY_CONTRACT: F231 evidence lift pack missing for nonfeed profile')
+        return (decision, False, reasons, warnings)
+
+    # Classify primary block type from reasons
+    if blocks['has_memory']:
+        return (Decision.BLOCKED_BY_MEMORY, False, [f'BLOCKED_BY_MEMORY: {memory.swap_gate_reason}'], warnings)
+
+    if blocks['has_provider_surface']:
+        return (Decision.BLOCKED_BY_PROVIDER_SURFACE, False, [], warnings)
+
+    if blocks['has_contract']:
+        return (Decision.BLOCKED_BY_CONTRACT, False, [], warnings)
+
+    if blocks['has_unknown']:
+        return (Decision.BLOCKED_BY_UNKNOWN, False, [], warnings)
+
+    # Hardware-tainted path for diagnostic tier
+    if memory.swap_policy_tier == 'diagnostic':
+        decision = Decision.READY_FOR_LIVE_HARDWARE_TAINTED
+        live_allowed = True
+        reasons.append(f'HARDWARE_TAINTED: {memory.swap_gate_reason}')
+        warnings.append('Swap elevated: results will be non-comparable (use --require-memory-ok for clean run)')
+        return (decision, live_allowed, reasons, warnings)
+
+    # All clear
+    return (Decision.READY_FOR_LIVE, True, ['All required probe checks passed; UMA within limits'], warnings)
+
+
+def _compute_capability_flags(
+    blocks: dict,
+    fallback_blocked: bool,
+    memory: _MemoryState,
+    artifact_state: _ArtifactState,
+) -> tuple[bool, list[str]]:
+    """Compute capability_live_allowed and capability_blockers."""
+    capability_blocked = (
+        blocks['has_provider_surface'] or
+        blocks['has_memory'] or
+        blocks['f224_blocks'] or
+        blocks['f231_blocks'] or
+        fallback_blocked
+    )
+
+    blockers = []
+    if blocks['has_provider_surface']:
+        blockers.append('provider_surface_degraded')
+    if blocks['f224_blocks']:
+        blockers.append('F224 blocking artifacts missing')
+    if blocks['f231_blocks']:
+        blockers.append('F231 evidence lift pack missing')
+    if blocks['has_memory']:
+        blockers.append('BLOCKED_BY_MEMORY')
+    if fallback_blocked:
+        blockers.append('fallback_schema_blocked')
+
+    return not capability_blocked, blockers
+
+
 def run_gate(repo_root: Path, profile: str, query: str) -> DecisionResult:
     """
     Run the pre-live decision gate.
     No live sprint. No model load. No network. No SprintScheduler.
     """
     repo_root = Path(repo_root).resolve()
-    reasons: list[str] = []
-    warnings: list[str] = []
-    missing_required: list[str] = []
-    missing_optional: list[str] = []
-    checked: dict[str, dict] = {}
-    fallback_blocked = False
-    mig_report = _load_report(repo_root, 'probe_m218e_memory_integration_guard', 'memory_integration_guard.json')
-    mig_pass = _is_pass(mig_report)
-    checked['probe_m218e_memory_integration_guard'] = {'found': mig_report.found, 'parse_error': mig_report.parse_error, 'pass': mig_pass, 'status': mig_report.data.get('status') if mig_report.found else None}
-    if not mig_report.found:
-        missing_required.append('probe_m218e_memory_integration_guard')
-        reasons.append('BLOCKED_BY_CONTRACT: memory integration guard missing')
-    elif not mig_pass:
-        reasons.append('BLOCKED_BY_CONTRACT: memory integration guard FAILED')
-    mig_manifest = _load_report(repo_root, 'probe_m218e_memory_integration_guard', 'memory_integration_manifest.json')
-    checked['probe_m218e_memory_integration_guard_manifest'] = {'found': mig_manifest.found, 'parse_error': mig_manifest.parse_error}
-    zf_sanity = _load_report(repo_root, 'probe_f216i_zero_findings_quality', 'sanity_zero_findings.json')
-    zf_quality = _load_report(repo_root, 'probe_f216i_zero_findings_quality', 'zero_findings_quality.json')
-    zf_sane, zf_detail = _zero_findings_quality_sane(zf_sanity)
-    checked['probe_f216i_zero_findings_quality_sanity'] = {'found': zf_sanity.found, 'parse_error': zf_sanity.parse_error, 'sane': zf_sane, 'detail': zf_detail, 'verdict': zf_sanity.data.get('verdict') if zf_sanity.found else None}
-    checked['probe_f216i_zero_findings_quality'] = {'found': zf_quality.found, 'parse_error': zf_quality.parse_error, 'detail': zf_quality.data.get('confirmation_zero_findings_stay_failed', {}).get('grade') if zf_quality.found else None}
-    if not zf_sane:
-        reasons.append(f'BLOCKED_BY_UNKNOWN: zero-findings quality crashed or wrong verdict — {zf_detail}')
-    nrg_report = _load_report(repo_root, 'probe_f216h_nonfeed_recovery_guard', 'nonfeed_recovery_guard.json')
-    nrg_manifest = _load_report(repo_root, 'probe_f216h_nonfeed_recovery_guard', 'nonfeed_recovery_manifest.json')
-    nrg_pass = _is_pass(nrg_report)
-    checked['probe_f216h_nonfeed_recovery_guard'] = {'found': nrg_report.found, 'parse_error': nrg_report.parse_error, 'pass': nrg_pass, 'ready_for_smoke': nrg_report.data.get('ready_for_controlled_smoke') if nrg_report.found else None, 'status': nrg_report.data.get('status') if nrg_report.found else None}
-    checked['probe_f216h_nonfeed_recovery_guard_manifest'] = {'found': nrg_manifest.found}
-    if not nrg_report.found:
-        missing_required.append('probe_f216h_nonfeed_recovery_guard')
-        reasons.append('BLOCKED_BY_CONTRACT: nonfeed recovery guard missing')
-    elif not nrg_pass:
-        reasons.append('BLOCKED_BY_CONTRACT: nonfeed recovery guard FAILED')
-    surf_missing, surf_warnings, surf_checked = _check_provider_surface(repo_root)
-    checked.update(surf_checked)
-    warnings.extend(surf_warnings)
-    for old_probe in surf_missing:
-        missing_required.append(old_probe)
-        if 'bootstrap' in old_probe:
-            reasons.append('BLOCKED_BY_PROVIDER_SURFACE: public bootstrap missing (no passing F219H/F219D alias)')
-        else:
-            reasons.append('BLOCKED_BY_PROVIDER_SURFACE: CT provider resilience missing (no passing F219E alias)')
-    ct_cooldown_pass, ct_cooldown_detail, ct_cooldown_report = _check_ct_cooldown(repo_root)
-    checked['probe_f219e_ct_provider_cooldown'] = {'found': ct_cooldown_report.found if ct_cooldown_report else False, 'pass': ct_cooldown_pass, 'detail': ct_cooldown_detail}
-    if ct_cooldown_report and (not ct_cooldown_report.found):
-        missing_optional.append('probe_f219e_ct_provider_cooldown')
-        warnings.append('optional CT cooldown report absent — skipped')
-    elif ct_cooldown_report and (not ct_cooldown_pass):
-        reasons.append(f'BLOCKED_BY_PROVIDER_SURFACE: CT cooldown FAILED — {ct_cooldown_detail}')
-    ledger_pass, ledger_detail = _check_nonfeed_candidate_ledger(repo_root)
-    checked['probe_f217e_nonfeed_candidate_ledger'] = {'pass': ledger_pass, 'detail': ledger_detail}
-    if not ledger_pass:
-        warnings.append(f'nonfeed candidate ledger issue: {ledger_detail}')
-    sc_pass, sc_detail, sc_report = _check_surface_contract(repo_root)
-    checked['probe_f219a_surface_contract'] = {'found': sc_report.found if sc_report else False, 'pass': sc_pass, 'detail': sc_detail}
-    if sc_report and (not sc_report.found):
-        missing_optional.append('probe_f219a_surface_contract')
-        warnings.append('optional surface contract absent — skipped')
-    elif sc_report and (not sc_pass):
-        reasons.append(f'BLOCKED_BY_CONTRACT: surface contract FAILED — {sc_detail}')
-    hmf_pass, hmf_detail, hmf_report = _check_hermes_metal_finalizer(repo_root)
-    checked['probe_f219b_hermes_metal_finalizer'] = {'found': hmf_report.found if hmf_report else False, 'pass': hmf_pass, 'detail': hmf_detail}
-    if hmf_report and (not hmf_report.found):
-        missing_optional.append('probe_f219b_hermes_metal_finalizer')
-        warnings.append('optional Hermes Metal finalizer absent — skipped')
-    elif hmf_report and (not hmf_pass):
-        reasons.append(f'BLOCKED_BY_CONTRACT: Hermes Metal finalizer FAILED — {hmf_detail}')
-    pss_pass, pss_detail, pss_report = _check_public_session_seal(repo_root)
-    checked['probe_f219d_public_session_seal'] = {'found': pss_report.found if pss_report else False, 'pass': pss_pass, 'detail': pss_detail}
-    if pss_report and (not pss_report.found):
-        missing_optional.append('probe_f219d_public_session_seal')
-        warnings.append('optional public session seal absent — skipped')
-    elif pss_report and (not pss_pass):
-        reasons.append(f'BLOCKED_BY_PROVIDER_SURFACE: public session seal FAILED — {pss_detail}')
-    fallback_reports: list[ProbeReport | None] = [mig_report, mig_manifest, nrg_report, nrg_manifest, zf_sanity, zf_quality, ct_cooldown_report, sc_report, hmf_report, pss_report]
-    for old_probe, alias_list in _PROVIDER_SURFACE_ALIASES.items():
-        for new_probe, report_filename in alias_list:
-            fallback_reports.append(_load_report(repo_root, new_probe, report_filename))
-        old_filename = 'public_bootstrap.json' if 'bootstrap' in old_probe else 'ct_provider_resilience.json'
-        fallback_reports.append(_load_report(repo_root, old_probe, old_filename))
-    for r in fallback_reports:
-        if r is not None and _has_fallback_schema_marker(r):
-            fallback_blocked = True
-            reasons.append('BLOCKED_BY_UNKNOWN: fallback acquisition schema marker detected')
-            break
-    checked['fallback_schema_marker'] = {'blocked': fallback_blocked}
-    f224_core_ready, f224_warnings, missing_f224, f224_checked = _check_f224_artifacts(repo_root, profile)
-    checked.update(f224_checked)
-    if not f224_core_ready:
-        for probe in missing_f224:
-            reasons.append(f'BLOCKED_BY_CONTRACT: {probe} missing — required for {profile}')
-    warnings.extend(f224_warnings)
-    f231_core_ready, f231_warnings, missing_f231, f231_checked = _check_f231_artifacts(repo_root, profile)
-    checked.update(f231_checked)
-    if not f231_core_ready:
-        for probe in missing_f231:
-            reasons.append(f'BLOCKED_BY_CONTRACT: {probe} missing — required evidence lift pack for {profile}')
-    warnings.extend(f231_warnings)
-    is_nonfeed_blocking = profile in ('active300', 'nonfeed_diagnostic')
-    _f224_blocks_nonfeed = not f224_core_ready and is_nonfeed_blocking
-    _f231_blocks_nonfeed = not f231_core_ready and is_nonfeed_blocking
+
+    # Phase 1: Required contract probes
+    acc = _GateAccumulator(reasons=[], warnings=[], missing_required=[], missing_optional=[], checked={})
+    acc, contract_state = _collect_required_probes(repo_root, acc)
+
+    # Phase 2: Optional probes
+    acc, optional_state = _collect_optional_probes(repo_root, acc)
+
+    # Phase 3: F224/F231 artifacts
+    acc, artifact_state = _collect_artifacts(repo_root, profile, acc)
+
+    # Phase 4: Memory state
     uma = _check_uma()
     swap_gib = uma.get('swap_used_gib', 0.0)
     uma_state = uma.get('uma_state', 'unknown')
-    checked['uma'] = uma
     swap_policy_tier, swap_gate_reason = get_swap_policy_tier(swap_gib)
     hardware_constrained = swap_policy_tier in ('diagnostic', 'hard_block')
-    if uma_state in ('critical', 'emergency'):
-        decision = Decision.BLOCKED_BY_MEMORY
-        live_allowed = False
-        hardware_constrained = True
-        swap_policy_tier = 'hard_block'
-        swap_gate_reason = f'uma_state={uma_state} (override)'
-        reasons.insert(0, f'BLOCKED_BY_MEMORY: uma_state={uma_state} (override)')
-    elif swap_policy_tier == 'hard_block':
-        decision = Decision.BLOCKED_BY_MEMORY
-        live_allowed = False
-        reasons.insert(0, f'BLOCKED_BY_MEMORY: {swap_gate_reason}')
-    elif swap_policy_tier == 'diagnostic':
-        if reasons:
-            first_reason = reasons[0]
-            if 'BLOCKED_BY_PROVIDER_SURFACE' in first_reason:
-                decision = Decision.BLOCKED_BY_PROVIDER_SURFACE
-            elif 'BLOCKED_BY_CONTRACT' in first_reason:
-                decision = Decision.BLOCKED_BY_CONTRACT
-            elif 'BLOCKED_BY_UNKNOWN' in first_reason:
-                decision = Decision.BLOCKED_BY_UNKNOWN
-            else:
-                decision = Decision.BLOCKED_BY_UNKNOWN
-            live_allowed = False
-        else:
-            decision = Decision.READY_FOR_LIVE_HARDWARE_TAINTED
-            live_allowed = True
-            reasons.append(f'HARDWARE_TAINTED: {swap_gate_reason}')
-            warnings.append('Swap elevated: results will be non-comparable (use --require-memory-ok for clean run)')
-    elif reasons:
-        if _f224_blocks_nonfeed or _f231_blocks_nonfeed:
-            decision = Decision.BLOCKED_BY_CONTRACT
-            live_allowed = False
-            if _f224_blocks_nonfeed:
-                reasons.insert(0, f'BLOCKED_BY_CONTRACT: F224 blocking artifacts missing for {profile}')
-            if _f231_blocks_nonfeed:
-                reasons.insert(0, f'BLOCKED_BY_CONTRACT: F231 evidence lift pack missing for {profile}')
-        else:
-            first_reason = reasons[0]
-            if 'BLOCKED_BY_PROVIDER_SURFACE' in first_reason:
-                decision = Decision.BLOCKED_BY_PROVIDER_SURFACE
-            elif 'BLOCKED_BY_CONTRACT' in first_reason:
-                decision = Decision.BLOCKED_BY_CONTRACT
-            elif 'BLOCKED_BY_UNKNOWN' in first_reason:
-                decision = Decision.BLOCKED_BY_UNKNOWN
-            else:
-                decision = Decision.BLOCKED_BY_UNKNOWN
-            live_allowed = False
-    elif _f224_blocks_nonfeed or _f231_blocks_nonfeed:
-        decision = Decision.BLOCKED_BY_CONTRACT
-        live_allowed = False
-        if _f224_blocks_nonfeed:
-            reasons.insert(0, f'BLOCKED_BY_CONTRACT: F224 blocking artifacts missing for {profile}')
-        if _f231_blocks_nonfeed:
-            reasons.insert(0, f'BLOCKED_BY_CONTRACT: F231 evidence lift pack missing for {profile}')
+    acc = acc.update_checked({'uma': uma})
+
+    memory = _MemoryState(
+        uma=uma, swap_policy_tier=swap_policy_tier, swap_gate_reason=swap_gate_reason,
+        hardware_constrained=hardware_constrained, uma_state=uma_state
+    )
+
+    # Phase 5: Classify blocks and derive decision
+    blocks = _classify_blocks(acc, artifact_state)
+    decision, live_allowed, extra_reasons, extra_warnings = _derive_decision(
+        memory, artifact_state, contract_state, blocks
+    )
+    acc = acc.extend_warnings(extra_warnings)
+
+    # Build final reasons (prepend from decision derivation)
+    final_reasons = acc.reasons
+    if extra_reasons and extra_reasons[0].startswith('BLOCKED_BY_'):
+        final_reasons = [*extra_reasons, *acc.reasons]
     else:
-        decision = Decision.READY_FOR_LIVE
-        live_allowed = True
-        reasons.append('All required probe checks passed; UMA within limits')
+        final_reasons = acc.reasons
+
+    # Capability flags
+    capability_live_allowed, capability_blockers = _compute_capability_flags(
+        blocks, contract_state.fallback_blocked, memory, artifact_state
+    )
+
+    # Feed baseline eligibility
+    feed_baseline_allowed = (
+        not blocks['has_provider_surface'] and
+        not blocks['has_memory'] and
+        swap_policy_tier in ('clean', 'diagnostic') and
+        not acc.missing_required
+    )
+
+    # Commands
     encoded_query = query.replace('"', '\\"')
     live_cmd = f'python -m core --profile {profile} --query "{encoded_query}" --live --require-memory-ok'
     highswap_cmd = f'python -m core --profile {profile} --query "{encoded_query}" --live --allow-high-swap'
-    _has_provider_surface_block = any(('BLOCKED_BY_PROVIDER_SURFACE' in r for r in reasons))
-    _has_contract_block = any(('BLOCKED_BY_CONTRACT' in r for r in reasons))
-    _has_memory_block = any(('BLOCKED_BY_MEMORY' in r for r in reasons))
-    _feed_baseline_ok = not _has_provider_surface_block and (not _has_memory_block) and (swap_policy_tier in ('clean', 'diagnostic')) and (not missing_required)
-    feed_baseline_allowed = bool(_feed_baseline_ok)
-    _capability_blocked = _has_provider_surface_block or _has_memory_block or _f224_blocks_nonfeed or _f231_blocks_nonfeed or fallback_blocked
-    capability_live_allowed = not _capability_blocked
-    capability_blockers = []
-    if _has_provider_surface_block:
-        capability_blockers.append('provider_surface_degraded')
-    if _f224_blocks_nonfeed:
-        capability_blockers.append('F224 blocking artifacts missing')
-    if _f231_blocks_nonfeed:
-        capability_blockers.append('F231 evidence lift pack missing')
-    if _has_memory_block:
-        capability_blockers.append('BLOCKED_BY_MEMORY')
-    if fallback_blocked:
-        capability_blockers.append('fallback_schema_blocked')
-    return DecisionResult(decision=decision, live_allowed=live_allowed, reasons=reasons, warnings=warnings, missing_required_reports=missing_required, missing_optional_reports=missing_optional, uma=uma, checked_reports=checked, suggested_live_command=live_cmd, suggested_highswap_diagnostic_command=highswap_cmd, fallback_schema_blocked=fallback_blocked, hardware_constrained=hardware_constrained, swap_policy_tier=swap_policy_tier, swap_gate_reason=swap_gate_reason, f224_core_ready=f224_core_ready, f224_warnings=f224_warnings, missing_f224_artifacts=missing_f224, f231_core_ready=f231_core_ready, f231_warnings=f231_warnings, missing_f231_artifacts=missing_f231, nonfeed_capability_blocked=_f224_blocks_nonfeed or _f231_blocks_nonfeed, nonfeed_block_reason=_build_nonfeed_block_reason(_f224_blocks_nonfeed, _f231_blocks_nonfeed, profile), feed_baseline_allowed=feed_baseline_allowed, capability_live_allowed=capability_live_allowed, capability_blockers=capability_blockers, next_action_feed_baseline=live_cmd if feed_baseline_allowed else highswap_cmd if swap_policy_tier != 'hard_block' else 'restart required — memory pressure', next_action_capability=_resolve_next_action_capability(live_cmd, capability_live_allowed, _has_memory_block, _has_contract_block, _f224_blocks_nonfeed, _f231_blocks_nonfeed))
+
+    next_action_feed = live_cmd if feed_baseline_allowed else (
+        highswap_cmd if swap_policy_tier != 'hard_block' else 'restart required — memory pressure'
+    )
+    next_action_cap = _resolve_next_action_capability(
+        live_cmd, capability_live_allowed, blocks['has_memory'],
+        blocks['has_contract'], blocks['f224_blocks'], blocks['f231_blocks']
+    )
+
+    return DecisionResult(
+        decision=decision, live_allowed=live_allowed,
+        reasons=final_reasons, warnings=acc.warnings,
+        missing_required_reports=acc.missing_required, missing_optional_reports=acc.missing_optional,
+        uma=uma, checked_reports=acc.checked,
+        suggested_live_command=live_cmd, suggested_highswap_diagnostic_command=highswap_cmd,
+        fallback_schema_blocked=contract_state.fallback_blocked,
+        hardware_constrained=hardware_constrained,
+        swap_policy_tier=swap_policy_tier, swap_gate_reason=swap_gate_reason,
+        f224_core_ready=artifact_state.f224_core_ready,
+        f224_warnings=artifact_state.f224_warnings,
+        missing_f224_artifacts=artifact_state.missing_f224,
+        f231_core_ready=artifact_state.f231_core_ready,
+        f231_warnings=artifact_state.f231_warnings,
+        missing_f231_artifacts=artifact_state.missing_f231,
+        nonfeed_capability_blocked=blocks['f224_blocks'] or blocks['f231_blocks'],
+        nonfeed_block_reason=_build_nonfeed_block_reason(
+            blocks['f224_blocks'], blocks['f231_blocks'], profile
+        ),
+        feed_baseline_allowed=feed_baseline_allowed,
+        capability_live_allowed=capability_live_allowed,
+        capability_blockers=capability_blockers,
+        next_action_feed_baseline=next_action_feed,
+        next_action_capability=next_action_cap,
+    )
 
 def _build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(description='Pre-Live Decision Gate — Sprint F219F', formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -623,69 +940,124 @@ def _build_parser() -> argparse.ArgumentParser:
     p.add_argument('--output-markdown', type=Path, default=None)
     return p
 
-def _render_markdown(result: DecisionResult, profile: str, query: str) -> str:
-    """Render decision result as markdown report."""
-    lines = ['# Pre-Live Decision Gate Report', '', f'**Decision:** `{result.decision.value}`', f'**Live Allowed:** `{result.live_allowed}`', f'**Hardware Constrained:** `{result.hardware_constrained}`', f'**Profile:** `{profile}`', f'**Query:** `{query}`', '', '---', '', '## UMA Status', '', '| Field | Value |', '|-------|-------|']
+def _render_uma_section(result: DecisionResult) -> list[str]:
+    """UMA status table section."""
+    lines = ['## UMA Status', '', '| Field | Value |', '|-------|-------|']
     uma = result.uma
-    for key in ['system_used_gib', 'swap_used_gib', 'swap_detected', 'uma_state', 'io_only', 'last_error']:
+    for key in ('system_used_gib', 'swap_used_gib', 'swap_detected', 'uma_state', 'io_only', 'last_error'):
         val = uma.get(key)
         if val is not None:
             lines.append(f'| {key} | {val} |')
-    lines.extend(['', '---', '', '## Swap Policy (F220F)', ''])
-    lines.extend(['| Field | Value |', '|-------|-------|', f'| Swap Policy Tier | `{result.swap_policy_tier}` |', f'| Swap Gate Reason | `{result.swap_gate_reason}` |', f'| Hardware Constrained | `{result.hardware_constrained}` |'])
-    lines.extend(['', '---', '', '## Reasons', ''])
+    return lines
+
+
+def _render_swap_policy_section(result: DecisionResult) -> list[str]:
+    """Swap policy section."""
+    return [
+        '', '---', '', '## Swap Policy (F220F)', '',
+        '| Field | Value |', '|-------|-------|',
+        f'| Swap Policy Tier | `{result.swap_policy_tier}` |',
+        f'| Swap Gate Reason | `{result.swap_gate_reason}` |',
+        f'| Hardware Constrained | `{result.hardware_constrained}` |',
+    ]
+
+
+def _render_reasons_section(result: DecisionResult) -> list[str]:
+    """Reasons list section."""
+    lines = ['', '---', '', '## Reasons', '']
     if result.reasons:
-        for r in result.reasons:
-            lines.append(f'- {r}')
+        lines.extend(f'- {r}' for r in result.reasons)
     else:
         lines.append('- (none)')
-    lines.extend(['', '---', '', '## Warnings', ''])
+    return lines
+
+
+def _render_warnings_section(result: DecisionResult) -> list[str]:
+    """Warnings list section."""
+    lines = ['', '---', '', '## Warnings', '']
     if result.warnings:
-        for w in result.warnings:
-            lines.append(f'- {w}')
+        lines.extend(f'- {w}' for w in result.warnings)
     else:
         lines.append('- (none)')
-    lines.extend(['', '---', '', '## Missing Reports', ''])
-    lines.append(f"**Required:** {', '.join(result.missing_required_reports) or '(none)'}")
-    lines.append(f"**Optional:** {', '.join(result.missing_optional_reports) or '(none)'}")
-    lines.extend(['', '---', '', '## Provider Surface Alias Table (F217→F219)', ''])
-    lines.append('| Old Probe | Current Alias | Status |')
-    lines.append('|-----------|---------------|--------|')
-    aliases = [('probe_f217c_public_bootstrap', 'probe_f219h_public_fetcher_import_seal / probe_f219d_public_session_seal'), ('probe_f217d_ct_provider_resilience', 'probe_f219e_ct_provider_cooldown')]
+    return lines
+
+
+def _render_missing_reports_section(result: DecisionResult) -> list[str]:
+    """Missing reports section."""
+    return [
+        '', '---', '', '## Missing Reports', '',
+        f"**Required:** {', '.join(result.missing_required_reports) or '(none)'}",
+        f"**Optional:** {', '.join(result.missing_optional_reports) or '(none)'}",
+    ]
+
+
+def _render_alias_table_section(result: DecisionResult) -> list[str]:
+    """Provider surface alias table section."""
+    aliases = [
+        ('probe_f217c_public_bootstrap', 'probe_f219h_public_fetcher_import_seal / probe_f219d_public_session_seal'),
+        ('probe_f217d_ct_provider_resilience', 'probe_f219e_ct_provider_cooldown'),
+    ]
     checked = result.checked_reports
-    for old, new_alias in aliases:
-        old_info = checked.get(old, {})
-        alias_keys = [k for k in checked if k.startswith(old + '_alias_')]
-        alias_statuses = []
-        for ak in alias_keys:
-            ai = checked.get(ak, {})
-            alias_statuses.append(f"{ak.split('_alias_', 1)[1]}: pass={ai.get('pass')}, found={ai.get('found')}")
-        status = 'PASS' if old_info.get('alias_satisfied') else 'absent' if not old_info.get('found') else 'FAIL'
-        lines.append(f'| {old} | {new_alias} | {status} |')
-    lines.extend(['', '---', '', '## Checked Reports', ''])
+    lines = ['', '---', '', '## Provider Surface Alias Table (F217→F219)', '',
+             '| Old Probe | Current Alias | Status |',
+             '|-----------|---------------|--------|']
+    for old_probe, new_alias in aliases:
+        old_info = checked.get(old_probe, {})
+        status = 'PASS' if old_info.get('alias_satisfied') else ('absent' if not old_info.get('found') else 'FAIL')
+        lines.append(f'| {old_probe} | {new_alias} | {status} |')
+    return lines
+
+
+def _render_checked_reports_section(result: DecisionResult) -> list[str]:
+    """Detailed checked reports section."""
+    lines = ['', '---', '', '## Checked Reports', '']
     for name, info in result.checked_reports.items():
         if name == 'uma':
             continue
-        found = info.get('found')
-        parse_err = info.get('parse_error')
-        passed = info.get('pass')
-        detail = info.get('detail')
         lines.append(f'### {name}')
-        lines.append(f'- found: `{found}`')
-        if parse_err:
-            lines.append(f'- parse_error: `{parse_err}`')
-        if passed is not None:
-            lines.append(f'- pass: `{passed}`')
-        if detail:
-            lines.append(f'- detail: `{detail}`')
+        lines.append(f'- found: `{info.get("found")}`')
+        if info.get('parse_error'):
+            lines.append(f'- parse_error: `{info.get("parse_error")}`')
+        if info.get('pass') is not None:
+            lines.append(f'- pass: `{info.get("pass")}`')
+        if info.get('detail'):
+            lines.append(f'- detail: `{info.get("detail")}`')
         lines.append('')
-    lines.extend(['', '---', '', '## Suggested Commands', ''])
-    lines.append(f'**Clean run (--require-memory-ok):**\n```bash\n{result.suggested_live_command}\n```')
+    return lines
+
+
+def _render_commands_section(result: DecisionResult) -> list[str]:
+    """Suggested commands section."""
+    lines = ['', '---', '', '## Suggested Commands', '',
+             f'**Clean run (--require-memory-ok):**\n```bash\n{result.suggested_live_command}\n```']
     if result.swap_policy_tier == 'diagnostic':
         lines.append(f'\n**Diagnostic run (--allow-high-swap — results non-comparable):**\n```bash\n{result.suggested_highswap_diagnostic_command}\n```')
     elif result.swap_policy_tier == 'hard_block':
         lines.append('\n**Hard block — restart required before running**')
-    return '\n'.join(lines)
+    return lines
+
+
+def _render_markdown(result: DecisionResult, profile: str, query: str) -> str:
+    """Render decision result as markdown report."""
+    header = [
+        '# Pre-Live Decision Gate Report', '',
+        f'**Decision:** `{result.decision.value}`',
+        f'**Live Allowed:** `{result.live_allowed}`',
+        f'**Hardware Constrained:** `{result.hardware_constrained}`',
+        f'**Profile:** `{profile}`',
+        f'**Query:** `{query}`',
+    ]
+    sections = [
+        _render_uma_section(result),
+        _render_swap_policy_section(result),
+        _render_reasons_section(result),
+        _render_warnings_section(result),
+        _render_missing_reports_section(result),
+        _render_alias_table_section(result),
+        _render_checked_reports_section(result),
+        _render_commands_section(result),
+    ]
+    return '\n'.join(header + [line for section in sections for line in section])
 
 def main() -> int:
     parser = _build_parser()

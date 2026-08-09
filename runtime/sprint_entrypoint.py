@@ -59,6 +59,8 @@ import time
 import traceback
 import uuid
 from collections.abc import Callable
+from contextlib import contextmanager
+from dataclasses import dataclass, field
 from pathlib import Path
 
 # TYPE_CHECKING imports — available for type checker but NOT loaded at runtime
@@ -84,6 +86,141 @@ if TYPE_CHECKING:
 # Runtime imports — lightweight, fast-loading only
 from hledac.universal.evidence_log import EvidenceLog
 from hledac.universal.core import memory_cycle as _memory_cycle  # F266-U2/U3
+
+
+# =============================================================================
+# PHASE REFACTORING: State Container & Decorators (F350M-R Phase 5)
+# =============================================================================
+
+@dataclass
+class SprintRunContext:
+    """
+    PHASE REFACTORING F350M-R: Centralized state container for run_sprint phases.
+    
+    Replaces ~40+ local variables with a structured dataclass for better
+    code organization, testability, and reduced cognitive load.
+    
+    Usage:
+        ctx = SprintRunContext(sprint_id="...", phase_times={...})
+        await _run_sprint_boot(ctx, query, ...)
+        await _run_sprint_execute(ctx, query)
+        await _run_sprint_windup(ctx, query)
+        await _run_sprint_teardown(ctx)
+    """
+    # Phase timing
+    phase_times: dict[str, float] = field(default_factory=dict)
+    
+    # Cancellation
+    cancel_event: asyncio.Event | None = None
+    
+    # Sprint identity
+    sprint_id: str = ""
+    query_hash: str = ""
+    
+    # Resources
+    store: "DuckDBShadowStore | None" = None
+    scheduler: "SprintScheduler | None" = None
+    power_assertion: Any = field(default=None)
+    
+    # Pre-flight state
+    uma_baseline_gib: float = 0.0
+    swap_detected_pre: bool = False
+    uma_state_pre: str = "ok"
+    effective_windup_s: float = 180.0
+    
+    # Recovery state
+    resume_from: dict | None = None
+    resume_step: int = 0
+    
+    # Seed state
+    seed_state: Any = field(default=None)
+    
+    # Sprint results
+    result: Any = field(default=None)
+    intel: dict = field(default_factory=dict)
+    
+    # Evidence log
+    evidence_log: Any = field(default=None)
+    
+    # Lock manager
+    sprint_lock_mgr: Any = field(default=None)
+    sprint_lock_path: Path | None = None
+    
+    # Export state
+    report_path: Path | None = None
+    live_feed_urls: list[str] = field(default_factory=list)
+    
+    # CT log client
+    ct_log_client: Any = field(default=None)
+    
+    # Dashboard
+    dashboard: Any = field(default=None)
+    
+    # DuckDB init flag
+    duckdb_init_ok: bool = False
+    
+    # Execution parameters (set in execute phase)
+    query: str = ""
+    duration_s: float = 1800.0
+    actual_duration: float = 0.0
+
+
+@contextmanager
+def _fail_safe(level: str = "debug", label: str = ""):
+    """
+    PHASE REFACTORING F350M-R: Standardized exception handling decorator.
+    
+    Replaces 39+ identical try/except/pass patterns with a consistent handler.
+    - CancelledError is always re-raised (I6 invariant)
+    - All other exceptions are logged at configured level and swallowed
+    - Optional label for debugging which operation failed
+    
+    Usage:
+        with _fail_safe("warning", "DuckDB init"):
+            await store.async_initialize()
+    
+    Args:
+        level: Log level - "debug", "info", "warning", "error"
+        label: Descriptive label for the operation (for log messages)
+    """
+    try:
+        yield
+    except asyncio.CancelledError:
+        raise  # I6 invariant: CancelledError must propagate, not swallowed
+    except Exception as e:
+        _log_level = {
+            "debug": logger.debug,
+            "info": logger.info,
+            "warning": logger.warning,
+            "error": logger.error,
+        }.get(level, logger.debug)
+        if label:
+            _log_level(f"[fail_safe:{label}] {type(e).__name__}: {e}")
+        else:
+            _log_level(f"[fail_safe] {type(e).__name__}: {e}")
+
+
+def _fail_safe_async(level: str = "debug", label: str = ""):
+    """
+    Async-compatible fail_safe wrapper for coroutines.
+    """
+    async def decorator(coro):
+        try:
+            return await coro
+        except asyncio.CancelledError:
+            raise
+        except Exception as e:
+            _log_level = {
+                "debug": logger.debug,
+                "info": logger.info,
+                "warning": logger.warning,
+                "error": logger.error,
+            }.get(level, logger.debug)
+            prefix = f"[fail_safe:{label}] " if label else "[fail_safe] "
+            _log_level(f"{prefix}{type(e).__name__}: {e}")
+            return None
+    return decorator
+
 
 # ULTIMATE-001: SprintSeedState global for deterministic cognitive replay
 # Set by run_sprint() at sprint start, accessed by coordinators for seeded random
@@ -973,6 +1110,35 @@ def _serialize_payload_direct(r: AcqReportPayload) -> dict[str, Any]:
     return msgspec.to_builtins(r)
 
 
+def _normalize_seed_context(
+    report: dict[str, Any],
+    r: AcqReportPayload,
+) -> dict[str, Any]:
+    """
+    Sprint F350M-R: Normalize seed context fields from AcqReportPayload.
+
+    Extracts duplicated logic from success and fallback paths in acq_payload_to_dict.
+    Returns updated report dict.
+    """
+    if not report.get("seed_context_available"):
+        has_seeds = (
+            r.pivot_seed_domains
+            or r.pivot_seed_ips
+            or r.pivot_seed_urls
+            or r.pivot_seed_hashes
+            or r.pivot_seed_cves
+        )
+        if has_seeds:
+            report["seed_context_available"] = True
+            report["seed_context_propagated"] = r.seed_context_propagated
+            if not report.get("seed_context_skip_reason"):
+                report["seed_context_skip_reason"] = ""
+        else:
+            if not report.get("seed_context_skip_reason"):
+                report["seed_context_skip_reason"] = "no_runtime_pivot_seeds"
+    return report
+
+
 def _build_sfo_list(r: AcqReportPayload) -> list[SourceFamilyOutcome]:
     """
     Build source_family_outcomes list from AcqReportPayload.
@@ -1322,22 +1488,8 @@ def acq_payload_to_dict(result: Any, scheduler: Any, query: str, _duration_s: fl
         _acq_report = reconcile_lane_detail_fields(_acq_report)
         _acq_report = complete_source_family_outcomes_from_lane_details(_acq_report)
         _acq_report = complete_source_family_outcomes_from_prelude(_acq_report)
-        if not _acq_report.get("seed_context_available"):
-            has_seeds = (
-                r.pivot_seed_domains
-                or r.pivot_seed_ips
-                or r.pivot_seed_urls
-                or r.pivot_seed_hashes
-                or r.pivot_seed_cves
-            )
-            if has_seeds:
-                _acq_report["seed_context_available"] = True
-                _acq_report["seed_context_propagated"] = r.seed_context_propagated
-                if not _acq_report.get("seed_context_skip_reason"):
-                    _acq_report["seed_context_skip_reason"] = ""
-            else:
-                if not _acq_report.get("seed_context_skip_reason"):
-                    _acq_report["seed_context_skip_reason"] = "no_runtime_pivot_seeds"
+        # Sprint F350M-R: Extract seed context normalization (clone elimination)
+        _acq_report = _normalize_seed_context(_acq_report, r)
 
     except Exception as _exc:
         logger.exception(
@@ -1386,22 +1538,8 @@ def acq_payload_to_dict(result: Any, scheduler: Any, query: str, _duration_s: fl
         _acq_report = reconcile_lane_detail_fields(_acq_report)
         _acq_report = complete_source_family_outcomes_from_lane_details(_acq_report)
         _acq_report = complete_source_family_outcomes_from_prelude(_acq_report)
-        if not _acq_report.get("seed_context_available"):
-            has_seeds = (
-                r.pivot_seed_domains
-                or r.pivot_seed_ips
-                or r.pivot_seed_urls
-                or r.pivot_seed_hashes
-                or r.pivot_seed_cves
-            )
-            if has_seeds:
-                _acq_report["seed_context_available"] = True
-                _acq_report["seed_context_propagated"] = r.seed_context_propagated
-                if not _acq_report.get("seed_context_skip_reason"):
-                    _acq_report["seed_context_skip_reason"] = ""
-            else:
-                if not _acq_report.get("seed_context_skip_reason"):
-                    _acq_report["seed_context_skip_reason"] = "no_runtime_pivot_seeds"
+        # Sprint F350M-R: Extract seed context normalization (clone elimination)
+        _acq_report = _normalize_seed_context(_acq_report, r)
 
     # ── 10. Return canonical wrapper ─────────────────────────────────────────────
     return {
@@ -1456,64 +1594,45 @@ def _scheduler_result_acquisition_payload(
     return acq_payload_to_dict(result, scheduler, query, duration_s)
 
 
-def _runtime_truth(
-    actual_duration_s: float,
-    query: str,
-    duration_s: float,
-    cycles_completed: int,
-    cycles_started: int,
-    accepted_findings: int,
-    total_pattern_hits: int,
-    public_accepted_findings: int,
-    feed_findings: int,
-    # Sprint F194A: CT findings are additive to feed/public in canonical truth
-    ct_findings: int = 0,
-    # F176A: Hardware pressure surfaces for smoke classification
-    swap_detected: bool = False,
-    uma_state: str = "ok",
-    # Sprint F195B: Branch timeout telemetry
-    branch_timeout_count: int = 0,
-    public_branch_timed_out: bool = False,
-    ct_branch_timed_out: bool = False,
-) -> dict:
+def _runtime_truth(inp: RuntimeTruthInput) -> dict:
     """Build canonical runtime-truth record from scheduler result data."""
     is_meaningful, evidence_note = _is_meaningful_run(
-        actual_duration_s,
-        cycles_completed,
-        cycles_started,
-        accepted_findings,
-        total_pattern_hits,
-        swap_detected=swap_detected,
-        uma_state=uma_state,
+        inp.actual_duration_s,
+        inp.cycles_completed,
+        inp.cycles_started,
+        inp.accepted_findings,
+        inp.total_pattern_hits,
+        swap_detected=inp.swap_detected,
+        uma_state=inp.uma_state,
     )
 
     # Branch mix — dominant signal source
     # Sprint F194A: CT findings tracked as distinct branch in branch_mix
     branch_mix = {
-        "feed_findings": feed_findings,
-        "public_findings": public_accepted_findings,
-        "ct_findings": ct_findings,
+        "feed_findings": inp.feed_findings,
+        "public_findings": inp.public_accepted_findings,
+        "ct_findings": inp.ct_findings,
     }
 
     # Primary signal source label — Sprint F194A: CT findings can dominate
-    if ct_findings > 0 and feed_findings == 0 and public_accepted_findings == 0:
+    if inp.ct_findings > 0 and inp.feed_findings == 0 and inp.public_accepted_findings == 0:
         primary = "ct"
-    elif feed_findings > 0 and public_accepted_findings == 0 and ct_findings == 0:
+    elif inp.feed_findings > 0 and inp.public_accepted_findings == 0 and inp.ct_findings == 0:
         primary = "feed"
-    elif public_accepted_findings > 0 and feed_findings == 0 and ct_findings == 0:
+    elif inp.public_accepted_findings > 0 and inp.feed_findings == 0 and inp.ct_findings == 0:
         primary = "public"
-    elif feed_findings > 0 and public_accepted_findings > 0 and ct_findings == 0:
+    elif inp.feed_findings > 0 and inp.public_accepted_findings > 0 and inp.ct_findings == 0:
         # F214-ACQ: When feed dominates (>95%) and non-feed is minimal, label as feed
         # not mixed — the signal is overwhelmingly from the feed lane.
-        total_nonfeed = public_accepted_findings + ct_findings
+        total_nonfeed = inp.public_accepted_findings + inp.ct_findings
         feed_dominance_ratio = (
-            feed_findings / (feed_findings + total_nonfeed) if (feed_findings + total_nonfeed) > 0 else 1.0
+            inp.feed_findings / (inp.feed_findings + total_nonfeed) if (inp.feed_findings + total_nonfeed) > 0 else 1.0
         )  # noqa: E501
         if feed_dominance_ratio > 0.95:
             primary = "feed"
         else:
             primary = "mixed"
-    elif ct_findings > 0 and (feed_findings > 0 or public_accepted_findings > 0):
+    elif inp.ct_findings > 0 and (inp.feed_findings > 0 or inp.public_accepted_findings > 0):
         primary = "mixed_ct"
     else:
         primary = "none"
@@ -1522,23 +1641,23 @@ def _runtime_truth(
         "is_meaningful": is_meaningful,
         "evidence_note": evidence_note,
         "command_params": {
-            "query": query,
-            "requested_duration_s": duration_s,
+            "query": inp.query,
+            "requested_duration_s": inp.duration_s,
         },
-        "actual_duration_s": round(actual_duration_s, 2),
-        "cycles_completed": cycles_completed,
-        "cycles_started": cycles_started,
+        "actual_duration_s": round(inp.actual_duration_s, 2),
+        "cycles_completed": inp.cycles_completed,
+        "cycles_started": inp.cycles_started,
         "branch_mix": branch_mix,
         "primary_signal_source": primary,
-        "total_pattern_hits": total_pattern_hits,
-        "accepted_findings": accepted_findings,
+        "total_pattern_hits": inp.total_pattern_hits,
+        "accepted_findings": inp.accepted_findings,
         # F176A: Hardware pressure surfaces for smoke classification
-        "pre_sprint_swap_detected": swap_detected,
-        "pre_sprint_uma_state": uma_state,
+        "pre_sprint_swap_detected": inp.swap_detected,
+        "pre_sprint_uma_state": inp.uma_state,
         # Sprint F195B: Branch timeout telemetry
-        "branch_timeout_count": branch_timeout_count,
-        "public_branch_timed_out": public_branch_timed_out,
-        "ct_branch_timed_out": ct_branch_timed_out,
+        "branch_timeout_count": inp.branch_timeout_count,
+        "public_branch_timed_out": inp.public_branch_timed_out,
+        "ct_branch_timed_out": inp.ct_branch_timed_out,
     }
 
 
@@ -2277,42 +2396,18 @@ def _match_condition(value: Any, expected: Any) -> bool:
     return value == expected
 
 
-def _compute_verdict_and_hint(
-    aborted: bool,
-    accepted_findings: int,
-    dup_rate: float,
-    public_pct: float,
-    feed_fnd: int,
-    hardware_limited: bool,
-    public_backend_degraded: bool,
-    public_discovered: int,
-    total_pattern_hits: int,
-    public_fetched: int,
-    stop_requested: bool,
-) -> tuple[str, str]:
+def _find_table_match(
+    table: list[tuple[tuple, Any]],
+    ctx: dict[str, Any],
+    default: Any,
+) -> Any:
     """
-    Sprint F350M-R: Extracted verdict + next_hint heuristics using decision tables.
-
-    Reduces run_sprint cyclomatic complexity by ~25 points.
-    Pure function — no side effects, no external dependencies.
+    Sprint F350M-R: Generic decision table matcher.
+    
+    Iterates through table rows of ((field, expected, field, expected, ...), result)
+    and returns the first matching result, or default if no match.
     """
-    ctx = {
-        "aborted": aborted,
-        "accepted_findings": accepted_findings,
-        "dup_rate": dup_rate,
-        "public_pct": public_pct,
-        "feed_fnd": feed_fnd,
-        "hardware_limited": hardware_limited,
-        "public_backend_degraded": public_backend_degraded,
-        "public_discovered": public_discovered,
-        "total_pattern_hits": total_pattern_hits,
-        "public_fetched": public_fetched,
-        "stop_requested": stop_requested,
-    }
-
-    # Compute verdict using decision table
-    verdict_key = "SIGNAL"  # default
-    for conditions, key in _VERDICT_TABLE:
+    for conditions, result in table:
         matched = True
         for i in range(0, len(conditions), 2):
             field = conditions[i]
@@ -2321,8 +2416,173 @@ def _compute_verdict_and_hint(
                 matched = False
                 break
         if matched:
-            verdict_key = key
-            break
+            return result
+    return default
+
+
+@dataclass
+class VerdictHintInput:
+    """
+    Sprint F350M-R: Input bundle for _compute_verdict_and_hint.
+    
+    Reduces function signature from 11 parameters to 1.
+    """
+    aborted: bool
+    accepted_findings: int
+    dup_rate: float
+    public_pct: float
+    feed_fnd: int
+    hardware_limited: bool
+    public_backend_degraded: bool
+    public_discovered: int
+    total_pattern_hits: int
+    public_fetched: int
+    stop_requested: bool
+    
+    def to_dict(self) -> dict:
+        return {
+            "aborted": self.aborted,
+            "accepted_findings": self.accepted_findings,
+            "dup_rate": self.dup_rate,
+            "public_pct": self.public_pct,
+            "feed_fnd": self.feed_fnd,
+            "hardware_limited": self.hardware_limited,
+            "public_backend_degraded": self.public_backend_degraded,
+            "public_discovered": self.public_discovered,
+            "total_pattern_hits": self.total_pattern_hits,
+            "public_fetched": self.public_fetched,
+            "stop_requested": self.stop_requested,
+        }
+
+
+@dataclass
+class CheckpointInput:
+    """
+    Sprint F350M-R: Input bundle for _compute_checkpoint_priority and _compute_checkpoint_category.
+    
+    Reduces function signatures from 13/14 parameters to 1.
+    """
+    accepted_findings: int
+    total_pattern_hits: int
+    public_error: str | None
+    public_discovered: int
+    public_backend: bool
+    feed_zero_check: bool
+    cross_branch_fail_check: bool
+    is_pre_active_mem_starved: bool
+    is_hardware_limited: bool
+    is_meaningful: bool
+    uma_state_pre: str
+    feed_fnd: int
+    phase_times: dict
+
+
+@dataclass
+class RuntimeTruthInput:
+    """
+    Sprint F350M-R: Input bundle for _runtime_truth.
+    
+    Reduces function signature from 15 parameters to 1.
+    """
+    actual_duration_s: float
+    query: str
+    duration_s: float
+    cycles_completed: int
+    cycles_started: int
+    accepted_findings: int
+    total_pattern_hits: int
+    public_accepted_findings: int
+    feed_findings: int
+    ct_findings: int = 0
+    swap_detected: bool = False
+    uma_state: str = "ok"
+    branch_timeout_count: int = 0
+    public_branch_timed_out: bool = False
+    ct_branch_timed_out: bool = False
+
+
+@dataclass
+class ReportBuildInput:
+    """
+    Sprint F350M-R: Input bundle for _build_report_dict.
+    
+    Reduces function signature from 23 parameters to 1.
+    Bundles context, result, metrics, and classifications computed in windup phase.
+    """
+    # Core identifiers
+    query: str
+    duration_s: float
+    actual_duration: float
+    
+    # Pre-computed metrics
+    feed_fnd: int
+    dup_rate: float
+    findings_per_min: float
+    public_pct: float
+    src_mix_str: str
+    
+    # Pre-computed classifications
+    verdict: str
+    next_hint: str
+    phase_durations: dict
+    runtime_truth: dict
+    timing_truth: dict
+    runtime_truth_level: str
+    observed_run_tuple: tuple
+    ckpt_category: str
+    checkpoint_zero_reason: str
+    export_finish_status: str
+    uma_peak_gib: float  # Raw peak memory from sample_uma_status()
+    
+    # Context references
+    ctx: "SprintRunContext"
+    result: Any
+    acq_payload_filtered: dict
+
+
+@dataclass
+class ExportHandoffInput:
+    """
+    Sprint F350M-R: Input bundle for _build_export_handoff.
+    
+    Reduces function signature from 17 parameters to 1.
+    Bundles context, result, and pre-computed classifications.
+    """
+    # Core identifiers
+    query: str
+    duration_s: float
+    actual_duration: float
+    
+    # Pre-computed classifications
+    runtime_truth: dict
+    timing_truth: dict
+    runtime_truth_level: str
+    observed_run_tuple: tuple
+    src_mix_str: str
+    ckpt_category: str
+    checkpoint_zero_reason: str
+    export_finish_status: str
+    phase_durations: dict
+    
+    # Context references
+    ctx: "SprintRunContext"
+    result: Any
+    top_seed_nodes: list
+    live_feed_urls: list
+    acq_payload: dict
+
+
+def _compute_verdict_and_hint(inp: VerdictHintInput) -> tuple[str, str]:
+    """
+    Sprint F350M-R: Extracted verdict + next_hint heuristics using decision tables.
+
+    Reduces run_sprint cyclomatic complexity by ~25 points.
+    Pure function — no side effects, no external dependencies.
+    """
+    ctx = inp.to_dict()
+
+    # Compute verdict using decision table
+    verdict_key = _find_table_match(_VERDICT_TABLE, ctx, "SIGNAL")
 
     # Build verdict string
     if verdict_key == "ABORTED_PARTIAL":
@@ -2332,18 +2592,9 @@ def _compute_verdict_and_hint(
         verdict = _VERDICT_TEMPLATES.get(verdict_key, "✅  SIGNAL: good feed performance")
 
     # Compute hint using decision table
-    next_hint = "current query and source mix working — continue as-is"
-    for conditions, hint in _HINT_TABLE:
-        matched = True
-        for i in range(0, len(conditions), 2):
-            field = conditions[i]
-            expected = conditions[i + 1]
-            if not _match_condition(ctx[field], expected):
-                matched = False
-                break
-        if matched:
-            next_hint = hint
-            break
+    next_hint = _find_table_match(
+        _HINT_TABLE, ctx, "current query and source mix working — continue as-is"
+    )
 
     return verdict, next_hint
 
@@ -2410,21 +2661,7 @@ _CHECKPOINT_REASON_TEMPLATES: dict[int, str] = {
 }
 
 
-def _compute_checkpoint_priority(
-    accepted_findings: int,
-    total_pattern_hits: int,
-    public_error: str | None,
-    public_discovered: int,
-    public_backend: bool,
-    feed_zero_check: bool,
-    cross_branch_fail_check: bool,
-    is_pre_active_mem_starved: bool,
-    is_hardware_limited: bool,
-    is_meaningful: bool,
-    uma_state_pre: str,
-    feed_fnd: int,
-    phase_times: dict,
-) -> int:
+def _compute_checkpoint_priority(inp: CheckpointInput) -> int:
     """
     Sprint F350M-R: Compute checkpoint priority from conditions.
 
@@ -2433,51 +2670,36 @@ def _compute_checkpoint_priority(
 
     Returns priority integer (lower = higher priority, checked first).
     """
-    if accepted_findings > 0:
+    if inp.accepted_findings > 0:
         return _CheckpointPriority.SIGNAL_REACHES_FINDINGS
-    if is_pre_active_mem_starved:
+    if inp.is_pre_active_mem_starved:
         return _CheckpointPriority.PRE_ACTIVE_MEMORY_STARVATION
-    if is_meaningful and uma_state_pre in ("warn", "critical", "emergency"):
+    if inp.is_meaningful and inp.uma_state_pre in ("warn", "critical", "emergency"):
         return _CheckpointPriority.SURVIVAL_ACTIVE_MINIMAL
-    if is_hardware_limited:
+    if inp.is_hardware_limited:
         return _CheckpointPriority.HARDWARE_LIMITED_SMOKE
-    if public_backend:
+    if inp.public_backend:
         return _CheckpointPriority.PUBLIC_BACKEND_DEGRADED
-    if public_error:
+    if inp.public_error:
         return _CheckpointPriority.DEGRADED_PUBLIC_BLOCKER
-    if is_meaningful and total_pattern_hits == 0 and accepted_findings == 0:
+    if inp.is_meaningful and inp.total_pattern_hits == 0 and inp.accepted_findings == 0:
         return _CheckpointPriority.MEANINGFUL_EMPTY_RUN
-    if feed_zero_check and public_discovered > 0:
+    if inp.feed_zero_check and inp.public_discovered > 0:
         return _CheckpointPriority.FEED_INGRESS_BLOCKER
-    if feed_zero_check and total_pattern_hits == 0 and not public_error:
+    if inp.feed_zero_check and inp.total_pattern_hits == 0 and not inp.public_error:
         return _CheckpointPriority.FEED_SOURCE_INACCESSIBLE
-    if is_meaningful and total_pattern_hits > 0 and accepted_findings == 0:
+    if inp.is_meaningful and inp.total_pattern_hits > 0 and inp.accepted_findings == 0:
         return _CheckpointPriority.SHORT_SIGNAL
-    if accepted_findings == 0 and total_pattern_hits > 0 and not public_backend:
+    if inp.accepted_findings == 0 and inp.total_pattern_hits > 0 and not inp.public_backend:
         return _CheckpointPriority.TRUE_DEPLETED_QUERY
-    if cross_branch_fail_check:
+    if inp.cross_branch_fail_check:
         return _CheckpointPriority.CROSS_BRANCH_SOURCE_INACCESSIBLE
-    if accepted_findings == 0 and phase_times.get("WINDUP", 0) > 0 and is_meaningful:
+    if inp.accepted_findings == 0 and inp.phase_times.get("WINDUP", 0) > 0 and inp.is_meaningful:
         return _CheckpointPriority.WINDUP_EXPORT_FAIL_SOFT
     return _CheckpointPriority.DEPLETED
 
 
-def _compute_checkpoint_category(
-    accepted_findings: int,
-    total_pattern_hits: int,
-    public_error: str | None,
-    public_discovered: int,
-    public_backend: bool,
-    feed_zero_check: bool,
-    cross_branch_fail_check: bool,
-    is_pre_active_mem_starved: bool,
-    is_hardware_limited: bool,
-    is_meaningful: bool,
-    uma_state_pre: str,
-    evidence_note: str,
-    feed_fnd: int,
-    phase_times: dict,
-) -> tuple[str, str]:
+def _compute_checkpoint_category(inp: CheckpointInput, evidence_note: str) -> tuple[str, str]:
     """
     Sprint F350M-R: Extracted checkpoint category + reason taxonomy.
 
@@ -2497,21 +2719,7 @@ def _compute_checkpoint_category(
     Returns (_ckpt_category: str, _checkpoint_zero_reason: str)
     """
     # Step 1: Compute priority once
-    priority = _compute_checkpoint_priority(
-        accepted_findings=accepted_findings,
-        total_pattern_hits=total_pattern_hits,
-        public_error=public_error,
-        public_discovered=public_discovered,
-        public_backend=public_backend,
-        feed_zero_check=feed_zero_check,
-        cross_branch_fail_check=cross_branch_fail_check,
-        is_pre_active_mem_starved=is_pre_active_mem_starved,
-        is_hardware_limited=is_hardware_limited,
-        is_meaningful=is_meaningful,
-        uma_state_pre=uma_state_pre,
-        feed_fnd=feed_fnd,
-        phase_times=phase_times,
-    )
+    priority = _compute_checkpoint_priority(inp)
 
     # Step 2: Lookup category and reason type
     _ckpt_category, reason_type = _CHECKPOINT_PRIORITY_MAP[priority]
@@ -2653,6 +2861,1165 @@ def _make_cycle_callback(dashboard: Any) -> Callable[[Any, str, float], None]:
 
 
 # =============================================================================
+# PHASE REFACTORING: Extracted Phase Functions (F350M-R Phase 5)
+# =============================================================================
+
+
+async def _run_sprint_boot(
+    ctx: SprintRunContext,
+    query: str,
+    duration_s: float,
+    windup_lead_s: float | None,
+    flags: SprintFlags | None,
+    force: bool,
+    aggressive_mode: bool,
+    resume: bool,
+    prng_seed: int | None,
+    replay_seed: int | None,
+) -> None:
+    """
+    PHASE REFACTORING F350M-R: BOOT phase - pre-flight guards, initialization, lock acquisition.
+
+    Extracted from run_sprint() to reduce cognitive complexity from ~240 to ~30.
+    Handles:
+    - Pre-flight guards (UMA, active window check)
+    - Seed state generation (ULTIMATE-001)
+    - Sprint lock acquisition (F266-LOCK)
+    - DuckDB initialization with concurrent circuit breaker reset
+    - ToT checkpoint recovery (UNIFIED-006)
+
+    Args:
+        ctx: SprintRunContext to populate with boot state
+        query: Sprint query string
+        duration_s: Requested sprint duration
+        windup_lead_s: Optional windup lead time override
+        flags: SprintFlags bundle
+        force: Override pre-flight guards
+        aggressive_mode: Aggressive mode flag
+        resume: Enable checkpoint recovery
+        prng_seed: Optional explicit PRNG seed
+        replay_seed: Optional replay seed for deterministic replay
+    """
+    # Phase timing
+    ctx.phase_times["BOOT"] = time.monotonic()
+    ctx.cancel_event = asyncio.Event()
+
+    # Pre-flight guards
+    _effective_windup_s, _uma_pre_sprint = _run_sprint_preflight_guards(
+        logger=logger,
+        duration_s=duration_s,
+        windup_lead_s=windup_lead_s,
+        flags=flags,
+        force=force,
+        early_config=None,  # Will be created below with full params
+    )
+    ctx.effective_windup_s = _effective_windup_s
+    ctx.uma_baseline_gib = _uma_pre_sprint.system_used_gib
+    ctx.swap_detected_pre = _uma_pre_sprint.swap_detected
+    ctx.uma_state_pre = _uma_pre_sprint.state
+
+    # Sprint ID and query hash
+    ctx.sprint_id = _make_sprint_id()
+    from hledac.universal.utils.hashing import query_fingerprint
+    ctx.query_hash = query_fingerprint(query) if resume else ""
+
+    # Seed state (ULTIMATE-001)
+    from hledac.universal.runtime.sprint_types import SprintSeedState
+    if replay_seed is not None:
+        ctx.seed_state = SprintSeedState.generate(query=query, explicit_seed=replay_seed)
+        logger.info("[ULTIMATE-001] Replay mode: seed=%d, tot_iv=%s",
+                    ctx.seed_state.prng_seed, ctx.seed_state.tot_iv[:8])
+    elif prng_seed is not None:
+        ctx.seed_state = SprintSeedState.generate(query=query, explicit_seed=prng_seed)
+        logger.info("[ULTIMATE-001] Using explicit seed=%d, tot_iv=%s",
+                    ctx.seed_state.prng_seed, ctx.seed_state.tot_iv[:8])
+    else:
+        ctx.seed_state = SprintSeedState.generate(query=query)
+        logger.info("[ULTIMATE-001] Generated seed=%d, tot_iv=%s "
+                    "(use --seed %d for deterministic replay)",
+                    ctx.seed_state.prng_seed, ctx.seed_state.tot_iv[:8],
+                    ctx.seed_state.prng_seed)
+    
+    global _current_sprint_seed_state
+    _current_sprint_seed_state = ctx.seed_state
+
+    ctx.phase_times["WARMUP"] = time.monotonic()
+
+    # Power assertion (APEX-1001)
+    ctx.power_assertion = PowerAssertion.acquire(reason=f"sprint_{ctx.sprint_id}")
+    logger.info("[PRE-LOOP] Power assertion acquired (method=%s) — sleep prevented",
+                ctx.power_assertion.method)
+
+    # Sprint lock acquisition (F266-LOCK)
+    from hledac.universal.core.graph_lock_manager import GraphLockManager
+    from hledac.universal.paths import get_sprint_lock_path
+    ctx.sprint_lock_path = get_sprint_lock_path(query)
+    _janitor_removed = _cleanup_stale_locks(ctx.sprint_lock_path.parent, logger)
+    
+    try:
+        ctx.sprint_lock_mgr = GraphLockManager(str(ctx.sprint_lock_path))
+        if not ctx.sprint_lock_mgr.acquire(timeout_s=5.0):
+            _holder = ctx.sprint_lock_mgr.holder_pid
+            logger.error(f"[F266-LOCK-ABORT] Sprint with query '{query}' already running (PID={_holder})")
+            sys.exit(2)
+        logger.debug(f"[F266-LOCK] Acquired sprint lock: {ctx.sprint_lock_path}")
+    except Exception as _lock_err:
+        logger.warning(f"[F266-LOCK] Could not acquire sprint lock (continuing): {_lock_err}")
+
+    # DuckDB initialization with concurrent operations
+    from hledac.universal.knowledge.duckdb_store import make_shadow_store
+    ctx.store = make_shadow_store()
+
+    # Concurrent boot operations
+    from hledac.universal.runtime.prewarm_daemon import start_prewarm_if_needed
+    start_prewarm_if_needed()
+    
+    from hledac.universal.utils.patterns.pattern_matcher import prewarm as prewarm_patterns
+    prewarm_patterns()
+
+    # Parallel DuckDB init + circuit breaker reset
+    _cb_reset_coro = _reset_circuit_breakers_async(logger)
+    
+    with contextlib.suppress(asyncio.CancelledError):
+        _init_results = await parallel_ok(
+            _duckdb_init_coro(ctx.store, logger),
+            _cb_reset_coro,
+            label="pre_init",
+        )
+    
+    if _init_results:
+        _duckdb_result = _init_results[0]
+        ctx.duckdb_init_ok = not isinstance(_duckdb_result, Exception) and _duckdb_result
+        if not ctx.duckdb_init_ok:
+            logger.warning(f"[P0-3] DuckDB pre-init failed (fail-soft): {_duckdb_result}")
+
+    # ToT checkpoint recovery (UNIFIED-006)
+    if ctx.duckdb_init_ok and resume:
+        ctx.resume_from, ctx.resume_step = await _attempt_tot_recovery(
+            ctx.store, ctx.query_hash, logger
+        )
+
+
+async def _attempt_tot_recovery(
+    store: Any,
+    query_hash: str,
+    logger: logging.Logger,
+) -> tuple[dict | None, int]:
+    """
+    Attempt to recover ToT checkpoint from a crashed sprint.
+    
+    Returns:
+        Tuple of (nodes_dict or None, resume_step)
+    """
+    try:
+        from hledac.universal.coordinators.meta_reasoning_coordinator import ThoughtNode
+        
+        _orphan_row = await store.async_get_latest_tot_checkpoint_by_query_hash(query_hash=query_hash)
+        if _orphan_row is None:
+            return None, 0
+            
+        _orphan_step, _tree_json_str, _ts, _stored_checksum, _orphan_sprint_id = _orphan_row
+        
+        # Verify checksum
+        _raw = _tree_json_str.encode("utf-8")
+        _computed = hashlib.blake2b(_raw, digest_size=32).hexdigest()
+        if _computed != _stored_checksum:
+            logger.error("[UNIFIED-006] Checksum mismatch — checkpoint corrupt, starting fresh")
+            return None, 0
+        
+        _envelope = orjson.loads(_raw)
+        _raw_nodes = _envelope.get("nodes", {})
+        
+        _nodes: dict[str, ThoughtNode] = {}
+        for _nid, _ndata in _raw_nodes.items():
+            try:
+                _nodes[_nid] = ThoughtNode(
+                    node_id=_ndata.get("node_id", _nid),
+                    thought=_ndata.get("thought", ""),
+                    value_estimate=_ndata.get("value_estimate", 0.0),
+                    parent=_ndata.get("parent"),
+                    children=_ndata.get("children", []),
+                    visited=_ndata.get("visited", False),
+                    expanded=_ndata.get("expanded", False),
+                    depth=_ndata.get("depth", 0),
+                    cost=_ndata.get("cost", 0.0),
+                    uncertainty=_ndata.get("uncertainty", 0.0),
+                )
+            except Exception:
+                pass
+        
+        if _nodes:
+            logger.warning(
+                "[UNIFIED-006] 🔄 RESUMING ToT from checkpoint: orphan_sprint=%s step=%d nodes=%d",
+                _orphan_sprint_id[:12], _orphan_step, len(_nodes)
+            )
+            return _nodes, _orphan_step
+        else:
+            logger.warning("[UNIFIED-006] Checkpoint found but all nodes failed deserialization")
+            return None, 0
+            
+    except Exception:
+        pass  # fail-soft: checkpoint probe must never block sprint start
+    return None, 0
+
+
+async def _run_sprint_execute(
+    ctx: SprintRunContext,
+    query: str,
+    duration_s: float,
+    aggressive_mode: bool,
+    deep_research: bool,
+    extreme_mode: bool,
+    acquisition_profile: str | None,
+    flags: SprintFlags | None,
+    rl_train_mode: bool,
+    ui_mode: bool,
+    export_dir: str,
+) -> None:
+    """
+    PHASE REFACTORING F350M-R: EXECUTE phase - scheduler setup, sprint race, execution.
+    
+    Delegates to extracted helper functions for scheduler setup, pre-flight checks,
+    dashboard, and the scheduler race.
+    """
+    # Phase 1: Scheduler setup
+    await _execute_scheduler_setup(
+        ctx=ctx, query=query, duration_s=duration_s,
+        aggressive_mode=aggressive_mode, deep_research=deep_research,
+        extreme_mode=extreme_mode, acquisition_profile=acquisition_profile,
+        flags=flags, rl_train_mode=rl_train_mode, export_dir=export_dir,
+    )
+    
+    # Phase 2: Pre-flight checks
+    health = await _execute_preflight_checks(ctx, flags)
+    
+    # Phase 3: Dashboard
+    ctx.live_feed_urls = _get_live_feed_urls()
+    await _execute_dashboard(ctx, ui_mode, query, duration_s)
+    
+    # Phase 4: Execute sprint race
+    await _execute_sprint_race(ctx, query)
+    
+    # Phase 5: Cleanup
+    await _execute_cleanup(ctx)
+
+
+async def _execute_scheduler_setup(
+    ctx: SprintRunContext, query: str, duration_s: float,
+    aggressive_mode: bool, deep_research: bool, extreme_mode: bool,
+    acquisition_profile: str | None, flags: SprintFlags | None,
+    rl_train_mode: bool, export_dir: str,
+) -> None:
+    """Phase 1: Scheduler configuration, creation, BlitzGC, V2Init."""
+    from hledac.universal.runtime.scheduler_config import SprintSchedulerConfig
+    from hledac.universal.runtime.scheduler_v2 import SprintSchedulerV2
+    from hledac.universal.runtime.scheduler_v2._v2_init import V2Init
+
+    # Configure acquisition profile
+    _acq_input = acquisition_profile
+    _acq_effective = acquisition_profile
+    if _acq_effective == "nonfeed_diagnostic180":
+        _acq_effective = "nonfeed_diagnostic"
+    if _acq_effective not in ("default", "nonfeed_diagnostic", "deep_osint_m1"):
+        logger.warning("[F228A] Unknown acquisition_profile=%r normalized to 'default'", _acq_input)
+        _acq_effective = "default"
+    if "HLEDAC_ACQUISITION_PROFILE" not in os.environ:
+        os.environ["HLEDAC_ACQUISITION_PROFILE"] = _acq_effective or "default"
+    acquisition_profile = _acq_effective or "default"
+
+    # Create scheduler config
+    config = SprintSchedulerConfig(
+        sprint_duration_s=float(duration_s), windup_lead_s=ctx.effective_windup_s,
+        export_enabled=True, export_dir=export_dir, aggressive_mode=aggressive_mode,
+        branch_timeout_budget_s=8.0 if aggressive_mode else 0.0,
+        acquisition_profile=acquisition_profile, deep_research_enabled=deep_research,
+        extreme_mode=extreme_mode,
+    )
+
+    # Blitz mode (BLITZ-12)
+    _blitz = getattr(flags, 'blitz_mode', False) if flags else False
+    if _blitz:
+        from hledac.universal.core.telemetry.context_state import set_blitz_mode as _set_blitz
+        _set_blitz(True)
+        logger.info("[BLITZ-12] Blitz mode enabled")
+        from hledac.universal.fetching.public_fetcher import reset_blitz_dead_hosts
+        reset_blitz_dead_hosts()
+
+    # Create scheduler
+    ctx.scheduler = SprintSchedulerV2(_config=config, _flags=flags)
+
+    # Activate BlitzGC (PHYSICS-06/07)
+    with _fail_safe_async("debug", "blitz_gc.sprint_start"):
+        from hledac.universal.coordinators.resource.blitz_gc import blitz_gc
+        _blitz_telemetry = blitz_gc.sprint_start()
+        logger.info("[PHYSICS-06] BlitzGC active — GC disabled for active sprint window")
+
+    # V2Init - unified initialization
+    _wall_clock_start = ctx.phase_times.get("WARMUP", ctx.phase_times["BOOT"])
+    _init = V2Init(ctx.scheduler)
+    await _init.run(
+        query, _wall_clock_start, ctx=None, cancel_event=ctx.cancel_event,
+        flags=flags, sprint_id=ctx.sprint_id, sprint_duration_s=float(duration_s),
+        windup_lead_s=ctx.effective_windup_s, duckdb_store=ctx.store,
+        rl_train_mode=rl_train_mode, logger=logger,
+        resume_from=ctx.resume_from, resume_step=ctx.resume_step, query_hash=ctx.query_hash,
+    )
+
+    # Get EvidenceLog reference
+    ctx.evidence_log = ctx.scheduler._evidence_log.value if ctx.scheduler._evidence_log else None
+
+
+async def _execute_preflight_checks(ctx: SprintRunContext, flags: SprintFlags | None):
+    """Phase 2: Health check and production guard."""
+    # Health check (F228F)
+    health = None
+    try:
+        async with asyncio.timeout(30.0):
+            health = await ctx.scheduler.health_check()
+    except TimeoutError:
+        logger.warning("[F228F] health_check timed out after 30s")
+
+    if health is not None and not health.overall_ok:
+        logger.warning(f"[F228F] health_check warnings: {health.summary()}")
+    elif health is not None:
+        logger.debug(f"[F228F] health_check: {health.summary()}")
+
+    # Production pre-flight guard (F272B)
+    if (flags.production if flags else False) and health is not None and not health.fetch_coordinator_ok:
+        logger.error("[F272B] --production pre-flight ABORT: fetch coordinator not_initialized")
+        sys.exit(2)
+
+    # CT log client (F193A)
+    ctx.ct_log_client = None
+    with _fail_safe_async("debug", "ct_log_client.init"):
+        from hledac.universal.intel.ct_log_client import CTLogClient
+        _ct_cache = Path.home() / ".hledac" / "ct_cache"
+        _ct_cache.mkdir(parents=True, exist_ok=True)
+        ctx.ct_log_client = CTLogClient(cache_dir=_ct_cache)
+
+    return health
+
+
+async def _execute_dashboard(ctx: SprintRunContext, ui_mode: bool, query: str, duration_s: float) -> None:
+    """Phase 3: Dashboard setup."""
+    if ui_mode:
+        with _fail_safe_async("warning", "dashboard.create"):
+            from hledac.universal.monitoring.sprint_dashboard import SprintDashboard
+            ctx.dashboard = SprintDashboard(ctx.sprint_id, query, duration_s)
+            ctx.dashboard.start()
+
+
+async def _execute_sprint_race(ctx: SprintRunContext, query: str) -> None:
+    """Phase 4: Scheduler vs cancel race with cooperative shutdown."""
+    from hledac.universal.utils.mlx_cache import start_memory_status_poller
+
+    _make_cycle_callback(ctx.dashboard)  # Register callback
+    
+    # Start memory status poller (ISSUE-7.2)
+    with _fail_safe_async("debug", "memory_status_poller.start"):
+        await start_memory_status_poller(interval_s=0.5)
+
+    # Race: scheduler.run() vs cancel_event
+    _cancel_waiter = safe_create_task(ctx.cancel_event.wait(), eager_start=True)
+    _scheduler_waiter = safe_create_task(ctx.scheduler.run(query), eager_start=True)
+
+    try:
+        _first_result, winner_task = await first_completed(_scheduler_waiter, _cancel_waiter)
+    except asyncio.TimeoutError:
+        raise
+
+    if winner_task is _scheduler_waiter and winner_task.done():
+        ctx.result = _first_result
+        _cancel_waiter.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await _cancel_waiter
+    else:
+        # Cooperative shutdown
+        _scheduler_waiter.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await _scheduler_waiter
+        from hledac.universal.runtime.scheduler_result import SprintSchedulerResult
+        _sf = SprintSchedulerResult()
+        _sf.scheduler_exit_path = "cooperative_shutdown"
+        _sf.scheduler_exit_reason = "SIGINT/SIGTERM received via shutdown_event"
+        ctx.result = _sf
+
+
+async def _execute_cleanup(ctx: SprintRunContext) -> None:
+    """Phase 5: Memory poller stop and lock release."""
+    # Stop memory status poller
+    with _fail_safe_async("debug", "memory_status_poller.stop"):
+        from hledac.universal.utils.mlx_cache import stop_memory_status_poller
+        await stop_memory_status_poller()
+
+    # Release sprint lock
+    if ctx.sprint_lock_mgr is not None:
+        with _fail_safe_async("debug", "sprint_lock.release"):
+            ctx.sprint_lock_mgr.release()
+            logger.debug("[F266-LOCK] Released sprint lock")
+
+
+async def _run_sprint_windup(
+    ctx: SprintRunContext,
+    query: str,
+    duration_s: float,
+    export_dir: str,
+    deep_probe_enabled: bool,
+) -> None:
+    """
+    PHASE REFACTORING F350M-R: WINDUP phase - result processing, report generation, export.
+    
+    Delegates to extracted helper functions for each phase of windup processing.
+    """
+    ctx.phase_times["WINDUP"] = time.monotonic()
+    result = ctx.result
+    actual_duration = ctx.phase_times.get("TEARDOWN", ctx.phase_times["WINDUP"]) - ctx.phase_times["BOOT"]
+    time_to_windup_s = ctx.phase_times["WINDUP"] - ctx.phase_times["BOOT"]
+
+    # Phase 1: Early windup - events, CT discovery, sprint delta
+    await _windup_phase1_early(ctx, query, actual_duration)
+    
+    # Phase 2: Timing - phase durations and scheduler intelligence
+    _phase_durations = _windup_phase2_timing(ctx, duration_s)
+    
+    # Phase 3: Compute metrics and classifications
+    metrics = _windup_phase3_compute_metrics(ctx, result, actual_duration)
+    classifications = _windup_phase3_compute_classifications(ctx, result, metrics, query, duration_s)
+    
+    # Phase 4: Logging
+    _windup_phase4_logging(ctx, result, classifications, metrics)
+    
+    # Phase 5: Build and write reports
+    ctx.report_path = get_sprint_json_report_path(ctx.sprint_id)
+    _acq_payload = _scheduler_result_acquisition_payload(result, ctx.scheduler, query, duration_s)
+    _acq_payload_filtered = {k: v for k, v in _acq_payload.items() if k != "source_family_outcomes"}
+    
+    report_dict = _build_report_dict(
+        inp=ReportBuildInput(
+            query=query,
+            duration_s=duration_s,
+            actual_duration=actual_duration,
+            feed_fnd=metrics["feed_fnd"],
+            dup_rate=metrics["dup_rate"],
+            findings_per_min=metrics["findings_per_min"],
+            public_pct=metrics["public_pct"],
+            src_mix_str=metrics["src_mix_str"],
+            verdict=classifications["verdict"],
+            next_hint=classifications["next_hint"],
+            phase_durations=_phase_durations,
+            runtime_truth=classifications["runtime_truth"],
+            timing_truth=classifications["timing_truth"],
+            runtime_truth_level=classifications["runtime_truth_level"],
+            observed_run_tuple=classifications["observed_run_tuple"],
+            ckpt_category=classifications["ckpt_category"],
+            checkpoint_zero_reason=classifications["checkpoint_zero_reason"],
+            export_finish_status=classifications["export_finish_status"],
+            uma_peak_gib=classifications["uma_peak_gib"],
+            ctx=ctx,
+            result=result,
+            acq_payload_filtered=_acq_payload_filtered,
+        )
+    )
+    ctx.report_path.write_bytes(_serialize_report(report_dict))
+    logger.info(f"[REPORT] {ctx.report_path}")
+
+    # Phase 6: Export handoff
+    await _windup_phase5_export(
+        ctx, result, _phase_durations, _acq_payload,
+        metrics["src_mix_str"], classifications, deep_probe_enabled,
+        query, actual_duration,
+    )
+
+
+async def _windup_phase1_early(ctx: SprintRunContext, query: str, actual_duration: float) -> None:
+    """Phase 1: Early windup - events, CT discovery, sprint delta."""
+    result = ctx.result
+    
+    # Record WINDUP phase event
+    if ctx.evidence_log is not None:
+        with _fail_safe_async("debug", "evidence_log.windup_event"):
+            ctx.evidence_log.create_event(
+                event_type="observation",
+                payload={"phase": "WINDUP", "sprint_id": ctx.sprint_id, "query": query},
+                confidence=1.0,
+            )
+
+    # CT log discovery (if not aggressive mode)
+    if not ctx.scheduler._config.aggressive_mode:
+        with _fail_safe_async("debug", "ct_log_discovery"):
+            await ctx.scheduler._run_ct_log_discovery_in_cycle(query=query, store=ctx.store)
+            result.accepted_findings += result.ct_log_stored
+
+    # Write sprint delta
+    uma_peak_gib = sample_uma_status().system_used_gib
+    await write_sprint_delta(
+        store=ctx.store, sprint_id=ctx.sprint_id, query=query,
+        new_findings=result.accepted_findings,
+        dedup_hits=result.duplicate_entry_hashes_skipped,
+        ioc_nodes=result.unique_entry_hashes_seen,
+        uma_baseline_gib=ctx.uma_baseline_gib, uma_peak_gib=uma_peak_gib,
+        synthesis_success=result.accepted_findings > 0, duration_s=actual_duration,
+        hits_per_source=result.hits_per_source, seed_state=ctx.seed_state,
+    )
+
+    # EvidenceLog teardown
+    if ctx.evidence_log is not None:
+        with _fail_safe_async("warning", "evidence_log.teardown"):
+            ctx.evidence_log.finalize()
+            ctx.evidence_log.freeze()
+    
+    ctx.phase_times["TEARDOWN"] = time.monotonic()
+    
+    # Record TEARDOWN phase event
+    if ctx.evidence_log is not None:
+        with _fail_safe_async("debug", "evidence_log.teardown_event"):
+            ctx.evidence_log.create_event(
+                event_type="observation",
+                payload={"phase": "TEARDOWN", "sprint_id": ctx.sprint_id, "actual_duration_s": round(actual_duration, 2)},
+                confidence=1.0,
+            )
+
+
+def _windup_phase2_timing(ctx: SprintRunContext, duration_s: float) -> dict[str, float]:
+    """Phase 2: Compute phase timings and get scheduler intelligence."""
+    phases = _PHASE_ORDER
+    _phase_durations: dict[str, float] = {}
+    for i, ph in enumerate(phases):
+        ph_name = ph.name
+        if ph_name in ctx.phase_times:
+            next_ph = phases[i + 1] if i + 1 < len(phases) else None
+            if next_ph is not None and next_ph.name in ctx.phase_times:
+                _phase_durations[ph_name] = round(ctx.phase_times[next_ph.name] - ctx.phase_times[ph_name], 2)
+    
+    with _fail_safe_async("debug", "compute_sprint_intelligence"):
+        ctx.intel = ctx.scheduler.compute_sprint_intelligence() or {}
+    return _phase_durations
+
+
+def _windup_phase3_compute_metrics(ctx: SprintRunContext, result: Any, actual_duration: float) -> dict:
+    """Phase 3a: Compute derived metrics."""
+    findings_per_min = (result.accepted_findings / (actual_duration / 60.0)) if actual_duration > 0 else 0.0
+    total_seen = result.unique_entry_hashes_seen + result.duplicate_entry_hashes_skipped
+    dup_rate = (result.duplicate_entry_hashes_skipped / total_seen * 100) if total_seen > 0 else 0.0
+    feed_fnd = result.accepted_findings - result.public_accepted_findings
+    public_pct = (result.public_accepted_findings / result.accepted_findings * 100) if result.accepted_findings > 0 else 0.0
+    
+    src_mix: list[str] = []
+    for src, cnt in sorted(result.hits_per_source.items(), key=lambda x: x[1], reverse=True):
+        src_mix.append(f"{src}={cnt}")
+    src_mix_str = ", ".join(src_mix) if src_mix else "none"
+    
+    return {
+        "findings_per_min": findings_per_min,
+        "dup_rate": dup_rate,
+        "feed_fnd": feed_fnd,
+        "public_pct": public_pct,
+        "src_mix_str": src_mix_str,
+    }
+
+
+def _windup_phase3_compute_classifications(ctx: SprintRunContext, result: Any, metrics: dict, query: str, duration_s: float) -> dict:
+    """Phase 3b: Compute verdict, runtime_truth, timing_truth, runtime_truth_level, checkpoint category."""
+    time_to_windup_s = ctx.phase_times["WINDUP"] - ctx.phase_times["BOOT"]
+    actual_duration = ctx.phase_times.get("TEARDOWN", ctx.phase_times["WINDUP"]) - ctx.phase_times["BOOT"]
+    
+    # Timing truth
+    pre_scheduler_boot_s = ctx.phase_times.get("WARMUP", 0) - ctx.phase_times["BOOT"]
+    _windup_mark = ctx.phase_times.get("WINDUP", ctx.phase_times.get("TEARDOWN", ctx.phase_times["BOOT"]))
+    scheduler_wall_s = _windup_mark - ctx.phase_times.get("WARMUP", ctx.phase_times["BOOT"])
+    windup_lead_observed_s = ctx.phase_times["TEARDOWN"] - ctx.phase_times.get("WINDUP", 0)
+    
+    timing_truth = {
+        "requested_duration_s": duration_s,
+        "windup_lead_s": ctx.scheduler._config.windup_lead_s,
+        "time_to_windup_s": round(time_to_windup_s, 2),
+        "time_to_teardown_s": round(ctx.phase_times["TEARDOWN"] - ctx.phase_times["BOOT"], 2),
+        "active_window_budget_s": round(duration_s - ctx.effective_windup_s, 2),
+        "windup_lead_observed_s": round(windup_lead_observed_s, 2),
+        "pre_scheduler_boot_s": round(pre_scheduler_boot_s, 2),
+        "scheduler_wall_s": round(scheduler_wall_s, 2),
+        "scheduler_returned_phase": "ACTIVE" if result.entered_active_at_monotonic else "entry_only",
+        "entered_active_truth": result.entered_active_at_monotonic is not None,
+        "first_cycle_truth": result.first_cycle_started_at_monotonic is not None,
+        "pre_active_starvation": result.pre_active_starved,
+        "pre_active_blocker": result.pre_loop_blocker_reason or None,
+    }
+
+    # Hardware-limited checks
+    _inline_hardware_limited = (
+        result.accepted_findings == 0 and result.total_pattern_hits == 0
+        and result.cycles_started == 0
+        and (ctx.swap_detected_pre or ctx.uma_state_pre in ("critical", "emergency"))
+    )
+    _is_hardware_limited = (
+        not metrics.get("is_meaningful", False) and result.cycles_started == 0
+        and (ctx.swap_detected_pre or ctx.uma_state_pre in ("critical", "emergency"))
+    )
+    _is_pre_active_mem_starved = (
+        not metrics.get("is_meaningful", False) and result.cycles_started == 0
+        and result.entered_active_at_monotonic is not None
+        and (ctx.swap_detected_pre or ctx.uma_state_pre in ("critical", "emergency", "warn"))
+    )
+
+    # Verdict
+    verdict, next_hint = _compute_verdict_and_hint(
+        inp=VerdictHintInput(
+            aborted=result.aborted,
+            accepted_findings=result.accepted_findings,
+            dup_rate=metrics["dup_rate"],
+            public_pct=metrics["public_pct"],
+            feed_fnd=metrics["feed_fnd"],
+            hardware_limited=_inline_hardware_limited,
+            public_backend_degraded=result.public_backend_degraded,
+            public_discovered=result.public_discovered,
+            total_pattern_hits=result.total_pattern_hits,
+            public_fetched=result.public_fetched,
+            stop_requested=result.stop_requested,
+        )
+    )
+
+    # Runtime truth
+    _total_ct = (result.lane_ct_accepted_findings or 0) + (result.ct_log_stored or 0)
+    runtime_truth = _runtime_truth(
+        inp=RuntimeTruthInput(
+            actual_duration_s=actual_duration,
+            query=query,
+            duration_s=duration_s,
+            cycles_completed=result.cycles_completed,
+            cycles_started=result.cycles_started,
+            accepted_findings=result.accepted_findings,
+            total_pattern_hits=result.total_pattern_hits,
+            public_accepted_findings=result.public_accepted_findings,
+            feed_findings=metrics["feed_fnd"],
+            ct_findings=_total_ct,
+            swap_detected=ctx.swap_detected_pre,
+            uma_state=ctx.uma_state_pre,
+            branch_timeout_count=result.branch_timeout_count,
+            public_branch_timed_out=result.public_branch_timed_out,
+            ct_branch_timed_out=result.ct_branch_timed_out,
+        )
+    )
+    is_meaningful = runtime_truth["is_meaningful"]
+    evidence_note = runtime_truth["evidence_note"]
+    timing_truth["active_runtime_occurred"] = is_meaningful and time_to_windup_s > 0
+
+    # Runtime truth level
+    runtime_truth_level = (
+        "active" if is_meaningful and result.accepted_findings > 0
+        else "pre_active_memory_starvation" if _is_pre_active_mem_starved
+        else "survival_active_minimal" if is_meaningful and ctx.uma_state_pre in ("warn", "critical", "emergency")
+        else "hardware_limited_smoke" if _is_hardware_limited
+        else "short_signal" if is_meaningful and result.total_pattern_hits > 0
+        else "meaningful_empty" if is_meaningful
+        else "smoke"
+    )
+
+    # Observed run tuple
+    observed_run_tuple = (
+        query[:40] if len(query) > 40 else query,
+        round(actual_duration, 1), result.cycles_completed,
+        metrics["src_mix_str"], runtime_truth_level,
+    )
+
+    # Checkpoint category
+    _public_backend = result.public_backend_degraded
+    _feed_zero_check = result.accepted_findings == 0 and metrics["feed_fnd"] == 0
+    _cross_branch_fail_check = (
+        result.accepted_findings == 0 and result.total_pattern_hits > 0
+        and not _public_backend and not result.public_error
+    )
+    _ckpt_category, _checkpoint_zero_reason = _compute_checkpoint_category(
+        inp=CheckpointInput(
+            accepted_findings=result.accepted_findings,
+            total_pattern_hits=result.total_pattern_hits,
+            public_error=result.public_error,
+            public_discovered=result.public_discovered,
+            public_backend=_public_backend,
+            feed_zero_check=_feed_zero_check,
+            cross_branch_fail_check=_cross_branch_fail_check,
+            is_pre_active_mem_starved=_is_pre_active_mem_starved,
+            is_hardware_limited=_is_hardware_limited,
+            is_meaningful=is_meaningful,
+            uma_state_pre=ctx.uma_state_pre,
+            feed_fnd=metrics["feed_fnd"],
+            phase_times=ctx.phase_times,
+        ),
+        evidence_note=evidence_note,
+    )
+    _export_finish_status = _compute_export_finish_status(
+        final_phase=result.final_phase, accepted_findings=result.accepted_findings, aborted=result.aborted,
+    )
+
+    uma_peak_gib = sample_uma_status().system_used_gib
+    
+    return {
+        "verdict": verdict, "next_hint": next_hint,
+        "runtime_truth": runtime_truth, "timing_truth": timing_truth,
+        "runtime_truth_level": runtime_truth_level, "observed_run_tuple": observed_run_tuple,
+        "ckpt_category": _ckpt_category, "checkpoint_zero_reason": _checkpoint_zero_reason,
+        "export_finish_status": _export_finish_status, "uma_peak_gib": uma_peak_gib,
+        "is_meaningful": is_meaningful, "evidence_note": evidence_note,
+    }
+
+
+def _windup_phase4_logging(ctx: SprintRunContext, result: Any, classifications: dict, metrics: dict) -> None:
+    """Phase 4: Log runtime truth, sprint done, summary, next hint, sources, intel."""
+    is_meaningful = classifications["is_meaningful"]
+    evidence_note = classifications["evidence_note"]
+
+    if is_meaningful:
+        logger.info(f"[RUNTIME TRUTH] ✅ MEANINGFUL ACTIVE RUN | {evidence_note}")
+    else:
+        logger.warning(f"[RUNTIME TRUTH] 🚨 SMOKE ONLY | {evidence_note}")
+
+    logger.info(f"[SPRINT DONE] {ctx.sprint_id} | findings: {result.accepted_findings}")
+    logger.info(f"[SUMMARY] {classifications['verdict']}")
+    logger.info(f"[NEXT] {classifications['next_hint']}")
+    logger.info(f"[SOURCES] {metrics['src_mix_str']}")
+
+    sv = ctx.intel.get("sprint_verdict") or {}
+    if sv:
+        logger.info(f"[INTEL] posture={sv.get('posture', '?')} | dominant={sv.get('dominant_signal', '?')}")
+
+
+async def _windup_phase5_export(
+    ctx: SprintRunContext, result: Any, phase_durations: dict, acq_payload: dict,
+    src_mix_str: str, classifications: dict, deep_probe_enabled: bool,
+    query: str, actual_duration: float,
+) -> None:
+    """Phase 5: Export handoff and deep probe."""
+    runtime_truth = classifications["runtime_truth"]
+    timing_truth = classifications["timing_truth"]
+    runtime_truth_level = classifications["runtime_truth_level"]
+    observed_run_tuple = classifications["observed_run_tuple"]
+    ckpt_category = classifications["ckpt_category"]
+    checkpoint_zero_reason = classifications["checkpoint_zero_reason"]
+    export_finish_status = classifications["export_finish_status"]
+
+    with _fail_safe_async("warning", "sprint_exporter"):
+        from hledac.universal.export.sprint_exporter import export_sprint
+
+        top_seed_nodes = []
+        with _fail_safe_async("debug", "get_top_seed_nodes"):
+            top_seed_nodes = ctx.store.get_top_seed_nodes(n=5) if ctx.store else []
+
+        handoff = _build_export_handoff(
+            inp=ExportHandoffInput(
+                query=query,
+                duration_s=ctx.duration_s,
+                actual_duration=actual_duration,
+                runtime_truth=runtime_truth,
+                timing_truth=timing_truth,
+                runtime_truth_level=runtime_truth_level,
+                observed_run_tuple=observed_run_tuple,
+                src_mix_str=src_mix_str,
+                ckpt_category=ckpt_category,
+                checkpoint_zero_reason=checkpoint_zero_reason,
+                export_finish_status=export_finish_status,
+                phase_durations=phase_durations,
+                ctx=ctx,
+                result=result,
+                top_seed_nodes=top_seed_nodes,
+                live_feed_urls=ctx.live_feed_urls,
+                acq_payload=acq_payload,
+            )
+        )
+
+        _elog_instance = ctx.scheduler._evidence_log.value if ctx.scheduler._evidence_log else None
+        export_result = await export_sprint(
+            store=ctx.store, handoff=handoff, sprint_id=ctx.sprint_id, evidence_log=_elog_instance,
+        )
+        logger.info(f"[EXPORT] finish layer → seeds={export_result.get('seeds_json', '')}")
+
+        if deep_probe_enabled:
+            with _fail_safe_async("warning", "deep_probe"):
+                from hledac.universal.deep_research.probe_runner import run_deep_probe_if_enabled
+                probe_result = await run_deep_probe_if_enabled(
+                    query=query, store=ctx.store, deep_probe_enabled=True
+                )
+                if probe_result:
+                    logger.info(f"[DEEP_PROBE] completed: {probe_result}")
+
+
+def _build_report_dict(inp: ReportBuildInput) -> dict:
+    """
+    Sprint F350M-R: Build the canonical report dictionary using bundled input.
+    
+    Reduces function signature from 23 parameters to 1.
+    """
+    # Unpack input for convenience in internal usage
+    ctx = inp.ctx
+    result = inp.result
+    
+    result_dict = {
+        "sprint_id": ctx.sprint_id,
+        "query": inp.query,
+        "duration_s": inp.duration_s,
+        "actual_duration_s": inp.actual_duration,
+        "accepted_findings": result.accepted_findings,
+        "feed_findings": inp.feed_fnd,
+        "public_accepted_findings": result.public_accepted_findings,
+        "public_discovered": result.public_discovered,
+        "public_fetched": result.public_fetched,
+        "public_matched_patterns": result.public_matched_patterns,
+        "public_stored_findings": result.public_stored_findings,
+        "public_error": result.public_error,
+        "ct_log_discovered": result.ct_log_discovered,
+        "ct_log_stored": result.ct_log_stored,
+        "ct_log_accepted_findings": result.ct_log_accepted_findings,
+        "ct_log_error": result.ct_log_error,
+        "cycles_completed": result.cycles_completed,
+        "cycles_started": result.cycles_started,
+        "unique_entry_hashes_seen": result.unique_entry_hashes_seen,
+        "duplicate_entry_hashes_skipped": result.duplicate_entry_hashes_skipped,
+        "total_pattern_hits": result.total_pattern_hits,
+        "dup_rate_pct": round(inp.dup_rate, 2),
+        "findings_per_min": round(inp.findings_per_min, 2),
+        "final_phase": result.final_phase,
+        "aborted": result.aborted,
+        "abort_reason": result.abort_reason,
+        "stop_requested": result.stop_requested,
+        "entries_per_source": result.entries_per_source,
+        "hits_per_source": result.hits_per_source,
+        "export_paths": result.export_paths,
+        "uma_peak_gib": inp.uma_peak_gib - ctx.uma_baseline_gib,
+        "synthesis_success": result.accepted_findings > 0,
+        "verdict": inp.verdict,
+        "next_hint": inp.next_hint,
+        "phase_timing": inp.phase_durations,
+        "runtime_truth": inp.runtime_truth,
+        "correlation_summary": ctx.intel.get("correlation"),
+        "hypothesis_pack_summary": ctx.intel.get("hypothesis_pack"),
+        "signal_path": ctx.intel.get("signal_path"),
+        "feed_verdict": ctx.intel.get("feed_verdict"),
+        "public_verdict": ctx.intel.get("public_verdict"),
+        "branch_value": ctx.intel.get("branch_value"),
+        "sprint_verdict": ctx.intel.get("sprint_verdict"),
+        "execution_context": {
+            "query": inp.query,
+            "requested_duration_s": inp.duration_s,
+            "actual_duration_s": round(inp.actual_duration, 2),
+            "source_count": len(ctx.live_feed_urls),
+            "sources": ctx.live_feed_urls,
+            "platform": _PLATFORM_INFO.copy(),
+            "report_path": str(ctx.report_path),
+            "git_snapshot": "unknown",
+            "export_dir": str(ctx.report_path.parent),
+        },
+    }
+
+    # Canonical run summary
+    intel = ctx.intel
+    crs = {
+        "meaningful": inp.runtime_truth["is_meaningful"],
+        "primary_signal": inp.runtime_truth["primary_signal_source"],
+        "posture": (intel.get("sprint_verdict") or {}).get("posture", "unknown"),
+        "dominant_signal_path": (intel.get("signal_path") or {}).get("dominant_signal_path", "unknown"),
+        "corroborated": (intel.get("signal_path") or {}).get("is_corroborated", False),
+        "is_noisy": (intel.get("signal_path") or {}).get("is_noisy", False),
+        "next_pivot": (intel.get("signal_path") or {}).get("next_pivot_recommendation", "unknown"),
+        "branch_verdict": (intel.get("branch_value") or {}).get("branch_verdict", "unknown"),
+        "risk_score": (intel.get("correlation") or {}).get("risk_score", 0.0),
+        "hypothesis_count": (intel.get("hypothesis_pack") or {}).get("hypothesis_count", 0),
+        "first_action": (intel.get("sprint_verdict") or {}).get("first_action", ""),
+        "confidence": (intel.get("sprint_verdict") or {}).get("confidence", ""),
+        "runtime_truth_level": inp.runtime_truth_level,
+        "checkpoint_zero_category": inp.ckpt_category,
+        "checkpoint_zero_reason": inp.checkpoint_zero_reason,
+        "observed_run_tuple": inp.observed_run_tuple,
+        "canonical_sprint_owner": "runtime.sprint_entrypoint.run_sprint",
+        "canonical_path_used": "run_sprint",
+        "effective_source_mix": inp.src_mix_str,
+        "effective_parallelism": len(ctx.live_feed_urls),
+        "effective_timeouts": {},
+        "active_iteration_count": result.cycles_completed,
+        **_extract_result_fields(result, inp.export_finish_status),
+        "timing_truth": inp.timing_truth,
+        "early_exit_class": getattr(result, "early_exit_class", ""),
+        "early_exit_reason": getattr(result, "early_exit_reason", ""),
+        "requested_duration_s": inp.duration_s,
+        "actual_duration_s": round(inp.actual_duration, 2),
+        "elapsed_pct": round((inp.actual_duration / inp.duration_s) * 100, 1) if inp.duration_s > 0 else 0.0,
+        "active_window_budget_s": inp.timing_truth["active_window_budget_s"],
+        "active_window_elapsed_s": inp.timing_truth["time_to_windup_s"],
+        "governor_uma_state": getattr(result, "governor_uma_state", ""),
+        "governor_system_used_gib": getattr(result, "governor_system_used_gib", 0.0),
+        "governor_swap_detected": getattr(result, "governor_swap_detected", False),
+        "governor_io_only": getattr(result, "governor_io_only", False),
+    }
+    result_dict["canonical_run_summary"] = crs
+
+    # Merge acquisition payload
+    result_dict.update(inp.acq_payload_filtered)
+    result_dict["timing_truth"] = inp.timing_truth
+    result_dict["gc_telemetry"] = {}
+    result_dict["nonfeed_mission_active"] = getattr(result, "nonfeed_mission_active", False)
+    result_dict["nonfeed_required_families"] = getattr(result, "nonfeed_required_families", ())
+    result_dict["nonfeed_optional_families"] = getattr(result, "nonfeed_optional_families", ())
+    result_dict["nonfeed_family_status"] = getattr(result, "nonfeed_family_status", {})
+    result_dict["nonfeed_all_required_terminal"] = getattr(result, "nonfeed_all_required_terminal", False)
+    result_dict["nonfeed_any_accepted"] = getattr(result, "nonfeed_any_accepted", False)
+    result_dict["nonfeed_provider_failures"] = getattr(result, "nonfeed_provider_failures", ())
+    result_dict["nonfeed_memory_skips"] = getattr(result, "nonfeed_memory_skips", ())
+    result_dict["nonfeed_mission_exit_reason"] = getattr(result, "nonfeed_mission_exit_reason", "")
+
+    # DuckDB stats
+    if ctx.store:
+        result_dict["duckdb_stats"] = getattr(ctx.store, "get_stats", lambda: {})()
+
+    # Rust extensions
+    try:
+        _ext_mod = __import__("hledac.universal.core.rust_backend", fromlist=["rust"]).rust.raw.module
+        if _ext_mod is not None:
+            _stat_collector = __import__("core.rust_backend.stats", fromlist=[""]).StatCollector
+            result_dict["rust_extensions"] = _stat_collector().collect(_ext_mod)
+        else:
+            result_dict["rust_extensions"] = {}
+    except Exception:
+        result_dict["rust_extensions"] = {}
+
+    # Evidence manifest
+    if ctx.evidence_log is not None:
+        result_dict["evidence_manifest"] = {
+            "total_count": ctx.evidence_log.size,
+            "ram_size": ctx.evidence_log.ram_size,
+            "persist_path": str(ctx.evidence_log.persist_path) if ctx.evidence_log.persist_path else None,
+        }
+    else:
+        result_dict["evidence_manifest"] = {"total_count": 0, "ram_size": 0, "persist_path": None, "note": "elog_not_wired"}
+
+    return result_dict
+
+
+def _build_export_handoff(inp: ExportHandoffInput) -> Any:
+    """
+    Sprint F350M-R: Build the ExportHandoff object using bundled input.
+    
+    Reduces function signature from 17 parameters to 1.
+    """
+    from hledac.universal.project_types import ExportHandoff
+    
+    # Unpack input for convenience
+    ctx = inp.ctx
+    result = inp.result
+    
+    intel = ctx.intel
+    scorecard = {
+        "synthesis_engine_used": "hermes3",
+        "gnn_predicted_links": 0,
+        "top_graph_nodes": inp.top_seed_nodes,
+        "phase_duration_seconds": inp.phase_durations,
+        "runtime_accepted_findings": (result.accepted_findings or 0) + (result.public_accepted_findings or 0),
+        "findings_per_minute": round(
+            ((result.accepted_findings or 0) + (result.public_accepted_findings or 0)) / (inp.actual_duration / 60.0),
+            2,
+        ) if inp.actual_duration > 0 else 0.0,
+        "identity_candidates_found": result.identity_candidates_found,
+        "identity_findings_produced": result.identity_findings_produced,
+        **inp.acq_payload,
+    }
+
+    canonical_run_summary = {
+        "meaningful": inp.runtime_truth["is_meaningful"],
+        "primary_signal": inp.runtime_truth["primary_signal_source"],
+        "posture": (intel.get("sprint_verdict") or {}).get("posture", "unknown"),
+        "dominant_signal_path": (intel.get("signal_path") or {}).get("dominant_signal_path", "unknown"),
+        "corroborated": (intel.get("signal_path") or {}).get("is_corroborated", False),
+        "is_noisy": (intel.get("signal_path") or {}).get("is_noisy", False),
+        "next_pivot": (intel.get("signal_path") or {}).get("next_pivot_recommendation", "unknown"),
+        "branch_verdict": (intel.get("branch_value") or {}).get("branch_verdict", "unknown"),
+        "risk_score": (intel.get("correlation") or {}).get("risk_score", 0.0),
+        "hypothesis_count": (intel.get("hypothesis_pack") or {}).get("hypothesis_count", 0),
+        "first_action": (intel.get("sprint_verdict") or {}).get("first_action", ""),
+        "confidence": (intel.get("sprint_verdict") or {}).get("confidence", ""),
+        "runtime_truth_level": inp.runtime_truth_level,
+        "checkpoint_zero_category": inp.ckpt_category,
+        "checkpoint_zero_reason": inp.checkpoint_zero_reason,
+        "observed_run_tuple": inp.observed_run_tuple,
+        "canonical_sprint_owner": "runtime.sprint_entrypoint.run_sprint",
+        "canonical_path_used": "run_sprint",
+        "effective_source_mix": inp.src_mix_str,
+        "effective_parallelism": len(inp.live_feed_urls),
+        "effective_timeouts": {},
+        "active_iteration_count": result.cycles_completed,
+        **_extract_result_fields(result, inp.export_finish_status),
+        "timing_truth": inp.timing_truth,
+        **inp.acq_payload,
+    }
+
+    return ExportHandoff(
+        sprint_id=ctx.sprint_id,
+        scorecard=scorecard,
+        top_nodes=inp.top_seed_nodes,
+        phase_durations=inp.phase_durations,
+        runtime_truth=inp.runtime_truth,
+        execution_context={
+            "query": inp.query,
+            "requested_duration_s": inp.duration_s,
+            "actual_duration_s": round(inp.actual_duration, 2),
+            "source_count": len(inp.live_feed_urls),
+            "sources": inp.live_feed_urls,
+            "platform": {
+                "python_version": _PLATFORM_INFO["python_version"],
+                "macos_version": _PLATFORM_INFO["macos_version"],
+            },
+            "report_path": str(ctx.report_path),
+            "git_snapshot": "unknown",
+            "export_dir": str(ctx.report_path.parent),
+        },
+        canonical_run_summary=canonical_run_summary,
+        synthesis_outcome_payload=None,
+        sprint_verdict=intel.get("sprint_verdict"),
+        analyst_brief=ctx.scheduler.get_analyst_brief() if ctx.scheduler else None,
+        timer_events=getattr(result, "timer_events", None),
+        uncertainty_flags=getattr(result, "synthesis_uncertainty_flags", None) or None,
+    )
+
+
+async def _run_sprint_teardown(ctx: SprintRunContext) -> None:
+    """
+    PHASE REFACTORING F350M-R: TEARDOWN phase - resource cleanup.
+
+    Handles all cleanup operations via extracted helpers:
+    - _teardown_power_and_tasks: Power assertion + task cancellation
+    - _teardown_scheduler: Scheduler shutdown
+    - _teardown_duckdb: DuckDB maintenance
+    - _teardown_evidence_log: EvidenceLog teardown
+    - _teardown_transports: HTTP client shutdown
+    - _teardown_cleanup: Ephemeral wipe, GC, checkpoints, lock
+
+    Args:
+        ctx: SprintRunContext with all resources
+    """
+    await _teardown_power_and_tasks(ctx)
+    await _teardown_dashboard(ctx)
+    await _teardown_scheduler(ctx)
+    await _teardown_duckdb(ctx)
+    await _teardown_evidence_log(ctx)
+    await _teardown_transports(ctx)
+    await _teardown_cleanup(ctx)
+
+
+async def _teardown_power_and_tasks(ctx: SprintRunContext) -> None:
+    """Release power assertion and cancel orphan tasks."""
+    # Release power assertion (APEX-1001)
+    if ctx.power_assertion is not None:
+        ctx.power_assertion.release()
+        logger.info("[TEARDOWN] Power assertion released")
+
+    # Task cancellation (F4.4)
+    from hledac.universal.utils.async_helpers import cancel_scope_drain
+    count = await cancel_scope_drain(timeout=5.0, label="orphan_drain")
+    if count > 0:
+        logger.debug("[SPRINT] Cancelled and drained %d orphan tasks", count)
+
+
+async def _teardown_dashboard(ctx: SprintRunContext) -> None:
+    """Finish dashboard display."""
+    if ctx.dashboard is not None:
+        with _fail_safe_async("warning", "dashboard.finish"):
+            elapsed_s = time.monotonic() - ctx.phase_times["BOOT"]
+            ctx.dashboard.finish(ctx.result, elapsed_s)
+
+
+async def _teardown_scheduler(ctx: SprintRunContext) -> None:
+    """Shutdown scheduler (F285 - Metal, LMDB, Hermes, transports)."""
+    if ctx.scheduler is not None:
+        with _fail_safe_async("debug", "scheduler.aclose"):
+            await ctx.scheduler.aclose(timeout_s=10.0)
+
+
+async def _teardown_duckdb(ctx: SprintRunContext) -> None:
+    """DuckDB teardown maintenance (BLITZ-07/09)."""
+    if ctx.store is not None:
+        with _fail_safe_async("debug", "duckdb.teardown"):
+            ctx.store.set_maintenance_disabled_during_active(False)
+            await ctx.store.run_teardown_maintenance()
+            ctx.store.set_journal_active_optimized(False)
+            await ctx.store.run_journal_teardown()
+
+
+async def _teardown_evidence_log(ctx: SprintRunContext) -> None:
+    """Close EvidenceLog and DuckDBStore in parallel."""
+    _core_close_targets: list[Any] = []
+    _elog = getattr(ctx.scheduler, '_evidence_log', None)
+    if _elog is not None and _elog.value is not None:
+        _core_close_targets.append(_elog.value)
+    if ctx.store is not None:
+        _core_close_targets.append(ctx.store)
+
+    if _core_close_targets:
+        with _fail_safe_async("debug", "parallel_close.core"):
+            from hledac.universal.utils.async_helpers import parallel_close
+            _core_close_errors = await parallel_close(
+                _core_close_targets,
+                concurrency=2,
+                ctx="teardown.core",
+            )
+            for _err in _core_close_errors:
+                if _err is not None:
+                    logger.debug(f"[TEARDOWN] Resource close error: {_err}")
+
+
+async def _teardown_transports(ctx: SprintRunContext) -> None:
+    """Close all HTTP clients in parallel."""
+    with _fail_safe_async("debug", "parallel_close_async.transports"):
+        from hledac.universal.utils.async_helpers import parallel_close_async
+        from hledac.universal.transport.httpx_client import close_httpx_client_async
+        from hledac.universal.transport.curl_cffi_runtime import close_curl_cffi_sessions_async
+        from hledac.universal.fetching.public_fetcher import close_public_fetcher_sessions_async
+        from hledac.universal.network.session_runtime import close_aiohttp_session_async
+
+        _transport_close_errors = await parallel_close_async(
+            [
+                ("httpx", close_httpx_client_async),
+                ("curl_cffi", close_curl_cffi_sessions_async),
+                ("public_fetcher", close_public_fetcher_sessions_async),
+                ("aiohttp", close_aiohttp_session_async),
+            ],
+            concurrency=4,
+            ctx="teardown.transports",
+        )
+        failed_transports = [name for name, exc in _transport_close_errors.items() if exc is not None]
+        if failed_transports:
+            logger.debug(f"[TEARDOWN] transport close failures: {failed_transports}")
+
+
+async def _teardown_cleanup(ctx: SprintRunContext) -> None:
+    """Final cleanup: ephemeral wipe, GC, checkpoints, lock."""
+    # Ephemeral state wipe (ADVERSARY-005)
+    with _fail_safe_async("debug", "ephemeral_wipe"):
+        from hledac.universal.security.ephemeral_wipe import EphemeralStateAnnihilator
+        _wipe_result = await EphemeralStateAnnihilator().annihilate()
+        if _wipe_result.get("buffers_wiped", 0) > 0 or _wipe_result.get("munlock_count", 0) > 0:
+            logger.debug(f"[ADVERSARY-005] ephemeral wipe: buffers={_wipe_result['buffers_wiped']}")
+
+    # GC cycle maintain
+    with _fail_safe_async("debug", "gc_cycle_maintain"):
+        await asyncio.to_thread(_memory_cycle.gc_cycle_maintain, force=False)
+
+    # ToT checkpoint cleanup (UNIFIED-007)
+    if ctx.store is not None:
+        with _fail_safe_async("debug", "tot_checkpoint.cleanup"):
+            from hledac.universal.coordinators.tot_checkpointer import TransactionalToTCheckpointer
+            _cleanup_ckpt = TransactionalToTCheckpointer(
+                sprint_id=ctx.sprint_id,
+                duckdb_store=ctx.store,
+                interval_s=30.0,
+                lmdb_incremental=True,
+                fs_fallback=True,
+            )
+            await _cleanup_ckpt.cleanup()
+            logger.debug("[UNIFIED-007] ToT checkpoints cleaned up")
+
+    # Final lock release
+    if ctx.sprint_lock_mgr is not None:
+        with _fail_safe_async("debug", "sprint_lock.release"):
+            ctx.sprint_lock_mgr.release()
+            logger.debug("[F266-LOCK] Released sprint lock")
+
+
+# =============================================================================
 # Main sprint runner
 # =============================================================================
 
@@ -2664,1520 +4031,92 @@ async def run_sprint(
     export_dir: str = str(Path.home() / ".hledac" / "reports"),
     aggressive_mode: bool = False,
     deep_probe_enabled: bool = False,
-    deep_research: bool = False,  # F11: enhanced deep research advisory
-    extreme_mode: bool = False,  # F11: EXHAUSTIVE depth for deep research
-    _no_communication: bool = False,  # F26X-3: opt-out of CommunicationLayer injection
+    deep_research: bool = False,
+    extreme_mode: bool = False,
+    _no_communication: bool = False,
     ui_mode: bool = False,
     windup_lead_s: float | None = None,
-    acquisition_profile: str | None = None,  # F223A: explicit profile override
-    rl_train_mode: bool = False,  # RL F257: QMIX training vs inference-only
-    force: bool = False,  # F221-ABORT: override zero-active-budget pre-flight guard
-    flags: SprintFlags | None = None,  # F26X-3/F260 fix: layer-injection flag bundle
-    shutdown_event: asyncio.Event | None = None,  # F350M-R ISSUE #4: cooperative shutdown event
-    resume: bool = True,  # UNIFIED-006: attempt deterministic ToT recovery from prior crash
-    # ULTIMATE-001: Deterministic cognitive replay
+    acquisition_profile: str | None = None,
+    rl_train_mode: bool = False,
+    force: bool = False,
+    flags: SprintFlags | None = None,
+    shutdown_event: asyncio.Event | None = None,
+    resume: bool = True,
     prng_seed: int | None = None,
     replay_seed: int | None = None,
     warc_dir: str | None = None,
 ) -> None:
     """
-    Run a full sprint lifecycle with UMA monitoring and delta reporting.
-    Uses SprintScheduler.run() directly to enable compute_sprint_intelligence() access.
-
+    PHASE REFACTORING F350M-R: Thin orchestrator for run_sprint.
+    
+    This function now delegates all work to extracted phase functions:
+    - _run_sprint_boot: Pre-flight, init, lock acquisition
+    - _run_sprint_execute: Scheduler setup, sprint race, execution
+    - _run_sprint_windup: Result processing, report generation, export
+    - _run_sprint_teardown: Resource cleanup
+    
     ROLE: CANONICAL SPRINT OWNER — SOLE production sprint authority.
     All report truth surfaces (canonical_run_summary, runtime_truth, timing_truth,
     checkpoint_zero_category, observed_run_tuple) are derived here.
-    No alternate or residual path may claim canonical_sprint_owner = "core.__main__.run_sprint".
-
-    F350M-R ISSUE #4: If shutdown_event is provided, installs SIGINT/SIGTERM handlers
-    that set the event (cooperative shutdown) when asyncio.run() is the caller
-    (i.e., no external signal handler was installed via _install_signal_handler_for_loop).
     """
-    # Sprint 8SA: Phase timing instrumentation
-    _phase_times: dict[str, float] = {}
-    _phase_times["BOOT"] = time.monotonic()
-
-    # F350M-R ISSUE #4: Cooperative shutdown — install signal handler in-loop
-    # when run_sprint is called directly via asyncio.run() (cli/parser path)
-    # instead of via _run_sprint_loop which handles signals externally.
-    _cancel_event: asyncio.Event = shutdown_event if shutdown_event is not None else asyncio.Event()
-
-    # A2: GC tuning, malloc pressure relief, and pre-sprint checks are now
-    # handled in build_runtime() before run_sprint() is called.
-    # _cancel_event is the only signal-related setup needed here:
-    # build_runtime creates the event but run_sprint receives it as a parameter.
-    # NOTE: _gc_telemetry is no longer captured here (build_runtime handles it).
-    # NOTE: _pressure_relief_task and _gc_background_task are not started here
-    # (build_runtime uses the one-shot start_malloc_pressure_relief instead of loops).
-
-    # A2-4: Early SprintSchedulerConfig for pre-flight F221 guard.
-    # Created here (before DuckDB init) so effective_windup_lead_s is available
-    # for the active-window budget check. Re-created with full params later.
-    # F500I: Lazy import — SprintSchedulerConfig heavy, only needed when --sprint runs
-    from hledac.universal.runtime.scheduler_config import SprintSchedulerConfig
-
-    _early_windup = 180.0 if windup_lead_s is None else float(windup_lead_s)
-    _early_config = SprintSchedulerConfig(
-        sprint_duration_s=float(duration_s),
-        windup_lead_s=_early_windup,
-        aggressive_mode=aggressive_mode,
-    )
-
-    # F360: Pre-flight guards extracted to module-level function
-    # Returns (effective_windup_s, uma_pre_sprint) tuple for caller
-    _effective_windup_s, _uma_pre_sprint = _run_sprint_preflight_guards(
-        logger=logger,
-        duration_s=duration_s,
-        windup_lead_s=windup_lead_s,
-        flags=flags,
-        force=force,
-        early_config=_early_config,
-    )
-    _swap_detected_pre = _uma_pre_sprint.swap_detected
-    _uma_state_pre = _uma_pre_sprint.state
-    uma_baseline_gib = _uma_pre_sprint.system_used_gib
-
-    # Sprint ID
-    sprint_id = _make_sprint_id()
-    # UNIFIED-006: Deterministic query hash for cross-sprint ToT recovery.
-    # SHA256-16 hex — same query produces same hash, enabling orphan
-    # checkpoint lookup across different random sprint_ids after a crash.
-    # Uses query_fingerprint() for ~2-3× speedup over blake2b-16 in Python.
-    from hledac.universal.utils.hashing import query_fingerprint
-    _query_hash = query_fingerprint(query) if resume else ""
-
-    # ULTIMATE-001: Generate SprintSeedState for deterministic cognitive replay
-    # This captures all sources of non-determinism (PRNG seed, ToT IV, config hash)
-    # for court-admissible forensic reproducibility.
-    from hledac.universal.runtime.sprint_types import SprintSeedState
-    _sprint_seed_state: SprintSeedState | None = None
-
-    if replay_seed is not None:
-        # Replay mode: reconstruct seed state from provided seed
-        # For replay, we use the provided seed but derive new ToT IV from it
-        _sprint_seed_state = SprintSeedState.generate(
-            query=query,
-            explicit_seed=replay_seed,
+    # Create run context for all phases
+    ctx = SprintRunContext()
+    
+    # Validate WARC directory in replay mode
+    if replay_seed is not None and warc_dir is None:
+        logger.warning(
+            "[ULTIMATE-001] Replay mode without --warc-dir: "
+            "live HTTP fetching will be used instead of WARC responses"
         )
-        logger.info(
-            "[ULTIMATE-001] Replay mode: using seed=%d, tot_iv=%s",
-            _sprint_seed_state.prng_seed,
-            _sprint_seed_state.tot_iv[:8],
-        )
-        # Validate WARC directory exists in replay mode
-        if warc_dir is None:
-            logger.warning(
-                "[ULTIMATE-001] Replay mode without --warc-dir: "
-                "live HTTP fetching will be used instead of WARC responses"
-            )
-    elif prng_seed is not None:
-        # Explicit seed provided: generate SprintSeedState with it
-        _sprint_seed_state = SprintSeedState.generate(
-            query=query,
-            explicit_seed=prng_seed,
-        )
-        logger.info(
-            "[ULTIMATE-001] Using explicit seed=%d, tot_iv=%s",
-            _sprint_seed_state.prng_seed,
-            _sprint_seed_state.tot_iv[:8],
-        )
-    else:
-        # No seed provided: generate random seed and log it for reproducibility
-        _sprint_seed_state = SprintSeedState.generate(query=query)
-        logger.info(
-            "[ULTIMATE-001] Generated random seed=%d, tot_iv=%s "
-            "(use --seed %d for deterministic replay)",
-            _sprint_seed_state.prng_seed,
-            _sprint_seed_state.tot_iv[:8],
-            _sprint_seed_state.prng_seed,
-        )
-
-    # Store seed state in global for coordinator access
-    global _current_sprint_seed_state
-    _current_sprint_seed_state = _sprint_seed_state
-
-    _phase_times["WARMUP"] = time.monotonic()
-
-    # APEX-1001: Acquire power assertion to prevent macOS sleep during sprint.
-    # MacBook Air M1 with closed lid enters sleep after ~30s, killing the sprint.
-    # PowerAssertion uses IOPMAssertion (PyObjC) or caffeinate fallback.
-    # ALWAYS-ON: no ENV toggle, sprints need uninterrupted execution.
-    # Released in finally block at TEARDOWN.
-    _power_assertion = PowerAssertion.acquire(reason=f"sprint_{sprint_id}")
-    logger.info(
-        "[PRE-LOOP] Power assertion acquired (method=%s) — sleep prevented",
-        _power_assertion.method,
-    )
-
-    # F266-LOCK: Sprint-level lock — prevent two sprints with the same query from
-    # running simultaneously. Uses GraphLockManager (fcntl.flock + PID header).
-    # Lock is released in the finally block at the bottom of this function.
-
-    _sprint_lock_mgr: GraphLockManager | None = None
-    _sprint_lock_path = get_sprint_lock_path(query)
-
-    # Sprint F320: Stale-lock janitor — scan locks/ directory before acquiring.
-    # Remove any lock whose owning PID is dead (crash, SIGKILL, orphaned).
-    # Uses psutil.pid_exists() for cross-platform liveness check.
-    # Extracted to reduce nesting complexity (was depth 12-21).
-    _janitor_removed = _cleanup_stale_locks(_sprint_lock_path.parent, logger)
-
+    
     try:
-        _sprint_lock_mgr = GraphLockManager(str(_sprint_lock_path))
-        if not _sprint_lock_mgr.acquire(timeout_s=5.0):
-            _holder = _sprint_lock_mgr.holder_pid
-            logger.error(
-                f"[F266-LOCK-ABORT] Sprint with query '{query}' already running "
-                f"(PID={_holder}). Use a different query or wait for the running sprint."
-            )
-            sys.exit(2)  # Config error — distinguishable from exit(1) runtime
-        logger.debug(f"[F266-LOCK] Acquired sprint lock: {_sprint_lock_path}")
-    except Exception as _lock_err:
-        logger.warning(f"[F266-LOCK] Could not acquire sprint lock (continuing): {_lock_err}")
-
-    # CoreML→MLX migration: CoreML sidecar removed — MLX is process-native, no subprocess.
-    # DuckDB init now runs alone in ~1-2s (was sequential with 60s CoreML timeout).
-    # Start both in parallel: DuckDB + (former CoreML parallel slot now eliminated).
-
-    # P1-1 + STORAGE-DUP-003 + S-04: DuckDB in-process mode — subprocess isolation removed.
-    # DuckDB runs in-process via DuckDBShadowStore (M1 8GB UMA safe).
-    # duckdb_subprocess_adapter.py ABSORBED into duckdb_store.py::make_shadow_store().
-    from hledac.universal.knowledge.duckdb_store import make_shadow_store
-
-    store = make_shadow_store()
-
-    # Issue #21: Concurrent boot — DuckDB init + circuit breaker reset + MLX prewarm
-    # run in parallel. Sequential was: await DuckDB (~1-2s) THEN prewarm thread spawn.
-    # Now all three start together: total wall-clock = max(duckdb, prewarm) not sum.
-    from hledac.universal.runtime.prewarm_daemon import start_prewarm_if_needed
-
-    # Start prewarm daemon FIRST (fire-and-forget, runs in background thread).
-    # Idempotent — skips if HLEDAC_PREENABLE_DONE=1 already set.
-    start_prewarm_if_needed()
-
-    # F3: IOC pattern prewarm — background-thread Rust ACO build (8-25ms off critical path).
-    # Gate: HLEDAC_PATTERN_WARMUP=1 (default ON). Fire-and-forget like MLX prewarm.
-    from hledac.universal.utils.patterns.pattern_matcher import prewarm as prewarm_patterns
-    prewarm_patterns()
-
-    # Circuit breaker reset — sync work offloaded to thread pool
-    _cb_reset_done = False
-
-    _cb_reset_coro = _reset_circuit_breakers_async(logger)
-
-    # F350M-R Issue #5: DuckDB init + circuit breaker reset run CONCURRENTLY.
-    # Formerly sequential: await store.async_initialize() THEN await _cb_reset_coro.
-    # Now both are gathered: total wall-clock = max(duckdb, cb_reset) not sum.
-    # Savings: ~50% of the ~1-2s DuckDB init is overlapped with cb_reset.
-    _duckdb_init_ok = False
-
-    # F3XX: parallel_ok() replaces asyncio.gather — preserves original coroutine order.
-    # contextlib.suppress CancelledError: I6 invariant (re-raised, not swallowed).
-    # Note: _reset_circuit_breakers_async handles its own internal to_thread + timeout,
-    # so it's passed directly to parallel_ok without _cb_reset_awaitable wrapper.
-    _init_results: list[bool] = []
-    with contextlib.suppress(asyncio.CancelledError):
-        _init_results = await parallel_ok(
-            _duckdb_init_coro(store, logger),
-            _cb_reset_coro,
-            label="pre_init",
-        )
-
-    # Extract DuckDB result (index 0) — parallel_ok maintains coroutine order.
-    if _init_results:
-        _duckdb_result = _init_results[0]
-        if isinstance(_duckdb_result, Exception):
-            logger.warning(f"[P0-3] DuckDB pre-init failed (fail-soft): {_duckdb_result}")
-            _duckdb_init_ok = False
-        else:
-            _duckdb_init_ok = _duckdb_result
-        # Circuit-breaker result is _init_results[1] — success/failure logged inside _reset_circuit_breakers_async.
-
-    # UNIFIED-006: Deterministic ToT checkpoint recovery — search by query_hash
-    # (SHA256-16 of query) across ALL sprint_ids. The old UNIFIED-005 probe
-    # was broken: it used the brand-new random sprint_id and never found anything.
-    # Now: same query → same hash → finds orphan from any crashed sprint.
-    _resume_from: dict | None = None
-    _resume_step: int = 0
-    if _duckdb_init_ok and resume:
-        try:
-            from hledac.universal.coordinators.meta_reasoning_coordinator import ThoughtNode
-
-            _orphan_row = await store.async_get_latest_tot_checkpoint_by_query_hash(
-                query_hash=_query_hash,
-            )
-            if _orphan_row is not None:
-                _orphan_step, _tree_json_str, _ts, _stored_checksum, _orphan_sprint_id = _orphan_row
-                # Verify checksum
-                _raw = _tree_json_str.encode("utf-8")
-                _computed = hashlib.blake2b(_raw, digest_size=32).hexdigest()
-                if _computed == _stored_checksum:
-                    _envelope = orjson.loads(_raw)
-                    _raw_nodes = _envelope.get("nodes", {})
-                    # Deserialize: dict → ThoughtNode (msgspec.Struct)
-                    _nodes: dict[str, ThoughtNode] = {}
-                    for _nid, _ndata in _raw_nodes.items():
-                        try:
-                            _nodes[_nid] = ThoughtNode(
-                                node_id=_ndata.get("node_id", _nid),
-                                thought=_ndata.get("thought", ""),
-                                value_estimate=_ndata.get("value_estimate", 0.0),
-                                parent=_ndata.get("parent"),
-                                children=_ndata.get("children", []),
-                                visited=_ndata.get("visited", False),
-                                expanded=_ndata.get("expanded", False),
-                                depth=_ndata.get("depth", 0),
-                                cost=_ndata.get("cost", 0.0),
-                                uncertainty=_ndata.get("uncertainty", 0.0),
-                            )
-                        except Exception:  # noqa: BLE001
-                            pass  # skip corrupt nodes
-                    if _nodes:
-                        _resume_from = _nodes
-                        _resume_step = _orphan_step
-                        logger.warning(
-                            "[UNIFIED-006] 🔄 RESUMING ToT from checkpoint: "
-                            "orphan_sprint=%s step=%d nodes=%d checksum=%s",
-                            _orphan_sprint_id[:12],
-                            _orphan_step,
-                            len(_nodes),
-                            _stored_checksum[:16],
-                        )
-                    else:
-                        logger.warning(
-                            "[UNIFIED-006] Checkpoint found but all nodes failed deserialization — "
-                            "starting fresh. orphan_sprint=%s",
-                            _orphan_sprint_id[:12],
-                        )
-                else:
-                    logger.error(
-                        "[UNIFIED-006] Checksum mismatch — checkpoint corrupt, starting fresh. "
-                        "stored=%s computed=%s",
-                        _stored_checksum[:16],
-                        _computed[:16],
-                    )
-            # Don't clean up orphaned checkpoints — the coordinator may need them.
-            # Cleanup happens in the finally block after successful completion.
-        except Exception:  # noqa: BLE001
-            pass  # fail-soft: checkpoint probe must never block sprint start
-
-    # Scheduler config
-    # A2-4: windup_lead_s now derived from _early_config.effective_windup_lead_s
-    # (duplicated formula removed — guard and scheduler now use the same source)
-    _windup_lead_s = _early_config.effective_windup_lead_s
-    # F228A: Defensive normalization — benchmark profile aliases must not reach
-    # acquisition_strategy as raw values. Record all three phases for telemetry.
-    _acq_input = acquisition_profile
-    _acq_effective = acquisition_profile
-    _acq_normalized = False
-    if _acq_effective == "nonfeed_diagnostic180":
-        _acq_effective = "nonfeed_diagnostic"
-        _acq_normalized = True
-    # Check _acq_effective (not _acq_input) since _acq_effective may have been
-    # normalized by the alias check above — we only want to flag truly unknown values
-    if _acq_effective not in ("default", "nonfeed_diagnostic", "deep_osint_m1"):
-        if _acq_input is not None and _acq_input not in ("default", "nonfeed_diagnostic", "deep_osint_m1"):
-            logger.warning(
-                "[F228A] Unknown acquisition_profile=%r normalized to 'default'",
-                _acq_input,
-            )
-        _acq_effective = "default"
-        _acq_normalized = True
-    # Guard: smoke180 profile uses windup_lead=180s — replaced by F221-ABORT
-    # pre-flight guard at the top of run_sprint(). The hard guard (MIN_ACTIVE_WINDOW_S)
-    # runs before LMDB init and exits with code 2 unless --force is passed.
-    # The soft warning that used to live here was redundant with the new guard
-    # and is removed in F221-ABORT.
-    # Propagate normalized value to scheduler and env for downstream seams
-    if "HLEDAC_ACQUISITION_PROFILE" not in os.environ:
-        os.environ["HLEDAC_ACQUISITION_PROFILE"] = _acq_effective or "default"
-    acquisition_profile = _acq_effective or "default"
-
-    # F273D: thread flags bundle (carries hermes_force) into SprintScheduler
-    # so _prewarm_hermes_for_sprint can override HLEDAC_ENABLE_HERMES_SYNTHESIS.
-    # Sprint F500I: Lazy import — SprintSchedulerConfig heavy, only needed when --sprint runs
-    # STEP 4 F350M-R: Using SprintSchedulerV2 (greenfield rewrite)
-    from hledac.universal.runtime.scheduler_config import SprintSchedulerConfig
-    from hledac.universal.runtime.scheduler_v2 import SprintSchedulerV2
-    from hledac.universal.runtime.scheduler_v2._v2_init import V2Init
-
-    config = SprintSchedulerConfig(
-        sprint_duration_s=float(duration_s),
-        windup_lead_s=_windup_lead_s,
-        export_enabled=True,
-        export_dir=export_dir,
-        aggressive_mode=aggressive_mode,
-        # Sprint F195B: 8s branch budget in aggressive mode
-        branch_timeout_budget_s=8.0 if aggressive_mode else 0.0,
-        # F223A: Explicit acquisition profile override
-        acquisition_profile=acquisition_profile,
-        # F11: Deep research advisory
-        deep_research_enabled=deep_research,
-        extreme_mode=extreme_mode,
-    )
-
-    # BLITZ-12: Set context var BEFORE any child tasks are spawned so
-    # all TaskGroup children inherit blitz_mode via contextvars propagation.
-    # When True, stealth/anti-correlation jitter delays are skipped entirely.
-    _blitz = getattr(flags, 'blitz_mode', False) if flags else False
-    if _blitz:
-        from hledac.universal.core.telemetry.context_state import set_blitz_mode as _set_blitz
-        _set_blitz(True)
-        logger.info("[BLITZ-12] Blitz mode enabled — stealth jitter delays skipped (duration=%ds ≤ 1800s)", int(duration_s))
-        # BLITZ-15: Reset dead-host tracking at sprint start.
-        from hledac.universal.fetching.public_fetcher import reset_blitz_dead_hosts
-        reset_blitz_dead_hosts()
-
-    scheduler = SprintSchedulerV2(_config=config, _flags=flags)
-
-    # PHYSICS-06/07: Activate BlitzGC mode — disable automatic GC for the
-    # active sprint window. Only explicit gen-0 ticks during I/O-wait windows
-    # will run. Full gen-2 sweep deferred to sprint_teardown() at winddown.
-    # MUST be called after all module imports and DuckDB init are complete,
-    # but BEFORE the acquisition phase begins.
-    try:
-        from hledac.universal.coordinators.resource.blitz_gc import blitz_gc
-
-        _blitz_telemetry = blitz_gc.sprint_start()
-        logger.info(
-            "[PHYSICS-06] BlitzGC active — GC disabled for active sprint window. "
-            "freeze=%s, thresholds=%s, startup_objects=%d",
-            _blitz_telemetry.get("freeze_method"),
-            _blitz_telemetry.get("blitz_thresholds"),
-            _blitz_telemetry.get("startup_snapshot_count", 0),
-        )
-    except Exception as _blitz_err:
-        logger.debug("[PHYSICS-06] BlitzGC sprint_start failed (fail-safe): %s", _blitz_err)
-
-    # A2-3: Unified init via V2Init.run() — replaces:
-    # EvidenceLog init + WARMUP event, SprintLifecycleManager creation,
-    # apply_injections, cancel_event wiring into scheduler.
-    _wall_clock_start = _phase_times.get("WARMUP", _phase_times["BOOT"])
-    _init = V2Init(scheduler)
-    await _init.run(
-        query,
-        _wall_clock_start,
-        ctx=None,  # V2Init builds its own SprintContext
-        cancel_event=_cancel_event,
-        flags=flags,
-        sprint_id=sprint_id,
-        sprint_duration_s=float(duration_s),
-        windup_lead_s=_windup_lead_s,
-        duckdb_store=store,
-        rl_train_mode=rl_train_mode,
-        logger=logger,
-        resume_from=_resume_from,  # UNIFIED-006: ToT checkpoint nodes (None if fresh)
-        resume_step=_resume_step,  # UNIFIED-006: step counter at resume point
-        query_hash=_query_hash,    # UNIFIED-006: SHA256-16 of query
-    )
-
-    # A2-3: Retrieve EvidenceLog from scheduler (injected by V2Init._apply_injections)
-    _elog = scheduler._evidence_log.value if scheduler._evidence_log else None
-
-    # Sprint F228F: Pre-run health check — verify critical dependencies
-    # SprintScheduler is top architectural chokepoint (degree 398).
-    # If it fails silently, nothing writes to DuckDB and nothing accumulates to graph.
-    # F228F CRITICAL 3 fix: add 30s timeout to prevent indefinite hang.
-    try:
-        async with asyncio.timeout(30.0):
-            health = await scheduler.health_check()
-    except TimeoutError:
-        logger.warning("[F228F] health_check timed out after 30s — continuing without pre-run check")
-        health = None
-    if health is not None and not health.overall_ok:
-        logger.warning(f"[F228F] health_check warnings: {health.summary()}")
-        # Fail-soft: log and continue — sprint will handle degraded mode gracefully
-    elif health is not None:
-        logger.debug(f"[F228F] health_check: {health.summary()} - real URLs from typed seed surface")
-
-    # Sprint F272B: --production pre-flight guard.
-    # In production mode, fetch_coordinator_ok=False is a hard blocker (we cannot
-    # make HTTP requests, so the sprint will produce no useful findings and will
-    # burn the full duration). Exit code 2 = config/preflight error per
-    # docs/architecture/EXIT_CODE_CONVENTION. Default (--production absent) keeps
-    # the existing fail-soft advisory-degraded behavior.
-    if (flags.production if flags else False) and health is not None and not health.fetch_coordinator_ok:
-        logger.error(
-            f"[F272B] --production pre-flight ABORT: fetch coordinator not_initialized. "
-            f"health_summary={health.summary()}. Use --no-production or fix fetch "
-            f"session initialization (check TOR/I2P env vars, public_fetcher imports)."
-        )
-        # Exit 2 = preflight/config error (matches F221-ABORT convention).
-        sys.exit(2)
-
-    live_feed_urls = _get_live_feed_urls()
-
-    # Sprint F193A: Instantiate CT log client for canonical pipeline
-    # Sprint F500I: Lazy import — CTLogClient only needed when --sprint runs
-    _ct_log_client = None
-    try:
-        # Sprint F193A: CTLogClient only needed when --sprint runs
-        # Note: Path already imported at module level (line 52)
-        from hledac.universal.intel.ct_log_client import CTLogClient
-
-        _ct_cache = Path.home() / ".hledac" / "ct_cache"
-        _ct_cache.mkdir(parents=True, exist_ok=True)
-        _ct_log_client = CTLogClient(cache_dir=_ct_cache)
-    except Exception as e:
-        logger.debug(f"CT log client initialization failed: {e}")
-
-    try:
-        # Sprint F195C: Sprint dashboard — created when ui_mode=True
-        _dashboard: Any = None
-        if ui_mode:
-            try:
-                from hledac.universal.monitoring.sprint_dashboard import SprintDashboard
-
-                _dashboard = SprintDashboard(sprint_id, query, duration_s)
-                _dashboard.start()
-            except Exception as e:
-                logger.warning(f"Dashboard creation failed: {e}")  # fail-safe: dashboard must never block sprint
-
-        # Sprint F195C: Progress callback for dashboard updates
-        # FIX: Pass _dashboard as parameter instead of closure capture
-        _on_cycle = _make_cycle_callback(_dashboard)
-
-        # Run sprint via scheduler directly (enables compute_sprint_intelligence access)
-        # now_monotonic=None: scheduler uses live time internally via adapter.tick()
-        # F261.1: soft-fail wrapper. Any non-cancellation exception from the
-        # scheduler is captured into a synthetic SprintSchedulerResult so the
-        # caller (and downstream dashboard / export) still sees a structured
-        # outcome rather than a 30-minute hard crash with no telemetry.
-        # CancelledError (asyncio.CancelledError) is NOT caught — it must
-        # propagate so cancellation semantics remain intact.
-        try:
-            # STEP 4 F350M-R: SprintSchedulerV2.run() signature — query only.
-            # lifecycle, duckdb_store, ct_log_client wired via inject_* methods above.
-            # F350M-R ISSUE #4: Cooperative shutdown — race scheduler.run() vs _cancel_event.wait()
-            # When SIGINT arrives via asyncio.run() default handler (cli/parser path),
-            # _cancel_event is set → cancels scheduler gracefully instead of loop.stop() hard-abort.
-            # F350M-R ISSUE #31: safe_create_task with eager_start=True (hot-path startup)
-            # ISSUE-7.2: Start memory status poller (500ms interval) for dynamic Metal cache reconfiguration
-            # Replaces mx.metal.get_active_memory() with psutil.available as primary signal.
-            # Fails silently if Rust atomic not available — Python fallback is always present.
-            try:
-                from hledac.universal.utils.mlx_cache import start_memory_status_poller
-                await start_memory_status_poller(interval_s=0.5)
-            except Exception:  # noqa: BLE001
-                pass
-
-            _cancel_waiter = safe_create_task(_cancel_event.wait(), eager_start=True)
-            _scheduler_waiter = safe_create_task(scheduler.run(query), eager_start=True)
-            # ISSUE-15: asyncio.wait(FIRST_COMPLETED) → first_completed helper
-            # ISSUE-15 FIX: first_completed returns (result, winner_task) — use result directly.
-            # Defensive done() check guards against edge cases where winner_task identity
-            # is uncertain (e.g., same task passed twice, or TaskGroup introspection edge cases).
-            try:
-                _first_result, winner_task = await first_completed(_scheduler_waiter, _cancel_waiter)
-            except asyncio.TimeoutError:
-                raise  # Should not happen
-            # If we won the race (scheduler done), use the result from first_completed.
-            # ISSUE-15 FIX: winner_task.done() defensive check before accessing result.
-            if winner_task is _scheduler_waiter and winner_task.done():
-                result = _first_result
-                # Cancel the cancel waiter since we finished normally
-                _cancel_waiter.cancel()
-                with contextlib.suppress(asyncio.CancelledError):
-                    await _cancel_waiter
-            else:
-                # Cancel event fired — cooperative shutdown triggered
-                _scheduler_waiter.cancel()
-                with contextlib.suppress(asyncio.CancelledError):
-                    await _scheduler_waiter
-                # F350M-R ISSUE #4: Return soft-fail result for cooperative shutdown
-                from hledac.universal.runtime.scheduler_result import (
-                    SprintSchedulerResult,
-                )
-                _sf = SprintSchedulerResult()
-                _sf.scheduler_exit_path = "cooperative_shutdown"
-                _sf.scheduler_exit_reason = "SIGINT/SIGTERM received via shutdown_event"
-                result = _sf
-        except Exception as _fatal_exc:
-            logger.exception("SprintScheduler.run() raised; returning soft-fail result")
-            try:
-                from hledac.universal.runtime.scheduler_result import (
-                    SprintSchedulerResult,
-                )
-
-                _sf = SprintSchedulerResult()
-                _sf.scheduler_exit_path = "soft_fail"
-                _sf.scheduler_exit_reason = f"{type(_fatal_exc).__name__}: {_fatal_exc}"
-                result = _sf
-            except Exception:
-                # Last-ditch fallback: raise the original exception.
-                raise
-            # ISSUE-2 fix: await store.aclose() explicitly in soft-fail path
-            # so WAL is flushed and connections closed even if CancelledError
-            # bypasses the finally block or event loop is being torn down.
-            # Fail-safe: log but never re-raise.
-            try:
-                await store.aclose(timeout_s=10.0)
-            except asyncio.CancelledError:
-                raise
-            except Exception as _aclose_err:
-                logger.debug(f"[ISSUE-2] store.aclose() in soft-fail path failed: {_aclose_err}")
-
-            # F285: Also close scheduler explicitly (Metal cache, LMDB, Hermes, transports).
-            # This is the canonical aclose() entry point for the graceful shutdown protocol.
-            try:
-                await scheduler.aclose(timeout_s=10.0)
-            except asyncio.CancelledError:
-                raise
-            except Exception as _aclose_err:
-                logger.debug(f"[F285] scheduler.aclose() in soft-fail path failed: {_aclose_err}")
-        finally:
-            # ISSUE-7.2: Stop memory status poller on sprint exit
-            try:
-                from hledac.universal.utils.mlx_cache import stop_memory_status_poller
-                await stop_memory_status_poller()
-            except Exception:  # noqa: BLE001
-                pass
-
-            # F266-LOCK: Always release sprint lock on exit — normal, exception, or SIGINT.
-            # Idempotent: GraphLockManager.release() is safe to call multiple times.
-            if _sprint_lock_mgr is not None:
-                try:
-                    _sprint_lock_mgr.release()
-                    logger.debug("[F266-LOCK] Released sprint lock")
-                except Exception as _lock_release_err:
-                    logger.debug(f"[F266-LOCK] Release failed (non-fatal): {_lock_release_err}")
-
-        # F2-3: Record DuckDB runtime mode in sprint result
-        result.duckdb_mode = store.duckdb_mode
-
-        # Sprint F150H: Pull scheduler intelligence (fail-soft, additive)
-        # correlation, hypothesis_pack, signal_path, feed_verdict,
-        # public_verdict, branch_value, sprint_verdict
-        try:
-            intel = scheduler.compute_sprint_intelligence()
-        except Exception as e:
-            logger.debug(f"compute_sprint_intelligence failed: {e}")
-
-        _phase_times["WINDUP"] = time.monotonic()
-
-        # BOOT → WINDUP: when scheduler's should_enter_windup() fires.
-        # This is the active window used (NOT full scheduler runtime —
-        # scheduler runs duration_s internally but windup_lead_s offsets entry).
-        # e.g. requested=300s, windup_lead_s=180 → time_to_windup_s ≈ 120s (correct).
-        time_to_windup_s = _phase_times["WINDUP"] - _phase_times["BOOT"]
-
-        # F166C: actual_duration is FULL BOOT→TEARDOWN wall-clock (not time_to_windup_s).
-        # time_to_windup_s was a misleading alias — it conflated pre-scheduler boot cost
-        # with active window. Actual runtime for metrics/thresholds must be full wall-clock.
-        # F167B fix: _phase_times["TEARDOWN"] is a timestamp; use it directly as timestamp.
-        # When TEARDOWN not yet recorded (early exit), fall back to BOOT→WINDUP which IS
-        # a duration stored in time_to_windup_s (not a timestamp). Guard with _phase_times["BOOT"]
-        # so the arithmetic is always timestamp - timestamp = duration.
-        _teardown_ts = _phase_times.get("TEARDOWN")
-        actual_duration = (_teardown_ts - _phase_times["BOOT"]) if _teardown_ts is not None else time_to_windup_s
-
-        # F166C: Pre-scheduler boot time (BOOT→WARMUP).
-        # Captures import, store init, lifecycle creation overhead.
-        pre_scheduler_boot_s = _phase_times.get("WARMUP", 0) - _phase_times["BOOT"]
-
-        # F166C: Scheduler wall time (WARMUP→WINDUP).
-        # Full scheduler elapsed from instantiation to windup entry.
-        # If ACTIVE was reached, ACTIVE→WINDUP is part of this window (scheduled cycles ran).
-        _windup_mark = _phase_times.get("WINDUP", _phase_times.get("TEARDOWN", _phase_times["BOOT"]))
-        scheduler_wall_s = _windup_mark - _phase_times.get("WARMUP", _phase_times["BOOT"])
-
-        # Sprint F11C: Record WINDUP phase event in EvidenceLog (if wired)
-        try:
-            if _elog is not None:
-                _elog.create_event(
-                    event_type="observation",
-                    payload={
-                        "phase": "WINDUP",
-                        "sprint_id": sprint_id,
-                        "query": query,
-                        "time_to_windup_s": round(time_to_windup_s, 2),
-                        "pre_scheduler_boot_s": round(pre_scheduler_boot_s, 2),
-                        "scheduler_wall_s": round(scheduler_wall_s, 2),
-                    },
-                    confidence=1.0,
-                )
-        except Exception:  # noqa: BLE001
-            pass  # fail-safe: evidence events never block sprint
-
-        # F166C: Pre-ACTIVE starvation — scheduler already computes this;
-        # __main__ re-derives for timing_truth only (not stored back to result).
-        # Uses result.entered_active_at_monotonic (set by scheduler at loop guard)
-        # and result.first_cycle_started_at_monotonic (set at first cycles_started += 1).
-
-        # UMA peak
-        uma_peak_gib = sample_uma_status().system_used_gib
-
-        # Sprint F193A+F194A: CT log canonical discovery — runs once after main cycle loop.
-        # In aggressive mode, CT runs in-cycle via _run_one_cycle_aggressive, so skip post-loop.
-        # Sprint F194A: Persisted CT findings are additive to feed/public accepted_findings
-        # in canonical sprint truth. They flow into write_sprint_delta, runtime_truth,
-        # report_dict, canonical_run_summary, and export handoff.
-        if not scheduler._config.aggressive_mode:
-            await scheduler._run_ct_log_discovery_in_cycle(query=query, store=store)
-            result.accepted_findings += result.ct_log_stored
-
-        # Write sprint delta
-        await write_sprint_delta(
-            store=store,
-            sprint_id=sprint_id,
-            query=query,
-            new_findings=result.accepted_findings,
-            dedup_hits=result.duplicate_entry_hashes_skipped,
-            ioc_nodes=result.unique_entry_hashes_seen,
-            uma_baseline_gib=uma_baseline_gib,
-            uma_peak_gib=uma_peak_gib,
-            synthesis_success=result.accepted_findings > 0,
-            duration_s=actual_duration,
-            hits_per_source=result.hits_per_source,
-            seed_state=_sprint_seed_state,  # ULTIMATE-001: Seed state for deterministic replay
-        )
-
-        # Sprint F11C: EvidenceLog teardown — fail-safe
-        try:
-            if _elog is not None:
-                _elog.finalize()
-                _elog.freeze()
-        except Exception as _elog_teardown_err:
-            logger.warning(f"[F11C] EvidenceLog teardown failed (non-fatal): {_elog_teardown_err}")
-
-        _phase_times["TEARDOWN"] = time.monotonic()
-
-        # Sprint F11C: Record TEARDOWN phase event in EvidenceLog (if wired)
-        try:
-            if _elog is not None:
-                _elog.create_event(
-                    event_type="observation",
-                    payload={
-                        "phase": "TEARDOWN",
-                        "sprint_id": sprint_id,
-                        "actual_duration_s": round(actual_duration, 2),
-                        "cycles_started": result.cycles_started,
-                        "cycles_completed": result.cycles_completed,
-                        "accepted_findings": result.accepted_findings,
-                    },
-                    confidence=1.0,
-                )
-        except Exception:  # noqa: BLE001
-            pass  # fail-safe: evidence events never block sprint
-
-        # Sprint 8SA: Phase timing profile — uses _PHASE_ORDER from sprint_lifecycle
-        phases = _PHASE_ORDER
-        # F288 fix: Compute ACTUAL phase durations (end-start), not start-BOOT offsets.
-        # phase_duration_seconds[PHASE] = how long the phase TOOK, not when it started.
-        # For the final phase (TEARDOWN), use actual_duration as its end point.
-        _phase_durations: dict[str, float] = {}
-        for i, ph in enumerate(phases):
-            ph_name = ph.name  # SprintPhase enum -> string key
-            if ph_name in _phase_times:
-                next_ph = phases[i + 1] if i + 1 < len(phases) else None
-                if next_ph is not None:
-                    next_name = next_ph.name
-                    if next_name in _phase_times:
-                        elapsed = _phase_times[next_name] - _phase_times[ph_name]
-                        _phase_durations[ph_name] = round(elapsed, 2)
-                        if logger.isEnabledFor(logging.INFO):
-                            logger.info("[%s] %s→%s: %.1fs", sprint_id, ph_name, next_name, elapsed)
-                else:
-                    # Final phase (TEARDOWN): duration = actual_duration - phase_start
-                    # actual_duration already computed above as _teardown_ts - _phase_times["BOOT"]
-                    if ph_name in _phase_times and _teardown_ts is not None:
-                        _phase_durations[ph_name] = round(_teardown_ts - _phase_times[ph_name], 2)
-
-        # Sprint F360: Wire record_sprint_budget to MetricsRegistry — phase durations
-        if _phase_durations:
-            import statistics
-
-            values = list(_phase_durations.values())
-            phase_avg_ms = (sum(values) / len(values)) * 1000
-            phase_p50_ms = statistics.median(values) * 1000
-            values_sorted = sorted(values)
-            p95_idx = max(0, int(len(values_sorted) * 0.95) - 1)
-            phase_p95_ms = values_sorted[p95_idx] * 1000
-            try:
-                from hledac.universal.metrics_registry import get_metrics_registry
-
-                get_metrics_registry().record_sprint_budget(
-                    elapsed_ms=actual_duration * 1000,
-                    remaining_ms=max(0.0, (duration_s - actual_duration) * 1000),
-                    phase="TEARDOWN",
-                    phase_avg_ms=phase_avg_ms,
-                    phase_p50_ms=phase_p50_ms,
-                    phase_p95_ms=phase_p95_ms,
-                )
-            except Exception:  # noqa: BLE001
-                pass  # fail-safe: metrics never block sprint
-
-        # --- Timing truth (Sprint F160E) -------------------------------------------
-        # Canonical surfaces that distinguish:
-        #   requested_duration  — what operator asked for
-        #   windup_lead_s       — T-minus offset that triggers wind-down
-        #   time_to_windup_s    — BOOT→WINDUP, the active window actually used
-        #   time_to_teardown_s  — BOOT→TEARDOWN, full wall-clock of this run
-        #   active_window_budget_s — theoretical active window (requested - windup_lead)
-        #   windup_lead_observed_s — actual time between WINDUP entry and TEARDOWN
-        _teardown_time = _phase_times.get("TEARDOWN", _phase_times.get("WINDUP", 0))
-        windup_lead_observed_s = _teardown_time - _phase_times.get("WINDUP", 0)
-        timing_truth = {
-            "requested_duration_s": duration_s,
-            "windup_lead_s": config.windup_lead_s,
-            "time_to_windup_s": round(time_to_windup_s, 2),
-            "time_to_teardown_s": round(_teardown_time - _phase_times["BOOT"], 2),
-            "active_window_budget_s": round(duration_s - config.effective_windup_lead_s, 2),
-            "windup_lead_observed_s": round(windup_lead_observed_s, 2),
-            # F166C: Pre-scheduler boot cost (import, store init, lifecycle creation)
-            "pre_scheduler_boot_s": round(pre_scheduler_boot_s, 2),
-            # F166C: Scheduler wall time (WARMUP→WINDUP, full scheduler elapsed)
-            "scheduler_wall_s": round(scheduler_wall_s, 2),
-            # F169F: scheduler_returned_phase — derive from result state, not dict inspection
-            # F167B fix: use result.entered_active_at_monotonic, NOT _phase_times["ACTIVE"]
-            # (which is never set — only BOOT/WARMUP/WINDUP/TEARDOWN are written)
-            "scheduler_returned_phase": ("ACTIVE" if result.entered_active_at_monotonic is not None else "entry_only"),
-            # F167B fix: use result fields (first cycle STARTED not cycles_completed)
-            "entered_active_truth": result.entered_active_at_monotonic is not None,
-            "first_cycle_truth": result.first_cycle_started_at_monotonic is not None,
-            # F166C: Pre-ACTIVE starvation — scheduler computes pre_active_starved and
-            # pre_loop_blocker_reason; use directly from result (not re-derived locally).
-            "pre_active_starvation": result.pre_active_starved,
-            "pre_active_blocker": result.pre_loop_blocker_reason or None,
-            # F166C: Full budget view for canonical runtime consumption
-            "canonical_runtime_budget_view": {
-                "pre_boot_s": round(pre_scheduler_boot_s, 2),
-                "scheduler_elapsed_s": round(scheduler_wall_s, 2),
-                "total_wallclock_s": round(actual_duration, 2),
-                "budget_consumed_pct": round((actual_duration / duration_s) * 100, 1) if duration_s > 0 else 0.0,
-            },
-        }
-
-        # --- Derived metrics --------------------------------------------------------
-        findings_per_min = (result.accepted_findings / (actual_duration / 60.0)) if actual_duration > 0 else 0.0
-        total_seen = result.unique_entry_hashes_seen + result.duplicate_entry_hashes_skipped
-        dup_rate = (result.duplicate_entry_hashes_skipped / total_seen * 100) if total_seen > 0 else 0.0
-        feed_fnd = result.accepted_findings - result.public_accepted_findings
-        public_pct = (
-            (result.public_accepted_findings / result.accepted_findings * 100) if result.accepted_findings > 0 else 0.0
-        )  # noqa: E501
-
-        # F169F: Use scheduler result fields directly — no local duplication.
-        # Scheduler SprintSchedulerResult.public_backend_degraded is pre-computed.
-        # DF-1: _public_backend_degraded, _feed_zero, _cross_branch_fail now
-        # computed ONCE in _ckpt_category section below; verdict uses inline checks.
-        _public_backend_degraded = result.public_backend_degraded
-
-        # Source mix
-        src_mix: list[str] = []
-        for src, cnt in sorted(result.hits_per_source.items(), key=lambda x: x[1], reverse=True):
-            src_mix.append(f"{src}={cnt}")
-        src_mix_str = ", ".join(src_mix) if src_mix else "none"
-
-        # Verdict heuristics — F176A+F169F: hardware-limited smoke is distinct from depleted query.
-        # _inline_hardware_limited computed here; verdict uses same condition.
-        _inline_hardware_limited = (
-            result.accepted_findings == 0
-            and result.total_pattern_hits == 0
-            and result.cycles_started == 0
-            and (_swap_detected_pre or _uma_state_pre in ("critical", "emergency"))
-        )
-        verdict, next_hint = _compute_verdict_and_hint(
-            aborted=result.aborted,
-            accepted_findings=result.accepted_findings,
-            dup_rate=dup_rate,
-            public_pct=public_pct,
-            feed_fnd=feed_fnd,
-            hardware_limited=_inline_hardware_limited,
-            public_backend_degraded=_public_backend_degraded,
-            public_discovered=result.public_discovered,
-            total_pattern_hits=result.total_pattern_hits,
-            public_fetched=result.public_fetched,
-            stop_requested=result.stop_requested,
-        )
-
-        # --- Runtime truth (smoke vs meaningful) ---------------------------------
-        # [F207L] Compute CT findings: legacy ct_log_stored + new acquisition lane CT findings
-        # The new acquisition lane (crtsh_adapter) is the canonical nonfeed CT path.
-        # lane_ct_accepted_findings tracks new-lane CT; ct_log_stored tracks legacy CT pipeline.
-        # Both paths can run in the same sprint — sum them for total CT signal.
-        _total_ct = (result.lane_ct_accepted_findings or 0) + (result.ct_log_stored or 0)
-
-        runtime_truth = _runtime_truth(
-            actual_duration_s=actual_duration,
+        # PHASE 1: BOOT - Pre-flight, initialization, lock acquisition
+        await _run_sprint_boot(
+            ctx=ctx,
             query=query,
             duration_s=duration_s,
-            cycles_completed=result.cycles_completed,
-            cycles_started=result.cycles_started,
-            accepted_findings=result.accepted_findings,
-            total_pattern_hits=result.total_pattern_hits,
-            public_accepted_findings=result.public_accepted_findings,
-            feed_findings=feed_fnd,
-            # Sprint F194A: CT findings additive to canonical truth accounting
-            # [F207L] Sum legacy ct_log_stored + lane_ct_accepted_findings from new acquisition lanes
-            ct_findings=_total_ct,
-            # F176A: Hardware pressure surfaces for smoke classification
-            swap_detected=_swap_detected_pre,
-            uma_state=_uma_state_pre,
-            # Sprint F195B: Branch timeout telemetry
-            branch_timeout_count=result.branch_timeout_count,
-            public_branch_timed_out=result.public_branch_timed_out,
-            ct_branch_timed_out=result.ct_branch_timed_out,
+            windup_lead_s=windup_lead_s,
+            flags=flags,
+            force=force,
+            aggressive_mode=aggressive_mode,
+            resume=resume,
+            prng_seed=prng_seed,
+            replay_seed=replay_seed,
         )
-        is_meaningful = runtime_truth["is_meaningful"]
-        evidence_note = runtime_truth["evidence_note"]
-
-        # F164D: explicit active-runtime occurred flag — guards against
-        # "windup only, no active window" drift in report layer.
-        # time_to_windup_s > 0 alone is insufficient (windupLead fires immediately
-        # on entry-only runs); requires is_meaningful too.
-        timing_truth["active_runtime_occurred"] = is_meaningful and time_to_windup_s > 0
-
-        # Clear separation: [SMOKE] vs [ACTIVE]
-        if is_meaningful:
-            logger.info(
-                f"[RUNTIME TRUTH] ✅ MEANINGFUL ACTIVE RUN | {evidence_note} | "
-                f"primary: {runtime_truth['primary_signal_source']} | "
-                f"cycles: {result.cycles_completed}/{result.cycles_started} | "
-                f"windup: {time_to_windup_s:.0f}s (budget={timing_truth['active_window_budget_s']:.0f}s)"
-            )
-        else:
-            logger.warning(
-                f"[RUNTIME TRUTH] 🚨 SMOKE ONLY | {evidence_note} | "
-                f"cycles: {result.cycles_completed}/{result.cycles_started} | "
-                f"windup: {time_to_windup_s:.0f}s (budget={timing_truth['active_window_budget_s']:.0f}s)"
-            )
-
-        logger.info(
-            f"[SPRINT DONE] {sprint_id} | "
-            f"findings: {result.accepted_findings} | "
-            f"cycles: {result.cycles_completed}/{result.cycles_started} | "
-            f"duplicates: {result.duplicate_entry_hashes_skipped} | "
-            f"phase: {result.final_phase}"
+        
+        # PHASE 2: EXECUTE - Scheduler setup, sprint race, execution
+        await _run_sprint_execute(
+            ctx=ctx,
+            query=query,
+            duration_s=duration_s,
+            aggressive_mode=aggressive_mode,
+            deep_research=deep_research,
+            extreme_mode=extreme_mode,
+            acquisition_profile=acquisition_profile,
+            flags=flags,
+            rl_train_mode=rl_train_mode,
+            ui_mode=ui_mode,
+            export_dir=export_dir,
         )
-        logger.info(
-            f"[SUMMARY] {verdict} | "
-            f"feed={feed_fnd} public={result.public_accepted_findings}({public_pct:.0f}%) | "
-            f"f/min={findings_per_min:.2f} | dup={dup_rate:.1f}% | "
-            f"public: disc={result.public_discovered} fetch={result.public_fetched} "
-            f"match={result.public_matched_patterns} stored={result.public_stored_findings}"
+        
+        # PHASE 3: WINDUP - Result processing, report generation, export
+        await _run_sprint_windup(
+            ctx=ctx,
+            query=query,
+            duration_s=duration_s,
+            export_dir=export_dir,
+            deep_probe_enabled=deep_probe_enabled,
         )
-        logger.info(f"[NEXT] {next_hint}")
-        logger.info(f"[SOURCES] {src_mix_str}")
-
-        # Sprint F150H: Log scheduler intelligence (visible operator signal)
-        sv = intel.get("sprint_verdict") or {}
-        sp = intel.get("signal_path") or {}
-        corr = intel.get("correlation") or {}
-        hyp = intel.get("hypothesis_pack") or {}
-        if sv:
-            logger.info(
-                f"[INTEL] posture={sv.get('posture', '?')} | "
-                f"dominant={sv.get('dominant_signal', '?')} | "
-                f"corroborated={sp.get('is_corroborated', False)} | "
-                f"noisy={sp.get('is_noisy', False)} | "
-                f"risk={corr.get('risk_score', 0):.3f} | "
-                f"hypotheses={hyp.get('hypothesis_count', 0)} | "
-                f"next={sv.get('first_action', '?')[:60]}"
-            )
-
-        # Sprint F500I: Use canonical path helper (no more ad-hoc /tmp)
-        report_path = get_sprint_json_report_path(sprint_id)
-
-        # CHECKPOINT-0 additive derived fields (computed before report_dict)
-        active_iterations = result.cycles_completed
-
-        # F176A: Hardware-limited smoke detection (MUST be before runtime_truth_level)
-        _is_hardware_limited = (
-            not is_meaningful
-            and result.cycles_started == 0
-            and (_swap_detected_pre or _uma_state_pre in ("critical", "emergency"))
-        )
-        # F176A: Pre-active memory starvation
-        _is_pre_active_mem_starved = (
-            not is_meaningful
-            and result.cycles_started == 0
-            and result.entered_active_at_monotonic is not None
-            and (_swap_detected_pre or _uma_state_pre in ("critical", "emergency", "warn"))
-        )
-
-        # F176A+E0-T4: runtime truth level taxonomy
-        # F176A adds: hardware_limited_smoke, pre_active_memory_starvation, survival_active_minimal
-        # E0-T4: short_signal — <180s with pattern hits but no findings.
-        # 180s floor in _is_meaningful_run is exempt for hits/findings early-returns.
-        # F178B: Priority order — more specific conditions must come BEFORE less specific.
-        # pre_active_memory_starvation (entered ACTIVE but zero cycles with memory pressure)
-        # MUST be checked before survival_active_minimal (bounded work with memory pressure).
-        # hardware_limited_smoke (never entered active, zero cycles, memory pressure) comes after
-        # pre_active_memory_starvation since the latter requires entered_active_at_monotonic.
-        runtime_truth_level = (
-            "active"
-            if is_meaningful and result.accepted_findings > 0
-            else "pre_active_memory_starvation"
-            if _is_pre_active_mem_starved
-            else "survival_active_minimal"
-            if is_meaningful and _uma_state_pre in ("warn", "critical", "emergency")
-            else "hardware_limited_smoke"
-            if _is_hardware_limited
-            else "short_signal"
-            if is_meaningful and result.total_pattern_hits > 0
-            else "meaningful_empty"
-            if is_meaningful
-            else "smoke"
-        )
-
-        # Sprint F162D: observed_run_tuple must be deterministic — no verdict string
-        # (verdict is heuristic and non-reproducible across identical runs).
-        # Canonical components: query-truncated, duration, iterations, source-mix, truth-level.
-        observed_run_tuple = (
-            query[:40] if len(query) > 40 else query,
-            round(actual_duration, 1),
-            active_iterations,
-            src_mix_str,
-            runtime_truth_level,
-        )
-
-        # CHECKPOINT-0 taxonomy (Sprint F155 + E0-T4 + F163C + F164D + F169F + F189A)
-        # Disjoint machine-readable buckets — report layer must not conflate these.
-        # Bucket set:
-        #   signal_reaches_findings           — findings accepted
-        #   pre_active_memory_starvation      — F176A: entered ACTIVE but zero cycles with memory pressure
-        #   survival_active_minimal           — F176A: bounded ACTIVE work under memory pressure
-        #   hardware_limited_smoke           — F176A: zero cycles + swap/pressure (hardware, not query failure)
-        #   public_backend_degraded           — F169F: public branch backend error (NetworkProxyError, HTTP errors)
-        #   degraded_public_blocker           — public branch error (legacy, non-backend errors)
-        #   meaningful_empty_run              — F169F+F189A: meaningful query, zero pattern hits, no findings
-        #   feed_ingress_blocker              — F169F: feed zero AND public discovered some signal
-        #   feed_source_inaccessible          — F169F: feed failed AND total hits=0 AND no infra error
-        #   true_depleted_query               — F169F: query vocabulary matched but nothing accepted
-        #   short_signal                      — F189A: meaningful query with hits but no accepted findings
-        #   cross_branch_source_inaccessible  — F169F: cross-branch sources failed, feed/public accessible
-        #   windup_export_fail_soft           — windup fired on zero-findings run
-        # Priority: findings > survival > hardware_limited > pre_active_mem > public_backend >
-        #   degraded > meaningful_empty > feed_ingress > feed_source_inaccessible >
-        #   true_depleted > short_signal > cross_branch > windup > depleted
-        # NOTE (F189A): meaningful_empty_run moved BEFORE _feed_zero guards because it requires
-        #   is_meaningful=True (query had runtime/hits evidence) while feed_source_inaccessible
-        #   describes a feed infrastructure failure. short_signal moved BEFORE true_depleted_query
-        #   because it requires is_meaningful=True (distinct from true_depleted_query's zero-findings
-        #   verdict which doesn't distinguish meaningful vs non-meaningful query execution).
-        # F192A DF-1/2/3: Use scheduler result fields directly — eliminated duplicate
-        # _public_backend_degraded, _feed_zero, _cross_branch_fail local computations.
-        _public_backend = result.public_backend_degraded
-        _feed_zero_check = result.accepted_findings == 0 and feed_fnd == 0
-        _cross_branch_fail_check = (
-            result.accepted_findings == 0
-            and result.total_pattern_hits > 0
-            and not _public_backend
-            and not result.public_error
-        )
-        # Sprint F350M-R: Extracted checkpoint category taxonomy
-        _ckpt_category, _checkpoint_zero_reason = _compute_checkpoint_category(
-            accepted_findings=result.accepted_findings,
-            total_pattern_hits=result.total_pattern_hits,
-            public_error=result.public_error,
-            public_discovered=result.public_discovered,
-            public_backend=_public_backend,
-            feed_zero_check=_feed_zero_check,
-            cross_branch_fail_check=_cross_branch_fail_check,
-            is_pre_active_mem_starved=_is_pre_active_mem_starved,
-            is_hardware_limited=_is_hardware_limited,
-            is_meaningful=is_meaningful,
-            uma_state_pre=_uma_state_pre,
-            evidence_note=evidence_note,
-            feed_fnd=feed_fnd,
-            phase_times=_phase_times,
-        )
-        # Sprint F350M-R: Extracted export finish status
-        _export_finish_status = _compute_export_finish_status(
-            final_phase=result.final_phase,
-            accepted_findings=result.accepted_findings,
-            aborted=result.aborted,
-        )
-
-        # [F208J-B ISSUE-15] Compute acquisition payload ONCE before report_dict construction.
-        # _acq_payload is reused for both report_dict (filtered for source_family_outcomes)
-        # and ExportHandoff (full payload). This eliminates duplicate computation that previously
-        # occurred when _scheduler_result_acquisition_payload() was called twice.
-        _acq_payload = _scheduler_result_acquisition_payload(result, scheduler, query, duration_s)
-
-        # Filtered version for report_dict — exclude source_family_outcomes top-level
-        # (F265-U9: it lives only inside acquisition_report as a list).
-        _acq_payload_filtered = {k: v for k, v in _acq_payload.items() if k != "source_family_outcomes"}
-
-        report_dict = {
-            "sprint_id": sprint_id,
-            "query": query,
-            "duration_s": duration_s,
-            "actual_duration_s": actual_duration,
-            "accepted_findings": result.accepted_findings,
-            "feed_findings": feed_fnd,
-            "public_accepted_findings": result.public_accepted_findings,
-            "public_discovered": result.public_discovered,
-            "public_fetched": result.public_fetched,
-            "public_matched_patterns": result.public_matched_patterns,
-            "public_stored_findings": result.public_stored_findings,
-            "public_error": result.public_error,
-            # Sprint F193A+F194A: CT log canonical discovery — additive to sprint truth
-            "ct_log_discovered": result.ct_log_discovered,
-            "ct_log_stored": result.ct_log_stored,
-            "ct_log_accepted_findings": result.ct_log_accepted_findings,
-            "ct_log_error": result.ct_log_error,
-            "cycles_completed": result.cycles_completed,
-            "cycles_started": result.cycles_started,
-            "unique_entry_hashes_seen": result.unique_entry_hashes_seen,
-            "duplicate_entry_hashes_skipped": result.duplicate_entry_hashes_skipped,
-            "total_pattern_hits": result.total_pattern_hits,
-            "dup_rate_pct": round(dup_rate, 2),
-            "findings_per_min": round(findings_per_min, 2),
-            "final_phase": result.final_phase,
-            "aborted": result.aborted,
-            "abort_reason": result.abort_reason,
-            "stop_requested": result.stop_requested,
-            "entries_per_source": result.entries_per_source,
-            "hits_per_source": result.hits_per_source,
-            "export_paths": result.export_paths,
-            "uma_peak_gib": uma_peak_gib - uma_baseline_gib,
-            "synthesis_success": result.accepted_findings > 0,
-            "verdict": verdict,
-            "next_hint": next_hint,
-            "phase_timing": _phase_durations,
-            "runtime_truth": runtime_truth,
-            # Sprint F150H: Scheduler intelligence propagated fail-soft (additive)
-            "correlation_summary": intel.get("correlation"),
-            "hypothesis_pack_summary": intel.get("hypothesis_pack"),
-            "signal_path": intel.get("signal_path"),
-            "feed_verdict": intel.get("feed_verdict"),
-            "public_verdict": intel.get("public_verdict"),
-            "branch_value": intel.get("branch_value"),
-            "sprint_verdict": intel.get("sprint_verdict"),
-            # Sprint F500I: Empirical run boundary — reproducible tuple
-            "execution_context": {
-                "query": query,
-                "requested_duration_s": duration_s,
-                "actual_duration_s": round(actual_duration, 2),
-                "source_count": len(live_feed_urls),
-                "sources": live_feed_urls,
-                # Sprint F500-O: Use pre-computed platform info (cached at module load)
-                "platform": _PLATFORM_INFO.copy(),
-                "report_path": str(report_path),
-                "git_snapshot": "unknown",
-                "export_dir": export_dir,
-            },
-            # Sprint F150H+F206S: Canonical operator summary — built ONCE, used in both
-            # report_dict and handoff. Acquisition payload spread additively on top so
-            # any canonical_run_summary fields also in _acq_payload are overwritten
-            # with acquisition truth (correct: acquisition fields should take precedence).
-            "canonical_run_summary": {
-                "meaningful": runtime_truth["is_meaningful"],
-                "primary_signal": runtime_truth["primary_signal_source"],
-                "posture": (intel.get("sprint_verdict") or {}).get("posture", "unknown"),
-                "dominant_signal_path": (intel.get("signal_path") or {}).get("dominant_signal_path", "unknown"),
-                "corroborated": (intel.get("signal_path") or {}).get("is_corroborated", False),
-                "is_noisy": (intel.get("signal_path") or {}).get("is_noisy", False),
-                "next_pivot": (intel.get("signal_path") or {}).get("next_pivot_recommendation", "unknown"),
-                "branch_verdict": (intel.get("branch_value") or {}).get("branch_verdict", "unknown"),
-                "risk_score": (intel.get("correlation") or {}).get("risk_score", 0.0),
-                "hypothesis_count": (intel.get("hypothesis_pack") or {}).get("hypothesis_count", 0),
-                "first_action": (intel.get("sprint_verdict") or {}).get("first_action", ""),
-                "confidence": (intel.get("sprint_verdict") or {}).get("confidence", ""),
-                "runtime_truth_level": runtime_truth_level,
-                "checkpoint_zero_category": _ckpt_category,
-                "checkpoint_zero_reason": _checkpoint_zero_reason,
-                "observed_run_tuple": observed_run_tuple,
-                "canonical_sprint_owner": "runtime.sprint_entrypoint.run_sprint",
-                "canonical_path_used": "run_sprint",
-                "effective_source_mix": src_mix_str,
-                "effective_parallelism": len(live_feed_urls),
-                "effective_timeouts": {},
-                "active_iteration_count": active_iterations,
-                # [F235] cycles_started/completed mirror runtime truth from scheduler result
-                # Sprint F500J: Use helper to eliminate redundant result attribute access.
-                **_extract_result_fields(result, _export_finish_status),
-                "timing_truth": timing_truth,
-                # Sprint F215D: Early exit semantics
-                "early_exit_class": getattr(result, "early_exit_class", ""),
-                "early_exit_reason": getattr(result, "early_exit_reason", ""),
-                "requested_duration_s": duration_s,
-                "actual_duration_s": round(actual_duration, 2),
-                "elapsed_pct": round((actual_duration / duration_s) * 100, 1) if duration_s > 0 else 0.0,
-                "active_window_budget_s": timing_truth["active_window_budget_s"],
-                "active_window_elapsed_s": timing_truth["time_to_windup_s"],
-                # G-3: Governor telemetry for hardware_critical lane gating diagnostics
-                # Compare with pre_sprint_uma_state (line 1002) to detect runtime divergence
-                "governor_uma_state": getattr(result, "governor_uma_state", ""),
-                "governor_system_used_gib": getattr(result, "governor_system_used_gib", 0.0),
-                "governor_swap_detected": getattr(result, "governor_swap_detected", False),
-                "governor_io_only": getattr(result, "governor_io_only", False),
-            },
-            # [F208I-A] Acquisition terminality and report truth — pure, fail-soft.
-            # Spread on top of canonical_run_summary so acquisition fields take precedence.
-            # F265-U9: Exclude source_family_outcomes from top-level spread — it lives ONLY
-            # inside acquisition_report (as a list). Having it at top-level creates a duplicate
-            # of acquisition_report["source_family_outcomes"] with an incompatible dict shape.
-            # [F208J-B ISSUE-15] Uses pre-computed _acq_payload_filtered — computed once before
-            # report_dict, eliminating duplicate call to _scheduler_result_acquisition_payload().
-            **_acq_payload_filtered,
-            "timing_truth": timing_truth,
-            # Sprint M218A: GC startup tuning telemetry
-            # A2: gc_telemetry now computed in build_runtime() before run_sprint() is called.
-            # Retained as empty dict to avoid breaking report_dict contract.
-            "gc_telemetry": {},
-            # Sprint F217B: Nonfeed mission controller telemetry
-            "nonfeed_mission_active": getattr(result, "nonfeed_mission_active", False),
-            "nonfeed_required_families": getattr(result, "nonfeed_required_families", ()),
-            "nonfeed_optional_families": getattr(result, "nonfeed_optional_families", ()),
-            "nonfeed_family_status": getattr(result, "nonfeed_family_status", {}),
-            "nonfeed_all_required_terminal": getattr(result, "nonfeed_all_required_terminal", False),
-            "nonfeed_any_accepted": getattr(result, "nonfeed_any_accepted", False),
-            "nonfeed_provider_failures": getattr(result, "nonfeed_provider_failures", ()),
-            "nonfeed_memory_skips": getattr(result, "nonfeed_memory_skips", ()),
-            "nonfeed_mission_exit_reason": getattr(result, "nonfeed_mission_exit_reason", ""),
-            # Sprint P2-B: DuckDB store telemetry
-            "duckdb_stats": getattr(store, "get_stats", lambda: {})(),
-            # Sprint P2-B: Rust extensions telemetry — routed through core.rust_backend
-            # wrapper for ABI checking and capability scoring (ISSUE-014 fix).
-            "rust_extensions": (
-                lambda _ext_mod=(
-                    lambda _r=__import__(
-                        "hledac.universal.core.rust_backend", fromlist=["rust"]
-                    ).rust: _r.raw.module
-                )(): (
-                    lambda _s=__import__(
-                        "core.rust_backend.stats", fromlist=[""]
-                    ).StatCollector: _s.StatCollector().collect(_ext_mod)
-                )() if _ext_mod is not None else {}
-            )(),
-            # Sprint F11C: EvidenceLog manifest summary (if wired)
-            "evidence_manifest": (
-                {
-                    "total_count": _elog.size,
-                    "ram_size": _elog.ram_size,
-                    "persist_path": str(_elog.persist_path) if _elog.persist_path else None,
-                }
-                if _elog is not None
-                else {"total_count": 0, "ram_size": 0, "persist_path": None, "note": "elog_not_wired"}
-            ),
-        }
-        report_path.write_bytes(_serialize_report(report_dict))
-        logger.info(f"[REPORT] {report_path}")
-
-        # Sprint F151D: Wire existing exporter seam over already-computed truth surfaces.
-        # Reuse: ExportHandoff, ensure_export_handoff, store.get_top_seed_nodes(),
-        # intel (correlation/hypothesis_pack/signal_path/feed_verdict/
-        # public_verdict/branch_value/sprint_verdict), runtime_truth, canonical_run_summary.
-        # Additive + fail-soft only — exporter failure does not crash sprint.
-        try:
-            from hledac.universal.project_types import ExportHandoff
-
-            top_seed_nodes: list = []
-            try:
-                top_seed_nodes = store.get_top_seed_nodes(n=5) if store else []
-            except Exception as e:
-                logger.debug(f"get_top_seed_nodes failed: {e}")
-
-            # Sprint F155: Determine handoff enrichment level (canonical_run_summary built inline)
-            _handoff_enriched = bool(runtime_truth and intel)
-
-            # [F208J-B ISSUE-15] _acq_payload already computed before report_dict above.
-            # Reuse it for ExportHandoff scorecard and canonical_run_summary — no duplicate call.
-
-            handoff = ExportHandoff(
-                sprint_id=sprint_id,
-                scorecard={
-                    "synthesis_engine_used": "hermes3",
-                    "gnn_predicted_links": 0,
-                    "top_graph_nodes": top_seed_nodes,
-                    "phase_duration_seconds": _phase_durations,
-                    # [F223D] runtime_accepted_findings — full truth from all lanes at windup time.
-                    # F265B fix: use result.accepted_findings + result.public_accepted_findings
-                    # since PUBLIC findings are tracked separately from FEED findings.
-                    "runtime_accepted_findings": (result.accepted_findings or 0)
-                    + (result.public_accepted_findings or 0),
-                    # F220F: findings_per_minute — computed from all-lanes total / active window.
-                    # PVS uses scorecard.findings_per_minute directly; adding here ensures PVS
-                    # never shows 0.0 for a productive sprint where phase_timings.WINDUP is 0.0.
-                    "findings_per_minute": round(
-                        ((result.accepted_findings or 0) + (result.public_accepted_findings or 0))
-                        / (actual_duration / 60.0),
-                        2,
-                    )
-                    if actual_duration > 0
-                    else 0.0,
-                    # Sprint F202B: Identity stitching sidecar counters
-                    "identity_candidates_found": result.identity_candidates_found,
-                    "identity_findings_produced": result.identity_findings_produced,
-                    # [F208J-B] Canonical acquisition terminality and report truth
-                    **_acq_payload,
-                },
-                top_nodes=top_seed_nodes,
-                phase_durations=_phase_durations,
-                # Sprint F155: Canonical truth enrichment — additive, derived-only
-                runtime_truth=runtime_truth,
-                execution_context={
-                    "query": query,
-                    "requested_duration_s": duration_s,
-                    "actual_duration_s": round(actual_duration, 2),
-                    "source_count": len(live_feed_urls),
-                    "sources": live_feed_urls,
-                    "platform": {
-                        "python_version": _PLATFORM_INFO["python_version"],
-                        "macos_version": _PLATFORM_INFO["macos_version"],
-                    },
-                    "report_path": str(report_path),
-                    "git_snapshot": "unknown",
-                    "export_dir": export_dir,
-                },
-                # Sprint F155: canonical_run_summary inline (already computed in report_dict)
-                canonical_run_summary={
-                    "meaningful": runtime_truth["is_meaningful"],
-                    "primary_signal": runtime_truth["primary_signal_source"],
-                    "posture": (intel.get("sprint_verdict") or {}).get("posture", "unknown"),
-                    "dominant_signal_path": (intel.get("signal_path") or {}).get("dominant_signal_path", "unknown"),
-                    "corroborated": (intel.get("signal_path") or {}).get("is_corroborated", False),
-                    "is_noisy": (intel.get("signal_path") or {}).get("is_noisy", False),
-                    "next_pivot": (intel.get("signal_path") or {}).get("next_pivot_recommendation", "unknown"),
-                    "branch_verdict": (intel.get("branch_value") or {}).get("branch_verdict", "unknown"),
-                    "risk_score": (intel.get("correlation") or {}).get("risk_score", 0.0),
-                    "hypothesis_count": (intel.get("hypothesis_pack") or {}).get("hypothesis_count", 0),
-                    "first_action": (intel.get("sprint_verdict") or {}).get("first_action", ""),
-                    "confidence": (intel.get("sprint_verdict") or {}).get("confidence", ""),
-                    "runtime_truth_level": runtime_truth_level,
-                    "checkpoint_zero_category": _ckpt_category,
-                    "checkpoint_zero_reason": _checkpoint_zero_reason,
-                    "observed_run_tuple": observed_run_tuple,
-                    "canonical_sprint_owner": "runtime.sprint_entrypoint.run_sprint",
-                    "canonical_path_used": "run_sprint",
-                    "effective_source_mix": src_mix_str,
-                    "effective_parallelism": len(live_feed_urls),
-                    "effective_timeouts": {},
-                    "active_iteration_count": active_iterations,
-                    # Sprint F500J: Use helper to eliminate redundant result attribute access.
-                    # (Includes pre_loop_elapsed_s, pre_loop_blocker_reason, pre_active_starvation,
-                    # export_finish_layer_status, public_error, ct_log_*, cc_archive_injected, etc.)
-                    **_extract_result_fields(result, _export_finish_status),
-                    # Sprint F160E: Canonical timing truth — separates active window from full run
-                    "timing_truth": timing_truth,
-                    # [F208J-B] Canonical acquisition terminality and report truth — same payload
-                    # as what entered scorecard above, ensuring export_sprint() receives consistent
-                    # acquisition truth via both the scorecard and canonical_run_summary seams.
-                    **_acq_payload,
-                },
-                synthesis_outcome_payload=None,  # synthesis_runner not exposed on lifecycle/scheduler
-                # Sprint F153: Top-level sprint verdict propagated to export
-                sprint_verdict=intel.get("sprint_verdict"),
-                # Sprint F204E: Analyst brief from sprint teardown
-                analyst_brief=scheduler.get_analyst_brief(),
-                # Sprint F238E Phase C: Runtime timer events for optional debug export
-                timer_events=getattr(result, "timer_events", None),
-                # APEX-1009: Uncertainty flags from synthesis — propagated to export for annotation
-                uncertainty_flags=getattr(result, "synthesis_uncertainty_flags", None) or None,
-            )
-
-            # Sprint F155: Log enrichment level
-            logger.info(f"[EXPORT] {'fully_enriched' if _handoff_enriched else 'degraded'} → sprint_id={sprint_id}")
-
-            # Sprint F500I: Lazy import — export_sprint heavy, only needed at end of sprint
-            from hledac.universal.export.sprint_exporter import export_sprint
-
-            # ISSUE [FINAL]-019-04: Extract EvidenceLog for WARC provenance chain
-            # FIX: Use getattr() directly for evidence_log to avoid UnboundLocalError in finally block.
-            # The shadowing assignment was removed — finally block now uses getattr() consistently.
-            _elog_instance: Any = scheduler._evidence_log.value if scheduler._evidence_log else None
-
-            export_result = await export_sprint(store=store, handoff=handoff, sprint_id=sprint_id, evidence_log=_elog_instance)
-            logger.info(f"[EXPORT] finish layer → seeds={export_result.get('seeds_json', '')}")
-
-            # Deep probe runs AFTER export completes — post-sprint, non-blocking
-            if deep_probe_enabled:
-                try:
-                    from hledac.universal.deep_research.probe_runner import run_deep_probe_if_enabled
-
-                    probe_result = await run_deep_probe_if_enabled(
-                        query=query,
-                        store=store,
-                        deep_probe_enabled=True,
-                    )
-                    if probe_result:
-                        logger.info(f"[DEEP_PROBE] completed: {probe_result}")
-                except Exception as probe_err:
-                    logger.warning(f"[DEEP_PROBE] probe runner failed (non-fatal): {probe_err}")
-        except Exception as ex:
-            logger.warning(f"[EXPORT] sprint_exporter seam failed (non-fatal): {ex}")
-
+        
+    except asyncio.CancelledError:
+        # Handle cancellation gracefully
+        logger.info("[run_sprint] Sprint cancelled — running teardown")
+        raise
     finally:
-        # APEX-1001: Release power assertion FIRST (before any other cleanup).
-        # This ensures macOS can sleep again after sprint completes.
-        # Idempotent and thread-safe.
-        if '_power_assertion' in locals():
-            _power_assertion.release()
-            logger.info("[TEARDOWN] Power assertion released")
-
-        # F4.4: Graceful task cancellation via trio-style cancel_scope_drain.
-        # Prevents "Task was destroyed but it is pending" warnings.
-        # SIGTERM during finally = CancelledError propagates through aclose calls;
-        # protected by cancel_scope_drain's 5s timeout.
-        from hledac.universal.utils.async_helpers import cancel_scope_drain
-
-        count = await cancel_scope_drain(timeout=5.0, label="orphan_drain")
-        if count > 0:
-            logger.debug("[SPRINT] Cancelled and drained %d orphan tasks", count)
-
-        # Sprint F195C: Finalize dashboard display
-        if _dashboard is not None:
-            try:
-                elapsed_s = time.monotonic() - _phase_times["BOOT"]
-                _dashboard.finish(result, elapsed_s)
-            except Exception as e:
-                logger.warning(f"Dashboard finish failed: {e}")  # fail-safe
-        # F285 LIFO cleanup: scheduler (Metal, LMDB, Hermes, transports) closes FIRST,
-        # then store (DuckDB WAL drains). This prevents the race where scheduler
-        # continues writing to DuckDB after close.
-        # EvidenceLog and DuckDBStore are INDEPENDENT — close them in parallel
-        # after scheduler shutdown to maximize teardown throughput.
-        # CancelledError propagates; all other exceptions are fail-safe logged.
-        try:
-            await scheduler.aclose(timeout_s=10.0)
-        except asyncio.CancelledError:
-            raise
-        except Exception as e:
-            logger.debug(f"[F285] scheduler.aclose() in finally block failed: {e}")  # fail-safe
-
-        # BLITZ-07: Run DuckDB teardown maintenance (single CHECKPOINT + conditional VACUUM).
-        # During ACTIVE phase, op-count and time-based maintenance were disabled
-        # to prevent 100-500ms I/O stalls on M1 8GB. Now we run one atomic maintenance
-        # cycle before closing the store. Fail-safe: any error is non-fatal.
-        try:
-            store.set_maintenance_disabled_during_active(False)
-            await store.run_teardown_maintenance()
-            # BLITZ-09: Switch journal from OFF→WAL for atomic final export.
-            # Must run AFTER maintenance re-enable and BEFORE store close.
-            store.set_journal_active_optimized(False)
-            await store.run_journal_teardown()
-        except asyncio.CancelledError:
-            raise
-        except Exception as e:
-            logger.debug(f"[BLITZ-07/09] teardown maintenance/journal failed (non-fatal): {e}")  # fail-safe
-
-        # ADVERSARY-005: EphemeralStateAnnihilator — cryptographically annihilate
-        # residual ephemeral state before sprint package export.
-        # Destroys: mlock'd key material, bytearray IOC/API-key buffers,
-        # tempfile.NamedTemporaryFile artifacts, and heap pages via MADV_DONTNEED.
-        # Disabled by HLEDAC_ENABLE_EPHEMERAL_WIPE=0 (audit mode).
-        # Idempotent, fail-soft, ≤800ms budget.
-        try:
-            from hledac.universal.security.ephemeral_wipe import EphemeralStateAnnihilator
-
-            _wipe_result = await EphemeralStateAnnihilator().annihilate()
-            if _wipe_result.get("buffers_wiped", 0) > 0 or _wipe_result.get("munlock_count", 0) > 0:
-                logger.debug(
-                    f"[ADVERSARY-005] ephemeral wipe: "
-                    f"buffers={_wipe_result['buffers_wiped']} "
-                    f"munlock={_wipe_result['munlock_count']} "
-                    f"total={_wipe_result['total_ms']:.0f}ms"
-                )
-        except asyncio.CancelledError:
-            raise
-        except Exception as e:
-            logger.debug(f"[ADVERSARY-005] EphemeralStateAnnihilator failed (non-fatal): {e}")  # fail-soft
-
-        # ISSUE-D-1: Close EvidenceLog + DuckDBStore in parallel (independent resources).
-        # F285 constraint respected: scheduler already closed, no WAL write race.
-        # FIX [FINAL]-019-04: Use getattr() to safely access _evidence_log in finally block.
-        # This avoids UnboundLocalError when exception occurs before evidence_log is initialized.
-        _core_close_errors: list[Exception | None] = []
-        _core_close_targets: list[Any] = []
-        _elog_in_finally: Any = getattr(scheduler, '_evidence_log', None)
-        if _elog_in_finally is not None:
-            _core_close_targets.append(_elog_in_finally)
-        _core_close_targets.append(store)
-        try:
-            from hledac.universal.utils.async_helpers import parallel_close
-            _core_close_errors = await parallel_close(
-                _core_close_targets,
-                concurrency=2,
-                ctx="teardown.core",
-            )
-        except asyncio.CancelledError:
-            raise
-        except Exception as e:
-            logger.debug(f"[TEARDOWN] parallel_close core resources failed: {e}")  # fail-soft
-        else:
-            if _elog_in_finally is not None:
-                _elog_err = _core_close_errors[0]
-                if _elog_err is not None:
-                    logger.debug(f"[F285] _elog.aclose() failed: {_elog_err}")  # fail-safe
-            _store_err = _core_close_errors[-1]
-            if _store_err is not None:
-                logger.debug(f"[ISSUE-2] store.aclose() failed: {_store_err}")  # fail-safe
-        # ISSUE-04: Close HTTP clients in parallel (independent, 200-500ms savings)
-        from hledac.universal.utils.async_helpers import parallel_close_async
-
-        _transport_close_errors: dict[str, Exception | None] = {}
-        try:
-            from hledac.universal.transport.httpx_client import close_httpx_client_async
-            from hledac.universal.transport.curl_cffi_runtime import close_curl_cffi_sessions_async
-            from hledac.universal.fetching.public_fetcher import close_public_fetcher_sessions_async
-            from hledac.universal.network.session_runtime import close_aiohttp_session_async
-
-            _transport_close_errors = await parallel_close_async(
-                [
-                    ("httpx", close_httpx_client_async),
-                    ("curl_cffi", close_curl_cffi_sessions_async),
-                    ("public_fetcher", close_public_fetcher_sessions_async),
-                    ("aiohttp", close_aiohttp_session_async),
-                ],
-                concurrency=4,
-                ctx="teardown.transports",
-            )
-        except asyncio.CancelledError:
-            raise
-        except Exception as e:
-            logger.debug(f"[TEARDOWN] parallel_close_async failed: {e}")  # fail-soft
-        else:
-            failed_transports = [name for name, exc in _transport_close_errors.items() if exc is not None]
-            if failed_transports:
-                logger.debug(f"[TEARDOWN] transport close failures: {failed_transports}")
-
-        # A2: Memory hygiene loops (pressure_relief, gc_background) are started
-        # in build_runtime() and stopped there — not started here, so not stopped here.
-        # gc_cycle_maintain is a one-shot call — keep it.
-        try:
-            await asyncio.to_thread(_memory_cycle.gc_cycle_maintain, force=False)
-        except Exception as e:
-            logger.debug(f"[TEARDOWN] gc_cycle_maintain failed: {e}")  # fail-soft
-        # UNIFIED-007: Clean up ToT checkpoints (DuckDB + LMDB + FS) for this sprint.
-        # Only runs on successful completion — if the sprint crashed, checkpoints
-        # remain for next run's recovery probe.
-        try:
-            from hledac.universal.coordinators.tot_checkpointer import (
-                TransactionalToTCheckpointer,
-            )
-            _cleanup_ckpt = TransactionalToTCheckpointer(
-                sprint_id=sprint_id,
-                duckdb_store=store,
-                interval_s=30.0,
-                # UNIFIED-007: All layers ON for complete cleanup
-                lmdb_incremental=True,
-                fs_fallback=True,
-            )
-            await _cleanup_ckpt.cleanup()
-            logger.debug("[UNIFIED-007] ToT checkpoints cleaned up for sprint=%s (DuckDB+LMDB+FS)", sprint_id[:12])
-        except Exception:  # noqa: BLE001
-            pass  # fail-soft
-        # F266-LOCK: Release sprint-level lock — must happen after all cleanup
-        # so that concurrent sprints don't steal the lock before teardown completes.
-        if _sprint_lock_mgr is not None:
-            try:
-                _sprint_lock_mgr.release()
-                logger.debug(f"[F266-LOCK] Released sprint lock: {_sprint_lock_path}")
-            except Exception as e:
-                logger.debug(f"[F266-LOCK] Lock release failed (non-fatal): {e}")  # fail-safe
+        # PHASE 4: TEARDOWN - Resource cleanup (always runs)
+        await _run_sprint_teardown(ctx)
 
 
-# =============================================================================
-# CLI entry point
-# =============================================================================
-
-
-# F350M-R: run_ct_pivot extracted to runtime/ct_pivot.py to break circular import.
-# Re-export from canonical location for backward compat (main() calls this directly).
-from hledac.universal.runtime.ct_pivot import run_ct_pivot
 
 async def run_semantic_pivot(query: str, top_k: int = 10) -> None:
     """

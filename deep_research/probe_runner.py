@@ -121,6 +121,54 @@ def _merge_probe_results(
 MAX_BUCKET_SCAN: int = 50
 IPFS_RESULT_CAP: int = 100
 
+def _try_local_search(local_seam: LocalSearchSeam, query: str) -> tuple | None:
+    """Try local search cache first. Returns results or None."""
+    try:
+        local_results = local_seam.search(query, top_k=5)
+        if local_results.results and local_results.results[0].score > LOCAL_SEARCH_CACHE_THRESHOLD:
+            return local_results
+    except Exception as e:
+        logger.debug(f'[DEEP_PROBE] local search failed: {e}')
+    return None
+
+async def _handle_cache_hit(store, local_results, query, result, start_time):
+    """Handle cache hit by ingesting findings."""
+    logger.debug(f"[DEEP_PROBE] cache hit for query '{query[:50]}...' (score={local_results.results[0].score:.3f})")
+    cache_findings = _convert_search_results_to_findings(local_results.results, query)
+    result['cache_hit'] = True
+    result['findings_ingested'] = len(cache_findings)
+    if cache_findings and store is not None:
+        try:
+            ingest_results = await store.async_ingest_findings_batch(cache_findings)
+            accepted = sum((1 for r in ingest_results if not hasattr(r, 'accepted') or r.accepted))
+            result['findings_ingested'] = accepted
+        except Exception as e:
+            logger.warning(f'[DEEP_PROBE] cache hit ingest failed: {e}')
+            result['errors'].append(f'cache_ingest: {e}')
+    result['probe_duration_s'] = round(time.monotonic() - start_time, 2)
+    return result
+
+async def _handle_network_probe(scanner, domain, store, max_buckets, query, local_seam, start_time, timeout_s, all_findings, result):
+    """Run network probes and ingest findings."""
+    try:
+        all_results = await _run_parallel_probes(scanner, domain, store, max_buckets, query, local_seam)
+        elapsed = time.monotonic() - start_time
+        if elapsed > timeout_s:
+            logger.debug(f'Probe exceeded timeout: {elapsed:.1f}s > {timeout_s}s')
+        result = _merge_probe_results(all_results, all_findings, result, local_seam, query)
+        if all_findings and store is not None:
+            try:
+                ingest_results = await store.async_ingest_findings_batch(all_findings)
+                accepted = sum((1 for r in ingest_results if not hasattr(r, 'accepted') or r.accepted))
+                result['findings_ingested'] = accepted
+                logger.debug(f'[DEEP_PROBE] ingested {accepted}/{len(all_findings)} findings')
+            except Exception as e:
+                logger.warning(f'[DEEP_PROBE] canonical ingest failed: {e}')
+                result['errors'].append(f'ingest: {e}')
+    except Exception as e:
+        logger.warning(f'[DEEP_PROBE] Unexpected error: {e}')
+        result['errors'].append(str(e))
+
 async def run_deep_probe(query: str, store, timeout_s: float=MAX_PROBE_DURATION_S, max_depth: int=MAX_CRAWL_DEPTH, max_buckets: int=MAX_BUCKET_SCAN) -> dict:
     """
     Run deep probe research as post-sprint bounded activity.
@@ -173,47 +221,20 @@ async def run_deep_probe(query: str, store, timeout_s: float=MAX_PROBE_DURATION_
         result['probe_duration_s'] = round(time.monotonic() - start_time, 2)
         return result
 
-    try:
-        local_results = local_seam.search(query, top_k=5)
-        if local_results.results and local_results.results[0].score > LOCAL_SEARCH_CACHE_THRESHOLD:
-            logger.debug(f"[DEEP_PROBE] cache hit for query '{query[:50]}...' (score={local_results.results[0].score:.3f})")
-            cache_findings = _convert_search_results_to_findings(local_results.results, query)
-            result['cache_hit'] = True
-            result['findings_ingested'] = len(cache_findings)
-            if cache_findings and store is not None:
-                try:
-                    ingest_results = await store.async_ingest_findings_batch(cache_findings)
-                    accepted = sum((1 for r in ingest_results if not hasattr(r, 'accepted') or r.accepted))
-                    result['findings_ingested'] = accepted
-                except Exception as e:
-                    logger.warning(f'[DEEP_PROBE] cache hit ingest failed: {e}')
-                    result['errors'].append(f'cache_ingest: {e}')
-            result['probe_duration_s'] = round(time.monotonic() - start_time, 2)
-            return result
-    except Exception as e:
-        logger.debug(f'[DEEP_PROBE] local search failed, proceeding to network: {e}')
+    # Try local search
+    local_results = _try_local_search(local_seam, query)
+    if local_results:
+        return await _handle_cache_hit(store, local_results, query, result, start_time)
+
     try:
         domain = _extract_domain(query)
         if not domain:
             domain = query.strip().lower().replace(' ', '_')[:50]
-
-        all_results = await _run_parallel_probes(scanner, domain, store, max_buckets, query, local_seam)
-        elapsed = time.monotonic() - start_time
-        if elapsed > timeout_s:
-            logger.debug(f'Probe exceeded timeout: {elapsed:.1f}s > {timeout_s}s')
-        result = _merge_probe_results(all_results, all_findings, result, local_seam, query)
-        if all_findings and store is not None:
-            try:
-                ingest_results = await store.async_ingest_findings_batch(all_findings)
-                accepted = sum((1 for r in ingest_results if not hasattr(r, 'accepted') or r.accepted))
-                result['findings_ingested'] = accepted
-                logger.debug(f'[DEEP_PROBE] ingested {accepted}/{len(all_findings)} findings')
-            except Exception as e:
-                logger.warning(f'[DEEP_PROBE] canonical ingest failed: {e}')
-                result['errors'].append(f'ingest: {e}')
+        await _handle_network_probe(scanner, domain, store, max_buckets, query, local_seam, start_time, timeout_s, all_findings, result)
     except Exception as e:
         logger.warning(f'[DEEP_PROBE] Unexpected error: {e}')
         result['errors'].append(str(e))
+
     result['probe_duration_s'] = round(time.monotonic() - start_time, 2)
     logger.info(f"[DEEP_PROBE] completed in {result['probe_duration_s']}s | urls={result['urls_discovered']} buckets={result['buckets_scanned']} ipfs={result['ipfs_results']} ingested={result['findings_ingested']}")
     return result

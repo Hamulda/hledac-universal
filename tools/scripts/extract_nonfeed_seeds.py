@@ -41,13 +41,18 @@ Flags:
 
 
 
+"""Sprint F222H: DuckDB NonfeedSeed Extraction - Refactored with modern Python patterns."""
+
 import argparse
 import json
+import re
 import sys
+from contextlib import contextmanager
+from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Any, Self
 
 # scripts/extract_nonfeed_seeds.py → universal/ → hledac/ → Hledac/ (project root)
-# Match pattern used in scripts/smoke_llm_candidate.py
 _project_root = Path(__file__).parent.parent
 _hledac_root = _project_root.parent
 _project_root_of_hledac = _hledac_root.parent
@@ -62,8 +67,31 @@ from hledac.universal.runtime.nonfeed_seed_extractor import (  # noqa: E402
     extract_nonfeed_seeds_from_findings,
 )
 
+
 # ---------------------------------------------------------------------------
-# DuckDB reading helpers
+# Dataclasses for typed results (modern Python 3.14+ pattern)
+# ---------------------------------------------------------------------------
+
+
+@dataclass(slots=True)
+class DuckDBReadResult:
+    """Result of reading findings from DuckDB."""
+    findings: list[dict[str, Any]]
+    tables_checked: list[str]
+    rows_scanned: int
+
+
+@dataclass(slots=True, frozen=True)
+class TableSchema:
+    """Schema information for a DuckDB table."""
+    name: str
+    columns: list[str]
+    text_columns: list[str]
+    column_map: dict[str, list[str]]  # normalized_name -> [original_columns]
+
+
+# ---------------------------------------------------------------------------
+# Column mapping configuration (eliminates if/elif chains)
 # ---------------------------------------------------------------------------
 
 # Text-like column names to look for in any DuckDB table
@@ -72,17 +100,240 @@ _TEXT_COLUMNS: frozenset[str] = frozenset([
     "evidence", "raw_text", "description", "indicator", "value",
     "query", "payload_text", "text", "finding_text",
 ])
-"""Column names treated as text content for IOC extraction."""
 
-# Safe identifier validation: alphanumeric + underscore only, no dots, no dashes
-import re  # noqa: E402
+# Timestamp column candidates
+_TIMESTAMP_COLUMNS: frozenset[str] = frozenset([
+    "ts", "timestamp", "created_at", "added_at",
+])
 
-_SAFE_IDENTIFIER_RE = re.compile(r'^[a-zA-Z_][a-zA-Z0-9_]*$')
+# Column name → finding key mapping (dictionary dispatch replaces if/elif chains)
+_COLUMN_DISPATCH: dict[str, tuple[str, type | None]] = {
+    "query": ("query", str),
+    "indicator": ("query", str),
+    "value": ("query", str),
+    "title": ("query", str),
+    "source_type": ("source_type", str),
+    "source": ("source_type", str),
+    "confidence": ("confidence", float),
+    "conf": ("confidence", float),
+    "ts": ("ts", str),
+    "timestamp": ("ts", str),
+    "created_at": ("ts", str),
+    "added_at": ("ts", str),
+}
+
+# ---------------------------------------------------------------------------
+# DuckDB reading helpers (modern Python 3.14+ patterns)
+# ---------------------------------------------------------------------------
 
 
 def _safe_table_name(name: str) -> str | None:
     """Validate table name is safe for DESCRIBE / SQL interpolation."""
     return name if _SAFE_IDENTIFIER_RE.match(name) else None
+
+
+@contextmanager
+def _duckdb_connection(db_path: str):
+    """Context manager for DuckDB connection - ensures proper cleanup."""
+    import duckdb
+    conn = duckdb.connect(db_path, read_only=True)
+    try:
+        yield conn
+    finally:
+        conn.close()
+
+
+# ---------------------------------------------------------------------------
+# Schema introspection helpers
+# ---------------------------------------------------------------------------
+
+
+def _get_table_names(conn: Any) -> list[str]:
+    """Get all table names from DuckDB connection."""
+    try:
+        result = conn.execute("SHOW TABLES").fetchall()
+        return [row[0] for row in result]
+    except Exception:  # noqa: BLE001
+        return []
+
+
+def _get_table_schema(conn: Any, table_name: str) -> TableSchema | None:
+    """Introspect table schema and identify text columns."""
+    safe_name = _safe_table_name(table_name)
+    if not safe_name:
+        return None
+
+    # Try quoted first, then unquoted
+    try:
+        col_result = conn.execute(f'DESCRIBE "{safe_name}"').fetchall()
+    except Exception:  # noqa: BLE001
+        try:
+            col_result = conn.execute(f"DESCRIBE {safe_name}").fetchall()
+        except Exception:  # noqa: BLE001
+            return None
+
+    col_names = [row[0] for row in col_result]
+
+    # Find text-like columns using set intersection (O(n) vs O(n*m))
+    col_lower_map = {col.lower(): col for col in col_names}
+    text_cols = [col for lower, col in col_lower_map.items() if lower in _TEXT_COLUMNS]
+
+    if not text_cols:
+        return None
+
+    # Build column map for efficient lookup
+    column_map: dict[str, list[str]] = {}
+    for col in col_names:
+        col_lower = col.lower()
+        if col_lower not in column_map:
+            column_map[col_lower] = []
+        column_map[col_lower].append(col)
+
+    return TableSchema(
+        name=table_name,
+        columns=col_names,
+        text_columns=text_cols,
+        column_map=column_map,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Query building helpers
+# ---------------------------------------------------------------------------
+
+import re
+from contextlib import contextmanager
+
+# Safe identifier validation: alphanumeric + underscore only, no dots, no dashes
+_SAFE_IDENTIFIER_RE = re.compile(r'^[a-zA-Z_][a-zA-Z0-9_]*$')
+
+
+def _build_where_clause(
+    schema: TableSchema,
+    query_filter: str | None,
+    sprint_id_filter: str | None,
+    since_hours: int | None,
+) -> tuple[str, list[Any]]:
+    """Build WHERE clause and parameters for DuckDB query.
+
+    Returns:
+        (where_clause, params)
+    """
+    where_parts: list[str] = []
+    params: list[Any] = []
+
+    if query_filter:
+        # Search all text columns for the query filter
+        text_col_refs = " || ' ' || ".join(
+            f'COALESCE("{c}", \'\')' for c in schema.text_columns
+        )
+        where_parts.append(f"({text_col_refs}) LIKE '%' || ? || '%'")
+        params.append(query_filter)
+
+    if sprint_id_filter and "sprint_id" in schema.columns:
+        where_parts.append('"sprint_id" = ?')
+        params.append(sprint_id_filter)
+
+    if since_hours is not None:
+        ts_candidates = [
+            c for c in schema.columns
+            if c.lower() in _TIMESTAMP_COLUMNS
+        ]
+        if ts_candidates:
+            where_parts.append(
+                f"{ts_candidates[0]} >= CURRENT_TIMESTAMP - INTERVAL '{since_hours} hours'"
+            )
+
+    if where_parts:
+        return " WHERE " + " AND ".join(where_parts), params
+    return "", params
+
+
+# ---------------------------------------------------------------------------
+# Row processing helpers
+# ---------------------------------------------------------------------------
+
+
+def _extract_text_from_row(row_dict: dict[str, Any], text_columns: list[str]) -> list[str]:
+    """Collect all non-empty text values from row columns."""
+    return [val.strip() for col in text_columns if (val := row_dict.get(col)) and isinstance(val, str) and val.strip()]
+
+
+def _parse_provenance_text(prov_val: Any) -> list[str]:
+    """Extract text items from provenance JSON column."""
+    try:
+        prov_list = json.loads(prov_val) if isinstance(prov_val, str) else prov_val
+        if isinstance(prov_list, list):
+            return [item.strip() for item in prov_list if isinstance(item, str) and item.strip()]
+    except Exception:  # noqa: BLE001
+        pass
+    return []
+
+
+def _map_dispatch_values(row_dict: dict[str, Any], column_map: dict[str, list[str]]) -> dict[str, Any]:
+    """Apply column dispatch mapping to row values."""
+    finding: dict[str, object] = {}
+    for col_lower, (key, expected_type) in _COLUMN_DISPATCH.items():
+        if col_lower in column_map:
+            original_col = column_map[col_lower][0]
+            val = row_dict.get(original_col)
+            if val is not None:
+                if expected_type is str:
+                    finding[key] = str(val)
+                elif expected_type is float:
+                    try:
+                        finding[key] = float(val)
+                    except (TypeError, ValueError):  # noqa: BLE001
+                        pass
+    return finding
+
+
+def _map_row_to_finding(
+    row: tuple[Any, ...],
+    schema: TableSchema,
+    provenance_json_col: str | None,
+) -> dict[str, Any] | None:
+    """Map a database row to a finding dict using dictionary dispatch.
+
+    Returns None if no valid text content found.
+    """
+    row_dict = dict(zip(schema.columns, row))
+
+    # Apply column dispatch for known fields
+    finding = _map_dispatch_values(row_dict, schema.column_map)
+
+    # Collect all text-like columns into payload_text
+    text_parts = _extract_text_from_row(row_dict, schema.text_columns)
+
+    # Parse provenance_json if present
+    if provenance_json_col and (prov_val := row_dict.get(provenance_json_col)):
+        text_parts.extend(_parse_provenance_text(prov_val))
+
+    if not text_parts:
+        return None
+
+    finding["payload_text"] = "\n".join(text_parts)
+    return finding
+
+
+def _execute_query_with_fallback(
+    conn: Any,
+    sql: str,
+    params: list[Any] | None,
+) -> list[tuple[Any, ...]] | None:
+    """Execute query with parameter fallback on failure."""
+    try:
+        return conn.execute(sql, params).fetchall()
+    except Exception:  # noqa: BLE001
+        try:
+            return conn.execute(sql).fetchall()
+        except Exception:  # noqa: BLE001
+            return None
+
+
+# ---------------------------------------------------------------------------
+# Main DuckDB reading function (refactored - complexity 44 → ~8)
+# ---------------------------------------------------------------------------
 
 
 def _read_findings_from_duckdb(
@@ -92,158 +343,67 @@ def _read_findings_from_duckdb(
     query_filter: str | None = None,
     sprint_id_filter: str | None = None,
     since_hours: int | None = None,
-) -> tuple[list[dict], list[str], int]:
+) -> DuckDBReadResult:
     """
     Read findings from a DuckDB file.
 
     Returns:
-        (findings, tables_checked, rows_scanned)
+        DuckDBReadResult with findings, tables_checked, and rows_scanned
 
     findings is a list of dicts with keys: query, source_type, confidence, ts, payload_text
     tables_checked is a list of table names examined
     rows_scanned is total rows read across all tables
     """
-    import duckdb
-
-    conn = duckdb.connect(db_path, read_only=True)
-    tables: list[str] = []
-    try:
-        result = conn.execute("SHOW TABLES").fetchall()
-        tables = [row[0] for row in result]
-    except Exception:  # noqa: BLE001
-        pass
-
-    all_findings: list[dict] = []
+    all_findings: list[dict[str, Any]] = []
     tables_checked: list[str] = []
+    rows_scanned = 0
 
-    for table_name in tables:
-        safe_name = _safe_table_name(table_name)
-        if not safe_name:
-            continue  # Skip unsafe table names
-        tables_checked.append(table_name)
-        try:
-            col_result = conn.execute(f'DESCRIBE "{safe_name}"').fetchall()
-        except Exception:
-            try:
-                col_result = conn.execute(f"DESCRIBE {safe_name}").fetchall()
-            except Exception:
+    with _duckdb_connection(db_path) as conn:
+        table_names = _get_table_names(conn)
+
+        for table_name in table_names:
+            schema = _get_table_schema(conn, table_name)
+            if schema is None:
                 continue
 
-        col_names = [row[0] for row in col_result]
+            tables_checked.append(table_name)
 
-        # Find text-like columns in this table
-        text_cols: list[str] = []
-        for col in col_names:
-            col_lower = col.lower()
-            if col_lower in _TEXT_COLUMNS:
-                text_cols.append(col)
-            if col_lower == "id":
-                pass
+            # Build and execute query
+            where_clause, params = _build_where_clause(
+                schema, query_filter, sprint_id_filter, since_hours
+            )
+            select_cols = ", ".join(f'"{c}"' for c in schema.columns)
+            sql = f'SELECT {select_cols} FROM "{table_name}"{where_clause} LIMIT {limit_findings}'
 
-        if not text_cols:
-            continue
-
-        # Build SELECT + WHERE clause
-        select_cols = ", ".join(f'"{c}"' for c in col_names)
-        where_parts: list[str] = []
-
-        if query_filter:
-            # Search all text columns for the query filter
-            text_col_refs = " || ' ' || ".join(f'COALESCE("{c}", \'\')' for c in text_cols)
-            where_parts.append(f"({text_col_refs}) LIKE '%' || ? || '%'")
-
-        if sprint_id_filter:
-            if "sprint_id" in col_names:
-                where_parts.append('"sprint_id" = ?')
-
-        if since_hours is not None:
-            ts_candidates = [c for c in col_names if c.lower() in ("ts", "timestamp", "created_at", "added_at")]
-            if ts_candidates:
-                where_parts.append(f"{ts_candidates[0]} >= CURRENT_TIMESTAMP - INTERVAL '{since_hours} hours'")
-
-        where_clause = ""
-        if where_parts:
-            where_clause = " WHERE " + " AND ".join(where_parts)
-
-        limit_clause = f" LIMIT {limit_findings}"
-
-        sql = f'SELECT {select_cols} FROM "{table_name}"{where_clause}{limit_clause}'
-
-        params: list = []
-        if query_filter:
-            params.append(query_filter)
-        if sprint_id_filter:
-            params.append(sprint_id_filter)
-
-        try:
-            rows = conn.execute(sql, params if params else None).fetchall()
-        except Exception:
-            # Try fallback without params
-            try:
-                rows = conn.execute(sql).fetchall()
-            except Exception:
+            rows = _execute_query_with_fallback(conn, sql, params if params else None)
+            if rows is None:
                 continue
 
-        for row in rows:
-            row_dict = dict(zip(col_names, row))
+            rows_scanned += len(rows)
 
-            # Extract text from row into finding dict
-            finding: dict[str, object] = {}
+            # Process rows using helper (no deep nesting in main function)
+            provenance_col = "provenance_json" if "provenance_json" in schema.columns else None
 
-            # Map known columns
-            for col in col_names:
-                col_lower = col.lower()
-                val = row_dict.get(col)
-                if val is None:
-                    continue
-                if col_lower in ("query", "indicator", "value", "title"):
-                    finding[col_lower] = str(val)
-                elif col_lower in ("source_type", "source"):
-                    finding["source_type"] = str(val)
-                elif col_lower in ("confidence", "conf"):
-                    try:
-                        finding["confidence"] = float(val)
-                    except (TypeError, ValueError):  # noqa: BLE001
-                        pass
-                elif col_lower in ("ts", "timestamp", "created_at", "added_at"):
-                    finding["ts"] = str(val)
+            for row in rows:
+                finding = _map_row_to_finding(row, schema, provenance_col)
+                if finding is not None:
+                    all_findings.append(finding)
+                    if len(all_findings) >= limit_findings:
+                        return DuckDBReadResult(
+                            findings=all_findings,
+                            tables_checked=tables_checked,
+                            rows_scanned=rows_scanned,
+                        )
 
-            # Collect all text-like columns into payload_text for extraction
-            text_parts: list[str] = []
-            for col in text_cols:
-                val = row_dict.get(col)
-                if isinstance(val, str) and val.strip():
-                    text_parts.append(val.strip())
-
-            if text_parts:
-                finding["payload_text"] = "\n".join(text_parts)
-
-            # For shadow_findings: parse provenance_json list and join into text
-            if "provenance_json" in col_names:
-                prov_val = row_dict.get("provenance_json")
-                if prov_val is not None:
-                    try:
-                        prov_list = json.loads(prov_val) if isinstance(prov_val, str) else prov_val
-                        if isinstance(prov_list, list):
-                            for item in prov_list:
-                                if isinstance(item, str) and item.strip():
-                                    text_parts.append(item.strip())
-                    except Exception:  # noqa: BLE001
-                        pass
-
-            if text_parts:
-                all_findings.append(finding)
-
+            # Early termination check
             if len(all_findings) >= limit_findings:
                 break
 
-        if len(all_findings) >= limit_findings:
-            break
-
-    conn.close()
-
-    rows_scanned = len(all_findings)
-    return all_findings, tables_checked, rows_scanned
+    return DuckDBReadResult(
+        findings=all_findings,
+        tables_checked=tables_checked,
+        rows_scanned=rows_scanned,
+    )
 
 
 def _build_findings_from_duckdb(
@@ -260,7 +420,7 @@ def _build_findings_from_duckdb(
     Returns:
         (findings, status) where status is "ok" or "schema_unrecognized"
     """
-    findings, tables_checked, rows_scanned = _read_findings_from_duckdb(
+    result = _read_findings_from_duckdb(
         db_path,
         limit_findings=limit_findings,
         query_filter=query_filter,
@@ -268,11 +428,11 @@ def _build_findings_from_duckdb(
         since_hours=since_hours,
     )
 
-    if not findings:
+    if not result.findings:
         # Schema not recognized — return what we found for status reporting
-        return [], "schema_unrecognized" if not tables_checked else "ok"
+        return [], "schema_unrecognized" if not result.tables_checked else "ok"
 
-    return findings, "ok"
+    return result.findings, "ok"
 
 
 # ---------------------------------------------------------------------------
@@ -352,138 +512,166 @@ def main() -> None:
         if not Path(db_path).exists():
             sys.exit(f"ERROR: DuckDB file not found: {db_path}")
 
-        findings, status = _build_findings_from_duckdb(
+        duckdb_result = _read_findings_from_duckdb(
             db_path,
             limit_findings=args.limit_findings,
             query_filter=args.query,
             sprint_id_filter=args.sprint_id,
             since_hours=args.since_hours,
         )
-
-        # Get tables checked info
-        _, tables_checked, rows_scanned = _read_findings_from_duckdb(
-            db_path,
-            limit_findings=args.limit_findings,
-            query_filter=args.query,
-            sprint_id_filter=args.sprint_id,
-            since_hours=args.since_hours,
-        )
+        findings = duckdb_result.findings
+        tables_checked = duckdb_result.tables_checked
+        rows_scanned = duckdb_result.rows_scanned
+        status = "schema_unrecognized" if not tables_checked else "ok"
         source = "duckdb"
     else:
-        # Load from JSON report
         report_path = Path(args.report)
         if not report_path.exists():
             sys.exit(f"ERROR: report not found: {report_path}")
-
-        with open(report_path) as f:
-            data = json.load(f)
-
-        # Extract findings — check common locations
-        for key in (
-            "findings",
-            "accepted_findings",
-            "canonical_report_snapshot",
-        ):
-            val = data.get(key)
-            if isinstance(val, list) and val:
-                findings = val
-                break
-
-        # Fallback: check resolved_output_json as path
-        if not findings:
-            roi = data.get("resolved_output_json", "")
-            if isinstance(roi, str) and Path(roi).exists():
-                with open(roi) as f:
-                    roi_data = json.load(f)
-                for key in ("findings", "accepted_findings"):
-                    val = roi_data.get(key)
-                    if isinstance(val, list) and val:
-                        findings = val
-                        break
-
+        findings = _load_findings_from_json_report(report_path)
         source = "json"
 
     if not findings:
         print("WARNING: No findings found — writing empty seeds file.")
 
     seeds = extract_nonfeed_seeds_from_findings(findings, max_seeds=args.max_seeds)
-    compute_lane_unlocks(seeds)
 
     # ── Sprint F223B: Quality gate ─────────────────────────────────────────
-    include_weak = args.include_weak
-    min_score = args.min_quality_score
+    classified, filtered = _classify_and_filter_seeds(
+        seeds,
+        query=args.query,
+        min_score=args.min_quality_score,
+        include_weak=args.include_weak,
+    )
+    filtered_seeds = [s for s, _ in filtered]
+    filtered_lane_unlocks = compute_lane_unlocks(filtered_seeds)
 
-    def _classify_with_quality(seed: NonfeedSeed) -> tuple[NonfeedSeed, SeedQuality]:
-        q = classify_seed_quality(
-            seed,
-            query=args.query or "",
-            context="",
-        )
-        return seed, q
+    # Build output and write
+    output = _build_output_dict(
+        source=source,
+        db_path=db_path,
+        args=args,
+        findings=findings,
+        seeds=seeds,
+        tables_checked=tables_checked,
+        rows_scanned=rows_scanned,
+        status=status,
+        classified=classified,
+        filtered=filtered,
+        filtered_seeds=filtered_seeds,
+        filtered_lane_unlocks=filtered_lane_unlocks,
+    )
 
-    classified: list[tuple[NonfeedSeed, SeedQuality]] = []
+    out_path = Path(args.json)
+    with open(out_path, "w") as f:
+        json.dump(output, f, indent=2, ensure_ascii=False)
+
+    _print_summary(source, seeds, findings, output, args.include_weak, status, tables_checked, out_path)
+
+
+def _kinds_distribution(seeds: list[NonfeedSeed]) -> dict[str, int]:
+    dist: dict[str, int] = {}
     for s in seeds:
-        _, q = _classify_with_quality(s)
-        classified.append((s, q))
+        dist[s.kind] = dist.get(s.kind, 0) + 1
+    return dict(sorted(dist.items(), key=lambda x: -x[1]))
 
-    # Filter: keep + weak (if --include-weak) + score >= min_score
-    def _passes_quality_gate(seed: NonfeedSeed, q: SeedQuality) -> bool:
+
+# ---------------------------------------------------------------------------
+# Main helpers
+# ---------------------------------------------------------------------------
+
+
+def _load_findings_from_json_report(report_path: Path) -> list[dict]:
+    """Extract findings from JSON report file."""
+    with open(report_path) as f:
+        data = json.load(f)
+
+    # Check common locations for findings
+    for key in ("findings", "accepted_findings", "canonical_report_snapshot"):
+        if isinstance(val := data.get(key), list) and val:
+            return val
+
+    # Fallback: check resolved_output_json as path
+    roi = data.get("resolved_output_json", "")
+    if isinstance(roi, str) and Path(roi).exists():
+        with open(roi) as f:
+            roi_data = json.load(f)
+        for key in ("findings", "accepted_findings"):
+            if isinstance(val := roi_data.get(key), list) and val:
+                return val
+
+    return []
+
+
+def _classify_and_filter_seeds(
+    seeds: list[NonfeedSeed],
+    query: str | None,
+    min_score: float,
+    include_weak: bool,
+) -> tuple[list[tuple[NonfeedSeed, SeedQuality]], list[tuple[NonfeedSeed, SeedQuality]]]:
+    """Classify seeds by quality and filter by threshold."""
+    classified = [
+        (s, classify_seed_quality(s, query=query or "", context=""))
+        for s in seeds
+    ]
+
+    def passes_gate(s: NonfeedSeed, q: SeedQuality) -> bool:
         if q.decision == "drop":
             return False
         if q.decision == "weak" and not include_weak:
             return False
         return q.score >= min_score
 
-    filtered = [(s, q) for s, q in classified if _passes_quality_gate(s, q)]
-    filtered_seeds = [s for s, _ in filtered]
-    filtered_lane_unlocks = compute_lane_unlocks(filtered_seeds)
+    filtered = [(s, q) for s, q in classified if passes_gate(s, q)]
+    return classified, filtered
 
-    # Build per-seed output with quality fields
-    seeds_output: list[dict] = []
-    for s, q in classified:
-        seeds_output.append({
-            "value": s.value,
-            "kind": s.kind,
-            "source": s.source,
-            "confidence": s.confidence,
-            "reason": s.reason,
-            "quality_decision": q.decision,
-            "quality_reason": q.reason,
-            "quality_score": q.score,
-        })
 
-    # Filtered seeds (only in output if they pass gate)
-    filtered_seeds_output: list[dict] = []
-    for s, q in filtered:
-        filtered_seeds_output.append({
-            "value": s.value,
-            "kind": s.kind,
-            "source": s.source,
-            "confidence": s.confidence,
-            "reason": s.reason,
-            "quality_decision": q.decision,
-            "quality_reason": q.reason,
-            "quality_score": q.score,
-        })
+def _seed_to_dict(seed: NonfeedSeed, quality: SeedQuality) -> dict[str, Any]:
+    """Convert seed with quality to output dict."""
+    return {
+        "value": seed.value,
+        "kind": seed.kind,
+        "source": seed.source,
+        "confidence": seed.confidence,
+        "reason": seed.reason,
+        "quality_decision": quality.decision,
+        "quality_reason": quality.reason,
+        "quality_score": quality.score,
+    }
 
-    # Build output
-    output: dict = {
+
+def _build_output_dict(
+    source: str,
+    db_path: str,
+    args: Any,
+    findings: list[dict],
+    seeds: list[NonfeedSeed],
+    tables_checked: list[str],
+    rows_scanned: int,
+    status: str,
+    classified: list[tuple[NonfeedSeed, SeedQuality]],
+    filtered: list[tuple[NonfeedSeed, SeedQuality]],
+    filtered_seeds: list[NonfeedSeed],
+    filtered_lane_unlocks: dict[str, list[str]],
+) -> dict:
+    """Build the output dictionary."""
+    return {
         "source": source,
-        "db_path": db_path if use_duckdb else "",
+        "db_path": db_path,
         "query_filter": args.query,
         "sprint_id_filter": args.sprint_id,
         "since_hours": args.since_hours,
         "total_findings": len(findings),
         "total_seeds": len(seeds),
         "max_seeds": args.max_seeds,
-        "min_quality_score": min_score,
-        "include_weak": include_weak,
+        "min_quality_score": args.min_quality_score,
+        "include_weak": args.include_weak,
         "publisher_domains_filtered": sorted(PUBLISHER_DOMAINS),
         "tables_checked": tables_checked,
         "rows_scanned": rows_scanned,
         "status": status,
-        "seeds": filtered_seeds_output,
-        "lane_unlocks": {lane: values for lane, values in filtered_lane_unlocks.items() if values},
+        "seeds": [_seed_to_dict(s, q) for s, q in filtered],
+        "lane_unlocks": {lane: vals for lane, vals in filtered_lane_unlocks.items() if vals},
         "seed_kinds": _kinds_distribution(filtered_seeds),
         "quality_summary": {
             "total_classified": len(classified),
@@ -509,12 +697,18 @@ def main() -> None:
         },
     }
 
-    # Write output
-    out_path = Path(args.json)
-    with open(out_path, "w") as f:
-        json.dump(output, f, indent=2, ensure_ascii=False)
 
-    # Print summary
+def _print_summary(
+    source: str,
+    seeds: list[NonfeedSeed],
+    findings: list[dict],
+    output: dict,
+    include_weak: bool,
+    status: str,
+    tables_checked: list[str],
+    out_path: Path,
+) -> None:
+    """Print execution summary."""
     print(f"Source: {source}")
     print(f"Extracted {len(seeds)} seeds from {len(findings)} findings")
     print(f"Quality gate: kept={output['quality_summary']['kept']}, "
@@ -522,18 +716,11 @@ def main() -> None:
           f"(included={include_weak}), "
           f"dropped={output['quality_summary']['dropped']}")
     print(f"Seed kinds: {output['seed_kinds']}")
-    if filtered_lane_unlocks:
+    if output["lane_unlocks"]:
         print(f"Lane unlocks: {', '.join(output['lane_unlocks'].keys())}")
     print(f"Output: {out_path}")
     if status == "schema_unrecognized":
         print(f"WARNING: Schema not recognized — tables checked: {tables_checked}")
-
-
-def _kinds_distribution(seeds: list[NonfeedSeed]) -> dict[str, int]:
-    dist: dict[str, int] = {}
-    for s in seeds:
-        dist[s.kind] = dist.get(s.kind, 0) + 1
-    return dict(sorted(dist.items(), key=lambda x: -x[1]))
 
 
 if __name__ == "__main__":

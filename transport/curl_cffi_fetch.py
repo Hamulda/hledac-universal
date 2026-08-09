@@ -386,6 +386,61 @@ def _touch_profile_session(profile: str) -> None:
     _profile_session_access[profile] = time.monotonic()
 
 
+def _find_stale_profiles(now: float) -> list[str]:
+    """Find profiles with idle time exceeding TTL."""
+    return [
+        profile for profile in list(_curl_cffi_sessions)
+        if now - _profile_session_access.get(profile, now) >= _PROFILE_SESSION_IDLE_TTL_S
+    ]
+
+def _evict_profile(profile: str) -> None:
+    """Evict a single profile session."""
+    try:
+        session = _curl_cffi_sessions.pop(profile, None)
+        if profile in _curl_cffi_profiles_order:
+            _curl_cffi_profiles_order.remove(profile)
+        _profile_session_access.pop(profile, None)
+        if session is not None and hasattr(session, "aclose"):
+            safe_create_task(session.aclose(), name=f"curl_cffi:evict:idle:{profile}")
+    except Exception:  # noqa: BLE001
+        pass
+
+def _find_stale_host_sessions(now: float) -> list[tuple[str, str]]:
+    """Find host sessions with age exceeding TTL."""
+    return [
+        cache_key for cache_key, (_, last_access) in list(_host_sessions.items())
+        if now - last_access >= _HOST_SESSION_TTL_S
+    ]
+
+def _evict_host_session(cache_key: tuple[str, str]) -> None:
+    """Evict a single host session."""
+    try:
+        old = _host_sessions.pop(cache_key, None)
+        if cache_key in _host_access_order:
+            _host_access_order.remove(cache_key)
+        if old is not None and hasattr(old[0], "aclose"):
+            safe_create_task(old[0].aclose(), name=f"curl_cffi:evict:host:{cache_key[0]}")
+    except Exception:  # noqa: BLE001
+        pass
+
+def _find_stale_resolved_sessions(now: float) -> list:
+    """Find resolved sessions with age exceeding TTL."""
+    return [
+        cache_key for cache_key, (_, last_access) in list(_resolved_sessions.items())
+        if now - last_access >= _RESOLVED_SESSION_TTL_S
+    ]
+
+def _evict_resolved_session(cache_key) -> None:
+    """Evict a single resolved session."""
+    try:
+        old = _resolved_sessions.pop(cache_key, None)
+        if cache_key in _resolved_sessions_order:
+            _resolved_sessions_order.remove(cache_key)
+        if old is not None and hasattr(old[0], "aclose"):
+            safe_create_task(old[0].aclose(), name=f"curl_cffi:evict:resolved")
+    except Exception:  # noqa: BLE001
+        pass
+
 async def _evict_stale_sessions() -> None:
     """Evict stale sessions from all three caches.
 
@@ -395,52 +450,20 @@ async def _evict_stale_sessions() -> None:
     now = time.monotonic()
 
     async with _curl_cffi_lock:
-        # Profile sessions: evict idle > _PROFILE_SESSION_IDLE_TTL_S
-        stale_profiles: list[str] = []
-        for profile in list(_curl_cffi_sessions):
-            last_access = _profile_session_access.get(profile, now)
-            if now - last_access >= _PROFILE_SESSION_IDLE_TTL_S:
-                stale_profiles.append(profile)
+        # Profile sessions
+        stale_profiles = _find_stale_profiles(now)
         for profile in stale_profiles:
-            try:
-                session = _curl_cffi_sessions.pop(profile, None)
-                if profile in _curl_cffi_profiles_order:
-                    _curl_cffi_profiles_order.remove(profile)
-                _profile_session_access.pop(profile, None)
-                if session is not None and hasattr(session, "aclose"):
-                    safe_create_task(session.aclose(), name=f"curl_cffi:evict:idle:{profile}")
-            except Exception:  # noqa: BLE001
-                pass
+            _evict_profile(profile)
 
-        # Host sessions: evict expired TTL
-        stale_hosts: list[tuple[str, str]] = []
-        for cache_key, (_session, last_access) in list(_host_sessions.items()):
-            if now - last_access >= _HOST_SESSION_TTL_S:
-                stale_hosts.append(cache_key)
+        # Host sessions
+        stale_hosts = _find_stale_host_sessions(now)
         for cache_key in stale_hosts:
-            try:
-                old = _host_sessions.pop(cache_key, None)
-                if cache_key in _host_access_order:
-                    _host_access_order.remove(cache_key)
-                if old is not None and hasattr(old[0], "aclose"):
-                    safe_create_task(old[0].aclose(), name=f"curl_cffi:evict:host:{cache_key[0]}")
-            except Exception:  # noqa: BLE001
-                pass
+            _evict_host_session(cache_key)
 
-        # Resolved sessions: evict expired TTL
-        stale_resolved: list = []
-        for cache_key, (_session, last_access) in list(_resolved_sessions.items()):
-            if now - last_access >= _RESOLVED_SESSION_TTL_S:
-                stale_resolved.append(cache_key)
+        # Resolved sessions
+        stale_resolved = _find_stale_resolved_sessions(now)
         for cache_key in stale_resolved:
-            try:
-                old = _resolved_sessions.pop(cache_key, None)
-                if cache_key in _resolved_sessions_order:
-                    _resolved_sessions_order.remove(cache_key)
-                if old is not None and hasattr(old[0], "aclose"):
-                    safe_create_task(old[0].aclose(), name=f"curl_cffi:evict:resolved")
-            except Exception:  # noqa: BLE001
-                pass
+            _evict_resolved_session(cache_key)
 
     total_evicted = len(stale_profiles) + len(stale_hosts) + len(stale_resolved)
     if total_evicted > 0:

@@ -58,6 +58,8 @@ class OneButtonVerdict(StrEnum):
     DO_NOT_RUN_UNKNOWN = 'DO_NOT_RUN_UNKNOWN'
     READY_FOR_NONFEED_CAPABILITY_RUN = 'READY_FOR_NONFEED_CAPABILITY_RUN'
     READY_FOR_FEED_BASELINE_ONLY = 'READY_FOR_FEED_BASELINE_ONLY'
+from functools import lru_cache
+
 from hledac.universal.core.resource_governor import CLEAN_SWAP_MAX_GIB, DIAGNOSTIC_SWAP_MAX_GIB
 _BENCHMARK_TO_ACQUISITION_PROFILE: dict[str, str] = {'nonfeed_diagnostic180': 'nonfeed_diagnostic', 'active300': 'default', 'active600': 'default'}
 
@@ -101,6 +103,7 @@ _F223_ARTIFACT_ALIASES: dict[str, list[tuple[str, str]]] = {'F223A_PROFILE_PROPA
 _F223_REQUIRED_PROBES = [('probe_f223a_nonfeed_profile_propagation', 'nonfeed_profile_propagation.json'), ('probe_f223b_terminality_verdict_ssot', 'terminality_verdict_ssot.json'), ('probe_f223c_public_counter_truth', 'public_counter_truth.json'), ('probe_f223d_product_value_reality', 'product_value_reality.json'), ('probe_f223h_cwd_invocation_guard', 'cwd_invocation_guard.json')]
 _F223_OPTIONAL_PROBES = [('probe_f223e_async_resource_hygiene', 'async_resource_hygiene.json'), ('probe_f223f_analyst_brief_reality', 'analyst_brief_reality.json'), ('probe_f223g_persistent_dedup_audit', 'persistent_dedup_audit.json')]
 
+@lru_cache(maxsize=1)
 def _sample_uma() -> dict:
     """Sample current UMA/swap state via core.resource_governor."""
     try:
@@ -206,24 +209,24 @@ def _check_all_f223_artifacts(repo_root: Path) -> tuple[list[F223ArtifactResult]
         optional_results.append(result)
     return (required_results, required_missing, optional_results)
 
+# Dispatch table for _derive_logical_name
+_DERIVE_LOGICAL_NAME_MAP: tuple[tuple[tuple[str, ...], str], ...] = (
+    (('nonfeed_profile_propagation', 'profile_propagation'), 'F223A_PROFILE_PROPAGATION'),
+    (('terminality_verdict_ssot',), 'F223B_TERMINALITY_VERDICT_SSOT'),
+    (('public_counter_truth', 'module_invocation_reality'), 'F223C_PUBLIC_COUNTER_TRUTH'),
+    (('product_value_reality',), 'F223D_PRODUCT_VALUE_REALITY'),
+    (('async_resource_hygiene',), 'F223E_ASYNC_RESOURCE_HYGIENE'),
+    (('analyst_brief_reality',), 'F223F_ANALYST_BRIEF_REALITY'),
+    (('persistent_dedup_audit',), 'F223G_PERSISTENT_DEDUP_AUDIT'),
+    (('cwd_invocation_guard',), 'F223H_CWD_INVOCATION_GUARD'),
+)
+
+
 def _derive_logical_name(probe_dir: str) -> str:
-    """Derive logical artifact name from probe directory."""
-    if 'nonfeed_profile_propagation' in probe_dir or 'profile_propagation' in probe_dir:
-        return 'F223A_PROFILE_PROPAGATION'
-    if 'terminality_verdict_ssot' in probe_dir:
-        return 'F223B_TERMINALITY_VERDICT_SSOT'
-    if 'public_counter_truth' in probe_dir or 'module_invocation_reality' in probe_dir:
-        return 'F223C_PUBLIC_COUNTER_TRUTH'
-    if 'product_value_reality' in probe_dir:
-        return 'F223D_PRODUCT_VALUE_REALITY'
-    if 'async_resource_hygiene' in probe_dir:
-        return 'F223E_ASYNC_RESOURCE_HYGIENE'
-    if 'analyst_brief_reality' in probe_dir:
-        return 'F223F_ANALYST_BRIEF_REALITY'
-    if 'persistent_dedup_audit' in probe_dir:
-        return 'F223G_PERSISTENT_DEDUP_AUDIT'
-    if 'cwd_invocation_guard' in probe_dir:
-        return 'F223H_CWD_INVOCATION_GUARD'
+    """Derive logical artifact name from probe directory using dispatch table."""
+    for keywords, logical_name in _DERIVE_LOGICAL_NAME_MAP:
+        if any(kw in probe_dir for kw in keywords):
+            return logical_name
     return probe_dir
 _CROSS_SPRINT_REQUIRED = [('probe_m218e_memory_integration_guard', 'memory_integration_guard.json'), ('probe_f219a_surface_contract', 'surface_contract.json'), ('probe_f219d_public_session_seal', 'public_session_seal.json'), ('probe_f219e_ct_provider_cooldown', 'ct_provider_cooldown.json'), ('probe_f220e_provider_surface_smoke', 'provider_surface_smoke.json')]
 
@@ -324,218 +327,529 @@ class OneButtonResult(msgspec.Struct, frozen=True, gc=False):
     def to_dict(self) -> dict:
         return {'verdict': self.verdict.value, 'live_allowed': self.live_allowed, 'reasons': self.reasons, 'warnings': self.warnings, 'uma': self.uma, 'f221_artifacts': self.f221_artifacts, 'missing_f221': self.missing_f221, 'missing_cross_sprint': self.missing_cross_sprint, 'f223_artifacts': self.f223_artifacts, 'missing_f223_required': self.missing_f223_required, 'f223_optional_status': self.f223_optional_status, 'provider_surface_ok': self.provider_surface_ok, 'fallback_schema_blocked': self.fallback_schema_blocked, 'swap_policy_tier': self.swap_policy_tier, 'swap_gate_reason': self.swap_gate_reason, 'live_command': self.live_command, 'triage_verdict': self.triage_verdict, 'triage_another_live_useful': self.triage_another_live_useful, 'capability_live_allowed': self.capability_live_allowed, 'feed_baseline_allowed': self.feed_baseline_allowed, 'why_nonfeed_capability_blocked': self.why_nonfeed_capability_blocked, 'degraded_but_allowed': self.degraded_but_allowed, 'canonical_fallback_detected': self.canonical_fallback_detected, 'f232g_research_quality_present': self.f232g_research_quality_present, 'f233d_nonfeed_prelude_coverage': self.f233d_nonfeed_prelude_coverage, 'investigation_admission': {'can_run_live_acquisition': self.can_run_live_acquisition, 'can_run_nonfeed_diagnostic': self.can_run_nonfeed_diagnostic, 'can_run_llm_synthesis': self.can_run_llm_synthesis, 'recommended_mode': self.recommended_mode, 'max_safe_iterations': self.max_safe_iterations, 'max_safe_pivots': self.max_safe_pivots, 'reason': self.investigation_reason}}
 
-def run_one_button_gate(repo_root: Path, profile: str, query: str, decision_gate_path: Path | None=None, last_live_triage_path: Path | None=None) -> OneButtonResult:
+# =============================================================================
+# Refactored run_one_button_gate — dispatch table pattern (CC: 75 → ~12)
+# =============================================================================
+
+# --- Swap Policy Tier ------------------------------------------------------------
+
+def _compute_swap_policy_tier(swap_gib: float, uma_state: str) -> tuple[str, str]:
+    """Compute swap policy tier and human-readable reason."""
+    if uma_state in ('critical', 'emergency'):
+        return ('hard_block', f'uma_state={uma_state}')
+    if swap_gib <= CLEAN_SWAP_MAX_GIB:
+        return ('clean', f'swap={swap_gib:.3f}GiB <= {CLEAN_SWAP_MAX_GIB}GiB')
+    if swap_gib <= DIAGNOSTIC_SWAP_MAX_GIB:
+        return ('diagnostic', f'swap={swap_gib:.3f}GiB in ({CLEAN_SWAP_MAX_GIB}GiB, {DIAGNOSTIC_SWAP_MAX_GIB}GiB]')
+    return ('hard_block', f'swap={swap_gib:.3f}GiB > {DIAGNOSTIC_SWAP_MAX_GIB}GiB')
+
+
+# --- Nonfeed Profile Flag Checker ------------------------------------------------
+
+def _check_nonfeed_profile_bool(repo_root: Path, probe_name: str, json_key: str) -> bool:
+    """Read a boolean flag from a nonfeed profile JSON artifact. Returns False on any error."""
+    path = repo_root / probe_name
+    if not path.exists():
+        return False
+    try:
+        for candidate in path.iterdir():
+            if candidate.is_file() and candidate.suffix == '.json':
+                with open(candidate, encoding='utf-8') as fh:
+                    if json.load(fh).get(json_key) is True:
+                        return True
+    except Exception:  # noqa: BLE001
+        pass
+    return False
+
+
+def _check_nonfeed_profile_flags(repo_root: Path, is_nonfeed_profile: bool) -> tuple[bool, bool]:
+    """Check F232G research quality and F233D prelude coverage for nonfeed profiles."""
+    if not is_nonfeed_profile:
+        return (False, False)
+    f232g = _check_nonfeed_profile_bool(repo_root, 'probe_f231d_research_quality_v2', 'research_quality')
+    f233d = _check_nonfeed_profile_bool(repo_root, 'probe_f233d_nonfeed_prelude_coverage', 'coverage_present')
+    return (f232g, f233d)
+
+
+# --- Blocking Conditions Dispatch Table ----------------------------------------
+
+@dataclass(frozen=True, slots=True)
+class _BlockingCondition:
+    """Single blocking condition for dispatch table."""
+    check: bool
+    verdict: OneButtonVerdict
+    reason: str
+    capability_block: str | None = None
+
+
+def _evaluate_blocking_conditions(
+    missing_f221: list[str],
+    missing_cross_sprint: list[str],
+    missing_f223_required: list[str],
+    fallback_blocked: bool,
+    provider_surface_ok: bool,
+    uma_state: str,
+    swap_gib: float,
+) -> tuple[bool, _BlockingCondition | None]:
+    """
+    Evaluate blocking conditions in priority order.
+    Returns (any_blocked, first_matching_condition | None).
+    """
+    conditions: tuple[_BlockingCondition, ...] = (
+        _BlockingCondition(
+            check=bool(missing_f221),
+            verdict=OneButtonVerdict.DO_NOT_RUN_FIX_ARTIFACTS,
+            reason=f'Missing required F221 probe artifacts: {", ".join(missing_f221)}'
+                + (f'; Also missing cross-sprint: {", ".join(missing_cross_sprint)}' if missing_cross_sprint else ''),
+            capability_block='missing_f221_artifacts',
+        ),
+        _BlockingCondition(
+            check=bool(missing_f223_required),
+            verdict=OneButtonVerdict.DO_NOT_RUN_FIX_ARTIFACTS,
+            reason=f'Missing required F223 post-F223 probe artifacts: {", ".join(missing_f223_required)}',
+            capability_block='missing_f223_required_artifacts',
+        ),
+        _BlockingCondition(
+            check=fallback_blocked,
+            verdict=OneButtonVerdict.DO_NOT_RUN_CONTRACT,
+            reason='Fallback acquisition schema detected in prelive reports',
+            capability_block='canonical_fallback_detected',
+        ),
+        _BlockingCondition(
+            check=not provider_surface_ok,
+            verdict=OneButtonVerdict.DO_NOT_RUN_PROVIDER_SURFACE,
+            reason='Provider surface missing or failing (public bootstrap / CT resilience)',
+            capability_block='provider_surface_missing_or_failing',
+        ),
+        _BlockingCondition(
+            check=uma_state in ('critical', 'emergency'),
+            verdict=OneButtonVerdict.DO_NOT_RUN_UNKNOWN,
+            reason=f'UMA state {uma_state} — restart required before any run',
+            capability_block=f'uma_state={uma_state}',
+        ),
+        _BlockingCondition(
+            check=swap_gib > DIAGNOSTIC_SWAP_MAX_GIB,
+            verdict=OneButtonVerdict.DO_NOT_RUN_MEMORY_HARD_BLOCK,
+            reason=f'Swap {swap_gib:.3f}GiB exceeds hard-block threshold ({DIAGNOSTIC_SWAP_MAX_GIB}GiB) — restart required before any run',
+            capability_block=f'swap={swap_gib:.3f}GiB_exceeds_hard_block_threshold',
+        ),
+    )
+    for cond in conditions:
+        if cond.check:
+            return (True, cond)
+    return (False, None)
+
+
+# --- Capability Live Allowed Calculator -----------------------------------------
+
+@dataclass(frozen=True, slots=True)
+class _CapabilityResult:
+    """Result of capability live allowed calculation."""
+    allowed: bool
+    why_blocked: str
+    warnings: tuple[str, ...]
+
+
+def _compute_capability_live_allowed(
+    provider_surface_ok: bool,
+    canonical_fallback_detected: bool,
+    f232g_present: bool,
+    is_nonfeed_profile: bool,
+) -> _CapabilityResult:
+    """Compute capability_live_allowed and blocked reasons."""
+    checks = (
+        ('provider_surface_degraded', provider_surface_ok),
+        ('canonical_fallback_detected', not canonical_fallback_detected),
+        ('f232g_research_quality_missing', f232g_present if is_nonfeed_profile else True),
+    )
+    blocked = [name for name, ok in checks if not ok]
+    warnings: tuple[str, ...] = ()
+    if is_nonfeed_profile and not f232g_present:
+        warnings = ('F232G research_quality not confirmed — capability run may be degraded',)
+    return _CapabilityResult(
+        allowed=all(ok for _, ok in checks),
+        why_blocked='; '.join(blocked) if blocked else '',
+        warnings=warnings,
+    )
+
+
+# --- Verdict Calculator ---------------------------------------------------------
+
+@dataclass(frozen=True, slots=True)
+class _VerdictResult:
+    """Complete verdict result with all derived fields."""
+    verdict: OneButtonVerdict
+    live_allowed: bool
+    capability_live_allowed: bool
+    feed_baseline_allowed: bool
+    reasons: tuple[str, ...]
+    warnings: tuple[str, ...]
+
+
+def _compute_verdict(
+    any_blocked: bool,
+    blocking: _BlockingCondition | None,
+    swap_policy_tier: str,
+    swap_gate_reason: str,
+    swap_gib: float,
+    uma_state: str,
+    capability: _CapabilityResult,
+    is_nonfeed_profile: bool,
+    f221_valid_count: int,
+    f221_total: int,
+) -> _VerdictResult:
+    """Compute final verdict and all derived flags from state."""
+    reasons: list[str] = []
+    warnings: list[str] = list(capability.warnings)
+
+    if any_blocked and blocking:
+        reasons.append(blocking.reason)
+        if swap_policy_tier == 'hard_block':
+            warnings.append(f'Hardware constrained: swap={swap_gib:.3f}GiB, tier={swap_policy_tier}')
+        return _VerdictResult(
+            verdict=blocking.verdict,
+            live_allowed=False,
+            capability_live_allowed=False,
+            feed_baseline_allowed=False,
+            reasons=tuple(reasons),
+            warnings=tuple(warnings),
+        )
+
+    # Not blocked
+    feed_baseline_allowed = True
+
+    if swap_policy_tier == 'diagnostic':
+        if capability.allowed:
+            verdict = OneButtonVerdict.READY_FOR_NONFEED_CAPABILITY_RUN
+            live_allowed = True
+        else:
+            verdict = OneButtonVerdict.RESTART_THEN_RUN
+            live_allowed = False
+        reasons.append(f'Swap elevated ({swap_gate_reason}) — restart recommended before clean run')
+        warnings.append(f'Hardware constrained: swap={swap_gib:.3f}GiB, tier={swap_policy_tier}')
+    elif capability.allowed:
+        verdict = OneButtonVerdict.READY_FOR_NONFEED_CAPABILITY_RUN
+        live_allowed = True
+        reasons.append(f'All nonfeed capability checks passed. UMA ok (swap={swap_gib:.3f}GiB, state={uma_state})')
+    else:
+        verdict = OneButtonVerdict.READY_FOR_FEED_BASELINE_ONLY
+        live_allowed = True
+        reasons.append(f'Feed baseline ready. Nonfeed capability blocked: {capability.why_blocked}')
+        if f221_valid_count < f221_total:
+            warnings.append(f'Only {f221_valid_count}/{f221_total} F221 artifacts valid')
+
+    return _VerdictResult(
+        verdict=verdict,
+        live_allowed=live_allowed,
+        capability_live_allowed=capability.allowed,
+        feed_baseline_allowed=feed_baseline_allowed,
+        reasons=tuple(reasons),
+        warnings=tuple(warnings),
+    )
+
+
+# --- Run Mode Dispatch Table -----------------------------------------------------
+
+@dataclass(frozen=True, slots=True)
+class _RunModeResult:
+    """Result of run mode calculation."""
+    can_run_live: bool
+    can_run_nonfeed_diag: bool
+    can_run_llm: bool
+    recommended_mode: str
+    max_safe_iter: int
+    max_safe_piv: int
+    investigation_reason: str
+
+
+# Module-level run mode base templates (swap_gib and why_blocked injected at call time)
+# Note: hard_block always has live_allowed=False, so we use False as the key.
+# The case (hard_block, True) is impossible and handled by the fallback below.
+_RUN_MODE_TEMPLATES: dict[tuple[str, bool], tuple[bool, bool, bool, str, int, int, str]] = {
+    # (tier, live_allowed) -> (can_run_live, can_run_nonfeed_diag, can_run_llm, recommended_mode, max_iter, max_piv, reason_template)
+    ('hard_block', False): (False, False, False, 'restart_first', 0, 0, 'swap_hard_block: swap={swap_gib:.3f}GiB > {diag_max}GiB'),
+    ('diagnostic', True): (True, True, False, 'dry_plan', 0, 0, 'swap_diagnostic: swap={swap_gib:.3f}GiB in ({clean_max}, {diag_max}]GiB'),
+    ('diagnostic', False): (False, True, False, 'dry_plan', 0, 0, 'swap_diagnostic: swap={swap_gib:.3f}GiB in ({clean_max}, {diag_max}]GiB'),
+    ('clean', True): (True, True, True, 'domain_live', 5, 20, 'clean_swap_full_capability'),
+    ('clean', False): (False, True, False, 'fix_artifacts', 0, 0, 'capability_blocked: {why_blocked}'),
+}
+
+
+def _compute_run_mode(
+    swap_policy_tier: str,
+    live_allowed: bool,
+    capability_live_allowed: bool,
+    why_nonfeed_capability_blocked: str,
+    provider_surface_ok: bool,
+    fallback_blocked: bool,
+    swap_gib: float,
+) -> _RunModeResult:
+    """Compute run mode recommendations from swap tier and capability state."""
+    # Lookup base mode template
+    template = _RUN_MODE_TEMPLATES.get((swap_policy_tier, live_allowed))
+    if template is None:
+        template = (False, True, False, 'dry_plan', 0, 0, 'unknown_swap_tier')
+    
+    can_run_live, can_run_diag, can_run_llm, recommended, max_iter, max_piv, reason_tpl = template
+    
+    # Build investigation reason with context
+    if '{swap_gib}' in reason_tpl:
+        investigation_reason = reason_tpl.format(swap_gib=swap_gib, clean_max=CLEAN_SWAP_MAX_GIB, diag_max=DIAGNOSTIC_SWAP_MAX_GIB)
+    elif '{why_blocked}' in reason_tpl:
+        investigation_reason = reason_tpl.format(why_blocked=why_nonfeed_capability_blocked)
+    else:
+        investigation_reason = reason_tpl
+
+    result = _RunModeResult(
+        can_run_live=can_run_live,
+        can_run_nonfeed_diag=can_run_diag,
+        can_run_llm=can_run_llm,
+        recommended_mode=recommended,
+        max_safe_iter=max_iter,
+        max_safe_piv=max_piv,
+        investigation_reason=investigation_reason,
+    )
+
+    # Override for surface issues
+    if not provider_surface_ok:
+        result = _RunModeResult(
+            can_run_live=False,
+            can_run_nonfeed_diag=result.can_run_nonfeed_diag,
+            can_run_llm=result.can_run_llm,
+            recommended_mode='fix_artifacts',
+            max_safe_iter=result.max_safe_iter,
+            max_safe_piv=result.max_safe_piv,
+            investigation_reason=f'provider_surface_broken: {result.investigation_reason}',
+        )
+    if fallback_blocked:
+        result = _RunModeResult(
+            can_run_live=False,
+            can_run_nonfeed_diag=result.can_run_nonfeed_diag,
+            can_run_llm=result.can_run_llm,
+            recommended_mode='fix_artifacts',
+            max_safe_iter=result.max_safe_iter,
+            max_safe_piv=result.max_safe_piv,
+            investigation_reason=f'fallback_schema_blocked: {result.investigation_reason}',
+        )
+
+    return result
+
+
+# --- Live Command Builder --------------------------------------------------------
+
+def _build_live_command(profile: str, query: str) -> dict:
+    """Build the live command dict with expected assertions and abort conditions."""
+    encoded_query = query.replace('"', '\\"')
+    return {
+        'command': (
+            f'cd /Users/vojtechhamada/PycharmProjects/Hledac && rtk proxy python '
+            f'-m hledac.universal.benchmarks.live_sprint_measurement '
+            f'--profile {profile} --query "{encoded_query}" --live '
+            f'--require-memory-ok --output-json <path> --output-md <path>'
+        ),
+        'expected_assertions': {
+            'benchmark_profile': profile,
+            'acquisition_profile': _get_acquisition_profile_for_benchmark(profile),
+            'run_quality_verdict': 'PASS_VALID_CAPABILITY_RUN or FAIL_NONFEED_EVIDENCE_MISSING',
+            'hardware_constrained': False,
+            'capability_synthesis': 'not None',
+            'next_sprint_seeds_generated': 'true or explicit skip_reason',
+            'public_terminal_stage_not_discovery_timeout': 'when bootstrap candidates exist',
+            'CT_raw_gt_0_accepted_eq_0_no_loss': False,
+            'nonfeed_priority_enabled': True,
+            'terminality_satisfied_cannot_produce_FAIL_TERMINALITY_UNSATISFIED': True,
+            'FAIL_NONFEED_EVIDENCE_MISSING_when_nonfeed_evidence_missing': True,
+            'runtime_accepted_findings_divergence_explicit': True,
+            'public_stage_counters_raw_count_source_present': True,
+        },
+        'abort_if': {
+            'swap_above_2G': f'swap > {CLEAN_SWAP_MAX_GIB}GiB',
+            'missing_f229_artifacts': 'any F229 structural check fails',
+            'missing_f223_required_artifacts': 'any F223 required artifact missing',
+            'fallback_acquisition_schema': 'fallback_schema detected in prelive reports',
+            'capability_synthesis_missing_in_exporter_self_test': 'capability_synthesis not in _generate_next_sprint_seeds',
+            'public_ct_provider_surface_missing': 'provider surface not OK',
+            'uma_state_critical_or_emergency': 'uma_state in (critical, emergency)',
+        },
+        'profile': profile,
+        'query': query,
+    }
+
+
+# --- Main Gate Function ----------------------------------------------------------
+
+def run_one_button_gate(
+    repo_root: Path,
+    profile: str,
+    query: str,
+    decision_gate_path: Path | None = None,
+    last_live_triage_path: Path | None = None,
+) -> OneButtonResult:
     """
     Run the one-button prelive gate.
 
     No live sprint. No model load. No network.
     """
     repo_root = Path(repo_root).resolve()
-    reasons: list[str] = []
-    warnings: list[str] = []
+
+    # --- Gather artifacts and state ---
     uma = _sample_uma()
     swap_gib = uma.get('swap_used_gib', 0.0)
     uma_state = uma.get('uma_state', 'unknown')
+
     f221_results, f221_missing = _check_all_f221_artifacts(repo_root)
+    f221_valid_count = sum(1 for r in f221_results if r.valid)
+    f221_total = len(f221_results)
     missing_f221 = [f'{r.probe_dir}/{r.filename}' for r in f221_missing]
-    f221_valid_count = sum((1 for r in f221_results if r.valid))
-    f221_artifacts = {'total': len(f221_results), 'valid': f221_valid_count, 'missing': len(f221_missing), 'details': [{'probe_dir': r.probe_dir, 'filename': r.filename, 'found': r.found, 'valid': r.valid, 'parse_error': r.parse_error} for r in f221_results]}
+
     _, cross_missing = _check_cross_sprint_artifacts(repo_root)
     missing_cross_sprint = [f'{r.probe_dir}/{r.filename}' for r in cross_missing]
+
     f223_results, f223_required_missing, f223_optional = _check_all_f223_artifacts(repo_root)
     missing_f223_required = [f'{r.probe_dir}/{r.filename}' for r in f223_required_missing]
-    f223_artifacts = {'required_total': len(f223_results), 'required_valid': sum((1 for r in f223_results if r.valid)), 'required_missing': len(f223_required_missing), 'optional_total': len(f223_optional), 'optional_valid': sum((1 for r in f223_optional if r.valid)), 'required_details': [{'logical_name': r.logical_name, 'probe_dir': r.probe_dir, 'filename': r.filename, 'found': r.found, 'valid': r.valid, 'parse_error': r.parse_error, 'resolved_path': r.resolved_path, 'alias_used': r.alias_used, 'searched_paths': r.searched_paths} for r in f223_results], 'optional_details': [{'logical_name': r.logical_name, 'probe_dir': r.probe_dir, 'filename': r.filename, 'found': r.found, 'valid': r.valid, 'parse_error': r.parse_error, 'resolved_path': r.resolved_path, 'alias_used': r.alias_used, 'searched_paths': r.searched_paths} for r in f223_optional]}
-    f223_optional_status = {'total': len(f223_optional), 'valid': sum((1 for r in f223_optional if r.valid))}
+
+    f221_artifacts = {
+        'total': f221_total,
+        'valid': f221_valid_count,
+        'missing': len(f221_missing),
+        'details': [
+            {'probe_dir': r.probe_dir, 'filename': r.filename, 'found': r.found,
+             'valid': r.valid, 'parse_error': r.parse_error}
+            for r in f221_results
+        ],
+    }
+
+    f223_artifacts = {
+        'required_total': len(f223_results),
+        'required_valid': sum(1 for r in f223_results if r.valid),
+        'required_missing': len(f223_required_missing),
+        'optional_total': len(f223_optional),
+        'optional_valid': sum(1 for r in f223_optional if r.valid),
+        'required_details': [
+            {'logical_name': r.logical_name, 'probe_dir': r.probe_dir, 'filename': r.filename,
+             'found': r.found, 'valid': r.valid, 'parse_error': r.parse_error,
+             'resolved_path': r.resolved_path, 'alias_used': r.alias_used,
+             'searched_paths': r.searched_paths}
+            for r in f223_results
+        ],
+        'optional_details': [
+            {'logical_name': r.logical_name, 'probe_dir': r.probe_dir, 'filename': r.filename,
+             'found': r.found, 'valid': r.valid, 'parse_error': r.parse_error,
+             'resolved_path': r.resolved_path, 'alias_used': r.alias_used,
+             'searched_paths': r.searched_paths}
+            for r in f223_optional
+        ],
+    }
+
+    f223_optional_status = {'total': len(f223_optional), 'valid': sum(1 for r in f223_optional if r.valid)}
+
     decision_data = _load_decision_gate(decision_gate_path)
     triage = _load_last_live_triage(last_live_triage_path)
+
     triage_verdict = triage.get('root_cause_class') if triage else None
     triage_another_live_useful = triage.get('another_live_useful') if triage else None
+
     provider_surface_ok = _is_provider_surface_ok(decision_data)
     fallback_blocked = _has_fallback_schema(decision_data)
-    if swap_gib <= CLEAN_SWAP_MAX_GIB:
-        swap_policy_tier = 'clean'
-        swap_gate_reason = f'swap={swap_gib:.3f}GiB <= {CLEAN_SWAP_MAX_GIB}GiB'
-    elif swap_gib <= DIAGNOSTIC_SWAP_MAX_GIB:
-        swap_policy_tier = 'diagnostic'
-        swap_gate_reason = f'swap={swap_gib:.3f}GiB in ({CLEAN_SWAP_MAX_GIB}GiB, {DIAGNOSTIC_SWAP_MAX_GIB}GiB]'
-    else:
-        swap_policy_tier = 'hard_block'
-        swap_gate_reason = f'swap={swap_gib:.3f}GiB > {DIAGNOSTIC_SWAP_MAX_GIB}GiB'
-    encoded_query = query.replace('"', '\\"')
-    live_command = {'command': f'cd /Users/vojtechhamada/PycharmProjects/Hledac && rtk proxy python -m hledac.universal.benchmarks.live_sprint_measurement --profile {profile} --query "{encoded_query}" --live --require-memory-ok --output-json <path> --output-md <path>', 'expected_assertions': {'benchmark_profile': profile, 'acquisition_profile': _get_acquisition_profile_for_benchmark(profile), 'run_quality_verdict': 'PASS_VALID_CAPABILITY_RUN or FAIL_NONFEED_EVIDENCE_MISSING', 'hardware_constrained': False, 'capability_synthesis': 'not None', 'next_sprint_seeds_generated': 'true or explicit skip_reason', 'public_terminal_stage_not_discovery_timeout': 'when bootstrap candidates exist', 'CT_raw_gt_0_accepted_eq_0_no_loss': False, 'nonfeed_priority_enabled': True, 'terminality_satisfied_cannot_produce_FAIL_TERMINALITY_UNSATISFIED': True, 'FAIL_NONFEED_EVIDENCE_MISSING_when_nonfeed_evidence_missing': True, 'runtime_accepted_findings_divergence_explicit': True, 'public_stage_counters_raw_count_source_present': True}, 'abort_if': {'swap_above_2G': f'swap > {CLEAN_SWAP_MAX_GIB}GiB', 'missing_f229_artifacts': 'any F229 structural check fails', 'missing_f223_required_artifacts': 'any F223 required artifact missing', 'fallback_acquisition_schema': 'fallback_schema detected in prelive reports', 'capability_synthesis_missing_in_exporter_self_test': 'capability_synthesis not in _generate_next_sprint_seeds', 'public_ct_provider_surface_missing': 'provider surface not OK', 'uma_state_critical_or_emergency': 'uma_state in (critical, emergency)'}, 'profile': profile, 'query': query}
-    is_nonfeed_profile = profile in ('nonfeed_diagnostic', 'nonfeed_diagnostic180', 'active300')
-    f232g_research_quality_present = False
-    if is_nonfeed_profile:
-        f231d_path = repo_root / 'probe_f231d_research_quality_v2' / 'research_quality_v2.json'
-        if f231d_path.exists():
-            try:
-                with open(f231d_path, encoding='utf-8') as fh:
-                    f231d_data = json.load(fh)
-                    if f231d_data.get('research_quality') is True:
-                        f232g_research_quality_present = True
-            except Exception:  # noqa: BLE001
-                pass
-    f233d_nonfeed_prelude_coverage = False
-    if is_nonfeed_profile:
-        f233d_path = repo_root / 'probe_f233d_nonfeed_prelude_coverage' / 'nonfeed_prelude_coverage.json'
-        if f233d_path.exists():
-            try:
-                with open(f233d_path, encoding='utf-8') as fh:
-                    f233d_data = json.load(fh)
-                    if f233d_data.get('coverage_present') is True:
-                        f233d_nonfeed_prelude_coverage = True
-            except Exception:  # noqa: BLE001
-                pass
     canonical_fallback_detected = bool(decision_data.get('fallback_schema_blocked', False)) if decision_data else False
-    capability_live_allowed = False
-    feed_baseline_allowed = False
-    why_nonfeed_capability_blocked = ''
-    any_run_blocked = False
-    if missing_f221:
-        any_run_blocked = True
-        verdict = OneButtonVerdict.DO_NOT_RUN_FIX_ARTIFACTS
-        live_allowed = False
-        capability_live_allowed = False
-        feed_baseline_allowed = False
-        reasons.append(f"Missing required F221 probe artifacts: {', '.join(missing_f221)}")
-        if missing_cross_sprint:
-            reasons.append(f"Also missing cross-sprint artifacts: {', '.join(missing_cross_sprint)}")
-    elif missing_f223_required:
-        any_run_blocked = True
-        verdict = OneButtonVerdict.DO_NOT_RUN_FIX_ARTIFACTS
-        live_allowed = False
-        capability_live_allowed = False
-        feed_baseline_allowed = False
-        reasons.append(f"Missing required F223 post-F223 probe artifacts: {', '.join(missing_f223_required)}")
-    elif fallback_blocked:
-        any_run_blocked = True
-        verdict = OneButtonVerdict.DO_NOT_RUN_CONTRACT
-        live_allowed = False
-        capability_live_allowed = False
-        feed_baseline_allowed = False
-        canonical_fallback_detected = True
-        why_nonfeed_capability_blocked = 'canonical_fallback_detected'
-        reasons.append('Fallback acquisition schema detected in prelive reports')
-    elif not provider_surface_ok:
-        any_run_blocked = True
-        verdict = OneButtonVerdict.DO_NOT_RUN_PROVIDER_SURFACE
-        live_allowed = False
-        capability_live_allowed = False
-        feed_baseline_allowed = False
-        why_nonfeed_capability_blocked = 'provider_surface_missing_or_failing'
-        reasons.append('Provider surface missing or failing (public bootstrap / CT resilience)')
-    elif uma_state in ('critical', 'emergency'):
-        any_run_blocked = True
-        verdict = OneButtonVerdict.DO_NOT_RUN_UNKNOWN
-        live_allowed = False
-        capability_live_allowed = False
-        feed_baseline_allowed = False
-        why_nonfeed_capability_blocked = f'uma_state={uma_state}'
-        reasons.append(f'UMA state {uma_state} — restart required before any run')
-        swap_policy_tier = 'hard_block'
-        swap_gate_reason = f'uma_state={uma_state}'
-    elif swap_gib > DIAGNOSTIC_SWAP_MAX_GIB:
-        any_run_blocked = True
-        verdict = OneButtonVerdict.DO_NOT_RUN_MEMORY_HARD_BLOCK
-        live_allowed = False
-        capability_live_allowed = False
-        feed_baseline_allowed = False
-        why_nonfeed_capability_blocked = f'swap={swap_gib:.3f}GiB_exceeds_hard_block_threshold'
-        reasons.append(f'Swap {swap_gib:.3f}GiB exceeds hard-block threshold ({DIAGNOSTIC_SWAP_MAX_GIB}GiB) — restart required before any run')
-        warnings.append(f'Hardware constrained: swap={swap_gib:.3f}GiB, tier={swap_policy_tier}')
-        swap_policy_tier = 'hard_block'
-    if not any_run_blocked:
-        feed_baseline_allowed = True
-        why_blocked_parts: list[str] = []
-        cap_provider_ok = provider_surface_ok
-        cap_no_fallback = not canonical_fallback_detected
-        cap_f232g_ok = f232g_research_quality_present
-        cap_f233d_ok = True
-        if not cap_provider_ok:
-            why_blocked_parts.append('provider_surface_degraded')
-        if not cap_no_fallback:
-            why_blocked_parts.append('canonical_fallback_detected')
-        if not cap_f232g_ok:
-            why_blocked_parts.append('f232g_research_quality_missing')
-        capability_live_allowed = cap_provider_ok and cap_no_fallback and cap_f232g_ok and cap_f233d_ok
-        if not capability_live_allowed:
-            why_nonfeed_capability_blocked = '; '.join(why_blocked_parts) if why_blocked_parts else 'unknown_capability_block'
-        if swap_policy_tier == 'diagnostic':
-            if capability_live_allowed:
-                verdict = OneButtonVerdict.READY_FOR_NONFEED_CAPABILITY_RUN
-                live_allowed = True
-            else:
-                verdict = OneButtonVerdict.RESTART_THEN_RUN
-                live_allowed = False
-            feed_baseline_allowed = True
-            reasons.append(f'Swap elevated ({swap_gate_reason}) — restart recommended before clean run')
-            warnings.append(f'Hardware constrained: swap={swap_gib:.3f}GiB, tier={swap_policy_tier}')
-        elif capability_live_allowed:
-            verdict = OneButtonVerdict.READY_FOR_NONFEED_CAPABILITY_RUN
-            live_allowed = True
-            reasons.append(f'All nonfeed capability checks passed. UMA ok (swap={swap_gib:.3f}GiB, state={uma_state})')
-            if not f232g_research_quality_present and is_nonfeed_profile:
-                warnings.append('F232G research_quality not confirmed — capability run may be degraded')
-        else:
-            verdict = OneButtonVerdict.READY_FOR_FEED_BASELINE_ONLY
-            live_allowed = True
-            capability_live_allowed = False
-            reasons.append(f'Feed baseline ready. Nonfeed capability blocked: {why_nonfeed_capability_blocked}')
-            if f221_valid_count < len(f221_results):
-                warnings.append(f'Only {f221_valid_count}/{len(f221_results)} F221 artifacts valid')
+
+    # --- Swap policy tier ---
+    swap_policy_tier, swap_gate_reason = _compute_swap_policy_tier(swap_gib, uma_state)
+
+    # --- Nonfeed profile flags ---
+    is_nonfeed_profile = profile in ('nonfeed_diagnostic', 'nonfeed_diagnostic180', 'active300')
+    f232g_present, f233d_present = _check_nonfeed_profile_flags(repo_root, is_nonfeed_profile)
+
+    # --- Blocking conditions ---
+    any_blocked, blocking = _evaluate_blocking_conditions(
+        missing_f221=missing_f221,
+        missing_cross_sprint=missing_cross_sprint,
+        missing_f223_required=missing_f223_required,
+        fallback_blocked=fallback_blocked,
+        provider_surface_ok=provider_surface_ok,
+        uma_state=uma_state,
+        swap_gib=swap_gib,
+    )
+
+    # Note: uma_state critical/emergency is already handled by _compute_swap_policy_tier
+
+    # --- Capability calculation ---
+    capability = _compute_capability_live_allowed(
+        provider_surface_ok=provider_surface_ok,
+        canonical_fallback_detected=canonical_fallback_detected,
+        f232g_present=f232g_present,
+        is_nonfeed_profile=is_nonfeed_profile,
+    )
+
+    # --- Verdict calculation ---
+    verdict_result = _compute_verdict(
+        any_blocked=any_blocked,
+        blocking=blocking,
+        swap_policy_tier=swap_policy_tier,
+        swap_gate_reason=swap_gate_reason,
+        swap_gib=swap_gib,
+        uma_state=uma_state,
+        capability=capability,
+        is_nonfeed_profile=is_nonfeed_profile,
+        f221_valid_count=f221_valid_count,
+        f221_total=f221_total,
+    )
+
+    # --- Triage warnings ---
+    reasons = list(verdict_result.reasons)
+    warnings = list(verdict_result.warnings)
+
     if triage_verdict:
         warnings.append(f'Last-live triage verdict: {triage_verdict}')
         if not triage_another_live_useful:
             warnings.append('Last-live triage: another live run may not be useful')
-    if swap_policy_tier == 'hard_block':
-        can_run_live = False
-        can_run_nonfeed_diag = False
-        can_run_llm = False
-        recommended_mode = 'restart_first'
-        max_safe_iter = 0
-        max_safe_piv = 0
-        investigation_reason = f'swap_hard_block: swap={swap_gib:.3f}GiB > {DIAGNOSTIC_SWAP_MAX_GIB}GiB'
-    elif swap_policy_tier == 'diagnostic':
-        can_run_live = live_allowed
-        can_run_nonfeed_diag = True
-        can_run_llm = False
-        recommended_mode = 'dry_plan'
-        max_safe_iter = 0
-        max_safe_piv = 0
-        investigation_reason = f'swap_diagnostic: swap={swap_gib:.3f}GiB in ({CLEAN_SWAP_MAX_GIB}, {DIAGNOSTIC_SWAP_MAX_GIB}]GiB'
-    elif swap_policy_tier == 'clean' and live_allowed:
-        can_run_live = True
-        can_run_nonfeed_diag = True
-        can_run_llm = True
-        recommended_mode = 'domain_live'
-        max_safe_iter = 5
-        max_safe_piv = 20
-        investigation_reason = 'clean_swap_full_capability'
-    elif swap_policy_tier == 'clean' and (not live_allowed):
-        can_run_live = False
-        can_run_nonfeed_diag = True
-        can_run_llm = False
-        recommended_mode = 'fix_artifacts'
-        max_safe_iter = 0
-        max_safe_piv = 0
-        investigation_reason = f'capability_blocked: {why_nonfeed_capability_blocked}'
-    else:
-        can_run_live = False
-        can_run_nonfeed_diag = True
-        can_run_llm = False
-        recommended_mode = 'dry_plan'
-        max_safe_iter = 0
-        max_safe_piv = 0
-        investigation_reason = 'unknown_swap_tier'
-    if not provider_surface_ok:
-        can_run_live = False
-        recommended_mode = 'fix_artifacts'
-        investigation_reason = f'provider_surface_broken: {investigation_reason}'
-    if fallback_blocked:
-        can_run_live = False
-        recommended_mode = 'fix_artifacts'
-        investigation_reason = f'fallback_schema_blocked: {investigation_reason}'
-    return OneButtonResult(verdict=verdict, live_allowed=live_allowed, reasons=reasons, warnings=warnings, uma=uma, f221_artifacts=f221_artifacts, missing_f221=missing_f221, missing_cross_sprint=missing_cross_sprint, f223_artifacts=f223_artifacts, missing_f223_required=missing_f223_required, f223_optional_status=f223_optional_status, provider_surface_ok=provider_surface_ok, fallback_schema_blocked=fallback_blocked, swap_policy_tier=swap_policy_tier, swap_gate_reason=swap_gate_reason, live_command=live_command, triage_verdict=triage_verdict, triage_another_live_useful=triage_another_live_useful, capability_live_allowed=capability_live_allowed, feed_baseline_allowed=feed_baseline_allowed, why_nonfeed_capability_blocked=why_nonfeed_capability_blocked, degraded_but_allowed=not provider_surface_ok and live_allowed, canonical_fallback_detected=canonical_fallback_detected, f232g_research_quality_present=f232g_research_quality_present, f233d_nonfeed_prelude_coverage=f233d_nonfeed_prelude_coverage, can_run_live_acquisition=can_run_live, can_run_nonfeed_diagnostic=can_run_nonfeed_diag, can_run_llm_synthesis=can_run_llm, recommended_mode=recommended_mode, max_safe_iterations=max_safe_iter, max_safe_pivots=max_safe_piv, investigation_reason=investigation_reason)
+
+    # --- Run mode calculation ---
+    run_mode = _compute_run_mode(
+        swap_policy_tier=swap_policy_tier,
+        live_allowed=verdict_result.live_allowed,
+        capability_live_allowed=verdict_result.capability_live_allowed,
+        why_nonfeed_capability_blocked=capability.why_blocked,
+        provider_surface_ok=provider_surface_ok,
+        fallback_blocked=fallback_blocked,
+        swap_gib=swap_gib,
+    )
+
+    # --- Build result ---
+    return OneButtonResult(
+        verdict=verdict_result.verdict,
+        live_allowed=verdict_result.live_allowed,
+        reasons=reasons,
+        warnings=warnings,
+        uma=uma,
+        f221_artifacts=f221_artifacts,
+        missing_f221=missing_f221,
+        missing_cross_sprint=missing_cross_sprint,
+        f223_artifacts=f223_artifacts,
+        missing_f223_required=missing_f223_required,
+        f223_optional_status=f223_optional_status,
+        provider_surface_ok=provider_surface_ok,
+        fallback_schema_blocked=fallback_blocked,
+        swap_policy_tier=swap_policy_tier,
+        swap_gate_reason=swap_gate_reason,
+        live_command=_build_live_command(profile, query),
+        triage_verdict=triage_verdict,
+        triage_another_live_useful=triage_another_live_useful,
+        capability_live_allowed=verdict_result.capability_live_allowed,
+        feed_baseline_allowed=verdict_result.feed_baseline_allowed,
+        why_nonfeed_capability_blocked=capability.why_blocked,
+        degraded_but_allowed=not provider_surface_ok and verdict_result.live_allowed,
+        canonical_fallback_detected=canonical_fallback_detected,
+        f232g_research_quality_present=f232g_present,
+        f233d_nonfeed_prelude_coverage=f233d_present,
+        can_run_live_acquisition=run_mode.can_run_live,
+        can_run_nonfeed_diagnostic=run_mode.can_run_nonfeed_diag,
+        can_run_llm_synthesis=run_mode.can_run_llm,
+        recommended_mode=run_mode.recommended_mode,
+        max_safe_iterations=run_mode.max_safe_iter,
+        max_safe_pivots=run_mode.max_safe_piv,
+        investigation_reason=run_mode.investigation_reason,
+    )
 
 def _render_markdown(result: OneButtonResult, profile: str, query: str) -> str:
     """Render one-button result as markdown report."""

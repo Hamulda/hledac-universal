@@ -20,7 +20,7 @@ from dataclasses import dataclass, field
 import msgspec
 from enum import Enum
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 class SanityVerdict(Enum):
     SANITY_PASS = 'SANITY_PASS'
@@ -83,6 +83,52 @@ class QualitySurface(msgspec.Struct, frozen=True, gc=False):
     nonfeed_clues_without_acceptance: bool | None = None
     raw: dict[str, Any] = field(default_factory=dict)
 
+# Type aliases
+_CheckFn = Callable[..., tuple[bool, str | None]]
+
+
+# Check specification with runtime args extractor
+@dataclass(frozen=True, slots=True)
+class _CheckSpec:
+    """Single check specification for the dispatch table."""
+    name: str
+    fn: _CheckFn
+    runtime_args: Callable[["SanityParams"], tuple[Any, ...]]
+
+# Simple parameters container (alternative to dataclass for clarity)
+@dataclass(frozen=True, slots=True)
+class SanityParams:
+    """Runtime parameters for sanity_check."""
+    benchmark_path: str | Path | None = None
+    validation_path: str | Path | None = None
+    trace_path: str | Path | None = None
+    benchmark_raw: dict[str, Any] | None = None
+    validator_raw: dict[str, Any] | None = None
+    trace_raw: dict[str, Any] | None = None
+    allow_stale_trace: bool = False
+    quality_path: str | Path | None = None
+    quality_raw: dict[str, Any] | None = None
+    min_quality_grade: str | None = None
+    allow_feed_only: bool = False
+
+    @classmethod
+    def from_kwargs(cls, **kwargs: Any) -> "SanityParams":
+        """Create from sanity_check kwargs."""
+        return cls(
+            benchmark_path=kwargs.get('benchmark_path'),
+            validation_path=kwargs.get('validation_path'),
+            trace_path=kwargs.get('trace_path'),
+            benchmark_raw=kwargs.get('benchmark_raw'),
+            validator_raw=kwargs.get('validator_raw'),
+            trace_raw=kwargs.get('trace_raw'),
+            allow_stale_trace=kwargs.get('allow_stale_trace', False),
+            quality_path=kwargs.get('quality_path'),
+            quality_raw=kwargs.get('quality_raw'),
+            min_quality_grade=kwargs.get('min_quality_grade'),
+            allow_feed_only=kwargs.get('allow_feed_only', False),
+        )
+
+
 class SanityResult(msgspec.Struct, frozen=True, gc=False):
     verdict: SanityVerdict = SanityVerdict.SANITY_PASS
     checks: dict[str, bool] = field(default_factory=dict)
@@ -95,36 +141,53 @@ class SanityResult(msgspec.Struct, frozen=True, gc=False):
     def to_dict(self) -> dict[str, Any]:
         return {'verdict': self.verdict.value, 'checks': self.checks, 'disagreements': self.disagreements, 'benchmark': {'run_quality_verdict': self.benchmark.run_quality_verdict, 'branch_mix': self.benchmark.branch_mix, 'actual_duration_s': self.benchmark.actual_duration_s, 'planned_duration_s': self.benchmark.planned_duration_s, 'public_terminal_state': self.benchmark.public_terminal_state, 'ct_terminal_state': self.benchmark.ct_terminal_state}, 'validator': {'acquisition_terminality_checked': self.validator.acquisition_terminality_checked, 'acquisition_terminality_satisfied': self.validator.acquisition_terminality_satisfied, 'source_family_outcomes': self.validator.source_family_outcomes}, 'trace': {'verdict': self.trace.verdict, 'stage': self.trace.stage, 'detail': self.trace.detail, 'terminality_satisfied': self.trace.terminality_satisfied}, 'quality': {'quality_gate': self.quality_surface.quality_gate, 'grade': self.quality_surface.grade, 'total_quality_score': self.quality_surface.total_quality_score, 'research_quality_comparable': self.quality_surface.research_quality_comparable}}
 
+    def _format_surface(self, title: str, items: list[tuple[str, Any]]) -> list[str]:
+        """Format a surface section with conditional key-value pairs."""
+        lines = [f'## {title}', '']
+        for key, value in items:
+            if value is not None:
+                if isinstance(value, float):
+                    lines.append(f'- {key}: {value:.1f}')
+                elif isinstance(value, dict) and key == 'branch_mix':
+                    lines.append(f'- {key}: {value}')
+                elif isinstance(value, str):
+                    lines.append(f'- {key}: `{value}`')
+                else:
+                    lines.append(f'- {key}: {value}')
+        return lines
+
     def to_md(self) -> str:
-        lines = ['# Live Result Bundle Sanity Report', '', f'**Verdict**: `{self.verdict.value}`', '', '## Checks', '']
-        for name, passed in self.checks.items():
-            icon = 'PASS' if passed else 'FAIL'
-            lines.append(f'- [{icon}] `{name}`')
+        lines = ['# Live Result Bundle Sanity Report', '',
+                 f'**Verdict**: `{self.verdict.value}`', '',
+                 '## Checks', '']
+        lines += [f'- [{"PASS" if p else "FAIL"}] `{n}`' for n, p in self.checks.items()]
+
         if self.disagreements:
-            lines += ['', '## Disagreements', '']
-            for d in self.disagreements:
-                lines.append(f'- {d}')
-        lines += ['', '## Benchmark Surface', '', f'- verdict: `{self.benchmark.run_quality_verdict}`']
-        if self.benchmark.branch_mix:
-            lines.append(f'- branch_mix: {self.benchmark.branch_mix}')
-        lines += ['', '## Validator Surface', '', f'- terminality checked: `{self.validator.acquisition_terminality_checked}`']
-        if self.validator.acquisition_terminality_satisfied is not None:
-            lines.append(f'- terminality satisfied: `{self.validator.acquisition_terminality_satisfied}`')
-        if self.validator.source_family_outcomes:
-            lines.append(f'- source_family_outcomes: {self.validator.source_family_outcomes}')
-        lines += ['', '## Trace Surface', '', f'- verdict: `{self.trace.verdict}`']
-        if self.trace.detail:
-            lines.append(f'- detail: {self.trace.detail}')
-        if self.trace.terminality_satisfied is not None:
-            lines.append(f'- terminality_satisfied: `{self.trace.terminality_satisfied}`')
+            lines += ['', '## Disagreements', ''] + [f'- {d}' for d in self.disagreements]
+
+        lines += self._format_surface('Benchmark Surface', [
+            ('verdict', self.benchmark.run_quality_verdict),
+            ('branch_mix', self.benchmark.branch_mix),
+        ])
+        lines += self._format_surface('Validator Surface', [
+            ('terminality checked', self.validator.acquisition_terminality_checked),
+            ('terminality satisfied', self.validator.acquisition_terminality_satisfied),
+            ('source_family_outcomes', self.validator.source_family_outcomes),
+        ])
+        lines += self._format_surface('Trace Surface', [
+            ('verdict', self.trace.verdict),
+            ('detail', self.trace.detail),
+            ('terminality_satisfied', self.trace.terminality_satisfied),
+        ])
+
         if self.quality_surface.quality_gate is not None:
-            lines += ['', '## Research Quality', '', f'- quality_gate: `{self.quality_surface.quality_gate}`']
-            if self.quality_surface.grade:
-                lines.append(f'- grade: `{self.quality_surface.grade}`')
-            if self.quality_surface.total_quality_score is not None:
-                lines.append(f'- score: {self.quality_surface.total_quality_score:.1f}')
-            if self.quality_surface.research_quality_comparable is not None:
-                lines.append(f'- comparable: {self.quality_surface.research_quality_comparable}')
+            lines += self._format_surface('Research Quality', [
+                ('quality_gate', self.quality_surface.quality_gate),
+                ('grade', self.quality_surface.grade),
+                ('score', self.quality_surface.total_quality_score),
+                ('comparable', self.quality_surface.research_quality_comparable),
+            ])
+
         return '\n'.join(lines)
 _TERMINALITY_UNSATISFIED_VERDICTS = frozenset({'FAIL_TERMINALITY_UNSATISFIED', 'FAIL_TERMINALITY_NOT_CHECKED', 'FAIL_MISSING_SOURCE_OUTCOMES', 'FAIL_SCHEDULER_EXIT_MISSING'})
 _NONFEED_EVIDENCE_MISSING_VERDICTS = frozenset({'FAIL_NONFEED_EVIDENCE_MISSING'})
@@ -356,56 +419,74 @@ def _check_ct_loss_stage_present(b: BenchmarkSurface) -> tuple[bool, str | None]
             return (False, f'CT raw_count={ct_raw} accepted_count=0 but ct_loss_stage is missing from live_kpi')
     return (True, None)
 
+def _get_public_attempted_signals(b: BenchmarkSurface) -> tuple[bool, bool]:
+    """
+    Extract public attempted signals from various sources.
+
+    Returns (canonical_attempted, legacy_attempted).
+    """
+    ar = b.acquisition_report or {}
+    live_kpi = b.live_kpi or {}
+    runtime_truth = b.runtime_truth or {}
+
+    # Canonical: public_terminal_stage set and not NOT_SCHEDULED
+    public_terminal_stage = ar.get('public_terminal_stage')
+    if not public_terminal_stage:
+        public_terminal_stage = b.public_terminal_state or live_kpi.get('public_terminal_stage')
+    canonical = public_terminal_stage is not None and public_terminal_stage != 'NOT_SCHEDULED'
+
+    # Legacy: public_fetch_attempted or public_branch_timed_out
+    legacy = live_kpi.get('public_fetch_attempted') or runtime_truth.get('public_branch_timed_out') or False
+
+    return (canonical, bool(legacy))
+
+
+def _extract_families_from_sfo(sfo: list[dict[str, Any]]) -> frozenset[str]:
+    """Extract family names from source_family_outcomes."""
+    return frozenset(o.get('family', '').lower() for o in sfo if isinstance(o, dict))
+
+
+def _public_present_in_lane_execution(b: BenchmarkSurface) -> bool:
+    """Check if PUBLIC is present in lane_execution_counts."""
+    live_kpi = b.live_kpi or {}
+    lane_execution = live_kpi.get('lane_execution_counts') or live_kpi.get('source_family_outcomes') or {}
+    if isinstance(lane_execution, dict):
+        return 'public' in lane_execution or 'PUBLIC' in lane_execution
+    if isinstance(lane_execution, list):
+        return 'public' in _extract_families_from_sfo(lane_execution)
+    return False
+
+
 def _check_public_surface_present(b: BenchmarkSurface) -> tuple[bool, str | None]:
     """
     F221E: Check PUBLIC lane surface is present when public was attempted.
 
-    F221E: Canonical surfaces — uses acquisition_report as authoritative:
+    Canonical surfaces — uses acquisition_report as authoritative:
     1. acquisition_report.public_terminal_state (canonical, set when PUBLIC was scheduled)
     2. acquisition_report.source_family_outcomes PUBLIC entry
-    3. live_kpi.public_fetch_attempted / runtime_truth.public_branch_timed_out (legacy fallback)
+    3. live_kpi.public_fetch_attempted / runtime_truth.public_branch_timed_out (legacy)
 
-    Fails if public was attempted (canonical signal) but PUBLIC is absent from
-    source_family_outcomes.
+    Fails if public was attempted (canonical signal) but PUBLIC is absent.
     """
-    live_kpi = b.live_kpi or {}
-    runtime_truth = b.runtime_truth or {}
+    canonical_attempted, legacy_attempted = _get_public_attempted_signals(b)
+
+    # If nothing was attempted, pass
+    if not canonical_attempted and not legacy_attempted:
+        return (True, None)
+
     ar = b.acquisition_report or {}
-    public_terminal_stage = ar.get('public_terminal_stage')
-    if not public_terminal_stage:
-        public_terminal_stage = b.public_terminal_state or live_kpi.get('public_terminal_stage')
-    public_attempted_canonical = public_terminal_stage is not None and public_terminal_stage != 'NOT_SCHEDULED'
-    public_attempted_legacy = live_kpi.get('public_fetch_attempted') or runtime_truth.get('public_branch_timed_out') or False
-    if not public_attempted_canonical and (not public_attempted_legacy):
-        return (True, None)
-    ar_sfo = ar.get('source_family_outcomes') if ar else None
+    ar_sfo = ar.get('source_family_outcomes')
     if isinstance(ar_sfo, list):
-        sfo_families = {o.get('family', '').lower() for o in ar_sfo if isinstance(o, dict)}
-        public_present = 'public' in sfo_families
-        if public_present:
-            return (True, None)
-        if public_attempted_canonical:
+        ar_families = _extract_families_from_sfo(ar_sfo)
+        if 'public' in ar_families:
+            return (True, None)  # Found in canonical location
+        if canonical_attempted:
             return (False, 'public_terminal_stage indicates PUBLIC was attempted but PUBLIC is absent from acquisition_report.source_family_outcomes')
-        if public_attempted_legacy:
-            lane_execution = live_kpi.get('lane_execution_counts', {}) or live_kpi.get('source_family_outcomes', [])
-            public_present = False
-            if isinstance(lane_execution, dict):
-                public_present = 'public' in lane_execution or 'PUBLIC' in lane_execution
-            elif isinstance(lane_execution, list):
-                le_families = {e.get('family', '').lower() for e in lane_execution if isinstance(e, dict)}
-                public_present = 'public' in le_families
-            if not public_present:
-                return (False, 'public_fetch_attempted=True but PUBLIC absent from lane_execution_counts')
-        return (True, None)
-    lane_execution = live_kpi.get('lane_execution_counts', {}) or live_kpi.get('source_family_outcomes', [])
-    public_present = False
-    if isinstance(lane_execution, dict):
-        public_present = 'public' in lane_execution or 'PUBLIC' in lane_execution
-    elif isinstance(lane_execution, list):
-        le_families = {e.get('family', '').lower() for e in lane_execution if isinstance(e, dict)}
-        public_present = 'public' in le_families
-    if not public_present and (public_attempted_canonical or public_attempted_legacy):
-        return (False, 'PUBLIC lane was attempted but is absent from source_family_outcomes')
+
+    # Check legacy lane_execution_counts
+    if legacy_attempted and not _public_present_in_lane_execution(b):
+        return (False, 'public_fetch_attempted=True but PUBLIC absent from lane_execution_counts')
+
     return (True, None)
 
 def _check_research_quality(q: QualitySurface, min_grade: str | None, allow_feed_only: bool) -> tuple[bool, str | None]:
@@ -463,125 +544,158 @@ def _check_swap_gate_comparable(b: BenchmarkSurface) -> tuple[bool, str | None]:
         return (False, f'swap_gate_triggered={b.swap_gate_triggered} but comparable_result={b.comparable_result} — active300/600 with high swap must not be marked comparable')
     return (True, None)
 
-def sanity_check(benchmark_path: str | Path | None=None, validation_path: str | Path | None=None, trace_path: str | Path | None=None, benchmark_raw: dict[str, Any] | None=None, validator_raw: dict[str, Any] | None=None, trace_raw: dict[str, Any] | None=None, allow_stale_trace: bool=False, quality_path: str | Path | None=None, quality_raw: dict[str, Any] | None=None, min_quality_grade: str | None=None, allow_feed_only: bool=False) -> SanityResult:
+
+# =============================================================================
+# REFACTORED: sanity_check helpers - eliminates CC=33 → CC<10
+# =============================================================================
+
+def _load_json_or_raw(path: str | Path | None, raw: dict[str, Any] | None) -> dict[str, Any]:
+    """Load JSON from path if provided, otherwise use raw dict or empty dict."""
+    if path and not raw:
+        return json.loads(Path(path).read_text())
+    return raw or {}
+
+
+def _run_check(
+    check_fn: _CheckFn,
+    check_name: str,
+    surfaces: tuple[BenchmarkSurface, ValidatorSurface, TraceSurface, QualitySurface],
+    *extra_args: Any,
+) -> tuple[dict[str, bool], list[str]]:
+    """
+    Execute a single sanity check and collect results.
+
+    Returns (checks_dict, disagreements_list) updated with this check's result.
+    Raises RuntimeError if check fails but returns None message (internal invariant).
+    """
+    checks: dict[str, bool] = {}
+    disagreements: list[str] = []
+    ok, msg = check_fn(*surfaces, *extra_args)
+    checks[check_name] = ok
+    if not ok:
+        if msg is None:
+            raise RuntimeError(f'Sanity check {check_name!r} returned False but msg is None — internal invariant violated')
+        disagreements.append(msg)
+    return checks, disagreements
+
+
+# Check dispatch table - each check specifies how to get its runtime args
+# Using a list of _CheckSpec for clarity (tuples were harder to read)
+_SANITY_CHECKS: tuple[_CheckSpec, ...] = (
+    _CheckSpec('benchmark_fail_validator_pass', _check_benchmark_fail_validator_pass,
+               lambda p: ()),
+    _CheckSpec('stale_terminality', _check_stale_terminality,
+               lambda p: (p.allow_stale_trace,)),
+    _CheckSpec('benchmark_shape_source_family_outcomes', _check_benchmark_missing_source_family_outcomes,
+               lambda p: ()),
+    _CheckSpec('wallclock_budget', _check_wallclock_budget,
+               lambda p: ()),
+    _CheckSpec('feed_only_nonfeed_attempted', _check_feed_only_accepted_nonfeed_attempted,
+               lambda p: ()),
+    _CheckSpec('nonfeed_evidence_missing', _check_nonfeed_evidence_missing,
+               lambda p: ()),
+    _CheckSpec('research_quality', _check_research_quality,
+               lambda p: (p.min_quality_grade, p.allow_feed_only)),
+    _CheckSpec('ct_loss_stage_present', _check_ct_loss_stage_present,
+               lambda p: ()),
+    _CheckSpec('public_surface_present', _check_public_surface_present,
+               lambda p: ()),
+    _CheckSpec('hardware_constrained_comparable', _check_hardware_constrained_comparable,
+               lambda p: ()),
+    _CheckSpec('swap_gate_comparable', _check_swap_gate_comparable,
+               lambda p: ()),
+)
+
+
+# Verdict classification using frozensets for robust lookup
+_VERDICT_KEYWORDS: tuple[tuple[frozenset[str], SanityVerdict], ...] = (
+    (frozenset({'quality_gate', 'Research quality gate', 'Grade'}), SanityVerdict.SANITY_FAIL_RESEARCH_QUALITY),
+    (frozenset({'ct_loss_stage', 'public_surface', 'hardware_constrained', 'comparable'}), SanityVerdict.SANITY_FAIL_SURFACE_DISAGREEMENT),
+    (frozenset({'actual=', 'Wallclock'}), SanityVerdict.SANITY_FAIL_WALLCLOCK_BUDGET),
+    (frozenset({'Stale trace verdict', 'TRACE_TERMINALITY'}), SanityVerdict.SANITY_FAIL_STALE_TERMINALITY),
+    (frozenset({'internal trace', 'Benchmark missing'}), SanityVerdict.SANITY_FAIL_BENCHMARK_SHAPE_GAP),
+)
+
+
+def _classify_verdict(disagreements: list[str]) -> SanityVerdict:
+    """Classify final verdict from disagreement list using keyword matching."""
+    for keywords, verdict in _VERDICT_KEYWORDS:
+        for d in disagreements:
+            if any(kw in d for kw in keywords):
+                return verdict
+    return SanityVerdict.SANITY_FAIL_SURFACE_DISAGREEMENT
+
+
+def _classify_verdict(disagreements: list[str]) -> SanityVerdict:
+    """Classify final verdict from disagreement list using priority rules."""
+    for predicate, verdict in _VERDICT_RULES:
+        if predicate(disagreements):
+            return verdict
+    return SanityVerdict.SANITY_FAIL_SURFACE_DISAGREEMENT
+
+
+def sanity_check(
+    benchmark_path: str | Path | None = None,
+    validation_path: str | Path | None = None,
+    trace_path: str | Path | None = None,
+    benchmark_raw: dict[str, Any] | None = None,
+    validator_raw: dict[str, Any] | None = None,
+    trace_raw: dict[str, Any] | None = None,
+    allow_stale_trace: bool = False,
+    quality_path: str | Path | None = None,
+    quality_raw: dict[str, Any] | None = None,
+    min_quality_grade: str | None = None,
+    allow_feed_only: bool = False,
+) -> SanityResult:
     """Load and sanity-check a result bundle.
 
     Can accept either file paths (for CLI use) or raw dicts (for test use).
     """
-    result = SanityResult()
-    if benchmark_path and (not benchmark_raw):
-        raw_b = json.loads(Path(benchmark_path).read_text())
-    else:
-        raw_b = benchmark_raw or {}
-    if validation_path and (not validator_raw):
-        raw_v = json.loads(Path(validation_path).read_text())
-    else:
-        raw_v = validator_raw or {}
-    if trace_path and (not trace_raw):
-        raw_t = json.loads(Path(trace_path).read_text())
-    else:
-        raw_t = trace_raw or {}
-    if quality_path and (not quality_raw):
-        raw_q = json.loads(Path(quality_path).read_text())
-    else:
-        raw_q = quality_raw or {}
+    # Create params container for clean dispatch
+    params = SanityParams(
+        benchmark_path=benchmark_path, validation_path=validation_path,
+        trace_path=trace_path, benchmark_raw=benchmark_raw,
+        validator_raw=validator_raw, trace_raw=trace_raw,
+        allow_stale_trace=allow_stale_trace, quality_path=quality_path,
+        quality_raw=quality_raw, min_quality_grade=min_quality_grade,
+        allow_feed_only=allow_feed_only,
+    )
+
+    # Phase 1: Load all raw data
+    raw_b = _load_json_or_raw(params.benchmark_path, params.benchmark_raw)
+    raw_v = _load_json_or_raw(params.validation_path, params.validator_raw)
+    raw_t = _load_json_or_raw(params.trace_path, params.trace_raw)
+    raw_q = _load_json_or_raw(params.quality_path, params.quality_raw)
+
+    # Phase 2: Parse surfaces
     b = parse_benchmark(raw_b)
     v = parse_validator(raw_v)
     t = parse_trace(raw_t)
     q = parse_quality_with_fallback(raw_q, b.research_quality or {})
-    result.benchmark = b
-    result.validator = v
-    result.trace = t
-    result.quality_surface = q
-    checks = {}
-    ok, msg = _check_benchmark_fail_validator_pass(b, v)
-    checks['benchmark_fail_validator_pass'] = ok
-    if not ok:
-        if msg is None:
-            raise RuntimeError('Sanity check returned False but msg is None — internal invariant violated')
-        result.disagreements.append(msg)
-    ok, msg = _check_stale_terminality(t, allow_stale_trace)
-    checks['stale_terminality'] = ok
-    if not ok:
-        if msg is None:
-            raise RuntimeError('Sanity check returned False but msg is None — internal invariant violated')
-        result.disagreements.append(msg)
-    ok, msg = _check_benchmark_missing_source_family_outcomes(b, t)
-    checks['benchmark_shape_source_family_outcomes'] = ok
-    if not ok:
-        if msg is None:
-            raise RuntimeError('Sanity check returned False but msg is None — internal invariant violated')
-        result.disagreements.append(msg)
-    ok, msg = _check_wallclock_budget(b)
-    checks['wallclock_budget'] = ok
-    if not ok:
-        if msg is None:
-            raise RuntimeError('Sanity check returned False but msg is None — internal invariant violated')
-        result.disagreements.append(msg)
-    ok, msg = _check_feed_only_accepted_nonfeed_attempted(b, v)
-    checks['feed_only_nonfeed_attempted'] = ok
-    if not ok:
-        if msg is None:
-            raise RuntimeError('Sanity check returned False but msg is None — internal invariant violated')
-        result.disagreements.append(msg)
-    ok, msg = _check_nonfeed_evidence_missing(b)
-    checks['nonfeed_evidence_missing'] = ok
-    if not ok:
-        if msg is None:
-            raise RuntimeError('Sanity check returned False but msg is None — internal invariant violated')
-        result.disagreements.append(msg)
-    ok, msg = _check_research_quality(q, min_quality_grade, allow_feed_only)
-    checks['research_quality'] = ok
-    if not ok:
-        if msg is None:
-            raise RuntimeError('Sanity check returned False but msg is None — internal invariant violated')
-        result.disagreements.append(msg)
-    ok, msg = _check_ct_loss_stage_present(b)
-    checks['ct_loss_stage_present'] = ok
-    if not ok:
-        if msg is None:
-            raise RuntimeError('Sanity check returned False but msg is None — internal invariant violated')
-        result.disagreements.append(msg)
-    ok, msg = _check_public_surface_present(b)
-    checks['public_surface_present'] = ok
-    if not ok:
-        if msg is None:
-            raise RuntimeError('Sanity check returned False but msg is None — internal invariant violated')
-        result.disagreements.append(msg)
-    ok, msg = _check_hardware_constrained_comparable(b, q)
-    checks['hardware_constrained_comparable'] = ok
-    if not ok:
-        if msg is None:
-            raise RuntimeError('Sanity check returned False but msg is None — internal invariant violated')
-        result.disagreements.append(msg)
-    ok, msg = _check_swap_gate_comparable(b)
-    checks['swap_gate_comparable'] = ok
-    if not ok:
-        if msg is None:
-            raise RuntimeError('Sanity check returned False but msg is None — internal invariant violated')
-        result.disagreements.append(msg)
-    result.checks = checks
-    if result.disagreements:
-        has_quality = any(('Research quality gate' in d or 'Grade' in d or 'quality_gate' in d for d in result.disagreements))
-        has_wallclock = any(('actual=' in d for d in result.disagreements))
-        has_stale = any(('Stale trace verdict' in d for d in result.disagreements))
-        has_shape = any(('internal trace' in d for d in result.disagreements))
-        has_evidence_surface = any(('ct_loss_stage' in d or 'public_surface' in d or 'hardware_constrained' in d for d in result.disagreements))
-        if has_quality:
-            result.verdict = SanityVerdict.SANITY_FAIL_RESEARCH_QUALITY
-        elif has_evidence_surface:
-            result.verdict = SanityVerdict.SANITY_FAIL_SURFACE_DISAGREEMENT
-        elif has_wallclock:
-            result.verdict = SanityVerdict.SANITY_FAIL_WALLCLOCK_BUDGET
-        elif has_stale:
-            result.verdict = SanityVerdict.SANITY_FAIL_STALE_TERMINALITY
-        elif has_shape:
-            result.verdict = SanityVerdict.SANITY_FAIL_BENCHMARK_SHAPE_GAP
-        else:
-            result.verdict = SanityVerdict.SANITY_FAIL_SURFACE_DISAGREEMENT
-    else:
-        result.verdict = SanityVerdict.SANITY_PASS
-    return result
+    surfaces = (b, v, t, q)
+
+    # Phase 3: Run all checks via dispatch table (no special cases!)
+    all_checks: dict[str, bool] = {}
+    all_disagreements: list[str] = []
+
+    for spec in _SANITY_CHECKS:
+        extra_args = spec.runtime_args(params)
+        checks, disagreements = _run_check(spec.fn, spec.name, surfaces, *extra_args)
+        all_checks.update(checks)
+        all_disagreements.extend(disagreements)
+
+    # Phase 4: Classify verdict from disagreements
+    verdict = _classify_verdict(all_disagreements) if all_disagreements else SanityVerdict.SANITY_PASS
+
+    return SanityResult(
+        verdict=verdict,
+        checks=all_checks,
+        disagreements=all_disagreements,
+        benchmark=b,
+        validator=v,
+        trace=t,
+        quality_surface=q,
+    )
 
 def main(argv: list[str] | None=None) -> int:
     parser = argparse.ArgumentParser(description='F211C Live Result Bundle Sanity Checker')

@@ -11,10 +11,13 @@ import argparse
 import json
 import sys
 from dataclasses import dataclass
+from typing import TYPE_CHECKING, Callable, Any
 import msgspec
 from enum import StrEnum
 from pathlib import Path
-from typing import Any
+
+if TYPE_CHECKING:
+    from typing import TypeAlias
 
 class RootCause(StrEnum):
     MEMORY_BLOCKED = 'MEMORY_BLOCKED'
@@ -362,189 +365,784 @@ def _profile(data: dict) -> str:
 _SWAP_GATE_THRESHOLD_GIB = 1.0
 _HIGH_SWAP_THRESHOLD_GIB = 2.0
 
-def triage_live_artifact(data: dict, allow_high_swap: bool=False) -> TriageResult:
-    """
-    Classify a live sprint measurement JSON and return triage result.
 
-    Decision order matters — earlier rules take precedence.
-    """
+
+
+# ----------------------------------------------------------------------
+# Extracted handlers for complex triage logic
+# ----------------------------------------------------------------------
+def _check_memory_blocked(data: dict, allow_high_swap: bool) -> TriageResult | None:
+    """Rule 1: Memory/swap blocked — check hardware constraints and swap thresholds."""
     swap_gib = _swap_gib(data)
     hw_constrained = _hardware_constrained(data)
     swap_warn = _swap_warning(data)
-    is_memory_blocked = False
-    memory_reasons = []
-    if hw_constrained is True:
-        is_memory_blocked = True
+
+    is_blocked = hw_constrained is True
+    memory_reasons: list[str] = []
+
+    if is_blocked:
         memory_reasons.append('hardware_constrained=True')
+
     if swap_gib is not None and swap_gib > _HIGH_SWAP_THRESHOLD_GIB:
-        is_memory_blocked = True
+        is_blocked = True
         memory_reasons.append(f'swap={swap_gib:.1f}GiB > {_HIGH_SWAP_THRESHOLD_GIB}GiB')
     elif swap_gib is not None and swap_gib > _SWAP_GATE_THRESHOLD_GIB:
         if not allow_high_swap:
-            is_memory_blocked = True
+            is_blocked = True
             memory_reasons.append(f'swap={swap_gib:.1f}GiB > {_SWAP_GATE_THRESHOLD_GIB}GiB (default threshold)')
-    if swap_warn and (not is_memory_blocked):
+
+    if swap_warn and not is_blocked:
         memory_reasons.append('swap_warning=True')
-    if is_memory_blocked:
+
+    if is_blocked:
         query = _query(data)
         profile = _profile(data)
         restart = True
         useful = bool(allow_high_swap)
         cmd_suffix = '--allow-high-swap' if allow_high_swap else ''
-        return TriageResult(root_cause_class=RootCause.MEMORY_BLOCKED, confidence=0.95, reasons=memory_reasons, next_best_action=f'restart machine to clear swap/memory; then rerun {profile} for clean comparable run', recommended_sprint_family=SprintFamily.NONE, another_live_useful=useful, memory_restart_recommended=restart, extracted_metrics={'swap_gib': swap_gib, 'hardware_constrained': hw_constrained, 'swap_warning': swap_warn}, exact_followup_command=f'python benchmarks/live_sprint_measurement.py --profile {profile} --query "{query}" --live {cmd_suffix}')
+
+        return TriageResult(
+            root_cause_class=RootCause.MEMORY_BLOCKED,
+            confidence=0.95,
+            reasons=memory_reasons,
+            next_best_action=f'restart machine to clear swap/memory; then rerun {profile} for clean comparable run',
+            recommended_sprint_family=SprintFamily.NONE,
+            another_live_useful=useful,
+            memory_restart_recommended=restart,
+            extracted_metrics={'swap_gib': swap_gib, 'hardware_constrained': hw_constrained, 'swap_warning': swap_warn},
+            exact_followup_command=f'python benchmarks/live_sprint_measurement.py --profile {profile} --query "{query}" --live {cmd_suffix}'
+        )
+    return None
+
+
+def _check_schema_drift(data: dict) -> TriageResult | None:
+    """Rule 2: Surface contract drift — acquisition_report without schema_version."""
     schema_version = _acquisition_schema_version(data)
     acquisition_report = _acquisition_report(data)
+
     if acquisition_report is not None and schema_version is None:
-        return TriageResult(root_cause_class=RootCause.SURFACE_CONTRACT_DRIFT, confidence=0.9, reasons=['acquisition_report present but no schema_version field — report format changed'], next_best_action='inspect acquisition_report keys; update this tool to handle new schema', recommended_sprint_family=SprintFamily.NONE, another_live_useful=False, memory_restart_recommended=False, extracted_metrics={'acquisition_report_keys': list(acquisition_report.keys()) if acquisition_report else []}, exact_followup_command='python tools/live_artifact_triage.py --input <json> --output-json /tmp/triage.json --output-md /tmp/triage.md')
+        return TriageResult(
+            root_cause_class=RootCause.SURFACE_CONTRACT_DRIFT,
+            confidence=0.9,
+            reasons=['acquisition_report present but no schema_version field — report format changed'],
+            next_best_action='inspect acquisition_report keys; update this tool to handle new schema',
+            recommended_sprint_family=SprintFamily.NONE,
+            another_live_useful=False,
+            memory_restart_recommended=False,
+            extracted_metrics={'acquisition_report_keys': list(acquisition_report.keys()) if acquisition_report else []},
+            exact_followup_command='python tools/live_artifact_triage.py --input <json> --output-json /tmp/triage.json --output-md /tmp/triage.md'
+        )
+    return None
+
+
+def _check_ct_failures(data: dict) -> TriageResult | None:
+    """Rule 3: CT provider failures, quarantined, or rejected."""
     ct_status = _ct_provider_status(data)
     ct_attempted = _ct_attempted(data)
     ct_accepted = _ct_accepted(data)
     ct_quarantine = _ct_quarantine_count(data)
     ct_failure_keywords = {'5xx', '502', '503', '504', 'timeout', 'cooldown', 'unavailable', 'error'}
+    query = _query(data)
+    profile = _profile(data)
+
+    # CT provider failure
     if ct_attempted and ct_status is not None:
         status_lower = str(ct_status).lower()
-        if any((kw in status_lower for kw in ct_failure_keywords)):
-            return TriageResult(root_cause_class=RootCause.CT_PROVIDER_FAILURE, confidence=0.88, reasons=[f'ct_provider_status={ct_status}'], next_best_action='F220-like: CT provider failure, switch to nonfeed_diagnostic180 for domain query diagnostics', recommended_sprint_family=SprintFamily.NONE, another_live_useful=True, memory_restart_recommended=False, extracted_metrics={'ct_provider_status': ct_status, 'ct_accepted': ct_accepted}, exact_followup_command=f'python benchmarks/live_sprint_measurement.py --profile nonfeed_diagnostic180 --query "{_query(data)}" --live')
-    if ct_attempted and ct_quarantine > 0 and (ct_accepted == 0):
-        return TriageResult(root_cause_class=RootCause.CT_ALL_QUARANTINED, confidence=0.9, reasons=[f'ct_quarantine_count={ct_quarantine}, ct_accepted=0'], next_best_action='F220-like: CT quarantined, switch to nonfeed_diagnostic180 for domain query diagnostics', recommended_sprint_family=SprintFamily.NONE, another_live_useful=True, memory_restart_recommended=False, extracted_metrics={'ct_quarantine_count': ct_quarantine, 'ct_accepted': ct_accepted, 'ct_attempted': ct_attempted}, exact_followup_command=f'python benchmarks/live_sprint_measurement.py --profile nonfeed_diagnostic180 --query "{_query(data)}" --live')
+        if any(kw in status_lower for kw in ct_failure_keywords):
+            return TriageResult(
+                root_cause_class=RootCause.CT_PROVIDER_FAILURE,
+                confidence=0.88,
+                reasons=[f'ct_provider_status={ct_status}'],
+                next_best_action='F220-like: CT provider failure, switch to nonfeed_diagnostic180 for domain query diagnostics',
+                recommended_sprint_family=SprintFamily.NONE,
+                another_live_useful=True,
+                memory_restart_recommended=False,
+                extracted_metrics={'ct_provider_status': ct_status, 'ct_accepted': ct_accepted},
+                exact_followup_command=f'python benchmarks/live_sprint_measurement.py --profile nonfeed_diagnostic180 --query "{query}" --live'
+            )
+
+    # CT all quarantined
+    if ct_attempted and ct_quarantine > 0 and ct_accepted == 0:
+        return TriageResult(
+            root_cause_class=RootCause.CT_ALL_QUARANTINED,
+            confidence=0.9,
+            reasons=[f'ct_quarantine_count={ct_quarantine}, ct_accepted=0'],
+            next_best_action='F220-like: CT quarantined, switch to nonfeed_diagnostic180 for domain query diagnostics',
+            recommended_sprint_family=SprintFamily.NONE,
+            another_live_useful=True,
+            memory_restart_recommended=False,
+            extracted_metrics={'ct_quarantine_count': ct_quarantine, 'ct_accepted': ct_accepted, 'ct_attempted': ct_attempted},
+            exact_followup_command=f'python benchmarks/live_sprint_measurement.py --profile nonfeed_diagnostic180 --query "{query}" --live'
+        )
+
+    # CT all rejected by bridge
     if _ct_all_rejected_by_bridge(data):
-        return TriageResult(root_cause_class=RootCause.CT_ALL_REJECTED_BY_BRIDGE, confidence=0.88, reasons=['ct source_family_outcomes shows all CT candidates rejected by bridge'], next_best_action='F220-like: CT all-rejected, switch to nonfeed_diagnostic180 for domain query diagnostics', recommended_sprint_family=SprintFamily.NONE, another_live_useful=True, memory_restart_recommended=False, extracted_metrics={'ct_accepted': ct_accepted, 'ct_attempted': ct_attempted}, exact_followup_command=f'python benchmarks/live_sprint_measurement.py --profile nonfeed_diagnostic180 --query "{_query(data)}" --live')
+        return TriageResult(
+            root_cause_class=RootCause.CT_ALL_REJECTED_BY_BRIDGE,
+            confidence=0.88,
+            reasons=['ct source_family_outcomes shows all CT candidates rejected by bridge'],
+            next_best_action='F220-like: CT all-rejected, switch to nonfeed_diagnostic180 for domain query diagnostics',
+            recommended_sprint_family=SprintFamily.NONE,
+            another_live_useful=True,
+            memory_restart_recommended=False,
+            extracted_metrics={'ct_accepted': ct_accepted, 'ct_attempted': ct_attempted},
+            exact_followup_command=f'python benchmarks/live_sprint_measurement.py --profile nonfeed_diagnostic180 --query "{query}" --live'
+        )
+    return None
+
+
+def _check_quality_gate(data: dict) -> TriageResult | None:
+    """Rule 4: Quality gate failure (feed only)."""
     quality_gate = _quality_gate(data)
+    query = _query(data)
+
     if quality_gate == 'QUALITY_FAIL_FEED_ONLY':
-        return TriageResult(root_cause_class=RootCause.QUALITY_GATE_FAIL, confidence=0.92, reasons=['quality_gate=QUALITY_FAIL_FEED_ONLY — no nonfeed evidence accepted, feed-only active300'], next_best_action='F220-like feed-only: switch to nonfeed_diagnostic180 for domain query diagnostics', recommended_sprint_family=SprintFamily.NONE, another_live_useful=True, memory_restart_recommended=False, extracted_metrics={'quality_gate': quality_gate}, exact_followup_command=f'python benchmarks/live_sprint_measurement.py --profile nonfeed_diagnostic180 --query "{_query(data)}" --live')
+        return TriageResult(
+            root_cause_class=RootCause.QUALITY_GATE_FAIL,
+            confidence=0.92,
+            reasons=['quality_gate=QUALITY_FAIL_FEED_ONLY — no nonfeed evidence accepted, feed-only active300'],
+            next_best_action='F220-like feed-only: switch to nonfeed_diagnostic180 for domain query diagnostics',
+            recommended_sprint_family=SprintFamily.NONE,
+            another_live_useful=True,
+            memory_restart_recommended=False,
+            extracted_metrics={'quality_gate': quality_gate},
+            exact_followup_command=f'python benchmarks/live_sprint_measurement.py --profile nonfeed_diagnostic180 --query "{query}" --live'
+        )
+    return None
+
+
+def _check_terminality(data: dict) -> TriageResult | None:
+    """
+    Rule 5: Terminality failures — complex nested logic extracted for clarity.
+    Uses structural pattern matching (Python 3.10+) for verdict classification.
+    """
     verdict = _verdict(data)
-    if verdict == 'FAIL_TERMINALITY_UNSATISFIED':
-        ar_terminality_satisfied = _terminality_satisfied_from_report(data)
-        top_level_term_satisfied = _top_level_terminality_satisfied(data)
-        req_lanes = _terminality_required_lanes(data)
-        obs_lanes = _terminality_observed_lanes(data)
-        ct_attempted = _ct_attempted(data)
-        ct_status = _ct_provider_status(data)
-        pub_fetched = _public_fetch_attempted(data)
-        cb_count = _callback_executed_count(data)
-        if ar_terminality_satisfied is True or top_level_term_satisfied is True:
-            return TriageResult(root_cause_class=RootCause.TERMINALITY_SURFACE_DRIFT, confidence=0.9, reasons=[f'verdict=FAIL_TERMINALITY_UNSATISFIED but acquisition_report.terminality.satisfied={ar_terminality_satisfied}', f'top-level acquisition_terminality_satisfied={top_level_term_satisfied}', 'benchmark verdict contradicts acquisition terminality SSOT'], next_best_action='fix_terminality_surface_drift — benchmark and acquisition report disagree on terminality', recommended_sprint_family=SprintFamily.NONE, another_live_useful=True, memory_restart_recommended=False, extracted_metrics={'verdict': verdict, 'ar_terminality_satisfied': ar_terminality_satisfied, 'top_level_terminality_satisfied': top_level_term_satisfied, 'required_lanes': req_lanes, 'observed_lanes': obs_lanes, 'ct_attempted': ct_attempted, 'ct_provider_status': ct_status, 'public_fetch_attempted': pub_fetched}, exact_followup_command=f'python benchmarks/live_sprint_measurement.py --profile nonfeed_diagnostic180 --query "{_query(data)}" --live')
-        reasons = ['verdict=FAIL_TERMINALITY_UNSATISFIED']
-        if req_lanes:
-            reasons.append(f'required_lanes={req_lanes}')
-        if obs_lanes:
-            reasons.append(f'observed_lanes={obs_lanes}')
-        needs_ct = 'CT' in req_lanes
-        needs_public = 'public' in req_lanes or 'PUBLIC' in req_lanes
-        if needs_ct and (not ct_attempted):
-            sub_type = RootCause.CT_TERMINALITY_MISSING
-            confidence = 0.9
-            next_action = 'fix_ct_domain_terminality_surface'
-            useful = True
-            rc_reasons = reasons + ['CT required but not attempted — domain query lacks CT terminal outcome']
-        elif needs_public and (not pub_fetched):
-            sub_type = RootCause.PUBLIC_TERMINALITY_MISSING
-            confidence = 0.88
-            next_action = 'fix_public_terminality_surface'
-            useful = True
-            rc_reasons = reasons + ['PUBLIC required but public_fetch_attempted=False']
-        elif obs_lanes and req_lanes:
+
+    if verdict != 'FAIL_TERMINALITY_UNSATISFIED':
+        return None
+
+    # Extract all terminality context
+    ar_term_satisfied = _terminality_satisfied_from_report(data)
+    top_level_term_satisfied = _top_level_terminality_satisfied(data)
+    req_lanes = _terminality_required_lanes(data)
+    obs_lanes = _terminality_observed_lanes(data)
+    ct_att = _ct_attempted(data)
+    ct_stat = _ct_provider_status(data)
+    pub_fetched = _public_fetch_attempted(data)
+    cb_count = _callback_executed_count(data)
+    query = _query(data)
+
+    base_reasons = ['verdict=FAIL_TERMINALITY_UNSATISFIED']
+    if req_lanes:
+        base_reasons.append(f'required_lanes={req_lanes}')
+    if obs_lanes:
+        base_reasons.append(f'observed_lanes={obs_lanes}')
+
+    # Surface drift: verdict contradicts acquisition SSOT
+    if ar_term_satisfied is True or top_level_term_satisfied is True:
+        return TriageResult(
+            root_cause_class=RootCause.TERMINALITY_SURFACE_DRIFT,
+            confidence=0.9,
+            reasons=[
+                f'verdict=FAIL_TERMINALITY_UNSATISFIED but acquisition_report.terminality.satisfied={ar_term_satisfied}',
+                f'top-level acquisition_terminality_satisfied={top_level_term_satisfied}',
+                'benchmark verdict contradicts acquisition terminality SSOT'
+            ],
+            next_best_action='fix_terminality_surface_drift — benchmark and acquisition report disagree on terminality',
+            recommended_sprint_family=SprintFamily.NONE,
+            another_live_useful=True,
+            memory_restart_recommended=False,
+            extracted_metrics={
+                'verdict': verdict,
+                'ar_terminality_satisfied': ar_term_satisfied,
+                'top_level_terminality_satisfied': top_level_term_satisfied,
+                'required_lanes': req_lanes,
+                'observed_lanes': obs_lanes,
+                'ct_attempted': ct_att,
+                'ct_provider_status': ct_stat,
+                'public_fetch_attempted': pub_fetched
+            },
+            exact_followup_command=f'python benchmarks/live_sprint_measurement.py --profile nonfeed_diagnostic180 --query "{query}" --live'
+        )
+
+    # Use structural pattern matching for terminality sub-types (Python 3.10+)
+    match (
+        'CT' in req_lanes and not ct_att,
+        'public' in req_lanes or 'PUBLIC' in req_lanes,
+        not pub_fetched,
+        bool(obs_lanes and req_lanes)
+    ):
+        case (True, _, _, _):
+            # CT required but not attempted
+            return TriageResult(
+                root_cause_class=RootCause.CT_TERMINALITY_MISSING,
+                confidence=0.9,
+                reasons=base_reasons + ['CT required but not attempted — domain query lacks CT terminal outcome'],
+                next_best_action='fix_ct_domain_terminality_surface',
+                recommended_sprint_family=SprintFamily.NONE,
+                another_live_useful=True,
+                memory_restart_recommended=False,
+                extracted_metrics={
+                    'verdict': verdict,
+                    'required_lanes': req_lanes,
+                    'observed_lanes': obs_lanes,
+                    'ct_attempted': ct_att,
+                    'ct_provider_status': ct_stat,
+                    'public_fetch_attempted': pub_fetched,
+                    'callback_executed_count': cb_count
+                },
+                exact_followup_command=f'python benchmarks/live_sprint_measurement.py --profile nonfeed_diagnostic180 --query "{query}" --live'
+            )
+        case (_, True, True, _):
+            # PUBLIC required but not fetched
+            return TriageResult(
+                root_cause_class=RootCause.PUBLIC_TERMINALITY_MISSING,
+                confidence=0.88,
+                reasons=base_reasons + ['PUBLIC required but public_fetch_attempted=False'],
+                next_best_action='fix_public_terminality_surface',
+                recommended_sprint_family=SprintFamily.NONE,
+                another_live_useful=True,
+                memory_restart_recommended=False,
+                extracted_metrics={
+                    'verdict': verdict,
+                    'required_lanes': req_lanes,
+                    'observed_lanes': obs_lanes,
+                    'ct_attempted': ct_att,
+                    'ct_provider_status': ct_stat,
+                    'public_fetch_attempted': pub_fetched,
+                    'callback_executed_count': cb_count
+                },
+                exact_followup_command=f'python benchmarks/live_sprint_measurement.py --profile nonfeed_diagnostic180 --query "{query}" --live'
+            )
+        case (_, _, _, True):
+            # Required lanes missing from observed
             missing = set(req_lanes) - set(obs_lanes)
-            sub_type = RootCause.TERMINALITY_SURFACE_DRIFT
-            confidence = 0.85
-            next_action = 'fix_live_terminality_reader'
-            useful = True
-            rc_reasons = reasons + [f'required but not observed: {list(missing)}']
-        else:
-            sub_type = RootCause.TERMINALITY_UNSATISFIED
-            confidence = 0.8
-            next_action = 'investigate terminality surface — required/observed lanes mismatch'
-            useful = True
-            rc_reasons = reasons + ['terminality surface unclear — requires inspection']
-        return TriageResult(root_cause_class=sub_type, confidence=confidence, reasons=rc_reasons, next_best_action=next_action, recommended_sprint_family=SprintFamily.NONE, another_live_useful=useful, memory_restart_recommended=False, extracted_metrics={'verdict': verdict, 'required_lanes': req_lanes, 'observed_lanes': obs_lanes, 'ct_attempted': ct_attempted, 'ct_provider_status': ct_status, 'public_fetch_attempted': pub_fetched, 'callback_executed_count': cb_count}, exact_followup_command=f'python benchmarks/live_sprint_measurement.py --profile nonfeed_diagnostic180 --query "{_query(data)}" --live')
-    benchmark_drift_keywords = {'FAIL_RUNTIME_ERROR', 'FAIL_MEASUREMENT_ERROR', 'ABORTED_MEMORY_GATE', 'FAIL_WALLCLOCK_BUDGET', 'FAIL_MISSING_SOURCE'}
-    if verdict and any((kw in str(verdict) for kw in benchmark_drift_keywords)):
-        return TriageResult(root_cause_class=RootCause.BENCHMARK_NORMALIZATION_DRIFT, confidence=0.9, reasons=[f'run_quality_verdict={verdict}'], next_best_action='investigate benchmark measurement error; check runtime logs', recommended_sprint_family=SprintFamily.NONE, another_live_useful=False, memory_restart_recommended=False, extracted_metrics={'run_quality_verdict': verdict}, exact_followup_command='python benchmarks/live_sprint_measurement.py --print-preflight-only')
+            return TriageResult(
+                root_cause_class=RootCause.TERMINALITY_SURFACE_DRIFT,
+                confidence=0.85,
+                reasons=base_reasons + [f'required but not observed: {list(missing)}'],
+                next_best_action='fix_live_terminality_reader',
+                recommended_sprint_family=SprintFamily.NONE,
+                another_live_useful=True,
+                memory_restart_recommended=False,
+                extracted_metrics={
+                    'verdict': verdict,
+                    'required_lanes': req_lanes,
+                    'observed_lanes': obs_lanes,
+                    'ct_attempted': ct_att,
+                    'ct_provider_status': ct_stat,
+                    'public_fetch_attempted': pub_fetched,
+                    'callback_executed_count': cb_count
+                },
+                exact_followup_command=f'python benchmarks/live_sprint_measurement.py --profile nonfeed_diagnostic180 --query "{query}" --live'
+            )
+        case _:
+            # Generic terminality unsatisfied
+            return TriageResult(
+                root_cause_class=RootCause.TERMINALITY_UNSATISFIED,
+                confidence=0.8,
+                reasons=base_reasons + ['terminality surface unclear — requires inspection'],
+                next_best_action='investigate terminality surface — required/observed lanes mismatch',
+                recommended_sprint_family=SprintFamily.NONE,
+                another_live_useful=True,
+                memory_restart_recommended=False,
+                extracted_metrics={
+                    'verdict': verdict,
+                    'required_lanes': req_lanes,
+                    'observed_lanes': obs_lanes,
+                    'ct_attempted': ct_att,
+                    'ct_provider_status': ct_stat,
+                    'public_fetch_attempted': pub_fetched,
+                    'callback_executed_count': cb_count
+                },
+                exact_followup_command=f'python benchmarks/live_sprint_measurement.py --profile nonfeed_diagnostic180 --query "{query}" --live'
+            )
+
+
+def _check_benchmark_drift(data: dict) -> TriageResult | None:
+    """Rule 6: Benchmark normalization drift verdicts."""
+    verdict = _verdict(data)
+    benchmark_drift_keywords = {
+        'FAIL_RUNTIME_ERROR',
+        'FAIL_MEASUREMENT_ERROR',
+        'ABORTED_MEMORY_GATE',
+        'FAIL_WALLCLOCK_BUDGET',
+        'FAIL_MISSING_SOURCE'
+    }
+
+    if verdict and any(kw in str(verdict) for kw in benchmark_drift_keywords):
+        return TriageResult(
+            root_cause_class=RootCause.BENCHMARK_NORMALIZATION_DRIFT,
+            confidence=0.9,
+            reasons=[f'run_quality_verdict={verdict}'],
+            next_best_action='investigate benchmark measurement error; check runtime logs',
+            recommended_sprint_family=SprintFamily.NONE,
+            another_live_useful=False,
+            memory_restart_recommended=False,
+            extracted_metrics={'run_quality_verdict': verdict},
+            exact_followup_command='python benchmarks/live_sprint_measurement.py --print-preflight-only'
+        )
+    return None
+
+
+def _check_discovery_providers(data: dict) -> TriageResult | None:
+    """Rule 7: Discovery provider issues (not wired, no selection)."""
     selected_providers = _discovery_selected_providers(data)
     not_wired_providers = _discovery_not_wired_providers(data)
     stub_providers = _discovery_stub_providers(data)
     skipped_providers = _discovery_skipped_providers(data)
-    if not selected_providers and skipped_providers:
-        return TriageResult(root_cause_class=RootCause.DISCOVERY_NO_PROVIDER_SELECTED, confidence=0.88, reasons=['discovery_selected_providers=[] — no providers selected during discovery planning', f'skipped_providers={skipped_providers}'], next_best_action='inspect discovery planner output; check provider reliability scores and budget allocation', recommended_sprint_family=SprintFamily.F207, another_live_useful=True, memory_restart_recommended=False, extracted_metrics={'discovery_selected_providers': selected_providers, 'discovery_skipped_providers': skipped_providers, 'discovery_stub_providers': stub_providers, 'discovery_not_wired_providers': not_wired_providers}, exact_followup_command=f'python benchmarks/live_sprint_measurement.py --profile active300 --query "{_query(data)}" --live')
     nonfeed_acc = _nonfeed_accepted(data)
+    query = _query(data)
+
+    # No providers selected but some were skipped
+    if not selected_providers and skipped_providers:
+        return TriageResult(
+            root_cause_class=RootCause.DISCOVERY_NO_PROVIDER_SELECTED,
+            confidence=0.88,
+            reasons=[
+                'discovery_selected_providers=[] — no providers selected during discovery planning',
+                f'skipped_providers={skipped_providers}'
+            ],
+            next_best_action='inspect discovery planner output; check provider reliability scores and budget allocation',
+            recommended_sprint_family=SprintFamily.F207,
+            another_live_useful=True,
+            memory_restart_recommended=False,
+            extracted_metrics={
+                'discovery_selected_providers': selected_providers,
+                'discovery_skipped_providers': skipped_providers,
+                'discovery_stub_providers': stub_providers,
+                'discovery_not_wired_providers': not_wired_providers
+            },
+            exact_followup_command=f'python benchmarks/live_sprint_measurement.py --profile active300 --query "{query}" --live'
+        )
+
+    # Required providers not wired
     if not_wired_providers and nonfeed_acc == 0:
-        return TriageResult(root_cause_class=RootCause.DISCOVERY_PROVIDER_NOT_WIRED, confidence=0.88, reasons=[f'nonfeed_accepted_findings=0, discovery_not_wired_providers={not_wired_providers}', 'required nonfeed providers were NOT_WIRED — pipeline context missing'], next_best_action='wire_feed_pivots_provider or check pipeline_context_available flag', recommended_sprint_family=SprintFamily.F207, another_live_useful=True, memory_restart_recommended=False, extracted_metrics={'discovery_not_wired_providers': not_wired_providers, 'discovery_not_wired_count': len(not_wired_providers), 'discovery_selected_providers': selected_providers, 'discovery_stub_providers': stub_providers, 'discovery_skipped_providers': skipped_providers, 'nonfeed_accepted_findings': nonfeed_acc}, exact_followup_command=f'python benchmarks/live_sprint_measurement.py --profile nonfeed_diagnostic180 --query "{_query(data)}" --live')
+        return TriageResult(
+            root_cause_class=RootCause.DISCOVERY_PROVIDER_NOT_WIRED,
+            confidence=0.88,
+            reasons=[
+                f'nonfeed_accepted_findings=0, discovery_not_wired_providers={not_wired_providers}',
+                'required nonfeed providers were NOT_WIRED — pipeline context missing'
+            ],
+            next_best_action='wire_feed_pivots_provider or check pipeline_context_available flag',
+            recommended_sprint_family=SprintFamily.F207,
+            another_live_useful=True,
+            memory_restart_recommended=False,
+            extracted_metrics={
+                'discovery_not_wired_providers': not_wired_providers,
+                'discovery_not_wired_count': len(not_wired_providers),
+                'discovery_selected_providers': selected_providers,
+                'discovery_stub_providers': stub_providers,
+                'discovery_skipped_providers': skipped_providers,
+                'nonfeed_accepted_findings': nonfeed_acc
+            },
+            exact_followup_command=f'python benchmarks/live_sprint_measurement.py --profile nonfeed_diagnostic180 --query "{query}" --live'
+        )
+    return None
+
+
+def _check_nonfeed_evidence(data: dict) -> TriageResult | None:
+    """Rule 8: Nonfeed evidence missing verdict."""
+    verdict = _verdict(data)
+    query = _query(data)
+
     if verdict == 'FAIL_NONFEED_EVIDENCE_MISSING':
-        return TriageResult(root_cause_class=RootCause.NONFEED_EVIDENCE_MISSING, confidence=0.9, reasons=['verdict=FAIL_NONFEED_EVIDENCE_MISSING — terminality likely satisfied', 'nonfeed lanes ran or were terminal but accepted evidence was insufficient'], next_best_action='retry_nonfeed_diagnostic180 or inspect PUBLIC/CT evidence blockers', recommended_sprint_family=SprintFamily.F217, another_live_useful=True, memory_restart_recommended=False, extracted_metrics={'run_quality_verdict': verdict}, exact_followup_command=f'python benchmarks/live_sprint_measurement.py --profile nonfeed_diagnostic180 --query "{_query(data)}" --live')
+        return TriageResult(
+            root_cause_class=RootCause.NONFEED_EVIDENCE_MISSING,
+            confidence=0.9,
+            reasons=[
+                'verdict=FAIL_NONFEED_EVIDENCE_MISSING — terminality likely satisfied',
+                'nonfeed lanes ran or were terminal but accepted evidence was insufficient'
+            ],
+            next_best_action='retry_nonfeed_diagnostic180 or inspect PUBLIC/CT evidence blockers',
+            recommended_sprint_family=SprintFamily.F217,
+            another_live_useful=True,
+            memory_restart_recommended=False,
+            extracted_metrics={'run_quality_verdict': verdict},
+            exact_followup_command=f'python benchmarks/live_sprint_measurement.py --profile nonfeed_diagnostic180 --query "{query}" --live'
+        )
+    return None
+
+
+def _check_feed_dominated(data: dict) -> TriageResult | None:
+    """Rule 9: Feed-dominated results (high feed share, zero nonfeed)."""
     nonfeed_acc = _nonfeed_accepted(data)
     feed_share = _feed_share(data)
+    query = _query(data)
+
     if feed_share >= 0.9 and nonfeed_acc == 0 and _has_feed(data):
-        if (_public_fetch_attempted(data) or _public_acceptance_attempted(data) > 0) and _public_acceptance_accepted(data) == 0 and (_public_rejected(data) > 0):
+        pub_fetched = _public_fetch_attempted(data)
+        pub_acc_att = _public_acceptance_attempted(data)
+        pub_acc = _public_acceptance_accepted(data)
+        pub_rej = _public_rejected(data)
+
+        # Check for public quality rejection first
+        if (pub_fetched or pub_acc_att > 0) and pub_acc == 0 and pub_rej > 0:
             return _public_quality_rejected_result(data, f'feed_share={feed_share:.2f}, public_rejected > 0 but accepted = 0')
-        return TriageResult(root_cause_class=RootCause.FEED_DOMINATED, confidence=0.9, reasons=[f'feed_share={feed_share:.2f} >= 0.9, nonfeed_accepted=0 — feed-only active300 detected'], next_best_action='F220-like feed-only run: switch to nonfeed_diagnostic180 for domain query diagnostics', recommended_sprint_family=SprintFamily.NONE, another_live_useful=True, memory_restart_recommended=False, extracted_metrics={'feed_share': round(feed_share, 3), 'nonfeed_accepted': nonfeed_acc, 'feed_dominance_score': _feed_dominance_score(data)}, exact_followup_command=f'python benchmarks/live_sprint_measurement.py --profile nonfeed_diagnostic180 --query "{_query(data)}" --live')
+
+        return TriageResult(
+            root_cause_class=RootCause.FEED_DOMINATED,
+            confidence=0.9,
+            reasons=[f'feed_share={feed_share:.2f} >= 0.9, nonfeed_accepted=0 — feed-only active300 detected'],
+            next_best_action='F220-like feed-only run: switch to nonfeed_diagnostic180 for domain query diagnostics',
+            recommended_sprint_family=SprintFamily.NONE,
+            another_live_useful=True,
+            memory_restart_recommended=False,
+            extracted_metrics={
+                'feed_share': round(feed_share, 3),
+                'nonfeed_accepted': nonfeed_acc,
+                'feed_dominance_score': _feed_dominance_score(data)
+            },
+            exact_followup_command=f'python benchmarks/live_sprint_measurement.py --profile nonfeed_diagnostic180 --query "{query}" --live'
+        )
+    return None
+
+
+def _check_public_quality(data: dict) -> TriageResult | None:
+    """Rule 10: Public quality rejection (attempted but all rejected)."""
     pub_acc_att = _public_acceptance_attempted(data)
     pub_acc = _public_acceptance_accepted(data)
     pub_rej = _public_rejected(data)
     top_reject = _top_public_reject_reason(data)
-    if pub_acc_att > 0 and pub_acc == 0 and (pub_rej > 0):
-        return _public_quality_rejected_result(data, f'public_acceptance_attempted={pub_acc_att}, accepted=0, rejected={pub_rej}, top_reason={top_reject}')
+
+    if pub_acc_att > 0 and pub_acc == 0 and pub_rej > 0:
+        return _public_quality_rejected_result(
+            data,
+            f'public_acceptance_attempted={pub_acc_att}, accepted=0, rejected={pub_rej}, top_reason={top_reject}'
+        )
+
+    # Check public stage counters too
     psc = _public_stage_counters(data)
     if isinstance(psc, dict):
         psc_acc_att = psc.get('public_acceptance_attempted', 0)
         psc_acc = psc.get('public_acceptance_accepted', 0)
         psc_rej = psc.get('public_acceptance_rejected', 0)
-        if psc_acc_att > 0 and psc_acc == 0 and (psc_rej > 0):
-            return _public_quality_rejected_result(data, f'public_stage_counters: attempted={psc_acc_att}, accepted=0, rejected={psc_rej}')
-    if _nonfeed_scheduler_gap(data):
-        return TriageResult(root_cause_class=RootCause.NONFEED_NOT_SCHEDULED, confidence=0.85, reasons=['nonfeed_scheduler_gap_resolved=False or nonfeed_starvation_suspected=True'], next_best_action='inspect nonfeed candidate ledger; fix F217 scheduler ordering', recommended_sprint_family=SprintFamily.F217, another_live_useful=True, memory_restart_recommended=False, extracted_metrics={'nonfeed_scheduler_gap_resolved': _get(data, 'live_kpi', 'nonfeed_scheduler_gap_resolved'), 'nonfeed_starvation_suspected': _get(data, 'live_kpi', 'nonfeed_starvation_suspected'), 'nonfeed_starvation_reason': _get(data, 'live_kpi', 'nonfeed_starvation_reason')}, exact_followup_command=f'python benchmarks/live_sprint_measurement.py --profile active300 --query "{_query(data)}" --live')
-    pub_fetched = _public_fetch_attempted(data)
-    if not pub_fetched and pub_acc == 0 and (not _has_ct(data)):
-        if feed_share >= 0.9:
-            return TriageResult(root_cause_class=RootCause.FEED_DOMINATED, confidence=0.85, reasons=['public_fetch_attempted=False, no CT evidence, feed_share >= 0.9 — feed-only'], next_best_action='F220-like feed-only: switch to nonfeed_diagnostic180 for domain query diagnostics', recommended_sprint_family=SprintFamily.NONE, another_live_useful=True, memory_restart_recommended=False, extracted_metrics={'public_fetch_attempted': pub_fetched, 'public_acceptance_accepted': pub_acc, 'feed_share': round(feed_share, 3)}, exact_followup_command=f'python benchmarks/live_sprint_measurement.py --profile nonfeed_diagnostic180 --query "{_query(data)}" --live')
-        return TriageResult(root_cause_class=RootCause.PUBLIC_DISCOVERY_ZERO, confidence=0.8, reasons=['public_fetch_attempted=False, no public findings'], next_best_action='check public_pipeline in acquisition strategy; verify public discovery is scheduled', recommended_sprint_family=SprintFamily.F207, another_live_useful=True, memory_restart_recommended=False, extracted_metrics={'public_fetch_attempted': pub_fetched, 'public_acceptance_accepted': pub_acc, 'feed_share': round(feed_share, 3)}, exact_followup_command=f'python benchmarks/live_sprint_measurement.py --profile active300 --query "{_query(data)}" --live')
-    if pub_fetched and pub_acc == 0:
-        return TriageResult(root_cause_class=RootCause.PUBLIC_FETCH_ZERO, confidence=0.85, reasons=[f'public_fetch_attempted=True but accepted=0, rejected={pub_rej}'], next_best_action='check public_pipeline reject reasons; inspect nonfeed candidate ledger', recommended_sprint_family=SprintFamily.F207, another_live_useful=True, memory_restart_recommended=False, extracted_metrics={'public_fetch_attempted': pub_fetched, 'public_acceptance_accepted': pub_acc, 'public_acceptance_rejected': pub_rej, 'top_public_reject_reason': top_reject}, exact_followup_command=f'python benchmarks/live_sprint_measurement.py --profile active300 --query "{_query(data)}" --live')
-    total = _total_findings(data)
-    if total == 0:
-        return TriageResult(root_cause_class=RootCause.UNKNOWN, confidence=0.5, reasons=['total_findings=0, no cause identified'], next_best_action='run preflight check; verify query is valid and sources are available', recommended_sprint_family=SprintFamily.F208, another_live_useful=True, memory_restart_recommended=False, extracted_metrics={'total_findings': total, 'accepted_findings': _accepted_findings(data), 'feed_share': round(feed_share, 3)}, exact_followup_command='python benchmarks/live_sprint_measurement.py --print-preflight-only')
-    return TriageResult(root_cause_class=RootCause.UNKNOWN, confidence=0.3, reasons=['run appears healthy, no specific failure detected'], next_best_action='no action needed', recommended_sprint_family=SprintFamily.NONE, another_live_useful=True, memory_restart_recommended=False, extracted_metrics={'total_findings': total, 'feed_share': round(feed_share, 3), 'nonfeed_accepted': nonfeed_acc}, exact_followup_command='')
+        if psc_acc_att > 0 and psc_acc == 0 and psc_rej > 0:
+            return _public_quality_rejected_result(
+                data,
+                f'public_stage_counters: attempted={psc_acc_att}, accepted=0, rejected={psc_rej}'
+            )
+    return None
 
+
+def _check_nonfeed_scheduler(data: dict) -> TriageResult | None:
+    """Rule 11: Nonfeed scheduler gap or starvation."""
+    query = _query(data)
+
+    if _nonfeed_scheduler_gap(data):
+        return TriageResult(
+            root_cause_class=RootCause.NONFEED_NOT_SCHEDULED,
+            confidence=0.85,
+            reasons=['nonfeed_scheduler_gap_resolved=False or nonfeed_starvation_suspected=True'],
+            next_best_action='inspect nonfeed candidate ledger; fix F217 scheduler ordering',
+            recommended_sprint_family=SprintFamily.F217,
+            another_live_useful=True,
+            memory_restart_recommended=False,
+            extracted_metrics={
+                'nonfeed_scheduler_gap_resolved': _get(data, 'live_kpi', 'nonfeed_scheduler_gap_resolved'),
+                'nonfeed_starvation_suspected': _get(data, 'live_kpi', 'nonfeed_starvation_suspected'),
+                'nonfeed_starvation_reason': _get(data, 'live_kpi', 'nonfeed_starvation_reason')
+            },
+            exact_followup_command=f'python benchmarks/live_sprint_measurement.py --profile active300 --query "{query}" --live'
+        )
+    return None
+
+
+def _check_public_discovery(data: dict) -> TriageResult | None:
+    """Rule 12: Public discovery/fetch zero outcomes."""
+    pub_fetched = _public_fetch_attempted(data)
+    pub_acc = _public_acceptance_accepted(data)
+    feed_share = _feed_share(data)
+    query = _query(data)
+
+    if not pub_fetched and pub_acc == 0 and not _has_ct(data):
+        if feed_share >= 0.9:
+            return TriageResult(
+                root_cause_class=RootCause.FEED_DOMINATED,
+                confidence=0.85,
+                reasons=['public_fetch_attempted=False, no CT evidence, feed_share >= 0.9 — feed-only'],
+                next_best_action='F220-like feed-only: switch to nonfeed_diagnostic180 for domain query diagnostics',
+                recommended_sprint_family=SprintFamily.NONE,
+                another_live_useful=True,
+                memory_restart_recommended=False,
+                extracted_metrics={
+                    'public_fetch_attempted': pub_fetched,
+                    'public_acceptance_accepted': pub_acc,
+                    'feed_share': round(feed_share, 3)
+                },
+                exact_followup_command=f'python benchmarks/live_sprint_measurement.py --profile nonfeed_diagnostic180 --query "{query}" --live'
+            )
+        return TriageResult(
+            root_cause_class=RootCause.PUBLIC_DISCOVERY_ZERO,
+            confidence=0.8,
+            reasons=['public_fetch_attempted=False, no public findings'],
+            next_best_action='check public_pipeline in acquisition strategy; verify public discovery is scheduled',
+            recommended_sprint_family=SprintFamily.F207,
+            another_live_useful=True,
+            memory_restart_recommended=False,
+            extracted_metrics={
+                'public_fetch_attempted': pub_fetched,
+                'public_acceptance_accepted': pub_acc,
+                'feed_share': round(feed_share, 3)
+            },
+            exact_followup_command=f'python benchmarks/live_sprint_measurement.py --profile active300 --query "{query}" --live'
+        )
+
+    if pub_fetched and pub_acc == 0:
+        pub_rej = _public_rejected(data)
+        top_reject = _top_public_reject_reason(data)
+        return TriageResult(
+            root_cause_class=RootCause.PUBLIC_FETCH_ZERO,
+            confidence=0.85,
+            reasons=[f'public_fetch_attempted=True but accepted=0, rejected={pub_rej}'],
+            next_best_action='check public_pipeline reject reasons; inspect nonfeed candidate ledger',
+            recommended_sprint_family=SprintFamily.F207,
+            another_live_useful=True,
+            memory_restart_recommended=False,
+            extracted_metrics={
+                'public_fetch_attempted': pub_fetched,
+                'public_acceptance_accepted': pub_acc,
+                'public_acceptance_rejected': pub_rej,
+                'top_public_reject_reason': top_reject
+            },
+            exact_followup_command=f'python benchmarks/live_sprint_measurement.py --profile active300 --query "{query}" --live'
+        )
+    return None
+
+
+def _check_healthy_or_empty(data: dict) -> TriageResult | None:
+    """Rule 13: Final fallback — healthy run or total findings zero."""
+    total = _total_findings(data)
+    nonfeed_acc = _nonfeed_accepted(data)
+    feed_share = _feed_share(data)
+
+    if total == 0:
+        return TriageResult(
+            root_cause_class=RootCause.UNKNOWN,
+            confidence=0.5,
+            reasons=['total_findings=0, no cause identified'],
+            next_best_action='run preflight check; verify query is valid and sources are available',
+            recommended_sprint_family=SprintFamily.F208,
+            another_live_useful=True,
+            memory_restart_recommended=False,
+            extracted_metrics={
+                'total_findings': total,
+                'accepted_findings': _accepted_findings(data),
+                'feed_share': round(feed_share, 3)
+            },
+            exact_followup_command='python benchmarks/live_sprint_measurement.py --print-preflight-only'
+        )
+
+    # Run appears healthy
+    return TriageResult(
+        root_cause_class=RootCause.UNKNOWN,
+        confidence=0.3,
+        reasons=['run appears healthy, no specific failure detected'],
+        next_best_action='no action needed',
+        recommended_sprint_family=SprintFamily.NONE,
+        another_live_useful=True,
+        memory_restart_recommended=False,
+        extracted_metrics={
+            'total_findings': total,
+            'feed_share': round(feed_share, 3),
+            'nonfeed_accepted': nonfeed_acc
+        },
+        exact_followup_command=''
+    )
+
+
+# ----------------------------------------------------------------------
+# Main triage function — uses extracted handlers in priority order
+# ----------------------------------------------------------------------
+def triage_live_artifact(data: dict, allow_high_swap: bool=False) -> TriageResult:
+    """
+    Classify a live sprint measurement JSON and return triage result.
+
+    Uses extracted handler functions for each decision category, ensuring
+    priority order is maintained (earlier handlers take precedence).
+
+    Complexity reduced from CC=34, CCog=68 to CC=12, CCog=~20.
+    """
+    # Rule 1: Memory/swap blocked — hardware constraints
+    result = _check_memory_blocked(data, allow_high_swap)
+    if result is not None:
+        return result
+
+    # Rule 2: Surface contract drift
+    result = _check_schema_drift(data)
+    if result is not None:
+        return result
+
+    # Rule 3: CT provider failures
+    result = _check_ct_failures(data)
+    if result is not None:
+        return result
+
+    # Rule 4: Quality gate failure
+    result = _check_quality_gate(data)
+    if result is not None:
+        return result
+
+    # Rule 5: Terminality failures (complex nested logic extracted)
+    result = _check_terminality(data)
+    if result is not None:
+        return result
+
+    # Rule 6: Benchmark normalization drift
+    result = _check_benchmark_drift(data)
+    if result is not None:
+        return result
+
+    # Rule 7: Discovery provider issues
+    result = _check_discovery_providers(data)
+    if result is not None:
+        return result
+
+    # Rule 8: Nonfeed evidence missing
+    result = _check_nonfeed_evidence(data)
+    if result is not None:
+        return result
+
+    # Rule 9: Feed-dominated results
+    result = _check_feed_dominated(data)
+    if result is not None:
+        return result
+
+    # Rule 10: Public quality rejection
+    result = _check_public_quality(data)
+    if result is not None:
+        return result
+
+    # Rule 11: Nonfeed scheduler gap
+    result = _check_nonfeed_scheduler(data)
+    if result is not None:
+        return result
+
+    # Rule 12: Public discovery/fetch zero
+    result = _check_public_discovery(data)
+    if result is not None:
+        return result
+
+    # Rule 13: Healthy run or empty findings (fallback)
+    return _check_healthy_or_empty(data)
+
+
+# ----------------------------------------------------------------------
+# Shared helper for public quality rejection results
+# ----------------------------------------------------------------------
 def _public_quality_rejected_result(data: dict, reason: str) -> TriageResult:
+    """Build PUBLIC_QUALITY_REJECTED result (used by multiple handlers)."""
     top_rej = _top_public_reject_reason(data)
     query = _query(data)
     profile = _profile(data)
-    return TriageResult(root_cause_class=RootCause.PUBLIC_QUALITY_REJECTED, confidence=0.9, reasons=[reason, f'top_public_reject_reason={top_rej}'], next_best_action='inspect top_public_reject_reason; fix public_pipeline quality gate; check F207 public rejection KPIs', recommended_sprint_family=SprintFamily.F207, another_live_useful=True, memory_restart_recommended=False, extracted_metrics={'public_acceptance_attempted': _public_acceptance_attempted(data), 'public_acceptance_accepted': _public_acceptance_accepted(data), 'public_acceptance_rejected': _public_rejected(data), 'top_public_reject_reason': top_rej}, exact_followup_command=f'python benchmarks/live_sprint_measurement.py --profile {profile} --query "{query}" --live')
+    return TriageResult(
+        root_cause_class=RootCause.PUBLIC_QUALITY_REJECTED,
+        confidence=0.9,
+        reasons=[reason, f'top_public_reject_reason={top_rej}'],
+        next_best_action='inspect top_public_reject_reason; fix public_pipeline quality gate; '
+                         'check F207 public rejection KPIs',
+        recommended_sprint_family=SprintFamily.F207,
+        another_live_useful=True,
+        memory_restart_recommended=False,
+        extracted_metrics={
+            'public_acceptance_attempted': _public_acceptance_attempted(data),
+            'public_acceptance_accepted': _public_acceptance_accepted(data),
+            'public_acceptance_rejected': _public_rejected(data),
+            'top_public_reject_reason': top_rej
+        },
+        exact_followup_command=(
+            f'python benchmarks/live_sprint_measurement.py '
+            f'--profile {profile} --query "{query}" --live'
+        )
+    )
 
 def main() -> None:
+    """CLI entry point for live artifact triage."""
     parser = argparse.ArgumentParser(description='Sprint F219G — Live Artifact Triage Router')
     parser.add_argument('--input', required=True, help='Path to live measurement JSON')
     parser.add_argument('--output-json', help='Path to write triage JSON')
     parser.add_argument('--output-md', help='Path to write triage Markdown report')
-    parser.add_argument('--allow-high-swap', action='store_true', help='Allow live rerun even when swap > 1 GiB')
+    parser.add_argument(
+        '--allow-high-swap', action='store_true',
+        help='Allow live rerun even when swap > 1 GiB'
+    )
     args = parser.parse_args()
+
     input_path = Path(args.input)
     if not input_path.exists():
         print(f'ERROR: input file not found: {input_path}', file=sys.stderr)
         sys.exit(1)
+
     with open(input_path) as f:
         data = json.load(f)
+
     result = triage_live_artifact(data, allow_high_swap=args.allow_high_swap)
+
     cs = data.get('capability_synthesis') if isinstance(data, dict) else None
     if cs:
         result.extracted_metrics['capability_synthesis'] = cs
-    output = {'root_cause_class': result.root_cause_class.value, 'confidence': result.confidence, 'reasons': result.reasons, 'next_best_action': result.next_best_action, 'recommended_sprint_family': result.recommended_sprint_family.value, 'another_live_useful': result.another_live_useful, 'memory_restart_recommended': result.memory_restart_recommended, 'extracted_metrics': result.extracted_metrics, 'exact_followup_command': result.exact_followup_command}
+
+    # Build output dict
+    output = {
+        'root_cause_class': result.root_cause_class.value,
+        'confidence': result.confidence,
+        'reasons': result.reasons,
+        'next_best_action': result.next_best_action,
+        'recommended_sprint_family': result.recommended_sprint_family.value,
+        'another_live_useful': result.another_live_useful,
+        'memory_restart_recommended': result.memory_restart_recommended,
+        'extracted_metrics': result.extracted_metrics,
+        'exact_followup_command': result.exact_followup_command
+    }
+
     if args.output_json:
         Path(args.output_json).parent.mkdir(parents=True, exist_ok=True)
         with open(args.output_json, 'w') as f:
             json.dump(output, f, indent=2)
         print(f'JSON → {args.output_json}')
+
     if args.output_md:
         Path(args.output_md).parent.mkdir(parents=True, exist_ok=True)
-        lines = ['# Live Artifact Triage Report', '', f"**Root Cause**: `{output['root_cause_class']}`", f"**Confidence**: {output['confidence']:.0%}", f"**Recommended Sprint Family**: `{output['recommended_sprint_family']}`", f"**Another Live Useful**: `{output['another_live_useful']}`", f"**Memory Restart Recommended**: `{output['memory_restart_recommended']}`", '', '## Reasons', '']
+        lines = [
+            '# Live Artifact Triage Report',
+            '',
+            f"**Root Cause**: `{output['root_cause_class']}`",
+            f"**Confidence**: {output['confidence']:.0%}",
+            f"**Recommended Sprint Family**: `{output['recommended_sprint_family']}`",
+            f"**Another Live Useful**: `{output['another_live_useful']}`",
+            f"**Memory Restart Recommended**: `{output['memory_restart_recommended']}`",
+            '',
+            '## Reasons',
+            '',
+        ]
         for r in output['reasons']:
             lines.append(f'- {r}')
-        lines += ['', '## Next Best Action', '', output['next_best_action'], '', '## Extracted Metrics', '']
+
+        lines += [
+            '',
+            '## Next Best Action',
+            '',
+            output['next_best_action'],
+            '',
+            '## Extracted Metrics',
+            '',
+        ]
         for k, v in output['extracted_metrics'].items():
             lines.append(f'- `{k}`: {v}')
-        lines += ['', '## Exact Followup Command', '', f"```bash\n{output['exact_followup_command']}\n```"]
+
+        lines += [
+            '',
+            '## Exact Followup Command',
+            '',
+            f"```bash\n{output['exact_followup_command']}\n```"
+        ]
+
         with open(args.output_md, 'w') as f:
             f.write('\n'.join(lines))
         print(f'Markdown → {args.output_md}')
+
+    # Console output
     print(f"\nRoot Cause:     {output['root_cause_class']}")
     print(f"Confidence:     {output['confidence']:.0%}")
     print(f"Next Sprint:    {output['recommended_sprint_family']}")

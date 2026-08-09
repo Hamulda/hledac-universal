@@ -394,29 +394,24 @@ def _skip_doctype(raw: str, i: int) -> int:
     """Skip DOCTYPE declaration including nested brackets."""
     i += 9  # skip '<!doctype'
     depth = 0
-    in_quote = False
     quote_char: str | None = None
     n = len(raw)
     while i < n:
         ch = raw[i]
-        if not in_quote:
-            if ch in ('"', "'"):
-                in_quote = True
-                quote_char = ch
-            elif ch == '[':
-                depth += 1
-            elif ch == ']':
-                if depth > 0:
-                    depth -= 1
-                    if depth == 0 and i + 1 < n and (raw[i + 1] == '>'):
-                        i += 2
-                        return i
-            elif ch == '>' and depth == 0:
-                i += 1
-                return i
-        elif ch == quote_char:
-            in_quote = False
-            quote_char = None
+        if quote_char is not None:
+            if ch == quote_char:
+                quote_char = None
+        elif ch in ('"', "'"):
+            quote_char = ch
+        elif ch == '[':
+            depth += 1
+        elif ch == ']':
+            if depth > 0:
+                depth -= 1
+                if depth == 0 and i + 1 < n and raw[i + 1] == '>':
+                    return i + 2
+        elif ch == '>' and depth == 0:
+            return i + 1
         i += 1
     return i
 
@@ -460,6 +455,21 @@ def _handle_entity_ref(raw: str, i: int, result: list[str]) -> int:
     return i + 1
 
 
+def _is_doctype_start(raw: str, i: int, n: int) -> bool:
+    """Check if position i starts a DOCTYPE declaration."""
+    return n - i >= 9 and raw[i] == '<' and raw[i:i + 9].lower() == '<!doctype'
+
+
+def _is_entity_decl_start(raw: str, i: int, n: int) -> bool:
+    """Check if position i starts an ENTITY declaration."""
+    return n - i >= 9 and raw[i] == '<' and raw[i:i + 9].lower() == '<!entity'
+
+
+def _is_entity_ref(raw: str, i: int, n: int) -> bool:
+    """Check if position i is an entity reference (not numeric)."""
+    return n - i > 1 and raw[i] == '&' and raw[i + 1] != '#'
+
+
 def _safe_sanitize_xml(raw: str) -> str:
     """
     Produce a sanitized copy of XML text safe for re-parsing.
@@ -479,21 +489,20 @@ def _safe_sanitize_xml(raw: str) -> str:
     Returns the original input unchanged if no DOCTYPE/ENTITY declarations
     are present (fast path).
     """
-    if '<!doctype' not in raw.lower() and '<!entity' not in raw.lower() and ('&' not in raw):
+    if '<!doctype' not in raw.lower() and '<!entity' not in raw.lower() and '&' not in raw:
         return raw
     result: list[str] = []
     i = 0
     n = len(raw)
     while i < n:
-        c = raw[i]
-        if c == '<' and raw[i:i + 9].lower() == '<!doctype':
+        if _is_doctype_start(raw, i, n):
             i = _skip_doctype(raw, i)
-        elif c == '<' and raw[i:i + 9].lower() == '<!entity':
+        elif _is_entity_decl_start(raw, i, n):
             i = _skip_entity_decl(raw, i)
-        elif c == '&' and i + 1 < n and (raw[i + 1] != '#'):
+        elif _is_entity_ref(raw, i, n):
             i = _handle_entity_ref(raw, i, result)
         else:
-            result.append(c)
+            result.append(raw[i])
             i += 1
     return ''.join(result)
 
@@ -561,31 +570,32 @@ def _parse_rss_author(item_children: list) -> str:
     return ''
 
 
-def _build_entry_from_rss_fields(
+def _dedup_and_create_entry(
     title: str,
     link: str,
     description: str,
     pub_date_raw: str,
     guid_raw: str,
-    is_permalink: bool | None,
     entry_author: str,
     content_encoded: str,
     feed_url: str,
     seen_keys: set[str],
     retrieved_ts: float,
 ) -> FeedEntryHit | None:
-    """Build FeedEntryHit from parsed RSS field values."""
+    """Build FeedEntryHit from RSS field values with deduplication."""
     published_ts = _parse_published_ts(pub_date_raw)
-    summary = content_encoded or description
-    dedup_key = _entry_dedup_key(link or guid_raw, title, pub_date_raw, None, None)
+    # Normalize values to avoid repeated 'or' expressions
+    entry_url = link or guid_raw or ''
+    summary = content_encoded or description or ''
+    dedup_key = _entry_dedup_key(entry_url, title, pub_date_raw, None, None)
     if dedup_key in seen_keys:
         return None
     seen_keys.add(dedup_key)
     return FeedEntryHit(
         feed_url=feed_url,
-        entry_url=link or guid_raw or '',
+        entry_url=entry_url,
         title=title or '',
-        summary=summary or '',
+        summary=summary,
         published_raw=pub_date_raw or '',
         published_ts=published_ts,
         source=_SOURCE,
@@ -595,6 +605,10 @@ def _build_entry_from_rss_fields(
         rich_content=content_encoded or '',
         entry_author=entry_author,
     )
+
+
+# Keep old name as alias for compatibility
+_build_entry_from_rss_fields = _dedup_and_create_entry
 
 
 def _parse_rss_item(item: Any, feed_url: str, seen_keys: set[str], retrieved_ts: float) -> FeedEntryHit | None:
@@ -660,6 +674,38 @@ def _parse_rss(root, feed_url: str, retrieved_ts: float) -> list[FeedEntryHit]:
         entry.feed_language = channel_language
     return entries
 
+def _parse_atom_entry(entry, feed_url: str, retrieved_ts: float, feed_title: str, feed_language: str, seen_keys: set[str], rank: int) -> FeedEntryHit | None:
+    """Parse a single Atom entry element and return FeedEntryHit or None if duplicate."""
+    title = _text_of(_find_first_child(entry, 'title'))
+    summary = _text_of(_find_first_child(entry, 'summary'))
+    content_el = _find_first_child(entry, 'content')
+    rich_content = _text_of(content_el) or ''
+    published_raw = _text_of(_find_first_child(entry, 'published')) or _text_of(_find_first_child(entry, 'updated'))
+    published_ts = _parse_published_ts(published_raw)
+    author_el = _find_first_child(entry, 'author')
+    entry_author = _text_of(_find_first_child(author_el, 'name')) if author_el is not None else ''
+    entry_url = _extract_atom_entry_url(entry)
+    dedup_key = _entry_dedup_key(entry_url, title, published_raw, None, None)
+    if dedup_key in seen_keys:
+        return None
+    seen_keys.add(dedup_key)
+    return FeedEntryHit(feed_url=feed_url, entry_url=entry_url or '', title=title or '', summary=summary or '', published_raw=published_raw or '', published_ts=published_ts, source=_SOURCE, rank=rank, retrieved_ts=retrieved_ts, entry_hash=_entry_hash(title or '', published_raw or ''), rich_content=rich_content or '', entry_author=entry_author, feed_title=feed_title, feed_language=feed_language)
+
+
+def _extract_atom_entry_url(entry) -> str:
+    """Extract the best URL from Atom entry link elements."""
+    for link_el in _iter_children(entry, 'link'):
+        rel = link_el.get('rel')
+        href = link_el.get('href') or ''
+        if rel is None or rel == 'alternate':
+            return _normalize_url(href)
+    for link_el in _iter_children(entry, 'link'):
+        href = link_el.get('href') or ''
+        if href:
+            return _normalize_url(href)
+    return ''
+
+
 def _parse_atom(root, feed_url: str, retrieved_ts: float) -> list[FeedEntryHit]:
     """
     Parse Atom 1.0 feed.
@@ -671,35 +717,10 @@ def _parse_atom(root, feed_url: str, retrieved_ts: float) -> list[FeedEntryHit]:
     feed_language = _text_of(_find_first_child(root, 'language')) or ''
     entries: list[FeedEntryHit] = []
     seen_keys: set[str] = set()
-    for entry in _iter_children(root, 'entry'):
-        title = _text_of(_find_first_child(entry, 'title'))
-        summary = _text_of(_find_first_child(entry, 'summary'))
-        content_el = _find_first_child(entry, 'content')
-        rich_content = _text_of(content_el) or ''
-        published_raw = _text_of(_find_first_child(entry, 'published')) or _text_of(_find_first_child(entry, 'updated'))
-        published_ts = _parse_published_ts(published_raw)
-        author_el = _find_first_child(entry, 'author')
-        entry_author = ''
-        if author_el is not None:
-            entry_author = _text_of(_find_first_child(author_el, 'name')) or ''
-        entry_url = ''
-        for link_el in _iter_children(entry, 'link'):
-            rel = link_el.get('rel')
-            href = link_el.get('href') or ''
-            if rel is None or rel == 'alternate':
-                entry_url = _normalize_url(href)
-                break
-        if not entry_url:
-            for link_el in _iter_children(entry, 'link'):
-                href = link_el.get('href') or ''
-                if href:
-                    entry_url = _normalize_url(href)
-                    break
-        dedup_key = _entry_dedup_key(entry_url, title, published_raw, None, None)
-        if dedup_key in seen_keys:
-            continue
-        seen_keys.add(dedup_key)
-        entries.append(FeedEntryHit(feed_url=feed_url, entry_url=entry_url or '', title=title or '', summary=summary or '', published_raw=published_raw or '', published_ts=published_ts, source=_SOURCE, rank=len(entries), retrieved_ts=retrieved_ts, entry_hash=_entry_hash(title or '', published_raw or ''), rich_content=rich_content or '', entry_author=entry_author, feed_title=feed_title, feed_language=feed_language))
+    for rank, entry in enumerate(_iter_children(root, 'entry')):
+        entry_hit = _parse_atom_entry(entry, feed_url, retrieved_ts, feed_title, feed_language, seen_keys, rank)
+        if entry_hit is not None:
+            entries.append(entry_hit)
     return entries
 
 def _report_parse_mode(out_list: list[str] | None, mode: str) -> None:
@@ -785,6 +806,34 @@ def _fetch_feed_content(feed_url: str, timeout_s: float, max_bytes: int) -> tupl
     return (result, None, None)
 
 
+def _categorize_parse_failure(result, had_valid_feed_type: bool) -> tuple[str, str | None]:
+    """
+    Categorize parse failure and return error_tag and src_err.
+
+    Returns tuple of (error_tag, src_err).
+    """
+    stripped = result.text.strip()
+    starts_html = stripped.startswith(('<!DOCTYPE', '<html'))
+    final_url = getattr(result, 'final_url', None) or None
+    redirected_flag = getattr(result, 'redirected', False) or False
+    is_redirect = redirected_flag or (final_url and final_url != result.url and starts_html)
+
+    if is_redirect and starts_html:
+        error_tag = 'redirected_non_feed_endpoint'
+        src_err = 'source_redirected_to_non_feed'
+    elif starts_html:
+        error_tag = 'fetch_returned_html_not_xml'
+        src_err = None
+    elif had_valid_feed_type:
+        error_tag = 'valid_empty_feed'
+        src_err = None
+    else:
+        error_tag = 'xml_parse_error'
+        src_err = None
+
+    return (error_tag, src_err)
+
+
 def _parse_and_validate_feed(result, feed_url: str, retrieved_ts: float) -> tuple:
     """
     Parse feed XML and validate results.
@@ -796,25 +845,7 @@ def _parse_and_validate_feed(result, feed_url: str, retrieved_ts: float) -> tupl
     had_valid_feed_type: bool = bool(_feed_type)
 
     if not parsed and result.text.strip():
-        stripped = result.text.strip()
-        starts_html = stripped.startswith(('<!DOCTYPE', '<html'))
-        final_url = getattr(result, 'final_url', None) or None
-        redirected_flag = getattr(result, 'redirected', False) or False
-        is_redirect = redirected_flag or (final_url and final_url != result.url and starts_html)
-
-        if is_redirect and starts_html:
-            error_tag = 'redirected_non_feed_endpoint'
-        elif starts_html:
-            error_tag = 'fetch_returned_html_not_xml'
-        elif had_valid_feed_type:
-            error_tag = 'valid_empty_feed'
-        else:
-            error_tag = 'xml_parse_error'
-
-        src_err: str | None = None
-        if error_tag == 'redirected_non_feed_endpoint':
-            src_err = 'source_redirected_to_non_feed'
-
+        error_tag, src_err = _categorize_parse_failure(result, had_valid_feed_type)
         return (parsed, had_valid_feed_type, error_tag, src_err, result.text)
 
     return (parsed, had_valid_feed_type, None, None, result.text)
@@ -969,6 +1000,32 @@ def _score_entries(deduped: list[FeedEntryHit], retrieved_ts: float) -> list[tup
     return scored
 
 
+def _get_base_reason(freshness_tier: str, freshness_score: float, quality_score: float) -> str:
+    """Get base reason string based on freshness and quality scores."""
+    tier_reason_map = {
+        'future': 'future_timestamp',
+        'unknown': 'missing_timestamp',
+    }
+    if freshness_tier in tier_reason_map:
+        return tier_reason_map[freshness_tier]
+    if freshness_score >= 1.0:
+        return 'recent_high_quality' if quality_score >= 0.5 else 'recent'
+    if freshness_score >= 0.85:
+        return 'fresh_high_quality' if quality_score >= 0.5 else 'fresh'
+    if quality_score >= 0.6:
+        return 'quality_signal'
+    if quality_score >= 0.3:
+        return 'moderate_quality'
+    return 'aged_low_quality'
+
+
+def _is_enhanced_entry(entry: FeedEntryHit, richness_band: str) -> bool:
+    """Check if entry has enhanced metadata (author + language or high richness)."""
+    has_author = bool(entry.entry_author.strip())
+    has_lang = bool(entry.feed_language.strip())
+    return (has_author and has_lang) or richness_band == 'high'
+
+
 def _build_selection_reason(
     entry: FeedEntryHit,
     freshness_score: float,
@@ -985,28 +1042,9 @@ def _build_selection_reason(
 
     Returns formatted reason string with all metadata.
     """
-    if freshness_tier == 'future':
-        reason = 'future_timestamp'
-    elif freshness_tier == 'unknown':
-        reason = 'missing_timestamp'
-    elif freshness_score >= 1.0:
-        reason = 'recent_high_quality' if quality_score >= 0.5 else 'recent'
-    elif freshness_score >= 0.85:
-        reason = 'fresh_high_quality' if quality_score >= 0.5 else 'fresh'
-    elif quality_score >= 0.6:
-        reason = 'quality_signal'
-    elif quality_score >= 0.3:
-        reason = 'moderate_quality'
-    else:
-        reason = 'aged_low_quality'
-
-    has_author = bool(entry.entry_author.strip())
-    has_lang = bool(entry.feed_language.strip())
-    is_enhanced = has_author and has_lang or richness_band == 'high'
-
-    if is_enhanced and not reason.startswith('enhanced_'):
+    reason = _get_base_reason(freshness_tier, freshness_score, quality_score)
+    if _is_enhanced_entry(entry, richness_band) and not reason.startswith('enhanced_'):
         reason = 'enhanced_' + reason
-
     return f'{reason}|ts_rel={ts_rel:.2f}|richness={richness_band}|usefulness={usefulness_band}|src_bias={spb:.2f}|ts_signal={time_signal}'
 
 
@@ -1198,6 +1236,42 @@ def _resolve_feed_href(raw_href: str, base_url: str) -> str:
     resolved = resolved_parsed._replace(fragment='').geturl()
     return _normalize_url(resolved)
 
+
+def _compute_feed_confidence(feed_type: str) -> float | None:
+    """Compute confidence score based on feed MIME type."""
+    if feed_type in _FEED_TYPES_HIGH:
+        return 1.0
+    if feed_type in _FEED_TYPES_LOW:
+        return 0.5
+    return None
+
+
+def _is_valid_resolved_url(resolved: str) -> bool:
+    """Check if resolved URL has valid http/https scheme."""
+    if not resolved:
+        return False
+    parsed = urllib.parse.urlparse(resolved)
+    return parsed.scheme in ('http', 'https')
+
+
+def _build_discovery_hit(hit_dict: dict, page_url: str, base_url: str, seen_urls: set[str], max_candidates: int, hits: list[FeedDiscoveryHit], discovered_ts: float) -> bool:
+    """Process a single hit dict and add to hits if valid. Returns True if max reached."""
+    raw_href = hit_dict['href']
+    feed_type = hit_dict['type']
+    title = hit_dict['title']
+    confidence = _compute_feed_confidence(feed_type)
+    if confidence is None:
+        return False
+    resolved = _resolve_feed_href(raw_href, base_url)
+    if not _is_valid_resolved_url(resolved):
+        return False
+    if resolved in seen_urls:
+        return False
+    seen_urls.add(resolved)
+    hits.append(FeedDiscoveryHit(page_url=page_url, feed_url=resolved, title=title or '', feed_type=feed_type, confidence=confidence, source='link_tag', discovered_ts=discovered_ts))
+    return len(hits) >= max_candidates
+
+
 def discover_feed_urls_from_html(page_url: str, html_text: str, max_candidates: int=_MAX_CANDIDATES_DEFAULT) -> FeedDiscoveryBatchResult:
     """
     Discover RSS/Atom feed URLs from an HTML page's <link> tags.
@@ -1236,23 +1310,7 @@ def discover_feed_urls_from_html(page_url: str, html_text: str, max_candidates: 
     hits: list[FeedDiscoveryHit] = []
     discovered_ts = time.time()
     for hit_dict in parser.hits:
-        raw_href = hit_dict['href']
-        feed_type = hit_dict['type']
-        title = hit_dict['title']
-        confidence = 1.0 if feed_type in _FEED_TYPES_HIGH else 0.5 if feed_type in _FEED_TYPES_LOW else None
-        if confidence is None:
-            continue
-        resolved = _resolve_feed_href(raw_href, base_url)
-        if not resolved:
-            continue
-        parsed_resolved = urllib.parse.urlparse(resolved)
-        if parsed_resolved.scheme not in ('http', 'https'):
-            continue
-        if resolved in seen_urls:
-            continue
-        seen_urls.add(resolved)
-        hits.append(FeedDiscoveryHit(page_url=page_url, feed_url=resolved, title=title or '', feed_type=feed_type, confidence=confidence, source='link_tag', discovered_ts=discovered_ts))
-        if len(hits) >= max_candidates:
+        if _build_discovery_hit(hit_dict, page_url, base_url, seen_urls, max_candidates, hits, discovered_ts):
             break
     if hits:
         parse_error = None
