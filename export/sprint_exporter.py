@@ -4343,6 +4343,14 @@ def _derive_branch_truth(  # noqa: F811
     return " | ".join(parts)
 
 
+def _first_non_none(*values: str | None) -> str | None:
+    """Return the first non-None value from a sequence of call results."""
+    for value in values:
+        if value is not None:
+            return value
+    return None
+
+
 def _derive_best_first_move(  # noqa: F811
     runtime_truth: dict[str, Any] | None,
     signal_path: dict[str, Any] | None,
@@ -4352,14 +4360,15 @@ def _derive_best_first_move(  # noqa: F811
     correlation: dict[str, Any] | None,
 ) -> str:
     """Derive immediate next action. Single sentence, max 80 chars."""
-    return _check_degraded_health(runtime_truth, sprint_verdict) or \
-           _check_high_risk_state(correlation) or \
-           _get_sprint_verdict_move(sprint_verdict) or \
-           _get_signal_path_move(signal_path) or \
-           _get_canonical_run_summary_move(canonical_run_summary) or \
-           _get_pvs_guidance(pvs) or \
-           _get_correlation_shortlist(correlation) or \
-           "assess: gather more data before committing to approach"
+    return _first_non_none(
+        _check_degraded_health(runtime_truth, sprint_verdict),
+        _check_high_risk_state(correlation),
+        _get_sprint_verdict_move(sprint_verdict),
+        _get_signal_path_move(signal_path),
+        _get_canonical_run_summary_move(canonical_run_summary),
+        _get_pvs_guidance(pvs),
+        _get_correlation_shortlist(correlation),
+    ) or "assess: gather more data before committing to approach"
 
 def _check_degraded_health(
     runtime_truth: dict[str, Any] | None,
@@ -4426,16 +4435,19 @@ def _get_pvs_guidance(pvs: dict[str, Any] | None) -> str | None:
 
 def _get_correlation_shortlist(correlation: dict[str, Any] | None) -> str | None:
     """Get from correlation operator shortlist."""
-    if correlation:
-        shortlist = correlation.get("operator_shortlist") or []
-        if shortlist and isinstance(shortlist, list) and shortlist:
-            first = shortlist[0]
-            if isinstance(first, dict):
-                action = first.get("action", "")
-                target = first.get("target", "")
-                if action:
-                    return f"{action}: {target[:40]}" if target else action[:80]
-    return None
+    if not correlation:
+        return None
+    shortlist = correlation.get("operator_shortlist") or []
+    if not isinstance(shortlist, list) or not shortlist:
+        return None
+    first = shortlist[0]
+    if not isinstance(first, dict):
+        return None
+    action = first.get("action", "")
+    if not action:
+        return None
+    target = first.get("target", "")
+    return f"{action}: {target[:40]}" if target else action[:80]
 
 # [IMPORTED from components] placeholder markers - functions moved to components package
 # Line references: L3699, L3780, L3789, L3975, L4010, L4079, L4125, L4173, L4231, L4283, L4333, L4389, L4489, L4528

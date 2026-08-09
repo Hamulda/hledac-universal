@@ -1,3 +1,0 @@
-{"schema_version":"0.7.0","event":{"type":"thread.started","thread_id":"session-universal-20260716T122058Z_367266-15162-agent-init-grounding-explorer-20260716T122106096Z"}}
-{"schema_version":"0.7.0","event":{"type":"turn.started"}}
-{"schema_version":"0.7.0","event":{"type":"item.completed","item":{"id":"item_0","type":"harness","event":"planning_started","message":"Generating execution spec, contract, and task tracker."}}}

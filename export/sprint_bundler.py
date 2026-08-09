@@ -466,6 +466,28 @@ def bundle_sprint(
     return _create_bundle_archive(artifacts, detected_output, sprint_id, timestamp)
 
 
+def _decompress_bundle(bundle_bytes: bytes) -> bytes:
+    """Decompress bundle bytes, trying zstd first, then returning raw bytes."""
+    try:
+        import compression.zstd
+        return compression.zstd.decompress(bundle_bytes)
+    except ImportError:
+        return bundle_bytes
+
+
+def _parse_manifest_entries(manifest_text: str) -> dict[str, str]:
+    """Parse a manifest.sha256 file text into a {filename: sha256} dict."""
+    entries: dict[str, str] = {}
+    for line in manifest_text.split("\n"):
+        if not line or line.startswith("#"):
+            continue
+        parts = line.split("  ", 1)
+        if len(parts) == 2:
+            sha256, filename = parts
+            entries[filename] = sha256
+    return entries
+
+
 def verify_bundle(bundle_path: Path) -> dict[str, Any]:
     """
     Verify bundle integrity by checking SHA-256 hashes.
@@ -477,7 +499,7 @@ def verify_bundle(bundle_path: Path) -> dict[str, Any]:
         - files_checked: int
         - errors: list[str]
     """
-    result = {
+    result: dict[str, Any] = {
         "valid": False,
         "manifest_valid": False,
         "files_checked": 0,
@@ -485,39 +507,19 @@ def verify_bundle(bundle_path: Path) -> dict[str, Any]:
     }
 
     try:
-        # Decompress bundle
-        bundle_bytes = bundle_path.read_bytes()
-        try:
-            import compression.zstd
-            tar_bytes = compression.zstd.decompress(bundle_bytes)
-        except ImportError:
-            # Assume uncompressed .tar
-            tar_bytes = bundle_bytes
-
-        # Extract tar
+        tar_bytes = _decompress_bundle(bundle_path.read_bytes())
         tar_buffer = io.BytesIO(tar_bytes)
+
         with tarfile.open(fileobj=tar_buffer, mode="r") as tar:
-            # Read manifest
             manifest_file = tar.extractfile("manifest.sha256")
             if not manifest_file:
                 result["errors"].append("manifest.sha256 not found")
                 return result
 
-            manifest_text = manifest_file.read().decode("utf-8")
-            manifest_lines = [
-                line for line in manifest_text.split("\n")
-                if line and not line.startswith("#")
-            ]
+            manifest_entries = _parse_manifest_entries(
+                manifest_file.read().decode("utf-8")
+            )
 
-            # Parse manifest entries
-            manifest_entries = {}
-            for line in manifest_lines:
-                parts = line.split("  ", 1)
-                if len(parts) == 2:
-                    sha256, filename = parts
-                    manifest_entries[filename] = sha256
-
-            # Verify each file
             for filename, expected_hash in manifest_entries.items():
                 if filename == "manifest.sha256":
                     continue  # Skip manifest itself
@@ -527,9 +529,7 @@ def verify_bundle(bundle_path: Path) -> dict[str, Any]:
                     result["errors"].append(f"{filename} not found in archive")
                     continue
 
-                file_bytes = file_obj.read()
-                actual_hash = _compute_sha256(file_bytes)
-
+                actual_hash = _compute_sha256(file_obj.read())
                 if actual_hash != expected_hash:
                     result["errors"].append(
                         f"{filename}: hash mismatch "
