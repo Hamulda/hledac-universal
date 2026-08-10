@@ -22,6 +22,10 @@ TRUE ZERO-COPY ARCHITECTURE:
 3. Pointer swap only - no mlx_lm.load() after initial startup
 4. Lazy eviction only when memory pressure > 90%
 
+MODERN-35 Fix: P-core affinity for MLX inference.
+- set_mlx_affinity() pins MLX threads to P-cores before inference
+- E-cores strictly reserved for I/O operations
+
 Performance:
 - OLD cache-hit path: <10ms (pointer swap) ✓
 - OLD cache-miss path: 1-20s (mlx_lm.load) ✗ ELIMINATED
@@ -51,6 +55,12 @@ import mlx.core as mx
 import mlx_lm
 
 logger = logging.getLogger(__name__)
+
+# MODERN-35 Fix: Import CPU affinity utilities
+from hledac.universal.utils.cpu_affinity import (
+    set_mlx_affinity,
+    is_apple_silicon,
+)
 
 # Type aliases for clarity
 ModelT = Any
@@ -1119,6 +1129,10 @@ class MicroModelPool:
         
         if loaded.spec.task_type == TaskType.EMBEDDINGS:
             return self._generate_embeddings(loaded, prompt, **kwargs)
+        
+        # MODERN-35 Fix: Set P-core affinity before MLX inference
+        if is_apple_silicon():
+            set_mlx_affinity()
         
         response = mlx_lm.generate(
             loaded.model,

@@ -43,6 +43,12 @@ from pathlib import Path
 from typing import Any, TypeVar
 from hledac.universal.utils.async_helpers import parallel_ok, safe_wait_for
 from hledac.universal.core.sync_bridge import stream_via_queue
+
+# MODERN-35 Fix: Import CPU affinity utilities for MLX Metal operations
+from hledac.universal.utils.cpu_affinity import (
+    set_mlx_affinity,
+    is_apple_silicon,
+)
 from hledac.universal.utils.cache import PyCacheDict
 from hledac.universal.utils.lru_cache import LRUCache, SlidingWindowKVCache
 from hledac.universal.utils.msgspec_json import decode as _msgspec_decode, encode_fast as _msgspec_encode_fast
@@ -1969,27 +1975,38 @@ class DeepHermes3Engine:
     async def _triage_generate_fallback(
         self, prompt: str, max_tokens: int = 4
     ) -> str:
-        """BLITZ-11: Fallback generation-based triage when token ID lookup fails."""
+        """BLITZ-11: Fallback generation-based triage when token ID lookup fails.
+        
+        NEW-M2 FIX: Offload blocking MLX operations (mx.eval, mx.argmax) to thread pool.
+        MLX releases GIL during Metal compute, so asyncio.to_thread is appropriate.
+        """
         try:
             import mlx.core as mx
             from mlx_lm.utils import generate_step
 
             _model = self._draft_model_obj
             _tok = self._draft_tokenizer
+            _eos = _tok.eos_token_id
 
-            _input_ids = mx.array([_tok.encode(prompt)])
-            _generated: list[int] = []
+            def _sync_generate() -> tuple[list[int], str]:
+                """Synchronous MLX generation loop (runs in thread pool)."""
+                _input_ids = mx.array([_tok.encode(prompt)])
+                _generated: list[int] = []
 
-            for _ in range(max_tokens):
-                _logits = _model(_input_ids)
-                mx.eval(_logits)
-                _next_token = int(mx.argmax(_logits[0, -1, :]).item())
-                if _next_token == _tok.eos_token_id:
-                    break
-                _generated.append(_next_token)
-                _input_ids = mx.array([list(_input_ids[0].tolist()) + [_next_token]])
+                for _ in range(max_tokens):
+                    _logits = _model(_input_ids)
+                    mx.eval(_logits)
+                    _next_token = int(mx.argmax(_logits[0, -1, :]).item())
+                    if _next_token == _eos:
+                        break
+                    _generated.append(_next_token)
+                    _input_ids = mx.array([list(_input_ids[0].tolist()) + [_next_token]])
 
-            return _tok.decode(_generated) if _generated else ""
+                return _generated, _tok.decode(_generated) if _generated else ""
+
+            # NEW-M2 FIX: Offload blocking MLX ops to thread pool to avoid blocking event loop
+            _generated, _result = await asyncio.to_thread(_sync_generate)
+            return _result
         except Exception:
             return ""
 
@@ -3084,6 +3101,12 @@ class DeepHermes3Engine:
         # (Path 2: run_coroutine_threadsafe). Post-inference _mlx_clear_and_timestamp()
         # handles the barrier + cache cleanup on the worker thread (Path 1) where the
         # Metal stream context is valid, avoiding any event-loop stall.
+
+        # MODERN-35 Fix: Set P-core affinity before MLX Metal inference
+        # E-cores are strictly reserved for I/O operations only
+        if is_apple_silicon():
+            set_mlx_affinity()
+
         try:
             with _mlx_lock:
                 response = mlx_generate(**generate_kwargs)
@@ -4859,9 +4882,21 @@ class DeepHermes3Engine:
             self._session_cache_pool.clear()
             logger.debug('[F03] KV cache pools cleared (keep_cache_pool=False)')
         self.invalidate_prefix_cache()
+        # NEW-M3 FIX: Offload blocking mx.eval([]) to thread pool when in async context.
+        # mx.eval([]) is fast but can block the event loop if called frequently.
+        # Check for running loop and use to_thread to avoid blocking.
         try:
             import mlx.core as mx
-            mx.eval([])
+            import concurrent.futures
+            try:
+                loop = asyncio.get_running_loop()
+            except RuntimeError:
+                # No running loop — call directly (sync context)
+                mx.eval([])
+            else:
+                # Running loop — offload to thread pool
+                with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+                    pool.submit(mx.eval, [])
         except Exception:  # noqa: BLE001
             pass
         self._kv_cache_stats = {'cache_uses': 0, 'cache_prefills': 1, 'quantized_count': 0, 'parallel_prefills': 0}

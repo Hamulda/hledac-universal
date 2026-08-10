@@ -1465,6 +1465,10 @@ class Chameleon:
             return False
         try:
             libc = ctypes.CDLL(ctypes.util.find_library('c'))
+            # H4: Add argtypes for ptrace to ensure correct type handling on ARM64.
+            # ptrace(request, pid, addr, data) — all args are integers on macOS.
+            libc.ptrace.argtypes = [ctypes.c_int, ctypes.c_int, ctypes.c_void_p, ctypes.c_int]
+            libc.ptrace.restype = ctypes.c_int
             PT_DENY_ATTACH = 31
             result = libc.ptrace(PT_DENY_ATTACH, 0, 0, 0)
             if result == 0:
@@ -1493,6 +1497,9 @@ class Chameleon:
             if 'P_TRACED' in result.stdout or 'traced' in result.stdout.lower():
                 return True
             libc = ctypes.CDLL(ctypes.util.find_library('c'))
+            # H4: Add argtypes for ptrace to ensure correct type handling on ARM64.
+            libc.ptrace.argtypes = [ctypes.c_int, ctypes.c_int, ctypes.c_void_p, ctypes.c_int]
+            libc.ptrace.restype = ctypes.c_int
             PT_TRACE_ME = 0
             result = libc.ptrace(PT_TRACE_ME, 0, 0, 0)
             if result < 0:

@@ -541,9 +541,12 @@ async def fetch_ipfs(cid: str, timeout: int=30) -> bytes | None:
     """
     Fetch content from IPFS via multiple gateways.
 
-    INVARIANT (F218Z): If Tor is available (CURL_CFFI_PROXY set), route all
+    INVARIANT (F218Z): If Tor is available (TOR_SOCKS_PROXY_URL set), route all
     IPFS gateway requests through Tor SOCKS5H proxy. Never over clearnet when
     Tor is active. Check HLEDAC_IPFS_CLEARNET=1 to override (explicit opt-in).
+
+    H3 FIX: Changed from deprecated CURL_CFFI_PROXY to TOR_SOCKS_PROXY_URL
+    to match the rest of the codebase (curl_cffi_fetch.py:206, unified_transport.py:339).
 
     Tries gateways in order until one succeeds:
       1. Local daemon: http://localhost:8080/ipfs/{cid}
@@ -563,7 +566,8 @@ async def fetch_ipfs(cid: str, timeout: int=30) -> bytes | None:
       - Fail-soft: returns None, never raises
     """
     import os as _os
-    _tor_proxy = _os.environ.get('CURL_CFFI_PROXY', '')
+    # H3 FIX: Use TOR_SOCKS_PROXY_URL (matches curl_cffi_fetch.py:206 pattern)
+    _tor_proxy = _os.environ.get('TOR_SOCKS_PROXY_URL', 'socks5h://127.0.0.1:9050')
     _clearnet_override = _os.environ.get('HLEDAC_IPFS_CLEARNET', '').lower() in ('1', 'true', 'yes', 'on')
     _use_tor = bool(_tor_proxy) and (not _clearnet_override)
     if _use_tor:

@@ -32,4 +32,10 @@ rustflags = [
 [profile.release]
 opt-level = 3
 strip = true
-panic = "abort"
+# SAFE-1 FIX: Removed panic = "abort" — .cargo/config.toml profile settings override
+# Cargo.toml. With abort, catch_unwind becomes inert (panics → SIGABRT → kills Python).
+# Cargo.toml:486 now sets panic = "unwind", enabling FFI safety infrastructure:
+#   - ffi_safe! macro (madvise.rs:96)
+#   - catch_unwind in ioc_extract.rs:176
+#   - catch_unwind in graph_traverse/cache.rs:257
+#   - catch_unwind_or_return() in ffi_safe.rs:171

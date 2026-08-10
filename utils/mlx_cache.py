@@ -70,9 +70,59 @@ _MLX_SEMAPHORE: asyncio.Semaphore | None = None
 # Synchronní lock pro evict_all (nezávislý na asyncio lock)
 _MLX_EVICT_LOCK = threading.Lock()
 
-# Sprint F206J: P1-14 - Cache hit/miss metrics
+# ── MODERN-43 Fix: Atomic Cache Metrics ─────────────────────────────────────────
+# Cache hit/miss metrics now use Rust atomic counters when available.
+# Fallback: Python threading.Lock for environments without Rust extension.
+
+_cache_metrics_lock = threading.Lock()
 _CACHE_HITS = 0
 _CACHE_MISSES = 0
+_RUST_AVAILABLE = False
+
+# Try to load Rust atomic facade
+try:
+    from hledac_rust_extensions import mlx_cache_hit, mlx_cache_miss, mlx_cache_stats, mlx_cache_stats_reset
+    _RUST_AVAILABLE = True
+except ImportError:
+    mlx_cache_hit = mlx_cache_miss = mlx_cache_stats = mlx_cache_stats_reset = None
+
+
+def _cache_hit() -> None:
+    """MODERN-43: Thread-safe cache hit increment."""
+    if _RUST_AVAILABLE:
+        mlx_cache_hit()
+    else:
+        global _CACHE_HITS
+        with _cache_metrics_lock:
+            _CACHE_HITS += 1
+
+
+def _cache_miss() -> None:
+    """MODERN-43: Thread-safe cache miss increment."""
+    if _RUST_AVAILABLE:
+        mlx_cache_miss()
+    else:
+        global _CACHE_MISSES
+        with _cache_metrics_lock:
+            _CACHE_MISSES += 1
+
+
+def _get_cache_counts() -> tuple[int, int]:
+    """MODERN-43: Get current cache hit/miss counts."""
+    if _RUST_AVAILABLE:
+        return mlx_cache_stats()
+    with _cache_metrics_lock:
+        return (_CACHE_HITS, _CACHE_MISSES)
+
+
+def _reset_cache_stats() -> None:
+    """MODERN-43: Reset cache statistics."""
+    if _RUST_AVAILABLE:
+        mlx_cache_stats_reset()
+    global _CACHE_HITS, _CACHE_MISSES
+    with _cache_metrics_lock:
+        _CACHE_HITS = 0
+        _CACHE_MISSES = 0
 
 
 def _get_cache_lock() -> asyncio.Lock:
@@ -158,24 +208,24 @@ def evict_all() -> None:
 
 def get_cache_stats() -> dict:
     """Get cache statistics including hit/miss metrics."""
-    total = _CACHE_HITS + _CACHE_MISSES
-    hit_rate = _CACHE_HITS / total if total > 0 else 0.0
+    hits, misses = _get_cache_counts()
+    total = hits + misses
+    hit_rate = hits / total if total > 0 else 0.0
     return {
         "size": len(_MLX_CACHE),
         "max": _MLX_CACHE_MAX,
         "models": list(_MLX_CACHE.keys()),
-        "hits": _CACHE_HITS,
-        "misses": _CACHE_MISSES,
+        "hits": hits,
+        "misses": misses,
         "total": total,
         "hit_rate": hit_rate,
+        "rust_atomic": _RUST_AVAILABLE,
     }
 
 
 def reset_cache_stats() -> None:
-    """Reset cache hit/miss statistics."""
-    global _CACHE_HITS, _CACHE_MISSES
-    _CACHE_HITS = 0
-    _CACHE_MISSES = 0
+    """MODERN-43: Reset cache hit/miss statistics."""
+    _reset_cache_stats()
 
 
 # =============================================================================

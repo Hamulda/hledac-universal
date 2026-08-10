@@ -40,6 +40,9 @@ def evidence_log_init(
     Fail-soft: any exception is swallowed so initialization failures
     never block the sprint.
     """
+    # MODERN-06 FIX: Ensure event loop is always closed to prevent leaks.
+    # Previously, newly created loops were never closed, causing resource leaks.
+    _loop_needs_close: bool = False
     try:
         # Python 3.12+: get_running_loop() in async context, fallback to
         # new_event_loop() for sync context. Avoids deprecated get_event_loop()
@@ -49,6 +52,7 @@ def evidence_log_init(
         except RuntimeError:
             loop = asyncio.new_event_loop()
             asyncio.set_event_loop(loop)
+            _loop_needs_close = True
 
         if loop.is_running():
             _task = asyncio.create_task(elog.initialize())
@@ -58,6 +62,13 @@ def evidence_log_init(
             loop.run_until_complete(elog.initialize())
     except Exception:  # noqa: BLE001
         pass  # fail-soft: initialize() failures never block sprint
+    finally:
+        # MODERN-06 FIX: Always close the loop if we created it.
+        if _loop_needs_close:
+            try:
+                loop.close()
+            except Exception:  # noqa: BLE001
+                pass  # Best-effort cleanup
 
     try:
         elog.create_event(

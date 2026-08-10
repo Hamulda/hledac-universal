@@ -268,11 +268,13 @@ class MemorySettings(msgspec.Struct, frozen=True, gc=False):
     soft_ceiling_gib: float = 5.5  # fetch concurrency hard-caps here
 
     # Resource governor thresholds
-    threshold_soft_warn_gib: float = 6.8
-    threshold_warn_gib: float = 7.0
-    threshold_critical_gib: float = 7.5
-    threshold_emergency_gib: float = 7.8
-    hysteresis_exit_gib: float = 6.8
+    # MODERN-45 Fix: Values derived from SSOT UmaBudget (M1 8GB, 6.25 GiB ceiling)
+    # These MUST match utils.uma_budget.UmaBudget.THRESHOLD_*_GIB values
+    threshold_soft_warn_gib: float = 5.5       # = UmaBudget.THRESHOLD_SOFT_WARN_GIB (88% of ceiling)
+    threshold_warn_gib: float = 5.94          # = UmaBudget.THRESHOLD_WARN_GIB (95% of ceiling)
+    threshold_critical_gib: float = 6.19      # = UmaBudget.THRESHOLD_CRITICAL_GIB (99% of ceiling)
+    threshold_emergency_gib: float = 6.25     # = UmaBudget.THRESHOLD_EMERGENCY_GIB (100% = ceiling)
+    hysteresis_exit_gib: float = 4.5          # = SOFT_WARN - ORCHESTRATOR (proper hysteresis band)
 
     @classmethod
     def from_env(cls) -> "MemorySettings":
@@ -283,11 +285,11 @@ class MemorySettings(msgspec.Struct, frozen=True, gc=False):
             mlx_cache_clear_interval=ENV.get_int("HLEDAC_MLX_CACHE_CLEAR_INTERVAL", 10),
             allow_swap=ENV.get_bool("HLEDAC_ALLOW_SWAP", False),
             soft_ceiling_gib=ENV.get_float("HLEDAC_SOFT_CEILING_GIB", 5.5),
-            threshold_soft_warn_gib=ENV.get_float("HLEDAC_RG_THRESHOLD_SOFT_WARN_GIB", 6.8),
-            threshold_warn_gib=ENV.get_float("HLEDAC_RG_THRESHOLD_WARN_GIB", 7.0),
-            threshold_critical_gib=ENV.get_float("HLEDAC_RG_THRESHOLD_CRITICAL_GIB", 7.5),
-            threshold_emergency_gib=ENV.get_float("HLEDAC_RG_THRESHOLD_EMERGENCY_GIB", 7.8),
-            hysteresis_exit_gib=ENV.get_float("HLEDAC_RG_HYSTERESIS_EXIT_GIB", 6.5),  # P2-8: was 6.8, now 6.5 for proper hysteresis band
+            threshold_soft_warn_gib=ENV.get_float("HLEDAC_RG_THRESHOLD_SOFT_WARN_GIB", 5.5),
+            threshold_warn_gib=ENV.get_float("HLEDAC_RG_THRESHOLD_WARN_GIB", 5.938),
+            threshold_critical_gib=ENV.get_float("HLEDAC_RG_THRESHOLD_CRITICAL_GIB", 6.191),
+            threshold_emergency_gib=ENV.get_float("HLEDAC_RG_THRESHOLD_EMERGENCY_GIB", 6.25),
+            hysteresis_exit_gib=ENV.get_float("HLEDAC_RG_HYSTERESIS_EXIT_GIB", 4.5),
         )
 
 

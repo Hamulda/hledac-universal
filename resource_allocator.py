@@ -31,7 +31,7 @@ import msgspec
 from typing import Any, Self
 from hledac.universal.core.psutil_shim import PSUTIL_AVAILABLE as _PSUTIL_AVAILABLE
 from hledac.universal.core.psutil_shim import process as _process
-from hledac.universal.utils.uma_budget import M1_FETCH_SOFT_CEILING_GB
+from hledac.universal.utils.uma_budget import M1_FETCH_SOFT_CEILING_GB, UmaBudget
 from hledac.universal.utils.config_introspection import safe_attr_get
 from operator import attrgetter, itemgetter
 logger = logging.getLogger(__name__)
@@ -75,20 +75,22 @@ class ResourceAllocator:
     Predictive resource allocator with:
     - MAX_CONCURRENT: Maximum concurrent requests (default 3)
     - MAX_RAM_GB: Maximum RAM usage (mirrors uma_budget.M1_FETCH_SOFT_CEILING_GB)
-    - SOFT_PREEMPT_RAM_GIB: Request-level soft-preemption threshold (default 6.5 GB)
+    - SOFT_PREEMPT_RAM_GIB: Request-level soft-preemption threshold (default THRESHOLD_WARN)
     - Warm-up: First 5 queries use fixed allocation
     - MLX-based linear regression for prediction after warm-up
 
     MEM-UMA-002: Reactive RSS throttling at two levels:
-    - SOFT_LIMIT (6.5 GiB): reduce concurrency by 50%
-    - HARD_LIMIT (7.2 GiB): emergency heap flush + MemoryError
+    - SOFT_LIMIT (THRESHOLD_WARN ~5.94 GiB): reduce concurrency by 50%
+    - HARD_LIMIT (UMA_HARD_CEILING 6.25 GiB): emergency heap flush + MemoryError
+
+    NEW-M4 Fix: All RSS limits now derive from SSOT UmaBudget to eliminate sprawl.
     """
     MAX_CONCURRENT: int = 3
     MAX_RAM_GB: float = M1_FETCH_SOFT_CEILING_GB
-    SOFT_PREEMPT_RAM_GIB: float = 6.5
-    # MEM-UMA-002: Explicit RSS limits for reactive throttling
-    RSS_SOFT_LIMIT_GIB: float = 6.5   # 500MB buffer before hard limit
-    RSS_HARD_LIMIT_GIB: float = 7.2    # M1 8GB SWAP limit — abort if reached
+    SOFT_PREEMPT_RAM_GIB: float = UmaBudget.THRESHOLD_WARN_GIB  # ~5.94 GiB (NEW-M4)
+    # MEM-UMA-002: Explicit RSS limits for reactive throttling (NEW-M4 SSOT fix)
+    RSS_SOFT_LIMIT_GIB: float = UmaBudget.THRESHOLD_WARN_GIB   # ~5.94 GiB — 95% of ceiling
+    RSS_HARD_LIMIT_GIB: float = UmaBudget.UMA_HARD_CEILING_GIB  # 6.25 GiB — HARD CEILING (NEW-M4)
     WARMUP_QUERIES: int = 5
     __slots__ = tuple(('active_requests', 'coeffs', 'history', 'total_ram_mb', 'warmup_counter', '_throttle_level', '_saved_max_concurrent'))
 

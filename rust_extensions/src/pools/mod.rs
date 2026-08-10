@@ -2,7 +2,7 @@
 //!
 //! Unified thread pool management with adaptive sizing based on workload and system resources.
 //!
-//! ## Architecture
+//! ## MODERN-34: P/E Core Affinity Architecture
 //!
 //! ```text
 //! ┌─────────────────────────────────────────────────────────────────┐
@@ -14,28 +14,42 @@
 //!         ▼                  ▼                  ▼
 //! ┌───────────────┐  ┌───────────────┐  ┌─────────────────┐
 //! │   pools::cpu  │  │   pools::io   │  │  pools::mixed   │
-//! │  (CPU-bound)  │  │  (I/O-bound) │  │  (Adaptive)     │
+//! │  P-cores ★   │  │  E-cores ★   │  │  P-cores ★     │
+//! │  USER_INIT   │  │  UTILITY     │  │  Adaptive       │
 //! └───────────────┘  └───────────────┘  └─────────────────┘
 //!                            │
 //! ┌───────────────────────────────────────────────────────────────┐
-//! │               pools::elastic::ElasticPool                      │
-//! │            (Dynamic Pool Resizing)                           │
+//! │              topology::TopologyInfo                            │
+//! │   (Cached perflevel0/1 at startup)                           │
 //! └───────────────────────────────────────────────────────────────┘
 //! ```
 //!
-//! ## Pool Types
+//! ★ = QoS class enforced per thread via `thread_policy_set` Mach API
 //!
-//! | Pool | Threads | Use Case | Module |
-//! |------|---------|----------|--------|
-//! | CPU | P-cores (1-4) | SIMD, hashing, quality_gate | pools::cpu |
-//! | I/O | 2 | DuckDB, file I/O | pools::io |
-//! | Mixed | 1-2 adaptive | IOC extract, URL ops | pools::mixed |
+//! ## MODERN-34: Core-to-Workload Mapping
 //!
-//! ## M1 8GB Safety
+//! | Pool | Cores | QoS | Workloads |
+//! |------|-------|-----|-----------|
+//! | cpu | P-cores | USER_INITIATED (0x19) | Aho-Corasick, deobfuscate, SIMD, MLX inference |
+//! | io | E-cores | UTILITY (0x11) | DNS, HTTP, QUIC, DuckDB, WAL |
+//! | mixed | P-cores | USER_INITIATED | IOC extract, URL ops (adaptive) |
 //!
-//! - MAX_TOTAL_THREADS = 8 (4P + 4E cores)
-//! - Memory-pressure aware thresholds
+//! ## M1 8GB Thread Budget (MODERN-33)
+//!
+//! | Component | Threads | Cores | QoS |
+//! |-----------|---------|-------|-----|
+//! | cpu_pool | 3 | P-cores | USER_INITIATED |
+//! | io_pool | 2 | E-cores | UTILITY |
+//! | mixed_pool | 1 | P-cores | USER_INITIATED |
+//! | dispatchers | 2 | E-cores | UTILITY |
+//! | **Total** | **8** | 4P + 4E | - |
+//!
+//! ## Safety Features
+//!
+//! - MAX_TOTAL_THREADS = 8 enforced globally
+//! - Memory-pressure aware thresholds (adaptive_scheduler)
 //! - Elastic resizing without restart
+//! - Graceful OOM fallback (1-thread minimum)
 
 pub mod cpu;
 pub mod elastic;

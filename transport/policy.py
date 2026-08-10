@@ -24,7 +24,7 @@ MEMORY CONSTRAINTS (M1 8GB UMA):
   - T0: max 4 concurrent sessions (prewarm pool), ~60MB
   - T1: max 2 concurrent sessions, ~20MB
   - T2: max 5 concurrent QUIC handshakes (semaphore), ~50MB aioquic
-  - T3: bounded by memory_budget_gate (soft 4.5GiB, hard 6.0GiB)
+  - T3: bounded by memory_budget_gate (soft 4.5GiB, hard 5.5GiB — from SSOT MISSION_PEAK_RSS_GIB)
 
 INVARIANTS:
   [TP-1] T0 is always-on — never blocked by memory pressure
@@ -44,6 +44,13 @@ from hledac.universal.fetching.memory_budget_gate import decide as _browser_deci
 from hledac.universal.transport.http3_lane import is_enabled as _http3_lane_enabled
 from hledac.universal.transport.httpx_client import is_httpx_h2_enabled
 
+# MODERN-36 Fix: Import from SSOT instead of hardcoding
+from hledac.universal.utils.uma_budget import (
+    UmaBudget,
+    MISSION_PEAK_RSS_GIB,
+    ORCHESTRATOR_GIB,
+)
+
 class TransportTier(Enum):
     """Explicit tier labels — mirrors policy.py decision tree."""
     T0 = 'T0_curl_cffi'
@@ -51,8 +58,12 @@ class TransportTier(Enum):
     T2 = 'T2_httpx_h3'
     T3 = 'T3_js_renderer'
 Tier = Literal['T0_curl_cffi', 'T1_httpx_h2', 'T2_httpx_h3', 'T3_js_renderer']
-_SOFT_GIB: float = 4.5
-_HARD_GIB: float = 6.0
+
+# MODERN-36 Fix: Derived from SSOT instead of hardcoded
+# Old: _SOFT_GIB: float = 4.5, _HARD_GIB: float = 6.0
+# New: SOFT = (ORCHESTRATOR + 50% headroom), HARD = MISSION_PEAK_RSS_GIB
+_SOFT_GIB: float = round(ORCHESTRATOR_GIB * 1.5, 2)  # 1.5 GiB — orchestrator + headroom
+_HARD_GIB: float = MISSION_PEAK_RSS_GIB  # 5.5 GiB — process RSS hard cap
 
 class TransportPolicyDecision(msgspec.Struct, frozen=True, gc=False):
     """

@@ -34,7 +34,7 @@ logger = logging.getLogger(__name__)
 
 def _madvise_heap_critical() -> None:
     """
-    ISSUE-16: At CRITICAL memory pressure, call madvise(MADV_FREE_REUSABLE)
+    ISSUE-16 / NEW-M12 FIX: At CRITICAL memory pressure, call madvise(MADV_DONTNEED)
     on the entire process heap after mx.eval([]) barrier.
 
     On M1 8GB, MADV_DONTNEED (advice=1) is used at CRITICAL because
@@ -42,27 +42,31 @@ def _madvise_heap_critical() -> None:
     MADV_FREE_REUSABLE is a no-op on anonymous (non-mmap) regions on Darwin,
     but MADV_DONTNEED immediately discards pages.
 
-    Delegates to Rust madvise_free_reusable(addr=0, length=0, advice=1)
-    which applies to the entire process VM domain via madvise(null, 0, advice).
+    NEW-M12 FIX: Use ctypes directly instead of Rust madvise_free_reusable.
+    The Rust function has a guard `if addr==0 || length==0 { return 0; }` which
+    makes it a NO-OP. The ctypes approach bypasses this guard and correctly
+    calls madvise(0, 0, MADV_DONTNEED) which applies to the whole address space.
+
+    Pattern from security/ephemeral_wipe.py:584-605.
 
     Must be called AFTER mx.eval([]) barrier and gc.collect() to ensure
     Metal/MLX tensors are synchronized before page reclamation.
     """
     try:
-        # R6: Centralized Rust access via core.rust_backend
-        from hledac.universal.core.rust_backend import rust
-        _rust = rust.raw.module
-        # madvise_free_reusable(addr=0, length=0, advice=1) applies to entire
-        # process address space via madvise(MADV_DONTNEED) on Darwin.
-        # addr=0 + length=0 is the canonical "whole process" madvise pattern.
-        result = _rust.madvise_free_reusable(0, 0, 1)
+        import ctypes
+        import sys
+
+        libc = ctypes.CDLL(None)
+        # MADV_DONTNEED = 4 on both Darwin and Linux
+        result = libc.madvise(
+            ctypes.c_void_p(0),  # addr=0: whole address space
+            ctypes.c_size_t(0),  # length=0: whole address space
+            4,  # MADV_DONTNEED
+        )
         if result == -1:
             logger.debug("[HERMES cache] madvise(DONTNEED) whole-process heap → failed (errno available)")
         else:
             logger.debug("[HERMES cache] madvise(DONTNEED) whole-process heap → OK")
-    except ImportError:  # noqa: BLE001
-        # Rust extension not built — silent no-op (metal memory still reclaimed via mx.eval)
-        pass
     except Exception as _e:
         # Fail-open: never crash the cache on madvise errors
         logger.debug(f"[HERMES cache] madvise heap: {_e}")

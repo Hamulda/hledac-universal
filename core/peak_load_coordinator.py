@@ -35,12 +35,14 @@
 #     cancelled via asyncio.Task.cancel() rather than just "notified".
 #     Cooperative cancellation via CancelledError ensures clean teardown.
 #
-# M1 8GB UMA BUDGET CALIBRATION:
+# M1 8GB UMA BUDGET CALIBRATION (SSOT aligned):
 #     Total RAM:              8.00 GiB
-#     System reserved:        ~1.52 GiB (macOS + WindowServer + kernel)
-#     Safe ceiling (81%):     6.48 GiB
-#     Headroom for spikes:    0.50 GiB
-#     Available for workload: 5.98 GiB (subsystem allocations)
+#     macOS system baseline:   2.5 GiB (non-adjustable)
+#     Hledac tracked:         3.75 GiB (orchestrator + LLM + KV)
+#     ─────────────────────────────────────────────────
+#     SSOT ceiling (6.25):    6.25 GiB (100% of ceiling)
+#     Process RSS cap (5.5):  5.5 GiB (88% of ceiling = MISSION_PEAK_RSS_GIB)
+#     Available for workload:  5.5 GiB (subsystem allocations)
 
 
 
@@ -65,14 +67,26 @@ import msgspec
 logger = logging.getLogger(__name__)
 
 # =============================================================================
-# CONSTANTS - M1 8GB UMA CALIBRATION
+# MODERN-36 Fix: SSOT imports — M1 8GB UMA calibration
 # =============================================================================
+# FIX: Removed hardcoded 6.48 GiB — now imports from SSOT (uma_budget.py)
+# Old: _DEFAULT_TOTAL_BUDGET_GIB: float = 6.48  # 81% of 8 GiB
+# New: Uses UmaBudget.UMA_HARD_CEILING_GIB = 6.25 GiB (SSOT)
 
-# 81% of 8 GiB = 6.48 GiB - safe ceiling for all subsystem allocations
-_DEFAULT_TOTAL_BUDGET_GIB: float = 6.48
+from hledac.universal.utils.uma_budget import (
+    UmaBudget,
+    MISSION_PEAK_RSS_GIB,
+    ORCHESTRATOR_GIB,
+    LLM_WEIGHTS_GIB,
+    KV_CACHE_GIB,
+    SWAP_TIERS,  # MODERN-41 Fix: Use SSOT swap tiers instead of hardcoded 3.8
+)
+
+# PRIMARY SSOT: The ONE authoritative ceiling
+_DEFAULT_TOTAL_BUDGET_GIB: float = UmaBudget.UMA_HARD_CEILING_GIB  # 6.25 GiB
 
 # Per-class reservation floor - guarantees minimum allocation for each class
-_CLASS_RESERVATION_FRACTION: float = 0.05  # 5% of budget = ~324 MiB per class
+_CLASS_RESERVATION_FRACTION: float = 0.05  # 5% of budget = ~312 MiB per class
 
 # Admission timeout - how long a subsystem waits before giving up
 _DEFAULT_ACQUIRE_TIMEOUT_S: float = 30.0
@@ -81,10 +95,10 @@ _DEFAULT_ACQUIRE_TIMEOUT_S: float = 30.0
 _PREEMPTION_CHECK_INTERVAL_S: float = 2.0
 
 # High-water mark fraction - when total allocation exceeds this, trigger preemption
-_HIGH_WATER_FRACTION: float = 0.90  # 90% of budget = ~5.83 GiB
+_HIGH_WATER_FRACTION: float = UmaBudget.WARN_RATIO  # 95% of ceiling = ~5.938 GiB
 
 # Emergency cutoff - hard stop, no new admissions above this
-_EMERGENCY_FRACTION: float = 0.97  # 97% of budget = ~6.29 GiB
+_EMERGENCY_FRACTION: float = UmaBudget.CRITICAL_RATIO  # 99% of ceiling = ~6.191 GiB
 
 # Max admission log entries (bounded for memory safety)
 _MAX_ADMISSION_LOG: int = 64
@@ -732,8 +746,12 @@ class GlobalPeakLoadCoordinator:
             system_used_gib = uma.system_used_gib
             system_total_gib = uma.system_used_gib + uma.system_available_gib
 
-            # Conservative: reject if system_used + estimated > total * 0.90
-            system_limit_gib = system_total_gib * 0.90
+            # MODERN-37 Fix: Derive from SSOT UmaBudget instead of hardcoded 0.90
+            # SSOT ceiling = 6.25 GiB; WARN threshold = 95% = 5.938 GiB
+            # System limit = min(95% of actual total, SSOT ceiling * 1.10 for headroom)
+            # This ensures the coordinator's limit stays consistent with its own budget
+            uma_budget_warn_gib = UmaBudget.THRESHOLD_WARN_GIB  # 5.938 GiB
+            system_limit_gib = min(system_total_gib * 0.90, uma_budget_warn_gib * 1.10)
             projected_used_gib = system_used_gib + (estimated_mb / 1024)
 
             if projected_used_gib > system_limit_gib:
@@ -743,13 +761,14 @@ class GlobalPeakLoadCoordinator:
                     f"(system used={system_used_gib:.2f} GiB)"
                 )
 
-            # Check swap — high swap = systemic pressure
-            if uma.swap_used_gib is not None and uma.swap_used_gib > 3.8:
+            # MODERN-41 Fix: Check swap using SSOT DIAGNOSTIC threshold
+            # SWAP_TIERS.DIAGNOSTIC = 4.675 GiB — elevated swap indicates systemic pressure
+            if uma.swap_used_gib is not None and uma.swap_used_gib > SWAP_TIERS.DIAGNOSTIC:
                 # HIGH priority can proceed despite high swap
                 if _PRIORITY_ORDER[priority] < _PRIORITY_ORDER[TaskPriority.HIGH]:
                     return False, (
                         f"UMA pressure: swap={uma.swap_used_gib:.1f} GiB "
-                        f"(threshold=3.8 GiB)"
+                        f"(threshold={SWAP_TIERS.DIAGNOSTIC:.3f} GiB from SSOT)"
                     )
 
             return True, f"UMA OK ({system_used_gib:.1f}/{system_total_gib:.1f} GiB)"

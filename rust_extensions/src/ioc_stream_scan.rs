@@ -301,56 +301,8 @@ impl StreamingIocScanner {
         path: &str,
         chunk_size: Option<usize>,
     ) -> PyResult<Vec<StreamPatternHit>> {
-        let chunk_size = chunk_size.unwrap_or(65536).max(4096);
-
-        let file = File::open(path).map_err(|e| {
-            pyo3::exceptions::PyIOError::new_err(format!("Failed to open file '{}': {}", path, e))
-        })?;
-
-        let mmap = unsafe { Mmap::map(&file) }.map_err(|e| {
-            pyo3::exceptions::PyIOError::new_err(format!("Failed to mmap file '{}': {}", path, e))
-        })?;
-
-        let file_len = mmap.len();
-        if file_len == 0 {
-            return Ok(Vec::new());
-        }
-
-        // Determine max pattern length for overlap window.
-        // This ensures no match spanning a chunk boundary is missed.
-        let max_pattern_len = self
-            .patterns
-            .iter()
-            .map(|p| p.len())
-            .max()
-            .unwrap_or(1)
-            .min(chunk_size / 2); // cap overlap at half chunk
-
-        let mut all_hits: Vec<StreamPatternHit> = Vec::new();
-        let mut offset: usize = 0;
-
-        while offset < file_len {
-            let end = (offset + chunk_size).min(file_len);
-            let slice = &mmap[offset..end];
-            let mut hits = self._scan_slice(slice);
-
-            // Adjust offsets to be absolute (file-relative)
-            for hit in &mut hits {
-                hit.start += offset;
-                hit.end += offset;
-            }
-
-            all_hits.append(&mut hits);
-
-            if end >= file_len {
-                break;
-            }
-
-            // Advance by chunk_size - max_pattern_len to create overlap window
-            offset = end.saturating_sub(max_pattern_len);
-        }
-
-        Ok(all_hits)
+        let mmap = self._open_mmap(path)?;
+        self._scan_mmap_chunked(&mmap, chunk_size, false)
     }
 
     /// Scan a specific byte range of an mmap'd file.
@@ -500,20 +452,20 @@ impl StreamingIocScanner {
     /// Raises:
     ///     IOError: If the file cannot be opened or mmap'd.
     #[cfg(feature = "data")]
-    fn scan_mmap_arrow_ipc(&self, path: &str, py: Python<'_>) -> PyResult<Bound<'_, PyBytes>> {
+    fn scan_mmap_arrow_ipc<'py>(&self, path: &str, py: Python<'py>) -> PyResult<Bound<'py, PyBytes>> {
         use crate::arrow_c_data::ipc;
         
-        let file = File::open(path).map_err(|e| {
-            pyo3::exceptions::PyIOError::new_err(format!("Failed to open file '{}': {}", path, e))
-        })?;
-
-        let mmap = unsafe { Mmap::map(&file) }.map_err(|e| {
-            pyo3::exceptions::PyIOError::new_err(format!("Failed to mmap file '{}': {}", path, e))
-        })?;
+        let mmap = self._open_mmap(path)?;
 
         // Scan and convert to IPC bytes
         let hits = self._scan_slice(&mmap);
-        let ipc_bytes = ipc::hits_to_ipc_bytes(&hits)
+        
+        // Convert to owned tuples for IPC builder
+        let hits_tuples: Vec<_> = hits.into_iter()
+            .map(|h| (h.pattern, h.label, h.value, h.start, h.end))
+            .collect();
+        
+        let ipc_bytes = ipc::hits_to_ipc_bytes_owned(hits_tuples)
             .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(format!(
                 "Arrow IPC serialization failed: {}", e
             )))?;
@@ -531,11 +483,17 @@ impl StreamingIocScanner {
     ///
     /// See `scan_mmap_arrow_ipc()` for Python usage example.
     #[cfg(feature = "data")]
-    fn scan_bytes_arrow_ipc(&self, buffer: &[u8], py: Python<'_>) -> PyResult<Bound<'_, PyBytes>> {
+    fn scan_bytes_arrow_ipc<'py>(&self, buffer: &[u8], py: Python<'py>) -> PyResult<Bound<'py, PyBytes>> {
         use crate::arrow_c_data::ipc;
         
         let hits = self._scan_slice(buffer);
-        let ipc_bytes = ipc::hits_to_ipc_bytes(&hits)
+        
+        // Convert to owned tuples for IPC builder
+        let hits_tuples: Vec<_> = hits.into_iter()
+            .map(|h| (h.pattern, h.label, h.value, h.start, h.end))
+            .collect();
+        
+        let ipc_bytes = ipc::hits_to_ipc_bytes_owned(hits_tuples)
             .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(format!(
                 "Arrow IPC serialization failed: {}", e
             )))?;
@@ -550,79 +508,36 @@ impl StreamingIocScanner {
     /// Memory bounded by chunk_size regardless of file size.
     /// See `scan_mmap_arrow_ipc()` for Python usage example.
     #[cfg(feature = "data")]
-    fn scan_iter_mmap_arrow_ipc(
+    fn scan_iter_mmap_arrow_ipc<'py>(
         &self,
         path: &str,
         chunk_size: Option<usize>,
-        py: Python<'_>,
-    ) -> PyResult<Bound<'_, PyBytes>> {
+        py: Python<'py>,
+    ) -> PyResult<Bound<'py, PyBytes>> {
         use crate::arrow_c_data::ipc;
         
-        let chunk_size = chunk_size.unwrap_or(65536).max(4096);
-
-        let file = File::open(path).map_err(|e| {
-            pyo3::exceptions::PyIOError::new_err(format!("Failed to open file '{}': {}", path, e))
-        })?;
-
-        let mmap = unsafe { Mmap::map(&file) }.map_err(|e| {
-            pyo3::exceptions::PyIOError::new_err(format!("Failed to mmap file '{}': {}", path, e))
-        })?;
-
-        let file_len = mmap.len();
-        if file_len == 0 {
-            // Return empty IPC stream
-            let empty_ipc = ipc::hits_to_ipc_bytes(&[])
+        let mmap = self._open_mmap(path)?;
+        
+        // Use the shared chunking logic (returns owned hits)
+        let all_hits_owned = self._scan_mmap_chunked_to_tuples(&mmap, chunk_size);
+        
+        // Handle empty case explicitly to avoid lifetime issues
+        let ipc_bytes = if all_hits_owned.is_empty() {
+            ipc::build_ioc_scan_ipc(
+                vec![],
+                vec![],
+                vec![],
+                vec![],
+                vec![],
+            ).map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(format!(
+                "Arrow IPC serialization failed: {}", e
+            )))?
+        } else {
+            ipc::hits_to_ipc_bytes_owned(all_hits_owned)
                 .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(format!(
                     "Arrow IPC serialization failed: {}", e
-                )))?;
-            return Ok(PyBytes::new(py, &empty_ipc));
-        }
-
-        // Determine max pattern length for overlap window
-        let max_pattern_len = self
-            .patterns
-            .iter()
-            .map(|p| p.len())
-            .max()
-            .unwrap_or(1)
-            .min(chunk_size / 2);
-
-        let mut all_hits: Vec<(String, Option<String>, String, usize, usize)> = Vec::new();
-        let mut offset: usize = 0;
-
-        while offset < file_len {
-            let end = (offset + chunk_size).min(file_len);
-            let slice = &mmap[offset..end];
-            let mut hits = self._scan_slice(slice);
-
-            // Adjust offsets to be absolute (file-relative)
-            for hit in &mut hits {
-                hit.start += offset;
-                hit.end += offset;
-            }
-
-            // Convert to tuple format for IPC builder
-            for hit in hits {
-                all_hits.push((
-                    hit.pattern,
-                    hit.label,
-                    hit.value,
-                    hit.start,
-                    hit.end,
-                ));
-            }
-
-            if end >= file_len {
-                break;
-            }
-
-            offset = end.saturating_sub(max_pattern_len);
-        }
-
-        let ipc_bytes = ipc::hits_to_ipc_bytes(&all_hits)
-            .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(format!(
-                "Arrow IPC serialization failed: {}", e
-            )))?;
+                )))?
+        };
 
         Ok(PyBytes::new(py, &ipc_bytes))
     }
@@ -648,6 +563,121 @@ impl StreamingIocScanner {
 // ---------------------------------------------------------------------------
 
 impl StreamingIocScanner {
+    /// Open an mmap for a file path with proper error handling.
+    fn _open_mmap(&self, path: &str) -> PyResult<Mmap> {
+        let file = File::open(path).map_err(|e| {
+            pyo3::exceptions::PyIOError::new_err(format!("Failed to open file '{}': {}", path, e))
+        })?;
+        unsafe { Mmap::map(&file) }.map_err(|e| {
+            pyo3::exceptions::PyIOError::new_err(format!("Failed to mmap file '{}': {}", path, e))
+        })
+    }
+    
+    /// Shared chunking logic for mmap scanning.
+    /// 
+    /// Returns hits with absolute offsets adjusted for chunk position.
+    fn _scan_mmap_chunked(
+        &self,
+        mmap: &Mmap,
+        chunk_size: Option<usize>,
+        _return_tuples: bool, // Placeholder for type dispatch
+    ) -> PyResult<Vec<StreamPatternHit>> {
+        let chunk_size = chunk_size.unwrap_or(65536).max(4096);
+        let file_len = mmap.len();
+        
+        if file_len == 0 {
+            return Ok(Vec::new());
+        }
+
+        // Determine max pattern length for overlap window.
+        let max_pattern_len = self
+            .patterns
+            .iter()
+            .map(|p| p.len())
+            .max()
+            .unwrap_or(1)
+            .min(chunk_size / 2);
+
+        let mut all_hits: Vec<StreamPatternHit> = Vec::new();
+        let mut offset: usize = 0;
+
+        while offset < file_len {
+            let end = (offset + chunk_size).min(file_len);
+            let slice = &mmap[offset..end];
+            let mut hits = self._scan_slice(slice);
+
+            // Adjust offsets to be absolute (file-relative)
+            for hit in &mut hits {
+                hit.start += offset;
+                hit.end += offset;
+            }
+
+            all_hits.append(&mut hits);
+
+            if end >= file_len {
+                break;
+            }
+
+            // Advance by chunk_size - max_pattern_len to create overlap window
+            offset = end.saturating_sub(max_pattern_len);
+        }
+
+        Ok(all_hits)
+    }
+    
+    /// Shared chunking logic that returns owned tuples (for Arrow IPC path).
+    /// 
+    /// OPTIMIZATION: Avoids intermediate StreamPatternHit allocation.
+    fn _scan_mmap_chunked_to_tuples(
+        &self,
+        mmap: &Mmap,
+        chunk_size: Option<usize>,
+    ) -> Vec<(String, Option<String>, String, usize, usize)> {
+        let chunk_size = chunk_size.unwrap_or(65536).max(4096);
+        let file_len = mmap.len();
+        
+        if file_len == 0 {
+            return Vec::new();
+        }
+
+        // Determine max pattern length for overlap window.
+        let max_pattern_len = self
+            .patterns
+            .iter()
+            .map(|p| p.len())
+            .max()
+            .unwrap_or(1)
+            .min(chunk_size / 2);
+
+        let mut all_hits: Vec<(String, Option<String>, String, usize, usize)> = Vec::new();
+        let mut offset: usize = 0;
+
+        while offset < file_len {
+            let end = (offset + chunk_size).min(file_len);
+            let slice = &mmap[offset..end];
+            let hits = self._scan_slice(slice);
+
+            // Convert directly to tuples with absolute offsets
+            for hit in hits {
+                all_hits.push((
+                    hit.pattern,
+                    hit.label,
+                    hit.value,
+                    hit.start + offset,  // Adjust to absolute position
+                    hit.end + offset,
+                ));
+            }
+
+            if end >= file_len {
+                break;
+            }
+
+            offset = end.saturating_sub(max_pattern_len);
+        }
+
+        all_hits
+    }
+    
     /// Core scan logic over a byte slice.
     ///
     /// Uses `aho_corasick::AhoCorasick::find_iter()` which runs NEON Teddy

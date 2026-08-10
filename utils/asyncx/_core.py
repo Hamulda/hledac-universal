@@ -73,7 +73,15 @@ async def async_getaddrinfo(
     ISSUE-6 FIX: Replaces aiodns (c-ares) with rust.dns which has automatic
     resource management via Rust Drop trait — no FD leak possible, no close()
     needed. Supports DoH/DoT/DoQ for 2-5× faster parallel resolution vs stdlib
-    loop.getaddrinfo(). Falls back to loop.getaddrinfo() when rust.dns unavailable.
+    loop.getaddrinfo().
+
+    RESOLUTION ORDER:
+        PRIMARY: rust.dns.resolve_async_await() (DoT to Cloudflare)
+        SECONDARY: rust.dns.resolve_async() with run_in_executor
+        TERTIARY: loop.getaddrinfo() (stdlib fallback)
+
+    NOTE: Requires rust.dns with dns feature enabled in Cargo.toml.
+    Build: `maturin develop --features dns` or use --features full.
 
     Args:
         host: hostname to resolve

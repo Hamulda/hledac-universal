@@ -3,7 +3,8 @@ brain/mlx_bridge.py — MLX Token Streaming Bridge Integration
 
 ISSUE #015: Adaptive token streaming + memory pressure feedback for MLX LLM inference.
 
-
+ISSUE MODERN-35: ANE placement + GPU inference on P-cores.
+- MODERN-35 Fix: P-core affinity for MLX operations via utils.cpu_affinity
 
 Architecture:
     MLXWorkerThread
@@ -19,6 +20,7 @@ Python provides:
     - The actual mlx_lm.stream_generate() call (Python API, no C equivalent)
     - async generator protocol via asyncio.StreamReader
     - Cancellation via _stream_cancelled Event
+    - P-core affinity via utils.cpu_affinity (MODERN-35 fix)
 
 Key invariants (MBridge.*):
     MBridge.1: Zero top-level MLX imports (lazy via mlx_lm import)
@@ -27,6 +29,12 @@ Key invariants (MBridge.*):
     MBridge.4: Cancellation wired to _stream_cancelled asyncio.Event
     MBridge.5: Memory feedback: mx.get_active_memory() → chunk_size (canonical since MLX 0.32)
     MBridge.6: mlx_bridge config from constants.mlx_bridge (30s default timeout)
+    MBridge.7: P-core affinity via set_mlx_affinity() (MODERN-35 fix)
+
+MODERN-35 P-Core Affinity:
+    - MLX Metal compute runs on P-cores (highest QoS)
+    - E-cores strictly reserved for I/O operations
+    - Affinity set before any MLX inference via utils.cpu_affinity
 
 Always-on, fail-safe, M1 8GB bounded.
 """
@@ -72,8 +80,11 @@ def _get_mlx() -> Any:
 # Default timeout for mlx bridge operations
 DEFAULT_MLX_BRIDGE_TIMEOUT_S: float = 30.0
 
-# M1 8GB unified memory ceiling (matches utils/mlx_memory/_core.py MAX_MEMORY_MB)
-_MAX_MEMORY_BYTES: int = 6_400 * 1024 * 1024  # 6.25 GiB in bytes
+# MODERN-36 Fix: Import from SSOT instead of hardcoding
+# Old: _MAX_MEMORY_BYTES: int = 6_400 * 1024 * 1024  # 6.25 GiB in bytes
+from hledac.universal.utils.uma_budget import UmaBudget
+
+_MAX_MEMORY_BYTES: int = int(UmaBudget.UMA_HARD_CEILING_GIB * 1024 * 1024 * 1024)  # 6.25 GiB in bytes
 
 
 def _get_mlx_bridge_config() -> dict[str, Any]:

@@ -244,6 +244,46 @@ def arrow_ipc_to_table(
         return None
 
 
+def arrow_ipc_to_pa_table(
+    ipc_bytes: bytes | bytearray | memoryview,
+    source: str = "parquet",
+) -> Any | None:
+    """
+    MODERN-25-EXT: Unified Arrow IPC → PyArrow Table converter.
+
+    Reads IPC stream and returns full PyArrow Table (not dict).
+    Used by parquet_writer._export_via_rust_arrow() for Polars integration.
+
+    Args:
+        ipc_bytes: Raw IPC bytes from Rust Arrow builder.
+        source: Human-readable origin (default: "parquet").
+
+    Returns:
+        PyArrow Table on success, None on failure.
+    """
+    import io as _io
+
+    try:
+        import pyarrow as _pa
+    except ImportError:  # noqa: BLE001
+        _logging.getLogger("duckdb_store").debug(
+            "[MODERN-25-EXT] %s: PyArrow unavailable", source
+        )
+        return None
+
+    if not ipc_bytes or len(ipc_bytes) < _ARROW_IPC_MIN_SIZE:
+        return None
+
+    try:
+        reader = _pa.ipc.open_stream(_io.BytesIO(ipc_bytes))
+        return reader.read_all()
+    except Exception as _exc:  # noqa: BLE001
+        _logging.getLogger("duckdb_store").debug(
+            "[MODERN-25-EXT] %s: IPC→table failed: %s", source, _exc
+        )
+        return None
+
+
 # ---------------------------------------------------------------------------
 # SEC-02: DuckDB file permission hardening
 # ---------------------------------------------------------------------------
@@ -10216,10 +10256,9 @@ class DuckDBShadowStore:
         if not ipc_bytes or len(ipc_bytes) <= 8:
             return (0, None)  # empty batch — success, zero records (genuine end)
 
-        reader = _pa.ipc.open_stream(_io.BytesIO(ipc_bytes))
-        try:
-            record_batch = reader.read_next_batch()
-        except StopIteration:
+        # MODERN-25: Unified Arrow IPC helper
+        record_batch = arrow_ipc_to_record_batch(ipc_bytes, source="rust_dict")
+        if record_batch is None:
             return (0, None)  # empty schema-only batch — treat as success
 
         duckdb_count, duckdb_err = self._qe_insert_batch(record_batch, len(findings))

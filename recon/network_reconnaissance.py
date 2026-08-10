@@ -465,7 +465,9 @@ class SSLAnalyzer:
             or None if connection fails
         """
         try:
-            # Try Rust tls13 module first (<1ms, accurate JA4)
+            # PRIMARY: Rust tls13 module (<1ms, accurate JA4)
+            # NOTE: Requires rust.tls with tls13 feature enabled in Cargo.toml
+            # Build: `maturin develop --features tls13` or use --features full
             try:
                 from hledac.universal.core.rust_backend import rust as _rust
                 if hasattr(_rust, 'tls') and _rust.TLS13_AVAILABLE:
@@ -476,7 +478,8 @@ class SSLAnalyzer:
             except Exception:  # noqa: BLE001
                 pass
 
-            # Fallback: Python ssl analysis (slower, less accurate)
+            # SECONDARY: Python ssl analysis (slower, less accurate)
+            # This fallback is used when Rust tls13 feature is not compiled.
             context = ssl.create_default_context()
             context.check_hostname = False
             context.verify_mode = ssl.CERT_NONE

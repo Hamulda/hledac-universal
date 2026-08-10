@@ -1,26 +1,17 @@
 """
 Parallel Execution Optimizer
 Advanced parallel execution optimization for Hledač automation systems
+
+MODERN-33: Now applies computed P/E core affinity via darwin_affinity.rs.
+MODERN-34: Workload-aware affinity mapping for Apple Silicon M1.
 """
 
-
-
-
-
-
-
-
-
-
-
-
-
 import asyncio
-import msgspec
-import inspect
+import ctypes
 import logging
 import multiprocessing
 import os
+import platform
 import threading
 import time
 from collections import defaultdict, deque
@@ -30,11 +21,24 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from enum import Enum
 from typing import TYPE_CHECKING, Any
+
+import msgspec
 import msgspec.json as _json
 import numpy as np
 import psutil
+
 from .async_helpers import parallel_ok, parallel
 from .lru_cache import LRUCache
+
+# MODERN-33: Try to import Rust darwin_affinity extension
+try:
+    import hledac_rust_extensions as rust
+    _RUST_DARWIN_AFFINITY = getattr(rust, 'darwin_affinity', None)
+    _RUST_TOPOLOGY = getattr(rust, 'topology', None)
+except ImportError:
+    _RUST_DARWIN_AFFINITY = None
+    _RUST_TOPOLOGY = None
+
 if TYPE_CHECKING:
     pass
 logger = logging.getLogger(__name__)
@@ -135,25 +139,47 @@ class _ConcurrencyController:
         self._available.release()
 
     async def _monitor_loop(self):
-        """Background loop that adjusts concurrency limit based on memory."""
+        """
+        Background loop that adjusts concurrency limit based on memory.
+        
+        MODERN-34 FIX: Deadlock prevention - don't hold lock while acquiring semaphore.
+        When reducing limit (diff < 0), we release the lock before waiting for
+        available semaphore slots. This prevents blocking the entire event loop
+        if the semaphore is already at capacity.
+        """
         while True:
             await asyncio.sleep(5)
             try:
                 mem_available = psutil.virtual_memory().available / (1024 * 1024)
             except Exception:
                 mem_available = 2048
+            
             async with self._get_lock():
                 old_limit = self._limit
                 new_limit = 1 if mem_available < self._max_memory_threshold else 2
+                
                 if new_limit != old_limit:
                     diff = new_limit - old_limit
                     if diff > 0:
+                        # Increasing limit: release slots (no wait, safe under lock)
                         for _ in range(diff):
                             self._available.release()
+                        self._limit = new_limit
                     else:
-                        for _ in range(-diff):
-                            await self._available.acquire()
-                    self._limit = new_limit
+                        # Decreasing limit: remember the diff, update after lock release
+                        # to avoid deadlock (can't hold lock while waiting for semaphore)
+                        self._limit = new_limit  # Update immediately so subsequent runs see new value
+            
+            # MODERN-34 FIX: Handle decreasing limit OUTSIDE the lock
+            # This is safe because we've already updated self._limit above
+            if new_limit < old_limit:
+                for _ in range(old_limit - new_limit):
+                    try:
+                        await asyncio.wait_for(self._available.acquire(), timeout=30.0)
+                    except asyncio.TimeoutError:
+                        # Timeout acquiring semaphore - skip this adjustment
+                        logger.warning('_monitor_loop: timeout acquiring semaphore for limit decrease')
+                        break
 
 class ParallelExecutionOptimizer:
     """Advanced parallel execution optimization system"""
@@ -938,13 +964,38 @@ class IntelligentResourceAllocator:
         logger.info(f'IntelligentResourceAllocator: P-cores={self.p_cores}, E-cores={self.e_cores}')
 
     def _detect_m1_cores(self) -> None:
-        """Detect M1 P/E core topology using sysctl"""
+        """
+        Detect M1 P/E core topology.
+        
+        MODERN-34 FIX: Prefer Rust topology module (~100ns sysctl) over
+        subprocess calls (~1-2ms fork+exec). Falls back to subprocess only
+        if Rust extension unavailable.
+        """
         import platform
         import subprocess
         if platform.system() != 'Darwin':
             logger.info('Not macOS - using generic CPU topology')
             self._fallback_to_generic_topology()
             return
+        
+        # MODERN-34: Use Rust topology module (fast, cached)
+        if _RUST_TOPOLOGY is not None:
+            try:
+                topo = _RUST_TOPOLOGY.init_topology_py()
+                if topo.is_apple_silicon:
+                    self.is_apple_silicon = True
+                    p_core_count = topo.p_core_count
+                    e_core_count = topo.e_core_count
+                    total_cores = topo.total_logical
+                    # E-cores are indices 0 to e_core_count-1, P-cores are e_core_count to total
+                    self.e_cores = list(range(e_core_count))
+                    self.p_cores = list(range(e_core_count, total_cores))
+                    logger.info(f'M1 Core Topology (Rust): {p_core_count} P-cores, {e_core_count} E-cores')
+                    return
+            except Exception as e:
+                logger.warning(f'Failed to use Rust topology: {e} - falling back to subprocess')
+        
+        # Fallback: subprocess sysctl (slower but always works)
         try:
             result = subprocess.run(['sysctl', '-n', 'machdep.cpu.brand_string'], capture_output=True, text=True, timeout=5)
             cpu_brand = result.stdout.strip()
@@ -958,7 +1009,7 @@ class IntelligentResourceAllocator:
                 total_cores = p_core_count + e_core_count
                 self.e_cores = list(range(e_core_count))
                 self.p_cores = list(range(e_core_count, total_cores))
-                logger.info(f'M1 Core Topology: {p_core_count} P-cores, {e_core_count} E-cores')
+                logger.info(f'M1 Core Topology (subprocess): {p_core_count} P-cores, {e_core_count} E-cores')
             else:
                 logger.info(f'Non-Apple CPU: {cpu_brand}')
                 self._fallback_to_generic_topology()
@@ -975,13 +1026,17 @@ class IntelligentResourceAllocator:
         self.p_cores = list(range(mid, cpu_count))
         logger.info(f'Generic topology: {len(self.p_cores)} performance threads, {len(self.e_cores)} efficiency threads')
 
-    def allocate_task(self, task_priority: str='normal', cpu_intensity: float=0.5) -> dict[str, Any]:
+    def allocate_task(self, task_priority: str='normal', cpu_intensity: float=0.5, apply_affinity: bool=True) -> dict[str, Any]:
         """
         Allocate a task to appropriate core type
+
+        MODERN-33 FIX: Now APPLIES the computed affinity via darwin_affinity.rs.
+        Previously the cpu_affinity was computed but never applied.
 
         Args:
             task_priority: "low", "normal", "high", "critical"
             cpu_intensity: 0.0-1.0 scale of CPU intensity
+            apply_affinity: If True (default), apply the affinity to current thread
 
         Returns:
             Allocation configuration with CPU affinity
@@ -992,8 +1047,7 @@ class IntelligentResourceAllocator:
             if self.e_cores:
                 allocation['core_type'] = 'efficiency'
                 allocation['cpu_affinity'] = self.e_cores
-            return allocation
-        if task_priority in ['high', 'critical'] or cpu_intensity > 0.7:
+        elif task_priority in ['high', 'critical'] or cpu_intensity > 0.7:
             if self.p_cores and (not self._are_p_cores_overloaded()):
                 allocation['core_type'] = 'performance'
                 allocation['cpu_affinity'] = self.p_cores
@@ -1013,8 +1067,69 @@ class IntelligentResourceAllocator:
             all_cores = self.e_cores + self.p_cores
             if all_cores:
                 allocation['cpu_affinity'] = all_cores
+
+        # MODERN-33: Apply affinity to current thread
+        if apply_affinity:
+            self._apply_thread_affinity(allocation)
+
         self.allocation_history.append({'timestamp': datetime.now(UTC), 'priority': task_priority, 'cpu_intensity': cpu_intensity, 'allocation': allocation.copy()})
         return allocation
+
+    def _apply_thread_affinity(self, allocation: dict[str, Any]) -> None:
+        """
+        Apply CPU affinity based on allocation configuration.
+
+        MODERN-33 FIX: This method was missing — cpu_affinity was computed but never applied.
+        Now uses darwin_affinity.rs for Apple Silicon or ctypes as fallback.
+
+        Args:
+            allocation: Allocation dict from allocate_task()
+        """
+        core_type = allocation.get('core_type', 'any')
+        cpu_affinity = allocation.get('cpu_affinity')
+
+        # MODERN-33: Try Rust darwin_affinity extension first (preferred)
+        if _RUST_DARWIN_AFFINITY is not None:
+            try:
+                if core_type == 'performance' or (cpu_affinity and cpu_affinity == self.p_cores):
+                    _RUST_DARWIN_AFFINITY.apply_pcore_affinity()
+                    logger.debug('[allocation] Applied P-core affinity')
+                elif core_type == 'efficiency' or (cpu_affinity and cpu_affinity == self.e_cores):
+                    _RUST_DARWIN_AFFINITY.apply_ecore_affinity()
+                    logger.debug('[allocation] Applied E-core affinity')
+                else:
+                    # Balanced — apply P-core affinity for mixed workloads
+                    _RUST_DARWIN_AFFINITY.apply_pcore_affinity()
+                    logger.debug('[allocation] Applied balanced (P-core) affinity')
+            except Exception as e:
+                logger.warning(f'[allocation] Failed to apply Rust affinity: {e}')
+                self._apply_thread_affinity_ctypes(allocation)
+            return
+
+        # Fallback: Use ctypes for Darwin
+        self._apply_thread_affinity_ctypes(allocation)
+
+    def _apply_thread_affinity_ctypes(self, allocation: dict[str, Any]) -> None:
+        """
+        Apply CPU affinity using ctypes (fallback for when Rust extension unavailable).
+
+        MODERN-28 FIX: Uses correct QoS class constants:
+        - 0x19 = QOS_CLASS_USER_INITIATED (P-cores)
+        - 0x11 = QOS_CLASS_UTILITY (E-cores)
+        """
+        core_type = allocation.get('core_type', 'any')
+
+        # Only apply on Darwin
+        if platform.system() != 'Darwin':
+            return
+
+        try:
+            libpthread = ctypes.CDLL('/usr/lib/libSystem.B.dylib')
+            qos_class = 0x19 if core_type == 'performance' else 0x11  # USER_INITIATED vs UTILITY
+            libpthread.pthread_set_qos_class_self_np(qos_class, 0)
+            logger.debug(f'[allocation] Applied ctypes QoS {hex(qos_class)} for {core_type} core')
+        except Exception as e:
+            logger.debug(f'[allocation] ctypes affinity failed: {e}')
 
     def _are_p_cores_overloaded(self) -> bool:
         """Check if P-cores are overloaded based on recent allocations"""

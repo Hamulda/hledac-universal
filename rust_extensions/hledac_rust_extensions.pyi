@@ -578,15 +578,134 @@ def peak_rss_bytes() -> int:
     ...
 
 def memory_pressure_level() -> int:
-    """Memory pressure level 0-2: 0=normal (<4GiB), 1=elevated (4-5.5GiB), 2=critical (>5.5GiB)."""
+    """Memory pressure level 0-2: 0=normal (<soft), 1=elevated (soft-hard), 2=critical (>hard).
+
+    MODERN-44: Default thresholds after startup sync: soft=3.75 GiB, hard=6.191 GiB.
+    These are synced from Python UmaBudget SSOT at import time.
+    """
     ...
 
 def set_memory_pressure_thresholds(soft_gib: float, hard_gib: float) -> None:
-    """Set memory pressure thresholds. A5-01 SSOT: syncs Rust thresholds from Python resource_governor."""
+    """MODERN-44: Set memory pressure thresholds from Python UmaBudget SSOT.
+
+    MODERN-44 SPEC:
+    - soft_gib = UmaBudget.UMA_HARD_CEILING_GIB * 0.6 = 3.75 GiB
+    - hard_gib = UmaBudget.THRESHOLD_CRITICAL_GIB = 6.191 GiB
+
+    Raises ImportError on failure to ensure coherent enforcement between Rust and Python.
+    """
+    ...
+
+# ─── MODERN-42: Atomic Allocator Ledger ───────────────────────────────────────
+
+def allocate_bytes(gib: float, subsystem: int) -> tuple[bool, int, int]:
+    """MODERN-42: Atomically allocate bytes from centralized ledger.
+
+    Args:
+        gib: Amount to allocate in GiB
+        subsystem: Subsystem identifier (0=MLX, 1=DuckDB, 2=Tokio, 3=Kuzu, 4=Other)
+
+    Returns:
+        (ok, current_total_bytes, ceiling_bytes)
+        ok=False means allocation would exceed ceiling.
+
+    Thread-safe via atomic compare-and-swap.
+    """
+    ...
+
+def release_bytes(gib: float, subsystem: int) -> int:
+    """MODERN-42: Atomically release bytes back to centralized ledger.
+
+    Args:
+        gib: Amount to release in GiB
+        subsystem: Subsystem identifier
+
+    Returns:
+        New total after release.
+
+    Thread-safe via atomic fetch_sub.
+    """
+    ...
+
+def get_allocation_stats() -> tuple[int, int, float]:
+    """MODERN-42: Get current allocation statistics.
+
+    Returns:
+        (total_allocated_bytes, ceiling_bytes, utilization_pct)
+    """
+    ...
+
+def set_allocation_ceiling(gib: float) -> None:
+    """MODERN-42: Set the allocation ceiling.
+
+    Args:
+        gib: New ceiling in GiB
+
+    Default: 6.0625 GiB (6.25 * 0.97).
+    """
     ...
 
 def advise_free(ptr: int, len: int) -> bool:
     """Apply MADV_FREE_REUSABLE to a memory region via madvise(2). Returns True on success, False on failure."""
+    ...
+
+# ─── MODERN-43: Atomic MLX Ledger ───────────────────────────────────────────
+
+def mlx_alloc_bytes_add(bytes: int) -> int:
+    """MODERN-43: Atomically add bytes to MLX allocation ledger.
+
+    Called on every mx.array() allocation to track total MLX memory usage.
+    Lock-free: no GIL acquisition needed.
+
+    Returns the new total allocation bytes.
+    """
+    ...
+
+def mlx_alloc_bytes_sub(bytes: int) -> int:
+    """MODERN-43: Atomically subtract bytes from MLX allocation ledger.
+
+    Called when MLX memory is freed (e.g., clear_cache, model unload).
+    Returns the new total allocation bytes.
+    """
+    ...
+
+def mlx_alloc_bytes_get() -> int:
+    """MODERN-43: Get current MLX allocation total in bytes.
+
+    Returns the total bytes tracked via mlx_alloc_bytes_add/sub.
+    """
+    ...
+
+def mlx_cache_hit() -> int:
+    """MODERN-43: Atomically increment MLX cache hit counter.
+
+    Called on every cache hit in MLX operations.
+    Lock-free: no GIL acquisition needed.
+    Returns the new hit count.
+    """
+    ...
+
+def mlx_cache_miss() -> int:
+    """MODERN-43: Atomically increment MLX cache miss counter.
+
+    Called on every cache miss in MLX operations.
+    Lock-free: no GIL acquisition needed.
+    Returns the new miss count.
+    """
+    ...
+
+def mlx_cache_stats() -> tuple[int, int]:
+    """MODERN-43: Get MLX cache statistics.
+
+    Returns (hits, misses) as a tuple of int.
+    """
+    ...
+
+def mlx_cache_stats_reset() -> None:
+    """MODERN-43: Reset MLX cache statistics.
+
+    Resets both hits and misses to zero. Useful for test isolation.
+    """
     ...
 
 # IOC extract (rust_extensions/src/ioc_extract.rs)

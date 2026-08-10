@@ -405,7 +405,58 @@ def _cb_float(key: str) -> float:
         clamped = AdaptiveConfig.get()._clamp_float(raw, float(entry[2]), float(entry[3]), float(entry[1]))
         return clamped
     return float(entry[1])
-RG_CONFIG_DEFAULTS: Final[dict[str, tuple[str, float, float, float]]] = {'THRESHOLD_SOFT_WARN_GIB': ('RG_THRESHOLD_SOFT_WARN_GIB', 6.8, 5.0, 8.0), 'THRESHOLD_WARN_GIB': ('RG_THRESHOLD_WARN_GIB', 7.0, 5.5, 8.5), 'THRESHOLD_CRITICAL_GIB': ('RG_THRESHOLD_CRITICAL_GIB', 7.5, 6.0, 9.0), 'THRESHOLD_EMERGENCY_GIB': ('RG_THRESHOLD_EMERGENCY_GIB', 7.8, 6.5, 9.5), 'HYSTERESIS_EXIT_GIB': ('RG_HYSTERESIS_EXIT_GIB', 6.5, 5.0, 7.5), 'CLEAN_SWAP_MAX_GIB': ('RG_CLEAN_SWAP_MAX_GIB', 3.0, 1.0, 6.0), 'DIAGNOSTIC_SWAP_MAX_GIB': ('RG_DIAGNOSTIC_SWAP_MAX_GIB', 5.0, 3.0, 8.0), 'HARD_BLOCK_SWAP_GIB': ('RG_HARD_BLOCK_SWAP_GIB', 6.0, 4.0, 9.0), 'HYSTERESIS_COOLDOWN_SEC': ('RG_HYSTERESIS_COOLDOWN_SEC', 2.0, 0.5, 10.0), 'ALPHA_FAST': ('RG_ALPHA_FAST', 0.4, 0.05, 0.9), 'ALPHA_SLOW': ('RG_ALPHA_SLOW', 0.15, 0.01, 0.5), 'MPC_HORIZON_S': ('RG_MPC_HORIZON_S', 10.0, 5.0, 30.0), 'TARGET_HEADROOM_GIB': ('RG_TARGET_HEADROOM_GIB', 0.5, 0.1, 2.0), 'EMERGENCY_THRESHOLD_GIB': ('RG_EMERGENCY_THRESHOLD_GIB', 7.8, 6.5, 9.5)}
+# MODERN-36 Fix: SSOT values from UmaBudget (6.25 GiB ceiling on M1 8GB)
+# Old values were based on 8GB * ratios (6.8, 7.0, 7.5, 7.8) which didn't align with SSOT.
+# Now derives from UmaBudget.THRESHOLD_*_GIB values:
+#   - THRESHOLD_SOFT_WARN_GIB = 5.5 (88% of 6.25)
+#   - THRESHOLD_WARN_GIB = 5.938 (95% of 6.25)
+#   - THRESHOLD_CRITICAL_GIB = 6.191 (99% of 6.25)
+#   - THRESHOLD_EMERGENCY_GIB = 6.25 (100% = ceiling)
+try:
+    from hledac.universal.utils.uma_budget import UmaBudget, SWAP_TIERS
+
+    # MODERN-41 Fix: Use SSOT SWAP_TIERS values for swap thresholds
+    _RG_DEFAULTS = {
+        'THRESHOLD_SOFT_WARN_GIB': (5.5, 5.0, 6.0),      # soft_warn (88% of ceiling)
+        'THRESHOLD_WARN_GIB': (5.938, 5.5, 6.5),          # warn (95% of ceiling)
+        'THRESHOLD_CRITICAL_GIB': (6.191, 5.8, 6.5),      # critical (99% of ceiling)
+        'THRESHOLD_EMERGENCY_GIB': (6.25, 6.0, 7.0),     # emergency (ceiling)
+        'HYSTERESIS_EXIT_GIB': (4.5, 4.0, 5.5),          # exit threshold
+        # MODERN-41 Fix: SSOT SWAP_TIERS values
+        'CLEAN_SWAP_MAX_GIB': (SWAP_TIERS.CLEAN, 1.0, 5.0),
+        'DIAGNOSTIC_SWAP_MAX_GIB': (SWAP_TIERS.DIAGNOSTIC, 3.0, 6.0),
+        'HARD_BLOCK_SWAP_GIB': (SWAP_TIERS.HARD_BLOCK, 4.0, 6.5),
+        'HYSTERESIS_COOLDOWN_SEC': (2.0, 0.5, 10.0),
+        'ALPHA_FAST': (0.4, 0.05, 0.9),
+        'ALPHA_SLOW': (0.15, 0.01, 0.5),
+        'MPC_HORIZON_S': (10.0, 5.0, 30.0),
+        'TARGET_HEADROOM_GIB': (0.5, 0.1, 2.0),
+        'EMERGENCY_THRESHOLD_GIB': (6.25, 6.0, 7.0),
+    }
+    RG_CONFIG_DEFAULTS: Final[dict[str, tuple[str, float, float, float]]] = {
+        k: (f'RG_{k}', v[0], v[1], v[2]) for k, v in _RG_DEFAULTS.items()
+    }
+except ImportError:
+    # Fallback: M1 8GB SSOT values (hardcoded to avoid import issues)
+    # MODERN-41 Fix: Use SSOT SWAP_TIERS fallback values
+    _FALLBACK_SWAP_TIERS = {'CLEAN': 3.3, 'DIAGNOSTIC': 4.675, 'HARD_BLOCK': 5.225}
+    RG_CONFIG_DEFAULTS: Final[dict[str, tuple[str, float, float, float]]] = {
+        'THRESHOLD_SOFT_WARN_GIB': ('RG_THRESHOLD_SOFT_WARN_GIB', 5.5, 5.0, 6.0),
+        'THRESHOLD_WARN_GIB': ('RG_THRESHOLD_WARN_GIB', 5.938, 5.5, 6.5),
+        'THRESHOLD_CRITICAL_GIB': ('RG_THRESHOLD_CRITICAL_GIB', 6.191, 5.8, 6.5),
+        'THRESHOLD_EMERGENCY_GIB': ('RG_THRESHOLD_EMERGENCY_GIB', 6.25, 6.0, 7.0),
+        'HYSTERESIS_EXIT_GIB': ('RG_HYSTERESIS_EXIT_GIB', 4.5, 4.0, 5.5),
+        # MODERN-41 Fix: SSOT SWAP_TIERS fallback values
+        'CLEAN_SWAP_MAX_GIB': ('RG_CLEAN_SWAP_MAX_GIB', _FALLBACK_SWAP_TIERS['CLEAN'], 1.0, 5.0),
+        'DIAGNOSTIC_SWAP_MAX_GIB': ('RG_DIAGNOSTIC_SWAP_MAX_GIB', _FALLBACK_SWAP_TIERS['DIAGNOSTIC'], 3.0, 6.0),
+        'HARD_BLOCK_SWAP_GIB': ('RG_HARD_BLOCK_SWAP_GIB', _FALLBACK_SWAP_TIERS['HARD_BLOCK'], 4.0, 6.5),
+        'HYSTERESIS_COOLDOWN_SEC': ('RG_HYSTERESIS_COOLDOWN_SEC', 2.0, 0.5, 10.0),
+        'ALPHA_FAST': ('RG_ALPHA_FAST', 0.4, 0.05, 0.9),
+        'ALPHA_SLOW': ('RG_ALPHA_SLOW', 0.15, 0.01, 0.5),
+        'MPC_HORIZON_S': ('RG_MPC_HORIZON_S', 10.0, 5.0, 30.0),
+        'TARGET_HEADROOM_GIB': ('RG_TARGET_HEADROOM_GIB', 0.5, 0.1, 2.0),
+        'EMERGENCY_THRESHOLD_GIB': ('RG_EMERGENCY_THRESHOLD_GIB', 6.25, 6.0, 7.0),
+    }
 
 def _rg_float(key: str) -> float:
     entry = RG_CONFIG_DEFAULTS[key]

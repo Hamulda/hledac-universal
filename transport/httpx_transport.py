@@ -341,7 +341,7 @@ def should_use_httpx_h2(
     if breaker.is_auto_disabled:
         return False, "httpx_h2_auto_disabled"
 
-    # P3: Darknet URLs — route via curl_cffi (SOCKS5H via CURL_CFFI_PROXY env)
+    # P3: Darknet URLs — route via curl_cffi (SOCKS5H via TOR_SOCKS_PROXY_URL)
     # F3XX: Tor/I2P now use httpx-socks in connection_pool_manager.py
     host = _extract_host(url)
     if host.endswith(".onion"):

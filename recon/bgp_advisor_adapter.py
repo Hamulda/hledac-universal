@@ -79,25 +79,33 @@ class BGPAdvisorAdapter:
 
 
 def _sync_enrich_ips(adapter: BGPAdapter, ips: list[str]) -> None:
-    """Sync wrapper: run async enrich_ip for each IP in a dedicated session."""
+    """Sync wrapper: run async enrich_ip for each IP in a dedicated session.
+    
+    MODERN-06 FIX: Ensures event loop is properly closed in all code paths.
+    """
+    loop: asyncio.AbstractEventLoop | None = None
     try:
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
-        try:
-            for ip in ips:
-                try:
-                    result = loop.run_until_complete(adapter.enrich_ip(ip))
-                    if result and result.asn:
-                        logger.debug(
-                            "[BGP] %s → ASN %s / %s / %s",
-                            ip,
-                            result.asn,
-                            result.prefix or "unknown",
-                            result.org_name or "unknown",
-                        )
-                except Exception:  # noqa: BLE001
-                    pass  # fail-soft per-IP
-        finally:
-            loop.close()
+        for ip in ips:
+            try:
+                result = loop.run_until_complete(adapter.enrich_ip(ip))
+                if result and result.asn:
+                    logger.debug(
+                        "[BGP] %s → ASN %s / %s / %s",
+                        ip,
+                        result.asn,
+                        result.prefix or "unknown",
+                        result.org_name or "unknown",
+                    )
+            except Exception:  # noqa: BLE001
+                pass  # fail-soft per-IP
     except Exception:  # noqa: BLE001
         pass  # fail-soft overall
+    finally:
+        # MODERN-06 FIX: Always close the loop if we created it.
+        if loop is not None and not loop.is_closed():
+            try:
+                loop.close()
+            except Exception:  # noqa: BLE001
+                pass  # Best-effort cleanup

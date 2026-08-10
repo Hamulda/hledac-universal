@@ -18,6 +18,12 @@ M1 8GB budget (pro slabs = ~0.5 GiB volitelné):
     LLM (Hermes-3): ~2.0 GiB
     KV cache:         ~0.75 GiB
     Metal slabs:       ~0.5 GiB  (bounded, model má prioritu)
+
+MODERN-43: Atomic allocation ledger integration
+- On acquire_slab() allocation: mlx_alloc_bytes_add()
+- On _evict_slab() release: mlx_alloc_bytes_sub()
+- On slab hit: _cache_hit() (via Rust atomic facade)
+- On slab miss: _cache_miss() (via Rust atomic facade)
 """
 import gc
 import logging
@@ -29,6 +35,21 @@ import msgspec
 from typing import Any
 from operator import attrgetter, itemgetter
 logger = logging.getLogger(__name__)
+
+# MODERN-43: Try to load Rust atomic facade for allocation ledger and cache metrics
+_RUST_ALLOC_AVAILABLE: bool = False
+_mlx_alloc_bytes_add: Any = None
+_mlx_alloc_bytes_sub: Any = None
+_mlx_alloc_bytes_get: Any = None
+
+try:
+    from hledac_rust_extensions import mlx_alloc_bytes_add, mlx_alloc_bytes_sub, mlx_alloc_bytes_get
+    _RUST_ALLOC_AVAILABLE = True
+    _mlx_alloc_bytes_add = mlx_alloc_bytes_add
+    _mlx_alloc_bytes_sub = mlx_alloc_bytes_sub
+    _mlx_alloc_bytes_get = mlx_alloc_bytes_get
+except ImportError:
+    logger.debug("[MODERN-43] Rust allocation ledger unavailable in _slab.py")
 _SLAB_CLASSES_BYTES: tuple[int, ...] = (64 * 1024, 256 * 1024, 1024 * 1024, 4 * 1024 * 1024, 16 * 1024 * 1024, 64 * 1024 * 1024, 128 * 1024 * 1024, 256 * 1024 * 1024)
 _SLAB_CLASS_NAMES: tuple[str, ...] = ('64KB', '256KB', '1MB', '4MB', '16MB', '64MB', '128MB', '256MB')
 _SLABS_PER_CLASS: int = 2
@@ -115,6 +136,12 @@ class MetalSlabPool:
                     slab.last_access = _time.monotonic()
                     self._stats_hits += 1
                     logger.debug(f'[MetalSlabPool] HIT slab={slab_id[:8]} size={actual_size // 1024}KB')
+                    # MODERN-43: Track slab pool hit via Rust atomic
+                    try:
+                        from utils.mlx_memory._core import _cache_hit
+                        _cache_hit()
+                    except Exception:
+                        pass  # Non-critical, don't fail allocation
                     return slab
             if len(slabs) >= _SLABS_PER_CLASS:
                 lru_slab = min(slabs.values(), key=attrgetter("last_access"))
@@ -124,6 +151,12 @@ class MetalSlabPool:
                 if self._stats_allocated_bytes + actual_size > _MAX_SLAB_TOTAL_BYTES:
                     self._stats_misses += 1
                     logger.debug(f'[MetalSlabPool] MISS — total cap reached ({self._stats_allocated_bytes / 1024 ** 2:.0f}MB)')
+                    # MODERN-43: Track slab pool miss via Rust atomic
+                    try:
+                        from utils.mlx_memory._core import _cache_miss
+                        _cache_miss()
+                    except Exception:
+                        pass  # Non-critical
                     return None
         try:
             import mlx.core as mx
@@ -133,6 +166,12 @@ class MetalSlabPool:
                 self._slabs[size_cls][slab.slab_id] = slab
                 self._stats_allocated_bytes += actual_size
                 self._stats_hits += 1
+            # MODERN-43: Track MLX allocation via Rust atomic ledger
+            if _RUST_ALLOC_AVAILABLE:
+                try:
+                    _mlx_alloc_bytes_add(actual_size)
+                except Exception as e:
+                    logger.debug(f"[MODERN-43] mlx_alloc_bytes_add failed: {e}")
             logger.debug(f'[MetalSlabPool] ALLOC slab={slab.slab_id[:8]} size={actual_size // 1024}KB')
             return slab
         except Exception as e:
@@ -152,10 +191,18 @@ class MetalSlabPool:
     def release_all(self) -> None:
         """Release all slabs back to the system."""
         with self._slab_lock:
+            # Track total bytes being released for Rust atomic ledger
+            total_bytes = self._stats_allocated_bytes
             for size_cls, slabs in self._slabs.items():
                 for slab in list(slabs.values()):
                     self._evict_slab(slab, size_cls)
             self._stats_allocated_bytes = 0
+        # MODERN-43: Track full pool release via Rust atomic
+        if _RUST_ALLOC_AVAILABLE and total_bytes > 0:
+            try:
+                _mlx_alloc_bytes_sub(total_bytes)
+            except Exception:
+                pass
         gc.collect()
 
     def _evict_slab(self, slab: _Slab, size_cls: int) -> None:
@@ -165,6 +212,12 @@ class MetalSlabPool:
             self._stats_allocated_bytes -= slab.size_bytes
             slab.memoryview = None
             slab.in_use = False
+            # MODERN-43: Track MLX deallocation via Rust atomic ledger
+            if _RUST_ALLOC_AVAILABLE:
+                try:
+                    _mlx_alloc_bytes_sub(slab.size_bytes)
+                except Exception as e:
+                    logger.debug(f"[MODERN-43] mlx_alloc_bytes_sub failed: {e}")
             logger.debug(f'[MetalSlabPool] EVICT slab={slab.slab_id[:8]} size={slab.size_bytes // 1024}KB')
 
     def _aggressive_cleanup(self) -> None:
@@ -185,7 +238,23 @@ class MetalSlabPool:
         """Return pool statistics."""
         with self._slab_lock:
             total_slabs = sum((len(s) for s in self._slabs.values()))
-            return {'total_slabs': total_slabs, 'max_slabs': len(_SLAB_CLASSES_BYTES) * _SLABS_PER_CLASS, 'allocated_bytes': self._stats_allocated_bytes, 'max_bytes': _MAX_SLAB_TOTAL_BYTES, 'hits': self._stats_hits, 'misses': self._stats_misses}
+            # MODERN-43: Include Rust atomic ledger total if available
+            rust_alloc_bytes = 0
+            if _RUST_ALLOC_AVAILABLE and _mlx_alloc_bytes_get is not None:
+                try:
+                    rust_alloc_bytes = _mlx_alloc_bytes_get()
+                except Exception:
+                    pass
+            return {
+                'total_slabs': total_slabs,
+                'max_slabs': len(_SLAB_CLASSES_BYTES) * _SLABS_PER_CLASS,
+                'allocated_bytes': self._stats_allocated_bytes,
+                'rust_alloc_bytes': rust_alloc_bytes,
+                'max_bytes': _MAX_SLAB_TOTAL_BYTES,
+                'hits': self._stats_hits,
+                'misses': self._stats_misses,
+                'rust_atomic': _RUST_ALLOC_AVAILABLE,
+            }
 
     def get_buffer_for_size(self, size_bytes: int) -> Any | None:
         """

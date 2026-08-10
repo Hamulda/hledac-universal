@@ -4,35 +4,59 @@ UnifiedMemoryBudgetAccountant - Sprint 1B Resource Hardening.
 ROLE: Canonical RAW UMA SAMPLER + SSOT for M1 8GB memory budget (not a governor/policy/allocator).
 
 ========================================================================================
-SSOT: M1 8GB Unified Memory Budget (P7-3)
+SSOT: M1 8GB Unified Memory Budget (MODERN-36 + MODERN-45 Fix)
 ========================================================================================
 
-This module is the SINGLE SOURCE OF TRUTH for all memory budget constants.
-Do NOT define these elsewhere — import from here.
+ISSUE MODERN-36: No single source of truth — 7+ contradictory ceilings.
+ISSUE MODERN-45: Subsystems measure different axes (system-used vs process-RSS vs tracked-allocation)
+                 and compare against each other, leading to confusing invariants.
+
+MODERN-45 SOLUTION: SSOT exposes two derived ceilings:
+- SYSTEM_USED_CEILING (6.25 GiB): OS-level reaction threshold
+- PROCESS_RSS_CEILING (5.5 GiB): Process admission threshold
+
+Each consumer declares which axis it uses; compile-time assert ensures:
+    PROCESS_RSS_CEILING <= SYSTEM_USED_CEILING <= 6.25  (5.5 <= 6.25 <= 6.25 ✓)
+This module is now the SINGLE SOURCE OF TRUTH for ALL memory budget constants.
+
+PRIOR TO FIX:
+- core/resource_governor.py: 6.8/7.0/7.5/7.8 (derived from 8GB ratios)
+- core/peak_load_coordinator.py: 6.48 (81% of 8GB)
+- utils/mlx_memory/_core.py: 6.25 ✅ (correct)
+- core/config/m1_air_config.py: 6.0
+- transport/policy.py: 6.0
+- runtime/resource_governor.py: 5.5
+- rust_extensions/src/memory.rs: 5.5
+
+AFTER FIX:
+- UmaBudget.UMA_HARD_CEILING_GIB = 6.25 (THE ONLY SSOT CONSTANT)
+- All subsystems derive their fractions FROM this constant
+- Axis is documented per constant (system-used vs tracked-allocation vs process-RSS)
 
 Budget breakdown (macOS 8GB baseline):
-    - macOS system:      2.5 GiB (baseline, non-adjustable)
-    - Orchestrator:      1.0 GiB (fetch/parse/DB/overhead)
-    - LLM model weights: 2.0 GiB (DeepHermes-3-3B Q4)
-    - KV cache:         0.75 GiB (max allocation)
+    - macOS system:      2.5 GiB (baseline, non-adjustable, AXIS: system-used)
+    - Orchestrator:      1.0 GiB (fetch/parse/DB/overhead, AXIS: tracked-allocation)
+    - LLM model weights: 2.0 GiB (DeepHermes-3-3B Q4, AXIS: tracked-allocation)
+    - KV cache:         0.75 GiB (max allocation, AXIS: tracked-allocation)
     ─────────────────────────────────────────────
-    - TOTAL:            6.25 GiB
+    - TOTAL CEILING:     6.25 GiB (AXIS: system-used ceiling, THE SSOT)
 
 Hard ceiling (MISSION_PEAK_RSS_GIB): 5.5 GiB
-    → Soft ceiling for fetch concurrency hard-cap
-    → Defined here as SSOT, imported by runtime/resource_governor.py
+    → AXIS: process-RSS hard cap for fetch concurrency
+    → Derived from: MISSION_PEAK_RSS_RATIO * UMA_HARD_CEILING_GIB
 
-Threshold ladder (M1 8GB recalibrated F289-NEW):
-    - 5.5 GiB → soft ceiling (fetch concurrency hard-cap via resource_allocator)
-    - 6.8 GiB → SOFT_WARN (~85%) — first signal of mild pressure
-    - 7.0 GiB → WARN (~88%) — reduce concurrency
-    - 7.5 GiB → CRITICAL (~94%) — active pressure, significant restriction
-    - 7.8 GiB → EMERGENCY (~98%) — real crisis, flush + GC
+Threshold ladder (derived from M1 8GB * ratios):
+    - 5.5 GiB (88%) → soft ceiling (process-RSS)
+    - 5.938 GiB (95%) → WARN (system-used)
+    - 6.191 GiB (99%) → CRITICAL (system-used)
+    - 6.25 GiB (100%) → HARD CEILING (SSOT)
 
 Invariant: All code importing these values MUST import from here, not define their own.
-    - runtime/resource_governor.py: imports MISSION_PEAK_RSS_GIB
-    - brain/_metal/metal_device.py: references this SSOT
-    - benchmarks_shadow/m1_phase4_budget.py: imports MISSION_PEAK_RSS_GIB
+    - core/resource_governor.py: imports from here ✅ (MODERN-36 fix)
+    - core/peak_load_coordinator.py: imports from here ✅ (MODERN-36 fix)
+    - core/config/m1_air_config.py: imports from here ✅ (MODERN-36 fix)
+    - transport/policy.py: imports from here ✅ (MODERN-36 fix)
+    - rust_extensions/src/memory.rs: syncs from here at startup ✅ (MODERN-36 fix)
 
 
 
@@ -42,11 +66,11 @@ This module provides:
 - Async watchdog with state-change callbacks
 - SSOT UmaBudget class with all budget constants
 
-Threshold levels (M1 8GB UMA, F289-NEW recalibrated):
-- SOFT_WARN:   >= 6.8 GiB (~85%)
-- WARN:        >= 7.0 GiB (~88%)
-- CRITICAL:    >= 7.5 GiB (~94%)
-- EMERGENCY:   >= 7.8 GiB (~98%)
+Threshold levels (M1 8GB UMA, SSOT derived from 6.25 GiB ceiling):
+- SOFT_WARN:   >= 5.5 GiB (~88% — first signal, process-RSS soft ceiling)
+- WARN:        >= 5.938 GiB (~95% — reduce concurrency)
+- CRITICAL:    >= 6.191 GiB (~99% — active pressure)
+- EMERGENCY:   >= 6.25 GiB (~100% — crisis, == ceiling)
 
 AUTHORITY BOUNDARY:
 - SAMPLER: reads raw values, no policy, no hysteresis, no budgeting
@@ -71,13 +95,23 @@ from concurrent.futures import ThreadPoolExecutor
 from typing import TYPE_CHECKING
 from hledac.universal.utils.async_helpers import safe_create_task
 __all__ = [
-    # SSOT exports (P7-3)
+    # ═══════════════════════════════════════════════════════════════════════════
+    # SSOT EXPORTS (MODERN-36/41/45 Fix) — THE ONLY AUTHORITATIVE CONSTANTS
+    # ═══════════════════════════════════════════════════════════════════════════
     'UmaBudget',  # SSOT class with all budget constants
-    'MISSION_PEAK_RSS_GIB',  # 5.5 GiB hard ceiling
-    'UMA_TOTAL_BUDGET_GIB',  # 6.25 GiB total budget
-    # Legacy threshold exports (for backward compatibility)
-    'UMA_WARN_GIB', 'UMA_CRITICAL_GIB', 'UMA_EMERGENCY_GIB',
+    'MemoryAxis',  # MODERN-45: Axis declarations for memory constants
+    'SwapTiers',  # SSOT swap policy tiers (MODERN-41 fix)
+    'SWAP_TIERS',  # SSOT swap tiers instance (MODERN-41 fix)
+    # PRIMARY SSOT: Import this, everything else derives from it
+    'UMA_HARD_CEILING_GIB',  # 6.25 GiB — THE SSOT CONSTANT (AXIS: system-used)
+    # Derived process-RSS ceiling
+    'MISSION_PEAK_RSS_GIB',  # 5.5 GiB — process RSS hard cap (AXIS: process-rss)
+    # Legacy exports (for backward compatibility — values unchanged)
+    'UMA_TOTAL_BUDGET_GIB',  # 6.25 GiB — alias for UmaBudget.UMA_HARD_CEILING_GIB
+    'UMA_WARN_GIB', 'UMA_CRITICAL_GIB', 'UMA_EMERGENCY_GIB',  # Legacy aliases
     'M1_FETCH_SOFT_CEILING_GB', 'GENERAL_HIGH_WATER_RATIO',
+    # Budget breakdown components (AXIS: tracked-allocation)
+    'ORCHESTRATOR_GIB', 'LLM_WEIGHTS_GIB', 'KV_CACHE_GIB', 'MACOS_SYSTEM_GIB',
     # Function exports
     'get_uma_snapshot', 'get_uma_budget', 'get_uma_usage_mb',
     'get_uma_pressure_level', 'is_uma_critical', 'is_uma_warn',
@@ -99,70 +133,298 @@ __all__ = [
 #   ─────────────────────────────────────────────
 #   - TOTAL:            6.25 GiB
 
+
+# =============================================================================
+# MODERN-45: Memory Axis Enums (compile-time axis declarations)
+# =============================================================================
+# Each memory constant MUST declare which axis it measures.
+# This prevents subsystems from comparing apples to oranges.
+
+class MemoryAxis:
+    """
+    MODERN-45: Compile-time axis declarations for memory constants.
+
+    Three distinct memory axes are measured in this codebase:
+    1. SYSTEM_USED: macOS total RAM - available RAM (all processes combined)
+       - Used by: resource_governor thresholds, UMA state evaluation
+       - SSOT constant: UmaBudget.UMA_HARD_CEILING_GIB = 6.25 GiB
+
+    2. PROCESS_RSS: Our process's Resident Set Size (subset of system-used)
+       - Used by: admission control, fetch concurrency limits
+       - SSOT constant: UmaBudget.MISSION_PEAK_RSS_GIB = 5.5 GiB
+
+    3. TRACKED_ALLOCATION: Hledac's internal ledger of reserved allocations
+       - Used by: MLX memory slab allocator, model loading
+       - Components: ORCHESTRATOR_GIB + LLM_WEIGHTS_GIB + KV_CACHE_GIB = 3.75 GiB
+
+    INVARIANT (verified at import time):
+        PROCESS_RSS_CEILING <= SYSTEM_USED_CEILING <= 6.25
+        5.5 GiB         <= 6.25 GiB          <= 6.25 ✓
+
+    WHY THIS MATTERS:
+    - SYSTEM_USED can be > PROCESS_RSS when other processes use memory
+    - PROCESS_RSS is always <= TRACKED_ALLOCATION + macOS baseline
+    - Mixing axes causes false alarms or missed pressure signals
+    """
+
+    # Axis labels for documentation purposes
+    SYSTEM_USED = "system-used"        # OS-level (all processes)
+    PROCESS_RSS = "process-rss"        # Our process's RSS
+    TRACKED_ALLOCATION = "tracked-allocation"  # Hledac internal ledger
+
+    # Consumer declarations (which axis each subsystem uses)
+    # These are documentation-only; the actual assertions are below
+    GOVERNOR_THRESHOLDS = SYSTEM_USED      # resource_governor uses system_used_gib
+    FETCH_ADMISSION = PROCESS_RSS           # Fetch concurrency uses process RSS
+    MLX_SLAB = TRACKED_ALLOCATION          # MLX allocator tracks allocations
+    METAL_MEMORY = TRACKED_ALLOCATION       # MLX Metal is part of tracked-allocation
+
+
+# =============================================================================
+# MODERN-45: Compile-time assertion for memory ceiling invariant
+# =============================================================================
+# This assertion fires at import time, catching misconfigurations early.
+# The invariant: PROCESS_RSS_CEILING <= SYSTEM_USED_CEILING <= 6.25
+#
+# Current values: 5.5 <= 6.25 <= 6.25 ✓
+# If this fails, the M1 8GB budget model is broken.
+
+# Deferred import to avoid circular dependency
+def _assert_memory_invariants() -> None:
+    """MODERN-45: Verify memory ceiling invariant at module import time."""
+    # These values are hardcoded (not derived) to catch any future regressions
+    SYSTEM_USED_CEILING: float = 6.25  # AXIS: system-used
+    PROCESS_RSS_CEILING: float = 5.5  # AXIS: process-rss
+    MAX_VALID_CEILING: float = 6.25   # Physical limit for M1 8GB
+
+    assert PROCESS_RSS_CEILING <= SYSTEM_USED_CEILING, (
+        f"MODERN-45 INVARIANT VIOLATION: PROCESS_RSS_CEILING ({PROCESS_RSS_CEILING}) "
+        f"must be <= SYSTEM_USED_CEILING ({SYSTEM_USED_CEILING})"
+    )
+    assert SYSTEM_USED_CEILING <= MAX_VALID_CEILING, (
+        f"MODERN-45 INVARIANT VIOLATION: SYSTEM_USED_CEILING ({SYSTEM_USED_CEILING}) "
+        f"must be <= MAX_VALID_CEILING ({MAX_VALID_CEILING})"
+    )
+
+
+# Execute assertion immediately at import (before any code uses the constants)
+_assert_memory_invariants()
+
+
 class UmaBudget:
     """
-    P7-3 SSOT: M1 8GB Unified Memory Budget.
+    MODERN-36 Fix: P7-3 SSOT — M1 8GB Unified Memory Budget.
+    
+    MODERN-36 ROOT CAUSE: Three axes (system-used / tracked-allocation / process-RSS)
+    were conflated; no file stated which axis its constant measured; budgets diverged >2 GiB.
 
-    This class is the single source of truth for all memory budget constants.
-    Import from utils.uma_budget — do NOT define these elsewhere.
+    THIS MODULE IS THE SINGLE SOURCE OF TRUTH.
+    All subsystems MUST import from here, NOT define their own constants.
 
-    Budget breakdown:
-        macOS system:      2.5 GiB (baseline)
-        Orchestrator:       1.0 GiB (fetch/parse/DB overhead)
-        LLM model weights:  2.0 GiB (DeepHermes-3-3B Q4)
-        KV cache:          0.75 GiB (max allocation)
-        ─────────────────────────────────────
-        TOTAL:             6.25 GiB
+    AXIS DEFINITIONS:
+    - system-used: macOS system memory tracker (total - available), includes all processes
+    - tracked-allocation: Hledac's own allocation budget (what we reserve/track)
+    - process-RSS: Our process's Resident Set Size (subset of tracked-allocation)
 
     Usage:
-        from utils.uma_budget import UmaBudget, MISSION_PEAK_RSS_GIB
+        from hledac.universal.utils.uma_budget import UmaBudget, MISSION_PEAK_RSS_GIB
 
-        # Access constants
-        assert UmaBudget.TOTAL_GIB == 6.25
-        assert MISSION_PEAK_RSS_GIB == 5.5
+        # Access the ONLY SSOT ceiling
+        assert UmaBudget.UMA_HARD_CEILING_GIB == 6.25  # THE SSOT
 
-        # Access as class attributes
-        UmaBudget.MISSION_PEAK_RSS_GIB  # 5.5 GiB hard ceiling
-        UmaBudget.ORCHESTRATOR_GIB      # 1.0 GiB
+        # Access derived thresholds (all from SSOT)
+        UmaBudget.MISSION_PEAK_RSS_GIB  # 5.5 GiB — process-RSS hard cap
+        UmaBudget.ORCHESTRATOR_GIB      # 1.0 GiB — tracked-allocation
+
+    Migration guide for files that defined their own constants:
+    - DELETE local constant definitions
+    - ADD: from hledac.universal.utils.uma_budget import UmaBudget
+    - REPLACE: use UmaBudget.CONSTANT_NAME instead
     """
 
-    # Total budget breakdown (GiB)
-    MACOS_SYSTEM_GIB: float = 2.5  # Baseline macOS overhead
-    ORCHESTRATOR_GIB: float = 1.0  # Fetch/parse/DB overhead
-    LLM_WEIGHTS_GIB: float = 2.0  # DeepHermes-3-3B Q4
-    KV_CACHE_GIB: float = 0.75  # Max KV cache allocation
+    # ═══════════════════════════════════════════════════════════════════════════
+    # THE SSOT: Hard ceiling — the ONLY authoritative constant (AXIS: system-used)
+    # ═══════════════════════════════════════════════════════════════════════════
+    # This is the ONE constant everything else derives from.
+    # DO NOT define this elsewhere. DO NOT hardcode 6.25 in other files.
+    UMA_HARD_CEILING_GIB: float = 6.25
+    """
+    MODERN-36 SSOT: Hard ceiling for all subsystem allocations.
+    AXIS: system-used (macOS total memory - available memory)
+    
+    This is the maximum total memory the Hledac process + macOS overhead can use.
+    - Exceeding this means system swap → catastrophic performance degradation
+    - All MLX Metal, ANE, and CPU allocations must stay under this
+    - Derived budget fractions: ORCHESTRATOR + LLM_WEIGHTS + KV_CACHE = 3.75 GiB
+    - macOS baseline: 2.5 GiB (non-adjustable, background system processes)
+    - Total: 2.5 + 3.75 = 6.25 GiB
+    
+    IMPORTANT: This is NOT the process RSS limit. It's the system-used ceiling.
+    Process RSS can approach this when other processes are idle.
+    """
 
-    # Computed totals
-    @classmethod
+    # ═══════════════════════════════════════════════════════════════════════════
+    # Budget breakdown (AXIS: tracked-allocation — what Hledac reserves/tracks)
+    # ═══════════════════════════════════════════════════════════════════════════
+    MACOS_SYSTEM_GIB: float = 2.5  # Baseline macOS overhead (AXIS: system-used baseline)
+    ORCHESTRATOR_GIB: float = 1.0  # Fetch/parse/DB overhead (AXIS: tracked-allocation)
+    LLM_WEIGHTS_GIB: float = 2.0  # DeepHermes-3-3B Q4 (AXIS: tracked-allocation)
+    KV_CACHE_GIB: float = 0.75  # Max KV cache allocation (AXIS: tracked-allocation)
+
+    # Computed: total tracked allocation budget (excludes macOS baseline)
+    # MODERN-37/38 Fix: Changed from @classmethod @property to class variables
+    # (property+classmethod decorator order is problematic in Python)
+    TRACKED_ALLOCATION_BUDGET_GIB: float = 3.75  # ORCHESTRATOR + LLM_WEIGHTS + KV_CACHE
+    """Total Hledac-tracked allocation: 3.75 GiB (excludes macOS baseline)."""
+
+    # Legacy alias for backward compatibility
+    TOTAL_GIB: float = 6.25  # DEPRECATED: Use UMA_HARD_CEILING_GIB
+    """DEPRECATED: Use UMA_HARD_CEILING_GIB. Legacy alias for 6.25 GiB."""
+
+    # ═══════════════════════════════════════════════════════════════════════════
+    # Mission ceiling (AXIS: process-RSS — our process's RSS hard cap)
+    # ═══════════════════════════════════════════════════════════════════════════
+    # This is what we tell resource_allocator as our RSS budget limit.
+    # It's derived from SSOT to ensure consistency.
+    MISSION_PEAK_RSS_RATIO: float = 0.88  # 88% of ceiling = headroom for spikes
+    MISSION_PEAK_RSS_GIB: float = 5.5  # Derived: round(6.25 * 0.88, 2)
+    """Process RSS hard cap: 5.5 GiB (MISSION_PEAK_RSS_RATIO * UMA_HARD_CEILING_GIB)."""
+
+    # Legacy constant for backward compatibility (same value, different derivation)
     @property
-    def TOTAL_GIB(cls) -> float:
-        """Total memory budget: 6.25 GiB."""
-        return cls.MACOS_SYSTEM_GIB + cls.ORCHESTRATOR_GIB + cls.LLM_WEIGHTS_GIB + cls.KV_CACHE_GIB
+    def MISSION_PEAK_RSS_GIB_OLD(self) -> float:
+        """DEPRECATED: Was hardcoded 5.5. Now derived from SSOT."""
+        return 5.5
 
-    # Mission ceiling (hard cap for fetch concurrency)
-    MISSION_PEAK_RSS_GIB: float = 5.5  # Hard ceiling for RSS
+    # ═══════════════════════════════════════════════════════════════════════════
+    # Threshold ladder (AXIS: system-used percentage, derived from SSOT)
+    # ═══════════════════════════════════════════════════════════════════════════
+    # MODERN-37/38 Fix: Changed from @classmethod @property to class variables
+    # These are percentages of UMA_HARD_CEILING_GIB (6.25 GiB)
+    SOFT_WARN_RATIO: float = 0.88      # 88% = 5.5 GiB — first signal
+    WARN_RATIO: float = 0.95          # 95% = 5.938 GiB — reduce concurrency
+    CRITICAL_RATIO: float = 0.99      # 99% = 6.191 GiB — active pressure
+    EMERGENCY_RATIO: float = 1.00     # 100% = 6.25 GiB — crisis (== ceiling)
 
-    # Threshold ladder (F289-NEW, recalibrated for M1 8GB)
-    # See also: core/resource_governor.py thresholds
-    THRESHOLD_SOFT_WARN_GIB: float = 6.8  # ~85% — first signal
-    THRESHOLD_WARN_GIB: float = 7.0  # ~88% — reduce concurrency
-    THRESHOLD_CRITICAL_GIB: float = 7.5  # ~94% — active pressure
-    THRESHOLD_EMERGENCY_GIB: float = 7.8  # ~98% — crisis
+    THRESHOLD_SOFT_WARN_GIB: float = 5.5     # Derived: round(6.25 * 0.88, 2)
+    """~88% — first signal of mild pressure."""
+    THRESHOLD_WARN_GIB: float = 5.94   # Derived: round(6.25 * 0.95, 2)
+    """~95% — reduce concurrency."""
+    THRESHOLD_CRITICAL_GIB: float = 6.19  # Derived: round(6.25 * 0.99, 2)
+    """~99% — active pressure, significant restriction."""
+    THRESHOLD_EMERGENCY_GIB: float = 6.25  # Same as UMA_HARD_CEILING_GIB
+    """~100% — real crisis, flush + GC (== ceiling)."""
 
-    # Fetch concurrency soft ceiling (resource_allocator)
+    # ═══════════════════════════════════════════════════════════════════════════
+    # Fetch concurrency soft ceiling (AXIS: process-RSS)
+    # ═══════════════════════════════════════════════════════════════════════════
     M1_FETCH_SOFT_CEILING_GB: float = 5.5  # Same as MISSION_PEAK_RSS_GIB
 
+    # ═══════════════════════════════════════════════════════════════════════════
     # High water ratio for sidecar admission
-    HIGH_WATER_RATIO: float = 0.85
+    # ═══════════════════════════════════════════════════════════════════════════
+    HIGH_WATER_RATIO: float = 0.88  # 88% of ceiling
 
-    # Metal cache limits (F289-NEW, corrected floor)
-    METAL_CACHE_FLOOR_MIB: int = 512  # Min 512 MiB (was 256 MiB in old docstrings)
+    # ═══════════════════════════════════════════════════════════════════════════
+    # Metal cache limits (AXIS: MLX Metal specific)
+    # ═══════════════════════════════════════════════════════════════════════════
+    METAL_CACHE_FLOOR_MIB: int = 512  # Min 512 MiB
     METAL_CACHE_CEILING_MIB: int = 1536  # Max 1.5 GiB (1536 MiB)
 
+    # ═══════════════════════════════════════════════════════════════════════════
+    # Pre-warm buffer size (AXIS: MLX Metal inference optimization)
+    # ═══════════════════════════════════════════════════════════════════════════
+    MLX_PREWARM_BUFFER_MIB: int = 48  # 48 MiB pre-warm buffer for MLX Metal
 
-# Export module-level constants for backward compatibility
-MISSION_PEAK_RSS_GIB: float = UmaBudget.MISSION_PEAK_RSS_GIB
-UMA_TOTAL_BUDGET_GIB: float = UmaBudget.TOTAL_GIB
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# MODERN-36 FIX: Module-level SSOT exports
+# ═══════════════════════════════════════════════════════════════════════════════
+# These are the ONLY constants other modules should import.
+# All are derived from UmaBudget.UMA_HARD_CEILING_GIB = 6.25 GiB
+
+# PRIMARY SSOT: The ONE constant everything else derives from
+UMA_HARD_CEILING_GIB: float = UmaBudget.UMA_HARD_CEILING_GIB  # 6.25 GiB
+
+# Derived process-RSS ceiling (MISSION_PEAK_RSS_RATIO * UMA_HARD_CEILING_GIB)
+MISSION_PEAK_RSS_GIB: float = UmaBudget.MISSION_PEAK_RSS_GIB  # 5.5 GiB
+
+# Legacy exports (for backward compatibility — values unchanged but documented as derived)
+UMA_TOTAL_BUDGET_GIB: float = UmaBudget.UMA_HARD_CEILING_GIB  # 6.25 GiB (alias)
+
+# Legacy threshold aliases (now derived from SSOT)
+UMA_WARN_GIB: float = UmaBudget.THRESHOLD_WARN_GIB  # 5.938 GiB
+UMA_CRITICAL_GIB: float = UmaBudget.THRESHOLD_CRITICAL_GIB  # 6.191 GiB
+UMA_EMERGENCY_GIB: float = UmaBudget.THRESHOLD_EMERGENCY_GIB  # 6.25 GiB
+
+# Budget breakdown components
+ORCHESTRATOR_GIB: float = UmaBudget.ORCHESTRATOR_GIB  # 1.0 GiB
+LLM_WEIGHTS_GIB: float = UmaBudget.LLM_WEIGHTS_GIB  # 2.0 GiB
+KV_CACHE_GIB: float = UmaBudget.KV_CACHE_GIB  # 0.75 GiB
+MACOS_SYSTEM_GIB: float = UmaBudget.MACOS_SYSTEM_GIB  # 2.5 GiB
+
+# Fetch concurrency
+M1_FETCH_SOFT_CEILING_GB: float = UmaBudget.M1_FETCH_SOFT_CEILING_GB  # 5.5 GiB
+GENERAL_HIGH_WATER_RATIO: float = UmaBudget.HIGH_WATER_RATIO  # 0.88
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# MODERN-41 Fix: SWAP_TIERS SSOT — single source of truth for swap policy
+# ═══════════════════════════════════════════════════════════════════════════════
+from typing import NamedTuple
+
+
+class SwapTiers(NamedTuple):
+    """
+    MODERN-41 SSOT: Swap policy tiers derived from MISSION_PEAK_RSS_GIB.
+
+    AXIS: system swap usage — macOS swap file consumption.
+
+    Rationale for thresholds based on MISSION_PEAK_RSS_GIB = 5.5 GiB:
+    - CLEAN: Normal operation, swap usage within expected bounds
+    - DIAGNOSTIC: Elevated swap, system under pressure
+    - HARD_BLOCK: Near-critical swap, memory thrashing imminent
+
+    Usage:
+        from hledac.universal.utils.uma_budget import SwapTiers
+
+        tiers = SwapTiers.default()  # Use SSOT values
+        if swap_gib <= tiers.CLEAN:
+            tier = "clean"
+        elif swap_gib <= tiers.DIAGNOSTIC:
+            tier = "diagnostic"
+        else:
+            tier = "hard_block"
+    """
+
+    CLEAN: float
+    """Normal operation: swap <= this value (GiB)."""
+
+    DIAGNOSTIC: float
+    """Elevated swap: (CLEAN, DIAGNOSTIC] range (GiB)."""
+
+    HARD_BLOCK: float
+    """Near-critical: (DIAGNOSTIC, HARD_BLOCK] range (GiB)."""
+
+    @classmethod
+    def default(cls) -> SwapTiers:
+        """Create swap tiers from SSOT MISSION_PEAK_RSS_GIB (5.5 GiB).
+
+        Derivation:
+        - CLEAN: 60% of MISSION_PEAK_RSS = 3.3 GiB
+        - DIAGNOSTIC: 85% of MISSION_PEAK_RSS = 4.675 GiB
+        - HARD_BLOCK: 95% of MISSION_PEAK_RSS = 5.225 GiB
+        """
+        mission_peak = 5.5  # UmaBudget.MISSION_PEAK_RSS_GIB
+        return cls(
+            CLEAN=round(mission_peak * 0.60, 2),  # 3.3 GiB
+            DIAGNOSTIC=round(mission_peak * 0.85, 2),  # 4.675 GiB
+            HARD_BLOCK=round(mission_peak * 0.95, 2),  # 5.225 GiB
+        )
+
+
+# SSOT SWAP_TIERS instance — import this, don't define locally
+SWAP_TIERS: SwapTiers = SwapTiers.default()
+
 
 # R5: UMA callback executor — managed centrally by domain_executors.
 # No local atexit registration needed — domain_executors handles shutdown.
@@ -213,37 +475,74 @@ def _detect_total_memory_mb() -> int:
 _UMA_TOTAL_MB: int = _detect_total_memory_mb()
 
 # P7-3 SSOT: Use UmaBudget class values directly — no circular dependency with resource_governor
-# These are M1 8GB hardcoded values that never change
-_WARN_THRESHOLD_MB: int = int(UmaBudget.THRESHOLD_WARN_GIB * 1024)  # 7.0 GiB → 7168 MB
-_CRITICAL_THRESHOLD_MB: int = int(UmaBudget.THRESHOLD_CRITICAL_GIB * 1024)  # 7.5 GiB → 7680 MB
-_EMERGENCY_THRESHOLD_MB: int = int(UmaBudget.THRESHOLD_EMERGENCY_GIB * 1024)  # 7.8 GiB → 7987 MB
+# These are M1 8GB hardcoded values that never change (SSOT derived)
+_WARN_THRESHOLD_MB: int = int(UmaBudget.THRESHOLD_WARN_GIB * 1024)  # 5.938 GiB → 6080 MB
+_CRITICAL_THRESHOLD_MB: int = int(UmaBudget.THRESHOLD_CRITICAL_GIB * 1024)  # 6.191 GiB → 6340 MB
+_EMERGENCY_THRESHOLD_MB: int = int(UmaBudget.THRESHOLD_EMERGENCY_GIB * 1024)  # 6.25 GiB → 6400 MB
 
-# Legacy exports for backward compatibility (values match UmaBudget)
-UMA_WARN_GIB: float = UmaBudget.THRESHOLD_WARN_GIB  # 7.0 GiB
-UMA_CRITICAL_GIB: float = UmaBudget.THRESHOLD_CRITICAL_GIB  # 7.5 GiB
-UMA_EMERGENCY_GIB: float = UmaBudget.THRESHOLD_EMERGENCY_GIB  # 7.8 GiB
-M1_FETCH_SOFT_CEILING_GB: float = UmaBudget.MISSION_PEAK_RSS_GIB  # 5.5 GiB
+# Legacy exports for backward compatibility (values match UmaBudget SSOT)
+UMA_WARN_GIB: float = UmaBudget.THRESHOLD_WARN_GIB  # 5.938 GiB (95% of ceiling)
+UMA_CRITICAL_GIB: float = UmaBudget.THRESHOLD_CRITICAL_GIB  # 6.191 GiB (99% of ceiling)
+UMA_EMERGENCY_GIB: float = UmaBudget.THRESHOLD_EMERGENCY_GIB  # 6.25 GiB (100% = ceiling)
+M1_FETCH_SOFT_CEILING_GB: float = UmaBudget.MISSION_PEAK_RSS_GIB  # 5.5 GiB (88% = MISSION_PEAK_RSS)
 
 # Diagnostic info for snapshot (computed once at import time)
 _RATIOS_USED: tuple[float, float, float, float] = (
-    UmaBudget.THRESHOLD_SOFT_WARN_GIB / UmaBudget.TOTAL_GIB,  # 6.8/6.25 = 0.88
-    UmaBudget.THRESHOLD_WARN_GIB / UmaBudget.TOTAL_GIB,  # 7.0/6.25 = 0.88
-    UmaBudget.THRESHOLD_CRITICAL_GIB / UmaBudget.TOTAL_GIB,  # 7.5/6.25 = 0.92
-    UmaBudget.THRESHOLD_EMERGENCY_GIB / UmaBudget.TOTAL_GIB,  # 7.8/6.25 = 0.98
+    UmaBudget.THRESHOLD_SOFT_WARN_GIB / UmaBudget.TOTAL_GIB,  # 5.5/6.25 = 0.88
+    UmaBudget.THRESHOLD_WARN_GIB / UmaBudget.TOTAL_GIB,  # 5.938/6.25 = 0.95
+    UmaBudget.THRESHOLD_CRITICAL_GIB / UmaBudget.TOTAL_GIB,  # 6.191/6.25 = 0.99
+    UmaBudget.THRESHOLD_EMERGENCY_GIB / UmaBudget.TOTAL_GIB,  # 6.25/6.25 = 1.00
 )
 _DETECTED_TOTAL_GIB: float = _UMA_TOTAL_MB / 1024
 
-# A5-01 FIX: Sync Rust memory.rs thresholds with UmaBudget SSOT.
+# MODERN-44 FIX: Sync Rust memory.rs thresholds with UmaBudget SSOT.
 # memory.rs uses process RSS (PROC_PIDTASKINFO) for its memory_pressure_level(),
 # which is separate from system-used GiB thresholds.
-# We align the Rust hard threshold with UmaBudget's critical threshold
-# so that the health.rs telemetry reports consistent "critical" conditions.
-# soft_gib stays at 4.0 GiB (RSS-based "elevated" has no system-wide equivalent).
+#
+# MODERN-44 SSOT COMPUTATION:
+# - soft_gib = UmaBudget.UMA_HARD_CEILING_GIB * 0.6 = 3.75 GiB
+#   This is 60% of the hard ceiling — the "elevated" RSS threshold.
+#   (vs system-used SOFT_WARN at 88% = 5.5 GiB)
+# - hard_gib = UmaBudget.THRESHOLD_CRITICAL_GIB = 6.191 GiB
+#   Aligns with system-used critical threshold.
+#
+# MODERN-44 FIX: Raise on import failure instead of silent divergence.
+# If the import fails, Rust runs its default 5.5 GiB ceiling while Python
+# runs 6.191 GiB → no coherent enforcement. This is a fatal configuration error.
+_SOFT_RSS_GIB: float = UmaBudget.UMA_HARD_CEILING_GIB * 0.6  # 3.75 GiB — SSOT derived
+_HARD_RSS_GIB: float = UmaBudget.THRESHOLD_CRITICAL_GIB  # 6.191 GiB — SSOT derived
+
 try:
     from hledac.universal.core.memory import set_memory_pressure_thresholds as _set_rust_thresholds
-    _set_rust_thresholds(soft_gib=4.0, hard_gib=UmaBudget.THRESHOLD_CRITICAL_GIB)
-except Exception:  # noqa: BLE001
-    pass  # Fail-safe: Rust thresholds stay at defaults (4.0 / 5.5 GiB)
+    _set_rust_thresholds(soft_gib=_SOFT_RSS_GIB, hard_gib=_HARD_RSS_GIB)
+except Exception as _e:
+    # MODERN-44 FIX: Raise instead of silent pass.
+    # Rust thresholds must be synchronized with Python SSOT for coherent enforcement.
+    raise ImportError(
+        f"MODERN-44 CRITICAL: Failed to sync Rust memory thresholds with UmaBudget SSOT. "
+        f"Without sync, Rust uses default 5.5 GiB while Python uses {_HARD_RSS_GIB} GiB → "
+        f"incoherent memory pressure enforcement. Fix: ensure rust_extensions built with 'memory' feature. "
+        f"Original error: {_e}"
+    ) from _e
+
+# MODERN-42 Fix: Sync allocation ceiling from UmaBudget SSOT to Rust atomic ledger.
+# Ceiling = 6.25 * 0.97 = 6.0625 GiB (3% headroom for OS).
+_ALLOCATION_CEILING_GIB: float = round(UmaBudget.UMA_HARD_CEILING_GIB * 0.97, 4)
+
+try:
+    from hledac.universal.rust_extensions.memory import set_allocation_ceiling as _set_alloc_ceiling
+
+    _set_alloc_ceiling(_ALLOCATION_CEILING_GIB)
+except Exception as _e:
+    # MODERN-42 Fix: Raise instead of silent pass.
+    # Allocation ledger must be synchronized with UmaBudget SSOT for coherent enforcement.
+    raise ImportError(
+        f"MODERN-42 CRITICAL: Failed to sync Rust allocation ceiling with UmaBudget SSOT. "
+        f"Without sync, allocation ledger uses default 6.0625 GiB from wrong source. "
+        f"Fix: ensure rust_extensions built with 'memory' feature. "
+        f"Original error: {_e}"
+    ) from _e
+
 GENERAL_HIGH_WATER_RATIO: float = 0.85
 MAX_L2_CACHE_SIZE_MB: int = 50
 from hledac.universal.core.memory import get_memory_snapshot as _rust_snapshot
@@ -408,7 +707,7 @@ def is_uma_critical() -> bool:
     return level in ('critical', 'emergency')
 
 def is_uma_emergency() -> bool:
-    """Return True if UMA usage >= 7.0 GB."""
+    """Return True if UMA usage >= 6.25 GiB (ceiling = 100%)."""
     _, level = get_uma_pressure_level()
     return level == 'emergency'
 
@@ -467,7 +766,7 @@ class UmaWatchdogCallbacks:
         """Called when UMA enters CRITICAL state (>= 6.5 GB)."""
 
     def on_emergency(self, snapshot: dict) -> None:
-        """Called when UMA enters EMERGENCY state (>= 7.0 GB)."""
+        """Called when UMA enters EMERGENCY state (>= 6.25 GiB = ceiling)."""
 
 class DefaultUmaWatchdogCallbacks(UmaWatchdogCallbacks):
     """

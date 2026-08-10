@@ -127,16 +127,26 @@ def get_mlx_memory_module() -> Any:
     return _mlx_memory_module
 
 
-# ── UMA Budget Constants ───────────────────────────────────────────────────────
+# ── MODERN-36 Fix: SSOT imports ─────────────────────────────────────────────────
+# FIX: Was hardcoded 6.25 locally, now imports from SSOT (uma_budget.py)
+# Old: _MLX_BUDGET_GIB: float = 6.25
+# New: Uses UmaBudget.UMA_HARD_CEILING_GIB = 6.25 GiB (SSOT)
 
 try:
-    _MLX_BUDGET_GIB: float = 6.25
-    MLX_WARNING_GIB: float = _MLX_BUDGET_GIB * 0.8
-    MLX_CRITICAL_GIB: float = _MLX_BUDGET_GIB * 0.9
+    from hledac.universal.utils.uma_budget import (
+        UmaBudget,
+        MISSION_PEAK_RSS_GIB,
+    )
+    _MLX_BUDGET_GIB: float = UmaBudget.UMA_HARD_CEILING_GIB  # 6.25 GiB (SSOT)
+    # MLX-specific thresholds derived from SSOT
+    MLX_WARNING_GIB: float = round(_MLX_BUDGET_GIB * MISSION_PEAK_RSS_RATIO, 2)  # 5.5 GiB
+    MLX_CRITICAL_GIB: float = round(_MLX_BUDGET_GIB * UmaBudget.CRITICAL_RATIO, 2)  # 6.191 GiB
     MAX_MEMORY_MB: int = int(_MLX_BUDGET_GIB * 1024)  # 6_400 MB
-except Exception:
-    MLX_WARNING_GIB = 5.0
-    MLX_CRITICAL_GIB = 5.625
+except ImportError:
+    # Fallback for environments without uma_budget (should not happen)
+    _MLX_BUDGET_GIB = 6.25
+    MLX_WARNING_GIB = 5.5
+    MLX_CRITICAL_GIB = 6.19
     MAX_MEMORY_MB = 6_400
 
 # ── Metal Memory Constants ─────────────────────────────────────────────────────
@@ -753,9 +763,83 @@ def get_semaphore_for_testing(category: str) -> asyncio.Semaphore:
     return asyncio.Semaphore(1)
 
 
-# Cache hit/miss metrics
+# ── MODERN-43 Fix: Atomic Cache Metrics ─────────────────────────────────────────
+# Cache hit/miss metrics now use Rust atomic counters when available.
+# Fallback: Python threading.Lock for environments without Rust extension.
+#
+# MODERN-43 ROOT CAUSE: _CACHE_HITS/_CACHE_MISSES were plain Python ints
+# incremented without lock protection → race condition in multi-threaded context.
+#
+# SOLUTION: Use Rust AtomicU64 (lock-free, ~1ns) when available.
+# Rust provides: mlx_cache_hit(), mlx_cache_miss(), mlx_cache_stats(),
+#                mlx_cache_stats_reset()
+# Python fallback: threading.Lock + plain ints (still thread-safe).
+
+_cache_metrics_lock = threading.Lock()
 _CACHE_HITS: int = 0
 _CACHE_MISSES: int = 0
+_RUST_AVAILABLE: bool = False
+
+# Try to load Rust atomic facade
+try:
+    from hledac_rust_extensions import mlx_cache_hit, mlx_cache_miss, mlx_cache_stats, mlx_cache_stats_reset
+    _RUST_AVAILABLE = True
+    logger.debug("[MODERN-43] Rust atomic cache facade available")
+except ImportError:
+    logger.debug("[MODERN-43] Rust atomic cache facade unavailable, using Python fallback")
+    mlx_cache_hit = mlx_cache_miss = mlx_cache_stats = mlx_cache_stats_reset = None
+
+
+def _cache_hit() -> None:
+    """MODERN-43: Thread-safe cache hit increment.
+
+    Uses Rust atomic when available (lock-free ~1ns).
+    Falls back to Python threading.Lock.
+    """
+    if _RUST_AVAILABLE:
+        mlx_cache_hit()
+    else:
+        global _CACHE_HITS
+        with _cache_metrics_lock:
+            _CACHE_HITS += 1
+
+
+def _cache_miss() -> None:
+    """MODERN-43: Thread-safe cache miss increment.
+
+    Uses Rust atomic when available (lock-free ~1ns).
+    Falls back to Python threading.Lock.
+    """
+    if _RUST_AVAILABLE:
+        mlx_cache_miss()
+    else:
+        global _CACHE_MISSES
+        with _cache_metrics_lock:
+            _CACHE_MISSES += 1
+
+
+def _get_cache_counts() -> tuple[int, int]:
+    """MODERN-43: Get current cache hit/miss counts.
+
+    Returns (hits, misses) from Rust atomics or Python fallback.
+    """
+    if _RUST_AVAILABLE:
+        return mlx_cache_stats()
+    with _cache_metrics_lock:
+        return (_CACHE_HITS, _CACHE_MISSES)
+
+
+def _reset_cache_stats() -> None:
+    """MODERN-43: Reset cache statistics.
+
+    Resets both Rust atomics and Python fallback.
+    """
+    if _RUST_AVAILABLE:
+        mlx_cache_stats_reset()
+    global _CACHE_HITS, _CACHE_MISSES
+    with _cache_metrics_lock:
+        _CACHE_HITS = 0
+        _CACHE_MISSES = 0
 
 
 async def get_mlx_model(model_name: str) -> tuple[Any, Any]:
@@ -1019,13 +1103,15 @@ def evict_all() -> None:
 
 def get_cache_stats() -> dict[str, Any]:
     """Get model cache statistics including hit/miss metrics."""
-    total = _CACHE_HITS + _CACHE_MISSES
-    hit_rate = _CACHE_HITS / total if total > 0 else 0.0
+    hits, misses = _get_cache_counts()
+    total = hits + misses
+    hit_rate = hits / total if total > 0 else 0.0
     return {
         "size": len(_MLX_CACHE),
         "max": _MLX_CACHE_MAX,
         "models": list(_MLX_CACHE.keys()),
-        "cache_hits": _CACHE_HITS,
-        "cache_misses": _CACHE_MISSES,
+        "cache_hits": hits,
+        "cache_misses": misses,
         "hit_rate": hit_rate,
+        "rust_atomic": _RUST_AVAILABLE,
     }

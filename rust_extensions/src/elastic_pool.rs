@@ -1,43 +1,24 @@
 //! elastic_pool — Phase-aware dynamic rayon pool resizing.
 //!
-//! ## Problem
+//! ## MODERN-31: Single Source of Truth
 //!
-//! `cpu_pool()` and `io_pool()` in `lib.rs` are `LazyLock<ThreadPool>` singletons
-//! built once at first access with fixed thread counts (4 and 2 respectively).
-//! They are never resized during a sprint.
+//! Pool sizing is now driven by `adaptive_scheduler.rs` which provides
+//! pressure-based recommendations via `recommended_cpu_threads()` and
+//! `recommended_io_threads()`. This module implements the actual pool
+//! resizing via `resize_cpu_pool(n)` / `resize_io_pool(n)`.
 //!
-//! `adaptive_scheduler.rs` only *recommends* threshold sizes — it does NOT grow or shrink
-//! the actual pool. The archived `unified_executor.py` had channel-based work-stealing
-//! dispatch but was archived during F350M-R cleanup.
-//!
-//! ## Solution
+//! ## MODERN-32: Global Thread Budget
 //!
 //! Replaces the static `LazyLock<ThreadPool>` pattern with
 //! `Arc<RwLock<Option<ThreadPool>>>` wrappers that can be swapped atomically
-//! at runtime via `resize_cpu_pool(n)` / `resize_io_pool(n)`.
+//! at runtime. The global thread budget is enforced across ALL pools:
 //!
-//! The existing dispatchers in `pool_run.rs` are updated to read the current pool
-//! from the `RwLock` on each iteration — so pool replacement is seamless:
-//! old dispatchers drain their queue while new work goes to the new pool.
+//!   - cpu_pool threads (P-cores via USER_INITIATED QoS)
+//!   - io_pool threads (E-cores via UTILITY QoS)
+//!   - mixed_pool threads (adaptive, 1-2 threads)
+//!   - dispatcher threads (E-cores, 3 total)
 //!
-//! ## Phase-Aware Elasticity (Python side)
-//!
-//! The Python `RayonPoolManager` (in `isolated_executors.py`) drives resize based on
-//! sprint phase transitions:
-//!
-//!   | Phase    | cpu_pool | io_pool | Total |
-//!   |----------|----------|---------|-------|
-//!   | BOOT     | 4        | 2       | 6     |
-//!   | ACTIVE   | 4        | 4       | 8     |  ← fetch-heavy: io expands
-//!   | SYNTHESIS| 6        | 2       | 8     |  ← cpu-heavy: borrow from io
-//!   | WINDUP   | 4        | 2       | 6     |  ← back to default
-//!
-//! ## M1 8GB Guard
-//!
-//! `MAX_TOTAL_THREADS = 8` is enforced:
-//!   - `resize_cpu_pool(n)` → min(n, MAX_TOTAL_THREADS)
-//!   - `resize_io_pool(n)`  → min(n, MAX_TOTAL_THREADS - cpu_count)
-//!   - Never exceeds 8 total rayon threads (4P + 4E cores).
+//! Total never exceeds MAX_TOTAL_THREADS = 8 (M1 8GB: 4P + 4E).
 //!
 //! ## Backward Compatibility
 //!
@@ -53,10 +34,17 @@ use rayon::ThreadPoolBuilder;
 use std::sync::Arc;
 use std::thread;
 
-/// Maximum total rayon threads across all pools.
-/// M1 Air: 4P + 4E = 8 logical cores.
-/// Enforced by resize_cpu_pool() and resize_io_pool().
-const MAX_TOTAL_THREADS: usize = 8;
+// MODERN-32: Delegate MAX_TOTAL_THREADS to adaptive_scheduler (single source of truth)
+use crate::adaptive_scheduler::MAX_TOTAL_THREADS;
+
+// ---------------------------------------------------------------------------
+// MODERN-33: Single Source of Truth for P-core detection
+// ---------------------------------------------------------------------------
+// MODERN-33 FIX: Removed duplicate detect_topology_p_cores().
+// Now uses lib.rs::detect_p_core_count() as single source of truth.
+// This eliminates 50+ lines of duplicate sysctlbyname code.
+
+// ---------------------------------------------------------------------------
 
 /// Global CPU-bound pool — wrapped in Arc<RwLock> for dynamic replacement.
 /// Initialized lazily on first resize call or pool reference access.
@@ -73,8 +61,7 @@ static IO_POOL: RwLock<Option<Arc<ThreadPool>>> = RwLock::new(None);
 /// Build a CPU-bound ThreadPool with `num_threads` threads.
 /// Applies P-core QoS hints (macOS) and CPU affinity (Linux).
 ///
-/// [SWARM]-009 FIX: Returns Result instead of panicking on OOM.
-/// On M1 8GB, thread allocation can fail if system memory is constrained.
+/// MODERN-28 FIX: CPU pool uses USER_INITIATED → P-cores for CPU-bound work.
 fn build_cpu_pool(num_threads: usize) -> Result<ThreadPool, String> {
     let n = num_threads.clamp(1, MAX_TOTAL_THREADS);
     ThreadPoolBuilder::new()
@@ -89,7 +76,7 @@ fn build_cpu_pool(num_threads: usize) -> Result<ThreadPool, String> {
                 {
                     unsafe {
                         libc::pthread_set_qos_class_self_np(
-                            libc::qos_class_t::QOS_CLASS_USER_INITIATED,
+                            libc::qos_class_t::QOS_CLASS_USER_INITIATED, // MODERN-28: P-cores
                             0,
                         );
                     }
@@ -106,8 +93,8 @@ fn build_cpu_pool(num_threads: usize) -> Result<ThreadPool, String> {
 
 /// Build an I/O-bound ThreadPool with `num_threads` threads.
 ///
-/// [SWARM]-009 FIX: Returns Result instead of panicking on OOM.
-/// On M1 8GB, thread allocation can fail if system memory is constrained.
+/// MODERN-28 FIX: IO pool uses UTILITY → E-cores for I/O-bound work.
+/// This allows P-cores to focus on CPU-intensive tasks (inference, ML).
 fn build_io_pool(num_threads: usize) -> Result<ThreadPool, String> {
     let n = num_threads.clamp(1, 4); // io_pool max 4 threads
     ThreadPoolBuilder::new()
@@ -121,7 +108,7 @@ fn build_io_pool(num_threads: usize) -> Result<ThreadPool, String> {
                 {
                     unsafe {
                         libc::pthread_set_qos_class_self_np(
-                            libc::qos_class_t::QOS_CLASS_USER_INITIATED,
+                            libc::qos_class_t::QOS_CLASS_UTILITY, // MODERN-28: E-cores
                             0,
                         );
                     }
@@ -152,7 +139,22 @@ fn apply_affinity_hint(cores: usize) {
     };
 }
 
-#[cfg(not(all(target_os = "linux", not(target_env = "musl"))))]
+/// MODERN-26: macOS P-core affinity via Mach APIs.
+/// Delegates to crate::darwin_affinity for unified implementation.
+#[cfg(target_os = "macos")]
+fn apply_affinity_hint(cores: usize) {
+    crate::darwin_affinity::apply_cpu_affinity(cores);
+}
+
+/// musl: No sched_setaffinity available.
+#[cfg(all(target_os = "linux", target_env = "musl"))]
+fn apply_affinity_hint(_cores: usize) {}
+
+/// Windows / other: No-op.
+#[cfg(not(any(
+    target_os = "macos",
+    all(target_os = "linux", not(target_env = "musl"))
+)))]
 fn apply_affinity_hint(_cores: usize) {}
 
 // ---------------------------------------------------------------------------
@@ -160,6 +162,9 @@ fn apply_affinity_hint(_cores: usize) {}
 // ---------------------------------------------------------------------------
 
 /// Resize the CPU-bound pool to `num_threads`.
+///
+/// MODERN-31 FIX: Updates global budget via adaptive_scheduler::set_cpu_budget()
+/// so that budget accounting is unified across all pools.
 ///
 /// [SWARM]-009 FIX: Graceful degradation on OOM.
 /// Logs error and keeps existing pool if new pool build fails.
@@ -175,6 +180,8 @@ pub fn resize_cpu_pool(num_threads: usize) {
             let new_pool = Arc::new(pool);
             let mut guard = CPU_POOL.write();
             *guard = Some(new_pool);
+            // MODERN-31: Update global budget for unified accounting
+            crate::adaptive_scheduler::set_cpu_budget(n);
         }
         Err(e) => {
             eprintln!(
@@ -187,14 +194,16 @@ pub fn resize_cpu_pool(num_threads: usize) {
 
 /// Resize the I/O-bound pool to `num_threads`.
 ///
+/// MODERN-31 FIX: Updates global budget via adaptive_scheduler::set_io_budget()
+/// so that budget accounting is unified across all pools.
+///
 /// [SWARM]-009 FIX: Graceful degradation on OOM.
 /// Logs error and keeps existing pool if new pool build fails.
-/// Panics if `num_threads` would push total threads above MAX_TOTAL_THREADS (8).
-/// Enforces: cpu_threads + io_threads <= 8.
+/// Enforces: cpu_threads + io_threads + dispatchers <= MAX_TOTAL_THREADS (8).
 ///
 /// Thread-safe: uses RwLock for concurrent readers vs single writer.
 pub fn resize_io_pool(num_threads: usize) {
-    // Read current CPU pool size to enforce total <= 8
+    // Read current CPU pool size to enforce total <= 8 (accounting for dispatchers)
     let cpu_count = {
         let guard = CPU_POOL.read();
         match &*guard {
@@ -202,7 +211,8 @@ pub fn resize_io_pool(num_threads: usize) {
             None => 0,
         }
     };
-    let max_io = MAX_TOTAL_THREADS.saturating_sub(cpu_count);
+    // MODERN-32: Reserve 3 slots for dispatchers
+    let max_io = MAX_TOTAL_THREADS.saturating_sub(cpu_count + 3);
     let n = num_threads.clamp(1, max_io.max(1));
 
     match build_io_pool(n) {
@@ -210,6 +220,8 @@ pub fn resize_io_pool(num_threads: usize) {
             let new_pool = Arc::new(pool);
             let mut guard = IO_POOL.write();
             *guard = Some(new_pool);
+            // MODERN-31: Update global budget for unified accounting
+            crate::adaptive_scheduler::set_io_budget(n);
         }
         Err(e) => {
             eprintln!(
@@ -238,16 +250,28 @@ pub fn get_io_pool_threads() -> usize {
     }
 }
 
-/// Get total active rayon threads across cpu + io pools.
+/// Get total active rayon threads across cpu + io pools (dispatchers NOT included).
+/// For global budget including dispatchers, use adaptive_scheduler::get_total_threads().
 pub fn get_total_active_threads() -> usize {
     get_cpu_pool_threads() + get_io_pool_threads()
 }
 
 /// Initialize default pools (called by Python at startup).
-/// Sets cpu_pool=4, io_pool=2 — matches the original LazyLock defaults.
+///
+/// MODERN-30 FIX: Pools are now sized based on actual hardware topology:
+/// - cpu_pool: p_cores (1-4, M1 8GB safe)
+/// - io_pool: MAX_TOTAL_THREADS - p_cores (leaves headroom for system)
+///
+/// Before: Hardcoded cpu_pool=4, io_pool=2 (wasteful on 2P systems, risky on 8P systems)
+/// After:  Topology-aware sizing (4P → cpu=4/io=4, 2P → cpu=2/io=2, 1P → cpu=1/io=1)
 pub fn init_default_pools() {
-    resize_cpu_pool(4);
-    resize_io_pool(2);
+    // MODERN-33 + MODERN-34: Use topology::p_core_count() — single source of truth
+    // This uses the cached perflevel0/1 counts from topology.rs
+    let p_cores = crate::topology::p_core_count();
+    let io_threads = MAX_TOTAL_THREADS.saturating_sub(p_cores).max(1);
+
+    resize_cpu_pool(p_cores);
+    resize_io_pool(io_threads);
 }
 
 // ---------------------------------------------------------------------------
@@ -431,10 +455,14 @@ mod tests {
 
     #[test]
     fn test_init_default_pools() {
+        // MODERN-33 + MODERN-34: Uses topology::p_core_count()
         init_default_pools();
-        assert_eq!(get_cpu_pool_threads(), 4);
-        assert_eq!(get_io_pool_threads(), 2);
-        assert_eq!(get_total_active_threads(), 6);
+        let p_cores = crate::topology::p_core_count();
+        assert_eq!(get_cpu_pool_threads(), p_cores);
+        // io_pool = MAX_TOTAL_THREADS - p_cores (but min 1)
+        let expected_io = (MAX_TOTAL_THREADS - p_cores).max(1);
+        assert_eq!(get_io_pool_threads(), expected_io);
+        assert_eq!(get_total_active_threads(), MAX_TOTAL_THREADS);
     }
 
     #[test]

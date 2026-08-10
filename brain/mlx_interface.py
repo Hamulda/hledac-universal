@@ -22,6 +22,9 @@ Usage:
     mx = get_mlx()      # mlx.core singleton
     metal = get_metal()  # mx.metal singleton
     mlx_lm = get_mlx_lm()  # mlx_lm module
+
+NOTE (MODERN-35): Callers must set P-core affinity before mlx_lm.generate().
+See brain/deephermes3_engine.py for proper implementation pattern.
 """
 from __future__ import annotations
 
@@ -29,6 +32,12 @@ import logging
 import threading
 from dataclasses import dataclass
 from typing import Any
+
+# MODERN-35 Fix: Import CPU affinity utilities for MLX Metal operations
+from hledac.universal.utils.cpu_affinity import (
+    set_mlx_affinity,
+    is_apple_silicon,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -169,6 +178,10 @@ def _generate_mlx(prompt: str, max_tokens: int = 256, temperature: float = 0.7) 
         mlx_lm = get_mlx_lm()
         # mlx_lm.generate is the standard API
         if hasattr(mlx_lm, 'generate'):
+            # MODERN-35 Fix: Set P-core affinity before MLX Metal inference
+            # E-cores are strictly reserved for I/O operations only
+            if is_apple_silicon():
+                set_mlx_affinity()
             # Synchronous generate (may need to be wrapped in asyncio)
             import mlx.core as mx
             return mlx_lm.generate(prompt, max_tokens=max_tokens, temp=temperature)

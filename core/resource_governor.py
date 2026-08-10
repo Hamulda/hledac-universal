@@ -38,11 +38,11 @@ AUTHORITY BOUNDARY:
 Sprint 8AB + P7-3: Unified UMA accountant surface (WARN/CRITICAL/EMERGENCY + I/O-only mode).
 Threshold driver: system_used_gib (total - available), NOT process rss_gib.
 
-P7-3 SSOT: Threshold constants from utils.uma_budget.UmaBudget:
-    - 6.8 GiB → SOFT_WARN
-    - 7.0 GiB → WARN
-    - 7.5 GiB → CRITICAL
-    - 7.8 GiB → EMERGENCY
+P7-3 SSOT: Threshold constants from utils.uma_budget.UmaBudget (M1 8GB, 6.25 GiB ceiling):
+    - 5.5 GiB  → SOFT_WARN (88% of ceiling = MISSION_PEAK_RSS_GIB)
+    - 5.938 GiB → WARN (95% of ceiling)
+    - 6.191 GiB → CRITICAL (99% of ceiling)
+    - 6.25 GiB  → EMERGENCY (ceiling = 100%)
 """
 
 from __future__ import annotations
@@ -619,14 +619,25 @@ def _adaptive_threshold(ratio: float) -> float:
 from hledac.universal.core.env_config import ENV as _ENV
 
 _RG_USE_RATIOS: bool = _ENV.get_bool("HLEDAC_RG_USE_RATIOS", default=True)
+
+# MODERN-36 Fix: Import from SSOT
+from hledac.universal.utils.uma_budget import (
+    UmaBudget,
+    MISSION_PEAK_RSS_GIB,
+    ORCHESTRATOR_GIB,
+)
+
 try:
     from hledac.universal.config import _rg_float
 
     if _RG_USE_RATIOS:
-        _THRESHOLD_SOFT_WARN_GIB: float = _adaptive_threshold(_SOFT_WARN_RATIO)
-        _THRESHOLD_WARN_GIB: float = _adaptive_threshold(_WARN_RATIO)
-        _THRESHOLD_CRITICAL_GIB: float = _adaptive_threshold(_CRITICAL_RATIO)
-        _THRESHOLD_EMERGENCY_GIB: float = _adaptive_threshold(_EMERGENCY_RATIO)
+        # MODERN-36 Fix: Use SSOT ceiling (6.25 GiB) instead of detected memory
+        # Old: _adaptive_threshold(_SOFT_WARN_RATIO) with detected memory
+        # New: UmaBudget.THRESHOLD_*_GIB (derived from SSOT)
+        _THRESHOLD_SOFT_WARN_GIB: float = UmaBudget.THRESHOLD_SOFT_WARN_GIB
+        _THRESHOLD_WARN_GIB: float = UmaBudget.THRESHOLD_WARN_GIB
+        _THRESHOLD_CRITICAL_GIB: float = UmaBudget.THRESHOLD_CRITICAL_GIB
+        _THRESHOLD_EMERGENCY_GIB: float = UmaBudget.THRESHOLD_EMERGENCY_GIB
     else:
         _THRESHOLD_SOFT_WARN_GIB = _rg_float("THRESHOLD_SOFT_WARN_GIB")
         _THRESHOLD_WARN_GIB = _rg_float("THRESHOLD_WARN_GIB")
@@ -634,15 +645,17 @@ try:
         _THRESHOLD_EMERGENCY_GIB = _rg_float("THRESHOLD_EMERGENCY_GIB")
     _HYSTERESIS_EXIT_GIB: float = _rg_float("HYSTERESIS_EXIT_GIB")
 except (ImportError, NameError):
-    _THRESHOLD_SOFT_WARN_GIB = round(_DETECTED_TOTAL_GIB * _SOFT_WARN_RATIO, 2)
-    _THRESHOLD_WARN_GIB = round(_DETECTED_TOTAL_GIB * _WARN_RATIO, 2)
-    _THRESHOLD_CRITICAL_GIB = round(_DETECTED_TOTAL_GIB * _CRITICAL_RATIO, 2)
-    _THRESHOLD_EMERGENCY_GIB = round(_DETECTED_TOTAL_GIB * _EMERGENCY_RATIO, 2)
+    # MODERN-36 Fix: Use SSOT values instead of derived from detected memory
+    # Old: round(_DETECTED_TOTAL_GIB * _SOFT_WARN_RATIO, 2)
+    # New: UmaBudget.THRESHOLD_*_GIB (from SSOT)
+    _THRESHOLD_SOFT_WARN_GIB = UmaBudget.THRESHOLD_SOFT_WARN_GIB  # 5.5 GiB
+    _THRESHOLD_WARN_GIB = UmaBudget.THRESHOLD_WARN_GIB  # 5.938 GiB
+    _THRESHOLD_CRITICAL_GIB = UmaBudget.THRESHOLD_CRITICAL_GIB  # 6.191 GiB
+    _THRESHOLD_EMERGENCY_GIB = UmaBudget.THRESHOLD_EMERGENCY_GIB  # 6.25 GiB
     # P2-8 COMPREHENSIVE FIX: Create proper hysteresis band
     # Exit threshold MUST be below entry threshold to prevent immediate exit after entry.
-    # With CRITICAL entry at 6.7 GiB and SWAP entry at 6.0 GiB, exit should be between them.
-    # Using WARN threshold - 0.5 GiB creates ~0.3 GiB band for M1 8GB.
-    _HYSTERESIS_EXIT_GIB = round(_THRESHOLD_WARN_GIB - 0.5, 2)
+    # MODERN-36 Fix: Using ORCHESTRATOR_GIB (1.0 GiB) creates proper band for M1 8GB.
+    _HYSTERESIS_EXIT_GIB = round(_THRESHOLD_SOFT_WARN_GIB - ORCHESTRATOR_GIB, 2)  # 4.5 GiB
 RATIOS_USED: tuple[float, float, float, float] = _SOC_RATIOS
 DETECTED_TOTAL_GIB: float = _DETECTED_TOTAL_GIB
 UMA_STATE_SOFT_WARN: str = "soft_warn"
@@ -655,9 +668,13 @@ try:
     DIAGNOSTIC_SWAP_MAX_GIB: float = _rg_float("DIAGNOSTIC_SWAP_MAX_GIB")
     HARD_BLOCK_SWAP_GIB: float = _rg_float("HARD_BLOCK_SWAP_GIB")
 except NameError:
-    CLEAN_SWAP_MAX_GIB = 3.0
-    DIAGNOSTIC_SWAP_MAX_GIB = 5.0
-    HARD_BLOCK_SWAP_GIB = 6.0
+    # MODERN-41 Fix: Use SSOT SWAP_TIERS instead of local derivation
+    # SSOT is in utils.uma_budget.SWAP_TIERS
+    from hledac.universal.utils.uma_budget import SWAP_TIERS
+
+    CLEAN_SWAP_MAX_GIB = SWAP_TIERS.CLEAN  # 3.3 GiB
+    DIAGNOSTIC_SWAP_MAX_GIB = SWAP_TIERS.DIAGNOSTIC  # 4.675 GiB
+    HARD_BLOCK_SWAP_GIB = SWAP_TIERS.HARD_BLOCK  # 5.225 GiB
 
 
 def get_swap_policy_tier(swap_gib: float) -> tuple[str, str]:
@@ -808,9 +825,25 @@ class UMAStatus(msgspec.Struct, frozen=True, gc=False):
     Sprint 8AB + F163F: Unified UMA accounting snapshot.
     Migrated from @dataclass(frozen=True, slots=True) → msgspec.Struct.
 
+    MODERN-45: Axis documentation for memory fields.
+
+    Memory Axes (see MemoryAxis in uma_budget.py):
+    ┌─────────────────────────────────────────────────────────────────────────┐
+    │ AXIS: system-used     (total RAM - available RAM, all processes)       │
+    │   • system_used_gib: THRESHOLD DRIVER for governor decisions          │
+    │   • system_available_gib: Complementary available memory               │
+    ├─────────────────────────────────────────────────────────────────────────┤
+    │ AXIS: process-rss     (our process's RSS, subset of system-used)       │
+    │   • rss_gib: DIAGNOSTIC field (informational only)                     │
+    ├─────────────────────────────────────────────────────────────────────────┤
+    │ AXIS: tracked-allocation (Hledac's internal ledger)                    │
+    │   • metal_*: MLX Metal memory (tracked separately)                      │
+    └─────────────────────────────────────────────────────────────────────────┘
+
     Fields:
-        rss_gib: Process RSS in GiB (diagnostic, NOT threshold driver).
-        system_used_gib: (total - available) in GiB (THRESHOLD DRIVER).
+        rss_gib: Process RSS in GiB (AXIS: process-rss, DIAGNOSTIC only).
+                 NOT used for threshold decisions — see system_used_gib.
+        system_used_gib: (total - available) in GiB (AXIS: system-used, THRESHOLD DRIVER).
         system_available_gib: Available system memory in GiB.
         swap_used_gib: Swap usage in GiB (diagnostic only — F163F).
         swap_detected: True if swap > 3.8 GiB (active swap = systemic pressure).
@@ -819,6 +852,10 @@ class UMAStatus(msgspec.Struct, frozen=True, gc=False):
         state: "ok" | "soft_warn" | "warn" | "critical" | "emergency".
         io_only: True if I/O-only mode should be active.
         last_error: Error message if sampling failed (None = OK).
+
+    MODERN-45 INVARIANT:
+        system_used_gib >= rss_gib (system-used always >= process-rss)
+        unless system is nearly idle and other processes use minimal memory.
 
     F163F CHANGE: swap_detected added — active swap indicates M1 UMA
     pressure that is SYSTEMIC (not process-bound). On M1 8GB, swap is a
@@ -3538,35 +3575,45 @@ def get_mpc_telemetry() -> dict[str, Any]:
     }
 
 
-_QOS_USER_INITIATED: int = 25
-_QOS_UTILITY: int = 17
-_QOS_BACKGROUND: int = 9
+# MODERN-27: Canonical QoS class constants (Apple Silicon / libdispatch)
+# These match libc::qos_class_t values used in rust_extensions/src/lib.rs
+_QOS_USER_INITIATED: int = 0x19  # 25 - P-core scheduling priority
+_QOS_UTILITY: int = 0x11         # 17 - Balanced efficiency
+_QOS_BACKGROUND: int = 0x09      #  9 - Background efficiency
 
 
 def set_thread_qos(qos_level: int) -> None:
     """
-    Sprint 8PC: Set calling thread's QoS class on Apple Silicon.
+    Sprint 8PC + MODERN-29 FIX: Set calling thread's QoS class on Apple Silicon.
 
     Useful for hinting the kernel about latency vs throughput tradeoffs.
 
-    QoS levels:
-        0x19 (USER_INITIATED): Interactive / latency-sensitive
+    QoS levels (MODERN-29: Use pthread_set_qos_class_self_np, NOT raw syscall 366):
+        0x19 (USER_INITIATED): Interactive / latency-sensitive → P-core scheduling
         0x11 (UTILITY):         Background / throughput-oriented
         0x09 (BACKGROUND):      Low-priority background tasks
 
+    MODERN-29 FIX: Replace libc.syscall(366, ...) with direct pthread_set_qos_class_self_np.
+    Rationale:
+        - Syscall 366 is implementation detail that varies by macOS version
+        - pthread_set_qos_class_self_np via ctypes uses the stable libSystem API
+        - Matches the correct implementation in utils/thread_pools.py:41-42
+
     B.7: Fail-open — if syscall fails (non-macOS or permission), log at DEBUG
     and return without raising.
-
-    Implementation: ctypes.CDLL(None).syscall(pthread_set_qos_class_self_np).
     """
     try:
         import ctypes
-        import ctypes.util
 
-        libc = ctypes.CDLL(None)
-        libc.syscall(366, qos_level, 0)
+        # MODERN-29 FIX: Use libSystem directly, NOT libc.syscall(366)
+        # This matches the correct pattern in utils/thread_pools.py
+        libpthread = ctypes.CDLL("/usr/lib/libSystem.B.dylib")
+        libpthread.pthread_set_qos_class_self_np(qos_level, 0)
+    except OSError as exc:
+        # Handle non-macOS or symbol-not-found gracefully
+        logger.debug(f"[QoS] pthread_set_qos_class_self_np not available (non-macOS): {exc}")
     except Exception as exc:
-        logger.debug(f"[QoS] pthread_set_qos_class_self_np failed (non-macOS or permission): {exc}")
+        logger.debug(f"[QoS] pthread_set_qos_class_self_np failed: {exc}")
 
 
 def get_lane_ram_budget(lane_id: str) -> int:

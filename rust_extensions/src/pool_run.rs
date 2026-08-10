@@ -52,6 +52,71 @@ use crate::mixed_pool;
 #[cfg(feature = "otel")]
 use crate::tracing::{clear_tls_trace_context, is_tracing_enabled, set_tls_trace_context};
 
+// NEW-M1 FIX: PyCapsule RAII guard for Arc-based lifecycle.
+// Python 3.14+ compatible using stable PyCapsule C API.
+// The capsule destructor automatically calls rayon_drop_channel when garbage collected,
+// providing RAII semantics at the FFI boundary.
+
+// Capsule name for PyCapsule FFI boundary (Python 3.14+ stable C API)
+const RAYON_HANDLE_CAPSULE_NAME: &str = "hledac.universal._rayon_handle";
+
+// Module-level FFI imports for Python 3.14+ compatibility (stable PyCapsule C API)
+use pyo3::ffi::{PyCapsule_GetPointer, PyCapsule_IsValid, PyCapsule_New};
+
+/// Tombstone set to prevent double-free on drop_rayon_handle_internal.
+/// Once a handle is dropped, its pointer value is kept PERMANENTLY.
+/// This is safe because Arc::into_raw returns unique, never-reused pointer values.
+static DROPPED_HANDLES: LazyLock<parking_lot::RwLock<std::collections::HashSet<usize>>, fn() -> _> =
+    LazyLock::new(|| parking_lot::RwLock::new(std::collections::HashSet::new()));
+
+/// Internal helper to drop a rayon handle (Arc::from_raw + drop).
+/// Thread-safe via RwLock tombstone set.
+/// Returns silently if handle was already dropped (idempotent).
+fn drop_rayon_handle_internal(ptr: usize) {
+    if ptr == 0 {
+        return;
+    }
+
+    // Check tombstone first — if already dropped, this is a no-op
+    {
+        let dropped = DROPPED_HANDLES.read();
+        if dropped.contains(&ptr) {
+            return;
+        }
+    }
+
+    // Mark as dropped (Atomically: check-then-insert)
+    {
+        let mut dropped = DROPPED_HANDLES.write();
+        if dropped.contains(&ptr) {
+            return;
+        }
+        dropped.insert(ptr);
+    }
+
+    // NOW safe to drop: reconstruct Arc and drop it
+    // SAFETY: ptr was returned by Arc::into_raw in rayon_submit_channel.
+    // We hold the tombstone, so no other thread can drop this pointer.
+    let _shared = unsafe { Arc::from_raw(ptr as *const SharedTask) };
+    // Arc drops here — SharedTask refcount decremented
+}
+
+/// PyCapsule destructor callback — called automatically by Python GC.
+/// SAFETY: This is an extern "C" fn with PyObject* pointer, per PyCapsule spec.
+unsafe extern "C" fn rayon_handle_destructor(capsule: *mut pyo3::ffi::PyObject) {
+    if capsule.is_null() {
+        return;
+    }
+
+    // Get pointer from capsule using stable Python 3.14+ C API
+    let ptr = PyCapsule_GetPointer(capsule, RAYON_HANDLE_CAPSULE_NAME.as_ptr() as *const _);
+    if ptr.is_null() {
+        return;
+    }
+
+    drop_rayon_handle_internal(ptr as usize);
+}
+
 // State encoding for atomic compare-exchange
 const STATE_PENDING: u8 = 0;
 const STATE_READY: u8 = 1;
@@ -148,6 +213,9 @@ fn mixed_sender() -> &'static parking_lot::Mutex<Option<Sender<WorkItem>>> {
 /// NOTE: Uses `.expect()` because dispatcher thread is essential for pool operation.
 /// If this fails, the entire thread pool becomes non-functional (work won't be
 /// dispatched). This indicates a system-level OOM/resource exhaustion issue.
+/// MODERN-28 FIX: Dispatcher threads use UTILITY → E-cores.
+/// Dispatchers are I/O-bound (queue polling, recv operations).
+/// This keeps P-cores available for CPU-intensive rayon work.
 fn spawn_dispatcher(pool_name: &str, rx: Arc<Receiver<WorkItem>>) {
     let pool_name_owned = pool_name.to_string();
     thread::Builder::new()
@@ -158,7 +226,8 @@ fn spawn_dispatcher(pool_name: &str, rx: Arc<Receiver<WorkItem>>) {
             {
                 unsafe {
                     use libc::pthread_set_qos_class_self_np;
-                    let qos = libc::qos_class_t::QOS_CLASS_USER_INITIATED;
+                    // MODERN-28: Dispatchers use UTILITY (E-cores)
+                    let qos = libc::qos_class_t::QOS_CLASS_UTILITY;
                     pthread_set_qos_class_self_np(qos, 0);
                 }
             }
@@ -451,11 +520,21 @@ pub fn rayon_submit_channel_(
         ));
     }
 
-    // Return pointer to SharedTask — Python passes this to rayon_join_channel.
-    // R5 FIX: Use Arc::into_raw so we can reconstruct with Arc::from_raw in join/abort.
-    // Arc::into_raw returns *mut SharedTask (not *mut Arc<SharedTask>).
-    let ptr = Arc::into_raw(work_shared) as usize;
-    Ok(ptr.into_pyobject(py).unwrap().into())
+    // NEW-M1 FIX: Return PyCapsule with RAII destructor instead of raw usize.
+    // The capsule auto-calls rayon_drop_channel when garbage collected,
+    // providing RAII semantics at the FFI boundary.
+    //
+    // Backward compatibility: Both PyCapsule (default) and raw usize handles
+    // are supported. Python code can pass either to rayon_join/abort_channel.
+    let ptr = Arc::into_raw(work_shared) as *mut std::ffi::c_void;
+    let capsule = unsafe {
+        PyCapsule_New(
+            ptr,
+            RAYON_HANDLE_CAPSULE_NAME.as_ptr() as *const std::ffi::c_char,
+            Some(rayon_handle_destructor),
+        )
+    };
+    Ok(Py::from(capsule))
 }
 
 // ---------------------------------------------------------------------------
@@ -665,6 +744,43 @@ pub fn rayon_shutdown_channel_() -> PyResult<()> {
 }
 
 // ---------------------------------------------------------------------------
+// rayon_drop_channel — explicitly drop a rayon handle (Arc ownership release)
+// ---------------------------------------------------------------------------
+
+/// NEW-M1 FIX: Explicitly drop a rayon handle's Arc ownership.
+///
+/// This function is called automatically by the PyCapsule destructor when
+/// the handle is garbage collected (RAII pattern). It can also be called
+/// manually for immediate cleanup (e.g., after rayon_join/abort completes).
+///
+/// Thread-safe via tombstone pattern — safe to call multiple times.
+///
+/// Args:
+///     handle: usize pointer from rayon_submit_channel (raw handle).
+///             Can also accept a PyCapsule — extracts pointer internally.
+///
+/// Returns:
+///     None on success. Raises PyRuntimeError if handle is invalid.
+#[pyfunction]
+#[pyo3(name = "rayon_drop_channel")]
+pub fn rayon_drop_channel_(handle: &PyAny) -> PyResult<()> {
+    let ptr = if let Ok(ptr) = handle.extract::<usize>() {
+        // Raw usize handle (backward compatibility)
+        ptr
+    } else if let Ok(capsule_ptr) = handle.extract::<*mut std::ffi::c_void>() {
+        // PyCapsule handle — extract the pointer
+        capsule_ptr as usize
+    } else {
+        return Err(PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(
+            "Invalid handle type: expected usize or PyCapsule",
+        ));
+    };
+
+    drop_rayon_handle_internal(ptr);
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
 // Deprecated aliases — removed in R2 (were exact duplicates of channel versions)
 // ---------------------------------------------------------------------------
 // NOTE: rayon_submit / rayon_join / rayon_abort / rayon_shutdown were removed.
@@ -681,5 +797,7 @@ pub fn register_functions(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(rayon_join_channel_, m)?)?;
     m.add_function(wrap_pyfunction!(rayon_abort_channel_, m)?)?;
     m.add_function(wrap_pyfunction!(rayon_shutdown_channel_, m)?)?;
+    // NEW-M1 FIX: Explicit Arc drop for manual cleanup + PyCapsule RAII support
+    m.add_function(wrap_pyfunction!(rayon_drop_channel_, m)?)?;
     Ok(())
 }

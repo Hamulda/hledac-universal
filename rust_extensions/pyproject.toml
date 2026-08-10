@@ -19,7 +19,28 @@ requires-python = ">=3.14"
 # NOTE: features here REPLACE Cargo.toml default features, not add to them.
 # Must include all project features (core, data, bloom, graph, advanced) otherwise
 # #[cfg(feature)] gated modules are compiled out but still referenced by other code.
-features = ["pyo3/extension-module", "core", "data", "bloom", "graph", "advanced"]
+# FIX NEW-H4: Include ALL default features from Cargo.toml:243 plus pyproject-specific ones.
+# Without metal_shared, iosurface, swarm_dag the zero-copy IOSurface pipeline and
+# work-stealing DAG are NOT compiled, causing silent Python fallback.
+#
+# Default Cargo features (Cargo.toml:243):
+#   default = ["core", "data", "metal_shared", "iosurface", "swarm_dag"]
+# Additional pyproject-specific:
+#   pyo3/extension-module (required for cdylib builds)
+#   bloom (referenced by core)
+#   graph (not in default but used by this project)
+#   advanced (not in default but used by this project)
+features = [
+    "pyo3/extension-module",
+    "core",
+    "data",
+    "bloom",
+    "graph",
+    "advanced",
+    "metal_shared",  # NEW-H4 fix: zero-copy Rust↔Python↔MLX buffer sharing
+    "iosurface",     # NEW-H4 fix: CVPixelBuffer→Metal zero-copy pipeline
+    "swarm_dag",     # NEW-H4 fix: work-stealing task DAG with ROI-based pool sizing
+]
 # Module name matching the PyO3 #[pymodule] in lib.rs
 module-name = "hledac_rust_extensions"
 # Python package source (./hledac_rust_extensions/ subdirectory)

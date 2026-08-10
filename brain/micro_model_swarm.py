@@ -37,6 +37,12 @@ import mlx.core as mx
 import mlx_lm
 
 # Re-export from extracted modules for backward compatibility
+# MODERN-35 Fix: Import CPU affinity utilities
+from hledac.universal.utils.cpu_affinity import (
+    set_mlx_affinity,
+    is_apple_silicon,
+)
+
 from .content_router import (
     ContentRouter,
     classify_content,
@@ -258,6 +264,10 @@ class MicroModelSwarmRouter:
         main = self._pool.get_main_model()
         if main is None:
             raise RuntimeError("No main model registered")
+        
+        # MODERN-35 Fix: Set P-core affinity before MLX inference (fallback path)
+        if is_apple_silicon():
+            set_mlx_affinity()
         
         model, tokenizer = main
         result = mlx_lm.generate(

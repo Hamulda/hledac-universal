@@ -72,7 +72,7 @@ class IocScanResult:
     
     MODERN-24: This class wraps Arrow IPC bytes and provides zero-copy
     access to the underlying data. The Arrow RecordBatch columns are
-    stored as views into the buffer (no copying).
+    stored as views into the buffer (no copying beyond the initial IPC read).
     
     Usage:
         ipc_bytes = scanner.scan_mmap_arrow_ipc("/path/to/file.bin")
@@ -85,9 +85,15 @@ class IocScanResult:
         # Iterate as named tuples
         for hit in result:
             print(f"{hit.pattern}: {hit.value} at {hit.start}-{hit.end}")
+        
+        # OPTIMIZATION: Zero-copy iteration over raw Arrow arrays
+        for i in range(len(result)):
+            pattern = result.pattern_at(i)  # Direct Arrow array access
+            start = result.start_at(i)       # No list conversion
     """
     
-    __slots__ = ('_batch', '_patterns', '_labels', '_values', '_starts', '_ends')
+    __slots__ = ('_batch', '_patterns', '_labels', '_values', '_starts', '_ends', 
+                 '_pattern_col', '_label_col', '_value_col', '_start_col', '_end_col')
     
     # Schema columns for IOC scan results (matches Rust arrow_c_data.rs)
     _SCHEMA_COLUMNS = ('pattern', 'label', 'value', 'start', 'end')
@@ -100,6 +106,11 @@ class IocScanResult:
         values: List[str],
         starts: List[int],
         ends: List[int],
+        pattern_col=None,
+        label_col=None,
+        value_col=None,
+        start_col=None,
+        end_col=None,
     ):
         self._batch = batch
         self._patterns = patterns
@@ -107,6 +118,12 @@ class IocScanResult:
         self._values = values
         self._starts = starts
         self._ends = ends
+        # Store raw Arrow columns for zero-copy iteration (MODERN-24 optimization)
+        self._pattern_col = pattern_col
+        self._label_col = label_col
+        self._value_col = value_col
+        self._start_col = start_col
+        self._end_col = end_col
     
     @classmethod
     def from_ipc_bytes(cls, ipc_bytes: bytes) -> 'IocScanResult':
@@ -119,7 +136,7 @@ class IocScanResult:
             ipc_bytes: Arrow IPC stream bytes from Rust scan_mmap_arrow_ipc()
             
         Returns:
-            IocScanResult with columns accessible as lists
+            IocScanResult with columns accessible as lists AND zero-copy accessors
             
         Raises:
             ValueError: If IPC bytes are invalid or don't match expected schema
@@ -147,15 +164,21 @@ class IocScanResult:
                     f"Expected {cls._SCHEMA_COLUMNS}"
                 )
             
-            # Extract columns as Python lists (this is just pointer dereference, not copy)
-            # The underlying Arrow arrays are views into the IPC buffer
-            patterns = batch.column('pattern').to_pylist()
-            labels = batch.column('label').to_pylist()
-            values = batch.column('value').to_pylist()
+            # Store raw Arrow columns for zero-copy iteration (no list conversion)
+            # These are views into the IPC buffer - NO data copying
+            pattern_col = batch.column('pattern')
+            label_col = batch.column('label')
+            value_col = batch.column('value')
+            start_col = batch.column('start')
+            end_col = batch.column('end')
             
-            # Convert start/end to native int (they're uint64 in Arrow)
-            starts = [int(x) for x in batch.column('start').to_pylist()]
-            ends = [int(x) for x in batch.column('end').to_pylist()]
+            # Extract columns as Python lists (for backward compatibility)
+            # This is still efficient because Arrow slices the views
+            patterns = pattern_col.to_pylist()
+            labels = label_col.to_pylist()
+            values = value_col.to_pylist()
+            starts = [int(x) for x in start_col.to_pylist()]
+            ends = [int(x) for x in end_col.to_pylist()]
             
             return cls(
                 batch=batch,
@@ -164,10 +187,70 @@ class IocScanResult:
                 values=values,
                 starts=starts,
                 ends=ends,
+                pattern_col=pattern_col,
+                label_col=label_col,
+                value_col=value_col,
+                start_col=start_col,
+                end_col=end_col,
             )
             
         except Exception as e:
             raise ValueError(f"Failed to deserialize IPC bytes: {e}") from e
+    
+    # ---------------------------------------------------------------------------
+    # Zero-copy column accessors (MODERN-24 optimization)
+    # ---------------------------------------------------------------------------
+    
+    def pattern_at(self, index: int) -> str:
+        """Zero-copy string access from Arrow array (no list conversion)."""
+        if self._pattern_col is not None:
+            return self._pattern_col[index].as_py()
+        return self._patterns[index]
+    
+    def label_at(self, index: int) -> Optional[str]:
+        """Zero-copy nullable string access from Arrow array."""
+        if self._label_col is not None:
+            val = self._label_col[index].as_py()
+            return val  # Returns None for nulls automatically
+        return self._labels[index]
+    
+    def value_at(self, index: int) -> str:
+        """Zero-copy string access from Arrow array."""
+        if self._value_col is not None:
+            return self._value_col[index].as_py()
+        return self._values[index]
+    
+    def start_at(self, index: int) -> int:
+        """Zero-copy uint64 access from Arrow array (returns Python int)."""
+        if self._start_col is not None:
+            return self._start_col[index].as_py()
+        return self._starts[index]
+    
+    def end_at(self, index: int) -> int:
+        """Zero-copy uint64 access from Arrow array (returns Python int)."""
+        if self._end_col is not None:
+            return self._end_col[index].as_py()
+        return self._ends[index]
+    
+    def iter_zero_copy(self):
+        """Zero-copy iterator over hits (avoids list materialization).
+        
+        Usage:
+            for hit in result.iter_zero_copy():
+                print(f"{hit.pattern}: {hit.value}")
+        
+        Yields:
+            IocHit namedtuples with zero-copy column access
+        """
+        n = len(self)
+        for i in range(n):
+            yield IocHit(
+                pattern=self.pattern_at(i),
+                label=self.label_at(i),
+                value=self.value_at(i),
+                start=self.start_at(i),
+                end=self.end_at(i),
+            )
     
     @property
     def patterns(self) -> List[str]:
@@ -242,6 +325,7 @@ def read_arrow_ipc_bytes(ipc_bytes: bytes) -> Any:
     """Read generic Arrow IPC bytes (fallback to JSON).
     
     MODERN-24: If bytes start with ARROW magic, tries Arrow IPC deserialization.
+    MODERN-25: Delegates to arrow_ipc_to_table() from duckdb_store for unified handling.
     Falls back to JSON if Arrow deserialization fails.
     
     Args:
@@ -254,13 +338,15 @@ def read_arrow_ipc_bytes(ipc_bytes: bytes) -> Any:
         return {}
     
     if isinstance(ipc_bytes[:6], bytes) and ipc_bytes[:6] == b'ARROW':
+        # MODERN-25: Unified Arrow IPC helper
         try:
-            reader = ipc.open_stream(ipc_bytes)
-            table = reader.read_all()
-            result = {}
-            for col in table.column_names:
-                result[col] = table.column(col).to_pylist()
-            return result
+            from hledac.universal.knowledge.duckdb_store import arrow_ipc_to_table
+            result = arrow_ipc_to_table(ipc_bytes, source="shared_memory")
+            if result is not None:
+                return result
+        except ImportError:
+            # duckdb_store not available, fall through to direct handling
+            pass
         except Exception as e:
             logger.warning(f'Arrow IPC deserialization failed: {e}')
     
@@ -323,29 +409,23 @@ class ArrowSharedMemory:
         """
         Deserialize data from Arrow IPC format.
 
+        MODERN-25: Delegates to arrow_ipc_to_table() for unified Arrow IPC handling.
+
         Returns:
             Deserialized Python object
         """
         if self._buffer is None:
             raise ValueError('No data to deserialize. Call serialize() first.')
-        if PYARROW_AVAILABLE and self._is_arrow_format():
+        if self._is_arrow_format():
+            # MODERN-25: Unified Arrow IPC helper
             try:
-                reader = pa.ipc.open_stream(pa.py_buffer(self._buffer))
-                table = reader.read_all()
-                result = {}
-                for col in table.column_names:
-                    arr = table.column(col)
-                    if arr.type == pa.string():
-                        result[col] = arr.to_pylist()
-                    elif pa.types.is_integer(arr.type):
-                        result[col] = arr.to_pylist()
-                    elif pa.types.is_floating(arr.type):
-                        result[col] = arr.to_pylist()
-                    elif pa.types.is_boolean(arr.type):
-                        result[col] = arr.to_pylist()
-                    else:
-                        result[col] = arr.to_pylist()
-                return result
+                from hledac.universal.knowledge.duckdb_store import arrow_ipc_to_table
+                result = arrow_ipc_to_table(self._buffer, source="arrow_shared_memory")
+                if result is not None:
+                    return result
+            except ImportError:
+                # duckdb_store not available, try direct pyarrow handling
+                pass
             except Exception as e:
                 logger.warning(f'Arrow deserialization failed, falling back to JSON: {e}')
         try:

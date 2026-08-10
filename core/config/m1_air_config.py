@@ -33,21 +33,46 @@ class M1AirConfig(msgspec.Struct, frozen=True, gc=False):
     """
     Immutable M1 8GB UMA hardware profile.
 
-    Memory budget breakdown (6.0 GiB total):
-      macOS system         ~2.5 GiB
-      Orchestrátor         ~1.0 GiB
-      LLM (Hermes3 4bit)   ~2.0 GiB
-      KV cache             ~0.75 GiB
+    MODERN-38 Fix: Clarified axis distinction between process-RSS and system-used.
+
+    Memory budget breakdown (two distinct AXES):
+    
+    AXIS: process-RSS (memory_budget_gib = MISSION_PEAK_RSS_GIB = 5.5 GiB):
+      macOS system         ~2.5 GiB  (baseline)
+      Hledac process       ~3.0 GiB  (orchestrator + LLM + KV)
       ──────────────────────────────
-      Total               ~6.25 GiB (ceiling at 6.0 GiB for safety)
+      Process RSS cap      5.5 GiB   (hard limit)
+    
+    AXIS: system-used (threshold_*_gib from UmaBudget SSOT):
+      UmaBudget ceiling    6.25 GiB  (SSOT hard ceiling)
+      Soft warn            5.5 GiB    (88% - first signal)
+      Warn                 5.938 GiB  (95% - reduce concurrency)
+      Critical             6.191 GiB  (99% - active pressure)
+      Emergency            6.25 GiB   (100% - crisis)
+
+    INVARIANT: process-RSS (5.5) < system-used thresholds (5.5-6.25)
+    This is intentional: our process can approach its RSS cap while
+    system-wide pressure is still moderate.
 
     All limits are hardware-validated for this specific configuration.
     Do NOT increase values without explicit M1 8GB testing.
     """
 
+    # ── MODERN-36/38 Fix: SSOT imports ──────────────────────────────────────
+    from hledac.universal.utils.uma_budget import (
+        UmaBudget,
+        MISSION_PEAK_RSS_GIB,
+        ORCHESTRATOR_GIB,
+        # MODERN-38 Fix: Import threshold ladder from SSOT
+        M1_FETCH_SOFT_CEILING_GB,
+    )
+
     # ── Hardware profile ─────────────────────────────────────────────────────
 
-    memory_budget_gib: ClassVar[float] = 6.0
+    # MODERN-36 Fix: Was hardcoded 6.0, now derived from SSOT
+    # Old: memory_budget_gib: ClassVar[float] = 6.0
+    # New: Uses MISSION_PEAK_RSS_GIB = 5.5 GiB (process RSS hard cap)
+    memory_budget_gib: ClassVar[float] = MISSION_PEAK_RSS_GIB
     """Ceiling for total process memory. Hard limit on M1 8GB UMA."""
 
     max_concurrent_lanes: ClassVar[int] = 4
@@ -100,12 +125,16 @@ class M1AirConfig(msgspec.Struct, frozen=True, gc=False):
     max_findings_per_sprint: ClassVar[int] = 500
     barrier_hard_timeout_s: ClassVar[float] = 30.0
 
-    # ── UMA pressure thresholds (GiB) ────────────────────────────────────────
+    # ── MODERN-38 Fix: UMA pressure thresholds (GiB) ──────────────────────────
+    # AXIS: system-used (macOS total memory - available memory)
+    # Derives from UmaBudget SSOT (6.25 GiB ceiling on M1 8GB)
+    # Note: These are SYSTEM-USED thresholds, different axis from memory_budget_gib
+    # which is process-RSS hard cap. Process RSS (5.5 GiB) << system-used thresholds.
 
-    threshold_soft_warn_gib: ClassVar[float] = 6.8
-    threshold_warn_gib: ClassVar[float] = 7.0
-    threshold_critical_gib: ClassVar[float] = 7.5
-    threshold_emergency_gib: ClassVar[float] = 7.8
+    threshold_soft_warn_gib: ClassVar[float] = UmaBudget.THRESHOLD_SOFT_WARN_GIB  # 5.5 GiB (88%)
+    threshold_warn_gib: ClassVar[float] = UmaBudget.THRESHOLD_WARN_GIB  # 5.938 GiB (95%)
+    threshold_critical_gib: ClassVar[float] = UmaBudget.THRESHOLD_CRITICAL_GIB  # 6.191 GiB (99%)
+    threshold_emergency_gib: ClassVar[float] = UmaBudget.THRESHOLD_EMERGENCY_GIB  # 6.25 GiB (100%)
     clean_swap_max_gib: ClassVar[float] = 3.0
     diagnostic_swap_max_gib: ClassVar[float] = 5.0
 
@@ -179,9 +208,12 @@ class M1AirConfig(msgspec.Struct, frozen=True, gc=False):
     _required_keys: ClassVar[frozenset[str]] = frozenset()
 
     def __post_init__(self) -> None:
+        # MODERN-38 Fix: Updated to expect MISSION_PEAK_RSS_GIB (5.5) not 6.0
         # Verify all ClassVars are set (not accidentally overridden by mistake)
-        if self.memory_budget_gib != 6.0:
-            raise ValueError(f"M1AirConfig memory_budget_gib must be 6.0, got {self.memory_budget_gib}")
+        # Note: Access class variable via type(self) since we're in instance context
+        expected_rss = type(self).MISSION_PEAK_RSS_GIB
+        if self.memory_budget_gib != expected_rss:
+            raise ValueError(f"M1AirConfig memory_budget_gib must be {expected_rss}, got {self.memory_budget_gib}")
         if self.max_concurrent_lanes != 4:
             raise ValueError(f"M1AirConfig max_concurrent_lanes must be 4, got {self.max_concurrent_lanes}")
 
@@ -193,8 +225,10 @@ class M1AirConfig(msgspec.Struct, frozen=True, gc=False):
         Called once at startup (core/__main__.py pre-flight).
         Raises ValueError if any invariant is violated.
         """
+        # MODERN-38 Fix: Updated to expect MISSION_PEAK_RSS_GIB (5.5) not 6.0
         # Memory ceiling check — ensure we never exceed physical RAM
-        assert cls.memory_budget_gib == 6.0, "memory_budget_gib invariant violated"
+        expected_rss = cls.MISSION_PEAK_RSS_GIB
+        assert cls.memory_budget_gib == expected_rss, f"memory_budget_gib invariant violated: expected {expected_rss}, got {cls.memory_budget_gib}"
         assert cls.threshold_emergency_gib >= cls.threshold_critical_gib >= cls.threshold_warn_gib >= cls.threshold_soft_warn_gib
         assert cls.hermes_timeout_max_s >= cls.hermes_timeout_default_s >= cls.hermes_timeout_min_s
         assert cls.h3_timeout_s >= cls.h3_wait_timeout_s

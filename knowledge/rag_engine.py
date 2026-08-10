@@ -439,12 +439,10 @@ class TantivyFulltextIndex:
                     self._index_path, query, top_k
                 )
                 if ipc_bytes and len(ipc_bytes) > 8:
-                    import io as _io
-                    import pyarrow as _pa
-                    reader = _pa.ipc.open_stream(_io.BytesIO(ipc_bytes))
-                    try:
-                        batch = reader.read_next_batch()
-                    except StopIteration:
+                    # MODERN-25-EXT: Use unified Arrow IPC helper
+                    from hledac.universal.knowledge.duckdb_store import arrow_ipc_to_record_batch
+                    batch = arrow_ipc_to_record_batch(ipc_bytes, source="rag_engine")
+                    if batch is None:
                         return []  # empty schema-only batch
 
                     # Columnar access: doc_id column + score column → mapped tuples

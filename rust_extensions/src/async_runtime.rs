@@ -115,35 +115,11 @@ impl Default for RuntimeConfig {
 impl RuntimeConfig {
     /// Detect optimal worker count for M1 8GB.
     ///
-    /// Strategy:
-    /// 1. macOS: Use `sysctl hw.perflevel0.logicalcpu` for P-core count
-    /// 2. Fallback: `num_cpus::get_physical()`
-    /// 3. Clamp to [1, 4] for RAM budget safety
+    /// MODERN-35 FIX: Now uses lib.rs::detect_p_core_count() as single source of truth.
+    /// This eliminates duplicate sysctlbyname code (~20 lines).
     fn detect_workers() -> usize {
-        #[cfg(target_os = "macos")]
-        {
-            let mut size: libc::size_t = std::mem::size_of::<u32>();
-            let mut value: u32 = 0;
-
-            let ret = unsafe {
-                libc::sysctlbyname(
-                    b"hw.perflevel0.logicalcpu\0".as_ptr() as *const libc::c_char,
-                    &mut value as *mut _ as *mut libc::c_void,
-                    &mut size,
-                    std::ptr::null_mut(),
-                    0,
-                )
-            };
-
-            if ret == 0 {
-                return (value as usize).clamp(MIN_WORKERS, MAX_WORKERS);
-            }
-        }
-
-        // Fallback: use num_cpus or default
-        num_cpus::get().clamp(MIN_WORKERS, MAX_WORKERS)
+        crate::detect_p_core_count().clamp(MIN_WORKERS, MAX_WORKERS)
     }
-
 }
 
 // ============================================================================

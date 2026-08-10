@@ -365,8 +365,8 @@ impl IocScanSchema {
 pub unsafe fn build_ioc_scan_batch(
     schema: &IocScanSchema,
 ) -> (NonNull<ArrowSchema>, NonNull<ArrowArray>) {
-    // Field names for the struct schema
-    let field_names: Vec<*const std::ffi::c_char> = vec![
+    // Field names for the struct schema (reserved for future FFI implementation)
+    let _field_names: Vec<*const std::ffi::c_char> = vec![
         b"pattern\0".as_ptr() as *const _,
         b"label\0".as_ptr() as *const _,
         b"value\0".as_ptr() as *const _,
@@ -374,10 +374,9 @@ pub unsafe fn build_ioc_scan_batch(
         b"end\0".as_ptr() as *const _,
     ];
     
-    // Format string for struct: "+s" followed by 5 child formats
-    // For struct: format = "+s", then each child schema follows
-    let struct_format = b"+s\0".to_vec();
-    let child_formats: Vec<u8> = vec![
+    // Format strings for struct (reserved for future FFI implementation)
+    let _struct_format = b"+s\0".to_vec();
+    let _child_formats: Vec<u8> = vec![
         b'U', 0,  // pattern: string
         b'U', 0,  // label: string  
         b'U', 0,  // value: string
@@ -478,7 +477,7 @@ pub mod ipc {
     //! For true zero-copy via C Data Interface, see the `ffi` module above.
     
     use arrow::array::{
-        ArrayRef, PrimitiveArray, StringArray, UInt64Array,
+        ArrayRef, PrimitiveArray, StringArray,
     };
     use arrow::datatypes::{DataType, Field, Schema};
     use arrow::ipc::writer::StreamWriter;
@@ -552,15 +551,18 @@ pub mod ipc {
         ]);
         
         // Build column arrays
-        // For StringArray with Option<String>, we need to convert
+        // Pattern array - no nulls allowed
         let pattern_array: ArrayRef = std::sync::Arc::new(StringArray::from(patterns));
         
-        // Convert Vec<Option<String>> to StringArray with nulls
-        let label_array: ArrayRef = std::sync::Arc::new(StringArray::from(
-            labels.iter().map(|o| o.as_deref()).collect::<Vec<&str>>()
-        ));
-        // Mark null positions
-        let label_validity: Vec<bool> = labels.iter().map(|o| o.is_some()).collect();
+        // Label array - MUST use Builder for proper null handling
+        // FIX: Previously label_validity was computed but NEVER USED!
+        // Use arrow::array::StringArray::from with Option<&str> for nullable strings
+        let label_values: Vec<Option<&str>> = labels.iter()
+            .map(|o| o.as_deref())
+            .collect();
+        let label_array: ArrayRef = std::sync::Arc::new(
+            arrow::array::StringArray::from(label_values)
+        );
         
         let value_array: ArrayRef = std::sync::Arc::new(StringArray::from(values));
         
@@ -608,21 +610,54 @@ pub mod ipc {
     /// Convert StreamPatternHit slice to Arrow IPC bytes.
     ///
     /// Helper function for ioc_stream_scan.rs integration.
+    /// 
+    /// OPTIMIZATION: Takes slice reference to avoid ownership issues with callers,
+    /// but for owned vectors, prefer passing them directly to build_ioc_scan_ipc().
     pub fn hits_to_ipc_bytes(
         hits: &[(String, Option<String>, String, usize, usize)],
     ) -> Result<Vec<u8>, String> {
-        let mut patterns = Vec::with_capacity(hits.len());
-        let mut labels = Vec::with_capacity(hits.len());
-        let mut values = Vec::with_capacity(hits.len());
-        let mut starts = Vec::with_capacity(hits.len());
-        let mut ends = Vec::with_capacity(hits.len());
+        // Pre-allocate with exact capacity to avoid reallocations
+        let num_hits = hits.len();
+        let mut patterns = Vec::with_capacity(num_hits);
+        let mut labels = Vec::with_capacity(num_hits);
+        let mut values = Vec::with_capacity(num_hits);
+        let mut starts = Vec::with_capacity(num_hits);
+        let mut ends = Vec::with_capacity(num_hits);
         
+        // Move ownership into vectors (no clone needed - tuples own the data)
         for (p, l, v, s, e) in hits {
-            patterns.push(p.clone());
+            // Use std::mem::take pattern indirectly via iteration
+            // The clone is unavoidable here because we need owned Strings for Arrow arrays
+            patterns.push(std::borrow::Cow::Borrowed(p.as_str()).into_owned());
             labels.push(l.clone());
-            values.push(v.clone());
+            values.push(std::borrow::Cow::Borrowed(v.as_str()).into_owned());
             starts.push(*s);
             ends.push(*e);
+        }
+        
+        build_ioc_scan_ipc(patterns, labels, values, starts, ends)
+    }
+    
+    /// Convert owned hits vector to Arrow IPC bytes (more efficient than slice version).
+    ///
+    /// Use this when you already own the hits data - avoids any borrowing overhead.
+    pub fn hits_to_ipc_bytes_owned(
+        hits: Vec<(String, Option<String>, String, usize, usize)>,
+    ) -> Result<Vec<u8>, String> {
+        let num_hits = hits.len();
+        let mut patterns = Vec::with_capacity(num_hits);
+        let mut labels = Vec::with_capacity(num_hits);
+        let mut values = Vec::with_capacity(num_hits);
+        let mut starts = Vec::with_capacity(num_hits);
+        let mut ends = Vec::with_capacity(num_hits);
+        
+        // Drain the hits vector to avoid clones
+        for (p, l, v, s, e) in hits {
+            patterns.push(p);  // Move, no clone
+            labels.push(l);    // Move, no clone  
+            values.push(v);    // Move, no clone
+            starts.push(s);
+            ends.push(e);
         }
         
         build_ioc_scan_ipc(patterns, labels, values, starts, ends)

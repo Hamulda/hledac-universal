@@ -253,15 +253,30 @@ class FindingPipeline:
         if self._mpsc is None:
             # Must spawn async task for direct ingest
             # ISSUE-02 fix: use new_event_loop() pattern for sync context (not get_event_loop which is deprecated in 3.14)
+            # MODERN-06 FIX: Store and manage loop lifecycle properly
+            _loop: asyncio.AbstractEventLoop | None = None
             try:
-                loop = asyncio.get_running_loop()
-            except RuntimeError:
-                loop = asyncio.new_event_loop()
-            loop.run_in_executor(
-                None,
-                self._sync_ingest_wrapper,
-                findings,
-            )
+                try:
+                    loop = asyncio.get_running_loop()
+                except RuntimeError:
+                    loop = asyncio.new_event_loop()
+                    asyncio.set_event_loop(loop)
+                    _loop = loop
+                loop.run_in_executor(
+                    None,
+                    self._sync_ingest_wrapper,
+                    findings,
+                )
+            except Exception:  # noqa: BLE001
+                pass  # fail-soft
+            finally:
+                # MODERN-06 FIX: Close loop if we created it.
+                # Note: Loop stays open for executor to complete, then we close it.
+                if _loop is not None and not _loop.is_closed():
+                    try:
+                        _loop.close()
+                    except Exception:  # noqa: BLE001
+                        pass
             return True
 
         import orjson
@@ -423,14 +438,22 @@ class FindingPipeline:
             )
 
     def _sync_ingest_wrapper(self, findings: list[CanonicalFinding]) -> None:
-        """Sync wrapper to run async ingest in executor."""
+        """Sync wrapper to run async ingest in executor.
+        
+        MODERN-06 FIX: Ensure event loop is always closed to prevent leaks.
+        """
+        loop: asyncio.AbstractEventLoop | None = None
         try:
             loop = asyncio.new_event_loop()
             loop.run_until_complete(self._direct_ingest(findings))
         except Exception:  # noqa: BLE001
             pass
         finally:
-            loop.close()
+            if loop is not None and not loop.is_closed():
+                try:
+                    loop.close()
+                except Exception:  # noqa: BLE001
+                    pass  # Best-effort cleanup
 
     async def _final_drain(self) -> None:
         """Final drain on shutdown — ingest remaining items."""

@@ -104,30 +104,39 @@ def madv_nocache_on_path(path: str | os.PathLike) -> bool:
 
 
 # QoS class constants for apply_thread_qos
-QOS_CLASS_BACKGROUND: int = 0x1
-QOS_CLASS_UTILITY: int = 0x2
-QOS_CLASS_DEFAULT: int = 0x3
-QOS_CLASS_INTERACTIVE: int = 0x6  # Fixed: was 0x5 (B-5)
-QOS_CLASS_USER_INITIATED: int = 0x9
+# MODERN-27 FIX: Correct Darwin qos_class_t values (XNU Mach QoS mapping)
+# Prior values (0x1/0x2/0x3/0x6/0x9) were WRONG — 0x9 is actually BACKGROUND!
+#
+# Real Darwin qos_class_t hex values:
+#   0x09 = QOS_CLASS_BACKGROUND      — lowest priority, E-cores only
+#   0x11 = QOS_CLASS_UTILITY         — low-latency tolerant, E-cores
+#   0x15 = QOS_CLASS_DEFAULT         — system default
+#   0x19 = QOS_CLASS_USER_INITIATED  — latently responding, P-cores (inference/ML)
+#   0x21 = QOS_CLASS_USER_INTERACTIVE — immediate response, P-cores (UI)
+QOS_CLASS_BACKGROUND: int = 0x09
+QOS_CLASS_UTILITY: int = 0x11
+QOS_CLASS_DEFAULT: int = 0x15
+QOS_CLASS_INTERACTIVE: int = 0x21
+QOS_CLASS_USER_INITIATED: int = 0x19
 
 
 def apply_thread_qos(qos_class: int) -> bool:
     """
-    F350M-R 5.5: Set QoS class for the current thread (B-5 fix).
+    MODERN-27 FIX: Set QoS class for the current thread.
+    Replaced wrong constants 0x1/0x2/0x3/0x6/0x9 with correct Darwin qos_class_t values.
 
-    QoS classes on macOS:
-        0x1 = QOS_CLASS_BACKGROUND — lowest priority (vacuum/close threads)
-        0x2 = QOS_CLASS_UTILITY
-        0x3 = QOS_CLASS_DEFAULT
-        0x6 = QOS_CLASS_INTERACTIVE  # Fixed: was 0x5 (B-5)
-        0x9 = QOS_CLASS_USER_INITIATED — highest priority (inference threads)
+    QoS classes on macOS (Darwin/XNU Mach QoS):
+        0x09 = QOS_CLASS_BACKGROUND — lowest priority (vacuum/close threads, E-cores)
+        0x11 = QOS_CLASS_UTILITY    — low-latency tolerant (IO/background, E-cores)
+        0x15 = QOS_CLASS_DEFAULT    — system default
+        0x19 = QOS_CLASS_USER_INITIATED — latently responding (inference/ML, P-cores)
+        0x21 = QOS_CLASS_USER_INTERACTIVE — immediate response (UI, P-cores)
 
     Uses Rust apply_current_thread_qos(qos_class) internally.
     Falls back silently on non-macOS or if unavailable.
 
-    B-5 fix: pthread_id parameter removed from Rust API. The old
-    apply_thread_qos(pthread_id=0, ...) always set the CALLING thread
-    regardless of pthread_id value — now fixed with apply_current_thread_qos.
+    MODERN-27 fix: Corrected all QoS hex values from wrong (0x1/0x2/0x3/0x6/0x9)
+    to actual Darwin qos_class_t values (0x09/0x11/0x15/0x19/0x21).
 
     Args:
         qos_class: QoS class constant (e.g. QOS_CLASS_BACKGROUND for vacuum).

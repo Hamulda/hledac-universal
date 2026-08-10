@@ -12,7 +12,7 @@ Key Changes:
 2. Content-based routing via regex patterns (no ML model needed)
 3. Pointer swap instead of mlx_lm.load() for hot-swap <1ms (TRUE ZERO-COPY)
 4. UMA-resident micro-models with LRU eviction
-5. Adaptive memory budget using ResourceGovernor
+5. Adaptive memory budget using AdaptiveMemoryManager
 
 Usage:
     from hledac.universal.brain.moe_swarm_integration import MoERouterSwarmMixin
@@ -36,6 +36,12 @@ from .content_router import (
     get_preferred_model,
     route_content,
 )
+
+# MODERN-35 Fix: Import CPU affinity utilities for MLX Metal operations
+from hledac.universal.utils.cpu_affinity import (
+    set_mlx_affinity,
+    is_apple_silicon,
+)
 from .micro_model_pool import (
     MICRO_MODELS,
     IMicroModelPool,
@@ -58,10 +64,10 @@ logger = logging.getLogger(__name__)
 
 
 # =============================================================================
-# ResourceGovernor for Adaptive Memory Budget
+# AdaptiveMemoryManager for Adaptive Memory Budget (NEW-M6: renamed from ResourceGovernor)
 # =============================================================================
 
-class ResourceGovernor:
+class AdaptiveMemoryManager:
     """
     Adaptive memory management for Apple Silicon.
     
@@ -86,7 +92,7 @@ class ResourceGovernor:
     
     def __init__(self, total_memory_mb: int = 8192):
         """
-        Initialize ResourceGovernor.
+        Initialize AdaptiveMemoryManager.
         
         Args:
             total_memory_mb: Total system memory (default 8GB for M1 MacBook Air)
@@ -180,12 +186,12 @@ class ResourceGovernor:
 
 
 # =============================================================================
-# SwappableMicroModelPool — Pool with ResourceGovernor integration
+# SwappableMicroModelPool — Pool with AdaptiveMemoryManager integration
 # =============================================================================
 
 class SwappableMicroModelPool(MicroModelPool):
     """
-    MicroModelPool with adaptive memory management via ResourceGovernor.
+    MicroModelPool with adaptive memory management via AdaptiveMemoryManager.
     
     ISSUE-022-06 FIX: Inherits batch preload from MicroModelPool for
     fragmentation-resistant UMA allocation.
@@ -215,7 +221,7 @@ class SwappableMicroModelPool(MicroModelPool):
         """
         # Calculate adaptive budget first if needed
         if use_adaptive_budget:
-            governor = ResourceGovernor()
+            governor = AdaptiveMemoryManager()
             adaptive_budget = governor.calculate_micro_model_budget()
             # Use adaptive budget if not explicitly set or adaptive is preferred
             if memory_budget_mb is None or use_adaptive_budget:
@@ -234,7 +240,7 @@ class SwappableMicroModelPool(MicroModelPool):
             preload_all=preload_all,
         )
         self._use_adaptive_budget = use_adaptive_budget
-        self._governor = ResourceGovernor()
+        self._governor = AdaptiveMemoryManager()
     
     @property
     def eviction_threshold(self) -> float:
@@ -281,7 +287,7 @@ class MoERouterSwarmMixin:
     - Content-based routing (regex patterns)
     - Micro-model pool with <100ms hot-swap
     - UMA-resident micro-models
-    - Adaptive memory budget via ResourceGovernor
+    - Adaptive memory budget via AdaptiveMemoryManager
     - Automatic LRU eviction
     
     Usage:
@@ -369,7 +375,7 @@ class MoERouterSwarmMixin:
         """
         Calculate memory budget for micro-models based on available RAM.
         
-        Uses ResourceGovernor for adaptive budget calculation.
+        Uses AdaptiveMemoryManager for adaptive budget calculation.
         
         M1 MacBook Air 8GB:
         - System + apps: ~1.5 GB
@@ -380,7 +386,7 @@ class MoERouterSwarmMixin:
         Returns:
             Memory budget in MB
         """
-        governor = ResourceGovernor()
+        governor = AdaptiveMemoryManager()
         return governor.calculate_micro_model_budget()
     
     async def _init_swarm_router(self) -> None:
@@ -846,6 +852,11 @@ class MoERouterWithSwarm:
         if self._main_model is None:
             raise RuntimeError("No main model available")
         
+        # MODERN-35 Fix: Set P-core affinity before MLX Metal inference
+        # E-cores are strictly reserved for I/O operations only
+        if is_apple_silicon():
+            set_mlx_affinity()
+        
         import mlx_lm
         return mlx_lm.generate(
             self._main_model,
@@ -975,7 +986,7 @@ def get_swarm_router() -> MicroModelSwarmRouter:
     Uses adaptive memory budget by default for M1 8GB optimization.
     """
     return create_swarm_router(
-        memory_budget_mb=None,  # Let ResourceGovernor calculate
+        memory_budget_mb=None,  # Let AdaptiveMemoryManager calculate
         preload_models=False,
         use_adaptive_budget=True,
     )

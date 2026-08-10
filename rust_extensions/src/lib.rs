@@ -95,8 +95,11 @@ pub mod bloom; // BloomFilter for URL dedup
 pub mod compress; // LZ4/Zstd compression
 #[cfg(feature = "advanced")]
 pub mod content_hasher; // SHA-256, BLAKE3 hashing
-#[cfg(feature = "advanced")]
-pub mod regex_lz4; // LZ4-compressed pattern store
+// [M7-FIX] REMOVED: regex_lz4 was a zombie module - declared but never registered
+// (registration commented out at line ~1330 due to zero Python callers).
+// If needed in future, uncomment the declaration and add `regex_lz4::register(m)?;`
+// #[cfg(feature = "advanced")]
+// pub mod regex_lz4; // LZ4-compressed pattern store
 #[cfg(feature = "data")]
 pub mod rolling_hash; // P3-3: Rabin-Karp rolling hash
 pub mod serde_json_rs; // JSON serialization (STIX export)
@@ -141,6 +144,22 @@ pub mod quic; // QUIC/HTTP3 via Quinn+H3
 #[cfg(feature = "tls13")]
 pub mod tls13; // TLS 1.3 JA4 fingerprinting
 pub mod tls_metadata; // TLS cert metadata extraction // Circuit breaker pattern
+
+// ============================================================================
+// Platform-Specific Modules
+// ============================================================================
+
+// MODERN-26: macOS CPU affinity via Mach APIs (thread_policy_set).
+// Provides P/E core preference hints for Apple Silicon.
+// Falls back to QoS class on older Macs.
+#[cfg(target_os = "macos")]
+pub mod darwin_affinity;
+
+// MODERN-33 + MODERN-34: Apple Silicon P/E core topology detection and affinity.
+// Provides cached perflevel0/1 counts and workload-aware affinity helpers.
+// Replaces scattered sysctl calls with single source of truth at startup.
+#[cfg(target_os = "macos")]
+pub mod topology;
 
 // ============================================================================
 // Network & Transport (HEIST-02: Embedded Tor)
@@ -210,8 +229,11 @@ pub mod swarm_dag; // SILICON-07: Work-stealing DAG // ISSUE-023: Federated Q-ta
 pub mod arrow_batch_builder; // Arrow ArrayBuilder batch construction
 #[cfg(feature = "data")]
 pub mod arrow_c_data; // MODERN-24: Arrow C Data Interface zero-copy export
-#[cfg(feature = "data")]
-pub mod parquet_reader; // F320+: Lazy parquet reader
+// [M7-FIX] REMOVED: parquet_reader was a zombie module - declared but never registered
+// (registration commented out at line ~1337 due to zero Python callers).
+// If needed in future, uncomment the declaration and add `parquet_reader::register(m)?;`
+// #[cfg(feature = "data")]
+// pub mod parquet_reader; // F320+: Lazy parquet reader
 
 #[cfg(feature = "data")]
 pub mod aimd_controller; // ISSUE-2.2: AIMD controller
@@ -331,9 +353,10 @@ pub mod health; // Issue #22: Health endpoint
 ///         Clamped to [1, 4] for M1 8GB RAM budget safety.
 ///
 /// MacBook Pro M3 Pro (12 cores) → 6 P-cores → clamp to 4.
-#[allow(dead_code)]
+// MODERN-29 FIX: Added #[pyfunction] for PyO3 FFI export
 #[cfg(target_os = "macos")]
-fn detect_p_core_count() -> usize {
+#[pyfunction]
+pub fn detect_p_core_count() -> usize {
     // ISSUE-12 FIX: Use sysctlbyname(2) directly — raw Mach syscall, no fork+exec
     // Previous: Command::new("sysctl").output() → fork()+exec() = ~1-2ms
     // Now: libc::sysctlbyname() → ~100ns (10,000× faster)
@@ -376,13 +399,21 @@ fn detect_p_core_count() -> usize {
     4
 }
 
+// MODERN-29 FIX: Added #[pyfunction] for PyO3 FFI export
 #[cfg(not(target_os = "macos"))]
-fn detect_p_core_count() -> usize {
+#[pyfunction]
+pub fn detect_p_core_count() -> usize {
     num_cpus::get_physical().clamp(1, 4)
 }
 
 /// Nastaví QoS třídu pro macOS scheduler.
 /// Volá se uvnitř rayon worker thread (NE v spawn_handler parent).
+/// MODERN-27/28 FIX: Set QoS class for current thread (P-core for mixed workloads).
+///
+/// MODERN-28: Mixed pool uses USER_INITIATED → P-cores for CPU-mixed workloads.
+/// MODERN-27/28 FIX: Set QoS class for current thread (P-core for mixed workloads).
+///
+/// MODERN-28: Mixed pool uses USER_INITIATED → P-cores for CPU-mixed workloads.
 #[cfg(target_os = "macos")]
 fn apply_qos_hint() {
     // ISSUE-FIX: pthread_set_qos_class_np was removed from Apple Silicon support.
@@ -390,8 +421,8 @@ fn apply_qos_hint() {
     // Falls back silently if unavailable (non-fatal).
     unsafe {
         use libc::pthread_set_qos_class_self_np;
-        // QoS_CLASS_USER_INITIATED = 0x9, but we use the constant directly
-        // to avoid libc version compatibility issues
+        // MODERN-27 FIX: Use libc's QOS_CLASS_USER_INITIATED constant directly.
+        // Correct value is 0x19 (not 0x9 as in old code).
         let qos = libc::qos_class_t::QOS_CLASS_USER_INITIATED;
         pthread_set_qos_class_self_np(qos, 0);
     }
@@ -423,6 +454,19 @@ fn apply_affinity_hint(p_cores: usize) {
 #[cfg(all(target_os = "linux", target_env = "musl"))]
 fn apply_affinity_hint(_p_cores: usize) {
     // musl: sched_setaffinity not available — skip silently
+}
+
+/// MODERN-26: macOS P-core affinity via Mach APIs.
+///
+/// Replaces the previous no-op implementation. Uses:
+///   1. `thread_policy_set` with `THREAD_PERFORMANCE_PROFILE` (M1+)
+///   2. `thread_policy_set` with `THREAD_AFFINITY_POLICY` (fallback for older Macs)
+///
+/// This provides soft affinity — a hint to the scheduler to prefer P/E cores.
+/// Hard pinning requires root privileges and is not attempted.
+#[cfg(target_os = "macos")]
+fn apply_affinity_hint(p_cores: usize) {
+    crate::darwin_affinity::apply_cpu_affinity(p_cores);
 }
 
 #[cfg(not(any(
@@ -484,7 +528,12 @@ macro_rules! build_mixed_pool {
             .spawn_handler(|thread| {
                 std::thread::spawn(move || {
                     #[cfg(target_os = "macos")]
-                    apply_qos_hint();
+                    {
+                        apply_qos_hint();
+                        // NEW-M11 FIX: Also apply P/E core affinity for macOS
+                        // This was missing - Linux path correctly called apply_affinity_hint()
+                        apply_affinity_hint($num_threads);
+                    }
                     #[cfg(all(target_os = "linux", not(target_env = "musl")))]
                     apply_affinity_hint($num_threads);
                     thread.run();
@@ -516,45 +565,58 @@ pub(crate) fn mixed_pool(n_items: usize) -> &'static ThreadPool {
     static POOL_PAIR: LazyLock<ThreadPool, fn() -> ThreadPool> =
         LazyLock::new(|| build_mixed_pool!("mixed-2", 2));
 
-    if n_items < adaptive_scheduler::mixed_threshold() {
-        &POOL_SINGLE
-    } else {
+    let threshold = adaptive_scheduler::mixed_threshold();
+    let use_pair = n_items >= threshold;
+
+    // MODERN-31: Update global budget when pool selection changes
+    adaptive_scheduler::set_mixed_threshold(threshold);
+    adaptive_scheduler::set_mixed_budget(if use_pair { 2 } else { 1 });
+
+    if use_pair {
         &POOL_PAIR
+    } else {
+        &POOL_SINGLE
     }
 }
 
-/// F350M-R 5.5: Set QoS class for the CURRENT thread (calling thread).
+/// MODERN-27 FIX: Set QoS class for the CURRENT thread (calling thread).
 ///
-/// QoS classes on macOS:
-///   0x1 = QOS_CLASS_BACKGROUND (lowest priority — vacuum/close threads)
-///   0x2 = QOS_CLASS_UTILITY
-///   0x3 = QOS_CLASS_DEFAULT
-///   0x6 = QOS_CLASS_INTERACTIVE
-///   0x9 = QOS_CLASS_USER_INITIATED (highest priority — inference threads)
+/// QoS classes on macOS (Darwin/XNU Mach QoS):
+///   0x09 = QOS_CLASS_BACKGROUND (lowest priority — vacuum/close threads, E-cores)
+///   0x11 = QOS_CLASS_UTILITY (low-latency tolerant — IO/background, E-cores)
+///   0x15 = QOS_CLASS_DEFAULT (system default)
+///   0x19 = QOS_CLASS_USER_INITIATED (latently responding — inference/ML, P-cores)
+///   0x21 = QOS_CLASS_USER_INTERACTIVE (immediate response — UI, P-cores)
+///
+/// MODERN-27 fix: Corrected ALL values from wrong (0x1/0x2/0x3/0x6/0x9)
+/// to actual Darwin qos_class_t values. The previous 0x9 was actually BACKGROUND!
+///
+/// MODERN-28 fix: P/E core affinity via QoS:
+///   - USER_INITIATED/INTERACTIVE → P-cores (performance)
+///   - UTILITY/BACKGROUND → E-cores (efficiency)
 ///
 /// B-5 fix: pthread_id removed — pthread_set_qos_class_self_np ALWAYS sets
 /// the calling thread, so the target pthread_id parameter was meaningless.
 /// Callers (ThreadPoolExecutor workers) invoke this from the target thread,
 /// so calling-thread semantics are correct.
 ///
-/// B-13 fix: qos_class_i32_to_qos_class_t() uses a local #[repr(i32)] enum
-/// for safe conversion instead of raw transmute, with a compile-time size
-/// assertion that sizeof(qos_class_t) == 4 bytes.
-///
 /// Returns 0 on success, -1 on failure (errno set).
 #[cfg(target_os = "macos")]
 mod qos_class_helpers {
     use libc::qos_class_t;
 
-    /// macOS QoS class raw values — mirrors libc::qos_class_t layout.
+    /// MODERN-27 FIX: Correct macOS QoS class raw values — Darwin qos_class_t.
+    ///
+    /// Prior values (0x1/0x2/0x3/0x6/0x9) were COMPLETELY WRONG!
+    /// 0x9 is actually BACKGROUND, not USER_INITIATED.
     #[derive(Debug, Clone, Copy)]
     #[repr(i32)]
     pub enum QosClassRaw {
-        Background = 0x1,
-        Utility = 0x2,
-        Default = 0x3,
-        Interactive = 0x6,
-        UserInitiated = 0x9,
+        Background = 0x09,      // E-cores only
+        Utility = 0x11,         // E-cores
+        Default = 0x15,         // system default
+        UserInitiated = 0x19,   // P-cores (inference/ML)
+        UserInteractive = 0x21, // P-cores (UI)
     }
 
     // Compile-time assertion: qos_class_t must be 4 bytes (i32/u32).
@@ -564,18 +626,18 @@ mod qos_class_helpers {
         "qos_class_t must be 4 bytes (i32); check libc version"
     );
 
-    /// Safely convert a raw i32 QoS class constant to libc::qos_class_t.
+    /// MODERN-27 FIX: Safely convert a raw i32 QoS class constant to libc::qos_class_t.
     #[inline]
     pub fn qos_class_i32_to_qos_class_t(raw: i32) -> qos_class_t {
-        // SAFETY: raw values 0x1/0x2/0x3/0x6/0x9 are valid QoS class discriminants
+        // SAFETY: raw values are valid Darwin QoS class discriminants
         // guaranteed by the macOS ABI for qos_class_t (which is a signed int).
         // The #[repr(i32)] enum has identical memory layout.
         let qos: QosClassRaw = match raw {
-            0x1 => QosClassRaw::Background,
-            0x2 => QosClassRaw::Utility,
-            0x3 => QosClassRaw::Default,
-            0x6 => QosClassRaw::Interactive,
-            0x9 => QosClassRaw::UserInitiated,
+            0x09 => QosClassRaw::Background,
+            0x11 => QosClassRaw::Utility,
+            0x15 => QosClassRaw::Default,
+            0x19 => QosClassRaw::UserInitiated,
+            0x21 => QosClassRaw::UserInteractive,
             _ => QosClassRaw::Default,
         };
         // transmute from our known-#[repr(i32)] enum to libc::qos_class_t.
@@ -1117,8 +1179,20 @@ fn hledac_rust_extensions(m: &Bound<'_, PyModule>) -> PyResult<()> {
 
     // F275: CommonCrypto SHA-256 hardware acceleration on Apple Silicon (~3× vs sha2 crate).
     crypto_accelerate::register_functions(m)?;
+
+    // MODERN-26: Darwin CPU affinity — apply_pcore_affinity(), apply_ecore_affinity()
+    #[cfg(target_os = "macos")]
+    darwin_affinity::register(m)?;
+
     // adaptive_scheduler is always compiled — no feature gate needed
     adaptive_scheduler::register_functions(m)?;
+
+    // MODERN-33 + MODERN-34: Apple Silicon topology detection + workload-aware affinity.
+    // Provides cached perflevel0/1 counts and apply_affinity_for_workload() helper.
+    // Auto-initializes at module import — topology info is ready for all subsequent calls.
+    #[cfg(target_os = "macos")]
+    topology::register(m)?;
+
     // swarm_dag: Work-stealing DAG with ROI-based adaptive pool sizing
     // MODERN-13: Now registered by default (was dead code with register() never called)
     #[cfg(feature = "advanced")]
@@ -1391,6 +1465,10 @@ fn hledac_rust_extensions(m: &Bound<'_, PyModule>) -> PyResult<()> {
     // apply_current_thread_qos. The pthread_id was unused (always set calling
     // thread); keeping the name preserves the Python-side API without a bump.
     m.add_function(wrap_pyfunction!(apply_thread_qos, m)?)?;
+
+    // MODERN-30: Export detect_p_core_count for topology-aware pool sizing
+    #[cfg(feature = "data")]
+    m.add_function(wrap_pyfunction!(detect_p_core_count, m)?)?;
 
     // R24: OpenTelemetry tracing
     #[cfg(feature = "otel")]

@@ -318,7 +318,8 @@ def apply_qos_to_main_thread() -> bool:
         pthread_set_qos_class_self_np = libc.pthread_set_qos_class_self_np
         pthread_set_qos_class_self_np.restype = ctypes.c_int
         pthread_set_qos_class_self_np.argtypes = [ctypes.c_int, ctypes.c_ulonglong]
-        QOS_CLASS_USER_INITIATED = 0x21
+        # NEW-M10 FIX: Corrected 0x21→0x19. 0x21 is USER_INTERACTIVE (UI), 0x19 is USER_INITIATED (inference/ML)
+        QOS_CLASS_USER_INITIATED = 0x19
         result = pthread_set_qos_class_self_np(QOS_CLASS_USER_INITIATED, 0)
         _APPLIED_QOS_TO_MAIN_THREAD = result == 0
         return _APPLIED_QOS_TO_MAIN_THREAD

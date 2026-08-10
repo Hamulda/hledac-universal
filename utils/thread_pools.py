@@ -1,8 +1,22 @@
 """
-Worker pooly s GCD QoS a detekcí jader pro Apple Silicon M1.
+Worker pools with GCD QoS and core detection for Apple Silicon M1.
+
+MODERN-33 + MODERN-34: P/E Core Affinity System
+=================================================
+This module provides Python-side thread pools with proper QoS class settings.
+For the definitive P/E core detection and workload-aware affinity, see:
+  - Rust: rust_extensions/src/topology.rs (cached perflevel0/1)
+  - Rust: rust_extensions/src/darwin_affinity.rs (Mach API affinity)
+  - Python: utils/execution_optimizer.py (IntelligentResourceAllocator)
+
+Core-to-Workload Mapping:
+-------------------------
+| Pool | QoS | Cores | Examples |
+|------|-----|-------|----------|
+| cpu_pool | USER_INITIATED (0x19) | P-cores | Aho-Corasick, deobfuscate, MLX |
+| io_pool | UTILITY (0x11) | E-cores | DNS, DuckDB, telemetry |
 
 Sprint 7A additions:
-
   - PersistentActorExecutor: bridge worker-thread → event-loop
   - ANE_EXECUTOR, DB_EXECUTOR, CPU_EXECUTOR named pools
 """
@@ -43,13 +57,13 @@ def _set_thread_qos(qos_class: int) -> None:
     except Exception:  # noqa: BLE001
         pass
 
-def _set_background() -> None:
-    """Nastavit Background QoS pro I/O vlákna."""
-    _set_thread_qos(9)
+def _set_io_qos() -> None:
+    """MODERN-28 FIX: Nastavit UTILITY QoS pro I/O vlákna (E-cores)."""
+    _set_thread_qos(0x11)  # QOS_CLASS_UTILITY
 
-def _set_user_initiated() -> None:
-    """Nastavit User Initiated QoS pro CPU vlákna."""
-    _set_thread_qos(25)
+def _set_cpu_qos() -> None:
+    """MODERN-28 FIX: Nastavit USER_INITIATED QoS pro CPU vlákna (P-cores)."""
+    _set_thread_qos(0x19)  # QOS_CLASS_USER_INITIATED
 _cores = _get_core_counts()
 _io_pool: concurrent.futures.ThreadPoolExecutor | None = None
 _cpu_pool: concurrent.futures.ThreadPoolExecutor | None = None
@@ -77,21 +91,21 @@ def get_core_counts() -> dict:
     return _cores.copy()
 
 def get_io_pool() -> concurrent.futures.ThreadPoolExecutor:
-    """Získat I/O ThreadPoolExecutor (Background QoS, E-cores)."""
+    """MODERN-28 FIX: Získat I/O ThreadPoolExecutor (UTILITY QoS, E-cores)."""
     global _io_pool
     if _io_pool is None:
         with _pool_lock:
             if _io_pool is None:
-                _io_pool = concurrent.futures.ThreadPoolExecutor(max_workers=_cores['e_cores'], thread_name_prefix='io_worker', initializer=_set_background)
+                _io_pool = concurrent.futures.ThreadPoolExecutor(max_workers=_cores['e_cores'], thread_name_prefix='io_worker', initializer=_set_io_qos)
     return _io_pool
 
 def get_cpu_pool() -> concurrent.futures.ThreadPoolExecutor:
-    """Získat CPU ThreadPoolExecutor (User Initiated QoS, P-cores)."""
+    """MODERN-28 FIX: Získat CPU ThreadPoolExecutor (USER_INITIATED QoS, P-cores)."""
     global _cpu_pool
     if _cpu_pool is None:
         with _pool_lock:
             if _cpu_pool is None:
-                _cpu_pool = concurrent.futures.ThreadPoolExecutor(max_workers=_cores['p_cores'], thread_name_prefix='cpu_worker', initializer=_set_user_initiated)
+                _cpu_pool = concurrent.futures.ThreadPoolExecutor(max_workers=_cores['p_cores'], thread_name_prefix='cpu_worker', initializer=_set_cpu_qos)
     return _cpu_pool
 
 def shutdown_pools() -> None:
@@ -155,14 +169,24 @@ class PersistentActorExecutor:
 
         Returns an ``asyncio.Future`` that resolves when the worker completes the job.
         The future is NOT tied to the worker lifecycle — it can be awaited independently.
+        
+        NEW-H5e fix: Rejects new jobs after shutdown is initiated to prevent job drops.
+        Jobs submitted after shutdown() would be lost because the worker loop pops
+        the sentinel first and exits, dropping any jobs queued after it.
         """
         if not self._started:
             raise RuntimeError('PersistentActorExecutor.start() must be called first')
+        # NEW-H5e fix: Reject new jobs after shutdown initiated
+        if self._shutdown_event.is_set():
+            raise RuntimeError('PersistentActorExecutor.shutdown() already called')
         loop = self._loop
         assert loop is not None
         fut = loop.create_future()
         item = (fn, args, kwargs, fut)
         with self._lock:
+            # Double-check after acquiring lock
+            if self._shutdown_event.is_set():
+                raise RuntimeError('PersistentActorExecutor.shutdown() already called')
             self._queue.append(item)
             self._submitted_count += 1
             self._condition.notify()

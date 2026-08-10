@@ -2,6 +2,29 @@
 //!
 //! Uses PROC_PIDTASKINFO on macOS (libc) — no external dependencies.
 //! Fallback: returns 0.0 on any error (caller falls back to psutil).
+//!
+//! ## MODERN-36/42 Fix: SSOT Synchronization
+//!
+//! Memory thresholds are now synced from Python's UmaBudget SSOT at startup:
+//! - UmaBudget.UMA_HARD_CEILING_GIB = 6.25 GiB (THE SSOT)
+//! - UmaBudget.MISSION_PEAK_RSS_GIB = 5.5 GiB (derived)
+//! - UmaBudget.THRESHOLD_SOFT_WARN_GIB = 5.5 GiB (derived)
+//!
+//! The Rust module provides fast atomic access (no GIL) to these thresholds
+//! via get_uma_state_u8() and memory_pressure_level(). Python SSOT values are
+//! synced at startup via set_memory_pressure_thresholds().
+//!
+//! ## MODERN-42 Fix: Centralized Atomic Allocator Ledger
+//!
+//! TOTAL_ALLOCATED_BYTES atomic tracks all subsystem allocations (MLX, DuckDB, Tokio, Kuzu).
+//! Python facade acquire() / release() provide thread-safe allocation accounting.
+//! Allocation ceiling = 6.25 GiB * 0.97 = 6.0625 GiB (3% headroom for OS).
+//!
+//! ## AXIS Documentation
+//!
+//! - system-used: macOS total memory - available memory (includes all processes)
+//! - tracked-allocation: Hledac's own allocation budget
+//! - process-RSS: Our process's Resident Set Size
 
 use pyo3::prelude::*;
 use pyo3::types::PyDict;
@@ -20,12 +43,150 @@ static PEAK_RSS_BYTES: AtomicU64 = AtomicU64::new(0);
 // Updated by memory_status_poller Python task, read by get_uma_state_u8().
 static UMA_STATE_ATOMIC: AtomicU8 = AtomicU8::new(0);
 
-// A5-01 FIX: Runtime-configurable memory pressure thresholds.
-// Default values match M1 8GB UMA profile (4 GiB / 5.5 GiB).
-// Synced from Python resource_governor.py at startup via
-// set_memory_pressure_thresholds() — making resource_governor the SSOT.
-static SOFT_GIB_ATOMIC: AtomicU64 = AtomicU64::new(4 * 1024 * 1024 * 1024);
-static HARD_GIB_ATOMIC: AtomicU64 = AtomicU64::new((11 * 1024 / 2) * 1024 * 1024); // 5.5 GiB
+// MODERN-36/44 Fix: Runtime-configurable memory pressure thresholds synced from SSOT.
+// MODERN-44 SPEC: soft = 3.75 GiB (UMA_HARD_CEILING * 0.6), hard = 6.191 GiB (THRESHOLD_CRITICAL)
+// These are synced from Python UmaBudget SSOT at startup via set_memory_pressure_thresholds().
+// Default values match MODERN-44 spec to avoid divergence if sync fails.
+static SOFT_GIB_ATOMIC: AtomicU64 = AtomicU64::new((6.25_f64 * 0.6 * 1024.0 * 1024.0 * 1024.0) as u64); // 3.75 GiB
+static HARD_GIB_ATOMIC: AtomicU64 = AtomicU64::new((6.25_f64 * 0.99 * 1024.0 * 1024.0 * 1024.0) as u64); // 6.191 GiB
+
+// MODERN-42 Fix: Centralized atomic allocator ledger.
+// TOTAL_ALLOCATED_BYTES tracks all subsystem allocations via fetch_add/fetch_sub.
+// Ceiling = 6.0625 GiB (6.25 * 0.97) — 3% headroom for OS overhead.
+static TOTAL_ALLOCATED_BYTES: AtomicU64 = AtomicU64::new(0);
+static ALLOCATION_CEILING_BYTES: AtomicU64 = AtomicU64::new((6.25 * 0.97 * 1024.0 * 1024.0 * 1024.0) as u64); // 6.0625 GiB
+
+/// Subsystem identifiers for allocation tracking.
+#[repr(u8)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Subsystem {
+    Mlx = 0,    // MLX Metal allocations
+    DuckDB = 1, // DuckDB memory-mapped files
+    Tokio = 2,  // Tokio task heap allocations
+    Kuzu = 3,   // Kuzu graph database
+    Other = 4,  // Generic/uncategorized
+}
+
+impl Subsystem {
+    pub fn from_u8(v: u8) -> Self {
+        match v {
+            0 => Subsystem::Mlx,
+            1 => Subsystem::DuckDB,
+            2 => Subsystem::Tokio,
+            3 => Subsystem::Kuzu,
+            _ => Subsystem::Other,
+        }
+    }
+
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Subsystem::Mlx => "MLX",
+            Subsystem::DuckDB => "DuckDB",
+            Subsystem::Tokio => "Tokio",
+            Subsystem::Kuzu => "Kuzu",
+            Subsystem::Other => "Other",
+        }
+    }
+}
+
+/// Allocate bytes from the centralized ledger.
+///
+/// Returns (ok: bool, current_total: u64, ceiling: u64).
+/// If total + bytes would exceed ceiling, returns (false, current_total, ceiling).
+///
+/// Thread-safe via atomic compare-and-swap.
+#[pyfunction]
+pub fn allocate_bytes(gib: f64, subsystem: u8) -> PyResult<(bool, u64, u64)> {
+    let bytes = (gib * 1024.0 * 1024.0 * 1024.0) as u64;
+    let ceiling = ALLOCATION_CEILING_BYTES.load(Ordering::Relaxed);
+
+    loop {
+        let current = TOTAL_ALLOCATED_BYTES.load(Ordering::Relaxed);
+        if current.saturating_add(bytes) > ceiling {
+            // Would exceed ceiling
+            return Ok((false, current, ceiling));
+        }
+        // Try to reserve these bytes
+        match TOTAL_ALLOCATED_BYTES.compare_exchange_weak(
+            current,
+            current + bytes,
+            Ordering::AcqRel,
+            Ordering::Relaxed,
+        ) {
+            Ok(_) => {
+                let subsys = Subsystem::from_u8(subsystem);
+                log_alloc("ALLOCATE", subsys.as_str(), bytes, TOTAL_ALLOCATED_BYTES.load(Ordering::Relaxed));
+                return Ok((true, current + bytes, ceiling));
+            }
+            Err(actual) => {
+                // Another thread modified, retry with actual value
+                if actual.saturating_add(bytes) > ceiling {
+                    return Ok((false, actual, ceiling));
+                }
+            }
+        }
+    }
+}
+
+/// Release bytes back to the centralized ledger.
+///
+/// Returns the new total after release.
+///
+/// Thread-safe via atomic fetch_sub.
+#[pyfunction]
+pub fn release_bytes(gib: f64, subsystem: u8) -> PyResult<u64> {
+    let bytes = (gib * 1024.0 * 1024.0 * 1024.0) as u64;
+    let new_total = TOTAL_ALLOCATED_BYTES.fetch_sub(bytes, Ordering::AcqRel);
+    let subsys = Subsystem::from_u8(subsystem);
+    log_alloc("RELEASE", subsys.as_str(), bytes, new_total);
+    Ok(new_total.saturating_sub(bytes))
+}
+
+/// Get current allocation stats.
+///
+/// Returns (total_allocated_bytes, ceiling_bytes, utilization_pct).
+#[pyfunction]
+pub fn get_allocation_stats() -> PyResult<(u64, u64, f64)> {
+    let total = TOTAL_ALLOCATED_BYTES.load(Ordering::Relaxed);
+    let ceiling = ALLOCATION_CEILING_BYTES.load(Ordering::Relaxed);
+    let utilization = if ceiling > 0 {
+        (total as f64 / ceiling as f64) * 100.0
+    } else {
+        0.0
+    };
+    Ok((total, ceiling, utilization))
+}
+
+/// Set the allocation ceiling (called at startup from Python SSOT).
+///
+/// Default: 6.0625 GiB (6.25 * 0.97).
+#[pyfunction]
+pub fn set_allocation_ceiling(gib: f64) {
+    let bytes = (gib * 1024.0 * 1024.0 * 1024.0) as u64;
+    ALLOCATION_CEILING_BYTES.store(bytes, Ordering::Relaxed);
+}
+
+fn log_alloc(op: &str, subsystem: &str, bytes: u64, new_total: u64) {
+    // Minimal logging — avoids perf overhead in hot path
+    #[cfg(debug_assertions)]
+    {
+        eprintln!(
+            "[ALLOC] {} {} {} bytes (total: {} bytes, {:.2} GiB)",
+            op,
+            subsystem,
+            bytes,
+            new_total,
+            new_total as f64 / (1024.0 * 1024.0 * 1024.0)
+        );
+    }
+}
+
+// MODERN-43 Fix: Atomic ledger for MLX allocation tracking.
+// These counters provide lock-free, GIL-free increment for high-frequency
+// MLX allocation accounting. Updated on every mx.array/clear_cache call.
+static MLX_ALLOC_BYTES: AtomicU64 = AtomicU64::new(0); // Total MLX allocations
+static MLX_CACHE_HITS: AtomicU64 = AtomicU64::new(0);  // Cache hits (lock-free)
+static MLX_CACHE_MISSES: AtomicU64 = AtomicU64::new(0); // Cache misses (lock-free)
 
 /// Returns current UMA state as u8 (0=ok, 1=soft_warn, 2=warn, 3=critical, 4=emergency).
 ///
@@ -42,6 +203,76 @@ pub fn get_uma_state_u8() -> u8 {
 #[pyfunction]
 pub fn set_uma_state_u8(state: u8) -> u8 {
     UMA_STATE_ATOMIC.swap(state, Ordering::Relaxed)
+}
+
+// ─── MODERN-43: Atomic MLX Ledger ───────────────────────────────────────────
+
+/// MODERN-43 Fix: Add bytes to MLX allocation ledger.
+///
+/// Called on every mx.array() allocation to track total MLX memory usage.
+/// This provides lock-free, GIL-free atomic increment for high-frequency
+/// MLX allocation accounting.
+///
+/// Returns the new total allocation bytes.
+#[pyfunction]
+pub fn mlx_alloc_bytes_add(bytes: u64) -> u64 {
+    MLX_ALLOC_BYTES.fetch_add(bytes, Ordering::Relaxed)
+}
+
+/// MODERN-43 Fix: Subtract bytes from MLX allocation ledger.
+///
+/// Called when MLX memory is freed (e.g., clear_cache, model unload).
+/// Returns the new total allocation bytes.
+#[pyfunction]
+pub fn mlx_alloc_bytes_sub(bytes: u64) -> u64 {
+    MLX_ALLOC_BYTES.fetch_sub(bytes, Ordering::Relaxed)
+}
+
+/// MODERN-43 Fix: Get current MLX allocation total in bytes.
+///
+/// Returns the total bytes tracked via mlx_alloc_bytes_add/sub.
+/// This is the atomic ledger sum, not the live MLX metric.
+#[pyfunction]
+pub fn mlx_alloc_bytes_get() -> u64 {
+    MLX_ALLOC_BYTES.load(Ordering::Relaxed)
+}
+
+/// MODERN-43 Fix: Atomically increment MLX cache hit counter.
+///
+/// Called on every cache hit in MLX operations.
+/// Lock-free: no GIL acquisition needed.
+#[pyfunction]
+pub fn mlx_cache_hit() -> u64 {
+    MLX_CACHE_HITS.fetch_add(1, Ordering::Relaxed)
+}
+
+/// MODERN-43 Fix: Atomically increment MLX cache miss counter.
+///
+/// Called on every cache miss in MLX operations.
+/// Lock-free: no GIL acquisition needed.
+#[pyfunction]
+pub fn mlx_cache_miss() -> u64 {
+    MLX_CACHE_MISSES.fetch_add(1, Ordering::Relaxed)
+}
+
+/// MODERN-43 Fix: Get MLX cache statistics.
+///
+/// Returns (hits, misses) as a tuple of u64.
+#[pyfunction]
+pub fn mlx_cache_stats() -> (u64, u64) {
+    (
+        MLX_CACHE_HITS.load(Ordering::Relaxed),
+        MLX_CACHE_MISSES.load(Ordering::Relaxed),
+    )
+}
+
+/// MODERN-43 Fix: Reset MLX cache statistics.
+///
+/// Resets both hits and misses to zero. Useful for test isolation.
+#[pyfunction]
+pub fn mlx_cache_stats_reset() {
+    MLX_CACHE_HITS.store(0, Ordering::Relaxed);
+    MLX_CACHE_MISSES.store(0, Ordering::Relaxed);
 }
 
 /// Returns current process RSS in GiB.
@@ -356,5 +587,18 @@ pub fn register_functions(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(set_uma_state_u8, m)?)?;
     // A5-01 FIX: threshold sync from Python SSOT
     m.add_function(wrap_pyfunction!(set_memory_pressure_thresholds, m)?)?;
+    // MODERN-42 Fix: atomic allocator ledger
+    m.add_function(wrap_pyfunction!(allocate_bytes, m)?)?;
+    m.add_function(wrap_pyfunction!(release_bytes, m)?)?;
+    m.add_function(wrap_pyfunction!(get_allocation_stats, m)?)?;
+    m.add_function(wrap_pyfunction!(set_allocation_ceiling, m)?)?;
+    // MODERN-43: Atomic MLX ledger functions
+    m.add_function(wrap_pyfunction!(mlx_alloc_bytes_add, m)?)?;
+    m.add_function(wrap_pyfunction!(mlx_alloc_bytes_sub, m)?)?;
+    m.add_function(wrap_pyfunction!(mlx_alloc_bytes_get, m)?)?;
+    m.add_function(wrap_pyfunction!(mlx_cache_hit, m)?)?;
+    m.add_function(wrap_pyfunction!(mlx_cache_miss, m)?)?;
+    m.add_function(wrap_pyfunction!(mlx_cache_stats, m)?)?;
+    m.add_function(wrap_pyfunction!(mlx_cache_stats_reset, m)?)?;
     Ok(())
 }

@@ -15,6 +15,8 @@ Uses:
   - F231J artifact inventory (probe_f231j_artifact_inventory/f231_artifact_inventory.json)
   - prelive_decision_gate (probe_f219f_prelive_decision_gate/prelive_decision.json)
   - prelive_artifact_pack (probe_f219i_prelive_artifact_pack/artifact_pack.json)
+
+MODERN-41 Fix: Uses SSOT SWAP_TIERS from utils.uma_budget instead of hardcoded values.
 """
 import argparse
 import json
@@ -22,10 +24,20 @@ import os
 import sys
 from dataclasses import dataclass, field
 from pathlib import Path
+
 BASE = Path('/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal')
 _F231_BLOCKING_PROBES = ['probe_f231a_public_candidate_ledger', 'probe_f231b_ct_acceptance_lift', 'probe_f231c_advisory_evidence_surface', 'probe_f231d_research_quality_v2', 'probe_f231e_research_quality_comparable_field', 'probe_f231f_evidence_depth_aliases', 'probe_f231g_quality_sanity_bundle_smoke']
-_CLEAN_SWAP_MAX_GIB = 2.0
-_DIAGNOSTIC_SWAP_MAX_GIB = 4.0
+
+# MODERN-41 Fix: Use SSOT SWAP_TIERS from UmaBudget
+try:
+    from hledac.universal.utils.uma_budget import SWAP_TIERS
+
+    _CLEAN_SWAP_MAX_GIB = SWAP_TIERS.CLEAN  # 3.3 GiB
+    _DIAGNOSTIC_SWAP_MAX_GIB = SWAP_TIERS.DIAGNOSTIC  # 4.675 GiB
+except ImportError:
+    # Fallback: hardcoded M1 8GB SSOT values
+    _CLEAN_SWAP_MAX_GIB = 3.3
+    _DIAGNOSTIC_SWAP_MAX_GIB = 4.675
 
 @dataclass(slots=True)
 class ReadinessResult:
@@ -87,9 +99,9 @@ def derive_verdict(gate_decision: str, f231_missing: list[str], swap_gib: float,
     if swap_gib <= _CLEAN_SWAP_MAX_GIB:
         return ReadinessResult(verdict='READY_TO_RUN_NOW', next_action='run_live_now', next_action_detail='nonfeed_diagnostic180 — exact command below', uma_swap_gib=swap_gib)
     elif swap_gib <= _DIAGNOSTIC_SWAP_MAX_GIB:
-        return ReadinessResult(verdict='READY_DIAGNOSTIC_ONLY', next_action='run_with_hardware_taint', next_action_detail=f'swap={swap_gib:.2f}GiB in (2.0, 4.0]GiB — hardware taint', uma_swap_gib=swap_gib)
+        return ReadinessResult(verdict='READY_DIAGNOSTIC_ONLY', next_action='run_with_hardware_taint', next_action_detail=f'swap={swap_gib:.2f}GiB in ({_CLEAN_SWAP_MAX_GIB:.1f}, {_DIAGNOSTIC_SWAP_MAX_GIB:.1f}]GiB — hardware taint', uma_swap_gib=swap_gib)
     else:
-        return ReadinessResult(verdict='READY_TO_RESTART_AND_RUN', next_action='restart_then_run_live', next_action_detail=f'swap={swap_gib:.2f}GiB > 4.0GiB — restart required', uma_swap_gib=swap_gib)
+        return ReadinessResult(verdict='READY_TO_RESTART_AND_RUN', next_action='restart_then_run_live', next_action_detail=f'swap={swap_gib:.2f}GiB > {_DIAGNOSTIC_SWAP_MAX_GIB:.1f}GiB — restart required', uma_swap_gib=swap_gib)
 
 
 def build_result(decision_path: Path, artifact_pack_path: Path, f231_inventory_path: Path) -> ReadinessResult:

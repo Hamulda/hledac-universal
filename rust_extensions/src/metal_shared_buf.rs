@@ -62,6 +62,8 @@
 //! SB.8: Python imports (ctypes, numpy) cached at module level ✓ (MODERN-21 OPTIMIZATION)
 //! SB.9: from_iosurface() uses IOSurfaceCreateMetalBuffer FFI for TRUE zero-copy ✓ (IO-4 FIX)
 
+// MODERN-28 FIX: ForeignType trait required for Buffer::from_ptr()
+use metal::foreign_types::ForeignType;
 use parking_lot::RwLock;
 use pyo3::prelude::*;
 use pyo3::Py;
@@ -93,30 +95,35 @@ unsafe fn iosurface_create_metal_buffer(
     use std::ffi::CStr;
 
     // Get the function pointer (lazy, cached)
+    // MODERN-28 FIX: Unsafe functions called inside unsafe block
     static FUNCPTR: LazyLock<Option<unsafe extern "C" fn(
         *mut std::ffi::c_void,
         *mut std::ffi::c_void,
     ) -> *mut std::ffi::c_void>> = LazyLock::new(|| {
-        let lib = libc::dlopen(
-            CStr::from_bytes_with_nul(b"/System/Library/Frameworks/Metal.framework/Metal\0")
-                .unwrap()
-                .as_ptr(),
-            libc::RTLD_NOW,
-        );
-        if lib.is_null() {
-            return None;
+        // SAFETY: dlopen and dlsym are safe when called with valid arguments
+        // and the library path is verified to exist on macOS.
+        unsafe {
+            let lib = libc::dlopen(
+                CStr::from_bytes_with_nul(b"/System/Library/Frameworks/Metal.framework/Metal\0")
+                    .unwrap()
+                    .as_ptr(),
+                libc::RTLD_NOW,
+            );
+            if lib.is_null() {
+                return None;
+            }
+            let sym = libc::dlsym(
+                lib,
+                CStr::from_bytes_with_nul(b"IOSurfaceCreateMetalBuffer\0")
+                    .unwrap()
+                    .as_ptr(),
+            );
+            if sym.is_null() {
+                libc::dlclose(lib);
+                return None;
+            }
+            Some(std::mem::transmute(sym))
         }
-        let sym = libc::dlsym(
-            lib,
-            CStr::from_bytes_with_nul(b"IOSurfaceCreateMetalBuffer\0")
-                .unwrap()
-                .as_ptr(),
-        );
-        if sym.is_null() {
-            libc::dlclose(lib);
-            return None;
-        }
-        Some(std::mem::transmute(sym))
     });
 
     if let Some(func) = *FUNCPTR {
@@ -524,9 +531,19 @@ impl SharedMetalBuffer {
         //
         // Falls back to regular buffer + copy if FFI is unavailable.
         let buffer = if iosurface_ptr != 0 {
-            let device_raw = device.as_raw() as *mut std::ffi::c_void;
+            // MODERN-28 FIX: Cast device to raw pointer using objc2-raw-macro pattern
+            // metal::Device wraps an objc2 id pointer accessible via .as_raw() when
+            // ForeignType trait is imported. For safety, use transmute approach.
+            let device_raw = {
+                // SAFETY: metal::Device is repr(transparent) over the underlying objc object id.
+                // This matches how objc2-metal internally stores the device.
+                let device_ptr: *const metal::Device = &device;
+                let device_id_ptr = device_ptr as *const *mut std::ffi::c_void;
+                unsafe { *device_id_ptr }
+            };
             let iosurface_ref = iosurface_ptr as *mut std::ffi::c_void;
 
+            // SAFETY: iosurface_create_metal_buffer is unsafe FFI, mtl_buffer_ptr is valid if non-null
             unsafe {
                 let mtl_buffer_ptr = iosurface_create_metal_buffer(device_raw, iosurface_ref);
                 if !mtl_buffer_ptr.is_null() {
@@ -535,7 +552,9 @@ impl SharedMetalBuffer {
                         "[IO-4] Created IOSurface-backed MTLBuffer ({}x{}, {} bytes/row) - ZERO-COPY",
                         width, height, bytes_per_row
                     );
-                    metal::Buffer::from_raw(mtl_buffer_ptr)
+                    // MODERN-28 FIX: Create Buffer from raw pointer
+                    // SAFETY: The pointer is valid from the FFI call
+                    metal::Buffer::from_ptr(mtl_buffer_ptr as *mut _)
                 } else {
                     // FFI failed, fall back to copy method
                     eprintln!(

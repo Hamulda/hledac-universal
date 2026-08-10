@@ -40,7 +40,7 @@ Migration (F272):
 import logging
 import os
 from typing import TYPE_CHECKING, Any
-from hledac.universal.utils.msgspec_json import loads as _msgspec_loads, dumps_str as _msgspec_dumps_str
+from hledac.universal.utils.codec import decode as _msgspec_loads, encode as _msgspec_encode
 
 if TYPE_CHECKING:
     pass
@@ -214,9 +214,8 @@ class UnifiedLMDBStore:
             return False
         try:
             self._ensure_init()
-            import orjson
             key_bytes = self._key_str(prefix, key)
-            value_bytes = _msgspec_dumps_str(value)
+            value_bytes = _msgspec_encode(value)  # encode() returns bytes for LMDB
             with self._env.begin(write=True) as txn:
                 txn.put(key_bytes, value_bytes)
             return True
@@ -230,12 +229,11 @@ class UnifiedLMDBStore:
             return None
         try:
             self._ensure_init()
-            import orjson
             with self._env.begin(buffers=True) as txn:
                 raw = txn.get(self._key_str(prefix, key))
             if raw is None:
                 return None
-            # orjson.loads accepts memoryview directly — zero-copy
+            # _msgspec_loads (codec.decode) handles memoryview natively
             return _msgspec_loads(raw)
         except Exception:
             return None
@@ -266,18 +264,16 @@ class UnifiedLMDBStore:
             return results
         try:
             self._ensure_init()
-            import orjson
             prefixed_key = prefix.encode() + b":"
             with self._env.begin(buffers=True) as txn:
                 cursor = txn.cursor()
                 if cursor.set_range(prefixed_key):
                     for key_bytes, value_bytes in cursor.iternext():
-                        # buffers=True returns memoryview; decode key directly (zero-copy)
-                        key = key_bytes.decode("utf-8")
+                        # buffers=True returns memoryview; handle both bytes and memoryview
+                        key = key_bytes.decode("utf-8") if isinstance(key_bytes, bytes) else bytes(key_bytes).decode("utf-8")
                         if not key.startswith(prefix + ":"):
                             break
                         try:
-                            # orjson.loads accepts memoryview directly — zero-copy
                             value = _msgspec_loads(value_bytes)
                             original_key = key[len(prefix) + 1:]
                             results.append((original_key, value))
@@ -531,13 +527,13 @@ class UnifiedLMDBStore:
                 old_lock.unlink(missing_ok=True)
                 shutil.move(str(temp_lock), str(old_lock))
 
-            # Reopen the store
+            # Reopen the store (metasync=False for M1 8GB optimization)
             self._env = lmdb.open(
                 str(self._path),
                 map_size=self._map_size,
                 max_dbs=1,
                 writemap=False,
-                metasync=True,
+                metasync=False,
             )
             self._initialized = True
 
@@ -550,7 +546,7 @@ class UnifiedLMDBStore:
 
         except Exception as exc:
             logger.warning("[LMDB-UNIFIED] compact_database failed: %s", exc)
-            # Try to restore — reopen if we closed the env
+            # Try to restore — reopen if we closed the env (metasync=False for M1)
             if not self._initialized:
                 try:
                     import lmdb
@@ -559,7 +555,7 @@ class UnifiedLMDBStore:
                         map_size=self._map_size,
                         max_dbs=1,
                         writemap=False,
-                        metasync=True,
+                        metasync=False,
                     )
                     self._initialized = True
                 except Exception:

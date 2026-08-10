@@ -18,6 +18,11 @@ Consumers:
 迁移 (F350M-R):
   class ModelLifecycle přesunuto z brain/model_lifecycle.py do core/model_runtime.py.
   brain/model_lifecycle.py nyní obsahuje pouze roles 1-4 (emergency seam, MLX helpers, shadow-state).
+
+MODERN-35 Fix: P-core affinity for MLX Metal pre-warm and inference.
+- set_mlx_affinity() pins MLX threads to P-cores before pre-warm
+- E-cores are reserved for I/O operations
+- ANE inference (when implemented) also uses P-core affinity
 """
 
 import asyncio
@@ -28,6 +33,13 @@ from pathlib import Path
 from typing import Any
 
 logger = logging.getLogger(__name__)
+
+# MODERN-35 Fix: Import CPU affinity utilities
+from hledac.universal.utils.cpu_affinity import (
+    set_mlx_affinity,
+    is_apple_silicon,
+    get_core_topology,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -225,17 +237,31 @@ class ModelLifecycle:
             self._loaded = True
             logger.info("[LIFECYCLE] Model loaded: %s", model_path_str)
 
-            # Sprint #8: MLX Metal pre-warm — allocate 48 MB buffer pool AFTER load
+            # MODERN-35 Fix: MLX Metal pre-warm with P-core affinity
+            # Sprint #8: Allocate 48 MB buffer pool AFTER load
             # to avoid first-inference allocation latency. MetalBufferPool is the
             # internal MLX allocator; priming it after model load forces the Metal
             # heap to map 48 MB of unified memory pages before any real inference runs,
             # eliminating first-call latency. Safe: MLX UMA shares with CPU, overall
             # M1 8GB budget remains under 6.25 GB ceiling.
+            #
+            # MODERN-35: Added P-core affinity to prevent MLX from competing with
+            # rayon on P-cores. E-cores are reserved strictly for I/O.
             try:
+                # Set P-core affinity before pre-warm (MODERN-35 fix)
+                if is_apple_silicon():
+                    set_mlx_affinity()
+                    topology = get_core_topology()
+                    logger.debug(
+                        "[LIFECYCLE] MLX P-core affinity set (P-cores=%d, E-cores=%d)",
+                        topology["p_cores"], topology["e_cores"]
+                    )
+                
+                # Allocate pre-warm buffer
                 _warm_buffer = mx.zeros([12_000_000], dtype=mx.float32)  # 48 MB
                 mx.eval(_warm_buffer)  # Force allocation — MLX lazy evaluation requires barrier
                 del _warm_buffer  # release immediately; page mapping persists
-                logger.debug("[LIFECYCLE] MLX Metal pre-warmed (48 MB buffer)")
+                logger.debug("[LIFECYCLE] MLX Metal pre-warmed (48 MB buffer, P-core affinity)")
             except Exception as e:
                 logger.debug("[LIFECYCLE] MLX Metal pre-warm skipped: %s", e)
 

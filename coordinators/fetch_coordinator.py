@@ -86,6 +86,7 @@ from hledac.universal.utils.locks import LazyAsyncioLock  # ISSUE-011: asyncio-s
 from ..tools.url_dedup import DeduplicationStrategy, dedupe_url_list
 from ..knowledge.cross_sprint_gate import get_cross_sprint_gate
 from ..knowledge.entity_confirmation import get_entity_confirmation_service, get_entity_confirmation_service_sync
+
 from .base import UniversalCoordinator
 
 # ── Cognitive Saturation Detection ─────────────────────────────────────────────
@@ -2512,8 +2513,9 @@ class FetchCoordinator(UniversalCoordinator):
             self._processed_urls.add(url)
 
         # Transport + session pre-acquisition
+        # NEW-C1 FIX: Use Transport.DIRECT (not CLEARNET - CLEARNET is in RouteDecision, not Transport)
         from ..transport.transport_resolver import Transport as _T
-        url_transport: _T = _T.CLEARNET  # Default fallback
+        url_transport: _T = _T.DIRECT  # Default fallback: DIRECT = clearnet equivalent
         try:
             from ..transport.transport_resolver import get_transport_for_url
             url_transport = get_transport_for_url(url)
@@ -2525,9 +2527,10 @@ class FetchCoordinator(UniversalCoordinator):
         _pre_acquired_i2p_session: Any | None = None
 
         try:
-            if url_transport is Transport.TOR and route_decision.name != 'TOR_UNAVAILABLE':
+            # NEW-C1 FIX: Use _T alias (not bare Transport which is module-level import)
+            if url_transport is _T.TOR and route_decision.name != 'TOR_UNAVAILABLE':
                 _pre_acquired_tor_session = await self._get_tor_session(host_name)
-            elif url_transport is Transport.I2P and route_decision.name != 'I2P_UNAVAILABLE':
+            elif url_transport is _T.I2P and route_decision.name != 'I2P_UNAVAILABLE':
                 _pre_acquired_i2p_session = await self._get_i2p_session(host_name)
         except Exception:  # noqa: BLE001
             pass
@@ -2792,6 +2795,9 @@ class FetchCoordinator(UniversalCoordinator):
         self, result: dict[str, Any] | None, url_transport: Any, host_name: str,
     ) -> None:
         """F360-R: Record fetch outcome to telemetry."""
+        # NEW-C1 FIX: Import Transport locally (not using module-level to avoid circular imports)
+        from ..transport.transport_resolver import Transport as _T
+        
         if result and not result.get('error'):
             result.setdefault('success', True)
             await self._aimd_release_success()
@@ -2884,8 +2890,9 @@ class FetchCoordinator(UniversalCoordinator):
                     clearance = get_clearance_for_domain(host_name, url, result.get('status_code', 0), result_headers, result_content)
                     if clearance:
                         logger.info('[CLEARANCE] Stored %d clearance cookies for %s', len(clearance), host_name)
-            except Exception:  # noqa: BLE001
-                pass
+            except Exception as e:  # noqa: BLE001
+                # NEW-H6 fix: Log clearance cookie failure instead of silent pass
+                logger.debug('[CLEARANCE] Store clearance cookies failed: %s', e)
         return result
 
     def _postprocess_captcha(self, result: dict[str, Any] | None, url: str) -> dict[str, Any] | None:
@@ -2900,8 +2907,9 @@ class FetchCoordinator(UniversalCoordinator):
                         logger.debug('[CAPTCHA] CAPTCHA detected at %s, skipping', url_for_check)
                         self._captcha_detections += 1
                         return None
-                except Exception:  # noqa: BLE001
-                    pass
+                except Exception as e:  # noqa: BLE001
+                    # NEW-H6 fix: Log CAPTCHA detection failure instead of silent pass
+                    logger.debug('[CAPTCHA] Detection failed: %s', e)
         return result
 
     async def _maybe_deep_research(self, query: str, limit: int=10) -> list[dict[str, Any]] | None:

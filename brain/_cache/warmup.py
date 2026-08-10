@@ -14,6 +14,9 @@ Extracted to eliminate depth-6 nested functions:
 - _do_generate() → WarmupManager._do_generate_impl()
 
 M1 8GB Safe: Parallel prefill with timeout protection.
+
+NOTE (MODERN-35): P-core affinity must be set before mlx_lm.generate().
+See brain/deephermes3_engine.py for proper implementation pattern.
 """
 
 from __future__ import annotations
@@ -26,6 +29,12 @@ from typing import TYPE_CHECKING, Any, Callable
 
 if TYPE_CHECKING:
     import mlx.core as mx
+
+# MODERN-35 Fix: Import CPU affinity utilities for MLX Metal operations
+from hledac.universal.utils.cpu_affinity import (
+    set_mlx_affinity,
+    is_apple_silicon,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -259,6 +268,10 @@ class WarmupManager:
             warmup_prompt = self._build_warmup_prompt()
 
             def do_generate() -> None:
+                # MODERN-35 Fix: Set P-core affinity before MLX Metal inference
+                # E-cores are strictly reserved for I/O operations only
+                if is_apple_silicon():
+                    set_mlx_affinity()
                 with get_metal_stream_context():
                     mlx_lm.generate(
                         model=model,

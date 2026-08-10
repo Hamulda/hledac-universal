@@ -106,6 +106,8 @@ async def stream_via_queue(
     # A5-04 FIX: Store producer exception so caller can see it.
     # Uses a list of one element as a mutable container (thread-safe for our purposes).
     _producer_error: list[Exception | None] = [None]
+    # NEW-H5a FIX: Track cancellation state explicitly for finally block.
+    _cancelled = False
 
     def _producer() -> None:
         """Runs in executor thread — produces tokens and signals completion."""
@@ -179,6 +181,10 @@ async def stream_via_queue(
                     pass
                 break
     except asyncio.CancelledError:
+        # NEW-H5a FIX: Track cancellation state explicitly.
+        # Using a flag instead of fut.cancelled() to avoid race conditions
+        # where the executor future hasn't propagated cancellation yet.
+        _cancelled = True
         fut.cancel()
         raise
     finally:
@@ -187,9 +193,10 @@ async def stream_via_queue(
         with _high_water_lock:
             if _high_water > 0:
                 logger.debug("[stream_via_queue] high_water=%d", _high_water)
-        # A5-04 FIX: Re-raise producer exception only when not cancelled.
+        # A5-04 + NEW-H5a FIX: Re-raise producer exception only when not cancelled.
         # If the consumer was cancelled, let CancelledError take precedence —
         # the caller expects it for shutdown. Producer errors are only propagated
         # when the consumer completed normally (not cancelled).
-        if _producer_error[0] is not None and not fut.cancelled():
+        # Use explicit flag instead of fut.cancelled() to avoid race conditions.
+        if _producer_error[0] is not None and not _cancelled:
             raise _producer_error[0]

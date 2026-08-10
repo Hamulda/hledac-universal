@@ -9,6 +9,9 @@ PEP 698: Extracted from DeepHermes3Engine inference orchestration.
 Central facade for all inference operations.
 
 M1 8GB: Unified inference interface with memory-aware scheduling.
+
+NOTE (MODERN-35): P-core affinity must be set before mlx_lm.generate().
+See brain/deephermes3_engine.py for proper implementation pattern.
 """
 
 from __future__ import annotations
@@ -21,6 +24,12 @@ from typing import TYPE_CHECKING, Any, AsyncIterator
 if TYPE_CHECKING:
     from hledac.universal.brain._metal.metal_device import MetalDevice
     from hledac.universal.brain._cache.kv_cache_manager import KVCacheManager
+
+# MODERN-35 Fix: Import CPU affinity utilities for MLX Metal operations
+from hledac.universal.utils.cpu_affinity import (
+    set_mlx_affinity,
+    is_apple_silicon,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -236,6 +245,10 @@ class GenerationFacade:
 
         async def generator() -> AsyncIterator[str]:
             import mlx_lm
+            # MODERN-35 Fix: Set P-core affinity before MLX Metal inference
+            # E-cores are strictly reserved for I/O operations only
+            if is_apple_silicon():
+                set_mlx_affinity()
             for token in mlx_lm.generate(model, tokenizer, **gen_kwargs):
                 yield token
 
@@ -335,6 +348,10 @@ class GenerationFacade:
         import mlx_lm
 
         def generate() -> str:
+            # MODERN-35 Fix: Set P-core affinity before MLX Metal inference
+            # E-cores are strictly reserved for I/O operations only
+            if is_apple_silicon():
+                set_mlx_affinity()
             return mlx_lm.generate(
                 model=model,
                 tokenizer=tokenizer,

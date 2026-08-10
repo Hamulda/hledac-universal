@@ -384,12 +384,11 @@ class ParquetExporter:
                 logger.debug('[PARQUET] Rust arrow batch unavailable: %s — falling back to Polars', rust_err)
                 return None
 
-            # Open Arrow IPC stream (zero-copy) — rust_result is already Arrow IPC bytes
-            reader = self._pa.ipc.open_stream(rust_result)
-            batches = list(reader)
-            if not batches:
+            # MODERN-25-EXT: Use unified Arrow IPC helper (reads all batches)
+            from hledac.universal.knowledge.duckdb_store import arrow_ipc_to_pa_table
+            arrow_table = arrow_ipc_to_pa_table(rust_result, source="parquet_writer")
+            if arrow_table is None:
                 return None
-            arrow_table = self._pa.Table.from_batches(batches)
 
             # Polars from_arrow (zero-copy)
             if self._pl is None:

@@ -1,17 +1,20 @@
 {
+  "_note": "MODERN-41 Fix: This probe artifact is stale. Swap thresholds are now in SSOT SWAP_TIERS.",
+  "_note_url": "see utils/uma_budget.py::SwapTiers",
   "sprint": "F232C",
   "report_type": "final_prelive_readiness",
   "verdict": "READY_TO_RESTART_AND_RUN",
   "live_allowed": false,
   "next_action": "RESTART_THEN_RUN_LIVE",
-  "next_action_detail": "swap=8.000GiB > 4.0GiB \u2014 restart required",
+  "next_action_detail": "swap=8.000GiB > 5.225GiB (HARD_BLOCK threshold from SSOT)",
   "blockers": [
     {
       "category": "memory",
       "severity": "HARD_BLOCK",
-      "detail": "swap=8.000GiB > 4.0GiB threshold (hard_block tier)",
+      "detail": "swap=8.000GiB > HARD_BLOCK_SWAP_GIB=5.225GiB threshold (MODERN-41 SSOT)",
       "current_swap_gib": 8.0,
-      "threshold_gib": 4.0
+      "threshold_gib": 5.225,
+      "threshold_source": "SWAP_TIERS.HARD_BLOCK from utils.uma_budget.SWAP_TIERS"
     }
   ],
   "f231_inventory_verdict": "F231_PACK_READY",
@@ -31,12 +34,12 @@
   "swap_used_gib": 8.0,
   "uma_state": "unknown",
   "swap_policy_tier": "hard_block",
-  "swap_gate_reason": "swap=8.000GiB > 4.0GiB",
+  "swap_gate_reason": "swap=8.000GiB > HARD_BLOCK_SWAP_GIB=5.225GiB (SSOT SWAP_TIERS)",
   "hardware_constrained": true,
   "gate_decision": "BLOCKED_BY_MEMORY",
   "gate_live_allowed": false,
   "gate_reasons": [
-    "BLOCKED_BY_MEMORY: swap=6.79GiB > 4.0GiB \u2014 restart required"
+    "BLOCKED_BY_MEMORY: swap=6.79GiB > 5.225GiB (HARD_BLOCK from SSOT) \u2014 restart required"
   ],
   "gate_warnings": [],
   "f224_core_ready": true,
@@ -56,6 +59,7 @@
     "f231_core_ready=True missing=[]",
     "provider_surface_ok=False",
     "swap_used=8.000GiB uma_state=unknown",
-    "contract_false_positives_stripped: 0"
+    "contract_false_positives_stripped: 0",
+    "MODERN-41_fix: threshold_gib updated from 4.0 to 5.225 (SSOT SWAP_TIERS.HARD_BLOCK)"
   ]
 }

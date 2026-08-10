@@ -46,6 +46,8 @@ import logging
 from collections.abc import Mapping, Sequence
 from typing import Any
 
+from hledac.universal.utils.codec import encode as _msgspec_encode
+
 logger = logging.getLogger(__name__)
 
 # M1 8GB safety: cap batch size so a single transaction doesn't
@@ -203,7 +205,7 @@ def putmulti_bounded_str(
     for key_str, value_dict in items:
         try:
             prefixed = f"{key_prefix}:{key_str}".encode("utf-8") if key_prefix else key_str.encode("utf-8")
-            val_bytes = _msgspec_dumps_str(value_dict)
+            val_bytes = _msgspec_encode(value_dict)  # encode() returns bytes for LMDB
             encoded.append((prefixed, val_bytes))
         except Exception:  # noqa: BLE001
             # Skip unencodable items; track them in results

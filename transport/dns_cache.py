@@ -93,17 +93,20 @@ class DnsCache:
 
         MODERN-09: Uses async API (resolve_async_await) when available, which
         returns awaitables directly — no run_in_executor needed!
+
+        NOTE: This is the SECONDARY fallback path. The PRIMARY path is
+        rust.dns via async_getaddrinfo() which tries rust.dns first.
         """
         if not _HAS_RUST_DNS:
             return None
 
         try:
-            # MODERN-09: Use async API if available (preferred)
+            # PRIMARY: Async API (preferred, no executor needed)
             if _HAS_RUST_DNS_ASYNC:
                 ips: list[str] = await rust.dns.resolve_async_await(real_host, "A")
                 return ips if ips else None
 
-            # Fallback: use sync API with run_in_executor
+            # SECONDARY: Sync API with run_in_executor (when async not available)
             loop = asyncio.get_running_loop()
             ips = await loop.run_in_executor(
                 None,

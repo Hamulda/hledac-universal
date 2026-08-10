@@ -305,10 +305,10 @@ class RustWorkerPool:
     rayon pool dispatcher — žádný thread::spawn per task).
     ~5μs/task vs ~500μs/task thread::spawn overhead.
 
-    M1 8GB thread budget (all rayon + asyncio singletons):
-      cpu_pool: 4 threads (P-cores, QoS=utility)
-      io_pool:  2 threads (E-cores, QoS=background)
-      mixed_pool: 1-2 threads (adaptive)
+    MODERN-28 FIX: M1 8GB thread budget (all rayon + asyncio singletons):
+      cpu_pool: 4 threads (P-cores, QoS=USER_INITIATED=0x19)     ← P-core scheduling
+      io_pool:  2 threads (E-cores, QoS=UTILITY=0x11)            ← E-core efficiency
+      mixed_pool: 1-2 threads (adaptive, P-core ceiling)
       asyncio event loop: 1 thread
       ─────────────────────────────────────────
       Total: 7-8 OS threads (fits 8-core M1)

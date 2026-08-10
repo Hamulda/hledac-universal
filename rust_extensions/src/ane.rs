@@ -5,6 +5,19 @@
 //! ANE je dedicated Neural Engine chip na M1/M2/M3 Apple Silicon (16 jader, 11 TOPS).
 //! Není přístupný přímo - pouze přes CoreML framework.
 //!
+//! ## MODERN-35: ANE Placement + GPU Inference Status
+//!
+//! **ISSUE**: ANE module is a registry stub (no real inference); MLX runs on GPU
+//! but competes with rayon on P-cores.
+//!
+//! **CURRENT STATE**: This module provides model registry + CoreML FFI infrastructure.
+//! Actual ANE inference is delegated to Python's `brain/ane_inference.py`.
+//!
+//! **FIX APPLIED**:
+//! 1. P-core affinity for MLX Metal operations (utils/cpu_affinity.py)
+//! 2. E-cores strictly reserved for I/O operations
+//! 3. ANE inference continues to use Python path (CoreML/coremltools)
+//!
 //! ## SILICON-06: ANE Idle Fix (2026-07)
 //!
 //! **Problem**: ANE was completely idle during embedding batches — all inference
@@ -24,6 +37,20 @@
 //! When integrated, `run_inference()` and `embed_tokens()` will call
 //! CoreML directly without Python bridge overhead. Current stubs delegate
 //! to `brain/ane_inference.py:ANEInferenceEngine` via PyO3 callbacks.
+//!
+//! ## MODERN-35 P-Core Affinity Plan
+//!
+//! **TODO**: Integrate with utils/cpu_affinity.py for ANE inference threads:
+//! ```python
+//! from utils.cpu_affinity import set_ane_affinity
+//!
+//! # Before ANE inference (when Rust-native is implemented)
+//! set_ane_affinity()  # Pin CoreML dispatch threads to P-cores
+//! embeddings = rust.ane.embed_tokens(model_id, tokens, mask)
+//! ```
+//!
+//! The Neural Engine itself is a dedicated chip, but CPU preprocessing
+//! for ANE input should run on P-cores for minimum latency.
 //!
 //! ## ANE Memory Constraints (M1 8GB specific)
 //!

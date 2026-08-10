@@ -1167,6 +1167,13 @@ def _python_madvise_free_reusable(addr: int, length: int) -> bool:
 
         if sys.platform == "darwin":
             libc = ctypes.CDLL(None)
+            # H1 FIX: Set argtypes to prevent 64-bit ARM64 address truncation.
+            # madvise(addr, len, advice) — addr MUST be c_void_p (64-bit on ARM64),
+            # len MUST be c_size_t, advice MUST be c_int. Without argtypes, ctypes
+            # may truncate 64-bit pointers to 32-bit integers on Apple Silicon.
+            # Pattern: composition_root.py:199, resource_governor.py:2274
+            libc.madvise.argtypes = [ctypes.c_void_p, ctypes.c_size_t, ctypes.c_int]
+            libc.madvise.restype = ctypes.c_int
             result = libc.madvise(addr, length, 7)  # MADV_FREE_REUSABLE
             return result == 0
     except Exception:  # noqa: BLE001

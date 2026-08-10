@@ -3,6 +3,14 @@ Token-level uncertainty extraction from MLX inference via logits_processors.
 
 ISSUE APEX-1008: DeepHermes3Engine uses mlx_lm.generate() but doesn't extract
 
+NOTE (MODERN-35): Callers MUST set P-core affinity before mlx_lm.generate() when
+using logits_processors from this module. Import utils.cpu_affinity and call:
+    from hledac.universal.utils.cpu_affinity import set_mlx_affinity, is_apple_silicon
+    if is_apple_silicon():
+        set_mlx_affinity()
+    output = mlx_lm.generate(..., logits_processors=[processor])
+See brain/deephermes3_engine.py for example implementation.
+
 
 
 

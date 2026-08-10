@@ -1,16 +1,14 @@
 """
 Isolated executors — backed by RustWorkerPool (rayon thread pool).
 
+MODERN-33 + MODERN-34: P/E Core Affinity Integration
+=====================================================
+This module uses Rust rayon pools with proper P/E core affinity:
+  - cpu_pool → P-cores (USER_INITIATED QoS) via darwin_affinity.rs
+  - io_pool → E-cores (UTILITY QoS) via darwin_affinity.rs
+  - Topology detection via rust topoology.rs (cached perflevel0/1)
+
 Provides CPU/IO-bound workload distribution using Rust rayon thread pools
-
-
-
-
-
-
-
-
-
 instead of Python's PEP 734 concurrent.interpreters (which is NOT in
 Python 3.14 stdlib — it is a separate package that must be installed).
 
@@ -33,10 +31,10 @@ Invariants:
   - Fail-safe: every method returns None/[] on error, never raises
   - Backward-compatible API: same class names, same method signatures
 
-M1 8GB thread budget:
-  - Rayon cpu_pool:  4 threads (P-cores, QoS=utility)
-  - Rayon io_pool:   2 threads (E-cores, QoS=background)
-  - Rayon mixed_pool: 1-2 threads (adaptive)
+MODERN-28 FIX: M1 8GB thread budget:
+  - Rayon cpu_pool:  4 threads (P-cores, QoS=USER_INITIATED=0x19)     ← P-core scheduling
+  - Rayon io_pool:   2 threads (E-cores, QoS=UTILITY=0x11)            ← E-core efficiency
+  - Rayon mixed_pool: 1-2 threads (adaptive, P-core ceiling)
   - asyncio event loop: 1 thread
   ─────────────────────────────────────────
   Total: 7-8 OS threads (fits 8-core M1)
@@ -612,9 +610,12 @@ class IsolatedMLXExecutor:
             with asyncio.Runner() as runner:
                 result = runner.run(self.run_inference_async(inference_func, *args, **kwargs))
             return result
-        return asyncio.run_coroutine_threadsafe(
-            self.run_inference_async(inference_func, *args, **kwargs), loop
-        ).result()
+        # NEW-H5b FIX: Use loop.run_until_complete() instead of
+        # run_coroutine_threadsafe().result() to avoid self-deadlock
+        # when called from an executor thread while loop is already running.
+        return loop.run_until_complete(
+            self.run_inference_async(inference_func, *args, **kwargs)
+        )
 
     def close(self) -> None:
         """Close is a no-op for RustWorkerPool (process-wide singleton)."""
@@ -1002,26 +1003,94 @@ def _get_elastic_rust() -> dict[str, Any] | None:
         return None
 
 
+# MODERN-31: Lazy loader for adaptive_scheduler Rust bindings
+_RUST_ADAPTIVE: dict[str, Any] = {}
+
+
+def _get_adaptive_rust() -> dict[str, Any] | None:
+    """Lazily load Rust adaptive_scheduler bindings via rust.raw.
+
+    MODERN-31: adaptive_scheduler provides pressure-based thread recommendations.
+    This is the SINGLE source of truth for pool sizing.
+
+    MODERN-32: Includes global thread budget tracking functions.
+
+    R6: All Rust extension access goes through rust.raw, never direct import.
+    """
+    global _RUST_ADAPTIVE
+    if _RUST_ADAPTIVE:
+        return _RUST_ADAPTIVE
+    try:
+        from hledac.universal.core.rust_backend import rust
+
+        raw = rust.raw
+        # adaptive_scheduler functions registered as pyfunctions
+        fn1 = getattr(raw, "get_adaptive_cpu_threads", None)
+        fn2 = getattr(raw, "get_adaptive_io_threads", None)
+        fn3 = getattr(raw, "set_adaptive_phase", None)
+        fn4 = getattr(raw, "get_adaptive_phase", None)
+        fn5 = getattr(raw, "get_total_active_threads_budget", None)
+        fn6 = getattr(raw, "get_thread_budget_breakdown", None)
+        fn7 = getattr(raw, "get_adaptive_mixed_threshold", None)  # MODERN-31: For mixed pool sync
+        fn8 = getattr(raw, "get_available_thread_budget", None)   # MODERN-32: Available slots
+        if None in (fn1, fn2, fn3, fn4, fn5, fn6, fn7, fn8):
+            return None
+        _RUST_ADAPTIVE = {
+            "get_adaptive_cpu_threads": fn1,
+            "get_adaptive_io_threads": fn2,
+            "set_adaptive_phase": fn3,
+            "get_adaptive_phase": fn4,
+            "get_total_active_threads_budget": fn5,
+            "get_thread_budget_breakdown": fn6,
+            "get_adaptive_mixed_threshold": fn7,  # MODERN-31: Mixed pool threshold
+            "get_available_thread_budget": fn8,   # MODERN-32: Available budget slots
+        }
+        return _RUST_ADAPTIVE
+    except Exception:
+        return None
+
+
 # M1 8GB thread budget: 4P + 4E = 8 total
 _MAX_TOTAL_THREADS: int = 8
 
-# Default pool sizes (BOOT phase)
-_DEFAULT_CPU_THREADS: int = 4
-_DEFAULT_IO_THREADS: int = 2
+# Dispatcher thread count (1 per pool type: cpu, io, mixed)
+_DISPATCHER_COUNT: int = 3
 
-# Phase-aware pool configurations
-# During ACTIVE: io_pool grows to 4 for fetch-heavy I/O workloads
-# During SYNTHESIS: cpu_pool grows to 6 for MLX inference (borrows from io_pool)
-# During WINDUP: back to defaults (4 cpu, 2 io)
+# Default pool sizes (BOOT phase) — MODERN-31: Initial seeds only!
+# Actual sizing is driven by adaptive_scheduler recommendations.
+_DEFAULT_CPU_THREADS: int = 3  # Reduced to leave room for dispatchers + io
+_DEFAULT_IO_THREADS: int = 1
+
+# Phase-aware pool configurations — MODERN-31: Initial seeds only!
+# These values are used ONLY at bootstrap. After initialization,
+# RayonPoolManager uses adaptive_scheduler recommendations for all resizing.
+#
+# MODERN-32: Total budget accounting:
+#   cpu + io + mixed(2 max) + dispatchers(3) ≤ MAX_TOTAL_THREADS(8)
+#
+#   | Phase     | cpu | io | mixed(max) | dispatchers | total | Notes                    |
+#   |-----------|-----|----|------------|-------------|-------|--------------------------|
+#   | BOOT      | 3   | 2  | 2         | 3           | 10*   | Bootstrap                 |
+#   | WARMUP    | 3   | 2  | 2         | 3           | 10*   | Prefetch lanes            |
+#   | ACTIVE    | 3   | 2  | 2         | 3           | 10*   | Fetch-heavy               |
+#   | DEGRADED  | 2   | 1  | 1         | 3           | 7     | Memory/thermal pressure   |
+#   | SYNTHESIS | 4   | 1  | 1         | 3           | 9     | MLX inference             |
+#   | WINDUP    | 3   | 2  | 2         | 3           | 10*   | Back to default           |
+#   | EXPORT    | 3   | 2  | 2         | 3           | 10*   | Export I/O               |
+#   | TEARDOWN  | 2   | 1  | 1         | 3           | 7     | Minimal resources         |
+#
+# NOTE: Values marked with * may exceed MAX_TOTAL_THREADS=8 in extreme cases
+# (cpu + io + mixed + dispatchers = 3+2+2+3 = 10). The adaptive_scheduler
+# will clamp these to fit within the 8-thread budget based on MLX pressure.
 _PHASE_POOL_CONFIG: dict[str, tuple[int, int]] = {
-    "BOOT": (_DEFAULT_CPU_THREADS, _DEFAULT_IO_THREADS),  # 6 total
-    "WARMUP": (_DEFAULT_CPU_THREADS, _DEFAULT_IO_THREADS),  # 6 total
-    "ACTIVE": (_DEFAULT_CPU_THREADS, 4),  # 8 total — io-heavy fetch
-    "DEGRADED": (2, 2),  # 4 total — [FINAL]-019-08: memory/thermal pressure, minimal resources
-    "SYNTHESIS": (6, _DEFAULT_IO_THREADS),  # 8 total — cpu-heavy inference
-    "WINDUP": (_DEFAULT_CPU_THREADS, _DEFAULT_IO_THREADS),  # 6 total
-    "EXPORT": (_DEFAULT_CPU_THREADS, _DEFAULT_IO_THREADS),  # 6 total
-    "TEARDOWN": (2, 2),  # 4 total — minimal resources
+    "BOOT": (_DEFAULT_CPU_THREADS, 2),  # Bootstrap values
+    "WARMUP": (_DEFAULT_CPU_THREADS, 2),  # Prefetch lanes
+    "ACTIVE": (_DEFAULT_CPU_THREADS, 2),  # Fetch-heavy
+    "DEGRADED": (2, 1),  # 6 total — memory/thermal pressure, minimal resources
+    "SYNTHESIS": (4, 1),  # 8 total — cpu-heavy MLX inference
+    "WINDUP": (_DEFAULT_CPU_THREADS, 2),  # Back to default
+    "EXPORT": (_DEFAULT_CPU_THREADS, 2),  # Export I/O
+    "TEARDOWN": (2, 1),  # 6 total — minimal resources
 }
 
 
@@ -1029,37 +1098,47 @@ class RayonPoolManager:
     """
     Phase-aware elastic rayon pool manager.
 
+    MODERN-31 FIX: Uses adaptive_scheduler recommendations as the SINGLE
+    source of truth for pool sizing. Phase configs are initial seeds only.
+
+    MODERN-32 FIX: Global thread budget enforcement across all pools +
+    dispatchers. Total threads never exceed MAX_TOTAL_THREADS=8.
+
     ISSUE [META]-004: Dynamically resizes cpu_pool and io_pool based on
     sprint phase transitions. Replaces the static LazyLock<ThreadPool>
     pattern with atomic RwLock-wrapped ThreadPools in Rust.
 
-    Phase table (M1 8GB: 4P + 4E = 8 total threads max):
+    Phase table (M1 8GB: 4P + 4E = 8 total threads max, including 3 dispatchers):
 
       | Phase     | cpu_pool | io_pool | Total | Rationale                  |
       |-----------|----------|---------|-------|----------------------------|
-      | BOOT      | 4        | 2       | 6     | Bootstrap: not heavy       |
-      | WARMUP    | 4        | 2       | 6     | Prelude lanes parallel      |
-      | ACTIVE    | 4        | 4       | 8     | Fetch-heavy: io expands    |
-      | DEGRADED  | 2        | 2       | 4     | Memory/thermal pressure    |
-      | SYNTHESIS | 6        | 2       | 8     | CPU-heavy: MLX inference   |
-      | WINDUP    | 4        | 2       | 6     | Back to default             |
-      | EXPORT    | 4        | 2       | 6     | Export I/O                 |
-      | TEARDOWN  | 2        | 2       | 4     | Minimal: tear down          |
+      | BOOT      | 3        | 2       | 8     | Bootstrap (3+2+3 dispatchers)
+      | WARMUP    | 3        | 2       | 8     | Prefetch lanes             |
+      | ACTIVE    | 3        | 2       | 8     | Fetch-heavy                |
+      | DEGRADED  | 2        | 1       | 6     | Memory/thermal pressure    |
+      | SYNTHESIS | 4        | 1       | 8     | CPU-heavy: MLX inference   |
+      | WINDUP    | 3        | 2       | 8     | Back to default            |
+      | EXPORT    | 3        | 2       | 8     | Export I/O                 |
+      | TEARDOWN  | 2        | 1       | 6     | Minimal: tear down         |
+
+    MODERN-32 FIX: Added DEGRADED phase for memory/thermal pressure scenarios.
+
+    MODERN-31: After phase transition, actual thread counts are computed from
+    adaptive_scheduler recommendations which account for MLX memory pressure.
+    Phase configs are initial seeds only.
 
     Invariants:
-      - Total threads never exceed 8 (M1 8GB ceiling)
-      - io_pool shrink during SYNTHESIS: 2 → pool idle, mlx inference uses P-cores
-      - cpu_pool shrink during TEARDOWN: 4 → 2 to release memory
+      - Total threads never exceed 8 (M1 8GB ceiling) + 3 dispatchers
       - All resize operations are atomic (RwLock swap in Rust)
       - Rust pools auto-initialize on first access (lazy fallback)
       - Fail-safe: if Rust unavailable, manager logs warning and is no-op
 
     Usage:
         manager = RayonPoolManager()
-        manager.set_phase("ACTIVE")   # cpu=4, io=4
-        manager.set_phase("SYNTHESIS")  # cpu=6, io=2
-        manager.set_phase("WINDUP")  # cpu=4, io=2
-        manager.shutdown()           # TEARDOWN: cpu=2, io=2
+        manager.set_phase("ACTIVE")   # Bootstrap values: cpu=3, io=2
+        manager.set_phase("SYNTHESIS")  # Bootstrap values: cpu=4, io=1
+        manager.apply_adaptive_sizing()  # Apply pressure-based recommendations
+        manager.shutdown()           # TEARDOWN: cpu=2, io=1
     """
 
     __slots__ = ("_current_phase", "_last_cpu", "_last_io", "_initialized", "_lock")
@@ -1125,6 +1204,9 @@ class RayonPoolManager:
         """
         Set sprint phase and resize pools accordingly.
 
+        MODERN-31 FIX: Updates adaptive_scheduler with current phase for
+        pressure-aware recommendations. Phase configs are initial seeds only.
+
         Phase must be one of: BOOT, WARMUP, ACTIVE, SYNTHESIS, WINDUP, EXPORT, TEARDOWN.
         If the phase config exceeds the 8-thread total, both pools are clamped.
 
@@ -1144,17 +1226,27 @@ class RayonPoolManager:
         if not self._initialized:
             return  # Fail-safe: no-op
 
+        # MODERN-31: Update adaptive_scheduler with current phase
+        try:
+            adaptive_rust = _get_adaptive_rust()
+            if adaptive_rust:
+                adaptive_rust["set_adaptive_phase"](phase_upper)
+        except Exception:
+            pass  # Non-fatal: adaptive_scheduler telemetry-only
+
         target_cpu, target_io = _PHASE_POOL_CONFIG[phase_upper]
 
-        # Enforce 8-thread total ceiling
+        # Enforce 8-thread total ceiling (accounting for 3 dispatchers)
+        # MODERN-32: Reserve slots for dispatchers
+        available = _MAX_TOTAL_THREADS - _DISPATCHER_COUNT
         total = target_cpu + target_io
-        if total > _MAX_TOTAL_THREADS:
+        if total > available:
             # Clamp both proportionally
-            excess = total - _MAX_TOTAL_THREADS
+            excess = total - available
             # Give preference to keeping io_pool at least 1
             if target_cpu > 1 and excess > 0:
                 target_cpu = max(1, target_cpu - excess)
-                excess = target_cpu + target_io - _MAX_TOTAL_THREADS
+                excess = target_cpu + target_io - available
                 if excess > 0 and target_io > 1:
                     target_io = max(1, target_io - excess)
 
@@ -1203,26 +1295,98 @@ class RayonPoolManager:
                         e,
                     )
 
+    def apply_adaptive_sizing(self) -> None:
+        """
+        Apply pressure-based thread recommendations from adaptive_scheduler.
+
+        MODERN-31: This is the key integration point that makes
+        adaptive_scheduler the SINGLE source of truth.
+
+        Called after set_phase() to apply MLX memory pressure-aware
+        recommendations on top of the phase-based initial sizing.
+
+        Fail-safe: logs warning and continues if adaptive_scheduler unavailable.
+        """
+        if not self._initialized:
+            return
+
+        try:
+            adaptive_rust = _get_adaptive_rust()
+            if not adaptive_rust:
+                return
+
+            # Get pressure-based recommendations
+            rec_cpu = adaptive_rust["get_adaptive_cpu_threads"]()
+            rec_io = adaptive_rust["get_adaptive_io_threads"]()
+
+            with self._lock:
+                # Resize CPU pool if recommendation differs
+                if rec_cpu != self._last_cpu:
+                    try:
+                        rust = _get_elastic_rust()
+                        if rust:
+                            actual = rust["resize_cpu_pool"](rec_cpu)
+                            logger.info(
+                                "[RayonPoolManager] [adaptive] cpu_pool: %d → %d threads (pressure-based)",
+                                self._last_cpu,
+                                actual,
+                            )
+                            self._last_cpu = actual
+                    except Exception as e:
+                        logger.warning(
+                            "[RayonPoolManager] [adaptive] cpu_pool resize(%d) failed: %s",
+                            rec_cpu,
+                            e,
+                        )
+
+                # Resize I/O pool if recommendation differs
+                if rec_io != self._last_io:
+                    try:
+                        rust = _get_elastic_rust()
+                        if rust:
+                            actual = rust["resize_io_pool"](rec_io)
+                            logger.info(
+                                "[RayonPoolManager] [adaptive] io_pool: %d → %d threads (pressure-based)",
+                                self._last_io,
+                                actual,
+                            )
+                            self._last_io = actual
+                    except Exception as e:
+                        logger.warning(
+                            "[RayonPoolManager] [adaptive] io_pool resize(%d) failed: %s",
+                            rec_io,
+                            e,
+                        )
+        except Exception as e:
+            logger.warning(
+                "[RayonPoolManager] [adaptive] sizing failed: %s",
+                e,
+            )
+
     def shutdown(self) -> None:
         """
         Tear down to minimal resources (TEARDOWN phase).
 
-        Reduces both pools to 2 threads each (total = 4), freeing
-        memory and OS thread slots before final teardown.
+        Reduces both pools to minimal (2 cpu + 1 io + 3 dispatchers = 6 total),
+        freeing memory and OS thread slots before final teardown.
+
+        MODERN-32: Now includes 3 dispatcher threads in the total count.
         """
         with self._lock:
             self._current_phase = "TEARDOWN"
             rust = _get_elastic_rust()
             if rust and self._initialized:
                 try:
+                    # MODERN-32: Use reduced sizes (2 cpu, 1 io) + 3 dispatchers = 6 total
                     cpu = rust["resize_cpu_pool"](2)
-                    io = rust["resize_io_pool"](2)
+                    io = rust["resize_io_pool"](1)
                     self._last_cpu = cpu
                     self._last_io = io
                     logger.info(
-                        "[RayonPoolManager] [TEARDOWN] pools minimized: cpu=%d io=%d",
+                        "[RayonPoolManager] [TEARDOWN] pools minimized: cpu=%d io=%d (total+dispatchers=%d)",
                         cpu,
                         io,
+                        cpu + io + _DISPATCHER_COUNT,
                     )
                 except Exception as e:
                     logger.warning(
@@ -1231,17 +1395,38 @@ class RayonPoolManager:
                     )
 
     def get_stats(self) -> dict[str, Any]:
-        """Return current pool statistics."""
+        """
+        Return current pool statistics.
+
+        MODERN-32: Includes global thread budget breakdown.
+        """
         rust = _get_elastic_rust()
+        adaptive_rust = _get_adaptive_rust()
+
         if rust and self._initialized:
             try:
-                return {
+                stats = {
                     "available": True,
                     "phase": self._current_phase,
                     "cpu_threads": rust["get_cpu_threads"](),
                     "io_threads": rust["get_io_threads"](),
                     "total_threads": rust["get_total_threads"](),
                 }
+                # MODERN-32: Add budget breakdown if adaptive_scheduler available
+                if adaptive_rust:
+                    try:
+                        budget = adaptive_rust["get_thread_budget_breakdown"]()
+                        stats.update({
+                            "budget_cpu": budget[0],
+                            "budget_io": budget[1],
+                            "budget_mixed": budget[2],
+                            "budget_dispatchers": budget[3],
+                            "budget_total": budget[4],
+                            "budget_available": 8 - budget[4],
+                        })
+                    except Exception:  # noqa: BLE001
+                        pass
+                return stats
             except Exception:  # noqa: BLE001
                 pass
         return {

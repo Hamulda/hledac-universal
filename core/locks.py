@@ -255,6 +255,8 @@ def acquire_in_order(
                 ...
 
     C-8 fix: Vrací ExitStack se VŠEMI locks (ne jen první v kategorii).
+    NEW-H5d fix: Locks se sbírají pod _REGISTRY_LOCK, ale enter_context()
+    se volá MIMO zámek — aby se neprodlužovalo držení _REGISTRY_LOCK.
     NOTE: Pro kategorie se stejným priority se používá původí pořadí.
     """
     if not categories:
@@ -270,13 +272,22 @@ def acquire_in_order(
 
     sorted_cats = sorted(unique, key=attrgetter("value"))
 
-    # Collect ALL locks in ascending category order via ExitStack
-    stack = contextlib.ExitStack()
+    # NEW-H5d fix: Collect locks under registry lock, but enter them outside.
+    # This minimizes the time _REGISTRY_LOCK is held, preventing blocking
+    # other threads that need to register/unregister locks.
+    collected_locks: list = []
     with _REGISTRY_LOCK:
         for cat in sorted_cats:
             locks_in_cat = _LOCKS_BY_CATEGORY.get(cat, [])
             for lock in locks_in_cat:
-                stack.enter_context(lock)
+                collected_locks.append(lock)
+
+    # Enter all collected locks (outside _REGISTRY_LOCK)
+    # ExitStack.__enter__() acquires each lock synchronously.
+    # If acquisition fails, ExitStack's __exit__ cleans up already-acquired locks.
+    stack = contextlib.ExitStack()
+    for lock in collected_locks:
+        stack.enter_context(lock)
 
     return stack
 

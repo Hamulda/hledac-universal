@@ -12,6 +12,9 @@ pub use crate::elastic_pool::{
     init_default_pools, resize_cpu_pool, resize_io_pool,
 };
 
+// MODERN-34: Import MAX_TOTAL_THREADS for budget-safe sizing
+use crate::adaptive_scheduler::MAX_TOTAL_THREADS;
+
 /// Pool phase for adaptive sizing.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PoolPhase {
@@ -27,23 +30,32 @@ pub enum PoolPhase {
 
 impl PoolPhase {
     /// Get CPU pool size for this phase.
+    ///
+    /// MODERN-34 FIX: All values clamped to respect MAX_TOTAL_THREADS=8 budget.
+    /// Synthesis uses 4 P-cores max (leaves room for io + dispatchers).
     pub fn cpu_threads(&self) -> usize {
         match self {
             PoolPhase::Boot => 4,
             PoolPhase::Active => 4,
-            PoolPhase::Synthesis => 6,
-            PoolPhase::Windup => 4,
+            PoolPhase::Synthesis => 4, // Was 6 — violated MAX_TOTAL_THREADS budget
+            PoolPhase::Windup => 3,
         }
+        .min(MAX_TOTAL_THREADS)
     }
 
     /// Get I/O pool size for this phase.
+    ///
+    /// MODERN-34 FIX: Values adjusted to respect global budget.
+    /// cpu_threads + io_threads + dispatchers(3) + mixed(max 2) <= 8
     pub fn io_threads(&self) -> usize {
         match self {
             PoolPhase::Boot => 2,
-            PoolPhase::Active => 4,
+            PoolPhase::Active => 2, // Was 4 — violated budget with cpu=4
             PoolPhase::Synthesis => 2,
-            PoolPhase::Windup => 2,
+            PoolPhase::Windup => 1,
         }
+        .min(MAX_TOTAL_THREADS.saturating_sub(self.cpu_threads() + 3 + 2)) // Reserve for dispatchers + mixed
+        .max(1) // At least 1 IO thread
     }
 }
 

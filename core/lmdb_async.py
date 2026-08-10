@@ -290,8 +290,9 @@ async def lmdb_async_put_many(
         return 0
 
     if _use_rust_lmdb_async():
-        # Rust path: rayon parallel batch, GIL release
-        return _get_rust_backend().lmdb_async_put_many(env, items)
+        # H2 FIX: Rust backend exports lmdb_async_put_batch, not lmdb_async_put_many.
+        # lmdb_async_put_many was a typo — call the registered batch function.
+        return _get_rust_backend().lmdb_async_put_batch(env, items)
 
     # Fallback: asyncio.to_thread() + cursor.put_multi
     def _put_many() -> int:

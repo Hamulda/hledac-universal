@@ -27,10 +27,12 @@ def _gauss(mu: float, sigma: float) -> float:
     z0 = math.sqrt(-2.0 * math.log(u1)) * math.cos(2.0 * math.pi * u2)
     return mu + sigma * z0
 
-QOS_CLASS_USER_INTERACTIVE = 33
-QOS_CLASS_USER_INITIATED = 25
-QOS_CLASS_UTILITY = 17
-QOS_CLASS_BACKGROUND = 9
+# MODERN-27 FIX: Correct Darwin qos_class_t hex values (XNU Mach QoS mapping)
+# Prior decimal values (33/25/17/9) were inconsistent — now uses hex like file_cache.py
+QOS_CLASS_USER_INTERACTIVE: int = 0x21  # 33 - P-cores, immediate response
+QOS_CLASS_USER_INITIATED: int = 0x19    # 25 - P-cores, inference/ML
+QOS_CLASS_UTILITY: int = 0x11           # 17 - E-cores, IO/background
+QOS_CLASS_BACKGROUND: int = 0x09        #  9 - E-cores only, lowest priority
 
 class TokenBucket:
     """
