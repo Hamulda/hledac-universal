@@ -420,10 +420,14 @@ class TorTransport(Transport):
         except Exception:  # noqa: BLE001
             pass
         await self._maybe_rotate_circuit(domain=domain)
-        from hledac.universal.core.env_config import ENV
-        os.environ['CURL_CFFI_PROXY'] = ENV.get_str('TOR_SOCKS_PROXY_URL', 'socks5h://127.0.0.1:9050')
+        # P0-2 MODERN-02 FIX: Pass proxies directly instead of using dead env var.
+        # The CURL_CFFI_PROXY env var was never read by curl_cffi_fetch.py —
+        # this was the root cause of .onion/.i2p leak via Clearnet.
+        # Now passing SOCKS5H proxy directly for DNS-on-proxy semantics.
+        from .curl_cffi_fetch import _TOR_CURL_PROXY
+        proxies = {"http": _TOR_CURL_PROXY, "https": _TOR_CURL_PROXY}
         try:
-            result = await fetch_via_curl_cffi(url=config.url, timeout_s=config.timeout_s, max_bytes=config.max_bytes)
+            result = await fetch_via_curl_cffi(url=config.url, timeout_s=config.timeout_s, max_bytes=config.max_bytes, proxies=proxies)
             from .base import TransportResult
             return TransportResult(url=config.url, final_url=result.get('final_url', config.url), status_code=result.get('status_code', 0), content_type=result.get('content_type', ''), fetched_bytes=len(result.get('content', b'')), error=result.get('error'), failure_stage=result.get('failure_stage'), network_error_kind=result.get('network_error_kind'), selected_transport='tor')
         except Exception as e:

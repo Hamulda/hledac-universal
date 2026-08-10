@@ -445,8 +445,24 @@ pub fn batch_cosine_similarity(
         ));
     }
 
-    let expected_queries = num_queries * hidden_dim;
-    let expected_candidates = num_candidates * hidden_dim;
+    // P5-2 FIX: Use checked_mul to prevent integer overflow leading to OOB access.
+    // Malicious inputs with large num_queries * hidden_dim could overflow usize
+    // and wrap around to pass the bounds check, causing OOB read/write.
+    let expected_queries = num_queries
+        .checked_mul(hidden_dim)
+        .ok_or_else(|| {
+            pyo3::exceptions::PyValueError::new_err(
+                "Integer overflow in num_queries * hidden_dim",
+            )
+        })?;
+
+    let expected_candidates = num_candidates
+        .checked_mul(hidden_dim)
+        .ok_or_else(|| {
+            pyo3::exceptions::PyValueError::new_err(
+                "Integer overflow in num_candidates * hidden_dim",
+            )
+        })?;
 
     if queries.len() != expected_queries {
         return Err(pyo3::exceptions::PyValueError::new_err(format!(
@@ -464,16 +480,25 @@ pub fn batch_cosine_similarity(
         )));
     }
 
+    // P5-2 FIX: Use checked_mul for results allocation to prevent overflow.
+    let total_results = num_queries
+        .checked_mul(num_candidates)
+        .ok_or_else(|| {
+            pyo3::exceptions::PyValueError::new_err(
+                "Integer overflow in num_queries * num_candidates",
+            )
+        })?;
+
     // Update telemetry
     {
         let mut telemetry = ACCELERATE_TELEMETRY.write();
         telemetry.cosine_calls += 1;
         telemetry.cosine_pairs = telemetry
             .cosine_pairs
-            .saturating_add((num_queries * num_candidates) as u64);
+            .saturating_add(total_results as u64);
     }
 
-    let mut results = vec![0.0_f32; num_queries * num_candidates];
+    let mut results = vec![0.0_f32; total_results];
 
     #[cfg(all(target_os = "macos", not(vdsp_unavailable)))]
     {
@@ -581,7 +606,15 @@ pub fn batch_normalize(
         ));
     }
 
-    let expected = batch_size * hidden_dim;
+    // P5-2 FIX: Use checked_mul to prevent integer overflow leading to OOB access.
+    let expected = batch_size
+        .checked_mul(hidden_dim)
+        .ok_or_else(|| {
+            pyo3::exceptions::PyValueError::new_err(
+                "Integer overflow in batch_size * hidden_dim",
+            )
+        })?;
+
     if vectors.len() != expected {
         return Err(pyo3::exceptions::PyValueError::new_err(format!(
             "Vectors size mismatch: expected {}, got {}",

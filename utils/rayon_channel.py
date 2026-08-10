@@ -33,6 +33,15 @@ M1 8GB SAFETY
   - Deadlock prevention: submit in asyncio.to_thread, join in run_in_executor
   - Fail-soft: any error → falls back to direct asyncio.to_thread
 
+MODERN-04: RAII via PyCapsule
+------------------------------
+  rayon_submit_channel now returns a PyCapsule instead of raw usize.
+  The capsule's destructor automatically calls rayon_drop_channel when
+  garbage collected, providing RAII semantics at the FFI boundary.
+
+  This eliminates the need for manual rayon_drop_channel calls in most cases.
+  The old raw usize API is still supported for backward compatibility.
+
 USAGE
 -----
   # Before (R7 anti-pattern):
@@ -58,6 +67,68 @@ from typing import Any, TypeVar
 logger = logging.getLogger(__name__)
 
 T = TypeVar("T")
+
+# ---------------------------------------------------------------------------
+# MODERN-04: Safety net wrapper for rayon handles
+# ---------------------------------------------------------------------------
+
+class RayonHandle:
+    """Safety net wrapper for rayon handle.
+
+    MODERN-04: This class provides an additional layer of safety beyond the
+    PyCapsule destructor. It wraps the handle and ensures rayon_drop_channel
+    is called on garbage collection via __del__.
+
+    This is a fallback for cases where the PyCapsule destructor might not
+    be called (e.g., circular references, interpreter shutdown).
+
+    Note: This class is optional when using PyCapsule handles, but provides
+    an extra safety net for robust resource management.
+    """
+
+    __slots__ = ("_handle", "_dropped")
+
+    def __init__(self, handle: Any) -> None:
+        self._handle = handle
+        self._dropped = False
+
+    def __del__(self) -> None:
+        """Safety net: ensure handle is dropped on garbage collection.
+
+        MODERN-04: This __del__ is a fallback safety net. The primary
+        cleanup mechanism is the PyCapsule destructor in Rust, which is
+        called automatically. This __del__ only runs if:
+        - The PyCapsule destructor wasn't called (interpreter shutdown)
+        - Circular references prevented normal cleanup
+        - The handle was used with raw usize API
+        """
+        if self._dropped:
+            return
+
+        try:
+            from hledac.universal.core.rust_backend import rust
+            rust.raw.rayon_drop_channel(self._handle)
+            self._dropped = True
+        except Exception:  # noqa: BLE001
+            # Best-effort: don't raise exceptions in __del__
+            # This is already a safety net, primary cleanup is the Rust destructor
+            pass
+
+    def get_handle(self) -> Any:
+        """Get the underlying handle for use with rayon_join/abort_channel."""
+        return self._handle
+
+    def release(self) -> None:
+        """Explicitly release the handle. Safe to call multiple times."""
+        if self._dropped:
+            return
+        try:
+            from hledac.universal.core.rust_backend import rust
+            rust.raw.rayon_drop_channel(self._handle)
+            self._dropped = True
+        except Exception:  # noqa: BLE001
+            pass
+
 
 # ---------------------------------------------------------------------------
 # Lazy availability check — cached after first call
@@ -129,6 +200,8 @@ async def dispatch_rayon(
     rayon_submit_channel = rust.raw.rayon_submit_channel
     rayon_join_channel = rust.raw.rayon_join_channel
     rayon_abort_channel = rust.raw.rayon_abort_channel
+    # P0-4 FIX: Explicit Arc release after join/abort to prevent UAF/double-free
+    rayon_drop_channel = rust.raw.rayon_drop_channel
 
     def _submit() -> int:
         return rayon_submit_channel(pool_type, n_items, fn, args)
@@ -143,6 +216,15 @@ async def dispatch_rayon(
 
     def _join(h: int) -> Any:
         return rayon_join_channel(h, timeout)
+
+    # MODERN-04: Helper to release Arc ownership after task completion.
+    # For PyCapsule handles, the destructor auto-releases; this is still called
+    # for immediate cleanup and backward compatibility with raw usize handles.
+    def _drop(h: int) -> None:
+        try:
+            rayon_drop_channel(h)
+        except Exception:  # noqa: BLE001
+            pass  # Best-effort — auto-release via capsule destructor handles this
 
     try:
         if timeout is None:
@@ -164,6 +246,15 @@ async def dispatch_rayon(
         except Exception:  # noqa: BLE001
             pass
         raise
+    finally:
+        # MODERN-04: Always release Arc ownership after the final join/abort call.
+        # For PyCapsule handles (default), the destructor auto-releases Arc on GC.
+        # We still call rayon_drop_channel explicitly for immediate cleanup and
+        # backward compatibility with raw usize handles.
+        try:
+            await asyncio.to_thread(_drop, handle)
+        except Exception:  # noqa: BLE001
+            pass  # Best-effort — auto-release via capsule destructor handles this
 
 
 # ---------------------------------------------------------------------------

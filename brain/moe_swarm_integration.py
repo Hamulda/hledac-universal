@@ -43,8 +43,8 @@ from .micro_model_pool import (
     MicroModelPool,
     MicroModelSpec,
     TaskType,
-    create_micro_model_pool,
 )
+from .micro_model_swarm import create_micro_model_pool  # P3-1 FIX: was importing from micro_model_pool (wrong module)
 from .micro_model_swarm import (
     MicroModelSwarmRouter,
     create_swarm_router,
@@ -150,8 +150,13 @@ class ResourceGovernor:
         return current_pressure > self.HIGH_PRESSURE
     
     def can_allocate(self, size_mb: int, current_pressure: float) -> bool:
-        """Check if new allocation is safe."""
-        return current_pressure + (size_mb / self._total_memory) < self.CRITICAL_PRESSURE
+        """Check if new allocation is safe.
+        
+        P3-8 FIX: size_mb is in MB, _total_memory is stored in bytes.
+        Convert _total_memory to MB for consistent unit comparison.
+        """
+        total_memory_mb = self._total_memory / (1024 * 1024)
+        return current_pressure + (size_mb / total_memory_mb) < self.CRITICAL_PRESSURE
     
     def get_eviction_threshold(self, current_pressure: float) -> float:
         """

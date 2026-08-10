@@ -4,7 +4,7 @@ use pyo3::prelude::Python;
 use pyo3::prelude::*;
 use rayon::prelude::*;
 
-use crate::gil::release_gil;
+use crate::gil::{release_gil, release_gil_caught_panic};
 
 // Sprint F266 (2026-06-21). Drop-in acceleration for Python `json.dumps`
 // in `export/stix_exporter.py` where STIX bundle serialization is the
@@ -13,6 +13,11 @@ use crate::gil::release_gil;
 // Benchmarks (M1 8GB, 1000-entry STIX bundle):
 //   Python json.dumps  ≈ 8-12 ms
 //   serde_json         ≈ 2-4 ms  (3-4× faster, no GIL, SIMD-ready)
+//
+// ## GIL Handling
+// All batch functions release the GIL via `release_gil()` during rayon
+// parallel work. This allows asyncio event loop to run on other threads
+// and enables true CPU parallelism for multi-core workloads.
 //
 // API design:
 //   `serde_json_pretty(json_str)` — pretty-print with indent=2, like json.dumps(d, indent=2)
@@ -243,10 +248,10 @@ pub fn serde_json_pretty_bytes(input: &[u8], sort_keys: bool) -> Vec<u8> {
 /// * `items` — list of (json_str, pretty, sort_keys) tuples
 ///
 /// # Returns
-/// List of formatted JSON strings (same order as input)
+/// List of formatted JSON strings (same order as input), or Err on panic.
 #[pyfunction]
-pub fn batch_serde_json(items: Vec<(String, bool, bool)>) -> Vec<String> {
-    Python::attach(|py| {
+pub fn batch_serde_json(items: Vec<(String, bool, bool)>) -> PyResult<Vec<String>> {
+    let result: Vec<String> = Python::attach(|py| {
         release_gil(py, || {
             items
                 .par_iter()
@@ -255,59 +260,89 @@ pub fn batch_serde_json(items: Vec<(String, bool, bool)>) -> Vec<String> {
                 })
                 .collect()
         })
-    })
+    });
+    if release_gil_caught_panic() {
+        return Err(PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(
+            "Rust panic in batch_serde_json",
+        ));
+    }
+    Ok(result)
 }
 
 /// Batch pretty-print (indent=2) for a list of pre-serialized JSON strings.
 #[pyfunction]
-pub fn batch_serde_json_pretty(items: Vec<String>) -> Vec<String> {
-    Python::attach(|py| {
+pub fn batch_serde_json_pretty(items: Vec<String>) -> PyResult<Vec<String>> {
+    let result: Vec<String> = Python::attach(|py| {
         release_gil(py, || {
             items
                 .par_iter()
                 .map(|json_str| serde_json_reexport(json_str, true, false))
                 .collect()
         })
-    })
+    });
+    if release_gil_caught_panic() {
+        return Err(PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(
+            "Rust panic in batch_serde_json_pretty",
+        ));
+    }
+    Ok(result)
 }
 
 /// Batch compact serialize for a list of pre-serialized JSON strings.
 #[pyfunction]
-pub fn batch_serde_json_compact(items: Vec<String>) -> Vec<String> {
-    Python::attach(|py| {
+pub fn batch_serde_json_compact(items: Vec<String>) -> PyResult<Vec<String>> {
+    let result: Vec<String> = Python::attach(|py| {
         release_gil(py, || {
             items
                 .par_iter()
                 .map(|json_str| serde_json_reexport(json_str, false, false))
                 .collect()
         })
-    })
+    });
+    if release_gil_caught_panic() {
+        return Err(PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(
+            "Rust panic in batch_serde_json_compact",
+        ));
+    }
+    Ok(result)
 }
 
 /// Batch pretty-print with sorted keys for a list of pre-serialized JSON strings.
 #[pyfunction]
-pub fn batch_serde_json_pretty_sorted(items: Vec<String>) -> Vec<String> {
-    Python::attach(|py| {
+pub fn batch_serde_json_pretty_sorted(items: Vec<String>) -> PyResult<Vec<String>> {
+    let result: Vec<String> = Python::attach(|py| {
         release_gil(py, || {
             items
                 .par_iter()
                 .map(|json_str| serde_json_reexport(json_str, true, true))
                 .collect()
         })
-    })
+    });
+    if release_gil_caught_panic() {
+        return Err(PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(
+            "Rust panic in batch_serde_json_pretty_sorted",
+        ));
+    }
+    Ok(result)
 }
 
 /// Batch compact serialize with sorted keys for a list of pre-serialized JSON strings.
 #[pyfunction]
-pub fn batch_serde_json_compact_sorted(items: Vec<String>) -> Vec<String> {
-    Python::attach(|py| {
+pub fn batch_serde_json_compact_sorted(items: Vec<String>) -> PyResult<Vec<String>> {
+    let result: Vec<String> = Python::attach(|py| {
         release_gil(py, || {
             items
                 .par_iter()
                 .map(|json_str| serde_json_reexport(json_str, false, true))
                 .collect()
         })
-    })
+    });
+    if release_gil_caught_panic() {
+        return Err(PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(
+            "Rust panic in batch_serde_json_compact_sorted",
+        ));
+    }
+    Ok(result)
 }
 
 /// Parse JSON string via Rust serde_json (SIMD) and return JSON string.

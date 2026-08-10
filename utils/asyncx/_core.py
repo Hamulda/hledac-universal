@@ -48,11 +48,15 @@ logger = __import__("logging").getLogger(__name__)
 # ---------------------------------------------------------------------------
 
 _HAS_RUST_DNS: bool = False
+_HAS_RUST_DNS_ASYNC: bool = False
 try:
     import rust
     _HAS_RUST_DNS = hasattr(rust, "dns") and hasattr(rust.dns, "resolve_async")
+    # MODERN-09: Check for async version
+    _HAS_RUST_DNS_ASYNC = hasattr(rust.dns, "resolve_async_await")
 except Exception:
     _HAS_RUST_DNS = False
+    _HAS_RUST_DNS_ASYNC = False
 
 
 async def async_getaddrinfo(
@@ -85,8 +89,13 @@ async def async_getaddrinfo(
     if _HAS_RUST_DNS and family in (0, socket.AF_INET, socket.AF_INET6) and type_ in (0, socket.SOCK_STREAM):
         try:
             qtype = "AAAA" if family == socket.AF_INET6 else "A"
-            loop = asyncio.get_running_loop()
-            ips = await loop.run_in_executor(None, lambda: rust.dns.resolve_async(host, qtype))
+            # MODERN-09: Use async API if available (preferred)
+            if _HAS_RUST_DNS_ASYNC:
+                ips = await rust.dns.resolve_async_await(host, qtype)
+            else:
+                # Fallback: use sync API with run_in_executor
+                loop = asyncio.get_running_loop()
+                ips = await loop.run_in_executor(None, lambda: rust.dns.resolve_async(host, qtype))
             if ips:
                 af = socket.AF_INET if family != socket.AF_INET6 else socket.AF_INET6
                 return [

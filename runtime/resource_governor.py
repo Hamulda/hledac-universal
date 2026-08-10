@@ -3,6 +3,14 @@ runtime/resource_governor.py — M1ResourceGovernor advisory safety layer
 
 ROLE: Advisory safety layer for branch concurrency, model lease, and renderer lease.
 
+P7-3 SSOT: MISSION_PEAK_RSS_GIB imported from utils.uma_budget.UmaBudget.
+Threshold ladder from UmaBudget (F289-NEW):
+    - 5.5 GiB → soft ceiling (MISSION_PEAK_RSS_GIB)
+    - 6.8 GiB → SOFT_WARN
+    - 7.0 GiB → WARN
+    - 7.5 GiB → CRITICAL
+    - 7.8 GiB → EMERGENCY
+
 
 
 
@@ -64,7 +72,9 @@ MODEL_LOADED_BRANCH_CONCURRENCY = 2
 CRITICAL_ALLOW_RENDERER = False
 CRITICAL_ALLOW_MODEL_LOAD = False
 _EMA_ALPHA = 0.3
-MISSION_PEAK_RSS_GIB: float = 5.5
+# P7-3 SSOT: Import from UmaBudget SSOT, not local definition
+from hledac.universal.utils.uma_budget import MISSION_PEAK_RSS_GIB as _UMA_BUDGET_MISSION_PEAK
+MISSION_PEAK_RSS_GIB: float = _UMA_BUDGET_MISSION_PEAK
 SIDECAR_DEFAULT_ESTIMATE_MB: int = 128
 # [FINAL]-019: HEAVY_SIDECARS now includes memory cost metadata for budget accounting.
 # In windup mode (WINDUP QoS level), these are skipped to reduce pressure.

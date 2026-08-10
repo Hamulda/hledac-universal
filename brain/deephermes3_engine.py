@@ -1792,19 +1792,41 @@ class DeepHermes3Engine:
             self._supports_draft = False
             self._triage_mode = False
 
-            # Force garbage collection to release Metal buffers
+            # GHOST_INVARIANT F183C: correct cleanup order
             import gc
             gc.collect()
 
-            # Clear MLX cache to release GPU memory
+            # Barrier: flush GPU queue BEFORE clear_cache (MLX lazy eval)
+            _mx_module = None
             try:
-                import mlx.core as mx
-                mx.metal.clear_cache()
+                import mlx.core as _mx_module
+                _mx_module.eval([])  # Force GPU queue flush
             except Exception:  # noqa: BLE001
                 pass
 
-            logger.info('[SPEC] Draft model evicted successfully (~200MB freed)%s',
-                        ' [triage mode cleared]' if _was_triage else '')
+            # Clear MLX cache to release GPU memory
+            freed_mb = None
+            try:
+                if _mx_module is None:
+                    import mlx.core as _mx_module
+                if hasattr(_mx_module, 'metal'):
+                    # Measure before clear
+                    before_mb = getattr(_mx_module.metal, 'get_cache_memory', lambda: None)() or 0
+                    _mx_module.metal.clear_cache()
+                    # Measure after clear (approximate freed amount)
+                    after_mb = getattr(_mx_module.metal, 'get_cache_memory', lambda: 0)() or 0
+                    freed_mb = max(0, (before_mb - after_mb) // (1024 * 1024))
+            except Exception:  # noqa: BLE001
+                pass
+
+            gc.collect()  # Second GC pass for circular refs
+
+            if freed_mb is not None and freed_mb > 0:
+                logger.info('[SPEC] Draft model evicted successfully (~%dMB freed)%s',
+                            freed_mb, ' [triage mode cleared]' if _was_triage else '')
+            else:
+                logger.info('[SPEC] Draft model evicted successfully [cache clear attempted]%s',
+                            ' [triage mode cleared]' if _was_triage else '')
 
         except Exception as e:
             logger.warning(f'[SPEC] Draft model eviction failed: {e}')
@@ -2829,11 +2851,16 @@ class DeepHermes3Engine:
         Clears Metal allocator cache only when:
           - force_clear=True  (timeout retry path — memory may be fragmented)
           - _generation_since_clear >= _CLEAR_INTERVAL
-          - UMA pressure state is HIGH or CRITICAL
+          - UMA pressure state is CRITICAL or EMERGENCY
 
         This eliminates the 1-20ms per-call penalty from unconditional clear,
         while preserving the original sequence: gc.collect() -> mx.eval([]) ->
         mx.clear_cache() -> gc.collect().
+
+        P2-4 FIX: Counter reset now happens ONLY after actual clear (not before).
+        Previously, the counter was reset unconditionally at line 2882 even when
+        _should_clear=False, making the >=20 threshold unreachable because the
+        counter was constantly being zeroed before reaching it.
 
         Args:
             force_clear: Force clear even if throttle threshold not met.
@@ -2845,24 +2872,29 @@ class DeepHermes3Engine:
             if self._generation_since_clear >= self._CLEAR_INTERVAL:
                 _should_clear = True
             else:
-                # Check memory pressure — HIGH/CRITICAL requires immediate relief
+                # P2-4 FIX: 'high' is not a valid UmaState — valid values are:
+                # 'ok', 'soft_warn', 'warn', 'critical', 'emergency'
+                # CRITICAL (94%) and EMERGENCY (98%) require immediate relief
                 try:
                     from hledac.universal.core.resource_governor import sample_uma_status
                     _uma = sample_uma_status()
                     _uma_state = getattr(_uma, 'state', 'ok')
-                    if _uma_state in ('high', 'critical'):
+                    if _uma_state in ('critical', 'emergency'):
                         _should_clear = True
                 except Exception:  # noqa: BLE001
                     pass  # fail-open: don't clear if sampling fails
 
-        # Always update timestamp and counter regardless of whether we clear
+        # Update timestamp regardless of whether we clear
         import time as _time
         self._last_inference_at = _time.monotonic()
-        self._generation_since_clear = 0  # reset counter after recording
         self._last_clear_at = self._last_inference_at
 
         if not _should_clear:
             return
+
+        # P2-4 FIX: Reset counter ONLY after actual clear, not unconditionally.
+        # This ensures the >=20 threshold is actually reachable.
+        self._generation_since_clear = 0
 
         try:
             import mlx.core as _mx
@@ -3246,6 +3278,15 @@ class DeepHermes3Engine:
     async def _try_main_thread_inference_with_retry(self, timeout: float, fn, *args, **kwargs) -> str | None:
         """Retry loop for main-thread inference with exponential backoff.
 
+        P2-7 FIX: Use run_in_executor instead of run_coroutine_threadsafe.
+        The previous approach used run_coroutine_threadsafe on a running loop,
+        but the coroutine contained a blocking MLX call. The timeout could never
+        fire because the blocking call would block the loop itself.
+
+        Solution: Use run_in_executor directly with the inference executor.
+        This properly offloads the blocking MLX call to a thread, allowing the
+        timeout mechanism (safe_wait_for) to actually interrupt the blocking call.
+
         Returns:
             Generated text on success, None when all retries exhausted.
         """
@@ -3253,23 +3294,25 @@ class DeepHermes3Engine:
         _base_delay = 2.0
         for _attempt in range(_retries + 1):
             try:
-                main_loop = asyncio.get_running_loop()
-
-                async def _coro_wrapper():
-                    return fn(*args, **kwargs)
-                inference_future = asyncio.run_coroutine_threadsafe(_coro_wrapper(), main_loop)
-                return await safe_wait_for(asyncio.wrap_future(inference_future), timeout=timeout, label='deephermes_inference')
+                loop = asyncio.get_running_loop()
+                # P2-7 FIX: Use run_in_executor directly - the blocking MLX call
+                # runs in a thread, and safe_wait_for can properly interrupt it.
+                return await safe_wait_for(
+                    loop.run_in_executor(self._inference_executor, lambda: fn(*args, **kwargs)),
+                    timeout=timeout,
+                    label='deephermes_inference'
+                )
             except TimeoutError:
                 if _attempt < _retries:
-                    logger.warning('[P0-2] main-thread inference timeout (attempt %d/%d), retrying in %.1fs', _attempt + 1, _retries + 1, _base_delay)
+                    logger.warning('[P2-7] main-thread inference timeout (attempt %d/%d), retrying in %.1fs', _attempt + 1, _retries + 1, _base_delay)
                     await asyncio.sleep(_base_delay)
                     _base_delay *= 1.5
                     self._mlx_clear_and_timestamp(force_clear=True)  # L-04: force clear after timeout (fragmented KV cache)
                     continue
-                logger.warning('[P0-2] main-thread inference timeout after %d attempts — propagating', _retries + 1)
+                logger.warning('[P2-7] main-thread inference timeout after %d attempts — propagating', _retries + 1)
                 raise
             except Exception as _submit_err:
-                logger.debug('[P0-2] main-thread submit failed (attempt %d): %s — falling back', _attempt + 1, _submit_err)
+                logger.debug('[P2-7] main-thread submit failed (attempt %d): %s — falling back', _attempt + 1, _submit_err)
                 if _attempt >= _retries:
                     return None
                 await asyncio.sleep(_base_delay)

@@ -4,32 +4,80 @@
 //! SILICON-03: Bypass BSD sockets entirely. Network.framework provides:
 //!   - User-space TCP stack (no kernel context switches per packet)
 //!   - Hardware-accelerated TLS 1.3 via Secure Transport
-//!   - Native QUIC support (future: nw_parameters_create_secure_quic)
+//!   - Native QUIC support via nw_parameters_create_quic()
 //!
-//! API: ``rust.nw_connection.fetch(url, timeout_ms) -> NwResponse``
+//! ## MODERN-12: Async FFI Bridge
 //!
-//! Architecture:
-//!   NWConnectionPool (bounded semaphore, max 200 connections on M1 8GB)
-//!   → NWConnection (nw_connection_t + dispatch queue)
-//!   → raw HTTP request construction + response parsing
+//! This module bridges Apple's callback-driven Network.framework API to Tokio
+//! async/await futures. The native API uses dispatch queues and block callbacks,
+//! but Python asyncio needs awaitable futures.
 //!
-//! M1 8GB bounds:
-//!   - Max 200 concurrent connections (pool cap)
-//!   - Each connection: ~50 KB user-space buffer
-//!   - Total pool RSS: ~10 MB (200 × 50 KB)
-//!   - Per-request timeout: configurable, default 10s
+//! ### Architecture
 //!
-//! Feature gate: nw_framework = ["dep:objc2", "dep:block2"]
+//! ```text
+//! Python asyncio event loop
+//!   └── await rust.nw_connection.fetch_async(url)
+//!       └── future_into_py() → Tokio task
+//!           └── spawn_blocking() → FFI thread
+//!               ├── Network.framework dispatch queue (libdispatch)
+//!               ├── block2 callbacks → oneshot::channel()
+//!               └── tokio::sync::Notify → async wakeup
+//! ```
+//!
+//! ### Key Changes (MODERN-12)
+//!
+//! 1. **parking_lot::Condvar → tokio::sync::Notify**: Async-safe state signaling
+//! 2. **Busy-poll → oneshot::channel()**: Proper async receive completion
+//! 3. **spawn_blocking() for FFI**: All Network.framework calls run in blocking threads
+//! 4. **future_into_py() pyfunctions**: Native Python awaitables (no to_thread)
+//!
+//! ### M1 8GB Safety
+//!
+//! - Uses shared tokio runtime (already bounded to 4 workers)
+//! - Connection pool: max 200 concurrent × 50 KB = 10 MB RSS
+//! - Tokio tasks: ~200 bytes each (negligible overhead)
+//!
+//! API:
+//! - Sync: ``rust.nw_connection.fetch(url, timeout_ms) -> NwResponse``
+//! - Async: ``rust.nw_connection.fetch_async(url, timeout_ms) -> Awaitable[NwResponse]``
+//! - Sync QUIC: ``rust.nw_connection.fetch_quic(url, timeout_ms) -> NwResponse``
+//! - Async QUIC: ``rust.nw_connection.fetch_quic_async(url, timeout_ms) -> Awaitable[NwResponse]``
+//!
+//! Feature gate: nw_framework = ["dep:objc2", "dep:block2", "shared_tokio"]
 //! Platform: aarch64-apple-darwin ONLY (uses Apple-specific frameworks)
 //!
-//! Fallback: when nw_framework feature is disabled, fetch() returns an error
-//! message pointing to ``maturin build --features nw_framework``.
+//! Fallback: when nw_framework feature is disabled, functions return clear error messages.
 
 use pyo3::prelude::*;
 
 use std::os::raw::c_void;
-use std::sync::{Arc, Condvar, Mutex, OnceLock};
+use std::sync::{Arc, OnceLock};
 use std::time::{Duration, Instant};
+
+// MODERN-12: std::sync::mpsc for cross-thread signaling from dispatch callbacks.
+// This module is only compiled when shared_tokio is enabled (via nw_framework feature).
+// Note: We use std::sync::mpsc instead of tokio channels because dispatch queue
+// callbacks run on OS threads OUTSIDE the tokio runtime context.
+#[cfg(feature = "shared_tokio")]
+use std::sync::mpsc as sync_mpsc;
+
+// P5-7: Use parking_lot::Mutex instead of std::sync::Mutex to avoid UB
+// when mutex is poisoned by panics in Obj-C callbacks.
+// parking_lot never poisons — it remains usable after a thread panic.
+// parking_lot 0.12 is already in Cargo.toml dependencies.
+use parking_lot::{Condvar, Mutex};
+
+// MODERN-12: Use tokio::sync::Semaphore for connection pool bounding.
+// This works across threads and is safe to use in spawn_blocking() context.
+#[cfg(feature = "shared_tokio")]
+use tokio::sync::Semaphore;
+
+// block2 for Objective-C blocks (Network.framework callbacks)
+// Note: ConcreteBlock is deprecated but still required because StackBlock::new()
+// requires Clone bound, but our closures capture variables (not Clone).
+// Using #[allow(deprecated)] to suppress warnings while maintaining compatibility.
+#[allow(deprecated)]
+use block2::ConcreteBlock;
 
 // ---------------------------------------------------------------------------
 // Objective-C / Network.framework type aliases (opaque C types)
@@ -212,12 +260,12 @@ impl ConnectionState {
 
     fn wait_for_ready(&self, timeout: Duration) -> Result<(), String> {
         let deadline = Instant::now() + timeout;
-        let mut state = self.state.lock().unwrap();
+        let mut state = self.state.lock();
         loop {
             match *state {
                 NW_CONNECTION_STATE_READY => return Ok(()),
                 NW_CONNECTION_STATE_FAILED => {
-                    let msg = self.error_msg.lock().unwrap().clone();
+                    let msg = self.error_msg.lock().clone();
                     return Err(msg.unwrap_or_else(|| "connection failed".to_string()));
                 }
                 NW_CONNECTION_STATE_CANCELLED => {
@@ -228,12 +276,11 @@ impl ConnectionState {
                     if remaining.is_zero() {
                         return Err("connection timeout waiting for ready state".to_string());
                     }
-                    let (new_state, timeout_result) =
-                        self.cv.wait_timeout(state, remaining).unwrap();
-                    state = new_state;
-                    if timeout_result.timed_out() {
-                        return Err("connection timeout waiting for ready state".to_string());
-                    }
+                    // parking_lot::Condvar::wait_for takes a &mut MutexGuard and duration.
+                    // After wait_for returns, the guard is still valid and state is locked.
+                    let _guard = self.cv.wait_for(&mut state, remaining);
+                    // Re-check state inside the guard
+                    continue;
                 }
             }
         }
@@ -241,7 +288,7 @@ impl ConnectionState {
 
     fn wait_for_recv_done(&self, timeout: Duration) -> bool {
         let deadline = Instant::now() + timeout;
-        let mut done = self.recv_done.lock().unwrap();
+        let mut done = self.recv_done.lock();
         loop {
             if *done {
                 return true;
@@ -253,23 +300,151 @@ impl ConnectionState {
             // We can't wait on recv_done directly — poll with short sleep
             drop(done);
             std::thread::sleep(Duration::from_millis(10));
-            done = self.recv_done.lock().unwrap();
+            done = self.recv_done.lock();
         }
     }
 
     fn append_recv_data(&self, data: &[u8]) {
-        let mut buf = self.recv_buffer.lock().unwrap();
+        let mut buf = self.recv_buffer.lock();
         buf.extend_from_slice(data);
     }
 
     fn mark_recv_done(&self) {
-        let mut done = self.recv_done.lock().unwrap();
+        let mut done = self.recv_done.lock();
         *done = true;
     }
 
     fn take_recv_data(&self) -> Vec<u8> {
-        let mut buf = self.recv_buffer.lock().unwrap();
+        let mut buf = self.recv_buffer.lock();
         std::mem::take(&mut *buf)
+    }
+}
+
+// ---------------------------------------------------------------------------
+// MODERN-12: Connection State for Async FFI Bridge
+//
+// This struct is used by fetch_async_impl() which runs inside spawn_blocking().
+// It uses std::sync::mpsc channels to receive completion signals from dispatch
+// queue callbacks (which run on OS threads outside tokio context).
+//
+// Why std::sync::mpsc instead of tokio channels?
+//   - Dispatch queue callbacks execute on libdispatch threads, NOT tokio tasks
+//   - tokio::sync primitives require tokio runtime context (unavailable here)
+//   - std::sync::mpsc works across any thread context
+//
+// The flow is:
+//   1. Create mpsc::Receiver in this blocking thread
+//   2. Pass Arc<AsyncConnectionState> to dispatch queue callbacks
+//   3. Callbacks store Sender via on_recv_done_setup()
+//   4. Callbacks signal via on_recv_done() when complete
+//   5. This thread receives via recv_timeout() with timeout
+// ---------------------------------------------------------------------------
+
+#[cfg(feature = "nw_framework")]
+struct AsyncConnectionState {
+    /// Current nw_connection_state_t value.
+    state: Mutex<i32>,
+    /// Error message if state == FAILED.
+    error_msg: Mutex<Option<String>>,
+    /// Accumulated response data from receive callbacks.
+    recv_buffer: Mutex<Vec<u8>>,
+    /// MODERN-12: Sender for receive completion (set before nw_connection_receive)
+    recv_tx: Mutex<Option<sync_mpsc::Sender<Result<Vec<u8>, String>>>>,
+    /// Send completion error (if any).
+    send_error: Mutex<Option<String>>,
+    /// MODERN-12: Sender for send completion
+    send_tx: Mutex<Option<sync_mpsc::Sender<Result<(), String>>>>,
+}
+
+#[cfg(feature = "nw_framework")]
+impl AsyncConnectionState {
+    fn new() -> Arc<Self> {
+        Arc::new(Self {
+            state: Mutex::new(NW_CONNECTION_STATE_INVALID),
+            error_msg: Mutex::new(None),
+            recv_buffer: Mutex::new(Vec::with_capacity(65536)),
+            recv_tx: Mutex::new(None),
+            send_error: Mutex::new(None),
+            send_tx: Mutex::new(None),
+        })
+    }
+
+    /// MODERN-12: Setup receive completion channel.
+    /// Call this before nw_connection_receive(), then await recv_rx.
+    fn setup_recv_channel(&self, tx: sync_mpsc::Sender<Result<Vec<u8>, String>>) {
+        let mut sender = self.recv_tx.lock();
+        *sender = Some(tx);
+    }
+
+    /// MODERN-12: Setup send completion channel.
+    /// Call this before nw_connection_send(), then await send_rx.
+    fn setup_send_channel(&self, tx: sync_mpsc::Sender<Result<(), String>>) {
+        let mut sender = self.send_tx.lock();
+        *sender = Some(tx);
+    }
+
+    /// MODERN-12: Called from block2 receive callback when data arrives.
+    fn on_receive_chunk(&self, data: &[u8]) {
+        let mut buf = self.recv_buffer.lock();
+        buf.extend_from_slice(data);
+    }
+
+    /// MODERN-12: Called from block2 receive callback when stream completes.
+    /// Signals the mpsc receiver with the accumulated data.
+    fn on_receive_done(&self, error: Option<String>) {
+        let data = {
+            let mut buf = self.recv_buffer.lock();
+            std::mem::take(&mut *buf)
+        };
+
+        // Send to the mpsc receiver
+        let mut sender = self.recv_tx.lock();
+        if let Some(tx) = sender.take() {
+            let result = match error {
+                Some(e) => Err(e),
+                None => Ok(data),
+            };
+            let _ = tx.send(result); // Ignore send error (receiver may be dropped)
+        }
+    }
+
+    /// MODERN-12: Called from block2 send callback when send completes.
+    /// Signals the mpsc receiver with success or error.
+    fn on_send_done(&self, error: Option<String>) {
+        let error_clone = error.clone();
+        if let Some(error) = error {
+            let mut err = self.send_error.lock();
+            *err = Some(error);
+        }
+
+        // Send to the mpsc receiver
+        let mut sender = self.send_tx.lock();
+        if let Some(tx) = sender.take() {
+            let result = match error_clone {
+                Some(e) => Err(e),
+                None => Ok(()),
+            };
+            let _ = tx.send(result);
+        }
+    }
+
+    /// MODERN-12: Called from block2 state change handler.
+    fn on_state_change(&self, state: i32, error_msg: Option<String>) {
+        {
+            let mut s = self.state.lock();
+            *s = state;
+        }
+        if state == NW_CONNECTION_STATE_FAILED {
+            let mut em = self.error_msg.lock();
+            if em.is_none() {
+                *em = error_msg.or_else(|| Some("connection failed".to_string()));
+            }
+        }
+    }
+
+    fn append_recv_data(&self, data: &[u8]) {
+        let mut buf = self.recv_buffer.lock();
+        buf.extend_from_slice(data);
     }
 }
 
@@ -278,7 +453,17 @@ impl ConnectionState {
 // ---------------------------------------------------------------------------
 
 /// Global semaphore capping concurrent connections at MAX_CONCURRENT_CONNECTIONS.
+/// MODERN-12: Uses tokio::sync::Semaphore for try_acquire() across threads.
+/// This is initialized lazily since tokio::sync::Semaphore::new() is const.
+#[cfg(feature = "shared_tokio")]
+static CONNECTION_SEM: std::sync::OnceLock<tokio::sync::Semaphore> = std::sync::OnceLock::new();
+
+#[cfg(not(feature = "shared_tokio"))]
 static CONNECTION_SEM: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+
+fn get_connection_semaphore() -> &'static tokio::sync::Semaphore {
+    CONNECTION_SEM.get_or_init(|| tokio::sync::Semaphore::new(MAX_CONCURRENT_CONNECTIONS))
+}
 
 /// Pool stats for telemetry.
 #[allow(dead_code)]
@@ -361,27 +546,24 @@ fn fetch_inner(url: &str, timeout_ms: u64) -> NwResponse {
         };
 
     // Acquire connection pool permit
-    let _permit = match CONNECTION_SEM.try_acquire() {
-        Ok(p) => {
-            // Update peak stats
-            if let Ok(stats) = get_pool_stats().lock() {
-                // update is best-effort
-            }
-            p
-        }
+    // tokio::sync::Semaphore::try_acquire returns Result<Permit, TryAcquireError>
+    let permit = match get_connection_semaphore().try_acquire() {
+        Ok(p) => p,
         Err(_) => {
             return NwResponse::error(
                 &format!(
-                    "nw: connection pool full ({} max)",
+                    "nw: connection pool unavailable ({} max)",
                     MAX_CONCURRENT_CONNECTIONS
                 ),
                 elapsed_ms(t0),
             );
         }
     };
+    let _permit = permit; // Drop guard when function exits
 
     // Update active count
-    if let Ok(mut stats) = get_pool_stats().lock() {
+    {
+        let mut stats = get_pool_stats().lock();
         stats.active_connections += 1;
         if stats.active_connections > stats.peak_connections {
             stats.peak_connections = stats.active_connections;
@@ -392,7 +574,8 @@ fn fetch_inner(url: &str, timeout_ms: u64) -> NwResponse {
     let result = fetch_inner_impl(host, port_str.as_str(), &path, use_tls, timeout_ms, t0);
 
     // Update active count on exit
-    if let Ok(mut stats) = get_pool_stats().lock() {
+    {
+        let mut stats = get_pool_stats().lock();
         stats.active_connections = stats.active_connections.saturating_sub(1);
         if result.error.is_some() {
             stats.total_errors += 1;
@@ -443,13 +626,15 @@ fn fetch_inner_impl(
     let conn_state_for_block = Arc::clone(&conn_state);
 
     // Set state change handler using block2
+    // Note: ConcreteBlock is deprecated but required for closures that capture variables
+    #[allow(deprecated)]
     let state_handler = block2::ConcreteBlock::new(move |state: i32, error: *mut c_void| {
-        let mut s = conn_state_for_block.state.lock().unwrap();
+        let mut s = conn_state_for_block.state.lock();
         *s = state;
         if state == NW_CONNECTION_STATE_FAILED && !error.is_null() {
             // error is an nw_error_t — extract description
             // For simplicity, mark as failed with generic message
-            let mut em = conn_state_for_block.error_msg.lock().unwrap();
+            let mut em = conn_state_for_block.error_msg.lock();
             *em = Some("Network.framework connection failed".to_string());
         }
         conn_state_for_block.cv.notify_all();
@@ -497,11 +682,12 @@ fn fetch_inner_impl(
 
     // Send completion block
     let send_conn_state = Arc::clone(&conn_state);
+    #[allow(deprecated)]
     let send_handler = block2::ConcreteBlock::new(move |error: *mut c_void| {
-        let mut done = send_conn_state.send_done.lock().unwrap();
+        let mut done = send_conn_state.send_done.lock();
         *done = true;
         if !error.is_null() {
-            let mut em = send_conn_state.send_error.lock().unwrap();
+            let mut em = send_conn_state.send_error.lock();
             *em = Some("send failed".to_string());
         }
     });
@@ -520,7 +706,7 @@ fn fetch_inner_impl(
     // Wait for send to complete
     let send_deadline = Instant::now() + timeout;
     loop {
-        let done = *conn_state.send_done.lock().unwrap();
+        let done = *conn_state.send_done.lock();
         if done {
             break;
         }
@@ -536,7 +722,7 @@ fn fetch_inner_impl(
     }
 
     // Check send error
-    if let Some(ref err) = *conn_state.send_error.lock().unwrap() {
+    if let Some(ref err) = *conn_state.send_error.lock() {
         let err = err.clone();
         unsafe { nw_connection_cancel(connection) };
         drop(send_handler_block);
@@ -547,7 +733,9 @@ fn fetch_inner_impl(
     }
 
     // Set up receive handler
+    
     let recv_conn_state = Arc::clone(&conn_state);
+    #[allow(deprecated)]
     let recv_handler = block2::ConcreteBlock::new(
         move |data: *mut c_void,
               _content_context: *mut c_void,
@@ -569,6 +757,8 @@ fn fetch_inner_impl(
             }
         },
     );
+    // MODERN-12: StackBlock + .copy() ensures heap-allocated block stays alive
+    // for async Network.framework callbacks
     let recv_handler_block = recv_handler.copy();
 
     // Initiate receive
@@ -709,6 +899,434 @@ fn elapsed_ms(t0: Instant) -> f64 {
 pub fn fetch(url: &str, timeout_ms: Option<u64>) -> NwResponse {
     let timeout = timeout_ms.unwrap_or((DEFAULT_TIMEOUT_S * 1000.0) as u64);
     fetch_inner(url, timeout)
+}
+
+// ---------------------------------------------------------------------------
+// MODERN-12: Async FFI Bridge
+//
+// Bridges Apple's callback-driven Network.framework API to Python asyncio awaitables.
+// Architecture:
+//
+//   Python asyncio
+//       └── await rust.nw_connection.fetch_async(url)
+//           └── future_into_py()
+//               └── tokio task (spawn_blocking)
+//                   ├── FFI: dispatch queue + Network.framework
+//                   ├── Callbacks: std::sync::mpsc channels (cross-thread signaling)
+//                   └── Result: returned to tokio task
+//
+// Why std::sync::mpsc (not tokio::sync::mpsc)?
+//   - Dispatch queue callbacks run on OS threads, not tokio tasks
+//   - std::sync::mpsc works across any thread context
+//   - tokio channels require tokio runtime context (unavailable in dispatch callbacks)
+//
+// Key optimizations vs sync version:
+//   - Python call sites: `await fetch_async()` instead of `to_thread(fetch)`
+//   - No asyncio.to_thread() wrapper overhead (~50-100µs per call)
+//   - Shared tokio runtime across all async modules
+// ---------------------------------------------------------------------------
+
+#[cfg(feature = "nw_framework")]
+use crate::async_bridge::future_into_py;
+
+/// MODERN-12: Async fetch wrapper (runs inside spawn_blocking).
+///
+/// This is a synchronous function that runs on a tokio blocking thread.
+/// It performs the actual Network.framework FFI calls and waits for completion
+/// using std::sync::mpsc channels (not tokio channels, since callbacks run
+/// on dispatch queue threads outside tokio context).
+///
+/// Python usage:
+/// ```python
+/// resp = await rust.nw_connection.fetch_async("https://example.com/")
+/// ```
+#[cfg(feature = "nw_framework")]
+fn fetch_async_inner(url: &str, timeout_ms: u64) -> NwResponse {
+    let t0 = Instant::now();
+
+    // Parse URL to extract host, port, path
+    let parsed = match url::Url::parse(url) {
+        Ok(u) => u,
+        Err(e) => return NwResponse::error(&format!("nw-async: invalid URL: {}", e), elapsed_ms(t0)),
+    };
+
+    let scheme = parsed.scheme();
+    let use_tls = scheme == "https";
+
+    if scheme != "http" && scheme != "https" {
+        return NwResponse::error("nw-async: only HTTP/HTTPS URLs supported", elapsed_ms(t0));
+    }
+
+    let host = match parsed.host_str() {
+        Some(h) => h,
+        None => return NwResponse::error("nw-async: no host in URL", elapsed_ms(t0)),
+    };
+
+    let port = parsed.port().unwrap_or(if use_tls { 443 } else { 80 });
+    let port_str = port.to_string();
+    let path = parsed.path().to_string()
+        + if let Some(q) = parsed.query() {
+            &format!("?{}", q)
+        } else {
+            ""
+        };
+
+    // Acquire connection pool permit
+    // tokio::sync::Semaphore::try_acquire returns Result<Permit, TryAcquireError>
+    let permit = match get_connection_semaphore().try_acquire() {
+        Ok(p) => p,
+        Err(_) => {
+            return NwResponse::error(
+                &format!(
+                    "nw-async: connection pool unavailable ({} max)",
+                    MAX_CONCURRENT_CONNECTIONS
+                ),
+                elapsed_ms(t0),
+            );
+        }
+    };
+    let _permit = permit;
+
+    // Update active count
+    {
+        let mut stats = get_pool_stats().lock();
+        stats.active_connections += 1;
+        if stats.active_connections > stats.peak_connections {
+            stats.peak_connections = stats.active_connections;
+        }
+        stats.total_fetches += 1;
+    }
+
+    let result = fetch_async_impl(host, port_str.as_str(), &path, use_tls, timeout_ms, t0);
+
+    // Update active count on exit
+    {
+        let mut stats = get_pool_stats().lock();
+        stats.active_connections = stats.active_connections.saturating_sub(1);
+        if result.error.is_some() {
+            stats.total_errors += 1;
+        }
+    }
+
+    result
+}
+
+/// MODERN-12: Internal async fetch implementation.
+///
+/// This is a SYNCHRONOUS function (runs inside spawn_blocking).
+/// It uses std::sync::mpsc channels to wait for dispatch queue callbacks,
+/// since those callbacks run on OS threads outside the tokio runtime context.
+///
+/// The mpsc channels allow cross-thread signaling from dispatch queue callbacks
+/// to this blocking thread without requiring tokio context.
+#[cfg(feature = "nw_framework")]
+fn fetch_async_impl(
+    host: &str,
+    port_str: &str,
+    path: &str,
+    use_tls: bool,
+    timeout_ms: u64,
+    t0: Instant,
+) -> NwResponse {
+    // std::sync::mpsc works across thread contexts (dispatch queue threads)
+    use std::sync::mpsc as sync_mpsc;
+
+    let timeout = Duration::from_millis(timeout_ms);
+
+    // Create dispatch queue for this connection
+    let label = format!("com.hledac.nw-async.{}:{}\0", host, port_str);
+    let queue = unsafe { dispatch_queue_create(label.as_ptr(), std::ptr::null()) };
+
+    // Create endpoint
+    let endpoint = unsafe { nw_endpoint_create_host(host.as_ptr(), port_str.as_ptr()) };
+
+    // Create parameters
+    let parameters: NwParametersT = if use_tls {
+        unsafe { nw_parameters_create_secure_tcp(std::ptr::null(), queue) }
+    } else {
+        unsafe { nw_parameters_create_secure_tcp(std::ptr::null(), queue) }
+    };
+
+    // Create connection
+    let connection = unsafe { nw_connection_create(endpoint, parameters) };
+    unsafe { nw_connection_set_queue(connection, queue) };
+
+    // MODERN-12: Create async connection state
+    let conn_state = AsyncConnectionState::new();
+
+    // State change handler using block2
+    
+    let conn_state_for_state = Arc::clone(&conn_state);
+    #[allow(deprecated)]
+    let state_handler = block2::ConcreteBlock::new(move |state: i32, error: *mut c_void| {
+        let error_msg = if !error.is_null() {
+            Some("Network.framework connection failed".to_string())
+        } else {
+            None
+        };
+        conn_state_for_state.on_state_change(state, error_msg);
+    });
+    let state_handler_block = state_handler.copy();
+
+    unsafe {
+        nw_connection_set_state_changed_handler(
+            connection,
+            &*state_handler_block as *const _ as *const c_void,
+        );
+    }
+
+    // Start connection
+    unsafe { nw_connection_start(connection) };
+
+    // MODERN-12: Wait for ready state with async timeout
+    let deadline = Instant::now() + timeout;
+    let mut state = conn_state.state.lock();
+    loop {
+        match *state {
+            NW_CONNECTION_STATE_READY => break,
+            NW_CONNECTION_STATE_FAILED => {
+                let msg = conn_state.error_msg.lock().clone();
+                unsafe { nw_connection_cancel(connection) };
+                drop(state_handler_block);
+                unsafe { dispatch_release(connection) };
+                unsafe { dispatch_release(queue) };
+                return NwResponse::error(&msg.unwrap_or_else(|| "connection failed".to_string()), elapsed_ms(t0));
+            }
+            NW_CONNECTION_STATE_CANCELLED => {
+                unsafe { nw_connection_cancel(connection) };
+                drop(state_handler_block);
+                unsafe { dispatch_release(connection) };
+                unsafe { dispatch_release(queue) };
+                return NwResponse::error("connection cancelled", elapsed_ms(t0));
+            }
+            _ => {}
+        }
+
+        let remaining = deadline.saturating_duration_since(Instant::now());
+        if remaining.is_zero() {
+            unsafe { nw_connection_cancel(connection) };
+            drop(state_handler_block);
+            unsafe { dispatch_release(connection) };
+            unsafe { dispatch_release(queue) };
+            return NwResponse::error("nw-async: connection timeout", elapsed_ms(t0));
+        }
+
+        // MODERN-12: Use tokio time for async timeout (parking_lot would block thread)
+        drop(state);
+        std::thread::sleep(remaining.min(Duration::from_millis(50)));
+        state = conn_state.state.lock();
+    }
+    drop(state);
+
+    // Build HTTP request
+    let request = format!(
+        "GET {} HTTP/1.1\r\nHost: {}\r\nUser-Agent: Hledac/1.0 (Network.framework async)\r\nAccept: */*\r\nAccept-Encoding: identity\r\nConnection: close\r\n\r\n",
+        path, host
+    );
+
+    // Create dispatch_data
+    let request_data = unsafe {
+        dispatch_data_create(
+            request.as_ptr(),
+            request.len(),
+            queue,
+            std::ptr::null(),
+        )
+    };
+
+    let context_label = b"com.hledac.http-request\0";
+    let content_context = unsafe { nw_content_context_create(context_label.as_ptr()) };
+
+    // MODERN-12: Create oneshot channel for send completion
+    
+    let (send_tx, send_rx) = sync_mpsc::channel();
+    
+    let send_conn_state = Arc::clone(&conn_state);
+    #[allow(deprecated)]
+    let send_handler = block2::ConcreteBlock::new(move |error: *mut c_void| {
+        let error_msg = if !error.is_null() {
+            Some("send failed".to_string())
+        } else {
+            None
+        };
+        send_conn_state.on_send_done(error_msg);
+    });
+    let send_handler_block = send_handler.copy();
+
+    unsafe {
+        nw_connection_send(
+            connection,
+            request_data,
+            content_context,
+            true,
+            &*send_handler_block as *const _ as *const c_void,
+        );
+    }
+
+    // MODERN-12: Wait for send completion with timeout
+    let send_deadline = Instant::now() + timeout;
+    let mut send_done = false;
+    let mut send_error: Option<String> = None;
+
+    loop {
+        if send_rx.try_recv().is_ok() {
+            send_done = true;
+            send_error = send_conn_state.send_error.lock().clone();
+            break;
+        }
+
+        if Instant::now() >= send_deadline {
+            unsafe { nw_connection_cancel(connection) };
+            drop(send_handler_block);
+            drop(state_handler_block);
+            unsafe { dispatch_release(connection) };
+            unsafe { dispatch_release(queue) };
+            return NwResponse::error("nw-async: send timeout", elapsed_ms(t0));
+        }
+        std::thread::sleep(Duration::from_millis(5));
+    }
+
+    if let Some(ref err) = send_error {
+        let err = err.clone();
+        unsafe { nw_connection_cancel(connection) };
+        drop(send_handler_block);
+        drop(state_handler_block);
+        unsafe { dispatch_release(connection) };
+        unsafe { dispatch_release(queue) };
+        return NwResponse::error(&format!("nw-async: send error: {}", err), elapsed_ms(t0));
+    }
+
+    // MODERN-12: Create oneshot channel for receive completion
+    
+    let (recv_tx, recv_rx) = sync_mpsc::channel();
+    
+    let recv_conn_state = Arc::clone(&conn_state);
+    #[allow(deprecated)]
+    let recv_handler = block2::ConcreteBlock::new(
+        move |data: *mut c_void,
+              _content_context: *mut c_void,
+              is_complete: bool,
+              error: *mut c_void| {
+            if !error.is_null() {
+                recv_conn_state.on_receive_done(Some("receive error".to_string()));
+                return;
+            }
+            if !data.is_null() {
+                let extracted = unsafe { extract_dispatch_data(data) };
+                if !extracted.is_empty() {
+                    recv_conn_state.on_receive_chunk(&extracted);
+                }
+            }
+            if is_complete {
+                recv_conn_state.on_receive_done(None);
+            }
+        },
+    );
+    let recv_handler_block = recv_handler.copy();
+
+    // Initiate receive
+    unsafe {
+        nw_connection_receive(
+            connection,
+            1,
+            MAX_RESPONSE_BODY as u32,
+            &*recv_handler_block as *const _ as *const c_void,
+        );
+    }
+
+    // MODERN-12: Wait for receive completion with timeout
+    let recv_timeout = timeout.saturating_sub(t0.elapsed());
+    let recv_deadline = Instant::now() + recv_timeout;
+    let response_bytes = 'recv_loop: loop {
+        if let Ok(result) = recv_rx.recv_timeout(Duration::from_millis(50)) {
+            break 'recv_loop match result {
+                Ok(data) => data,
+                Err(e) => {
+                    unsafe { nw_connection_cancel(connection) };
+                    drop(recv_handler_block);
+                    drop(send_handler_block);
+                    drop(state_handler_block);
+                    unsafe { dispatch_release(connection) };
+                    unsafe { dispatch_release(queue) };
+                    return NwResponse::error(&format!("nw-async: receive error: {}", e), elapsed_ms(t0));
+                }
+            };
+        }
+
+        if Instant::now() >= recv_deadline {
+            unsafe { nw_connection_cancel(connection) };
+            drop(recv_handler_block);
+            drop(send_handler_block);
+            drop(state_handler_block);
+            unsafe { dispatch_release(connection) };
+            unsafe { dispatch_release(queue) };
+            return NwResponse::error("nw-async: receive timeout", elapsed_ms(t0));
+        }
+    };
+
+    // Clean up
+    unsafe { nw_connection_cancel(connection) };
+    drop(recv_handler_block);
+    drop(send_handler_block);
+    drop(state_handler_block);
+    unsafe { dispatch_release(connection) };
+    unsafe { dispatch_release(queue) };
+
+    // Parse HTTP response
+    parse_http_response(&response_bytes, t0)
+}
+
+/// MODERN-12: Async fetch using Apple Network.framework.
+///
+/// Returns a native Python awaitable via future_into_py():
+/// ```python
+/// # Direct await — no asyncio.to_thread() needed!
+/// async def fetch_url(url):
+///     resp = await rust.nw_connection.fetch_async(url)
+///     return resp.body
+/// ```
+///
+/// # Arguments
+/// * ``py`` — Python interpreter (required for PyO3)
+/// * ``url`` — Target URL (http:// or https://)
+/// * ``timeout_ms`` — Request timeout in milliseconds (default 10000)
+///
+/// # Returns
+/// ``NwResponse`` with status, headers, body, error, and elapsed_ms.
+#[cfg(feature = "nw_framework")]
+#[pyfunction]
+pub fn fetch_async(
+    py: Python<'_>,
+    url: String,
+    timeout_ms: Option<u64>,
+) -> PyResult<Bound<'_, PyAny>> {
+    let timeout = timeout_ms.unwrap_or((DEFAULT_TIMEOUT_S * 1000.0) as u64);
+
+    future_into_py(py, async move {
+        // MODERN-12: Run the blocking Network.framework FFI in a tokio blocking thread.
+        // This is necessary because:
+        // 1. Network.framework uses dispatch queues and block callbacks
+        // 2. We can't use tokio's async I/O for these FFI calls
+        // 3. spawn_blocking() releases the tokio thread during the syscall
+        let result = tokio::task::spawn_blocking(move || {
+            fetch_async_inner(&url, timeout)
+        })
+        .await
+        .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(format!(
+            "nw-async: spawn_blocking failed: {}",
+            e
+        )))?;
+
+        // Convert to PyResult - return owned struct, PyO3 auto-converts
+        match result {
+            NwResponse { status, headers, body, error: None, elapsed_ms } => {
+                Ok(NwResponse { status, headers, body, error: None, elapsed_ms })
+            }
+            NwResponse { status: _, headers: _, body: _, error: Some(msg), elapsed_ms: _ } => {
+                Err(pyo3::exceptions::PyRuntimeError::new_err(msg))
+            }
+        }
+    })
 }
 
 // ---------------------------------------------------------------------------
@@ -1092,12 +1710,13 @@ fn fetch_quic_inner(url: &str, timeout_ms: u64) -> NwResponse {
     let authority = format!("{}:{}", host, port);
 
     // Acquire connection pool permit (shared with TCP pool)
-    let _permit = match CONNECTION_SEM.try_acquire() {
+    // tokio::sync::Semaphore::try_acquire returns Result<Permit, TryAcquireError>
+    let _permit = match get_connection_semaphore().try_acquire() {
         Ok(p) => p,
         Err(_) => {
             return NwResponse::error(
                 &format!(
-                    "nw-quic: connection pool full ({} max)",
+                    "nw-quic: connection pool unavailable ({} max)",
                     MAX_CONCURRENT_CONNECTIONS
                 ),
                 elapsed_ms(t0),
@@ -1105,7 +1724,8 @@ fn fetch_quic_inner(url: &str, timeout_ms: u64) -> NwResponse {
         }
     };
 
-    if let Ok(mut stats) = get_pool_stats().lock() {
+    {
+        let mut stats = get_pool_stats().lock();
         stats.active_connections += 1;
         if stats.active_connections > stats.peak_connections {
             stats.peak_connections = stats.active_connections;
@@ -1131,14 +1751,16 @@ fn fetch_quic_inner(url: &str, timeout_ms: u64) -> NwResponse {
 
     // Set up shared state for async callbacks
     let conn_state = ConnectionState::new();
+    
     let conn_state_for_block = Arc::clone(&conn_state);
 
     // State change handler
+    #[allow(deprecated)]
     let state_handler = block2::ConcreteBlock::new(move |state: i32, error: *mut c_void| {
-        let mut s = conn_state_for_block.state.lock().unwrap();
+        let mut s = conn_state_for_block.state.lock();
         *s = state;
         if state == NW_CONNECTION_STATE_FAILED && !error.is_null() {
-            let mut em = conn_state_for_block.error_msg.lock().unwrap();
+            let mut em = conn_state_for_block.error_msg.lock();
             *em = Some("Network.framework QUIC connection failed".to_string());
         }
         conn_state_for_block.cv.notify_all();
@@ -1206,12 +1828,14 @@ fn fetch_quic_inner(url: &str, timeout_ms: u64) -> NwResponse {
     let content_context = unsafe { nw_content_context_create(context_label.as_ptr()) };
 
     // Send completion block
+    
     let send_conn_state = Arc::clone(&conn_state);
+    #[allow(deprecated)]
     let send_handler = block2::ConcreteBlock::new(move |error: *mut c_void| {
-        let mut done = send_conn_state.send_done.lock().unwrap();
+        let mut done = send_conn_state.send_done.lock();
         *done = true;
         if !error.is_null() {
-            let mut em = send_conn_state.send_error.lock().unwrap();
+            let mut em = send_conn_state.send_error.lock();
             *em = Some("QUIC send failed".to_string());
         }
     });
@@ -1230,7 +1854,7 @@ fn fetch_quic_inner(url: &str, timeout_ms: u64) -> NwResponse {
     // Wait for send to complete
     let send_deadline = Instant::now() + timeout;
     loop {
-        let done = *conn_state.send_done.lock().unwrap();
+        let done = *conn_state.send_done.lock();
         if done {
             break;
         }
@@ -1247,7 +1871,7 @@ fn fetch_quic_inner(url: &str, timeout_ms: u64) -> NwResponse {
         std::thread::sleep(Duration::from_millis(5));
     }
 
-    if let Some(ref err) = *conn_state.send_error.lock().unwrap() {
+    if let Some(ref err) = *conn_state.send_error.lock() {
         let err = err.clone();
         unsafe { nw_connection_cancel(connection) };
         drop(send_handler_block);
@@ -1260,7 +1884,9 @@ fn fetch_quic_inner(url: &str, timeout_ms: u64) -> NwResponse {
     }
 
     // Receive response
+    
     let recv_conn_state = Arc::clone(&conn_state);
+    #[allow(deprecated)]
     let recv_handler = block2::ConcreteBlock::new(
         move |data: *mut c_void,
               _content_context: *mut c_void,
@@ -1341,11 +1967,10 @@ fn fetch_quic_inner(url: &str, timeout_ms: u64) -> NwResponse {
 
 #[cfg(feature = "nw_framework")]
 fn cleanup_quic_stats(had_error: bool) {
-    if let Ok(mut stats) = get_pool_stats().lock() {
-        stats.active_connections = stats.active_connections.saturating_sub(1);
-        if had_error {
-            stats.total_errors += 1;
-        }
+    let mut stats = get_pool_stats().lock();
+    stats.active_connections = stats.active_connections.saturating_sub(1);
+    if had_error {
+        stats.total_errors += 1;
     }
 }
 
@@ -1369,6 +1994,55 @@ fn cleanup_quic_stats(had_error: bool) {
 pub fn fetch_quic(url: &str, timeout_ms: Option<u64>) -> NwResponse {
     let timeout = timeout_ms.unwrap_or((DEFAULT_TIMEOUT_S * 1000.0) as u64);
     fetch_quic_inner(url, timeout)
+}
+
+/// MODERN-12: Async QUIC fetch using Apple Network.framework.
+///
+/// Returns a native Python awaitable via future_into_py():
+/// ```python
+/// # Direct await — no asyncio.to_thread() needed!
+/// async def fetch_quic_url(url):
+///     resp = await rust.nw_connection.fetch_quic_async(url)
+///     return resp.body
+/// ```
+///
+/// # Arguments
+/// * ``py`` — Python interpreter (required for PyO3)
+/// * ``url`` — Target URL (https:// only)
+/// * ``timeout_ms`` — Request timeout in milliseconds (default 10000)
+///
+/// # Returns
+/// ``NwResponse`` with status, headers, body, error, and elapsed_ms.
+#[cfg(feature = "nw_framework")]
+#[pyfunction]
+pub fn fetch_quic_async(
+    py: Python<'_>,
+    url: String,
+    timeout_ms: Option<u64>,
+) -> PyResult<Bound<'_, PyAny>> {
+    let timeout = timeout_ms.unwrap_or((DEFAULT_TIMEOUT_S * 1000.0) as u64);
+
+    future_into_py(py, async move {
+        // MODERN-12: Run the blocking Network.framework QUIC FFI in a tokio blocking thread.
+        let result = tokio::task::spawn_blocking(move || {
+            fetch_quic_inner(&url, timeout)
+        })
+        .await
+        .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(format!(
+            "nw-quic-async: spawn_blocking failed: {}",
+            e
+        )))?;
+
+        // Convert to PyResult - return owned struct, PyO3 auto-converts
+        match result {
+            NwResponse { status, headers, body, error: None, elapsed_ms } => {
+                Ok(NwResponse { status, headers, body, error: None, elapsed_ms })
+            }
+            NwResponse { status: _, headers: _, body: _, error: Some(msg), elapsed_ms: _ } => {
+                Err(pyo3::exceptions::PyRuntimeError::new_err(msg))
+            }
+        }
+    })
 }
 
 /// No-op stub when nw_framework feature is not enabled.
@@ -1412,7 +2086,7 @@ pub fn fetch_quic(url: &str, timeout_ms: Option<u64>) -> NwResponse {
 #[pyfunction]
 pub fn pool_stats() -> PyResult<Py<PyAny>> {
     Python::attach(|py| {
-        let stats = get_pool_stats().lock().unwrap();
+        let stats = get_pool_stats().lock();
         let dict = pyo3::types::PyDict::new(py);
         dict.set_item("total_fetches", stats.total_fetches)?;
         dict.set_item("total_errors", stats.total_errors)?;
@@ -1441,7 +2115,9 @@ pub fn pool_stats() -> PyResult<Py<PyAny>> {
 pub fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<NwResponse>()?;
     m.add_function(wrap_pyfunction!(fetch, m)?)?;
+    m.add_function(wrap_pyfunction!(fetch_async, m)?)?;
     m.add_function(wrap_pyfunction!(fetch_quic, m)?)?;
+    m.add_function(wrap_pyfunction!(fetch_quic_async, m)?)?;
     m.add_function(wrap_pyfunction!(pool_stats, m)?)?;
     Ok(())
 }

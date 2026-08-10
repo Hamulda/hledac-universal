@@ -5,6 +5,8 @@ Graph Service — Sprint Memory Layer Facade
 
 Cross-sprint entity memory backed by DuckPGQGraph (DuckDB).
 
+P6-4: LanceDB reranking is DEPRECATED. Migrate to DuckDB-backed stores.
+
 ROLE: Sprint memory / cross-sprint persistence layer.
 - Idempotent upsert for entities (INSERT OR IGNORE)
 - History lookup via find_connected
@@ -23,6 +25,9 @@ ARCHITECTURE (F226):
 - New code should prefer injected GraphService instances for test isolation.
 - Existing module-level API (reset_session) is preserved for
   backward compatibility and remains wired to the default facade instance.
+
+P6-4: LanceDB reranking (lines 537-546) is DEPRECATED.
+    Migrate to knowledge.duckdb_rag_store for vector reranking.
 """
 
 

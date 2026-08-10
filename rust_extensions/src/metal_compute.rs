@@ -223,8 +223,24 @@ pub fn batch_matmul(
         ));
     }
 
-    let expected_query_len = batch_size * hidden_dim;
-    let expected_weights_len = num_experts * hidden_dim * expert_dim;
+    // P4-NEW FIX: Use checked_mul to prevent integer overflow leading to OOB access.
+    // Same vulnerability class as P5-2 in accelerate.rs.
+    let expected_query_len = batch_size
+        .checked_mul(hidden_dim)
+        .ok_or_else(|| {
+            pyo3::exceptions::PyValueError::new_err(
+                "Integer overflow in batch_size * hidden_dim",
+            )
+        })?;
+
+    let expected_weights_len = num_experts
+        .checked_mul(hidden_dim)
+        .and_then(|v| v.checked_mul(expert_dim))
+        .ok_or_else(|| {
+            pyo3::exceptions::PyValueError::new_err(
+                "Integer overflow in num_experts * hidden_dim * expert_dim",
+            )
+        })?;
 
     if query.len() != expected_query_len {
         return Err(pyo3::exceptions::PyValueError::new_err(format!(
@@ -296,24 +312,53 @@ fn cpu_batch_matmul_fallback(
 ) -> Vec<f32> {
     use std::iter::zip;
 
-    let mut result = vec![0.0_f32; batch_size * num_experts * expert_dim];
+    // P4-NEW FIX: checked_mul for result allocation.
+    // Pre-validated inputs from batch_matmul() callers, but double-check for safety.
+    let total_result = batch_size
+        .checked_mul(num_experts)
+        .and_then(|v| v.checked_mul(expert_dim))
+        .unwrap_or_else(|| {
+            eprintln!(
+                "[metal_compute] Overflow in batch_size * num_experts * expert_dim: {} * {} * {}",
+                batch_size, num_experts, expert_dim
+            );
+            0
+        });
+
+    let mut result = vec![0.0_f32; total_result];
 
     // For each expert, compute: result[b, e, :] = query[b, :] @ expert_weights[e, :, :]
     for expert_idx in 0..num_experts {
         for batch_idx in 0..batch_size {
-            let result_offset = (batch_idx * num_experts + expert_idx) * expert_dim;
-            let query_offset = batch_idx * hidden_dim;
-            let weight_offset = expert_idx * hidden_dim * expert_dim;
+            // P4-NEW FIX: checked_mul for all offset calculations.
+            // Bounds are pre-validated in batch_matmul(), but these are safety nets.
+            let result_offset = batch_idx
+                .checked_mul(num_experts)
+                .and_then(|v| v.checked_add(expert_idx))
+                .and_then(|v| v.checked_mul(expert_dim))
+                .unwrap_or(0);
+            let query_offset = batch_idx.checked_mul(hidden_dim).unwrap_or(0);
+            let weight_offset = expert_idx
+                .checked_mul(hidden_dim)
+                .and_then(|v| v.checked_mul(expert_dim))
+                .unwrap_or(0);
 
             // Dot product: query[b,:] · expert_weights[e,:,k]
             for k in 0..expert_dim {
                 let mut sum = 0.0_f32;
                 for d in 0..hidden_dim {
-                    let q = query[query_offset + d];
-                    let w = expert_weights[weight_offset + d * expert_dim + k];
+                    let q_idx = query_offset.saturating_add(d);
+                    let w_idx = weight_offset
+                        .saturating_add(d.wrapping_mul(expert_dim))
+                        .saturating_add(k);
+                    let q = *query.get(q_idx).unwrap_or(&0.0);
+                    let w = *expert_weights.get(w_idx).unwrap_or(&0.0);
                     sum += q * w;
                 }
-                result[result_offset + k] = sum;
+                let r_idx = result_offset.saturating_add(k);
+                if r_idx < result.len() {
+                    result[r_idx] = sum;
+                }
             }
         }
     }
@@ -348,8 +393,22 @@ pub fn batch_matvec(
         ));
     }
 
-    let expected_query = batch_size * hidden_dim;
-    let expected_weights = num_experts * hidden_dim;
+    // P4-NEW FIX: checked_mul for bounds validation.
+    let expected_query = batch_size
+        .checked_mul(hidden_dim)
+        .ok_or_else(|| {
+            pyo3::exceptions::PyValueError::new_err(
+                "Integer overflow in batch_size * hidden_dim",
+            )
+        })?;
+
+    let expected_weights = num_experts
+        .checked_mul(hidden_dim)
+        .ok_or_else(|| {
+            pyo3::exceptions::PyValueError::new_err(
+                "Integer overflow in num_experts * hidden_dim",
+            )
+        })?;
 
     if query.len() != expected_query {
         return Err(pyo3::exceptions::PyValueError::new_err(format!(
@@ -369,16 +428,37 @@ pub fn batch_matvec(
 
     let start = std::time::Instant::now();
 
+    // P4-NEW FIX: checked_mul for result allocation.
+    let total_result = batch_size
+        .checked_mul(num_experts)
+        .unwrap_or_else(|| {
+            eprintln!(
+                "[metal_compute] Overflow in batch_size * num_experts: {} * {}",
+                batch_size, num_experts
+            );
+            0
+        });
+
     // Compute: result[b, e] = query[b,:] · expert_weights[e,:]
-    let mut result = vec![0.0_f32; batch_size * num_experts];
+    let mut result = vec![0.0_f32; total_result];
 
     for b in 0..batch_size {
         for e in 0..num_experts {
             let mut sum = 0.0_f32;
+            // P4-NEW FIX: bounds-checked array access.
+            let q_off = b.saturating_mul(hidden_dim);
+            let w_off = e.saturating_mul(hidden_dim);
+            let r_idx = b.saturating_mul(num_experts).saturating_add(e);
             for d in 0..hidden_dim {
-                sum += query[b * hidden_dim + d] * expert_weights[e * hidden_dim + d];
+                let q_idx = q_off.saturating_add(d);
+                let w_idx = w_off.saturating_add(d);
+                let q = *query.get(q_idx).unwrap_or(&0.0);
+                let w = *expert_weights.get(w_idx).unwrap_or(&0.0);
+                sum += q * w;
             }
-            result[b * num_experts + e] = sum;
+            if r_idx < result.len() {
+                result[r_idx] = sum;
+            }
         }
     }
 

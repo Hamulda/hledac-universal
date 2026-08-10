@@ -11,11 +11,9 @@ F320-3.2 changes
   before reuse. Without this, a "warm" session whose server closed the
   TCP connection forces a full TLS re-handshake (200-500 ms) on the very
   first request after pool acquisition — defeating the purpose of prewarm.
-* Probe runs in ``asyncio.to_thread()`` (thread pool, not event loop).
-  curl_cffi is a C binding (libcurl); its async methods call into
-  libcurl_easy_perform which can block the OS network stack for the
-  duration of a TLS handshake even when awaited. Running the probe in
-  a dedicated thread avoids blocking the event loop on any TLS I/O.
+* Probe runs directly in event loop via ``await session.head()``.
+  curl_cffi releases the GIL during TLS I/O; no thread needed.
+  MODERN-14: Simplified from asyncio.to_thread() + asyncio.Runner().
 
 Design invariants
 -----------------
@@ -28,7 +26,8 @@ Design invariants
 * Fail-soft: any error in prewarm (import, create, probe) is caught;
   the lazy session path is used as fallback. The fetch never fails
   because prewarm failed.
-* Background probe via ``asyncio.to_thread()`` — never blocks event loop.
+* Background probe via direct ``await`` — never blocks event loop.
+  MODERN-14: Uses native async, no GIL ping-pong overhead.
 * Circuit-breaker for probe hosts — skip repeatedly failing CDN endpoints.
 """
 
@@ -257,10 +256,15 @@ async def _probe_warm(session: Any) -> bool:
     we only care that the connection is now warm for re-use). Returns
     False on any error or timeout. Never raises.
 
-    F320-3.2: probe runs in ``asyncio.to_thread()`` to avoid blocking
+    F320-3.2: Originally ran in ``asyncio.to_thread()`` to avoid blocking
     the event loop. curl_cffi wraps libcurl (C); its async methods
     can block the OS network stack during TLS handshake even when
     awaited. Thread isolation ensures the event loop stays responsive.
+
+    MODERN-14: Simplified — session.head() is an async coroutine, just
+    await it directly. The GIL is released during I/O (TLS handshake)
+    via curl_cffi's internal async I/O. No need for asyncio.Runner() or
+    asyncio.to_thread() wrappers.
     """
     stats = _stats_var.get()
     stats["probe_attempts"] += 1
@@ -284,47 +288,14 @@ async def _probe_warm(session: Any) -> bool:
         probe_host = _PROBE_HOSTS[0]
     probe_url = probe_host
 
-    # F320-3.2: Run the blocking curl_cffi call in a thread.
-    # ``session.head()`` is an async coroutine wrapping libcurl which
-    # can block on TLS I/O. asyncio.to_thread() borrows a thread from
-    # the default ThreadPoolExecutor — this is safe because:
-    #   1. The probe is fire-and-forget (background task, no caller waits)
-    #   2. The thread pool is bounded by Python's default executor
-    #   3. No asyncio.run() is used (which would be M1 crash vector)
-    def _do_probe_blocking() -> bool:
-        # synchronous helper — runs in thread, no asyncio
-        # C7-FIX: Use asyncio.Runner() instead of new_event_loop/run_until_complete.
-        # Runner handles loop lifecycle automatically and is the modern Python 3.11+ pattern.
-        try:
-            import asyncio
-
-            async def _probe_async() -> bool:
-                result = await session.head(probe_url, timeout=_PROBE_TIMEOUT_S)
-                return result.status_code is not None
-
-            with asyncio.Runner() as runner:
-                return runner.run(_probe_async())
-        except Exception:  # noqa: BLE001
-            return False
-
+    # MODERN-14: session.head() is already an async coroutine from curl_cffi.
+    # Just await it directly — curl_cffi releases the GIL during I/O.
+    # No need for asyncio.Runner(), asyncio.to_thread(), or threading fallback.
     try:
-        # asyncio.to_thread: runs blocking func in thread pool, returns awaitable.
-        # This is the correct pattern — NOT asyncio.run() inside executor
-        # (which would be a M1 crash vector per GHOST_INVARIANTS).
-        ok = await asyncio.to_thread(_do_probe_blocking)
+        result = await session.head(probe_url, timeout=_PROBE_TIMEOUT_S)
+        ok = result.status_code is not None
     except Exception:  # noqa: BLE001
-        # Fallback: run in thread anyway if to_thread itself fails
-        try:
-            import threading
-            result_holder: dict[str, bool] = {}
-            def _thread_target():
-                result_holder["ok"] = _do_probe_blocking()
-            t = threading.Thread(target=_thread_target)
-            t.start()
-            t.join(timeout=_PROBE_TIMEOUT_S + 1.0)
-            ok = result_holder.get("ok", False)
-        except Exception:  # noqa: BLE001
-            ok = False
+        ok = False
 
     if ok:
         stats = _stats_var.get()

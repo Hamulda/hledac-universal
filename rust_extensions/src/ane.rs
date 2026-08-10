@@ -63,9 +63,7 @@ use pyo3::prelude::*;
 use std::collections::{BTreeMap, HashMap};
 use std::sync::LazyLock;
 
-// GNN-3: Logging via standard log crate
-#[macro_use]
-extern crate log;
+// GNN-3: Logging via eprintln (log crate not available, avoiding dep)
 
 /// ANE hardware constraints
 const ANE_MAX_MODELS: usize = 2;
@@ -377,12 +375,15 @@ impl EmbeddingStore {
     pub fn store(&mut self, kuzu_id: String, embedding: Vec<f32>) -> usize {
         // Evict if at capacity
         while self.embeddings.len() >= self.max_size {
-            if let Some((old_id, _)) = self.embeddings.pop_first() {
+            // Remove the first entry using drain with limit=1
+            let mut drainer = self.embeddings.drain();
+            if let Some((old_id, _)) = drainer.next() {
+                drop(drainer); // Drop remaining items
                 // Find and remove the index mapping
                 if let Some(idx) = self
                     .index_map
                     .iter()
-                    .find(|(_, v)| *v == &old_id)
+                    .find(|(_, v)| **v == old_id)
                     .map(|(k, _)| *k)
                 {
                     self.index_map.remove(&idx);
@@ -406,7 +407,7 @@ impl EmbeddingStore {
             embedding,
             updated_at: std::time::SystemTime::now(),
         };
-        self.embeddings.insert(kuzu_id, emb);
+        self.embeddings.insert(kuzu_id.clone(), emb);
         self.index_map.insert(gnn_index, kuzu_id);
 
         gnn_index
@@ -435,7 +436,7 @@ impl EmbeddingStore {
     pub fn get_all_embeddings(&self) -> Vec<(usize, String, Vec<f32>)> {
         self.embeddings
             .values()
-            .map(|e| (e.ggn_index, e.kuzu_id.clone(), e.embedding.clone()))
+            .map(|e| (e.gnn_index, e.kuzu_id.clone(), e.embedding.clone()))
             .collect()
     }
 }
@@ -756,7 +757,7 @@ pub fn gnn_load_model(
         .register(model_id.clone(), meta)
         .map_err(|e| pyo3::exceptions::PyValueError::new_err(e))?;
 
-    logger::info!("[ANE-GNN] Registered GraphSAGE model: {}", model_id);
+    eprintln!("[ANE-GNN] Registered GraphSAGE model: {}", model_id);
     Ok(model_id)
 }
 
@@ -938,7 +939,7 @@ pub fn gnn_run_inference(
         telemetry.embed_tokens += n_nodes as u64;
     }
 
-    logger::info!(
+    eprintln!(
         "[ANE-GNN] Inference stub for {} nodes (model={})",
         n_nodes,
         model_id
@@ -983,8 +984,13 @@ pub fn gnn_predict_links(
         *degrees.entry(dst).or_insert(0) += 1;
     }
 
-    // Build embedding map
-    let emb_map: std::collections::HashMap<_, _> = embeddings.into_iter().collect();
+    // Build embedding map keyed by index (usize)
+    // embeddings[i] corresponds to node with index i
+    let emb_map: std::collections::HashMap<usize, Vec<f32>> = embeddings
+        .into_iter()
+        .enumerate()
+        .map(|(idx, (_, emb))| (idx, emb))
+        .collect();
 
     let mut results: Vec<(usize, usize, f32, f32, f32, String)> = Vec::new();
 

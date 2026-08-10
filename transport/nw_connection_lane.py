@@ -20,8 +20,11 @@ Integration points:
   - ``coordinators/fetch_coordinator.py`` — optional upgrade path
 
 Architecture:
-  Python (asyncio) → asyncio.to_thread() → Rust NWConnectionPool
+  Python (asyncio) → Rust fetch_async() [awaitable] → Network.framework
   → nw_connection_t → Network.framework user-space TCP → hardware TLS
+
+MODERN-14: Direct async await eliminates GIL ping-pong from asyncio.to_thread().
+Rust fetch_async() returns a native Python awaitable via future_into_py().
 
 M1 8GB bounds:
   - Max 200 concurrent connections (Rust semaphore)
@@ -138,9 +141,8 @@ async def fetch_nw_connection(
     try:
         from hledac.universal.rust_extensions import nw_connection  # type: ignore[import-untyped]
 
-        # Run blocking Rust NWConnection call in thread pool
-        response = await asyncio.to_thread(
-            nw_connection.fetch,
+        # MODERN-14: fetch_async() returns native awaitable — no GIL ping-pong!
+        response = await nw_connection.fetch_async(
             url,
             timeout,
         )

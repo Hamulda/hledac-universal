@@ -5,7 +5,34 @@ P1-2 (Sprint 2026-06-08): Centralized HTTP/3 (QUIC) lane.
 F320 (Sprint 2026-07-17): Hybrid adapter with Rust-engine priority.
 SILICON-05 (Sprint F350M-R): Apple Network.framework native QUIC adapter.
 
-HTTP/3 strategies (one bounded layer):
+## MODERN-16: Hybrid Model Architecture
+
+This module implements the hybrid Python↔Rust HTTP/3 transport:
+
+┌─────────────────────────────────────────────────────────────────────────┐
+│                    Python Layer (QUIC Fallback)                         │
+├─────────────────────────────────────────────────────────────────────────┤
+│  http3_lane.py                                                         │
+│  - AioquicTransportAdapter (Python fallback)                           │
+│  - curl_cffi_opportunistic (Alt-Svc based)                             │
+│  - Legacy compatibility for existing callers                            │
+└───────────────────────────────┬─────────────────────────────────────────┘
+                                │ async FFI (future_into_py)
+                                │ Arrow IPC (bulk transfer)
+┌───────────────────────────────┴─────────────────────────────────────────┐
+│                    Rust Layer (QUIC Priority)                            │
+├─────────────────────────────────────────────────────────────────────────┤
+│  QuinnRustlsTransportAdapter (PREFERRED on Linux/x86_64)              │
+│  - Rust quinn + h3 + rustls                                           │
+│  - Uses rust.quic.fetch_async() — native await                         │
+│                                                                         │
+│  NwQuicTransportAdapter (PREFERRED on macOS arm64)                     │
+│  - Apple Network.framework native QUIC                                 │
+│  - Uses rust.nw_connection.fetch_quic_async() — native await          │
+│  - ~80 KB per connection vs ~50-80 MB for aioquic                     │
+└─────────────────────────────────────────────────────────────────────────┘
+
+HTTP/3 strategies (priority order):
 
 1. ``NwQuicTransportAdapter`` (PRIORITY on macOS 12.0+ / arm64)
    - Apple Network.framework native QUIC via ``nw_parameters_create_quic()``.
@@ -16,7 +43,7 @@ HTTP/3 strategies (one bounded layer):
 
 2. ``QuinnRustlsTransportAdapter`` (F320: Rust quinn + h3)
    - Cross-platform QUIC via rust_extensions/src/quic.rs (quinn + h3 + rustls).
-   - Wraps rust.quic.fetch() — immediate memory release on session close.
+   - MODERN-14: Uses rust.quic.fetch_async() — native await, no ThreadPoolExecutor.
    - Preferred over aioquic on all platforms (Linux, x86_64 darwin, CI).
 
 3. ``AioquicTransportAdapter`` (last-resort fallback)
@@ -966,9 +993,9 @@ class QuinnRustlsTransportAdapter:
     ) -> bytes | None:
         """Perform a real HTTP/3 request over QUIC via Rust quinn + h3.
 
-        Wraps rust.quic.fetch() which runs in a global tokio runtime
-        (2 threads, M1 8GB bounded). The call is made async via
-        asyncio.to_thread() to avoid blocking the event loop.
+        MODERN-14: Uses rust.quic.fetch_async() which returns a native Python
+        awaitable via future_into_py(). Direct await — no ThreadPoolExecutor
+        needed, zero GIL ping-pong during I/O.
 
         Returns response body as ``bytes`` on success, or ``None`` on any
         failure. Never raises.
@@ -1006,31 +1033,29 @@ class QuinnRustlsTransportAdapter:
             return None
 
         try:
-            # Call rust.quic.fetch() in a thread to avoid blocking the event loop
-            # rust.quic.fetch() uses a global tokio runtime internally
-            import asyncio
-            import concurrent.futures
+            # MODERN-14: Direct await of rust.quic.fetch_async()
+            # Returns native Python awaitable — no ThreadPoolExecutor needed!
+            import rust
 
-            try:
-                loop = asyncio.get_running_loop()
-                if loop.is_running():
-                    # Use ThreadPoolExecutor for async context
-                    with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
-                        future = pool.submit(
-                            _rust_quic_fetch_sync, url, headers, timeout_s
-                        )
-                        result = future.result(timeout=timeout_s + 5.0)
-                else:
-                    result = _rust_quic_fetch_sync(url, headers, timeout_s)
-            except RuntimeError:
-                # No event loop — call directly
-                result = _rust_quic_fetch_sync(url, headers, timeout_s)
+            if not hasattr(rust.quic, "fetch_async"):
+                _stats["http3_neqo_failures"] += 1
+                logger.debug("http3_lane: quinn: fetch_async not available")
+                return None
 
-            if result is None:
+            response = await rust.quic.fetch_async(
+                url=url,
+                method="GET",
+                body=None,
+                headers=[(k, v) for k, v in (headers or {}).items()] if headers else None,
+                timeout_s=timeout_s,
+            )
+
+            if response.error:
+                logger.debug("http3_lane: quinn: rust error: %s", response.error)
                 _stats["http3_neqo_failures"] += 1
                 return None
 
-            return result
+            return bytes(response.body)
 
         except asyncio.CancelledError:
             raise
@@ -1047,11 +1072,19 @@ class QuinnRustlsTransportAdapter:
 
 
 def _rust_quic_fetch_sync(url: str, headers: dict[str, str] | None, timeout_s: float) -> bytes | None:
-    """Synchronous wrapper for rust.quic.fetch().
+    """[DEPRECATED] Synchronous wrapper for rust.quic.fetch().
 
-    rust.quic.fetch() blocks the calling thread (uses internal tokio runtime),
-    so this should always be called from a ThreadPoolExecutor.
+    MODERN-14: This function is deprecated. QuinnRustlsTransportAdapter.fetch()
+    now uses rust.quic.fetch_async() directly (native awaitable via future_into_py).
+    This sync wrapper is kept only for backward compatibility with any external callers.
     """
+    import warnings
+    warnings.warn(
+        "_rust_quic_fetch_sync is deprecated — use rust.quic.fetch_async() directly",
+        DeprecationWarning,
+        stacklevel=2,
+    )
+
     try:
         import rust
         response = rust.quic.fetch(

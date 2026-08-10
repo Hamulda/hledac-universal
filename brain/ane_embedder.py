@@ -184,12 +184,26 @@ class _MLXFamilyMutex:
         return True
 
     def release(self, runtime: Literal['llm', 'embed_ane', 'embed_coreml']) -> None:
-        """Release lock for specified runtime."""
-        self._release_cross_lock()
+        """Release lock for specified runtime.
+        
+        P3-6 FIX: Ownership check MUST happen BEFORE releasing cross-lock.
+        Previous code dropped cross-lock first, allowing race conditions where:
+        1. Thread A release(llm) enters _release_cross_lock()
+        2. Thread B release(embed_ane) enters _release_cross_lock()
+        3. Both threads manipulate cross-lock without proper synchronization
+        
+        Correct order: check ownership first, then release resources.
+        """
+        # P3-6 FIX: Check ownership first while holding the lock
         with self._lock:
-            if self._active_runtime == runtime:
-                self._active_runtime = None
-                logger.debug(f'[_MLXFamilyMutex] Released {runtime}')
+            if self._active_runtime != runtime:
+                logger.debug(f'[_MLXFamilyMutex] Release({runtime}) ignored — currently active: {self._active_runtime}')
+                return
+            # Only release if we own it
+            self._active_runtime = None
+            logger.debug(f'[_MLXFamilyMutex] Released {runtime}')
+        # P3-6 FIX: Release cross-lock AFTER clearing ownership
+        self._release_cross_lock()
 
     def is_active(self) -> Literal['llm', 'embed_ane', 'embed_coreml', None]:
         """Return currently active runtime."""
@@ -564,7 +578,7 @@ class ANEEmbedder:
 
     Sprint F228B: Truthful ANE path — no NotImplementedError in production.
     """
-    __slots__ = tuple(('_fallback_embedder', '_last_load_error', '_loaded', '_mlx_model', '_mlx_processor', 'coreml_path', 'hidden_dim', 'model', 'model_name'))
+    __slots__ = tuple(('_fallback_embedder', '_last_load_error', '_loaded', '_mlx_model', '_mlx_processor', 'coreml_path', 'hidden_dim', 'model', 'model_name', '_ane_mutex_acquired'))
 
     def __init__(self, model_name: str='modernbert', hidden_dim: int=768):
         self.model_name = model_name
@@ -576,6 +590,7 @@ class ANEEmbedder:
         self._last_load_error: str | None = None
         self.coreml_path = MODELS_DIR / f'{model_name}_ane.mlpackage'
         self._fallback_embedder: Callable[..., Awaitable[np.ndarray]] | None = None
+        self._ane_mutex_acquired = False  # P3-6 FIX: Track mutex ownership
 
     def set_fallback(self, fallback_func: Callable[..., Awaitable[np.ndarray]]) -> None:
         """Nastaví fallback async funkci (např. MLX embedder)."""
@@ -622,7 +637,9 @@ class ANEEmbedder:
                 self.model = model
                 self._loaded = True
                 self._last_load_error = None
+                # P3-6 FIX: Track mutex ownership so unload() can release it
                 get_ane_mlx_mutex().acquire_embed_ane(model_size_mb=90.0)
+                self._ane_mutex_acquired = True
                 logger.info(f'ANEEmbedder loaded CoreML: {self.model_name}')
                 return
             except Exception as e:
@@ -774,6 +791,31 @@ class ANEEmbedder:
     def is_loaded(self) -> bool:
         """Vrátí True pokud je ANE nebo MLX model načten."""
         return self._loaded and (self.model is not None or self._mlx_model is not None)
+    
+    def unload(self) -> None:
+        """
+        P3-6 FIX: Unload ANE model and release mutex if acquired.
+        
+        This method properly releases the embed_ane mutex that was acquired
+        during load() when using the CoreML path.
+        """
+        # Release ANE mutex if we acquired it
+        if self._ane_mutex_acquired:
+            try:
+                get_ane_mlx_mutex().release('embed_ane')
+                logger.debug(f'[ANEEmbedder] Released embed_ane mutex for {self.model_name}')
+            except Exception as e:
+                logger.warning(f'[ANEEmbedder] Failed to release embed_ane mutex: {e}')
+            finally:
+                self._ane_mutex_acquired = False
+        
+        # Clear model references
+        self.model = None
+        self._mlx_model = None
+        self._mlx_processor = None
+        self._loaded = False
+        logger.debug(f'[ANEEmbedder] Unloaded: {self.model_name}')
+
 _ANE_EMBEDDER: ANEEmbedder | None = None
 
 def get_ane_embedder() -> ANEEmbedder | None:

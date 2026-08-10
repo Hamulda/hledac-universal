@@ -28,7 +28,17 @@ use pyo3::prelude::*;
 use std::panic;
 
 /// Result of a panic-safe pyfunction call.
-#[derive(Debug, Clone)]
+///
+/// # Safety
+///
+/// This struct contains raw pointers to owned CStrings.
+/// - Clone is explicitly DISABLED to prevent double-free
+/// - The Drop impl frees the owned pointers
+/// - NEVER clone this struct — use FallbackResult::ok/error/panic constructors instead
+///
+/// MODULE STATUS: Dead code — no external usage detected.
+/// This module exists as infrastructure for a potential future cascade fallback system.
+#[derive(Debug)]
 #[repr(C)]
 pub struct FallbackResult {
     /// Whether the call succeeded
@@ -67,7 +77,7 @@ impl FallbackResult {
         Self {
             success: false,
             fallback_used: false,
-            error: to_c_string(format!("panic: {}", panic_msg)),
+            error: to_c_string(&format!("panic: {}", panic_msg)),
             error_type: to_c_string("PanicError"),
         }
     }
@@ -98,7 +108,7 @@ impl Drop for FallbackResult {
 /// Check if the Rust FFI circuit breaker is open for a module.
 /// Returns true if the circuit is open (should use fallback).
 #[pyfunction]
-pub fn ffi_circuit_is_open(module: &str) -> bool {
+pub fn ffi_circuit_is_open(_module: &str) -> bool {
     // Import the Python FFI circuit breaker
     // Note: This is a lazy check, actual state is managed in Python
     // This function exists for the Rust side to quickly check if fallback is needed
@@ -164,10 +174,14 @@ where
 {
     match panic::catch_unwind(panic::AssertUnwindSafe(f)) {
         Ok(Ok(_result)) => FallbackResult::ok(),
-        Ok(Err(py_err)) => FallbackResult::error(
-            py_err.get_type(py_err.py()).name().unwrap_or("Error"),
-            py_err.to_string(),
-        ),
+        Ok(Err(py_err)) => {
+            // In PyO3 0.29, we can't easily get the Python type name from PyErr.
+            // Fall back to a generic error type.
+            FallbackResult::error(
+                "PyErr",
+                &py_err.to_string(),
+            )
+        }
         Err(panic_info) => {
             let msg = if let Some(s) = panic_info.downcast_ref::<&str>() {
                 s.to_string()
@@ -194,7 +208,7 @@ where
 /// }
 /// ```
 #[inline]
-pub fn catch_unwind_result<'py, F, R>(py: Python<'py>, f: F) -> FallbackResult
+pub fn catch_unwind_result<'py, F, R>(_py: Python<'py>, f: F) -> FallbackResult
 where
     F: std::panic::UnwindSafe + FnOnce() -> PyResult<R>,
 {

@@ -291,14 +291,26 @@ def get_dynamic_metal_cache_limit() -> int:
     """
     Dynamic Metal cache limit: 20% of available UMA, clamp [256MiB, 1.5GiB].
     Called by init_mlx_buffers; not for direct use by callers.
+
+    P2-5 FIX: Previously used get_uma_usage_mb() which returns USED memory,
+    then incorrectly labeled it as available_gb. This caused the Metal cache
+    limit to INCREASE with memory pressure (inverted behavior).
+    Now correctly uses psutil.virtual_memory().available for true available memory.
+    Per GHOST_INVARIANTS.md: "Metal cache limit is dynamic (ceiling 1.5 GiB)"
+    with formula: min(max(available*0.2, 512MiB), 1.5GiB)
     """
     try:
-        from hledac.universal.utils.uma_budget import get_uma_usage_mb
+        import psutil
 
-        total_mb = get_uma_usage_mb()
-        if total_mb is None:
-            return int(1.0 * 1024 * 1024 * 1024)
-        available_gb = (total_mb) / 1024.0
+        # P2-5 FIX: Use psutil.virtual_memory().available, NOT get_uma_usage_mb()
+        # get_uma_usage_mb() returns USED memory (sys_used), but we need AVAILABLE
+        # memory to calculate the Metal cache limit correctly.
+        # As memory pressure increases (available ↓), the Metal cache should shrink.
+        vm = psutil.virtual_memory()
+        available_bytes = vm.available
+        available_gb = available_bytes / (1024 ** 3)
+
+        # 20% of available memory, clamped [256MiB, 1.5GiB]
         raw = available_gb * 0.20
         clamped = max(min(raw, 1.5), 0.25)
         return int(clamped * 1024 * 1024 * 1024)
@@ -375,7 +387,7 @@ def configure_mlx_limits(cache_limit_mb: int = 1536, memory_limit_mb: int | None
     }
 
     cache_bytes = cache_limit_mb * 1024 * 1024
-    with _mx_metal_limits_lock:
+    with _mlx_metal_limits_lock:
         impl = _apply_metal_limits_impl(cache_bytes, _METAL_WIRED_LIMIT_BYTES)
         result.update(impl)
 
@@ -411,7 +423,7 @@ def init_mlx_buffers() -> dict[str, Any]:
     if mx is None:
         return {"success": False, "error": "MLX core unavailable"}
 
-    with _mx_metal_limits_lock:
+    with _mlx_metal_limits_lock:
         if _mlx_initialized:
             return {"success": True, "initialized": True}
 
@@ -785,10 +797,7 @@ async def get_mlx_model(model_name: str) -> tuple[Any, Any]:
 
 # ── MLX Utilities (from mlx_utils.py) ─────────────────────────────────────────
 
-import functools
-import inspect
-from collections.abc import Callable
-from typing import TypeVar
+# NOTE: functools, inspect, Callable, TypeVar already imported at module top
 
 _MIN_EVAL_INTERVAL: float = 0.05  # 50ms throttle
 _last_eval_time: float = 0.0

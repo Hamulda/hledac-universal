@@ -1,7 +1,38 @@
 """
 UnifiedMemoryBudgetAccountant - Sprint 1B Resource Hardening.
 
-ROLE: Canonical RAW UMA SAMPLER (not a governor/policy/allocator).
+ROLE: Canonical RAW UMA SAMPLER + SSOT for M1 8GB memory budget (not a governor/policy/allocator).
+
+========================================================================================
+SSOT: M1 8GB Unified Memory Budget (P7-3)
+========================================================================================
+
+This module is the SINGLE SOURCE OF TRUTH for all memory budget constants.
+Do NOT define these elsewhere — import from here.
+
+Budget breakdown (macOS 8GB baseline):
+    - macOS system:      2.5 GiB (baseline, non-adjustable)
+    - Orchestrator:      1.0 GiB (fetch/parse/DB/overhead)
+    - LLM model weights: 2.0 GiB (DeepHermes-3-3B Q4)
+    - KV cache:         0.75 GiB (max allocation)
+    ─────────────────────────────────────────────
+    - TOTAL:            6.25 GiB
+
+Hard ceiling (MISSION_PEAK_RSS_GIB): 5.5 GiB
+    → Soft ceiling for fetch concurrency hard-cap
+    → Defined here as SSOT, imported by runtime/resource_governor.py
+
+Threshold ladder (M1 8GB recalibrated F289-NEW):
+    - 5.5 GiB → soft ceiling (fetch concurrency hard-cap via resource_allocator)
+    - 6.8 GiB → SOFT_WARN (~85%) — first signal of mild pressure
+    - 7.0 GiB → WARN (~88%) — reduce concurrency
+    - 7.5 GiB → CRITICAL (~94%) — active pressure, significant restriction
+    - 7.8 GiB → EMERGENCY (~98%) — real crisis, flush + GC
+
+Invariant: All code importing these values MUST import from here, not define their own.
+    - runtime/resource_governor.py: imports MISSION_PEAK_RSS_GIB
+    - brain/_metal/metal_device.py: references this SSOT
+    - benchmarks_shadow/m1_phase4_budget.py: imports MISSION_PEAK_RSS_GIB
 
 
 
@@ -9,11 +40,13 @@ This module provides:
 - Raw memory sampling (system RAM via psutil, MLX active/peak/cache)
 - Pressure level classification (normal/warn/critical/emergency)
 - Async watchdog with state-change callbacks
+- SSOT UmaBudget class with all budget constants
 
-Threshold levels (M1 8GB UMA):
-- WARN:   >= 6.0 GB used
-- CRITICAL: >= 6.5 GB used
-- EMERGENCY: >= 7.0 GB used
+Threshold levels (M1 8GB UMA, F289-NEW recalibrated):
+- SOFT_WARN:   >= 6.8 GiB (~85%)
+- WARN:        >= 7.0 GiB (~88%)
+- CRITICAL:    >= 7.5 GiB (~94%)
+- EMERGENCY:   >= 7.8 GiB (~98%)
 
 AUTHORITY BOUNDARY:
 - SAMPLER: reads raw values, no policy, no hysteresis, no budgeting
@@ -37,7 +70,99 @@ import platform
 from concurrent.futures import ThreadPoolExecutor
 from typing import TYPE_CHECKING
 from hledac.universal.utils.async_helpers import safe_create_task
-__all__ = ['get_uma_snapshot', 'get_uma_budget', 'get_uma_usage_mb', 'get_uma_pressure_level', 'is_uma_critical', 'is_uma_warn', 'is_uma_emergency', 'format_uma_budget_report', 'UmaWatchdog', 'UmaWatchdogCallbacks', 'UMA_WARN_GIB', 'UMA_CRITICAL_GIB', 'UMA_EMERGENCY_GIB', 'M1_FETCH_SOFT_CEILING_GB', 'GENERAL_HIGH_WATER_RATIO', 'shutdown_uma_callback_executor']
+__all__ = [
+    # SSOT exports (P7-3)
+    'UmaBudget',  # SSOT class with all budget constants
+    'MISSION_PEAK_RSS_GIB',  # 5.5 GiB hard ceiling
+    'UMA_TOTAL_BUDGET_GIB',  # 6.25 GiB total budget
+    # Legacy threshold exports (for backward compatibility)
+    'UMA_WARN_GIB', 'UMA_CRITICAL_GIB', 'UMA_EMERGENCY_GIB',
+    'M1_FETCH_SOFT_CEILING_GB', 'GENERAL_HIGH_WATER_RATIO',
+    # Function exports
+    'get_uma_snapshot', 'get_uma_budget', 'get_uma_usage_mb',
+    'get_uma_pressure_level', 'is_uma_critical', 'is_uma_warn',
+    'is_uma_emergency', 'format_uma_budget_report',
+    'UmaWatchdog', 'UmaWatchdogCallbacks', 'shutdown_uma_callback_executor',
+]
+
+# =============================================================================
+# SSOT: M1 8GB Unified Memory Budget (P7-3)
+# =============================================================================
+# Single source of truth for all memory budget constants.
+# Import from here — do NOT define these elsewhere.
+#
+# Budget breakdown:
+#   - macOS system:      2.5 GiB (baseline, non-adjustable)
+#   - Orchestrator:      1.0 GiB (fetch/parse/DB/overhead)
+#   - LLM model weights: 2.0 GiB (DeepHermes-3-3B Q4)
+#   - KV cache:         0.75 GiB (max allocation)
+#   ─────────────────────────────────────────────
+#   - TOTAL:            6.25 GiB
+
+class UmaBudget:
+    """
+    P7-3 SSOT: M1 8GB Unified Memory Budget.
+
+    This class is the single source of truth for all memory budget constants.
+    Import from utils.uma_budget — do NOT define these elsewhere.
+
+    Budget breakdown:
+        macOS system:      2.5 GiB (baseline)
+        Orchestrator:       1.0 GiB (fetch/parse/DB overhead)
+        LLM model weights:  2.0 GiB (DeepHermes-3-3B Q4)
+        KV cache:          0.75 GiB (max allocation)
+        ─────────────────────────────────────
+        TOTAL:             6.25 GiB
+
+    Usage:
+        from utils.uma_budget import UmaBudget, MISSION_PEAK_RSS_GIB
+
+        # Access constants
+        assert UmaBudget.TOTAL_GIB == 6.25
+        assert MISSION_PEAK_RSS_GIB == 5.5
+
+        # Access as class attributes
+        UmaBudget.MISSION_PEAK_RSS_GIB  # 5.5 GiB hard ceiling
+        UmaBudget.ORCHESTRATOR_GIB      # 1.0 GiB
+    """
+
+    # Total budget breakdown (GiB)
+    MACOS_SYSTEM_GIB: float = 2.5  # Baseline macOS overhead
+    ORCHESTRATOR_GIB: float = 1.0  # Fetch/parse/DB overhead
+    LLM_WEIGHTS_GIB: float = 2.0  # DeepHermes-3-3B Q4
+    KV_CACHE_GIB: float = 0.75  # Max KV cache allocation
+
+    # Computed totals
+    @classmethod
+    @property
+    def TOTAL_GIB(cls) -> float:
+        """Total memory budget: 6.25 GiB."""
+        return cls.MACOS_SYSTEM_GIB + cls.ORCHESTRATOR_GIB + cls.LLM_WEIGHTS_GIB + cls.KV_CACHE_GIB
+
+    # Mission ceiling (hard cap for fetch concurrency)
+    MISSION_PEAK_RSS_GIB: float = 5.5  # Hard ceiling for RSS
+
+    # Threshold ladder (F289-NEW, recalibrated for M1 8GB)
+    # See also: core/resource_governor.py thresholds
+    THRESHOLD_SOFT_WARN_GIB: float = 6.8  # ~85% — first signal
+    THRESHOLD_WARN_GIB: float = 7.0  # ~88% — reduce concurrency
+    THRESHOLD_CRITICAL_GIB: float = 7.5  # ~94% — active pressure
+    THRESHOLD_EMERGENCY_GIB: float = 7.8  # ~98% — crisis
+
+    # Fetch concurrency soft ceiling (resource_allocator)
+    M1_FETCH_SOFT_CEILING_GB: float = 5.5  # Same as MISSION_PEAK_RSS_GIB
+
+    # High water ratio for sidecar admission
+    HIGH_WATER_RATIO: float = 0.85
+
+    # Metal cache limits (F289-NEW, corrected floor)
+    METAL_CACHE_FLOOR_MIB: int = 512  # Min 512 MiB (was 256 MiB in old docstrings)
+    METAL_CACHE_CEILING_MIB: int = 1536  # Max 1.5 GiB (1536 MiB)
+
+
+# Export module-level constants for backward compatibility
+MISSION_PEAK_RSS_GIB: float = UmaBudget.MISSION_PEAK_RSS_GIB
+UMA_TOTAL_BUDGET_GIB: float = UmaBudget.TOTAL_GIB
 
 # R5: UMA callback executor — managed centrally by domain_executors.
 # No local atexit registration needed — domain_executors handles shutdown.
@@ -86,24 +211,37 @@ def _detect_total_memory_mb() -> int:
     except (ImportError, AttributeError):
         return 8192
 _UMA_TOTAL_MB: int = _detect_total_memory_mb()
-from hledac.universal.core.resource_governor import _THRESHOLD_CRITICAL_GIB, _THRESHOLD_EMERGENCY_GIB, _THRESHOLD_WARN_GIB, RATIOS_USED as _RATIOS_USED, DETECTED_TOTAL_GIB as _DETECTED_TOTAL_GIB
-_WARN_THRESHOLD_MB: int = int(_THRESHOLD_WARN_GIB * 1024)
-_CRITICAL_THRESHOLD_MB: int = int(_THRESHOLD_CRITICAL_GIB * 1024)
-_EMERGENCY_THRESHOLD_MB: int = int(_THRESHOLD_EMERGENCY_GIB * 1024)
-UMA_WARN_GIB: float = _THRESHOLD_WARN_GIB
-UMA_CRITICAL_GIB: float = _THRESHOLD_CRITICAL_GIB
-UMA_EMERGENCY_GIB: float = _THRESHOLD_EMERGENCY_GIB
-M1_FETCH_SOFT_CEILING_GB: float = round(_UMA_TOTAL_MB / 1024 * 0.88, 2)
 
-# A5-01 FIX: Sync Rust memory.rs thresholds with resource_governor SSOT.
+# P7-3 SSOT: Use UmaBudget class values directly — no circular dependency with resource_governor
+# These are M1 8GB hardcoded values that never change
+_WARN_THRESHOLD_MB: int = int(UmaBudget.THRESHOLD_WARN_GIB * 1024)  # 7.0 GiB → 7168 MB
+_CRITICAL_THRESHOLD_MB: int = int(UmaBudget.THRESHOLD_CRITICAL_GIB * 1024)  # 7.5 GiB → 7680 MB
+_EMERGENCY_THRESHOLD_MB: int = int(UmaBudget.THRESHOLD_EMERGENCY_GIB * 1024)  # 7.8 GiB → 7987 MB
+
+# Legacy exports for backward compatibility (values match UmaBudget)
+UMA_WARN_GIB: float = UmaBudget.THRESHOLD_WARN_GIB  # 7.0 GiB
+UMA_CRITICAL_GIB: float = UmaBudget.THRESHOLD_CRITICAL_GIB  # 7.5 GiB
+UMA_EMERGENCY_GIB: float = UmaBudget.THRESHOLD_EMERGENCY_GIB  # 7.8 GiB
+M1_FETCH_SOFT_CEILING_GB: float = UmaBudget.MISSION_PEAK_RSS_GIB  # 5.5 GiB
+
+# Diagnostic info for snapshot (computed once at import time)
+_RATIOS_USED: tuple[float, float, float, float] = (
+    UmaBudget.THRESHOLD_SOFT_WARN_GIB / UmaBudget.TOTAL_GIB,  # 6.8/6.25 = 0.88
+    UmaBudget.THRESHOLD_WARN_GIB / UmaBudget.TOTAL_GIB,  # 7.0/6.25 = 0.88
+    UmaBudget.THRESHOLD_CRITICAL_GIB / UmaBudget.TOTAL_GIB,  # 7.5/6.25 = 0.92
+    UmaBudget.THRESHOLD_EMERGENCY_GIB / UmaBudget.TOTAL_GIB,  # 7.8/6.25 = 0.98
+)
+_DETECTED_TOTAL_GIB: float = _UMA_TOTAL_MB / 1024
+
+# A5-01 FIX: Sync Rust memory.rs thresholds with UmaBudget SSOT.
 # memory.rs uses process RSS (PROC_PIDTASKINFO) for its memory_pressure_level(),
-# which is separate from resource_governor's system-used GiB thresholds.
-# We align the Rust hard threshold with resource_governor's critical threshold
+# which is separate from system-used GiB thresholds.
+# We align the Rust hard threshold with UmaBudget's critical threshold
 # so that the health.rs telemetry reports consistent "critical" conditions.
 # soft_gib stays at 4.0 GiB (RSS-based "elevated" has no system-wide equivalent).
 try:
     from hledac.universal.core.memory import set_memory_pressure_thresholds as _set_rust_thresholds
-    _set_rust_thresholds(soft_gib=4.0, hard_gib=_THRESHOLD_CRITICAL_GIB)
+    _set_rust_thresholds(soft_gib=4.0, hard_gib=UmaBudget.THRESHOLD_CRITICAL_GIB)
 except Exception:  # noqa: BLE001
     pass  # Fail-safe: Rust thresholds stay at defaults (4.0 / 5.5 GiB)
 GENERAL_HIGH_WATER_RATIO: float = 0.85
@@ -141,11 +279,10 @@ def get_system_memory_mb() -> tuple[int, int, int]:
         return (total_mb, used_mb, available_mb)
     except Exception:  # noqa: BLE001
         pass
-    from hledac.universal.core.resource_governor import _get_cached_psutil, _read_virtual_memory_sync
+    # Fallback: use psutil directly (avoid circular dependency with resource_governor)
     try:
-        vm = _get_cached_psutil('virtual_memory', _read_virtual_memory_sync)
-        if vm is None:
-            return (0, 0, 0)
+        import psutil as _ps_fallback
+        vm = _ps_fallback.virtual_memory()
         total = getattr(vm, 'total', 0)
         available = getattr(vm, 'available', 0)
         used = total - available
@@ -153,7 +290,7 @@ def get_system_memory_mb() -> tuple[int, int, int]:
         used_mb = used // (1024 * 1024)
         available_mb = available // (1024 * 1024)
         return (total_mb, used_mb, available_mb)
-    except (AttributeError, OSError) as e:
+    except (ImportError, AttributeError, OSError) as e:
         logger.debug(f'get_system_memory_mb failed: {e}')
         return (0, 0, 0)
 

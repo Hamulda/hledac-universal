@@ -496,32 +496,6 @@ def _build_parallel_result(
 
 @overload
 async def parallel[T](
-    *coros: Awaitable[T] | T,
-    policy: Literal["log"],
-    concurrency: int | ConcurrencyBudgetResolver | None = None,
-    timeout: float | None = None,
-    taskgroup: bool = False,
-    names: Sequence[str] | None = None,
-    ctx: str = "",
-    logger_instance: logging.Logger | None = None,
-) -> list[T]: ...
-
-
-@overload
-async def parallel[T](
-    *coros: Awaitable[T] | T,
-    policy: ExceptionPolicy = "collect",
-    concurrency: int | ConcurrencyBudgetResolver | None = None,
-    timeout: float | None = None,
-    taskgroup: bool = False,
-    names: Sequence[str] | None = None,
-    ctx: str = "",
-    logger_instance: logging.Logger | None = None,
-) -> ParallelResult: ...
-
-
-@overload
-async def parallel[T](
     coros: Sequence[Awaitable[T]],
     *,
     policy: Literal["log"],
@@ -531,7 +505,29 @@ async def parallel[T](
     names: Sequence[str] | None = None,
     ctx: str = "",
     logger_instance: logging.Logger | None = None,
-) -> list[T]: ...
+) -> list[T]:
+    """Overload: policy='log' returns list[T] (only successes, exceptions logged)."""
+
+
+@overload
+async def parallel[T](
+    coros: Sequence[Awaitable[T]],
+    *,
+    policy: ExceptionPolicy = "collect",
+    concurrency: int | ConcurrencyBudgetResolver | None = None,
+    timeout: float | None = None,
+    taskgroup: bool = False,
+    names: Sequence[str] | None = None,
+    ctx: str = "",
+    logger_instance: logging.Logger | None = None,
+) -> ParallelResult:
+    """Overload: policy='collect'/'raise'/'first' returns ParallelResult."""
+
+
+# P4-5 FIX: Consolidated overloads. The implementation uses positional
+# coros (Sequence), not variadic *coros. The original overloads with
+# *coros were misleading and didn't match the implementation.
+# Usage: parallel([coro1, coro2], policy="log") — list as single argument.
 
 
 async def parallel[T](

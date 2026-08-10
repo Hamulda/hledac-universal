@@ -7,6 +7,84 @@ Fetches via JA3/TLS profile rotation (curl_cffi runtime + session cache).
 No network side effects on import.
 Streaming/chunked if AsyncSession supports it; hard cap at max_bytes otherwise.
 
+## MODERN-16: Hybrid Model Architecture
+
+This module implements the hybrid Python↔Rust stealth transport:
+
+┌─────────────────────────────────────────────────────────────────────────┐
+│                    Python Layer (Stealth)                               │
+├─────────────────────────────────────────────────────────────────────────┤
+│  curl_cffi_fetch.py                                                    │
+│  - JA3 rotation pool (6 browser profiles: Chrome, Safari, Firefox)     │
+│  - TLS impersonation via rustls-ffi (curl_cffi backend)              │
+│  - HTTP/2 SETTINGS spoofing for Safari profiles                        │
+│  - Session pooling with LRU eviction                                   │
+│  - JA3 ban detection + exponential backoff retry                      │
+└───────────────────────────────┬─────────────────────────────────────────┘
+                                │ async FFI (future_into_py)
+                                │ Arrow IPC (bulk transfer)
+┌───────────────────────────────┴─────────────────────────────────────────┐
+│                    Rust Layer (I/O)                                     │
+├─────────────────────────────────────────────────────────────────────────┤
+│  stealth_bridge.rs (MODERN-16)                                        │
+│  - DNS resolution bridge (→ dns.rs)                                   │
+│  - QUIC handshake bridge (→ quic.rs)                                  │
+│  - Network.framework bridge (→ nw_connection.rs)                       │
+│  - Arrow IPC for batch data transfer                                   │
+│                                                                         │
+│  async_runtime.rs                                                     │
+│  - Shared Tokio runtime (4 workers, M1 8GB safe)                       │
+│                                                                         │
+│  dns.rs / quic.rs / nw_connection.rs                                   │
+│  - Raw I/O primitives                                                  │
+│  - DoH DNS, QUIC, TLS handshake                                        │
+└─────────────────────────────────────────────────────────────────────────┘
+
+### Why curl_cffi STAYS in Python
+
+1. **No pure-Rust JA3 equivalent exists** — curl_cffi uses rustls-ffi which
+   provides the TLS fingerprinting layer. There's no Rust crate that matches
+   curl_cffi's browser profile database and HTTP/2 SETTINGS spoofing.
+
+2. **curl_cffi IS the stealth layer** — JA3 rotation, browser impersonation,
+   WebKit HTTP/2 SETTINGS are all implemented in Python. Moving them to Rust
+   would require reimplementing the entire fingerprinting subsystem.
+
+3. **HTTP/2 SETTINGS are profile-specific** — Safari profiles require
+   INITIAL_WINDOW_SIZE=4,194,304 vs curl_cffi's default 65,535. This
+   anti-bot fingerprinting is tied to the impersonation profiles.
+
+### What Rust DOES
+
+1. **DNS resolution** — rust.dns.resolve_async_await() with DoH support
+2. **QUIC handshake** — rust.quic.fetch_async() for HTTP/3
+3. **Network.framework** — rust.nw_connection.fetch_async() on macOS
+4. **Arrow IPC** — Batch data transfer via arrow_batch_builder.rs
+
+### Async FFI Usage
+
+```python
+# curl_cffi handles JA3, Rust handles DNS
+async def fetch_stealth(url: str) -> bytes:
+    # DNS via Rust (async FFI)
+    host = extract_host(url)
+    ips = await rust.stealth_bridge.dns_resolve_async(host)
+
+    # curl_cffi handles HTTP/2 + TLS impersonation (JA3)
+    session = await get_curl_session(profile="chrome136")
+    response = await session.get(url)
+
+    return response.content
+```
+
+### Files
+
+- transport/curl_cffi_fetch.py — Python curl_cffi wrapper (THIS FILE)
+- rust_extensions/src/stealth_bridge.rs — Rust async FFI bridge
+- rust_extensions/src/dns.rs — Async DNS with DoH
+- rust_extensions/src/quic.rs — QUIC/HTTP3 via quinn+h3
+- rust_extensions/src/nw_connection.rs — Apple Network.framework
+
 Architecture (Issue 3.5 consolidation):
   - This file is the canonical module: session management + JA3 rotation + fetch API
   - curl_cffi_runtime.py is a backward-compat re-export alias (deleted in v3.0)
@@ -26,6 +104,7 @@ import itertools
 import logging
 import os
 import random
+import socket
 import threading
 import time
 import urllib.parse
@@ -57,6 +136,30 @@ from ._tcp_keepalive import (
 )
 
 logger = logging.getLogger(__name__)
+
+# MODERN-16: Rust async FFI bridge availability detection
+# curl_cffi handles JA3/TLS impersonation in Python.
+# Rust handles raw I/O (DNS, QUIC, sockets) via async FFI.
+_HAS_RUST_STEALTH_BRIDGE: bool = False
+_RUST_STEALTH_BRIDGE = None
+
+try:
+    import rust
+    # Check if stealth_bridge module is available
+    if hasattr(rust, "stealth_bridge"):
+        _HAS_RUST_STEALTH_BRIDGE = True
+        _RUST_STEALTH_BRIDGE = rust.stealth_bridge
+        logger.debug("[MODERN-16] Rust stealth_bridge available")
+    else:
+        logger.debug("[MODERN-16] Rust stealth_bridge not available")
+except ImportError:
+    logger.debug("[MODERN-16] Rust module not available")
+
+# MODERN-16: Helper to check if DNS resolution can use Rust async FFI
+def _has_rust_dns_async() -> bool:
+    """Return True if rust.stealth_bridge.dns_resolve_async is available."""
+    return _HAS_RUST_STEALTH_BRIDGE and hasattr(_RUST_STEALTH_BRIDGE, "dns_resolve_async")
+
 
 DEFAULT_TIMEOUT_S = 10.0
 DEFAULT_MAX_BYTES = 10 * 1024 * 1024  # 10MB hard cap
@@ -105,6 +208,95 @@ _TOR_CURL_PROXY: str = ENV.get_str("TOR_SOCKS_PROXY_URL", "socks5h://127.0.0.1:9
 # I2P SOCKS5H proxy — default 4447 is I2P SAM bridge port (standard install)
 # F260: I2P has no NEWNYM equivalent — circuit rotation is intentionally absent
 _I2P_CURL_PROXY: str = ENV.get_str("I2P_SOCKS_PROXY_URL", "socks5h://127.0.0.1:4447")
+
+
+# === P0-2 DARKNET TLD ROUTER (Centralized fail-closed guard) ===
+# ISSUE MODERN-02: .onion/.i2p leak via Clearnet — root cause was proxies=None
+# reaching base fetch function causing direct Clearnet connection = deanonymization.
+#
+# This router enforces fail-closed security: darknet TLDs MUST have proxy.
+# - .onion / .b32.i2p → Tor proxy (socks5h://)
+# - .i2p → I2P proxy (socks5h://)
+# - .freenet → reserved for future (currently unsupported)
+# - other → Clearnet (proxies=None is acceptable)
+#
+# SOCKS5H is CRITICAL: the 'h' suffix means DNS resolution happens on the proxy
+# side, preventing local DNS leaks that would deanonymize darknet traffic.
+#
+# Architecture: Single centralized gate in fetch_via_curl_cffi() ensures ALL
+# code paths (direct calls, tor_transport, i2p_transport, tests) go through
+# the same fail-closed check. No exceptions — even test code.
+_DARKNET_TLDS: frozenset[str] = frozenset({".onion", ".i2p", ".b32.i2p", ".freenet"})
+
+
+def _route_tld_to_proxy(url: str, proxies: dict[str, str] | None) -> dict[str, str] | None:
+    """P0-2: Centralized TLD router — enforce fail-closed for darknet URLs.
+
+    MODERN-02 FIX: This is the canonical fail-closed gate for all curl_cffi
+    fetch paths. If a darknet URL reaches this function without proxies configured,
+    it raises RuntimeError immediately rather than leaking via Clearnet.
+
+    Args:
+        url: URL to classify
+        proxies: Existing proxy dict (may be None or partially configured)
+
+    Returns:
+        Proxies dict suitable for session.get(proxies=...) — both http/https schemes.
+        Returns None for clearnet URLs (no proxy needed).
+
+    Raises:
+        RuntimeError: Darknet TLD (.onion/.i2p) reached without proxy configured.
+    """
+    try:
+        # Extract host from URL
+        from urllib.parse import urlparse
+        parsed = urlparse(url)
+        host = parsed.netloc.lower().split(":")[0]  # Strip port
+    except Exception:  # noqa: BLE001
+        # Malformed URL — let it proceed with existing proxies (will likely fail)
+        return proxies
+
+    # Check if this is a darknet URL
+    is_darknet = any(host.endswith(tld) for tld in _DARKNET_TLDS)
+
+    if not is_darknet:
+        # Clearnet URL — proceed with whatever proxies were given
+        return proxies
+
+    # === DARKNET TLD: enforce fail-closed ===
+    if proxies is None:
+        # No proxies configured — this would be a deanonymization leak!
+        raise RuntimeError(
+            f"MODERN-02 P0 SECURITY VIOLATION: Darknet URL '{url}' reached "
+            f"fetch_via_curl_cffi() without proxies configured. This would cause "
+            f"a Clearnet connection with local DNS resolution = DEANONYMIZATION. "
+            f"Fix: Ensure TorTransport or I2PTransport passes proxies={{'http':_TOR_CURL_PROXY,"
+            f"'https':_TOR_CURL_PROXY}} for .onion URLs, or configure I2P proxy for .i2p."
+        )
+
+    # Verify both http and https schemes are configured for darknet
+    # (Darknet can be accessed via http://...onion even if URL uses http://)
+    if "http" not in proxies and "https" not in proxies:
+        raise RuntimeError(
+            f"MODERN-02 P0 SECURITY VIOLATION: Darknet URL '{url}' has malformed "
+            f"proxies={proxies} — missing 'http' and/or 'https' scheme. "
+            f"Darknet URLs can be http:// or https:// and require both schemes. "
+            f"Fix: proxies={{'http':proxy_url,'https':proxy_url}}"
+        )
+
+    # Validate proxy URL uses socks5h:// (critical for DNS security)
+    for scheme in ("http", "https"):
+        if scheme in proxies:
+            proxy_url = proxies[scheme]
+            if not proxy_url.startswith("socks5h://"):
+                logger.warning(
+                    f"MODERN-02: Darknet URL '{url}' using non-socks5h proxy "
+                    f"'{proxy_url}' for scheme '{scheme}'. This may cause local DNS "
+                    f"resolution. Recommended: socks5h:// for DNS-on-proxy semantics."
+                )
+
+    return proxies
+
 
 # Tor-specific circuit tracking for curl_cffi Tor fetcher
 _tor_curl_request_count: int = 0
@@ -1305,18 +1497,23 @@ async def _retry_on_eaddrinuse(
     url: str,
     headers: dict[str, str],
     timeout_s: float,
+    proxies: dict[str, str] | None,
+    http_version: Any = None,
 ) -> Any:
     """Retry HTTP request on EADDRINUSE with exponential backoff.
 
     ISSUE-P6-001: EADDRINUSE retry envelope — resilience against TIME_WAIT / port exhaustion.
     On Errno 48 (EADDRINUSE), retry with exponential backoff instead of failing immediately.
 
+    P0-2 FIX: proxies/http_version propagated through call chain for darknet fetch.
+    SOCKS5H ensures DNS resolution happens on the proxy (Tor/I2P), not locally.
+
     Returns:
         Response object on success, raises OSError if not EADDRINUSE or retries exhausted.
     """
     for attempt in range(_MAX_EADDRINUSE_RETRIES):
         try:
-            return await session.get(url, headers=headers, timeout=timeout_s)
+            return await session.get(url, headers=headers, timeout=timeout_s, proxies=proxies, http_version=http_version)
         except OSError as e:
             errno = getattr(e, "errno", None)
             if errno == _EADDRINUSE_ERRNO and attempt < _MAX_EADDRINUSE_RETRIES - 1:
@@ -1439,6 +1636,8 @@ async def _fetch_with_ja3_retry(
             timeout_s=timeout_s,
             max_bytes=max_bytes,
             profile=_current_profile,
+            proxies=proxies,
+            http_version=http_version,
             resolve=resolve,
         )
 
@@ -1636,7 +1835,10 @@ async def fetch_via_tor_curl_cffi(
         except Exception as e:  # noqa: BLE001
             logger.warning(f"[TOR] circuit rotation failed: {e}")
 
-    proxies = {"https": _TOR_CURL_PROXY}
+    # P0-2 SECURITY FIX: Include both http and https schemes.
+    # Darknet URLs may be specified as http://...onion and must route through Tor.
+    # SOCKS5H ensures DNS resolution on proxy side (no local DNS leak).
+    proxies = {"http": _TOR_CURL_PROXY, "https": _TOR_CURL_PROXY}
 
     if use_conditional_cache:
         try:
@@ -1691,7 +1893,10 @@ async def fetch_via_i2p_curl_cffi(
         profile: TLS profile for JA3 fingerprint
         use_conditional_cache: Use conditional-GET caching (default True, GRAPH-02)
     """
-    proxies = {"https": _I2P_CURL_PROXY}
+    # P0-2 SECURITY FIX: Include both http and https schemes.
+    # Darknet URLs may be specified as http://...i2p and must route through I2P.
+    # SOCKS5H ensures DNS resolution on proxy side (no local DNS leak).
+    proxies = {"http": _I2P_CURL_PROXY, "https": _I2P_CURL_PROXY}
 
     if use_conditional_cache:
         try:
@@ -1729,7 +1934,18 @@ async def fetch_via_curl_cffi(
     *,
     resolve: dict[str, str] | None = None,
 ) -> dict[str, Any]:
-    """Fetch URL via curl_cffi stealth lane (see module docstring for details)."""
+    """Fetch URL via curl_cffi stealth lane (see module docstring for details).
+
+    P0-2 MODERN-02 FIX: Centralized fail-closed TLD router guard.
+    All darknet URLs (.onion, .i2p, .b32.i2p) MUST pass through a configured proxy.
+    If proxies=None for a darknet URL, raises RuntimeError immediately rather
+    than leaking via Clearnet (which would cause deanonymization).
+    """
+    # P0-2 MODERN-02: Centralized fail-closed TLD router
+    # This is the single gate that prevents .onion/.i2p leak via Clearnet.
+    # Raises RuntimeError if darknet TLD without proxy — fail-closed security.
+    proxies = _route_tld_to_proxy(url, proxies)
+
     available, avail_reason = is_curl_cffi_available()
     if not available:
         return _make_error_result(
@@ -2005,6 +2221,8 @@ async def _execute_curl_fetch_attempt(
     timeout_s: float,
     max_bytes: int,
     profile: str,
+    proxies: dict[str, str] | None,
+    http_version: Any,
     *,
     resolve: dict[str, str] | None,
 ) -> tuple[dict[str, Any] | None, bool, float | None]:
@@ -2041,7 +2259,7 @@ async def _execute_curl_fetch_attempt(
 
         # ISSUE-P6-001: EADDRINUSE retry envelope
         try:
-            response = await _retry_on_eaddrinuse(session, url, _merged_headers, timeout_s)
+            response = await _retry_on_eaddrinuse(session, url, _merged_headers, timeout_s, proxies, http_version)
         except OSError:
             return (
                 _make_error_result(
@@ -2089,3 +2307,103 @@ def _handle_generic_exception(
         selected_transport="curl_cffi",
         tls_impersonate=used_profile,
     )
+
+
+# ============================================================================
+# MODERN-16: Rust Async FFI Bridge Integration
+# ============================================================================
+
+async def dns_resolve_via_rust(hostname: str, qtype: str = "A") -> list[str]:
+    """Resolve DNS via Rust async FFI bridge.
+
+    curl_cffi handles JA3/TLS impersonation in Python.
+    This function delegates DNS resolution to Rust for:
+    - DoH support (DNS over HTTPS)
+    - Better performance (Rust async runtime)
+    - Reduced Python GIL contention
+
+    Falls back to asyncio.getaddrinfo if Rust bridge unavailable.
+
+    Args:
+        hostname: Domain to resolve
+        qtype: DNS record type ("A", "AAAA", etc.)
+
+    Returns:
+        List of IP addresses
+    """
+    if not _has_rust_dns_async():
+        # Fallback: use asyncio.getaddrinfo
+        try:
+            loop = asyncio.get_running_loop()
+            return await loop.getaddrinfo(
+                hostname,
+                None,
+                family=socket.AF_UNSPEC,
+                type=socket.SOCK_STREAM,
+            )
+        except Exception:  # noqa: BLE001
+            return []
+
+    try:
+        # MODERN-16: Use Rust async DNS via stealth_bridge
+        result = await _RUST_STEALTH_BRIDGE.dns_resolve_async(hostname, qtype)
+        return result if result else []
+    except Exception:  # noqa: BLE001
+        return []
+
+
+async def dns_resolve_batch_via_rust(hostnames: list[str], qtype: str = "A") -> dict[str, list[str]]:
+    """Batch DNS resolution via Rust async FFI bridge.
+
+    More efficient than individual resolutions (single DNS round-trip).
+
+    Args:
+        hostnames: List of domains to resolve
+        qtype: DNS record type ("A", "AAAA", etc.)
+
+    Returns:
+        Dict mapping hostname → list of IPs
+    """
+    if not _HAS_RUST_STEALTH_BRIDGE or not hasattr(_RUST_STEALTH_BRIDGE, "dns_resolve_batch_async"):
+        # Fallback: resolve individually
+        results: dict[str, list[str]] = {}
+        for host in hostnames:
+            ips = await dns_resolve_via_rust(host, qtype)
+            results[host] = ips
+        return results
+
+    try:
+        return await _RUST_STEALTH_BRIDGE.dns_resolve_batch_async(hostnames, qtype)
+    except Exception:  # noqa: BLE001
+        return {host: [] for host in hostnames}
+
+
+def get_quic_backend_info() -> str:
+    """Get the QUIC backend info from Rust.
+
+    Returns:
+        Backend identifier: "rust_quinn", "nw_framework", "aioquic", or "none"
+    """
+    if not _HAS_RUST_STEALTH_BRIDGE or not hasattr(_RUST_STEALTH_BRIDGE, "get_quic_backend"):
+        return "none"
+
+    try:
+        return _RUST_STEALTH_BRIDGE.get_quic_backend()
+    except Exception:  # noqa: BLE001
+        return "none"
+
+
+def supports_curl_cffi_quic() -> bool:
+    """Check if curl_cffi supports HTTP/3 opportunistically.
+
+    Returns:
+        True if curl_cffi >= 0.7 with HttpVersion.v3 is available
+    """
+    if not _HAS_RUST_STEALTH_BRIDGE or not hasattr(_RUST_STEALTH_BRIDGE, "supports_curl_cffi_quic"):
+        return True  # Assume available if Rust bridge not present
+
+    try:
+        return _RUST_STEALTH_BRIDGE.supports_curl_cffi_quic()
+    except Exception:  # noqa: BLE001
+        return True
+

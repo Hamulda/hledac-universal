@@ -88,58 +88,16 @@ type TaskPort = u32;
 #[cfg(target_os = "macos")]
 const MACH_TASK_SELF: TaskPort = 0xffffffff;
 
-/// Raw mach_vm_remap syscall on Darwin/x86_64 and Darwin/arm64.
+/// Raw mach_vm_remap placeholder for macOS.
 ///
 /// # Safety
-/// - `src_addr` must be a valid, mapped address in the current process
-/// - `size` must be > 0 and <= actual mapped region
-/// - Caller must hold GIL if called from Python
+/// - `target_task` must be MACH_TASK_SELF for current process
+/// - `target_addr` must point to valid memory
+/// - `size` must be > 0
 #[cfg(target_os = "macos")]
-unsafe fn mach_vm_remap_raw(target_task: TaskPort, target_addr: *mut u64, size: size_t) -> i32 {
-    // On Darwin, mach_vm_remap is syscall number 489 (x86_64) / 489 (arm64)
-    // syscall(syscall_number, task, address, size, mask, flags, ...)
-
-    // We use the libc wrapper when available, falling back to raw syscall
-    #[cfg(target_arch = "x86_64")]
-    {
-        let ret: i32;
-        std::asm::symcall!(
-            489,   // SYS_mach_vm_remap
-            ret,
-            "={
-            rdi={target_task},
-            rsi={target_addr},
-            rdx={size},
-            r10={VM_FLAGS_ANYWHERE},
-            r8={VM_PROT_READ | VM_PROT_WRITE},
-            r9={VM_PROT_READ | VM_PROT_WRITE}
-            }",
-            in("rax") 489i64 => i32
-        );
-        ret
-    }
-
-    #[cfg(target_arch = "aarch64")]
-    {
-        // arm64 syscall: svc #0x80 with immediate in x16
-        // We use a different approach — std::arch::global_asm or libc
-        // For now, use the mach:: kernel crate pattern via raw syscall
-        let mut ret: i32 = KERN_NO_SPACE;
-        std::arch::global_asm!(
-            "mov x16, #489      // SYS_mach_vm_remap on arm64 darwin",
-            "mov x0, {0}        // target_task",
-            "mov x1, {1}        // target_addr ptr",
-            "mov x2, {2}        // size",
-            "mov x3, #0         // mask",
-            "mov x4, #0x0005    // flags: ANYWHERE | OVERWRITE",
-            "mov x5, #3         // cur_prot (READ|WRITE)",
-            "mov x6, #3         // max_prot (READ|WRITE)",
-            "svc #0x80",
-            "mov {3}, x0        // return value",
-            sym ret, sym target_addr, sym size, sym ret
-        );
-        ret
-    }
+unsafe fn mach_vm_remap_raw(_target_task: TaskPort, _target_addr: *mut u64, _size: size_t) -> i32 {
+    // TODO: Implement via libmach FFI or vm_remap wrapper
+    KERN_NO_SPACE
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -155,24 +113,16 @@ static REMAP_BYTES_TOTAL: AtomicU64 = AtomicU64::new(0);
 /// Global OnceLock for optional mach crate
 static _MACH_CRATE: OnceLock<bool> = OnceLock::new();
 
-/// Check if the `mach` crate is available at runtime.
+/// Check if the mach feature is enabled at compile time.
 fn mach_crate_available() -> bool {
-    *_MACH_CRATE.get_or_init(|| {
-        std::panic::catch_unwind(|| {
-            // Try to resolve a symbol from the mach crate if it were linked
-            // This is a compile-time feature; at runtime we check #[cfg]
-            #[cfg(feature = "mach")]
-            {
-                let _ = mach::vm::VM_PROT_READ;
-                true
-            }
-            #[cfg(not(feature = "mach"))]
-            {
-                false
-            }
-        })
-        .unwrap_or(false)
-    })
+    #[cfg(feature = "mach")]
+    {
+        true
+    }
+    #[cfg(not(feature = "mach"))]
+    {
+        false
+    }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -314,8 +264,9 @@ fn remap_file_to_child(file_path: &str, file_size: usize) -> Result<(u32, usize)
             null_mut(),
             mapped_size,
             libc::PROT_READ | libc::PROT_WRITE,
-            libc::MAP_PRIVATE,
-            -1, // anonymous
+            libc::MAP_PRIVATE | libc::MAP_ANONYMOUS,
+            -1,  // fd: -1 for anonymous mapping
+            0,   // offset: 0 for anonymous mapping
         )
     };
 
@@ -558,31 +509,22 @@ impl MachRemapStats {
 pub fn vm_remap_file(file_path: &str, file_size: usize) -> PyResult<(u32, usize, usize)> {
     // Feature gate check
     if std::env::var("HLEDAC_ENABLE_MACH_REMAP").as_deref() != Ok("1") {
-        return Err(PyErr::new::<MachRemapError, _>(
-            "HLEDAC_ENABLE_MACH_REMAP=1 not set".into(),
-            "not_enabled".into(),
-        ));
+        return Err(PyRuntimeError::new_err("HLEDAC_ENABLE_MACH_REMAP=1 not set"));
     }
 
     #[cfg(not(target_os = "macos"))]
     {
-        return Err(PyErr::new::<MachRemapError, _>(
-            "Only supported on macOS".into(),
-            "unsupported_platform".into(),
-        ));
+        return Err(PyRuntimeError::new_err("Only supported on macOS"));
     }
 
     // Memory guard: check available memory before remap
     let available = get_available_memory_bytes();
     const MEMORY_FLOOR: u64 = (3 * 1024 / 2) * 1024 * 1024; // 1.5 GiB
     if available < MEMORY_FLOOR {
-        return Err(PyErr::new::<MachRemapError, _>(
-            format!(
-                "available_memory={:.2} GiB < floor=1.5 GiB",
-                available as f64 / (1024.0 * 1024.0 * 1024.0)
-            ),
-            "memory_guard".into(),
-        ));
+        return Err(PyRuntimeError::new_err(format!(
+            "available_memory={:.2} GiB < floor=1.5 GiB",
+            available as f64 / (1024.0 * 1024.0 * 1024.0)
+        )));
     }
 
     // Concurrent remap guard
@@ -590,10 +532,7 @@ pub fn vm_remap_file(file_path: &str, file_size: usize) -> PyResult<(u32, usize,
         .compare_exchange(false, true, Ordering::Acquire, Ordering::Relaxed)
         .is_ok()
     {
-        return Err(PyErr::new::<MachRemapError, _>(
-            "another remap is already in progress".into(),
-            "concurrent_remap".into(),
-        ));
+        return Err(PyRuntimeError::new_err("another remap is already in progress"));
     }
 
     // ── Acquire scope guard for semaphore release ───────────────────────
@@ -626,16 +565,10 @@ pub fn vm_remap_file(file_path: &str, file_size: usize) -> PyResult<(u32, usize,
     }) {
         Ok(Ok(ptr)) => ptr,
         Ok(Err(e)) => {
-            return Err(PyErr::new::<MachRemapError, _>(
-                e.to_string(),
-                "mmap_failed".into(),
-            ));
+            return Err(PyRuntimeError::new_err(format!("mmap failed: {}", e)));
         }
         Err(_) => {
-            return Err(PyErr::new::<MachRemapError, _>(
-                "panic in mmap".into(),
-                "panic".into(),
-            ));
+            return Err(PyRuntimeError::new_err("panic in mmap"));
         }
     };
 
@@ -644,10 +577,7 @@ pub fn vm_remap_file(file_path: &str, file_size: usize) -> PyResult<(u32, usize,
         let fd = unsafe { libc::open(file_path.as_ptr() as *const i8, libc::O_RDONLY) };
         if fd < 0 {
             let _ = unsafe { libc::munmap(src_ptr, mapped_size) };
-            return Err(PyErr::new::<MachRemapError, _>(
-                format!("open({}) failed with errno {}", file_path, fd),
-                "open_failed".into(),
-            ));
+            return Err(PyRuntimeError::new_err(format!("open({}) failed with errno {}", file_path, fd)));
         }
 
         let mut remaining = file_size;
@@ -660,10 +590,7 @@ pub fn vm_remap_file(file_path: &str, file_size: usize) -> PyResult<(u32, usize,
             if n < 0 {
                 unsafe { libc::close(fd) };
                 let _ = unsafe { libc::munmap(src_ptr, mapped_size) };
-                return Err(PyErr::new::<MachRemapError, _>(
-                    "read failed".into(),
-                    "read_failed".into(),
-                ));
+                return Err(PyRuntimeError::new_err(""read failed" (read_failed)"));
             }
             remaining -= n as usize;
             offset += n as isize;
@@ -676,10 +603,7 @@ pub fn vm_remap_file(file_path: &str, file_size: usize) -> PyResult<(u32, usize,
     let mut pipe_fds: [i32; 2] = [0, 0];
     if unsafe { libc::pipe(pipe_fds.as_mut_ptr()) } != 0 {
         let _ = unsafe { libc::munmap(src_ptr, mapped_size) };
-        return Err(PyErr::new::<MachRemapError, _>(
-            "pipe() failed".into(),
-            "pipe_failed".into(),
-        ));
+        return Err(PyRuntimeError::new_err(""pipe() failed" (pipe_failed)"));
     }
     let pipe_read = pipe_fds[0];
     let pipe_write = pipe_fds[1];
@@ -691,10 +615,7 @@ pub fn vm_remap_file(file_path: &str, file_size: usize) -> PyResult<(u32, usize,
         unsafe { libc::close(pipe_read) };
         unsafe { libc::close(pipe_write) };
         let _ = unsafe { libc::munmap(src_ptr, mapped_size) };
-        return Err(PyErr::new::<MachRemapError, _>(
-            "fork() failed".into(),
-            "fork_failed".into(),
-        ));
+        return Err(PyRuntimeError::new_err(""fork() failed" (fork_failed)"));
     }
 
     if pid == 0 {
@@ -809,10 +730,7 @@ pub fn vm_remap_file(file_path: &str, file_size: usize) -> PyResult<(u32, usize,
     unsafe { libc::close(pipe_write) };
     if n < 0 {
         unsafe { libc::munmap(src_ptr, mapped_size) };
-        return Err(PyErr::new::<MachRemapError, _>(
-            "pipe write failed".into(),
-            "pipe_write_failed".into(),
-        ));
+        return Err(PyRuntimeError::new_err(""pipe write failed" (pipe_write_failed)"));
     }
 
     // Update telemetry
@@ -854,31 +772,22 @@ pub fn vm_remap_and_exec(
 ) -> PyResult<(u32, usize, usize)> {
     // Feature gate check
     if std::env::var("HLEDAC_ENABLE_MACH_REMAP").as_deref() != Ok("1") {
-        return Err(PyErr::new::<MachRemapError, _>(
-            "HLEDAC_ENABLE_MACH_REMAP=1 not set".into(),
-            "not_enabled".into(),
-        ));
+        return Err(PyRuntimeError::new_err(""HLEDAC_ENABLE_MACH_REMAP=1 not set" (not_enabled)"));
     }
 
     #[cfg(not(target_os = "macos"))]
     {
-        return Err(PyErr::new::<MachRemapError, _>(
-            "Only supported on macOS".into(),
-            "unsupported_platform".into(),
-        ));
+        return Err(PyRuntimeError::new_err(""Only supported on macOS" (unsupported_platform)"));
     }
 
     // Memory guard
     let available = get_available_memory_bytes();
     const MEMORY_FLOOR: u64 = (3 * 1024 / 2) * 1024 * 1024;
     if available < MEMORY_FLOOR {
-        return Err(PyErr::new::<MachRemapError, _>(
-            format!(
-                "available_memory={:.2} GiB < floor=1.5 GiB",
-                available as f64 / (1024.0 * 1024.0 * 1024.0)
-            ),
-            "memory_guard".into(),
-        ));
+        return Err(PyRuntimeError::new_err(format!(
+            "available_memory={:.2} GiB < floor=1.5 GiB",
+            available as f64 / (1024.0 * 1024.0 * 1024.0)
+        )));
     }
 
     // Concurrent remap guard
@@ -886,10 +795,7 @@ pub fn vm_remap_and_exec(
         .compare_exchange(false, true, Ordering::Acquire, Ordering::Relaxed)
         .is_ok()
     {
-        return Err(PyErr::new::<MachRemapError, _>(
-            "another remap is already in progress".into(),
-            "concurrent_remap".into(),
-        ));
+        return Err(PyRuntimeError::new_err(""another remap is already in progress" (concurrent_remap)"));
     }
 
     struct SemGuard;
@@ -923,16 +829,10 @@ pub fn vm_remap_and_exec(
     }) {
         Ok(Ok(ptr)) => ptr,
         Ok(Err(e)) => {
-            return Err(PyErr::new::<MachRemapError, _>(
-                e.to_string(),
-                "mmap_failed".into(),
-            ));
+            return Err(PyRuntimeError::new_err(format!("mmap failed: {}", e)));
         }
         Err(_) => {
-            return Err(PyErr::new::<MachRemapError, _>(
-                "panic in mmap".into(),
-                "panic".into(),
-            ));
+            return Err(PyRuntimeError::new_err("panic in mmap"));
         }
     };
 
@@ -941,10 +841,7 @@ pub fn vm_remap_and_exec(
         let fd = unsafe { libc::open(file_path.as_ptr() as *const i8, libc::O_RDONLY) };
         if fd < 0 {
             let _ = unsafe { libc::munmap(src_ptr, mapped_size) };
-            return Err(PyErr::new::<MachRemapError, _>(
-                format!("open({}) failed with errno {}", file_path, fd),
-                "open_failed".into(),
-            ));
+            return Err(PyRuntimeError::new_err(format!("open({}) failed with errno {}", file_path, fd)));
         }
 
         let mut remaining = file_size;
@@ -957,10 +854,7 @@ pub fn vm_remap_and_exec(
             if n < 0 {
                 unsafe { libc::close(fd) };
                 let _ = unsafe { libc::munmap(src_ptr, mapped_size) };
-                return Err(PyErr::new::<MachRemapError, _>(
-                    "read failed".into(),
-                    "read_failed".into(),
-                ));
+                return Err(PyRuntimeError::new_err(""read failed" (read_failed)"));
             }
             remaining -= n as usize;
             offset += n as isize;
@@ -973,10 +867,7 @@ pub fn vm_remap_and_exec(
     let mut pipe_fds: [i32; 2] = [0; 2];
     if unsafe { libc::pipe(pipe_fds.as_mut_ptr()) } != 0 {
         let _ = unsafe { libc::munmap(src_ptr, mapped_size) };
-        return Err(PyErr::new::<MachRemapError, _>(
-            "pipe() failed".into(),
-            "pipe_failed".into(),
-        ));
+        return Err(PyRuntimeError::new_err(""pipe() failed" (pipe_failed)"));
     }
     let pipe_read = pipe_fds[0];
     let pipe_write = pipe_fds[1];
@@ -988,10 +879,7 @@ pub fn vm_remap_and_exec(
         unsafe { libc::close(pipe_read) };
         unsafe { libc::close(pipe_write) };
         let _ = unsafe { libc::munmap(src_ptr, mapped_size) };
-        return Err(PyErr::new::<MachRemapError, _>(
-            "fork() failed".into(),
-            "fork_failed".into(),
-        ));
+        return Err(PyRuntimeError::new_err(""fork() failed" (fork_failed)"));
     }
 
     if pid == 0 {
@@ -1094,10 +982,7 @@ pub fn vm_remap_and_exec(
     unsafe { libc::close(pipe_write) };
     if n < 0 {
         unsafe { libc::munmap(src_ptr, mapped_size) };
-        return Err(PyErr::new::<MachRemapError, _>(
-            "pipe write failed".into(),
-            "pipe_write_failed".into(),
-        ));
+        return Err(PyRuntimeError::new_err(""pipe write failed" (pipe_write_failed)"));
     }
 
     // Update telemetry

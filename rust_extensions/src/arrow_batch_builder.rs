@@ -15,9 +15,9 @@
 //! 1. GIL acquired ONCE for entire batch (PyO3 `Python::acquire_gil()`)
 //! 2. Iterate CanonicalFinding list via PyO3 0.29+ `Bound<PyList>::iter()`
 //! 3. Parse each finding into `FindingsRow` struct
-//! 4. Build IPC message using hand-rolled Arrow IPC RecordBatch encoding
-//!    (no flatbuffers dep, no arrow crate, no arrow-arith/chrono conflict)
-//! 5. Serialize RecordBatch to bytes (IPC RecordBatchStream format)
+//! 4. Build proper Arrow RecordBatch using arrow crate (Schema + Arrays)
+//! 5. Serialize to IPC stream using arrow::ipc::writer::StreamWriter
+//!    (MODERN-17 FIX: real Arrow IPC, no more hand-rolled ARROW1\xff framing)
 //! 6. Return `Py<PyBytes>` — Python calls `pa.ipc.open_stream()` directly
 //!
 //! ## M1 8GB Safety
@@ -36,6 +36,10 @@ use pyo3::prelude::*;
 use pyo3::types::{PyBytes, PyList, PyTuple};
 use rayon::prelude::*;
 
+use arrow::array::{ArrayRef, Float64Array, RecordBatch, StringArray};
+use arrow::datatypes::{DataType, Field, Schema};
+use arrow::ipc::writer::StreamWriter;
+
 use crate::mixed_pool;
 
 // ---------------------------------------------------------------------------
@@ -51,6 +55,9 @@ const MAX_FINDINGS_PER_CALL: usize = 50_000;
 
 /// CanonicalFinding dict → Rust struct. Fields cloned into column vectors by
 /// build_columns / build_columns_parallel. GIL held only during this collect().
+///
+/// MODERN-20 FIX: Added claims_json field (8-column schema).
+/// Schema: id, query, source_type, confidence, ts, provenance_json, payload_text, claims_json
 #[derive(Debug, Clone, Default)]
 struct FindingsRow {
     id: String,
@@ -60,6 +67,7 @@ struct FindingsRow {
     ts: f64,
     provenance_json: String,
     payload_text: String,
+    claims_json: String,  // MODERN-20: Added for 8-column schema consistency
 }
 
 impl FindingsRow {
@@ -104,133 +112,28 @@ impl FindingsRow {
                 .and_then(|v| v.str())
                 .map(|s| s.to_string_lossy().into_owned())
                 .unwrap_or_default(),
+            // MODERN-20: claims_json field extracted from CanonicalFinding dict
+            claims_json: item
+                .get_item("claims_json")
+                .and_then(|v| v.str())
+                .map(|s| s.to_string_lossy().into_owned())
+                .unwrap_or_default(),
         }
     }
 }
 
 // ---------------------------------------------------------------------------
-// Arrow IPC RecordBatch encoding (hand-rolled)
+// Arrow IPC RecordBatch encoding (proper Arrow IPC via arrow crate)
+// MODERN-17: Replaces hand-rolled ARROW1\xff framing with real Arrow IPC.
+// The arrow crate handles FlatBuffers schema/recordbath metadata correctly.
+// Python's pa.ipc.open_stream() now works — real zero-copy deserialization.
 // ---------------------------------------------------------------------------
 
-/// Encode a string array as IPC format: null_bitmap + offsets + data bytes.
-/// Arrow IPC spec: null_bitmap MSB first per byte, 1 = valid, 0 = null.
-/// All-valid bitmap = 0xFF bytes (not 0x00 as was the bug).
-fn encode_string_array(values: &[String]) -> Vec<u8> {
-    let n_values = values.len();
-
-    // Null bitmap: 1 bit per value, MSB first. All-valid = all 1s.
-    let null_len = n_values.div_ceil(8);
-    let mut null_bitmap = vec![0u8; null_len];
-    for i in 0..n_values {
-        null_bitmap[i / 8] |= 1 << (7 - (i % 8));
-    }
-
-    // Offsets (i32 LE)
-    let mut offsets = Vec::with_capacity((n_values + 1) * 4);
-    offsets.push(0i32);
-    let mut cum: usize = 0;
-    for v in values {
-        cum += v.len();
-        offsets.push(cum as i32);
-    }
-    let total_data = cum;
-
-    // Layout: null_bitmap | offsets | data
-    let mut result = Vec::with_capacity(null_len + (n_values + 1) * 4 + total_data);
-    result.extend_from_slice(&null_bitmap);
-    for off in &offsets {
-        result.extend_from_slice(&off.to_le_bytes());
-    }
-    // Direct write — no intermediate Vec<_> + concat() (saves 2 allocations)
-    for v in values {
-        result.extend_from_slice(v.as_bytes());
-    }
-    result
-}
-
-/// Encode f64 array as IPC format: null_bitmap + data bytes.
-/// Arrow IPC spec: null_bitmap MSB first per byte, 1 = valid, 0 = null.
-/// All-valid bitmap = 0xFF bytes (not 0x00 as was the bug).
-fn encode_f64_array(values: &[f64]) -> Vec<u8> {
-    let n = values.len();
-    let null_len = n.div_ceil(8);
-
-    // Build null bitmap: 1 bit per value, MSB first. All-valid = all 1s.
-    let mut null_bitmap = vec![0u8; null_len];
-    for i in 0..n {
-        null_bitmap[i / 8] |= 1 << (7 - (i % 8));
-    }
-
-    let data_len = n * 8;
-    let mut result = Vec::with_capacity(null_len + data_len);
-    result.extend_from_slice(&null_bitmap);
-
-    // Encode all f64 values as little-endian bytes
-    let mut data = vec![0u8; data_len];
-    for (i, &v) in values.iter().enumerate() {
-        let bytes = v.to_le_bytes();
-        data[i * 8..(i + 1) * 8].copy_from_slice(&bytes);
-    }
-    result.extend_from_slice(&data);
-    result
-}
-
-/// Arrow IPC field encoding (simplified flatbuffers inline).
-fn encode_field(name: &str, type_code: i32) -> Vec<u8> {
-    let mut buf = Vec::new();
-    let name_bytes = name.as_bytes();
-    buf.extend_from_slice(&(name_bytes.len() as i32).to_le_bytes());
-    buf.extend_from_slice(name_bytes);
-    buf.extend_from_slice(&type_code.to_le_bytes());
-    buf.extend_from_slice(&1i32.to_le_bytes()); // nullable
-    buf.extend_from_slice(&0i64.to_le_bytes()); // length
-    buf
-}
-
-/// Arrow IPC schema body (no flatbuffers dependency).
-fn make_schema_body() -> Vec<u8> {
-    let mut body = Vec::new();
-    // id: Utf8
-    body.extend_from_slice(&encode_field("id", 4));
-    // query: Utf8
-    body.extend_from_slice(&encode_field("query", 4));
-    // source_type: Utf8
-    body.extend_from_slice(&encode_field("source_type", 4));
-    // confidence: Float64
-    body.extend_from_slice(&encode_field("confidence", 6));
-    // ts: Float64
-    body.extend_from_slice(&encode_field("ts", 6));
-    // provenance_json: Utf8
-    body.extend_from_slice(&encode_field("provenance_json", 4));
-    // payload_text: Utf8
-    body.extend_from_slice(&encode_field("payload_text", 4));
-    body
-}
-
-/// Arrow IPC RecordBatch body (column buffers).
-fn make_batch_body(
-    ids: &[String],
-    queries: &[String],
-    source_types: &[String],
-    confidences: &[f64],
-    timestamps: &[f64],
-    provenance_jsons: &[String],
-    payload_texts: &[String],
-) -> Vec<u8> {
-    let mut body = Vec::new();
-    body.extend_from_slice(&encode_string_array(ids));
-    body.extend_from_slice(&encode_string_array(queries));
-    body.extend_from_slice(&encode_string_array(source_types));
-    body.extend_from_slice(&encode_f64_array(confidences));
-    body.extend_from_slice(&encode_f64_array(timestamps));
-    body.extend_from_slice(&encode_string_array(provenance_jsons));
-    body.extend_from_slice(&encode_string_array(payload_texts));
-    body
-}
-
-/// Build complete Arrow IPC RecordBatch bytes (RecordBatchStream format).
-/// Format: magic(8) + schema_size(4) + schema_body + batch_count(4) + batch_size(4) + batch_body + footer(4)
-/// Arrow IPC spec v4: magic = "ARROW1" + 4×0xff padding
+/// Build proper Arrow IPC RecordBatch bytes using StreamWriter.
+/// MODERN-17 FIX: Uses arrow::ipc::writer::StreamWriter instead of hand-rolled
+/// ARROW1\xff\xff\xff\xff magic. This produces valid Arrow IPC stream format
+/// that PyArrow's pa.ipc.open_stream() can parse.
+/// MODERN-20 FIX: Added claims_json field for 8-column schema consistency.
 fn build_ipc_bytes(
     ids: Vec<String>,
     queries: Vec<String>,
@@ -239,47 +142,66 @@ fn build_ipc_bytes(
     timestamps: Vec<f64>,
     provenance_jsons: Vec<String>,
     payload_texts: Vec<String>,
-    n: usize,
+    claims_jsons: Vec<String>,  // MODERN-20: Added for 8-column schema
+    _n: usize,  // Kept for API compatibility (actual length derived from column arrays)
 ) -> Result<Vec<u8>, String> {
-    if n == 0 {
-        // Empty batch: valid Arrow IPC stream with schema but no batches.
-        // Format: magic(8) + schema_size(4) + schema_body + batch_count(0) + footer(4)
-        let schema_body = make_schema_body();
-        let mut result = Vec::with_capacity(24 + schema_body.len());
-        result.extend_from_slice(b"ARROW1\xff\xff\xff\xff");
-        result.extend_from_slice(&(schema_body.len() as u32).to_le_bytes());
-        result.extend_from_slice(&schema_body);
-        result.extend_from_slice(&(0u32).to_le_bytes()); // batch_count = 0
-        result.extend_from_slice(&0u32.to_le_bytes()); // footer = end marker
-        return Ok(result);
+    // Build Arrow Schema with 8 fields (MODERN-20: includes claims_json)
+    let schema = Schema::new(vec![
+        Field::new("id", DataType::Utf8, true),
+        Field::new("query", DataType::Utf8, true),
+        Field::new("source_type", DataType::Utf8, true),
+        Field::new("confidence", DataType::Float64, true),
+        Field::new("ts", DataType::Float64, true),
+        Field::new("provenance_json", DataType::Utf8, true),
+        Field::new("payload_text", DataType::Utf8, true),
+        Field::new("claims_json", DataType::Utf8, true),  // MODERN-20: Added
+    ]);
+
+    // Build column arrays
+    let ids_array: ArrayRef = std::sync::Arc::new(StringArray::from(ids));
+    let queries_array: ArrayRef = std::sync::Arc::new(StringArray::from(queries));
+    let source_types_array: ArrayRef = std::sync::Arc::new(StringArray::from(source_types));
+    let confidences_array: ArrayRef = std::sync::Arc::new(Float64Array::from(confidences));
+    let timestamps_array: ArrayRef = std::sync::Arc::new(Float64Array::from(timestamps));
+    let provenance_jsons_array: ArrayRef = std::sync::Arc::new(StringArray::from(provenance_jsons));
+    let payload_texts_array: ArrayRef = std::sync::Arc::new(StringArray::from(payload_texts));
+    let claims_jsons_array: ArrayRef = std::sync::Arc::new(StringArray::from(claims_jsons));  // MODERN-20: Added
+
+    // Create RecordBatch (requires Arc<Schema>)
+    let schema_ref: std::sync::Arc<arrow::datatypes::Schema> = std::sync::Arc::new(schema);
+    let batch = RecordBatch::try_new(
+        schema_ref.clone(),
+        vec![
+            ids_array,
+            queries_array,
+            source_types_array,
+            confidences_array,
+            timestamps_array,
+            provenance_jsons_array,
+            payload_texts_array,
+            claims_jsons_array,  // MODERN-20: Added
+        ],
+    )
+    .map_err(|e| format!("Failed to create RecordBatch: {}", e))?;
+
+    // Serialize to IPC stream format using StreamWriter
+    let mut buffer = Vec::new();
+    {
+        let mut writer = StreamWriter::try_new(&mut buffer, schema_ref.as_ref())
+            .map_err(|e| format!("Failed to create StreamWriter: {}", e))?;
+
+        writer.write(&batch)
+            .map_err(|e| format!("Failed to write RecordBatch: {}", e))?;
+
+        writer.finish()
+            .map_err(|e| format!("Failed to finish stream: {}", e))?;
     }
 
-    let schema_body = make_schema_body();
-    let batch_body = make_batch_body(
-        &ids,
-        &queries,
-        &source_types,
-        &confidences,
-        &timestamps,
-        &provenance_jsons,
-        &payload_texts,
-    );
-
-    // IPC stream: magic(8) + schema_size(4) + schema + batch_count(4) + batch_size(4) + batch + footer(4)
-    let mut result = Vec::with_capacity(24 + schema_body.len() + batch_body.len());
-    result.extend_from_slice(b"ARROW1\xff\xff\xff\xff"); // 8-byte magic with padding (Arrow IPC spec v4)
-    result.extend_from_slice(&(schema_body.len() as u32).to_le_bytes());
-    result.extend_from_slice(&schema_body);
-    result.extend_from_slice(&(1u32).to_le_bytes()); // batch_count = 1
-    result.extend_from_slice(&(batch_body.len() as u32).to_le_bytes());
-    result.extend_from_slice(&batch_body);
-    result.extend_from_slice(&0u32.to_le_bytes()); // footer = end marker
-
-    Ok(result)
+    Ok(buffer)
 }
 
 // ---------------------------------------------------------------------------
-// Column builders (serial + parallel)
+// Column builders (serial + parallel) — MODERN-20: 8 columns
 // ---------------------------------------------------------------------------
 
 fn build_columns(
@@ -292,6 +214,7 @@ fn build_columns(
     Vec<f64>,
     Vec<String>,
     Vec<String>,
+    Vec<String>,  // MODERN-20: Added claims_json
 ) {
     let n = rows.len();
     let mut ids = Vec::with_capacity(n);
@@ -301,6 +224,7 @@ fn build_columns(
     let mut timestamps = Vec::with_capacity(n);
     let mut provenance_jsons = Vec::with_capacity(n);
     let mut payload_texts = Vec::with_capacity(n);
+    let mut claims_jsons = Vec::with_capacity(n);  // MODERN-20: Added
     for row in rows {
         ids.push(row.id.clone());
         queries.push(row.query.clone());
@@ -309,6 +233,7 @@ fn build_columns(
         timestamps.push(row.ts);
         provenance_jsons.push(row.provenance_json.clone());
         payload_texts.push(row.payload_text.clone());
+        claims_jsons.push(row.claims_json.clone());  // MODERN-20: Added
     }
     (
         ids,
@@ -318,12 +243,14 @@ fn build_columns(
         timestamps,
         provenance_jsons,
         payload_texts,
+        claims_jsons,  // MODERN-20: Added
     )
 }
 
 /// Single-pass columnar transpose via par_chunks + reduce.
 /// Replaces 6× par_iter() (6 Rayon scopes → 1 scope).
 /// Chunking by 1024 improves cache locality vs flat par_iter.
+/// MODERN-20: Extended to 8 columns including claims_json.
 fn build_columns_parallel(
     rows: &[FindingsRow],
 ) -> (
@@ -334,6 +261,7 @@ fn build_columns_parallel(
     Vec<f64>,
     Vec<String>,
     Vec<String>,
+    Vec<String>,  // MODERN-20: Added claims_json
 ) {
     const CHUNK_SIZE: usize = 1024;
 
@@ -346,6 +274,7 @@ fn build_columns_parallel(
             let mut timestamps = Vec::with_capacity(chunk.len());
             let mut provenance_jsons = Vec::with_capacity(chunk.len());
             let mut payload_texts = Vec::with_capacity(chunk.len());
+            let mut claims_jsons = Vec::with_capacity(chunk.len());  // MODERN-20: Added
 
             for row in chunk {
                 ids.push(row.id.clone());
@@ -355,6 +284,7 @@ fn build_columns_parallel(
                 timestamps.push(row.ts);
                 provenance_jsons.push(row.provenance_json.clone());
                 payload_texts.push(row.payload_text.clone());
+                claims_jsons.push(row.claims_json.clone());  // MODERN-20: Added
             }
 
             (
@@ -365,6 +295,7 @@ fn build_columns_parallel(
                 timestamps,
                 provenance_jsons,
                 payload_texts,
+                claims_jsons,  // MODERN-20: Added
             )
         })
         .reduce(
@@ -377,10 +308,11 @@ fn build_columns_parallel(
                     Vec::new(),
                     Vec::new(),
                     Vec::new(),
+                    Vec::new(),  // MODERN-20: Added
                 )
             },
-            |(mut a_ids, mut a_q, mut a_st, mut a_c, mut a_ts, mut a_p, mut a_pl),
-             (b_ids, b_q, b_st, b_c, b_ts, b_p, b_pl)| {
+            |(mut a_ids, mut a_q, mut a_st, mut a_c, mut a_ts, mut a_p, mut a_pl, mut a_cl),
+             (b_ids, b_q, b_st, b_c, b_ts, b_p, b_pl, b_cl)| {
                 a_ids.extend(b_ids);
                 a_q.extend(b_q);
                 a_st.extend(b_st);
@@ -388,7 +320,8 @@ fn build_columns_parallel(
                 a_ts.extend(b_ts);
                 a_p.extend(b_p);
                 a_pl.extend(b_pl);
-                (a_ids, a_q, a_st, a_c, a_ts, a_p, a_pl)
+                a_cl.extend(b_cl);  // MODERN-20: Added
+                (a_ids, a_q, a_st, a_c, a_ts, a_p, a_pl, a_cl)
             },
         )
 }
@@ -428,15 +361,15 @@ pub fn build_arrow_batch_from_findings<'py>(
         .map(|item| FindingsRow::from_dict(&item))
         .collect();
 
-    // Build columns (parallel if N >= threshold)
-    let (ids, queries, source_types, confidences, timestamps, provenance_jsons, payload_texts) =
+    // Build columns (parallel if N >= threshold) — MODERN-20: 8 columns
+    let (ids, queries, source_types, confidences, timestamps, provenance_jsons, payload_texts, claims_jsons) =
         if n < PARALLEL_THRESHOLD {
             build_columns(&rows)
         } else {
             mixed_pool(n).install(|| build_columns_parallel(&rows))
         };
 
-    // Serialize to IPC
+    // Serialize to IPC — MODERN-20: includes claims_json
     let ipc_bytes = match build_ipc_bytes(
         ids,
         queries,
@@ -445,6 +378,7 @@ pub fn build_arrow_batch_from_findings<'py>(
         timestamps,
         provenance_jsons,
         payload_texts,
+        claims_jsons,
         n,
     ) {
         Ok(bytes) => bytes,
@@ -458,6 +392,9 @@ pub fn build_arrow_batch_from_findings<'py>(
 ///
 /// Compression reduces memory footprint for cold storage by ~2-3×.
 /// Wire format: [4-byte uncompressed size][LZ4-compressed IPC bytes]
+/// MODERN-17: Uses arrow::ipc::writer::StreamWriter — proper Arrow IPC encoding.
+/// Python pa.ipc.open_stream() now works correctly after decompression.
+/// MODERN-20: Now includes claims_json in 8-column schema.
 ///
 /// Args:
 ///     findings: Python list of CanonicalFinding dicts
@@ -485,15 +422,15 @@ pub fn build_compressed_arrow_batch_from_findings<'py>(
         .map(|item| FindingsRow::from_dict(&item))
         .collect();
 
-    // Build columns (parallel if N >= threshold)
-    let (ids, queries, source_types, confidences, timestamps, provenance_jsons, payload_texts) =
+    // Build columns (parallel if N >= threshold) — MODERN-20: 8 columns
+    let (ids, queries, source_types, confidences, timestamps, provenance_jsons, payload_texts, claims_jsons) =
         if n < PARALLEL_THRESHOLD {
             build_columns(&rows)
         } else {
             mixed_pool(n).install(|| build_columns_parallel(&rows))
         };
 
-    // Serialize to IPC
+    // Serialize to IPC — MODERN-20: includes claims_json
     let ipc_bytes = match build_ipc_bytes(
         ids,
         queries,
@@ -502,6 +439,7 @@ pub fn build_compressed_arrow_batch_from_findings<'py>(
         timestamps,
         provenance_jsons,
         payload_texts,
+        claims_jsons,
         n,
     ) {
         Ok(bytes) => bytes,
@@ -542,17 +480,20 @@ pub fn build_compressed_arrow_batch_from_findings<'py>(
 //   Savings: ~7× fewer Python object lookups; str() chain unchanged
 // ---------------------------------------------------------------------------
 
-/// Build Arrow IPC RecordBatch bytes from 7 pre-separated PyList column slices.
+/// Build Arrow IPC RecordBatch bytes from 8 pre-separated PyList column slices.
+/// MODERN-20: Extended to 8 columns including claims_json.
 ///
 /// P4-7: Column-path replacement for build_arrow_batch_from_findings.
 /// Avoids dict roundtrip by accepting (ids, queries, source_types, confidences,
-/// timestamps, provenance_jsons, payload_texts) as individual PyList references.
+/// timestamps, provenance_jsons, payload_texts, claims_jsons) as individual PyList references.
 /// Uses single-pass iterators — 1 Python iteration per list instead of 7× index
 /// lookups per row (ISSUE-007 fix). PyUnicode → Rust String is still a copy
 /// (no zero-copy from Python heap), but per-row overhead drops ~7×.
 ///
-/// Schema: id, query, source_type, confidence, ts, provenance_json, payload_text
-/// IPC format: RecordBatchStream (magic + schema + batch_count + batch_body + footer)
+/// Schema: id, query, source_type, confidence, ts, provenance_json, payload_text, claims_json
+/// MODERN-17: Uses arrow::ipc::writer::StreamWriter for proper Arrow IPC encoding.
+/// Python pa.ipc.open_stream() now works correctly.
+/// MODERN-20: Includes claims_json for 8-column schema consistency.
 ///
 /// Args:
 ///     ids: PyList[str] — finding IDs
@@ -562,6 +503,7 @@ pub fn build_compressed_arrow_batch_from_findings<'py>(
 ///     timestamps: PyList[float] — UNIX timestamps
 ///     provenance_jsons: PyList[str] — JSON-encoded provenance tuples
 ///     payload_texts: PyList[str] — raw text content (scrubbed before insert)
+///     claims_jsons: PyList[str] — JSON-encoded claims (MODERN-20: added)
 ///
 /// Returns:
 ///     `bytes` Arrow IPC RecordBatchStream bytes, or `None` on error.
@@ -574,17 +516,19 @@ pub fn build_record_batch_from_structs<'py>(
     timestamps: &'py Bound<'py, PyList>,
     provenance_jsons: &'py Bound<'py, PyList>,
     payload_texts: &'py Bound<'py, PyList>,
+    claims_jsons: &'py Bound<'py, PyList>,  // MODERN-20: Added 8th column
     py: Python<'py>,
 ) -> PyResult<Option<Bound<'py, PyBytes>>> {
     let n = ids.len();
 
-    // All columns must be same length
+    // All columns must be same length — MODERN-20: 8 columns
     if n != queries.len()
         || n != source_types.len()
         || n != confidences.len()
         || n != timestamps.len()
         || n != provenance_jsons.len()
         || n != payload_texts.len()
+        || n != claims_jsons.len()  // MODERN-20: Added
     {
         return Ok(None);
     }
@@ -605,6 +549,7 @@ pub fn build_record_batch_from_structs<'py>(
     let mut timestamps_out: Vec<f64> = Vec::with_capacity(n);
     let mut provenance_jsons_out: Vec<String> = Vec::with_capacity(n);
     let mut payload_texts_out: Vec<String> = Vec::with_capacity(n);
+    let mut claims_jsons_out: Vec<String> = Vec::with_capacity(n);  // MODERN-20: Added
 
     // Single-pass iterátor: 1× Python iteration per list, ne 7× indexovaný get_item.
     // ISSUE-007 fix: starý kód volal get_item(i) 7× + str() 6× + to_string_lossy() 6× per row.
@@ -616,6 +561,7 @@ pub fn build_record_batch_from_structs<'py>(
     let mut timestamps_iter = timestamps.iter();
     let mut provenance_jsons_iter = provenance_jsons.iter();
     let mut payload_texts_iter = payload_texts.iter();
+    let mut claims_jsons_iter = claims_jsons.iter();  // MODERN-20: Added
 
     loop {
         match (
@@ -626,6 +572,7 @@ pub fn build_record_batch_from_structs<'py>(
             timestamps_iter.next(),
             provenance_jsons_iter.next(),
             payload_texts_iter.next(),
+            claims_jsons_iter.next(),  // MODERN-20: Added
         ) {
             (
                 Some(id_item),
@@ -635,6 +582,7 @@ pub fn build_record_batch_from_structs<'py>(
                 Some(ts_item),
                 Some(prov_item),
                 Some(payload_item),
+                Some(claims_item),  // MODERN-20: Added
             ) => {
                 // Jeden .str() na item místo dvou .and_then() call chain.
                 let id_val = id_item
@@ -660,6 +608,10 @@ pub fn build_record_batch_from_structs<'py>(
                     .str()
                     .map(|s| s.to_string_lossy().into_owned())
                     .unwrap_or_default();
+                let claims_val = claims_item  // MODERN-20: Added
+                    .str()
+                    .map(|s| s.to_string_lossy().into_owned())
+                    .unwrap_or_default();
 
                 ids_out.push(id_val);
                 queries_out.push(query_val);
@@ -668,12 +620,13 @@ pub fn build_record_batch_from_structs<'py>(
                 timestamps_out.push(ts_val);
                 provenance_jsons_out.push(prov_val);
                 payload_texts_out.push(payload_val);
+                claims_jsons_out.push(claims_val);  // MODERN-20: Added
             }
             _ => break,
         }
     }
 
-    // Build IPC bytes
+    // Build IPC bytes — MODERN-20: includes claims_json
     let ipc_bytes = match build_ipc_bytes(
         ids_out,
         queries_out,
@@ -682,6 +635,7 @@ pub fn build_record_batch_from_structs<'py>(
         timestamps_out,
         provenance_jsons_out,
         payload_texts_out,
+        claims_jsons_out,
         n,
     ) {
         Ok(bytes) => bytes,
@@ -716,6 +670,7 @@ pub fn build_record_batch_from_structs<'py>(
 // ---------------------------------------------------------------------------
 
 /// Build Arrow IPC RecordBatch bytes from a list of CanonicalFinding structs.
+/// MODERN-20: Extended to 8 columns including claims_json.
 ///
 /// ISSUE-001 fix: Single-pass iteration over list[CanonicalFinding] via PyO3
 /// Bound API — eliminates 7× Python list comprehensions (7N allocations).
@@ -728,13 +683,17 @@ pub fn build_record_batch_from_structs<'py>(
 /// payload_text in 2 single passes before calling this function.
 /// Rust handles all other field extraction in one loop.
 ///
-/// Schema: id, query, source_type, confidence, ts, provenance_json, payload_text
+/// Schema: id, query, source_type, confidence, ts, provenance_json, payload_text, claims_json
+/// MODERN-17: Uses arrow::ipc::writer::StreamWriter for proper Arrow IPC encoding.
+/// Python pa.ipc.open_stream() now works correctly.
+/// MODERN-20: Includes claims_json for 8-column schema consistency.
 ///
 /// Args:
 ///     findings: Python list of CanonicalFinding msgspec.Struct instances
 ///     provenance_jsons: Python list of pre-encoded provenance bytes (from
 ///         _provenance_to_arrow_native — Arrow-native bytes or None)
 ///     payload_texts: Python list of scrubbed payload_text strings (SEC-01)
+///     claims_jsons: Python list of claims_json strings (MODERN-20: added)
 ///
 /// Returns:
 ///     `bytes` Arrow IPC RecordBatchStream bytes, or `None` on error.
@@ -743,6 +702,7 @@ pub fn build_record_batch_from_findings<'py>(
     findings: &'py Bound<'py, PyList>,
     provenance_jsons: &'py Bound<'py, PyList>,
     payload_texts: &'py Bound<'py, PyList>,
+    claims_jsons: &'py Bound<'py, PyList>,  // MODERN-20: Added 8th column
     py: Python<'py>,
 ) -> PyResult<Option<Bound<'py, PyBytes>>> {
     let n = findings.len();
@@ -755,8 +715,8 @@ pub fn build_record_batch_from_findings<'py>(
         return Ok(None);
     }
 
-    // Validate column lengths match
-    if n != provenance_jsons.len() || n != payload_texts.len() {
+    // Validate column lengths match — MODERN-20: 4 PyLists (was 3)
+    if n != provenance_jsons.len() || n != payload_texts.len() || n != claims_jsons.len() {
         return Ok(None);
     }
 
@@ -768,14 +728,16 @@ pub fn build_record_batch_from_findings<'py>(
     let mut timestamps_out: Vec<f64> = Vec::with_capacity(n);
     let mut provenance_jsons_out: Vec<String> = Vec::with_capacity(n);
     let mut payload_texts_out: Vec<String> = Vec::with_capacity(n);
+    let mut claims_jsons_out: Vec<String> = Vec::with_capacity(n);  // MODERN-20: Added
 
-    // ISSUE-007 pattern: iter() on all 3 PyLists — 1 C-API traversal per list
+    // ISSUE-007 pattern: iter() on all 4 PyLists — 1 C-API traversal per list
     // instead of N× get_item(i) index lookups. findings items need struct
-    // field extraction (nested get_item), provenance_jsons + payload_texts
+    // field extraction (nested get_item), provenance_jsons + payload_texts + claims_jsons
     // are simple strings via iter() + next().
     let mut findings_iter = findings.iter();
     let mut prov_iter = provenance_jsons.iter();
     let mut payload_iter = payload_texts.iter();
+    let mut claims_iter = claims_jsons.iter();  // MODERN-20: Added
 
     loop {
         let item = match findings_iter.next() {
@@ -787,6 +749,10 @@ pub fn build_record_batch_from_findings<'py>(
             None => break,
         };
         let payload_item = match payload_iter.next() {
+            Some(it) => it,
+            None => break,
+        };
+        let claims_item = match claims_iter.next() {  // MODERN-20: Added
             Some(it) => it,
             None => break,
         };
@@ -834,6 +800,12 @@ pub fn build_record_batch_from_findings<'py>(
             .map(|s| s.to_string_lossy().into_owned())
             .unwrap_or_default();
 
+        // claims_jsons — JSON-encoded claims (MODERN-20: added)
+        let claims_val = claims_item
+            .str()
+            .map(|s| s.to_string_lossy().into_owned())
+            .unwrap_or_default();
+
         ids_out.push(id_val);
         queries_out.push(query_val);
         source_types_out.push(st_val);
@@ -841,9 +813,11 @@ pub fn build_record_batch_from_findings<'py>(
         timestamps_out.push(ts_val);
         provenance_jsons_out.push(prov_val);
         payload_texts_out.push(payload_val);
+        claims_jsons_out.push(claims_val);  // MODERN-20: Added
     }
 
     // Build IPC bytes — shared encoder handles all entry points
+    // MODERN-20: includes claims_json
     let ipc_bytes = match build_ipc_bytes(
         ids_out,
         queries_out,
@@ -852,6 +826,7 @@ pub fn build_record_batch_from_findings<'py>(
         timestamps_out,
         provenance_jsons_out,
         payload_texts_out,
+        claims_jsons_out,
         n,
     ) {
         Ok(bytes) => bytes,
@@ -987,11 +962,12 @@ pub fn build_findings_from_iocs<'py>(
 
     let actual_n = ids.len();
     let payload_texts: Vec<String> = vec!["".to_string(); actual_n];
+    let claims_jsons: Vec<String> = vec![r#"[]"#.to_string(); actual_n];  // MODERN-20: Empty claims array for IOC findings
     if actual_n == 0 {
         return Ok(Some(PyBytes::new(py, b"")));
     }
 
-    // Serialize to IPC
+    // Serialize to IPC — MODERN-20: includes claims_jsons
     let ipc_bytes = match build_ipc_bytes(
         ids,
         queries,
@@ -1000,6 +976,7 @@ pub fn build_findings_from_iocs<'py>(
         timestamps,
         provenance_jsons,
         payload_texts,
+        claims_jsons,
         actual_n,
     ) {
         Ok(bytes) => bytes,
@@ -1016,6 +993,7 @@ pub fn build_findings_from_iocs<'py>(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use arrow::ipc::reader::StreamReader;
 
     #[test]
     fn test_parallel_threshold() {
@@ -1028,43 +1006,138 @@ mod tests {
     }
 
     #[test]
-    fn test_encode_string_array() {
-        let values = vec!["a".to_string(), "bc".to_string()];
-        let encoded = encode_string_array(&values);
-        assert!(!encoded.is_empty());
+    fn test_build_ipc_bytes_valid_arrow_stream() {
+        // MODERN-17: Test that build_ipc_bytes produces valid Arrow IPC stream
+        // that can be parsed by arrow's StreamReader (same as pa.ipc.open_stream).
+        // MODERN-20: Extended to 8 columns including claims_json.
+        let ids = vec!["id1".to_string(), "id2".to_string()];
+        let queries = vec!["query1".to_string(), "query2".to_string()];
+        let source_types = vec!["type1".to_string(), "type2".to_string()];
+        let confidences = vec![0.9, 0.8];
+        let timestamps = vec![1234567890.0, 1234567891.0];
+        let provenance_jsons = vec!["{}".to_string(), "{}".to_string()];
+        let payload_texts = vec!["text1".to_string(), "text2".to_string()];
+        let claims_jsons = vec![r#"[]"#.to_string(), r#"[]"#.to_string()];  // MODERN-20: Added
+
+        let result = build_ipc_bytes(
+            ids,
+            queries,
+            source_types,
+            confidences,
+            timestamps,
+            provenance_jsons,
+            payload_texts,
+            claims_jsons,  // MODERN-20: Added
+            2,
+        )
+        .expect("build_ipc_bytes should succeed");
+
+        // Verify magic bytes for Arrow IPC stream
+        assert!(result.starts_with(b"ARROW1"), "Should start with ARROW1 magic");
+
+        // Parse using StreamReader (validates the IPC format is correct)
+        let reader = StreamReader::try_new(std::io::Cursor::new(&result), None)
+            .expect("Should parse as valid Arrow IPC stream");
+
+        // Verify schema has correct fields — MODERN-20: 8 columns
+        let schema = reader.schema();
+        assert_eq!(schema.fields().len(), 8);  // MODERN-20: Changed from 7 to 8
+        assert_eq!(schema.field(0).name(), "id");
+        assert_eq!(schema.field(1).name(), "query");
+        assert_eq!(schema.field(2).name(), "source_type");
+        assert_eq!(schema.field(3).name(), "confidence");
+        assert_eq!(schema.field(4).name(), "ts");
+        assert_eq!(schema.field(5).name(), "provenance_json");
+        assert_eq!(schema.field(6).name(), "payload_text");
+        assert_eq!(schema.field(7).name(), "claims_json");  // MODERN-20: Added
+
+        // Collect batch and verify data
+        let batches: Vec<_> = reader.collect().expect("Should collect batches");
+        assert_eq!(batches.len(), 1);
+
+        let batch = &batches[0];
+        assert_eq!(batch.num_rows(), 2);
+        assert_eq!(batch.num_columns(), 8);  // MODERN-20: Changed from 7 to 8
     }
 
     #[test]
-    fn test_encode_f64_array() {
-        let values = vec![1.0, 2.5];
-        let encoded = encode_f64_array(&values);
-        assert!(!encoded.is_empty());
+    fn test_build_ipc_bytes_empty_produces_valid_stream() {
+        // MODERN-17: Empty batch should still produce valid Arrow IPC stream
+        // with schema but no batches (valid per Arrow spec).
+        // MODERN-20: Extended to 8 columns.
+        let result = build_ipc_bytes(
+            vec![],
+            vec![],
+            vec![],
+            vec![],
+            vec![],
+            vec![],
+            vec![],
+            vec![],  // MODERN-20: Added claims_jsons
+            0,
+        )
+        .expect("build_ipc_bytes should succeed for empty batch");
+
+        // Verify magic bytes
+        assert!(result.starts_with(b"ARROW1"), "Should start with ARROW1 magic");
+
+        // Empty stream with schema is valid Arrow IPC
+        let reader = StreamReader::try_new(std::io::Cursor::new(&result), None)
+            .expect("Empty stream with schema should parse");
+        assert_eq!(reader.schema().fields().len(), 8);  // MODERN-20: Changed from 7 to 8
     }
 
     #[test]
-    fn test_encode_string_array_null_bitmap() {
-        // All-valid bitmap: MSB first per byte → 0xFF for first 2 values
-        let values = vec!["a".to_string(), "b".to_string()];
-        let encoded = encode_string_array(&values);
-        // First byte = null bitmap: 2 values = 2 bits, MSB first → 0b11000000 = 0xC0
-        assert_eq!(encoded[0], 0b11000000);
-    }
+    fn test_build_ipc_bytes_data_roundtrip() {
+        // MODERN-17: Verify data integrity — what we write, we can read back
+        // MODERN-20: Extended to 8 columns including claims_json.
+        let ids = vec!["f1".to_string(), "f2".to_string(), "f3".to_string()];
+        let queries = vec!["q1".to_string(), "q2".to_string(), "q3".to_string()];
+        let source_types = vec!["st1".to_string(), "st2".to_string(), "st3".to_string()];
+        let confidences = vec![0.95, 0.85, 0.75];
+        let timestamps = vec![1000.0, 2000.0, 3000.0];
+        let provenance_jsons = vec!["{\"x\":1}".to_string(), "{\"y\":2}".to_string(), "{\"z\":3}".to_string()];
+        let payload_texts = vec!["p1".to_string(), "p2".to_string(), "p3".to_string()];
+        let claims_jsons = vec![r#"[{"t":"c1"}]"#.to_string(), r#"[{"t":"c2"}]"#.to_string(), r#"[{"t":"c3"}]"#.to_string()];  // MODERN-20: Added
 
-    #[test]
-    fn test_encode_f64_array_null_bitmap() {
-        let values = vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0];
-        let encoded = encode_f64_array(&values);
-        // 8 values = 1 byte bitmap → all 1s = 0xFF
-        assert_eq!(encoded[0], 0xFF);
-    }
+        let result = build_ipc_bytes(
+            ids.clone(),
+            queries.clone(),
+            source_types.clone(),
+            confidences.clone(),
+            timestamps.clone(),
+            provenance_jsons.clone(),
+            payload_texts.clone(),
+            claims_jsons.clone(),  // MODERN-20: Added
+            3,
+        )
+        .expect("build_ipc_bytes should succeed");
 
-    #[test]
-    fn test_build_ipc_bytes_empty_has_schema() {
-        let result = build_ipc_bytes(vec![], vec![], vec![], vec![], vec![], vec![], 0).unwrap();
-        assert!(result.starts_with(b"ARROW1"));
-        // Empty batch with schema: magic(8) + schema_size(4) + schema + batch_count(4) + footer(4)
-        // schema_size > 0 since schema is included
-        let schema_size = u32::from_le_bytes([result[8], result[9], result[10], result[11]]);
-        assert!(schema_size > 0, "empty batch should include schema");
+        // Parse and verify roundtrip
+        let reader = StreamReader::try_new(std::io::Cursor::new(&result), None)
+            .expect("Should parse as valid Arrow IPC");
+        let batches: Vec<_> = reader.collect().expect("Should collect batches");
+        let batch = &batches[0];
+
+        // Verify column data
+        let ids_col = batch.column(0).as_string::<i32>();
+        let conf_col = batch.column(3).as_primitive::<arrow::datatypes::Float64Type>();
+        let claims_col = batch.column(7).as_string::<i32>();  // MODERN-20: Added
+
+        assert_eq!(ids_col.len(), 3);
+        assert_eq!(ids_col.value(0), "f1");
+        assert_eq!(ids_col.value(1), "f2");
+        assert_eq!(ids_col.value(2), "f3");
+
+        assert_eq!(conf_col.len(), 3);
+        assert_eq!(conf_col.value(0), 0.95);
+        assert_eq!(conf_col.value(1), 0.85);
+        assert_eq!(conf_col.value(2), 0.75);
+
+        // MODERN-20: Verify claims_json roundtrip
+        assert_eq!(claims_col.len(), 3);
+        assert_eq!(claims_col.value(0), r#"[{"t":"c1"}]"#);
+        assert_eq!(claims_col.value(1), r#"[{"t":"c2"}]"#);
+        assert_eq!(claims_col.value(2), r#"[{"t":"c3"}]"#);
     }
 }

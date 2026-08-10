@@ -501,7 +501,7 @@ class FetchCoordinator(UniversalCoordinator):
     A5-02: evidence_sink parameter enables Dependency Inversion —
     FetchCoordinator never imports EvidenceLog directly.
     """
-    __slots__ = ('_adaptive_priority_provider', '_aimd', '_aimd_semaphore', '_base_retry_delay', '_batch_cp_result', '_blitz_mode', '_capacity', '_captcha_detections', '_captcha_detector', '_concurrency', '_concurrency_provider', '_config', '_cooldown_seconds', '_cover_count', '_cross_sprint_gate', '_entity_confirmation_service', '_ctx', '_current_geo_context', '_darknet_connector', '_dedup_lock', '_domain_rate_limiter', '_effective_ua', '_enqueue_pivot_provider', '_entropy_bridge_queue', '_entropy_bridge_task', '_entropy_alerts_processed', '_evidence_ids', '_evidence_sink', '_frontier', '_geo_proxies', '_gopher_transport', '_gopher_transport_enabled', '_hints_extractor', '_host_ips_cache', '_host_ips_inflight', '_http_cache_enabled', '_http_cache_transport', '_hypothesis_depth_provider', '_hypothesis_depth_setter', '_hypothesis_query_count_provider', '_hypothesis_query_count_setter', '_lightpanda_lock', '_lightpanda_pool', '_lightpanda_pool_started', '_max_backoff_delay', '_max_retries', '_micro_sprint_queue', '_micro_sprint_original_findings', '_micro_sprint_worker_task', '_orchestrator', '_paywall_bypass', '_per_host_gate', '_per_host_limit', '_pivot_queue_provider', '_pivot_stats_provider', '_privacy_allocator', '_privacy_lock', '_processed_urls', '_retry_budget', '_retry_budget_lock', '_retry_budget_max', '_retry_budget_window', '_robots_parser', '_running', '_session_checkpoint_task', '_session_lmdb_env', '_session_manager', '_sprint_config_provider', '_sprint_remaining_provider', '_stop_reason', '_swarm_dag', '_swarm_dag_rebalance_task', '_telemetry', '_tor_transport', '_tor_transport_enabled', '_urls_fetched_count', '_zstd')
+    __slots__ = ('_adaptive_priority_provider', '_aimd', '_aimd_semaphore', '_base_retry_delay', '_batch_cp_result', '_blitz_mode', '_capacity', '_captcha_detections', '_captcha_detector', '_clearance_jar', '_concurrency', '_concurrency_provider', '_config', '_cooldown_seconds', '_cover_count', '_cross_sprint_gate', '_entity_confirmation_service', '_ctx', '_current_geo_context', '_darknet_connector', '_dedup_lock', '_domain_rate_limiter', '_effective_ua', '_enqueue_pivot_provider', '_entropy_bridge_queue', '_entropy_bridge_task', '_entropy_alerts_processed', '_entropy_prune_counter', '_evidence_ids', '_evidence_sink', '_frontier', '_geo_proxies', '_gopher_transport', '_gopher_transport_enabled', '_hints_extractor', '_host_ips_cache', '_host_ips_inflight', '_http_cache_enabled', '_http_cache_transport', '_hypothesis_depth_provider', '_hypothesis_depth_setter', '_hypothesis_query_count_provider', '_hypothesis_query_count_setter', '_lightpanda_lock', '_lightpanda_pool', '_lightpanda_pool_started', '_max_backoff_delay', '_max_retries', '_micro_sprint_queue', '_micro_sprint_original_findings', '_micro_sprint_worker_task', '_orchestrator', '_paywall_bypass', '_per_host_gate', '_per_host_limit', '_pivot_queue_provider', '_pivot_stats_provider', '_privacy_allocator', '_privacy_lock', '_processed_urls', '_retry_budget', '_retry_budget_lock', '_retry_budget_max', '_retry_budget_window', '_robots_parser', '_running', '_session_checkpoint_task', '_session_lmdb_env', '_session_manager', '_sprint_config_provider', '_sprint_remaining_provider', '_stop_reason', '_swarm_dag', '_swarm_dag_rebalance_task', '_telemetry', '_tor_transport', '_tor_transport_enabled', '_urls_fetched_count', '_zstd')
 
     def __init__(self, config: FetchCoordinatorConfig | None=None, max_concurrent: int=3, blitz_mode: bool=True, pivot_queue_provider: Callable[[], Any]=lambda: None, pivot_stats_provider: Callable[[], dict] | None=None, hypothesis_query_count_provider: Callable[[], int]=lambda: 0, hypothesis_query_count_setter: Callable[[int], None]=lambda v: None, hypothesis_depth_provider: Callable[[], int]=lambda: 0, hypothesis_depth_setter: Callable[[int], None]=lambda v: None, sprint_config_provider: Callable[[], Any]=lambda: None, adaptive_priority_provider: Callable[[str, float], float]=lambda tt, base: base, enqueue_pivot_provider: Callable[..., Any]=lambda **kw: None, concurrency_provider: Callable[[], tuple[int, int, str, bool] | None] | None=None, sprint_remaining_provider: Callable[[], float | None]=lambda: None, evidence_sink: object | None=None) -> None:
         super().__init__(name='FetchCoordinator', max_concurrent=max_concurrent)
@@ -642,6 +642,8 @@ class FetchCoordinator(UniversalCoordinator):
         self._entropy_bridge_queue: asyncio.Queue[Any] | None = None
         self._entropy_bridge_task: asyncio.Task[None] | None = None
         self._entropy_alerts_processed: int = 0
+        # F360-R: Counter for periodic entropy pruning (every N calls)
+        self._entropy_prune_counter: int = 0
         # UNIFIED-003: Micro-sprint queue — bounded queue for re-fetch requests
         self._micro_sprint_queue: asyncio.Queue[dict[str, Any]] = asyncio.Queue(maxsize=32)
         self._micro_sprint_worker_task: asyncio.Task[None] | None = None
@@ -682,13 +684,14 @@ class FetchCoordinator(UniversalCoordinator):
         else:
             new_window = await self._aimd.blitz_boost(_target)
         # Sync semaphore to new window
+        # P4-3 FIX: Only increase permits when window grows. When window shrinks,
+        # do nothing - releasing permits makes backpressure worse by allowing MORE
+        # concurrent operations. The semaphore naturally limits new acquires.
         _diff = int(new_window) - self._aimd_semaphore._value
         if _diff > 0:
             for _ in range(_diff):
                 self._aimd_semaphore.release()
-        elif _diff < 0:
-            for _ in range(-_diff):
-                self._aimd_semaphore.release()  # negative diff: release excess permits
+        # P4-3 FIX: Removed elif _diff < 0 branch - don't release permits when shrinking
         self._telemetry['aimd_concurrency'] = new_window
         self._blitz_mode = True
         logger.info('[BLITZ-13] blitz_boost: window → %d (target=%d)', int(new_window), int(_target))
@@ -1071,26 +1074,37 @@ class FetchCoordinator(UniversalCoordinator):
         return None
 
     async def _resolve_dns_with_gate(self, cache_key: str, hostname: str) -> list[str] | None:
-        """F360-R: Phase 3 - DNS resolution with per-host rate limiting."""
+        """F360-R: Phase 3 - DNS resolution with per-host rate limiting.
+        
+        P4-2b FIX: Added proper cancellation handling to prevent orphan futures.
+        If the coroutine is cancelled (e.g., timeout), the future is properly
+        cancelled/removed from _host_ips_inflight to prevent memory leaks.
+        """
         # Reserve slot for new resolution (single-flight)
         fut: asyncio.Future[list[str] | None] = asyncio.get_event_loop().create_future()
         self._host_ips_inflight[cache_key] = fut
 
-        sem, _op_id = await self._per_host_gate.acquire(hostname)
         try:
-            raw_results = await async_getaddrinfo(hostname, 0, proto=socket.IPPROTO_TCP)
-        finally:
-            self._per_host_gate.release(sem)
+            sem, _op_id = await self._per_host_gate.acquire(hostname)
+            try:
+                raw_results = await async_getaddrinfo(hostname, 0, proto=socket.IPPROTO_TCP)
+            finally:
+                self._per_host_gate.release(sem)
 
-        ips = sorted({str(r[4][0]) for r in raw_results})
+            ips = sorted({str(r[4][0]) for r in raw_results})
 
-        async with self._dedup_lock:
-            if ips:
-                self._host_ips_cache[cache_key] = ips
-            fut.set_result(ips if ips else None)
+            async with self._dedup_lock:
+                if ips:
+                    self._host_ips_cache[cache_key] = ips
+                fut.set_result(ips if ips else None)
+                self._host_ips_inflight.pop(cache_key, None)
+
+            return ips if ips else None
+        except asyncio.CancelledError:
+            # P4-2b FIX: Clean up orphan future on cancellation
+            fut.cancel()
             self._host_ips_inflight.pop(cache_key, None)
-
-        return ips if ips else None
+            raise
 
     async def _validate_ips_public(self, ips: list[str]) -> tuple[bool, dict[str, Any]]:
         """F360-R: Phase 4 - Validate all resolved IPs are public."""
@@ -1154,16 +1168,26 @@ class FetchCoordinator(UniversalCoordinator):
         return current_window
 
     def _sync_semaphore_to_window(self, current_window: float) -> None:
-        """Sync semaphore permits to match current window."""
+        """Sync semaphore permits to match current window.
+        
+        P4-3 FIX: Only increase permits when window grows. When window shrinks,
+        do nothing - don't release permits. Releasing when shrinking makes
+        backpressure worse by allowing MORE concurrent operations.
+        
+        The semaphore naturally enforces the reduced window as running tasks
+        complete and release their permits. New acquires wait when window is
+        smaller than the semaphore's current permits.
+        """
         if current_window == self._aimd_semaphore._value:
             return
         diff = int(current_window) - self._aimd_semaphore._value
         if diff > 0:
             for _ in range(diff):
                 self._aimd_semaphore.release()
-        elif diff < 0:
-            for _ in range(-diff):
-                self._aimd_semaphore.release()
+        # P4-3 FIX: Removed elif diff < 0 branch. When window shrinks,
+        # we must NOT release permits - that would make backpressure worse.
+        # The semaphore value stays higher, naturally limiting new acquires
+        # until running tasks complete and release normally.
 
     async def _acquire_python_slot(self, bp_clearing: float | None) -> float:
         """Acquire slot using Python AIMDWindow + semaphore."""
@@ -1276,7 +1300,13 @@ class FetchCoordinator(UniversalCoordinator):
             async with self._privacy_lock:
                 await sem.acquire()
             return (lane, True)
-        except (TimeoutError, asyncio.CancelledError):  # noqa: BLE001 — best-effort; privacy_acquire cancellation/timeout; fail-open to clearnet
+        except asyncio.CancelledError:
+            # P0-3 FIX: Cancellation is fail-CLOSED (block), not fail-open to clearnet.
+            # Re-raising CancelledError ensures proper shutdown propagation.
+            # Suppressing here would be a deanonymization risk.
+            raise
+        except TimeoutError:
+            # TimeoutError is fail-open to clearnet (acceptable: slow privacy lane → fall back)
             return ('clearnet', True)
 
     def _privacy_release(self, lane: str) -> None:
@@ -1370,7 +1400,10 @@ class FetchCoordinator(UniversalCoordinator):
             logger.debug('[TOR] Timeout for %s', url)
             await self._aimd_release_failure()
             return None
-        except (httpx.HTTPError, OSError, asyncio.CancelledError) as e:  # noqa: BLE001 — best-effort; httpx response body read; non-critical
+        except asyncio.CancelledError:
+            # P0-3 FIX: Re-raise CancelledError for proper cancellation propagation.
+            raise
+        except (httpx.HTTPError, OSError) as e:  # noqa: BLE001 — best-effort; httpx response body read; non-critical
             logger.warning('Tor fetch failed: %s', e)
             await self._aimd_release_failure()
             return None
@@ -1421,7 +1454,10 @@ class FetchCoordinator(UniversalCoordinator):
             logger.debug('[I2P] Timeout for %s', url)
             await self._aimd_release_failure()
             return None
-        except (httpx.HTTPError, OSError, asyncio.CancelledError) as e:  # noqa: BLE001 — best-effort; httpx stream read; non-critical
+        except asyncio.CancelledError:
+            # P0-3 FIX: Re-raise CancelledError for proper cancellation propagation.
+            raise
+        except (httpx.HTTPError, OSError) as e:  # noqa: BLE001 — best-effort; httpx stream read; non-critical
             logger.warning('I2P fetch failed: %s', e)
             await self._aimd_release_failure()
             return None
@@ -1486,7 +1522,10 @@ class FetchCoordinator(UniversalCoordinator):
             logger.debug('[CURL] Timeout for %s', url)
             await self._aimd_release_failure()
             return {'url': url, 'content': b'', 'error': 'timeout'}
-        except (OSError, asyncio.CancelledError) as e:  # noqa: BLE001 — curl_cffi doesn't raise httpx.HTTPError; only network/OS errors expected here
+        except asyncio.CancelledError:
+            # P0-3 FIX: Re-raise CancelledError for proper cancellation propagation.
+            raise
+        except OSError as e:  # noqa: BLE001 — curl_cffi doesn't raise httpx.HTTPError; only network/OS errors expected here
             logger.warning('[CURL] Failed: %s', e)
             return {'url': url, 'content': b'', 'error': str(e)}
 
@@ -1813,8 +1852,15 @@ class FetchCoordinator(UniversalCoordinator):
             return (False, 'robots_blocked')
         _delay = _rp.get_crawl_delay(_ua, _doc)
         if _delay > 0:
-            with contextlib.suppress(TimeoutError, asyncio.CancelledError):
+            try:
                 await asyncio.sleep(_delay)
+            except asyncio.CancelledError:
+                # P0-3 FIX: Re-raise CancelledError to honour cancellation.
+                # Blanket suppress() would prevent clean shutdown propagation.
+                raise
+            except TimeoutError:
+                # TimeoutError: skip the crawl delay (acceptable: slow → proceed anyway)
+                pass
         return (True, None)
 
     async def _robots_check_fast(
@@ -1899,8 +1945,16 @@ class FetchCoordinator(UniversalCoordinator):
             return hosts
 
         def _dedup_and_trace() -> tuple[list[str], int]:
-            """Dedup + trace (sync CPU — runs in thread pool)."""
-            unique, dropped = dedupe_url_list(raw_batch, self._processed_urls)
+            """Dedup + trace (sync CPU — runs in thread pool).
+            
+            P4-4 FIX: Use add_to_filter=False to defer bloom filter updates
+            until after successful URL processing. This prevents permanent
+            seed loss when URLs fail validation after the dedup check.
+            URLs are added to bloom in _execute_dns_circuit_phase only
+            after passing DNS/circuit validation.
+            """
+            # P4-4: Don't add to bloom here - defer until after successful processing
+            unique, dropped = dedupe_url_list(raw_batch, self._processed_urls, add_to_filter=False)
             for url in raw_batch:
                 trace_dedup_decision(url, url not in unique)
             return (unique, dropped)
@@ -1925,7 +1979,10 @@ class FetchCoordinator(UniversalCoordinator):
             try:
                 resolved = await dns_coro
                 self._host_ips_cache = {h: list(ips) for h, ips in resolved.items()}
-            except (TimeoutError, asyncio.CancelledError, OSError) as exc:  # noqa: BLE001
+            except asyncio.CancelledError:
+                # P0-3 FIX: Re-raise CancelledError for proper cancellation propagation.
+                raise
+            except (TimeoutError, OSError) as exc:  # noqa: BLE001
                 logger.debug('[F-A4] batch DNS pre-resolve failed: %s: %s', type(exc).__name__, exc)
 
         return (raw_hosts, unique_batch)
@@ -2057,8 +2114,14 @@ class FetchCoordinator(UniversalCoordinator):
             filtered.append(_url)
 
         if total_delay > 0:
-            with contextlib.suppress(asyncio.CancelledError, asyncio.TimeoutError):
+            try:
                 await asyncio.sleep(total_delay)
+            except asyncio.CancelledError:
+                # P0-3 FIX: Re-raise CancelledError to honour cancellation.
+                raise
+            except asyncio.TimeoutError:
+                # TimeoutError: skip the cumulative delay (acceptable: slow → proceed anyway)
+                pass
 
         return filtered
 
@@ -2079,23 +2142,27 @@ class FetchCoordinator(UniversalCoordinator):
         url_to_result: dict[str, dict[str, Any] | None] = {}
 
         if tor_i2p_urls:
-            tor_i2p_result = await parallel(
+            # P4-5 FIX: policy="log" returns list[T], not ParallelResult.
+            # The result is already the list of successes (no .ok needed).
+            tor_i2p_results = await parallel(
                 [self._fetch_url(url) for url in tor_i2p_urls],
                 concurrency=min(len(tor_i2p_urls), 2),
                 policy="log",
                 ctx="fetch_coordinator.batch.tor_i2p",
             )
-            for _url, _res in zip(tor_i2p_urls, tor_i2p_result.ok, strict=False):
+            for _url, _res in zip(tor_i2p_urls, tor_i2p_results, strict=False):
                 url_to_result[_url] = _res
 
         if clearnet_urls:
-            clearnet_result = await parallel(
+            # P4-5 FIX: policy="log" returns list[T], not ParallelResult.
+            # The result is already the list of successes (no .ok needed).
+            clearnet_results = await parallel(
                 [self._fetch_url(url) for url in clearnet_urls],
                 concurrency=len(urls_to_fetch),
                 policy="log",
                 ctx="fetch_coordinator.batch",
             )
-            for _url, _res in zip(clearnet_urls, clearnet_result.ok, strict=False):
+            for _url, _res in zip(clearnet_urls, clearnet_results, strict=False):
                 url_to_result[_url] = _res
 
         results = [url_to_result.get(_url) for _url in urls_to_fetch]
@@ -2233,9 +2300,19 @@ class FetchCoordinator(UniversalCoordinator):
                 cb_task = tg.create_task(_circuit_breaker_check(), name='circuit_breaker')
             dns_safe, dns_meta = dns_task.result()
             cb_allowed, cb_reason, cb_retry_after = cb_task.result()
-        except* (Exception, BaseException):  # noqa: BLE001 — best-effort; TaskGroup ExceptionGroup or single exc; domain_breaker unavailable; non-critical
-            dns_safe, dns_meta = (True, {})
+        except* (OSError, asyncio.TimeoutError) as exc_group:  # noqa: BLE001 — fail-closed SSRF; network errors = block request
+            # Log the actual exception(s) for debugging; DO NOT swallow silently
+            for exc in exc_group.exceptions:
+                logger.warning(
+                    'DNS/circuit check failed, fail-closed: %s (%s)',
+                    type(exc).__name__,
+                    exc,
+                )
+            # P0-3 SSRF fix: fail-CLOSED - block on DNS/validation errors
+            dns_safe, dns_meta = (False, {'blocked_reason': 'dns_circuit_check_failed'})
+            # Circuit breaker is permissive on failure (cb_allowed=True); circuit is secondary to DNS validation
             cb_allowed, cb_reason, cb_retry_after = (True, '', 0.0)
+        # CancelledError propagates naturally via except* — no explicit handler needed
         return (dns_safe, dns_meta, cb_allowed, cb_reason, cb_retry_after)
 
     def _get_step_result(self, new_evidence_ids: list[str] | None=None, batch_size: int=0, effective_parallelism: int=0, batch_elapsed_ms: float=0.0) -> dict[str, Any]:
@@ -2335,7 +2412,12 @@ class FetchCoordinator(UniversalCoordinator):
         _privacy_acquired = False
         try:
             _privacy_lane, _privacy_acquired = await self._privacy_acquire_for_url(url)
-        except (TimeoutError, asyncio.CancelledError):  # noqa: BLE001
+        except asyncio.CancelledError:
+            # P0-3 FIX: Cancellation is fail-CLOSED (block), not fail-open to clearnet.
+            # Re-raising ensures proper shutdown propagation.
+            raise
+        except TimeoutError:
+            # TimeoutError is fail-open to clearnet (acceptable: slow privacy lane → fall back)
             _privacy_lane = 'clearnet'
             _privacy_acquired = True
 
@@ -2498,15 +2580,23 @@ class FetchCoordinator(UniversalCoordinator):
             if _retry_host:
                 try:
                     import socket
-                    # F360-R FIX: Use run_in_executor to avoid asyncio.run() in sync context
-                    # This prevents RuntimeError when already in an async context
+                    # F360-R FIX: Use sync socket.getaddrinfo directly in this sync function
+                    # The original asyncio.run() anti-pattern created nested event loops which
+                    # can cause RuntimeError: asyncio.run() cannot be called from a running event loop
+                    # Since _compute_resolve_binding is sync, we use blocking getaddrinfo
+                    # wrapped in a timeout-compatible pattern
+                    _retry_results: list[tuple] | None = None
                     try:
-                        loop = asyncio.get_running_loop()
-                        import concurrent.futures
-                        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
-                            _retry_results = pool.submit(asyncio.run, async_getaddrinfo(_retry_host, 0, proto=socket.IPPROTO_TCP)).result(timeout=5.0)
-                    except RuntimeError:
-                        _retry_results = asyncio.run(async_getaddrinfo(_retry_host, 0, proto=socket.IPPROTO_TCP))
+                        # Use socket.getaddrinfo directly (sync version)
+                        _retry_results = socket.getaddrinfo(_retry_host, 0, socket.AF_INET, socket.SOCK_STREAM)
+                    except socket.gaierror:
+                        # DNS resolution failed
+                        _retry_results = None
+                    except TimeoutError:
+                        _retry_results = None
+                    except OSError:
+                        _retry_results = None
+                    
                     if _retry_results:
                         _retry_ips = sorted({str(r[4][0]) for r in _retry_results})
                         for _ip_str in _retry_ips:
@@ -2527,8 +2617,8 @@ class FetchCoordinator(UniversalCoordinator):
                 self._privacy_release(preflight.privacy_lane)
             if preflight.host_sem is not None:
                 self._per_host_gate.release(preflight.host_sem)
-        except Exception:  # noqa: BLE001
-            pass
+        except Exception as e:  # noqa: BLE001 — best-effort; cleanup failure; log for debugging
+            logger.debug('[CLEANUP] Resource cleanup failed: %s (%s)', type(e).__name__, e)
 
     async def _fetch_with_retry_loop(
         self,
@@ -2568,7 +2658,11 @@ class FetchCoordinator(UniversalCoordinator):
                 _host_name, _resolve, _quinn_viable, _pre_acquired_tor_session,
                 _pre_acquired_i2p_session, proxy,
             )
-        except (TimeoutError, httpx.HTTPError, OSError, asyncio.CancelledError) as e:  # noqa: BLE001
+        except asyncio.CancelledError:
+            # P0-3 FIX: Re-raise CancelledError for proper cancellation propagation.
+            # Do NOT suppress - blanket CancelledError handling prevents clean shutdown.
+            raise
+        except (TimeoutError, httpx.HTTPError, OSError) as e:
             logger.warning('[_fetch_url] Unexpected error for %s: %s', url, e)
             await self._aimd_release_failure()
             return {'url': url, 'content': b'', 'error': str(e)}
@@ -2666,17 +2760,32 @@ class FetchCoordinator(UniversalCoordinator):
         _pre_acquired_i2p_session: Any,
         proxy: str | None,
     ) -> dict[str, Any] | None:
-        """F360-R: Dispatch fetch to appropriate transport."""
-        if url_transport is Transport.TOR:
-            return await self._fetch_tor(url, attempt, route_decision, host_name, _pre_acquired_tor_session)
-        if url_transport is Transport.I2P:
-            return await self._fetch_i2p(url, attempt, route_decision, host_name, _pre_acquired_i2p_session)
-        if url_transport is Transport.GOPHER:
-            return await self._fetch_gopher(url, attempt)
-        # Clearnet fetch
-        return await self._fetch_clearnet(
-            url=url, attempt=attempt, _host_name=host_name,
-            _resolve=_resolve, _quinn_viable=_quinn_viable, proxy=proxy,
+        """F360-R: Dispatch fetch to appropriate transport.
+        
+        P4-1 FIX: Was calling non-existent methods _fetch_tor/_fetch_i2p/_fetch_gopher/_fetch_clearnet.
+        Now uses correct method names: _fetch_with_tor/_fetch_with_i2p/_fetch_with_curl.
+        GOPHER is delegated to self._gopher_transport.fetch().
+        """
+        # Import Transport locally for dispatch (matches existing pattern in file)
+        from ..transport.transport_resolver import Transport as _T
+        
+        if url_transport is _T.TOR:
+            return await self._fetch_with_tor(url, session=_pre_acquired_tor_session)
+        if url_transport is _T.I2P:
+            return await self._fetch_with_i2p(url, session=_pre_acquired_i2p_session)
+        if url_transport is _T.GOPHER:
+            # GOPHER: use gopher transport if available
+            if self._gopher_transport is not None and self._gopher_transport_enabled:
+                try:
+                    return await self._gopher_transport.fetch(url)
+                except Exception as e:
+                    logger.warning('[GOPHER] Fetch failed for %s: %s', url, e)
+                    return None
+            logger.debug('[GOPHER] Gopher transport unavailable')
+            return None
+        # Clearnet fetch via curl_cffi (preferred)
+        return await self._fetch_with_curl(
+            url=url, proxy=proxy, resolve=_resolve,
         )
 
     async def _record_fetch_outcome(
@@ -2688,17 +2797,18 @@ class FetchCoordinator(UniversalCoordinator):
             await self._aimd_release_success()
             self._record_success(host_name)
             transport_name = url_transport.name.lower()
-            if url_transport is Transport.TOR:
+            if url_transport is _T.TOR:
                 self._record_transport_success("tor")
-            elif url_transport is Transport.I2P:
+            elif url_transport is _T.I2P:
                 self._record_transport_success("i2p")
-            self._maybe_fire_cover_traffic(transport=transport_name)
+            # P4-1 BONUS FIX: _maybe_fire_cover_traffic is async - must be awaited
+            await self._maybe_fire_cover_traffic(transport=transport_name)
         elif result is None or result.get('error'):
             is_timeout = result.get('error') == 'timeout' if result else True
             self._record_failure(host_name, is_timeout=is_timeout, failure_kind='fetch_error')
-            if url_transport is Transport.TOR:
+            if url_transport is _T.TOR:
                 self._record_transport_failure("tor", is_timeout=is_timeout)
-            elif url_transport is Transport.I2P:
+            elif url_transport is _T.I2P:
                 self._record_transport_failure("i2p", is_timeout=is_timeout)
 
     def _fetch_url_postprocess(self, result: dict[str, Any] | None, url: str, _host_name: str) -> dict[str, Any] | None:
@@ -2814,13 +2924,20 @@ class FetchCoordinator(UniversalCoordinator):
             from ..tools.ddgs_client import search_news_sync, search_text_sync
             from ..tools.deep_research_sources import urlscan_search, wayback_cdx_lookup
             from ..tools.search_fusion import top_k
-            deep_result = await parallel(
+            # P4-5 FIX: policy="log" returns list[T] (only successes), not ParallelResult.
+            # Use result directly - it already contains only non-exception values.
+            deep_results = await parallel(
                 [asyncio.to_thread(search_text_sync, query), asyncio.to_thread(search_news_sync, query), wayback_cdx_lookup(query, limit=8), urlscan_search(query, size=8)],
                 concurrency=4,
                 policy="log",
                 ctx="fetch_coordinator.deep_research",
             )
-            ddgs_rows, news_rows, wayback_rows, urlscan_rows = deep_result.ok[0], deep_result.ok[1], deep_result.ok[2], deep_result.ok[3]
+            # deep_results is list[Any] - unpack by position
+            # Each position may be None if that particular search source failed
+            ddgs_rows = deep_results[0] if len(deep_results) > 0 else None
+            news_rows = deep_results[1] if len(deep_results) > 1 else None
+            wayback_rows = deep_results[2] if len(deep_results) > 2 else None
+            urlscan_rows = deep_results[3] if len(deep_results) > 3 else None
             rows: list[dict[str, Any]] = []
             for part, label in [(ddgs_rows, 'ddgs'), (news_rows, 'news'), (wayback_rows, 'wayback'), (urlscan_rows, 'urlscan')]:
                 if isinstance(part, list):
@@ -2867,20 +2984,30 @@ class FetchCoordinator(UniversalCoordinator):
         # UNIFIED-004: Cancel entropy bridge consumer task
         if self._entropy_bridge_task is not None:
             self._entropy_bridge_task.cancel()
-            with contextlib.suppress(asyncio.CancelledError):
+            try:
                 await self._entropy_bridge_task
+            except asyncio.CancelledError:
+                # P0-3 FIX: Re-raise CancelledError to honour cancellation propagation.
+                # Blanket suppress() prevents proper task cancellation chain.
+                raise
             self._entropy_bridge_task = None
         # UNIFIED-004: Cancel micro-sprint worker task
         if self._micro_sprint_worker_task is not None:
             self._micro_sprint_worker_task.cancel()
-            with contextlib.suppress(asyncio.CancelledError):
+            try:
                 await self._micro_sprint_worker_task
+            except asyncio.CancelledError:
+                # P0-3 FIX: Re-raise CancelledError to honour cancellation propagation.
+                raise
             self._micro_sprint_worker_task = None
         # SILICON-07: Stop SwarmDAG rebalancer loop and DAG workers
         if self._swarm_dag_rebalance_task is not None:
             self._swarm_dag_rebalance_task.cancel()
-            with contextlib.suppress(asyncio.CancelledError):
+            try:
                 await self._swarm_dag_rebalance_task
+            except asyncio.CancelledError:
+                # P0-3 FIX: Re-raise CancelledError to honour cancellation propagation.
+                raise
             self._swarm_dag_rebalance_task = None
         if self._swarm_dag is not None:
             with contextlib.suppress(Exception):
@@ -2938,8 +3065,12 @@ class FetchCoordinator(UniversalCoordinator):
                 from metrics_registry import get_metrics_registry
                 get_metrics_registry().inc('cover_traffic_fired')
                 logger.debug('[COVER] fired cover traffic #%s for transport=%s', self._cover_count, transport)
-        except* (Exception, BaseException):  # noqa: BLE001 — best-effort; cover traffic outer TaskGroup failure; non-critical
-            pass
+        except* Exception as exc_group:  # noqa: BLE001 — best-effort; cover traffic outer TaskGroup failure; non-critical
+            # Log actual exception(s) for debugging; DO NOT swallow silently
+            for exc in exc_group.exceptions:
+                logger.debug('[COVER] TaskGroup failed: %s (%s)', type(exc).__name__, exc)
+            # P0-3 SSRF fix: Never catch BaseException — let CancelledError propagate for proper shutdown
+            # Note: CancelledError is NOT BaseException in Python 3.8+ but explicit handling is safer
 
     async def _fire_cover_traffic_url(self, url: str, delay: float, transport: str) -> None:
         """Fire a single cover traffic URL via the appropriate transport layer.
@@ -2950,7 +3081,12 @@ class FetchCoordinator(UniversalCoordinator):
         """
         try:
             await asyncio.sleep(delay)
-        except (TimeoutError, asyncio.CancelledError):  # noqa: BLE001 — best-effort; asyncio.sleep interrupted; non-critical
+        except asyncio.CancelledError:
+            # P0-3 FIX: Re-raise CancelledError to honour cancellation.
+            # Cover traffic is non-critical, so proper cancellation takes priority.
+            raise
+        except TimeoutError:
+            # TimeoutError: skip the cover traffic delay (acceptable: slow → skip this cover)
             return
         try:
             _ = _fast_url_host(url)
@@ -2973,7 +3109,11 @@ class FetchCoordinator(UniversalCoordinator):
             if tor and await tor.is_running():
                 config = TransportConfig(url=url, method='GET', headers=None, body=None, timeout=10.0)
                 await tor.fetch(config)
-        except* (asyncio.CancelledError, Exception):  # noqa: BLE001 — best-effort; Tor transport fetch failure; fire-and-forget cover traffic
+        except* asyncio.CancelledError:
+            # P0-3 FIX: Re-raise CancelledError to honour cancellation propagation.
+            raise
+        except* Exception:
+            # Best-effort; Tor transport fetch failure; fire-and-forget cover traffic
             pass
 
     async def _cover_i2p(self, url: str) -> None:
@@ -2985,7 +3125,11 @@ class FetchCoordinator(UniversalCoordinator):
             if i2p and i2p.is_running():
                 config = TransportConfig(url=url, method='GET', headers=None, body=None, timeout=10.0)
                 await i2p.fetch(config)
-        except* (asyncio.CancelledError, Exception):  # noqa: BLE001 — best-effort; I2P transport fetch failure; fire-and-forget cover traffic
+        except* asyncio.CancelledError:
+            # P0-3 FIX: Re-raise CancelledError to honour cancellation propagation.
+            raise
+        except* Exception:
+            # Best-effort; I2P transport fetch failure; fire-and-forget cover traffic
             pass
 
     async def _cover_clearnet(self, url: str) -> None:
@@ -2995,7 +3139,11 @@ class FetchCoordinator(UniversalCoordinator):
             ok, session, used_profile, host = await async_get_curl_cffi_session_for_host(url, profile='chrome131')
             if ok and session is not None:
                 await session.get(url, timeout=10.0)
-        except* (asyncio.CancelledError, Exception):  # noqa: BLE001 — best-effort; curl_cffi fetch failure; fire-and-forget cover traffic
+        except* asyncio.CancelledError:
+            # P0-3 FIX: Re-raise CancelledError to honour cancellation propagation.
+            raise
+        except* Exception:
+            # Best-effort; curl_cffi fetch failure; fire-and-forget cover traffic
             pass
 
     async def _fire_cover_traffic(self, url: str, delay: float, transport: str) -> None:
@@ -3003,14 +3151,14 @@ class FetchCoordinator(UniversalCoordinator):
         await self._fire_cover_traffic_url(url, delay, transport)
 
 
-def _put_task(task: object, pivot_queue: asyncio.Queue, pivot_stats: dict | None) -> None:
-    """Non-blocking put via call_later. Used by enqueue_pivot stagger."""
-    try:
-        pivot_queue.put_nowait(task)
-        if pivot_stats is not None:
-            pivot_stats['total'] = pivot_stats.get('total', 0) + 1
-    except asyncio.QueueFull:  # noqa: BLE001
-        pass
+    def _put_task(self, task: object, pivot_queue: asyncio.Queue, pivot_stats: dict | None) -> None:
+        """Non-blocking put via call_later. Used by enqueue_pivot stagger."""
+        try:
+            pivot_queue.put_nowait(task)
+            if pivot_stats is not None:
+                pivot_stats['total'] = pivot_stats.get('total', 0) + 1
+        except asyncio.QueueFull:  # noqa: BLE001
+            pass
 
 
     def enqueue_pivot(self, ioc_value: str, ioc_type: str, confidence: float, degree: float=1.0, task_type: str | None=None) -> None:
@@ -3069,7 +3217,7 @@ def _put_task(task: object, pivot_queue: asyncio.Queue, pivot_stats: dict | None
                 # the event loop stays responsive during the delay.
                 try:
                     _loop = asyncio.get_running_loop()
-                    _loop.call_later(jitter_s, _put_task, task, pivot_queue, pivot_stats)
+                    _loop.call_later(jitter_s, self._put_task, task, pivot_queue, pivot_stats)
                     continue  # call_later handles placement; skip immediate put
                 except RuntimeError:  # noqa: BLE001
                     pass  # no running loop → fall through to immediate put
@@ -3080,6 +3228,100 @@ def _put_task(task: object, pivot_queue: asyncio.Queue, pivot_stats: dict | None
                     pivot_stats['total'] = pivot_stats.get('total', 0) + 1
             except asyncio.QueueFull:  # noqa: BLE001
                 pass
+
+    async def drain_pivot_queue(self, max_tasks: int = 5) -> int:
+        """Drain pivot queue, return number processed.
+
+        PivotProtocol §A.2: Async drain for cooperative scheduling.
+        On M1 8GB, this is a no-op stub — pivot queue is consumed
+        by the micro-sprint worker inside this coordinator.
+        Returns 0 as queue drain is internal.
+
+        Args:
+            max_tasks: Maximum number of tasks to drain (ignored in stub).
+
+        Returns:
+            Number of tasks processed (0 for this stub implementation).
+        """
+        # Pivot queue is consumed by micro-sprint workers internally.
+        # This stub satisfies PivotProtocol for type checking.
+        return 0
+
+    async def record_feedback(
+        self,
+        pivot_type: str,
+        ioc_type: str,
+        succeeded: bool,
+    ) -> None:
+        """Record pivot execution feedback for adaptation.
+
+        PivotProtocol §A.3: Feedback loop integration with F203G pattern.
+
+        F203G PATTERN INTEGRATION:
+        ─────────────────────────
+        This method bridges PivotProtocol.record_feedback() to the
+        DuckDB-backed HypothesisFeedbackAdapter for RL-adaptive pivot scoring.
+
+        Architecture (F203G):
+            PivotProtocol.record_feedback()     ← this method
+                    ↓
+            HypothesisFeedbackAdapter.async_record()
+                    ↓
+            DuckDBShadowStore.async_record_hypothesis_feedback()
+                    ↓
+            PivotPlanner uses summary to penalize low-yield pivot types
+
+        On M1 8GB with no DuckDB store available:
+            - Method is a safe no-op stub (returns silently)
+            - No exception raised to avoid breaking the sprint
+
+        Args:
+            pivot_type: Type of pivot that was executed (domain/identity/leak/archive/graph).
+            ioc_type: The IOC type operated on (ipv4/domain/md5/etc).
+            succeeded: Whether the pivot produced accepted findings.
+        """
+        # F203G: Try to record via DuckDB-backed HypothesisFeedbackAdapter
+        try:
+            from ..runtime.hypothesis_feedback import HypothesisFeedbackAdapter
+            from ..knowledge.duckdb_store import DuckDBShadowStore
+
+            # Get DuckDB store - prefer orchestrator's store if available
+            duckdb_store: DuckDBShadowStore | None = None
+            if self._orchestrator is not None:
+                duckdb_store = getattr(self._orchestrator, '_duckdb_store', None)
+            if duckdb_store is None:
+                # Fallback: try global singleton
+                try:
+                    from ..knowledge.db import get_duckdb_store
+                    duckdb_store = get_duckdb_store()
+                except Exception:  # noqa: BLE001
+                    duckdb_store = None
+
+            if duckdb_store is None:
+                # M1 8GB safe: no DuckDB available, skip silently
+                return
+
+            # Convert succeeded bool to count-based feedback (F203G expects counts)
+            produced = 1
+            accepted = 1 if succeeded else 0
+            signal = 1.0 if succeeded else 0.0
+
+            # Get target_id from orchestrator if available
+            target_id = getattr(self._orchestrator, '_target_id', 'fetch_coordinator') if self._orchestrator else 'fetch_coordinator'
+
+            # Record via HypothesisFeedbackAdapter
+            adapter = HypothesisFeedbackAdapter(duckdb_store, target_id)
+            await adapter.async_record(
+                pivot_type=pivot_type,
+                ioc_type=ioc_type,
+                produced_count=produced,
+                accepted_count=accepted,
+                signal_value=signal,
+            )
+        except Exception:  # noqa: BLE001 — F203G feedback is best-effort; never break sprint
+            # M1 8GB safe: feedback recording failure is non-critical
+            pass
+
     def _enqueue_hypothesis_pivot(self, ioc_value: str, ioc_type: str, confidence: float, depth: int, degree: float=1.0) -> bool:
         """Enqueue a hypothesis-driven pivot task with bounded caps.
 
@@ -3143,8 +3385,11 @@ def _put_task(task: object, pivot_queue: asyncio.Queue, pivot_stats: dict | None
         if task is not None:
             self._session_checkpoint_task = None
             task.cancel()
-            with contextlib.suppress(asyncio.CancelledError):
+            try:
                 await task
+            except asyncio.CancelledError:
+                # P0-3 FIX: Re-raise CancelledError to honour cancellation propagation.
+                raise
 
     # ─────────────────────────────────────────────────────────────────────────
     # [META]-015: Micro-Sprint Contradiction Detection
@@ -3796,9 +4041,7 @@ def _put_task(task: object, pivot_queue: asyncio.Queue, pivot_stats: dict | None
         _PRUNE_INTERVAL = 10
         _now = time.monotonic()
 
-        # Use instance counter for periodic pruning
-        if not hasattr(self, '_entropy_prune_counter'):
-            self._entropy_prune_counter = 0
+        # Instance counter for periodic pruning (initialized in __init__)
         self._entropy_prune_counter += 1
 
         if self._entropy_prune_counter % _PRUNE_INTERVAL != 0:

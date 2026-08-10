@@ -472,6 +472,27 @@
     "metal_compute": [
       "metal_compute.register"
     ],
+    "metal_shared_buf": [
+      "SharedMetalBuffer",
+      "get_shared_buf_telemetry",
+      "reset_shared_buf_telemetry",
+      "is_metal_shared_available"
+    ],
+    "metal_hashcrack": [
+      "MetalHashCracker",
+      "MAX_GPU_BUFFER_BYTES",
+      "MAX_GPU_TOTAL_GUARD_BYTES",
+      "GPU_MIN_CANDIDATES",
+      "GPU_CHUNK_SIZE",
+      "GPU_THREADS_PER_GROUP"
+    ],
+    "iosurface_bridge": [
+      "is_iosurface_bridge_available",
+      "get_iosurface_from_pixelbuffer",
+      "create_metal_texture_from_iosurface",
+      "get_iosurface_bridge_telemetry",
+      "IOSurfaceTextureDescriptor"
+    ],
     "data": [
       "data.register_functions"
     ],
@@ -737,6 +758,21 @@
     "memory.register_functions",
     "memory_pressure_level",
     "metal_compute.register",
+    "SharedMetalBuffer",
+    "get_shared_buf_telemetry",
+    "reset_shared_buf_telemetry",
+    "is_metal_shared_available",
+    "MetalHashCracker",
+    "MAX_GPU_BUFFER_BYTES",
+    "MAX_GPU_TOTAL_GUARD_BYTES",
+    "GPU_MIN_CANDIDATES",
+    "GPU_CHUNK_SIZE",
+    "GPU_THREADS_PER_GROUP",
+    "is_iosurface_bridge_available",
+    "get_iosurface_from_pixelbuffer",
+    "create_metal_texture_from_iosurface",
+    "get_iosurface_bridge_telemetry",
+    "IOSurfaceTextureDescriptor",
     "mixed_pool_run_",
     "mlx_bridge.register",
     "mmap_alloc_with_hugepage",

@@ -9,7 +9,7 @@ use std::sync::Arc;
 use xml::reader::{EventReader, XmlEvent};
 use xxhash_rust::xxh3::xxh3_64;
 
-use crate::gil::release_gil;
+use crate::gil::{release_gil, release_gil_caught_panic};
 
 /// Shared dedup state — parking_lot::Mutex for HashSet access.
 /// Using Mutex because UnfairLockGuard doesn't provide access to the protected data.
@@ -305,28 +305,33 @@ pub fn feed_entry_pipeline(
     max_entries: usize,
     patterns: Vec<String>,
     labels: Vec<String>,
-) -> Vec<(
+) -> PyResult<Vec<(
     usize,
     String,
     Vec<(usize, usize, String, String, String)>,
     usize,
     usize,
     String,
-)> {
+)>> {
     let seen_guids = Arc::new(SeenGuids::new());
     let entries = parse_rss_xml(&raw_xml);
     if entries.is_empty() {
-        return Vec::new();
+        return Ok(Vec::new());
     }
     // Release GIL during rayon parallel scan — rayon threads are pure Rust,
-    // no Python callbacks. Allows concurrent HTTP I/O on other threads.
-    // R6: migrated to PyO3 0.29 Python::attach + py.detach via release_gil().
+    // no Python callbacks. This allows asyncio event loop to run on other threads.
+    // GIL is released via release_gil() for CPU-bound parallel work.
     let results = Python::attach(|py| {
         release_gil(py, || {
             scan_entries_parallel(&entries, &patterns, &labels, &seen_guids, max_entries)
         })
     });
-    results
+    if release_gil_caught_panic() {
+        return Err(PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(
+            "Rust panic in feed_entry_pipeline",
+        ));
+    }
+    Ok(results
         .into_iter()
         .map(|r| {
             let combined_hits = r
@@ -343,7 +348,7 @@ pub fn feed_entry_pipeline(
                 r.assembly_phase,
             )
         })
-        .collect()
+        .collect())
 }
 
 #[pyfunction]
@@ -352,7 +357,7 @@ pub fn feed_batch_pipeline(
     feeds: Vec<(String, usize)>,
     patterns: Vec<String>,
     labels: Vec<String>,
-) -> Vec<
+) -> PyResult<Vec<
     Vec<(
         usize,
         String,
@@ -361,20 +366,20 @@ pub fn feed_batch_pipeline(
         usize,
         String,
     )>,
-> {
+>> {
     // Build automaton ONCE for all feeds — avoids redundant O(N·M) rebuilds.
     let automaton = match build_automaton(&patterns) {
         Some(a) => a,
-        None => return Vec::new(), // Empty patterns — nothing to match.
+        None => return Ok(Vec::new()), // Empty patterns — nothing to match.
     };
     // Cross-feed dedup: single shared SeenGuids (OsUnfairLock + HashSet) passed to all feed scans.
     let seen_guids = Arc::new(SeenGuids::new());
     // Release GIL during rayon parallel feed processing.
-    // R6: migrated to PyO3 0.29 Python::attach + py.detach via release_gil().
-    // feed_entry_pipeline_xml_impl no longer calls py.detach internally.
+    // GIL is released via release_gil() for CPU-bound parallel work.
+    // This allows asyncio event loop to run on other threads.
     // Pass &patterns / &labels (not clones) — String is Sync, sharing owned
     // Vec is unnecessary here since the closure doesn't consume patterns/labels.
-    Python::attach(|py| {
+    let results: Vec<Vec<_>> = Python::attach(|py| {
         release_gil(py, || {
             feeds
                 .into_par_iter()
@@ -390,7 +395,13 @@ pub fn feed_batch_pipeline(
                 })
                 .collect()
         })
-    })
+    });
+    if release_gil_caught_panic() {
+        return Err(PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(
+            "Rust panic in feed_batch_pipeline",
+        ));
+    }
+    Ok(results)
 }
 
 // Internal non-PyO3 version — called from feed_batch_pipeline within py.detach scope.

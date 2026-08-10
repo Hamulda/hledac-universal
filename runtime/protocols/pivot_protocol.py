@@ -33,9 +33,18 @@ class PivotProtocol(Protocol):
         ioc_value: str,
         ioc_type: str,
         confidence: float,
-        source: str | None = None,
+        degree: float = 1.0,
+        task_type: str | None = None,
     ) -> None:
-        """Enqueue IOC pivot for processing."""
+        """Enqueue IOC pivot for processing.
+
+        Args:
+            ioc_value: The IOC value (IP, domain, hash, etc.)
+            ioc_type: Type of IOC (ipv4, domain, md5, etc.)
+            confidence: Confidence score 0.0-1.0
+            degree: Priority multiplier (default 1.0)
+            task_type: Specific task type to run (auto-detected if None)
+        """
         ...
 
     async def drain_pivot_queue(self, max_tasks: int = 5) -> int:

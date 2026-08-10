@@ -9,7 +9,7 @@ Architecture:
     ThreadPoolExecutor (MLX inference)
           │  tokens from sync gen_fn
           ▼
-    asyncio.Queue[_T] (bounded, maxsize=queue_max)
+    asyncio.Queue[_T] (unbounded, maxsize=0)
           │  await q.get()
           ▼
     async caller (event loop)
@@ -21,12 +21,18 @@ This pattern is M1-safe because:
   - MLX Metal ops run in the executor thread under get_metal_stream_context()
     (thread-local GPU stream — F288 fix in deephermes3_engine).
   - The event loop is never blocked; it only waits on q.get().
-  - The queue is bounded so the producer back-pressures if consumer is slow.
+  - The queue is unbounded (maxsize=0) so the producer NEVER blocks —
+    always at a clean cancellation point (work_queue.get()).
   - Cancellation via Future.cancel() stops the executor thread promptly.
+  - threading.Condition coordinates completion between producer and consumer
+    (R4-02 fix: eliminates race condition in done_event + queue drain).
 
 Usage:
-    async for token in stream_via_queue(sync_gen_fn, arg1, arg2, queue_max=16):
+    async for token in stream_via_queue(sync_gen_fn, arg1, arg2):
         yield token
+
+P2-6 fix: Uses nonlocal declaration for _high_water in _producer().
+P0-4 fix: Always releases Arc ownership after task completes (rayon_drop_channel).
 """
 
 from __future__ import annotations
@@ -70,12 +76,15 @@ async def stream_via_queue(
         Tokens from the synchronous generator, one at a time, as they arrive.
 
     Raises:
-        Nothing — errors are logged and swallowed; caller always gets a clean stream.
+        RuntimeError: If the producer raises an exception and the consumer was not
+                      cancelled (A5-04 / P2-6 fix).
+        asyncio.CancelledError: If the consumer is cancelled (propagated from caller).
 
     Invariants:
         - ALWAYS-ON: no feature flag; fails gracefully on any error.
         - M1-SAFE: unbounded queue ensures executor thread is always interruptible.
-        - FAIL-SAFE: executor errors are caught; caller never sees an exception.
+        - FAIL-SAFE: executor errors are re-raised to caller only when consumer
+                     completes normally (not cancelled). CancelledError takes precedence.
     """
     # Unbounded queue so the producer is NEVER blocked by queue operations.
     # This ensures the executor thread is always at a clean cancellation point:
@@ -100,6 +109,10 @@ async def stream_via_queue(
 
     def _producer() -> None:
         """Runs in executor thread — produces tokens and signals completion."""
+        # P2-6 FIX: Add nonlocal declaration so _high_water refers to the outer
+        # scope variable. Without this, Python treats _high_water as a local
+        # variable in _producer(), causing UnboundLocalError on the first token.
+        nonlocal _high_water
         try:
             for token in gen_fn(*args):
                 q.put_nowait(token)  # type: ignore[arg-type]

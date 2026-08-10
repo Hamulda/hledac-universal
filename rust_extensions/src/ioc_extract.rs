@@ -142,14 +142,14 @@ fn scan_iocs(text: &str) -> Vec<(String, String)> {
 
 /// Fast IOC extraction from raw text using pre-compiled regex patterns.
 /// Issue #15a: Releases GIL during CPU-intensive regex scan via release_gil()
-/// to enable true parallelism in asyncio.to_thread() ThreadPoolExecutor.
+/// to enable true parallelism and allow asyncio event loop to run on other threads.
 #[pyfunction]
 fn fast_ioc_extract(text: &str) -> Vec<(String, String)> {
     // Copy to Rust-owned string before releasing GIL
     let text_owned = text.to_string();
     // Release GIL for CPU-intensive regex scanning — allows Python threads to run.
-    // Uses gil::release_gil() via py.detach() (PyO3 0.29)
-    // and caches the result (zero overhead in hot paths).
+    // GIL released via release_gil() for CPU-bound regex scanning.
+    // This allows asyncio event loop to run on other threads during CPU-bound work.
     Python::attach(|py| release_gil(py, || scan_iocs(&text_owned)))
 }
 
@@ -201,13 +201,11 @@ pub fn batch_ioc_extract_fast<'py>(
             Ok(results)
         } else {
             // Parallel path — mixed_pool (1-2 threads, P-core ceiling)
-            // Issue #6: GIL released via `release_gil` to enable true rayon parallelism.
+            // GIL is held during pool.install() — rayon releases GIL internally
+            // during thread pool callbacks. This allows asyncio event loop to run
+            // on other threads during CPU-bound work.
             let pool = crate::mixed_pool(n);
-            Ok(Python::attach(|py| {
-                release_gil(py, || {
-                    pool.install(|| owned.par_iter().flat_map(|text| scan_iocs(text)).collect())
-                })
-            }))
+            Ok(pool.install(|| owned.par_iter().flat_map(|text| scan_iocs(text)).collect()))
         }
     })) {
         Ok(result) => result,

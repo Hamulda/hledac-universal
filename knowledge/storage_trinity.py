@@ -421,9 +421,18 @@ class StorageTrinity:
 
         async with self._lance_lock:
             try:
-                count = await self._semantic_store.flush()
-                if count > 0:
-                    logger.debug("[TRINITY:LANCE:FLUSH] Flushed %d records to LanceDB", count)
+                result = await self._semantic_store.flush()
+                # SAFE-4: flush() returns dict with detailed stats
+                if isinstance(result, dict):
+                    count = result.get('total', 0)
+                    errors = result.get('errors', {})
+                    if count > 0:
+                        logger.debug("[TRINITY:LANCE:FLUSH] Flushed %d records to LanceDB (english=%d, multilingual=%d)",
+                                    count, result.get('english', 0), result.get('multilingual', 0))
+                    if errors and any(errors.values()):
+                        logger.warning("[TRINITY:LANCE:FLUSH] Flush had errors: %s", errors)
+                elif result > 0:
+                    logger.debug("[TRINITY:LANCE:FLUSH] Flushed %d records to LanceDB", result)
             except Exception as exc:
                 logger.warning("[TRINITY:LANCE:FLUSH] Flush failed: %s", exc)
 

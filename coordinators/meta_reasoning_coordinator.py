@@ -1193,3 +1193,433 @@ class UniversalMetaReasoningCoordinator(UniversalCoordinator):
             'Fetch directive generation [SILICON-05]',
             'Multi-layer ToT crash resilience — LMDB+DuckDB+FS (UNIFIED-007/008)',
         ]
+async def _init_tot_checkpointer(self, query: str):
+    """Initialize ToT checkpointer if duckdb_store is available."""
+    from msgspec import to_builtins as _to_builtins
+    if self._duckdb_store is not None and self._sprint_id is not None:
+        try:
+            from hledac.universal.coordinators.tot_checkpointer import TransactionalToTCheckpointer
+            checkpointer = TransactionalToTCheckpointer(
+                sprint_id=self._sprint_id, duckdb_store=self._duckdb_store,
+                interval_s=30.0, query_hash=self._query_hash,
+            )
+            self._checkpointer = checkpointer
+            return checkpointer
+        except Exception:
+            logger.debug('ToT checkpointer init failed')
+    return None
+
+
+def _tot_urgency_skip(urgency: float) -> dict[str, Any]:
+    """Return urgency skip result."""
+    return {
+        'type': 'tree_of_thoughts_skipped_urgency', 'nodes': 0, 'depth': 0, 'best_path': [],
+        'best_value': 0.0, 'pruned_branches': 0, 'dead_ends': 0, 'used_learned_values': False,
+        'urgency': urgency, 'fallback_recommended': 'chain_of_thought',
+        'summary': 'ToT skipped due to high urgency — use CoT with max_steps=3',
+    }
+
+
+async def _resume_or_create_root(self, checkpointer):
+    """Resume from checkpoint or create new root node."""
+    if self._resume_from is not None and self._resume_step > 0:
+        nodes = dict(self._resume_from)
+        root_candidates = [n for n in nodes.values() if n.depth == 0]
+        root = root_candidates[0] if root_candidates else next(iter(nodes.values()))
+        max_depth = max((n.depth for n in nodes.values()), default=0)
+        leaves = [n for n in nodes.values() if not n.expanded and n.depth == max_depth] or [root]
+        logger.info('[UNIFIED-006] ToT resumed: step=%d nodes=%d leaves=%d', self._resume_step, len(nodes), len(leaves))
+        return nodes, leaves, True
+    
+    root = ThoughtNode(node_id='root', thought=f'Exploring: {self._query[:50]}...', value_estimate=0.5, depth=0, cost=0.0, uncertainty=0.0)
+    nodes = {'root': root}
+    if checkpointer:
+        from msgspec import to_builtins as _to_builtins
+        await checkpointer.incremental_checkpoint('root', _to_builtins(root), step=0)
+    return nodes, [root], False
+
+
+async def _apply_gravity_void_boost(self, branching_factor: int, query: str) -> int:
+    """Apply gravity void exploration bonus to branching factor."""
+    if self._gravity_field is None:
+        return branching_factor
+    try:
+        voids = self._gravity_field.find_voids(k=5, min_distance=0.25)
+        if voids:
+            max_radius = max(v.radius for v in voids)
+            bonus = min(0.15, 0.02 * len(voids) * (1.0 + max_radius))
+            if bonus > 0:
+                logger.debug('[SILICON-05] ToT exploration bonus=%.3f', bonus)
+            if len(voids) >= 3:
+                branching_factor = min(branching_factor + 1, 6)
+                logger.debug('[SILICON-05] ToT branching boosted to %d', branching_factor)
+            return branching_factor
+    except Exception:
+        logger.debug('[SILICON-05] Gravity void query failed')
+    return branching_factor
+
+
+async def _run_tot_search(
+    self, query, nodes, leaves, max_depth, branching_factor, beam_width,
+    value_predictor, dead_end_detector, query_complexity, checkpointer
+):
+    """Run the main ToT search loop."""
+    best_value, pruned_count, dead_end_count, igd_count = float('-inf'), 0, 0, 0
+    best_path = []
+    nodes_since_yield = 0
+    
+    dead_end_detector.register_branch('root')
+    self._igd_policy.register_branch('root')
+    
+    for depth in range(max_depth):
+        new_leaves = []
+        # PRM-1 FIX: Accumulate all new leaves across iterations
+        all_new_leaves = []
+        
+        for leaf in leaves:
+            if leaf.expanded:
+                continue
+            if self._igd_policy.should_abort(leaf.node_id, depth=leaf.depth):
+                igd_count += 1
+                # PRM-1 FIX: Use object.__setattr__ for frozen ThoughtNode mutation
+                object.__setattr__(leaf, 'expanded', True)
+                continue
+            if dead_end_detector.is_dead_end(leaf.node_id):
+                dead_end_count += 1
+                # PRM-1 FIX: Use object.__setattr__ for frozen ThoughtNode mutation
+                object.__setattr__(leaf, 'expanded', True)
+                continue
+            
+            new_leaves = await _expand_branches(
+                self, leaf, depth, branching_factor, value_predictor, query_complexity,
+                nodes, dead_end_detector, checkpointer, pruned_count
+            )
+            # PRM-1 FIX: Use object.__setattr__ for frozen ThoughtNode mutation
+            object.__setattr__(leaf, 'expanded', True)
+            # PRM-1 FIX: Accumulate new leaves instead of overwriting
+            all_new_leaves.extend(new_leaves)
+            nodes_since_yield = await _yield_if_needed(nodes_since_yield)
+        
+        # PRM-1 FIX: Use accumulated leaves
+        leaves = _select_beam(all_new_leaves, beam_width)
+        _cleanup_detectors(dead_end_detector, self._igd_policy, leaves)
+        
+        if checkpointer:
+            await checkpointer.checkpoint(nodes=nodes, step=depth + 1)
+        
+        best_path, best_value = _find_best_path(nodes, leaves, best_path, best_value)
+    
+    return _build_tot_result(
+        nodes, best_path, best_value, pruned_count, dead_end_count, igd_count,
+        value_predictor, self._resume_step if self._resume_from else 0, self._resume_from is not None
+    )
+
+
+async def _expand_branches(self, leaf, depth, branching_factor, value_predictor, query_complexity, nodes, dead_end_detector, checkpointer, pruned_count):
+    """Expand leaf node into branches."""
+    new_leaves = []
+    parent_value = leaf.value_estimate
+    
+    for i in range(branching_factor):
+        child_id = f'node_{depth}_{i}_{leaf.node_id}'
+        value_est, uncertainty = value_predictor.predict_value(child_id, depth + 1, parent_value, query_complexity)
+        
+        child = ThoughtNode(node_id=child_id, thought=f'Branch {i + 1} at depth {depth + 1}', value_estimate=value_est, parent=leaf.node_id, depth=depth + 1, cost=leaf.cost + 1.0, uncertainty=uncertainty)
+        gain = value_est - parent_value
+        
+        if depth >= _PRUNE_MIN_DEPTH and gain < _PRUNE_GAIN_THRESHOLD:
+            pruned_count += 1
+            # PRM-1 FIX: Use object.__setattr__ for frozen ThoughtNode mutation
+            object.__setattr__(child, 'thought', f'Pruned branch {i + 1} at depth {depth + 1} (gain={gain:.3f})')
+            nodes[child_id] = child
+            leaf.children.append(child_id)
+            if checkpointer:
+                from msgspec import to_builtins as _to_builtins
+                await checkpointer.incremental_checkpoint(child_id, _to_builtins(child), step=depth + 1)
+            continue
+        
+        leaf.children.append(child_id)
+        nodes[child_id] = child
+        new_leaves.append(child)
+        
+        if checkpointer:
+            from msgspec import to_builtins as _to_builtins
+            await checkpointer.incremental_checkpoint(child_id, _to_builtins(child), step=depth + 1)
+        
+        self._igd_policy.register_branch(child_id)
+        dead_end_detector.register_branch(child_id)
+        
+        if value_est > 0.5:
+            dead_end_detector.report_progress(child_id, ioc_count=1)
+            self._igd_policy.report_iocs(child_id, [value_est])
+    
+    return new_leaves
+
+
+async def _yield_if_needed(nodes_since_yield: int) -> int:
+    """Yield to event loop periodically."""
+    nodes_since_yield += 1
+    if nodes_since_yield >= _YIELD_EVERY_TOT:
+        await asyncio.sleep(0)
+        return 0
+    return nodes_since_yield
+
+
+def _select_beam(new_leaves: list, beam_width: int) -> list:
+    """Select top leaves for beam width."""
+    if len(new_leaves) > beam_width:
+        new_leaves.sort(key=lambda n: n.value_estimate - 0.05 * n.cost, reverse=True)
+        return new_leaves[:beam_width]
+    return new_leaves
+
+
+def _cleanup_detectors(dead_end_detector, igd_policy, leaves):
+    """Cleanup detectors for pruned branches."""
+    active_ids = {n.node_id for n in leaves} | {'root'}
+    dead_end_detector.cleanup_pruned(active_ids)
+    igd_policy.cleanup_pruned(active_ids)
+
+
+def _find_best_path(nodes: dict, leaves: list, best_path: list, best_value: float) -> tuple:
+    """Find best path through the tree."""
+    for leaf in leaves:
+        if leaf.value_estimate > best_value:
+            best_value = leaf.value_estimate
+            path = [leaf.node_id]
+            current = leaf
+            while current.parent:
+                path.append(current.parent)
+                current = nodes[current.parent]
+            best_path = list(reversed(path))
+    return best_path, best_value
+
+
+def _build_tot_result(nodes, best_path, best_value, pruned_count, dead_end_count, igd_count, value_predictor, resume_step, resumed):
+    """Build final ToT result."""
+    return {
+        'type': 'tree_of_thoughts', 'nodes': len(nodes), 'depth': len(best_path),
+        'best_path': best_path, 'best_value': best_value,
+        'pruned_branches': pruned_count, 'dead_ends': dead_end_count, 'igd_aborts': igd_count,
+        'used_learned_values': value_predictor.is_learned,
+        'resumed': resumed, 'resume_step': resume_step,
+        'igd_policy_stats': {},  # Simplified
+        'summary': f"ToT: {len(nodes)} nodes, {pruned_count} pruned, {dead_end_count} dead-ends, {igd_count} IGD-aborts, learned={value_predictor.is_learned}{', RESUMED' if resumed else ''}",
+    }
+
+
+
+    async def _graph_reasoning(self, query: str) -> dict[str, Any]:
+        """Execute Graph reasoning."""
+        config = self.strategy_configs[ReasoningStrategy.GRAPH_REASONING]
+        max_nodes = config['max_nodes']
+        nodes: dict[str, dict[str, Any]] = {}
+        edges: list[tuple[str, str]] = []
+        aspects = query.split()[:max_nodes]
+        # ULTIMATE-001: Use seeded RNG for deterministic graph structure
+        rng = _get_seeded_rng()
+        for i, aspect in enumerate(aspects):
+            nodes[f'node_{i}'] = {'concept': aspect, 'importance': rng.uniform(0.3, 1.0), 'connections': []}
+        for i in range(len(aspects)):
+            for j in range(i + 1, min(i + 3, len(aspects))):
+                if rng.random() < config['connection_density']:
+                    edges.append((f'node_{i}', f'node_{j}'))
+                    nodes[f'node_{i}']['connections'].append(f'node_{j}')
+                    nodes[f'node_{j}']['connections'].append(f'node_{i}')
+        centrality = {node_id: len(data['connections']) for node_id, data in nodes.items()}
+        central_nodes = sorted(centrality.items(), key=lambda x: x[1], reverse=True)[:3]
+        return {'type': 'graph_reasoning', 'nodes': len(nodes), 'edges': len(edges), 'central_concepts': [{'concept': nodes[nid]['concept'], 'connections': count} for nid, count in central_nodes], 'summary': f'Graph reasoning: {len(nodes)} concepts, {len(edges)} relationships'}
+
+    async def _ensemble_reason(self, query: str) -> dict[str, Any]:
+        """Execute ensemble reasoning with urgency-aware strategy selection.
+
+        BLITZ-06: When remaining_time < 2min, ensemble degrades to CoT-only
+        (skipping both ToT and Graph). When remaining_time < 5min, ToT is
+        excluded but CoT + Graph still run in parallel. In all cases the
+        result shape stays identical — callers see no difference.
+
+        CoT is ALWAYS included because it's the fastest strategy (~100ms).
+        Graph is the second-fastest and provides complementary structure.
+        ToT is the most expensive (5-50× CoT) and only worth it with
+        sufficient time budget.
+        """
+        remaining_s: float = (
+            self._sprint_clock.remaining_s
+            if self._sprint_clock is not None
+            else float('inf')
+        )
+
+        # BLITZ-06: Urgency-aware strategy selection
+        if remaining_s <= _ENSEMBLE_CO_T_ONLY_REMAINING_S:
+            logger.warning(
+                '[BLITZ-06] Remaining=%.1fs ≤ %ds — ensemble degraded to CoT-only '
+                '(skipping ToT + Graph, sprint critically low on time)',
+                remaining_s, _ENSEMBLE_CO_T_ONLY_REMAINING_S,
+            )
+            self._stats['ensemble_degraded_cot_only'] = (
+                self._stats.get('ensemble_degraded_cot_only', 0) + 1
+            )
+            strategies = [ReasoningStrategy.CHAIN_OF_THOUGHT]
+        elif remaining_s <= _ENSEMBLE_SKIP_TOT_REMAINING_S:
+            logger.info(
+                '[BLITZ-06] Remaining=%.1fs ≤ %ds — ensemble skipping ToT '
+                '(CoT + Graph only, ToT too expensive)',
+                remaining_s, _ENSEMBLE_SKIP_TOT_REMAINING_S,
+            )
+            self._stats['ensemble_skipped_tot'] = (
+                self._stats.get('ensemble_skipped_tot', 0) + 1
+            )
+            strategies = [
+                ReasoningStrategy.CHAIN_OF_THOUGHT,
+                ReasoningStrategy.GRAPH_REASONING,
+            ]
+        else:
+            strategies = [
+                ReasoningStrategy.CHAIN_OF_THOUGHT,
+                ReasoningStrategy.TREE_OF_THOUGHTS,
+                ReasoningStrategy.GRAPH_REASONING,
+            ]
+
+        tasks = [self.reason(query, s) for s in strategies]
+        results = await parallel_ok(*tasks, label='meta_reasoning_coordinator:422')
+        successful = [r for r in results if isinstance(r, dict) and r.get('success')]
+        if not successful:
+            return {'success': False, 'error': 'All reasoning strategies failed'}
+        strategy_counts = {}
+        for r in successful:
+            s = r.get('strategy', 'unknown')
+            strategy_counts[s] = strategy_counts.get(s, 0) + 1
+        best_strategy = max(strategy_counts, key=strategy_counts.get)
+        return {
+            'success': True,
+            'ensemble_size': len(successful),
+            'strategies_used': [r.get('strategy') for r in successful],
+            'selected_strategy': best_strategy,
+            'results': successful,
+            'summary': (
+                f'Ensemble reasoning: {len(successful)} strategies, '
+                f'selected {best_strategy}'
+                f'{" (urgency-degraded)" if len(strategies) < 3 else ""}'
+            ),
+        }
+
+    def get_statistics(self) -> dict[str, Any]:
+        """Get reasoning statistics including BLITZ-04 urgency info."""
+        stats = {
+            **self._stats,
+            'history_size': len(self.reasoning_history),
+            'urgency': self._compute_urgency(),  # BLITZ-04
+        }
+        if self._checkpointer is not None:
+            stats['checkpointer'] = self._checkpointer.stats
+        if self._sprint_clock is not None:
+            stats['remaining_s'] = self._sprint_clock.remaining_s
+            stats['total_duration_s'] = self._sprint_clock.total_duration_s
+        return stats
+
+    # ── UNIFIED-005: ToT State Persistence ────────────────────────────────
+
+    async def save_state(self) -> bool:
+        """
+        UNIFIED-005: Persist current ToT state to DuckDB atomically.
+
+        Delegates to TransactionalToTCheckpointer if initialized.
+        Called on explicit shutdown or at key depth transitions.
+        Returns True if saved, False if no checkpointer or on error.
+        """
+        if self._checkpointer is None:
+            return False
+        # The checkpointer already has the nodes reference bound —
+        # periodic loop + depth-level checkpoints handle persistence.
+        # This is an explicit trigger for caller convenience.
+        try:
+            if self._checkpointer._nodes_ref is not None:
+                return await self._checkpointer.checkpoint(
+                    nodes=self._checkpointer._nodes_ref,
+                )
+            return False
+        except Exception:
+            return False
+
+    async def load_state(
+        self,
+        sprint_id: str,
+        duckdb_store: Any,
+    ) -> dict | None:
+        """
+        UNIFIED-005: Load ToT state from the latest checkpoint for a sprint.
+
+        Creates a Temporary TransactionalToTCheckpointer to read the
+        checkpoint. Returns the nodes dict or None if not found / corrupt.
+
+        Args:
+            sprint_id: Sprint identifier to load checkpoint for.
+            duckdb_store: Initialized DuckDBShadowStore instance.
+
+        Returns:
+            dict[ str → ThoughtNode ] or None.
+        """
+        try:
+            from hledac.universal.coordinators.tot_checkpointer import (
+                TransactionalToTCheckpointer,
+            )
+            temp_ckpt = TransactionalToTCheckpointer(
+                sprint_id=sprint_id,
+                duckdb_store=duckdb_store,
+                interval_s=30.0,
+            )
+            restored = await temp_ckpt.restore()
+            if restored is None:
+                return None
+            step, nodes_dict, checksum = restored
+            logger.info(
+                "[UNIFIED-005] ToT state loaded: sprint=%s step=%d nodes=%d checksum=%s",
+                sprint_id[:12],
+                step,
+                len(nodes_dict),
+                checksum[:16],
+            )
+            # Store for later use
+            self._sprint_id = sprint_id
+            self._duckdb_store = duckdb_store
+            self._checkpointer = temp_ckpt
+            return nodes_dict
+        except Exception as exc:
+            logger.warning("[UNIFIED-005] load_state failed: %s", exc)
+            return None
+
+    async def cleanup_checkpoints(self) -> bool:
+        """
+        UNIFIED-005: Delete all checkpoints for this sprint.
+
+        Called when the sprint completes successfully — frees storage.
+        Returns True on success.
+        """
+        if self._checkpointer is None:
+            return False
+        try:
+            await self._checkpointer.stop(final_checkpoint=False)
+            ok = await self._checkpointer.cleanup()
+            self._checkpointer = None
+            return ok
+        except Exception:
+            return False
+
+    def _get_feature_list(self) -> list[str]:
+        return [
+            'Chain of Thought reasoning',
+            'Tree of Thoughts exploration',
+            'Graph reasoning',
+            'Automatic strategy selection',
+            'Ensemble reasoning',
+            'Strategy switching',
+            'Learned value prediction (SOVEREIGN-005)',
+            'Cost-weighted branch pruning (SOVEREIGN-005)',
+            'Dead-end detection (SOVEREIGN-005)',
+            'SprintClock urgency clamping (BLITZ-04)',
+            'Ensemble urgency gating (BLITZ-06)',
+            'Semantic gravity field void detection [SILICON-05]',
+            'Gravity-aware strategy selection [SILICON-05]',
+            'Void-aware ToT branch boosting [SILICON-05]',
+            'Fetch directive generation [SILICON-05]',
+            'Multi-layer ToT crash resilience — LMDB+DuckDB+FS (UNIFIED-007/008)',
+        ]

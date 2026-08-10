@@ -15,12 +15,17 @@
 //! The class is **stateless** — no `__init__`, no instance state, all
 //! methods are `#[staticmethod]`. M1-friendly: no allocations on the hot
 //! path except the result String.
+//!
+//! ## GIL Handling
+//! Batch functions release the GIL via `release_gil()` during rayon
+//! parallel work. This allows asyncio event loop to run on other threads
+//! and enables true CPU parallelism for multi-core workloads.
 
 use pyo3::prelude::*;
 use sha2::{Digest, Sha256};
 use xxhash_rust::xxh3::xxh3_64;
 
-use crate::gil::release_gil;
+use crate::gil::{release_gil, release_gil_caught_panic};
 
 /// Compute SHA-256 of a byte slice and return as 64-char lowercase hex.
 ///
@@ -105,18 +110,24 @@ pub fn blake3_hex(body: &[u8]) -> String {
 /// * `items` - list of byte slices to hash
 ///
 /// # Returns
-/// List of 16-character lowercase hex strings, same length as `items`
+/// List of 16-character lowercase hex strings, same length as `items`, or Err on panic.
 #[pyfunction]
-pub fn batch_xxh3_64_hex(items: Vec<Vec<u8>>) -> Vec<String> {
+pub fn batch_xxh3_64_hex(items: Vec<Vec<u8>>) -> PyResult<Vec<String>> {
     use rayon::prelude::*;
-    Python::attach(|py| {
+    let result: Vec<String> = Python::attach(|py| {
         release_gil(py, || {
             items
                 .par_iter()
                 .map(|item| format!("{:016x}", xxh3_64(item)))
                 .collect()
         })
-    })
+    });
+    if release_gil_caught_panic() {
+        return Err(PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(
+            "Rust panic in batch_xxh3_64_hex",
+        ));
+    }
+    Ok(result)
 }
 
 /// Compute BLAKE3-64 fingerprints for many bodies in parallel via rayon.
@@ -130,20 +141,14 @@ pub fn batch_xxh3_64_hex(items: Vec<Vec<u8>>) -> Vec<String> {
 /// * `bodies` - list of byte slices (response bodies)
 ///
 /// # Returns
-/// List of 16-character lowercase hex strings, same length as `bodies`
-/// Compute BLAKE3-64 fingerprints for many bodies in parallel via rayon.
-///
-/// On M1 (8-core) with NEON-enabled BLAKE3, expect ~5 GB/s aggregate
-/// throughput. Used to backfill body hashes after a bulk fetch
-/// (e.g. when migrating the dedup store) without serializing
-/// single-call overhead.
+/// List of 16-character lowercase hex strings, same length as `bodies`, or Err on panic.
 #[pyfunction]
-pub fn batch_blake3_64(bodies: Vec<Vec<u8>>) -> Vec<String> {
+pub fn batch_blake3_64(bodies: Vec<Vec<u8>>) -> PyResult<Vec<String>> {
     use rayon::prelude::*;
     // ISSUE-063: release GIL during rayon parallel scope — otherwise rayon
     // workers block the GIL, defeating parallelism. GIL is reacquired when
     // this closure returns and PyO3 builds the return value.
-    Python::attach(|py| {
+    let result: Vec<String> = Python::attach(|py| {
         release_gil(py, || {
             bodies
                 .par_iter()
@@ -156,7 +161,13 @@ pub fn batch_blake3_64(bodies: Vec<Vec<u8>>) -> Vec<String> {
                 })
                 .collect()
         })
-    })
+    });
+    if release_gil_caught_panic() {
+        return Err(PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(
+            "Rust panic in batch_blake3_64",
+        ));
+    }
+    Ok(result)
 }
 
 /// Python-facing class wrapper.
@@ -196,13 +207,13 @@ impl ContentHasher {
 
     /// Parallel batch BLAKE3-64 across many bodies.
     #[staticmethod]
-    fn batch_blake3_64(bodies: Vec<Vec<u8>>) -> Vec<String> {
+    fn batch_blake3_64(bodies: Vec<Vec<u8>>) -> PyResult<Vec<String>> {
         batch_blake3_64(bodies)
     }
 
     /// Parallel batch xxh3-64 across many items (NEON-accelerated on M1).
     #[staticmethod]
-    fn batch_xxh3_64_hex(items: Vec<Vec<u8>>) -> Vec<String> {
+    fn batch_xxh3_64_hex(items: Vec<Vec<u8>>) -> PyResult<Vec<String>> {
         batch_xxh3_64_hex(items)
     }
 }

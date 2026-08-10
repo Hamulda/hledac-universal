@@ -1,6 +1,8 @@
 """
 RAGOrchestrator — bounded dual-engine RAG (sqlite-vec + optional LanceDB).
 
+P6-4: LanceDB fallback is DEPRECATED. Migrate to DuckDB-backed stores.
+
 ROLE: Production RAG provider that wires advanced_rag → knowledge/lancedb_store.
 
 ================================================================================
@@ -10,11 +12,12 @@ Architecture (Phase 7.3):
         └─→ advanced_rag.RAGOrchestrator  (this module)
                 ├─→ utils.sqlite_vec_helpers.SqliteVecStore  (PRIMARY, M1 native)
                 │       └─→ SPRINT_STORE_ROOT / sprint_{id}.db (shared with DuckDB)
-                └─→ knowledge.lancedb_store.get_identity_store()  (FALLBACK, RAM > 5GB)
+                └─→ knowledge.lancedb_store.get_identity_store()  (DEPRECATED FALLBACK)
 
 M1 8GB invariants (always-on):
     - sqlite-vec primary: zero-process, ~5MB resident vs ~200MB LanceDB subprocess.
     - LanceDB fallback: only activated if system RAM headroom > 1.5GB.
+      (DEPRECATED: use DuckDB-backed stores instead)
     - Synchronous I/O offloaded via `loop.run_in_executor()` (NEVER asyncio.to_thread).
     - All collections bounded (MAX_SOURCES, MAX_TOKENS, MAX_CANDIDATES).
     - Fail-safe: any exception → empty result + warning log, never raises.
@@ -23,6 +26,10 @@ M1 8GB invariants (always-on):
 Capability flag:
     HLEDAC_ENABLE_ADVANCED_RAG=0 (default, dormant) — gate at runtime.
     HLEDAC_ADVANCED_RAG_BACKEND=sqlitevec|lancedb|auto (default: auto)
+
+P6-4 Migration:
+    Replace knowledge.lancedb_store.get_identity_store() with
+    knowledge.duckdb_rag_store.get_identity_store() for M1 8GB native operation.
 """
 import asyncio
 import logging

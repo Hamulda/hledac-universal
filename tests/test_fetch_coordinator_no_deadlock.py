@@ -476,3 +476,84 @@ async def test_deadlock_stress_1000_iterations():
 
     # All 1000 iterations passed
     assert len(iteration_failures) == 0, f"Expected 0 failures but got {len(iteration_failures)}"
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# MODERN-06: enqueue_pivot public protocol verification
+# ─────────────────────────────────────────────────────────────────────────────
+
+def test_fetch_coordinator_has_enqueue_pivot_method():
+    """Verify FetchCoordinator exposes enqueue_pivot as a public class method.
+
+    MODERN-06: enqueue_pivot misindent broke public protocol.
+    The method must be at class level (not nested inside _put_task) to be
+    callable as scheduler.enqueue_pivot(...) from windup_engine.py:132.
+
+    This test ensures the fix is in place and the method is discoverable.
+    """
+    from hledac.universal.coordinators.fetch_coordinator import FetchCoordinator
+    from hledac.universal.runtime.protocols.pivot_protocol import PivotProtocol
+
+    # P0: enqueue_pivot must be a callable class method, not a closure
+    assert hasattr(FetchCoordinator, 'enqueue_pivot'), (
+        "MODERN-06 FAIL: FetchCoordinator must have 'enqueue_pivot' method "
+        "at class level (not nested inside _put_task)"
+    )
+
+    # Verify it's a proper method (bound method when accessed on instance)
+    method = getattr(FetchCoordinator, 'enqueue_pivot')
+    assert callable(method), "enqueue_pivot must be callable"
+
+    # Verify signature includes required parameters
+    import inspect
+    sig = inspect.signature(method)
+    params = list(sig.parameters.keys())
+    assert 'ioc_value' in params, "enqueue_pivot must accept ioc_value"
+    assert 'ioc_type' in params, "enqueue_pivot must accept ioc_type"
+    assert 'confidence' in params, "enqueue_pivot must accept confidence"
+
+    # P1: FetchCoordinator should satisfy PivotProtocol at runtime
+    # (runtime_checkable allows isinstance checks)
+    mock_fc = MagicMock(spec=FetchCoordinator)
+    assert isinstance(mock_fc, PivotProtocol), (
+        "FetchCoordinator must satisfy PivotProtocol for type-safe calls"
+    )
+
+
+def test_fetch_coordinator_satisfies_full_pivot_protocol():
+    """Verify FetchCoordinator implements all PivotProtocol methods.
+
+    PivotProtocol requires:
+    - enqueue_pivot (sync) ✓ verified above
+    - drain_pivot_queue (async) - NEW
+    - record_feedback (async) - NEW
+
+    This test ensures FetchCoordinator satisfies the FULL protocol contract.
+    """
+    from hledac.universal.coordinators.fetch_coordinator import FetchCoordinator
+    from hledac.universal.runtime.protocols.pivot_protocol import PivotProtocol
+    import inspect
+
+    # Verify drain_pivot_queue exists and is async
+    assert hasattr(FetchCoordinator, 'drain_pivot_queue'), (
+        "FetchCoordinator must have 'drain_pivot_queue' method for PivotProtocol"
+    )
+    method = getattr(FetchCoordinator, 'drain_pivot_queue')
+    assert asyncio.iscoroutinefunction(method), (
+        "drain_pivot_queue must be an async function"
+    )
+
+    # Verify record_feedback exists and is async
+    assert hasattr(FetchCoordinator, 'record_feedback'), (
+        "FetchCoordinator must have 'record_feedback' method for PivotProtocol"
+    )
+    method = getattr(FetchCoordinator, 'record_feedback')
+    assert asyncio.iscoroutinefunction(method), (
+        "record_feedback must be an async function"
+    )
+
+    # Verify protocol compliance with mock
+    mock_fc = MagicMock(spec=FetchCoordinator)
+    assert isinstance(mock_fc, PivotProtocol), (
+        "FetchCoordinator must fully satisfy PivotProtocol"
+    )

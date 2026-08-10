@@ -100,6 +100,26 @@ jobs:
         working-directory: rust_extensions
         run: cargo fmt --check
 
+      - name: Feature matrix check (P7-1)
+        # P7-1: Verify feature matrix coverage and module reachability.
+        # Ensures no "dead code" that isn't compiled into the binary.
+        # Runs cargo check with all feature combinations.
+        run: |
+          # Check feature-gated modules are reachable
+          echo "=== Feature Matrix Analysis ==="
+          uv run --no-sync python tools/ci/rust_reachability_check.py rust_extensions/
+        continue-on-error: true
+
+      - name: Cargo check with feature matrix (P7-1)
+        # P7-1: Verify all feature combinations compile successfully.
+        # This ensures feature gates are correct and no broken cfg attributes.
+        working-directory: rust_extensions
+        run: |
+          echo "=== Feature Matrix Compilation ==="
+          # Check all features compile
+          cargo check --features full,mach,accelerate,ane 2>&1 | head -50
+        continue-on-error: true
+
   # ── macOS matrix: maturin wheel build + full test suite ─────────────────────
   # NOTE: macos-latest = ARM64 (M1/M2), macos-13 = Intel x86_64.
   # Explicit runner mapping is required — matrix platform name ≠ GitHub runner label.

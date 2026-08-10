@@ -1000,6 +1000,162 @@ def bulk_bump_aggregate(layout: IntCounterLayoutRust, deltas: list[int]) -> list
     """Apply a vector of int deltas to the layout in one call. Returns new values per layout."""
     ...
 
+# ============================================================================
+# SILICON-04: Metal Shared Buffer — Zero-Copy Rust↔Python↔MLX Tensor Sharing
+# ============================================================================
+
+class SharedMetalBuffer:
+    """Zero-copy Metal buffer with StorageModeShared for Rust↔Python↔MLX tensor sharing.
+
+    On M1 UMA, every `mx.array(numpy_arr)` creates a NEW Metal buffer + copies data
+    even though CPU and GPU share physical memory pages. This causes:
+    - L2 cache-line eviction from the 128 MB SLC
+    - Per-vector allocation overhead when reranking ANN candidates
+    - Memory bandwidth waste (CPU writes → GPU reads same physical address)
+
+    SharedMetalBuffer allocates a single MTLBuffer with StorageModeShared
+    and exposes it for:
+    - Python: zero-copy numpy views via __buffer__ protocol (PEP 3118)
+    - MLX: single mx.array() call over the entire batch (1 copy vs N copies)
+    - Rust: direct &[f32] access via contents() pointer
+
+    M1 8GB constraints:
+    - Max single buffer: 256 MB (shared MTLBuffer limit)
+    - Total allocated: tracked via atomic, auto-flush at 512 MB
+    - Thread-safe: parking_lot::RwLock for device, AtomicU64 for budget
+
+    Usage:
+        buf = SharedMetalBuffer.allocate(1000 * 256 * 4)  # bytes
+        buf.copy_from_numpy(data)
+        view = buf.to_numpy((1000, 256), "float32")
+        import mlx.core as mx
+        mx_arr = buf.to_mlx_array((1000, 256), mx.float32)
+    """
+    def __init__(self) -> None: ...
+    @staticmethod
+    def allocate(size_bytes: int) -> SharedMetalBuffer: ...
+    @staticmethod
+    def from_numpy(data: Any) -> SharedMetalBuffer: ...  # numpy array
+    @staticmethod
+    def from_iosurface(
+        iosurface_ptr: int,
+        width: int,
+        height: int,
+        bytes_per_row: int,
+        pixel_format: str,
+    ) -> SharedMetalBuffer: ...
+    def copy_from_numpy(self, data: Any) -> None: ...
+    def to_numpy(self, shape: tuple[int, ...], dtype: str) -> Any: ...  # numpy array view
+    def to_mlx_array(self, shape: tuple[int, ...], mlx_dtype: Any) -> Any: ...
+    def size_bytes(self) -> int: ...
+    def is_released(self) -> bool: ...
+    def release(self) -> None: ...
+
+# Module constants
+SHARED_BUF_MAX_SINGLE_MB: int  # 256
+SHARED_BUF_TOTAL_BUDGET_MB: int  # 512
+
+def get_shared_buf_telemetry() -> dict[str, int]:
+    """Return telemetry dict: allocations, releases, oom_errors, current_allocated_bytes, peak_allocated_bytes."""
+    ...
+
+def reset_shared_buf_telemetry() -> None:
+    """Reset shared buffer telemetry counters."""
+    ...
+
+def is_metal_shared_available() -> bool:
+    """Check if Metal shared buffers are available on this platform."""
+    ...
+
+# ============================================================================
+# SILICON-01: Metal GPU Hash Cracking — Opportunistic During I/O Wait
+# ============================================================================
+
+class MetalHashCracker:
+    """GPU-accelerated hash cracker using Metal compute shaders.
+
+    Opportunistic cracking during I/O wait — GPU buffers bounded to 64 MB,
+    released after each crack call. CPU fallback: NEON + Rayon (always available).
+
+    M1 8GB bounds:
+    - GPU buffers bounded to 64 MB, released after each crack call
+    - Max candidates per batch: 50
+    - Thread-safe with GIL release during GPU operations
+    """
+    def __init__(self) -> None: ...
+    def crack_sha256(
+        self,
+        target_hash: str,
+        candidates: list[str],
+    ) -> list[tuple[str, bool]]: ...
+    def crack_md5(
+        self,
+        target_hash: str,
+        candidates: list[str],
+    ) -> list[tuple[str, bool]]: ...
+    def batch_crack(
+        self,
+        targets: list[str],
+        candidates: list[str],
+    ) -> list[list[tuple[str, bool]]]: ...
+    def clear_cache(self) -> None: ...
+    def get_stats(self) -> dict[str, int]: ...
+
+# Module constants
+MAX_GPU_BUFFER_BYTES: int
+MAX_GPU_TOTAL_GUARD_BYTES: int
+GPU_MIN_CANDIDATES: int
+GPU_CHUNK_SIZE: int
+GPU_THREADS_PER_GROUP: int
+
+# ============================================================================
+# IO-4: IOSurface Zero-Copy Bridge — CVPixelBuffer → Metal Texture
+# ============================================================================
+
+class IOSurfaceTextureDescriptor:
+    """Descriptor for IOSurface-backed Metal texture (IO-4 zero-copy bridge).
+
+    Provides: CVPixelBuffer → IOSurface → MTLTexture pipeline,
+    Vision/OCR zero-copy integration via CIImage(ioSurface:).
+    """
+    iosurface_ptr: int
+    width: int
+    height: int
+    bytes_per_row: int
+    pixel_format: str
+    def __init__(
+        self,
+        iosurface_ptr: int,
+        width: int,
+        height: int,
+        bytes_per_row: int,
+        pixel_format: str,
+    ) -> None: ...
+    def __repr__(self) -> str: ...
+
+def is_iosurface_bridge_available() -> tuple[bool, str | None]:
+    """Check if IOSurface bridge is available. Returns (available, device_name)."""
+    ...
+
+def get_iosurface_from_pixelbuffer(pixelbuffer: Any) -> IOSurfaceTextureDescriptor:
+    """Extract IOSurface from CVPixelBuffer for zero-copy Metal processing."""
+    ...
+
+def create_metal_texture_from_iosurface(
+    descriptor: IOSurfaceTextureDescriptor,
+) -> Any:
+    """Create Metal texture from IOSurface descriptor. Returns MTLTexture (or None on failure)."""
+    ...
+
+def get_iosurface_bridge_telemetry() -> dict[str, Any]:
+    """Return IOSurface bridge telemetry: available, texture_count, bytes_allocated, etc."""
+    ...
+
+# Module constants
+MAX_TEXTURE_WIDTH: int  # 16384
+MAX_TEXTURE_HEIGHT: int  # 16384
+MAX_CONCURRENT_TEXTURES: int  # 4
+
 def bulk_snapshot_dict(layout: IntCounterLayoutRust) -> dict[str, int]:
     """Materialize the current layout as a str-keyed dict."""
     ...
@@ -1333,6 +1489,22 @@ def rayon_abort(handle: int, /) -> None:
     """
     ...
 
+def rayon_drop_channel(handle: int, /) -> None:
+    """P0-4 FIX: Release Arc<SharedTask> ownership to prevent UAF/double-free.
+
+    MUST be called by Python after the LAST call to rayon_join_channel or
+    rayon_abort_channel for a given handle. Without this call, the SharedTask
+    memory would be leaked or accessed after being freed.
+
+    Usage:
+        handle = rayon_submit_channel(...)
+        result = rayon_join_channel(handle, timeout)
+        rayon_drop_channel(handle)  # MUST call after final join/abort
+
+    handle: opaque handle from rayon_submit_channel
+    """
+    ...
+
 # Compression — F265B-III (rust_extensions/src/compress.rs)
 
 def compress_page(data: bytes) -> bytes:
@@ -1491,11 +1663,26 @@ def create_telemetry_aggregator() -> TelemetryAggregator:
 # F275-3: Arrow batch builder — CanonicalFinding list → Arrow IPC bytes (rayon-parallel)
 def build_arrow_batch_from_findings(findings: list[dict[str, Any]]) -> bytes | None: ...
 
-# ISSUE-001: Single-pass CanonicalFinding list → Arrow IPC (no Python list comprehensions)
+# ISSUE-001 + MODERN-20: Single-pass CanonicalFinding list → Arrow IPC (no Python list comprehensions)
+# MODERN-20: Extended to 8 columns including claims_json (4 PyList params instead of 3)
 def build_record_batch_from_findings(
     findings: list[Any],
     provenance_jsons: list[str | None],
     payload_texts: list[str],
+    claims_jsons: list[str],
+) -> bytes | None: ...
+
+# MODERN-20: Zero-copy column-path Arrow batch builder (8 PyList params)
+# ISSUE-007 fix: Single-pass iterators instead of 7× index lookups per row
+def build_record_batch_from_structs(
+    ids: list[str],
+    queries: list[str],
+    source_types: list[str],
+    confidences: list[float],
+    timestamps: list[float],
+    provenance_jsons: list[str],
+    payload_texts: list[str],
+    claims_jsons: list[str],
 ) -> bytes | None: ...
 
 # ISSUE-27: Claims extraction — CPU-bound sentence splitting, polarity, confidence (Rust)

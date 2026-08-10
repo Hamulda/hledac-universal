@@ -397,9 +397,15 @@ async def fetch_via_unified(url: str, policy: TransportPolicy | None=None, heade
         elif kind.startswith('curl_cffi'):
             proxies = None
             if policy.kind in (TransportKind.CURL_CFFI_TOR, TransportKind.CURL_CFFI_H3_TOR):
-                proxies = {'https': ENV.get_str('TOR_SOCKS_PROXY_URL', _TOR_PROXY)}
+                # P0-2 MODERN-02 FIX: Both http and https schemes required!
+                # .onion URLs can use http:// or https:// and BOTH must go through proxy.
+                proxy = ENV.get_str('TOR_SOCKS_PROXY_URL', _TOR_PROXY)
+                proxies = {'http': proxy, 'https': proxy}
             elif policy.kind in (TransportKind.CURL_CFFI_I2P, TransportKind.CURL_CFFI_H3_I2P):
-                proxies = {'https': ENV.get_str('I2P_SOCKS_PROXY_URL', _I2P_PROXY)}
+                # P0-2 MODERN-02 FIX: Both http and https schemes required!
+                # .i2p URLs can use http:// or https:// and BOTH must go through proxy.
+                proxy = ENV.get_str('I2P_SOCKS_PROXY_URL', _I2P_PROXY)
+                proxies = {'http': proxy, 'https': proxy}
             extra_headers = headers or {}
             resp = await client.get(url, headers=extra_headers, timeout=timeout_s, proxies=proxies, follow_redirects=True)
             body = resp.content[:max_bytes]

@@ -111,11 +111,30 @@ pub mod zero_copy; // Zero-copy PyO3 batch utilities // Lock-free SPSC queue
 // Cryptography & Security
 // ============================================================================
 
+// [MODERN-07]: Shared Tokio runtime — consolidates 3 separate runtimes into 1.
+// Must be before dns, quic, and arti_bridge which depend on it.
+#[cfg(feature = "shared_tokio")]
+pub mod async_runtime;
+
+// MODERN-08: pyo3-async-runtimes integration — returns awaitables directly to Python asyncio.
+// Eliminates need for asyncio.to_thread() wrappers on the Python side.
+#[cfg(feature = "shared_tokio")]
+pub mod async_bridge;
+
+// MODERN-16: Hybrid Python↔Rust stealth transport bridge.
+// Python keeps curl_cffi JA3/TLS impersonation; Rust owns raw I/O (DNS, QUIC, sockets).
+// Bridge via native async FFI + Arrow IPC for bulk transfer.
+// Uses tokio::net::lookup_host directly (no hickory-resolver dependency needed).
+#[cfg(feature = "stealth_bridge")]
+pub mod stealth_bridge;
+
 pub mod circuit_breaker;
+pub mod ffi_safe; // [SWARM]-005: Panic-safe FFI wrapper for pyfunction calls
 #[cfg(feature = "core")]
 pub mod crypto_accelerate; // CommonCrypto SHA-256 (M1 optimized)
 pub mod h2_safari_preset; // Safari WebKit HTTP/2 presets
-pub mod nw_connection; // Apple Network.framework TCP
+#[cfg(feature = "block2")]
+pub mod nw_connection; // Apple Network.framework TCP (requires block2)
 pub mod onion_validation; // GRAPH-03: .onion v3 validation
 #[cfg(feature = "quic")]
 pub mod quic; // QUIC/HTTP3 via Quinn+H3
@@ -146,6 +165,8 @@ pub mod xml_sanitize; // R7c: XML sanitization
 
 pub mod int_counter_layout; // SoA buffer for integer counters
 pub mod madvise; // Darwin madvise (MADV_FREE_REUSABLE)
+#[cfg(feature = "mach")]
+pub mod mach_remap; // [NEXUS]-018-03: Mach vm_remap zero-copy remapping
 pub mod memory; // Memory statistics via sysinfo
 pub mod os_unfair_lock; // ISSUE-4.3: os_unfair_lock (~5ns)
 pub mod sendfile; // ISSUE-4.4: sendfile(2) zero-copy
@@ -188,6 +209,8 @@ pub mod swarm_dag; // SILICON-07: Work-stealing DAG // ISSUE-023: Federated Q-ta
 #[cfg(feature = "data")]
 pub mod arrow_batch_builder; // Arrow ArrayBuilder batch construction
 #[cfg(feature = "data")]
+pub mod arrow_c_data; // MODERN-24: Arrow C Data Interface zero-copy export
+#[cfg(feature = "data")]
 pub mod parquet_reader; // F320+: Lazy parquet reader
 
 #[cfg(feature = "data")]
@@ -211,8 +234,8 @@ pub mod iosurface_bridge; // IO-4: IOSurface zero-copy bridge (CVPixelBuffer →
 pub mod metal_compute; // R22: Metal GPU matmul
 #[cfg(feature = "metal")]
 pub mod metal_hashcrack; // SILICON-01: GPU hash cracking
-#[cfg(feature = "metal")]
-pub mod metal_shared_buf; // SILICON-04: Shared Metal buffer
+#[cfg(feature = "metal_shared")]
+pub mod metal_shared_buf; // SILICON-04: Shared Metal buffer (guarded by metal_shared feature)
 pub mod mlx_bridge; // ISSUE-015: MLX async token streaming
 pub mod simd; // ISSUE-023: Modular SIMD (NEON fallback)
 
@@ -259,10 +282,6 @@ pub mod ip_parse; // Sprint P2-3: IP parsing & classification
 
 // Health & telemetry
 pub mod health; // Issue #22: Health endpoint
-
-// MLX integration (depends on metal feature)
-#[cfg(feature = "metal")]
-pub mod mlx_bridge;
 
 // ============================================================================
 // Rayon Thread Pools - M1 8GB safe, P/E core optimized
@@ -884,6 +903,12 @@ fn hledac_rust_extensions(m: &Bound<'_, PyModule>) -> PyResult<()> {
         eprintln!("[PANIC-HOOK] location={} message=\"{}\"", location, message);
     }));
 
+    // MODERN-08: pyo3-async-runtimes integration.
+    // No explicit runtime initialization needed - future_into_py() automatically
+    // detects the Python event loop via task-local storage.
+    // Python code can now use: `await rust.dns.resolve_async("example.com")`
+    // instead of: `asyncio.to_thread(rust.dns.resolve, "example.com")`
+
     // Expose package version for Python-side ABI compatibility checking (F275).
     // CARGO_PKG_VERSION is set by Cargo at compile time from Cargo.toml.
     m.add("__version__", env!("CARGO_PKG_VERSION"))?;
@@ -1056,8 +1081,24 @@ fn hledac_rust_extensions(m: &Bound<'_, PyModule>) -> PyResult<()> {
     #[cfg(feature = "quic")]
     quic::register(m)?;
 
+    // MODERN-08: pyo3-async-runtimes integration — async Python functions
+    // Exposes async versions of DNS, QUIC, and Arti that return awaitables directly.
+    // Usage: `await rust.dns.resolve_async("example.com")` instead of
+    // `asyncio.to_thread(rust.dns.resolve, "example.com")`
+    // Note: shared_tokio feature is included by dns, quic, embedded_tor, and nw_framework.
+    #[cfg(any(feature = "dns", feature = "quic", feature = "embedded_tor", feature = "nw_framework"))]
+    async_bridge::register(m)?;
+
+    // MODERN-16: Stealth bridge — Python curl_cffi JA3 ↔ Rust raw I/O
+    // Provides async DNS/QUIC bridges for curl_cffi_fetch.py
+    // Uses tokio::net::lookup_host directly (no hickory-resolver needed)
+    #[cfg(feature = "stealth_bridge")]
+    stealth_bridge::register(m)?;
+
     // SILICON-03: Apple Network.framework user-space TCP + hardware TLS
-    // Always registers — stub returns clear error when feature not enabled.
+    // MODERN-12: Async bridge returns native Python awaitables (no to_thread needed).
+    // Requires block2 feature (Objective-C blocks support).
+    #[cfg(feature = "block2")]
     nw_connection::register(m)?;
 
     // [NEXUS]-018-01: Safari WebKit HTTP/2 SETTINGS presets
@@ -1078,7 +1119,10 @@ fn hledac_rust_extensions(m: &Bound<'_, PyModule>) -> PyResult<()> {
     crypto_accelerate::register_functions(m)?;
     // adaptive_scheduler is always compiled — no feature gate needed
     adaptive_scheduler::register_functions(m)?;
-    // swarm_dag is optional (feature = "advanced") // SILICON-07: Work-stealing DAG with ROI-based adaptive pool sizing
+    // swarm_dag: Work-stealing DAG with ROI-based adaptive pool sizing
+    // MODERN-13: Now registered by default (was dead code with register() never called)
+    #[cfg(feature = "advanced")]
+    swarm_dag::register(m)?;
     rate_limit::register_module(m)?; // ISSUE #016: NVD token bucket rate limiter
                                      // F5.2: FeedDominanceGuard + LaneBudgetPool in Rust (zero-copy, no GIL)
     sprint_policies::register(m)?;
@@ -1316,7 +1360,7 @@ fn hledac_rust_extensions(m: &Bound<'_, PyModule>) -> PyResult<()> {
     metal_compute::register(m)?;
 
     // SILICON-04: Shared Metal buffer — zero-copy Rust↔Python↔MLX tensor sharing
-    #[cfg(feature = "metal")]
+    #[cfg(feature = "metal_shared")]
     metal_shared_buf::register(m)?;
 
     // SILICON-01: Metal GPU opportunistic hash cracking — GPU during I/O wait

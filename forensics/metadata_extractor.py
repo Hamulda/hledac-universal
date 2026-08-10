@@ -894,8 +894,10 @@ class UniversalMetadataExtractor:
         for i in range(0, len(file_paths), self.batch_size):
             batch = file_paths[i:i + self.batch_size]
             tasks = [self.extract(path) for path in batch]
+            # P4-5 FIX: policy="log" returns list[T], not ParallelResult.
+            # Use results directly as they already contain only successes.
             batch_results = await parallel(tasks, policy="log", ctx='metadata_extractor:1131')
-            for path, result in zip(batch, batch_results.ok, strict=False):
+            for path, result in zip(batch, batch_results, strict=False):
                 if isinstance(result, Exception):
                     results.append(MetadataResult(file_path=path, success=False, error=str(result)))
                 else:

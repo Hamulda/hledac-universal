@@ -344,18 +344,24 @@ BGP enrichment maps IP → ASN → owner → geoloc → netblocks → threat int
 
 ---
 
-## Sprint F289-NEW: M1 8GB Recalibrated Memory Thresholds
+## Sprint F289-NEW + P7-3: M1 8GB Recalibrated Memory Thresholds
 
-M1 8GB UMA threshold ladder recalibrated for MacBook Air M1 8GB UMA reality:
-- macOS ~2.5-4.5 GiB baseline + system daemons = 5-7 GiB při běžné práci
-- Původní limity (5.8/6.0/6.7/7.0) způsobovaly false-positive CRITICAL/EMERGENCY
+M1 8GB UMA threshold ladder recalibrated for MacBook Air M1 8GB UMA reality.
+P7-3 SSOT: All constants now defined in `utils.uma_budget.UmaBudget` — import from there.
 
-M1 8GB threshold ladder (see also `uma_budget.py` M1_FETCH_SOFT_CEILING_GB):
-- 5.5 GiB → soft ceiling (fetch concurrency hard-cap via resource_allocator)
-- 6.8 GiB → SOFT_WARN (~85%) — první signál mírného pressure
-- 7.0 GiB → WARN (~88%) — snížit concurrency
-- 7.5 GiB → CRITICAL (~94%) — aktivní pressure, výrazné omezení
-- 7.8 GiB → EMERGENCY (~98%) — skutečná krize, flush + GC
+**SSOT Budget Breakdown** (`utils.uma_budget.UmaBudget`):
+- macOS system:       2.5 GiB (baseline)
+- Orchestrator:         1.0 GiB (fetch/parse/DB overhead)
+- LLM model weights:  2.0 GiB (DeepHermes-3-3B Q4)
+- KV cache:          0.75 GiB (max allocation)
+- **TOTAL**:           **6.25 GiB**
+
+**M1 8GB threshold ladder** (see `uma_budget.py UmaBudget`):
+- 5.5 GiB → soft ceiling (MISSION_PEAK_RSS_GIB hard cap)
+- 6.8 GiB → SOFT_WARN (~85%) — first signal of mild pressure
+- 7.0 GiB → WARN (~88%) — reduce concurrency
+- 7.5 GiB → CRITICAL (~94%) — active pressure, significant restriction
+- 7.8 GiB → EMERGENCY (~98%) — real crisis, flush + GC
 
 Swap tiered policy (F289-NEW, recalibrated for M1 8GB baseline 1.0-1.2 GiB idle):
 - 3.0 GiB → clean/READY_TO_RUN_NOW (allows normal workload variance)
@@ -380,4 +386,21 @@ that could deadlock the async event loop. All file I/O in async methods must use
 `asyncio.to_thread()` or `run_in_executor()`.
 
 Fixed: `open(hostname_file)` → `await asyncio.to_thread(lambda: open(hostname_file))`
+
+---
+
+## P7-3: SSOT UmaBudget Reference
+
+All memory budget constants are now centralized in `utils.uma_budget.UmaBudget`.
+Import from there — do NOT define these elsewhere.
+
+| Constant | Value | Location |
+|----------|-------|----------|
+| `MISSION_PEAK_RSS_GIB` | 5.5 GiB | `UmaBudget.MISSION_PEAK_RSS_GIB` |
+| `UMA_TOTAL_BUDGET_GIB` | 6.25 GiB | `UmaBudget.TOTAL_GIB` |
+| `THRESHOLD_SOFT_WARN_GIB` | 6.8 GiB | `UmaBudget.THRESHOLD_SOFT_WARN_GIB` |
+| `THRESHOLD_WARN_GIB` | 7.0 GiB | `UmaBudget.THRESHOLD_WARN_GIB` |
+| `THRESHOLD_CRITICAL_GIB` | 7.5 GiB | `UmaBudget.THRESHOLD_CRITICAL_GIB` |
+| `THRESHOLD_EMERGENCY_GIB` | 7.8 GiB | `UmaBudget.THRESHOLD_EMERGENCY_GIB` |
+| `METAL_CACHE_FLOOR_MIB` | 512 MiB | `UmaBudget.METAL_CACHE_FLOOR_MIB` |
 

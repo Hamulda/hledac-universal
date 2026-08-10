@@ -331,7 +331,7 @@ impl AhoCorasickMatcher {
         // Clone interned_labels for use inside rayon thread (Send + Clone)
         let interned_labels = self.interned_labels.clone();
         Python::attach(|py| {
-            release_gil(py, || {
+            release_gil(py, std::panic::AssertUnwindSafe(|| {
                 pool.install(|| {
                     texts
                         .into_iter()
@@ -378,7 +378,7 @@ impl AhoCorasickMatcher {
                         })
                         .collect()
                 })
-            })
+            }))
         })
     }
 

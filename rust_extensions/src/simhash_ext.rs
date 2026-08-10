@@ -15,6 +15,11 @@
 //! - `hamming_dist(a, b)` → u32 distance
 //! - `is_near_duplicate(text_a, text_b, threshold=3, ngram_size=2)` → bool
 //! - `SimHashStore(threshold=3, ngram_size=2)` → mutable store
+//!
+//! ## Panic Handling
+//!
+//! All batch functions that release the GIL check for panics after the parallel
+//! work completes. On panic, they return `PyRuntimeError` to inform the caller.
 
 use pyo3::prelude::*;
 use rayon::prelude::*;
@@ -135,17 +140,18 @@ pub fn compute_simhash(text: &str, ngram_size: usize) -> u64 {
 /// ```
 #[pyfunction]
 #[pyo3(signature = (texts, ngram_size=2))]
-pub fn batch_compute_simhash(texts: Vec<String>, ngram_size: usize) -> Vec<u64> {
+pub fn batch_compute_simhash(texts: Vec<String>, ngram_size: usize) -> PyResult<Vec<u64>> {
     let slice = cap_slice(&texts);
     let n = slice.len();
     if n < BATCH_PARALLEL_THRESHOLD {
         // Small batch: serial path
-        slice.iter().map(|t| simhash(t, ngram_size)).collect()
+        Ok(slice.iter().map(|t| simhash(t, ngram_size)).collect())
     } else {
         // adaptive 1-2 threads: n < 64 → 1 thread; n ≥ 64 → 2 threads (P-core ceiling)
         // Issue #6: GIL released so rayon workers can truly run in parallel.
-        Python::attach(|py| {
-            crate::gil::release_gil(py, || {
+        use crate::gil::{release_gil, release_gil_caught_panic};
+        let result: Vec<u64> = Python::attach(|py| {
+            release_gil(py, || {
                 crate::mixed_pool(n).install(|| {
                     slice
                         .par_iter()
@@ -154,7 +160,13 @@ pub fn batch_compute_simhash(texts: Vec<String>, ngram_size: usize) -> Vec<u64> 
                         .collect()
                 })
             })
-        })
+        });
+        if release_gil_caught_panic() {
+            return Err(PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(
+                "Rust panic in batch_compute_simhash",
+            ));
+        }
+        Ok(result)
     }
 }
 

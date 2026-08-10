@@ -159,22 +159,25 @@ class NetworkReconnaissanceLane(BaseIntelligenceLane):
 
                     # Parallel execution: DNS + WHOIS + SSL run concurrently
                     # ISSUE ASYNC-001: asyncio.gather → parallel() with bounded concurrency (3 concurrent ops)
-                    _net_result = await parallel(
+                    # P4-5 FIX: policy="log" returns list[T] (only successes), not ParallelResult.
+                    # Use result directly - it already contains only non-exception values.
+                    # Exceptions are logged silently, so we get None for failed coroutines.
+                    _net_results = await parallel(
                         _fetch_dns(),
                         _fetch_whois(),
                         _fetch_ssl(),
                         policy="log",
                         concurrency=3,
                     )
-                    dns_result, whois_result, ssl_result = (
-                        _net_result.ok[0] if len(_net_result.ok) > 0 else None,
-                        _net_result.ok[1] if len(_net_result.ok) > 1 else None,
-                        _net_result.ok[2] if len(_net_result.ok) > 2 else None,
-                    )
+                    # _net_results is list[Any] - None for each failed/empty slot
+                    # Map back to expected positions: DNS, WHOIS, SSL
+                    dns_result = _net_results[0] if len(_net_results) > 0 else None
+                    whois_result = _net_results[1] if len(_net_results) > 1 else None
+                    ssl_result = _net_results[2] if len(_net_results) > 2 else None
 
                     # Combine results into a unified dict for parse() phase
-                    # Note: exceptions are filtered by parallel(policy="log") → stored in result.errors
-                    # therefore .ok values are always the raw return type (DNS records, WHOIS data, or None)
+                    # P4-5 FIX: policy="log" returns list[T] directly - exceptions are logged,
+                    # not stored in .errors. Values are already the raw return types.
                     combined = {
                         "dns": dns_result,
                         "whois": whois_result,

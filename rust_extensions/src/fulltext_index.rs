@@ -22,9 +22,16 @@
 //!
 //! ISSUE-011: Python BM25Index → Tantivy fulltext replacement.
 
+// MODERN-17 FIX: Use arrow crate for proper Arrow IPC encoding.
+// The hand-rolled ARROW1\xff\xff\xff\xff framing was broken — pyarrow couldn't parse it.
+use arrow::array::ArrayRef;
+use arrow::datatypes::Schema as ArrowSchema;
+use arrow::ipc::writer::StreamWriter;
+use arrow::record_batch::RecordBatch;
 use pyo3::prelude::*;
 use pyo3::types::PyBytes;
 use std::path::Path;
+use std::sync::Arc;
 use tantivy::collector::TopDocs;
 use tantivy::query::QueryParser;
 use tantivy::schema::*;
@@ -42,25 +49,19 @@ const FIELD_DOC_ID: &str = "doc_id";
 const FIELD_CONTENT: &str = "content";
 
 // ---------------------------------------------------------------------------
-// Tokenizer registration — English with stemming (M1 8GB safe, <1MB overhead)
+// Tokenizer — uses Tantivy's built-in "default" tokenizer
 // ---------------------------------------------------------------------------
 
-/// Register English tokenizer with stemming on the Tantivy global registry.
-/// Called once per process; idempotent.
-fn register_tokenizer() {
-    // Tantivy's TextAnalyzer uses a global tokenizer manager.
-    // Register only if not already present (lazy, idempotent).
-    let tokenizer = TextAnalyzer::builder(SimpleTokenizer::default())
-        .filter(LowerCaser)
-        .filter(RemoveLongFilter::limit(40))
-        .build();
-    // Note: Stemmer adds ~800KB dictionary. On M1 8GB, we skip stemming
-    // to save RAM. English stemming is rarely critical for OSINT search
-    // where queries match specific terms (IPs, domains, keywords).
-    // Stemmer can be added later via: .filter(Stemmer::new(SnowballStemmer::English))
-    // using: use tantivy::tokenizer::{Stemmer, SnowballStemmer};
-    tantivy::tokenizer::TextAnalyzer::register("default", tokenizer);
-}
+/// TANTIVY 0.22 FIX: Removed custom tokenizer registration.
+///
+/// Tantivy 0.22's TEXT flag automatically uses the built-in "default" tokenizer,
+/// which is identical to our previous custom config (SimpleTokenizer + LowerCaser +
+/// RemoveLongFilter::limit(40)). No custom registration needed.
+///
+/// For custom tokenizers in the future:
+///   let manager = tantivy::tokenizer::TokenizerManager::default();
+///   manager.register("custom", my_tokenizer);
+///   // Then set via IndexSettings::set_indexing(tokenizer_name)
 
 // ---------------------------------------------------------------------------
 // Schema builder
@@ -96,7 +97,10 @@ fn open_or_create_index(index_path: &Path) -> tantivy::Result<Index> {
         std::fs::create_dir_all(index_path)?;
         let dir = MmapDirectory::open(index_path)?;
         let schema = build_schema();
-        Index::create(dir, schema)
+        // TANTIVY 0.22 FIX: Index::create now requires IndexSettings as 3rd parameter.
+        // Default settings use mmap directory and simple tokenizer.
+        let settings = tantivy::IndexSettings::default();
+        Index::create(dir, schema, settings)
     }
 }
 
@@ -135,8 +139,6 @@ fn get_content_field(schema: &Schema) -> Field {
 #[pyfunction]
 #[pyo3(signature = (index_path, documents))]
 fn fulltext_create_index(index_path: &str, documents: Vec<(String, String)>) -> PyResult<()> {
-    register_tokenizer();
-
     let index_path = Path::new(index_path);
     // Remove existing index if present (fresh start)
     if index_path.exists() {
@@ -155,7 +157,8 @@ fn fulltext_create_index(index_path: &str, documents: Vec<(String, String)>) -> 
     let doc_id_field = get_doc_id_field(&schema);
     let content_field = get_content_field(&schema);
 
-    let writer: IndexWriter = index.writer_with_num_threads(1, 15_000_000).map_err(|e| {
+    // TANTIVY 0.22 FIX: IndexWriter now requires mutable reference.
+    let mut writer: IndexWriter = index.writer_with_num_threads(1, 15_000_000).map_err(|e| {
         PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!(
             "Tantivy: failed to create writer: {}",
             e
@@ -211,7 +214,6 @@ fn fulltext_create_index(index_path: &str, documents: Vec<(String, String)>) -> 
 #[pyfunction]
 #[pyo3(signature = (index_path, documents))]
 fn fulltext_add_documents(index_path: &str, documents: Vec<(String, String)>) -> PyResult<()> {
-    register_tokenizer();
 
     let index_path = Path::new(index_path);
     let index = open_or_create_index(index_path).map_err(|e| {
@@ -226,7 +228,8 @@ fn fulltext_add_documents(index_path: &str, documents: Vec<(String, String)>) ->
     let doc_id_field = get_doc_id_field(&schema);
     let content_field = get_content_field(&schema);
 
-    let writer: IndexWriter = index.writer_with_num_threads(1, 15_000_000).map_err(|e| {
+    // TANTIVY 0.22 FIX: IndexWriter now requires mutable reference.
+    let mut writer: IndexWriter = index.writer_with_num_threads(1, 15_000_000).map_err(|e| {
         PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!(
             "Tantivy: failed to create writer: {}",
             e
@@ -280,7 +283,6 @@ fn fulltext_add_documents(index_path: &str, documents: Vec<(String, String)>) ->
 #[pyfunction]
 #[pyo3(signature = (index_path, query, top_k = 10))]
 fn fulltext_search(index_path: &str, query: &str, top_k: u32) -> PyResult<Vec<(String, f32)>> {
-    register_tokenizer();
 
     if query.trim().is_empty() {
         return Ok(Vec::new());
@@ -327,7 +329,8 @@ fn fulltext_search(index_path: &str, query: &str, top_k: u32) -> PyResult<Vec<(S
 
     let mut results: Vec<(String, f32)> = Vec::with_capacity(top_docs.len());
     for (score, doc_address) in top_docs {
-        let retrieved_doc = searcher.doc(doc_address).map_err(|e| {
+        // TANTIVY 0.22 FIX: searcher.doc() now requires explicit type annotation.
+        let retrieved_doc: TantivyDocument = searcher.doc(doc_address).map_err(|e| {
             PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!(
                 "Tantivy: failed to retrieve doc: {}",
                 e
@@ -449,95 +452,50 @@ fn encode_fulltext_string_array(values: &[String]) -> Vec<u8> {
     result
 }
 
-/// Encode f64 array as IPC format: null_bitmap + data bytes.
-/// Identical to arrow_batch_builder::encode_f64_array — duplicated here
-/// to avoid cross-feature dependency.
-fn encode_fulltext_f64_array(values: &[f64]) -> Vec<u8> {
-    let n = values.len();
-    let null_len = n.div_ceil(8);
-
-    let mut null_bitmap = vec![0u8; null_len];
-    for i in 0..n {
-        null_bitmap[i / 8] |= 1 << (7 - (i % 8));
-    }
-
-    let data_len = n * 8;
-    let mut result = Vec::with_capacity(null_len + data_len);
-    result.extend_from_slice(&null_bitmap);
-
-    let mut data = vec![0u8; data_len];
-    for (i, &v) in values.iter().enumerate() {
-        let bytes = v.to_le_bytes();
-        data[i * 8..(i + 1) * 8].copy_from_slice(&bytes);
-    }
-    result.extend_from_slice(&data);
-    result
-}
-
-/// Encode a single IPC field: name_len(4) + name + type_code(4) + nullable(4) + length(8).
-/// type_code: 4 = Utf8, 6 = Float64 (hand-rolled IPC convention matching arrow_batch_builder).
-fn encode_fulltext_field(name: &str, type_code: i32) -> Vec<u8> {
-    let mut buf = Vec::new();
-    let name_bytes = name.as_bytes();
-    buf.extend_from_slice(&(name_bytes.len() as i32).to_le_bytes());
-    buf.extend_from_slice(name_bytes);
-    buf.extend_from_slice(&type_code.to_le_bytes());
-    buf.extend_from_slice(&1i32.to_le_bytes()); // nullable
-    buf.extend_from_slice(&0i64.to_le_bytes()); // length
-    buf
-}
-
-/// Build the schema body for 2-column fulltext results: doc_id:Utf8 + score:Float64.
-fn build_fulltext_schema_body() -> Vec<u8> {
-    let mut body = Vec::new();
-    body.extend_from_slice(&encode_fulltext_field("doc_id", 4)); // Utf8
-    body.extend_from_slice(&encode_fulltext_field("score", 6)); // Float64
-    body
-}
-
-/// Build the batch body (column buffers) for fulltext search results.
-fn build_fulltext_batch_body(doc_ids: &[String], scores: &[f64]) -> Vec<u8> {
-    let mut body = Vec::new();
-    body.extend_from_slice(&encode_fulltext_string_array(doc_ids));
-    body.extend_from_slice(&encode_fulltext_f64_array(scores));
-    body
-}
-
-/// Build complete Arrow IPC RecordBatchStream bytes for fulltext results.
+/// MODERN-17 FIX: Build proper Arrow IPC RecordBatch bytes for fulltext results.
 ///
-/// Format: magic(8) + schema_size(4) + schema_body + batch_count(4) + batch_size(4) + batch_body + footer(4)
+/// Uses arrow::ipc::writer::StreamWriter instead of hand-rolled ARROW1\xff\xff\xff\xff
+/// framing that pyarrow couldn't parse.
 ///
 /// Schema: doc_id: Utf8, score: Float64
 fn build_fulltext_ipc_bytes(
     doc_ids: Vec<String>,
     scores: Vec<f64>,
-    n: usize,
+    _n: usize,  // Kept for API compatibility (actual length derived from column arrays)
 ) -> Result<Vec<u8>, String> {
-    if n == 0 {
-        // Empty batch: schema only, zero batches.
-        let schema_body = build_fulltext_schema_body();
-        let mut result = Vec::with_capacity(24 + schema_body.len());
-        result.extend_from_slice(b"ARROW1\xff\xff\xff\xff");
-        result.extend_from_slice(&(schema_body.len() as u32).to_le_bytes());
-        result.extend_from_slice(&schema_body);
-        result.extend_from_slice(&(0u32).to_le_bytes()); // batch_count = 0
-        result.extend_from_slice(&0u32.to_le_bytes()); // footer = end marker
-        return Ok(result);
+    // Build Arrow Schema with 2 fields: doc_id (String) + score (Float64)
+    let schema = ArrowSchema::new(vec![
+        arrow::datatypes::Field::new("doc_id", arrow::datatypes::DataType::Utf8, true),
+        arrow::datatypes::Field::new("score", arrow::datatypes::DataType::Float64, true),
+    ]);
+
+    // Build column arrays using arrow types
+    use arrow::array::{Float64Array, StringArray};
+    let doc_ids_array: ArrayRef = Arc::new(StringArray::from(doc_ids));
+    let scores_array: ArrayRef = Arc::new(Float64Array::from(scores));
+
+    // Create RecordBatch (requires Arc<ArrowSchema>)
+    let schema_ref: Arc<ArrowSchema> = Arc::new(schema);
+    let batch = RecordBatch::try_new(
+        schema_ref.clone(),
+        vec![doc_ids_array, scores_array],
+    )
+    .map_err(|e| format!("Failed to create RecordBatch: {}", e))?;
+
+    // Serialize to IPC stream format using StreamWriter
+    let mut buffer = Vec::new();
+    {
+        let mut writer = StreamWriter::try_new(&mut buffer, schema_ref.as_ref())
+            .map_err(|e| format!("Failed to create StreamWriter: {}", e))?;
+
+        writer.write(&batch)
+            .map_err(|e| format!("Failed to write RecordBatch: {}", e))?;
+
+        writer.finish()
+            .map_err(|e| format!("Failed to finish stream: {}", e))?;
     }
 
-    let schema_body = build_fulltext_schema_body();
-    let batch_body = build_fulltext_batch_body(&doc_ids, &scores);
-
-    let mut result = Vec::with_capacity(24 + schema_body.len() + batch_body.len());
-    result.extend_from_slice(b"ARROW1\xff\xff\xff\xff");
-    result.extend_from_slice(&(schema_body.len() as u32).to_le_bytes());
-    result.extend_from_slice(&schema_body);
-    result.extend_from_slice(&(1u32).to_le_bytes()); // batch_count = 1
-    result.extend_from_slice(&(batch_body.len() as u32).to_le_bytes());
-    result.extend_from_slice(&batch_body);
-    result.extend_from_slice(&0u32.to_le_bytes()); // footer = end marker
-
-    Ok(result)
+    Ok(buffer)
 }
 
 /// Search a fulltext index and return results as Arrow IPC RecordBatchStream bytes.
@@ -563,13 +521,12 @@ fn build_fulltext_ipc_bytes(
 /// Returns: Arrow IPC bytes (RecordBatchStream) or None on error.
 #[pyfunction]
 #[pyo3(signature = (index_path, query, top_k = 10))]
-fn fulltext_search_arrow(
+fn fulltext_search_arrow<'py>(
     index_path: &str,
     query: &str,
     top_k: u32,
-    py: Python<'_>,
-) -> PyResult<Option<Bound<'_, PyBytes>>> {
-    register_tokenizer();
+    py: Python<'py>,
+) -> PyResult<Option<Bound<'py, PyBytes>>> {
 
     if query.trim().is_empty() {
         return Ok(Some(PyBytes::new(py, b"")));
@@ -614,7 +571,8 @@ fn fulltext_search_arrow(
     let mut scores: Vec<f64> = Vec::with_capacity(n);
 
     for (score, doc_address) in top_docs {
-        let retrieved_doc = match searcher.doc(doc_address) {
+        // TANTIVY 0.22 FIX: searcher.doc() requires explicit type annotation.
+        let retrieved_doc: TantivyDocument = match searcher.doc(doc_address) {
             Ok(d) => d,
             Err(_) => continue,
         };
@@ -637,6 +595,84 @@ fn fulltext_search_arrow(
     };
 
     Ok(Some(PyBytes::new(py, &ipc_bytes)))
+}
+
+// ---------------------------------------------------------------------------
+// Tests
+// ---------------------------------------------------------------------------
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use arrow::ipc::reader::StreamReader;
+
+    #[test]
+    fn test_fulltext_build_ipc_bytes_valid_arrow_stream() {
+        // MODERN-17: Verify that build_fulltext_ipc_bytes produces valid Arrow IPC
+        // that can be parsed by pa.ipc.open_stream()
+        let doc_ids = vec!["doc1".to_string(), "doc2".to_string(), "doc3".to_string()];
+        let scores = vec![0.95, 0.85, 0.75];
+
+        let result = build_fulltext_ipc_bytes(doc_ids, scores, 3)
+            .expect("build_fulltext_ipc_bytes should succeed");
+
+        // Verify magic bytes for Arrow IPC stream format
+        assert!(result.starts_with(b"ARROW1"), "Should start with ARROW1 magic");
+
+        // Parse using StreamReader (validates the IPC format is correct)
+        let reader = StreamReader::try_new(std::io::Cursor::new(&result), None)
+            .expect("Should parse as valid Arrow IPC stream");
+
+        // Verify schema has 2 fields
+        assert_eq!(reader.schema().fields().len(), 2);
+
+        // Verify we can read the batch
+        let batches: Vec<_> = reader.collect().expect("Should collect batches");
+        assert_eq!(batches.len(), 1);
+
+        let batch = &batches[0];
+        assert_eq!(batch.num_columns(), 2);
+        assert_eq!(batch.num_rows(), 3);
+    }
+
+    #[test]
+    fn test_fulltext_build_ipc_bytes_empty_batch() {
+        // MODERN-17: Verify empty batch produces valid Arrow IPC stream with schema
+        let result = build_fulltext_ipc_bytes(vec![], vec![], 0)
+            .expect("build_fulltext_ipc_bytes should succeed for empty batch");
+
+        // Verify magic bytes
+        assert!(result.starts_with(b"ARROW1"), "Should start with ARROW1 magic");
+
+        // Empty stream with schema is valid Arrow IPC
+        let reader = StreamReader::try_new(std::io::Cursor::new(&result), None)
+            .expect("Empty stream with schema should parse");
+        assert_eq!(reader.schema().fields().len(), 2);
+    }
+
+    #[test]
+    fn test_fulltext_build_ipc_bytes_data_roundtrip() {
+        // MODERN-17: Verify data integrity — what we write, we can read back
+        let doc_ids = vec!["id1".to_string(), "id2".to_string()];
+        let scores = vec![1.0, 0.5];
+
+        let result = build_fulltext_ipc_bytes(doc_ids.clone(), scores.clone(), 2)
+            .expect("build_fulltext_ipc_bytes should succeed");
+
+        // Parse and verify roundtrip
+        let reader = StreamReader::try_new(std::io::Cursor::new(&result), None)
+            .expect("Should parse as valid Arrow IPC");
+        let batches: Vec<_> = reader.collect().expect("Should collect batches");
+        let batch = &batches[0];
+
+        // Verify doc_id column
+        let doc_id_col = batch.column(0);
+        assert_eq!(doc_id_col.len(), 2);
+
+        // Verify score column
+        let score_col = batch.column(1);
+        assert_eq!(score_col.len(), 2);
+    }
 }
 
 // ---------------------------------------------------------------------------

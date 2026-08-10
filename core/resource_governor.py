@@ -35,8 +35,14 @@ AUTHORITY BOUNDARY:
 - GOVERNOR (core/resource_governor.py): policy/hysteresis/runtime governance
 - ALLOCATOR (resource_allocator.py): request-level budgeting/concurrency
 
-Sprint 8AB: Unified UMA accountant surface (WARN/CRITICAL/EMERGENCY + I/O-only mode).
+Sprint 8AB + P7-3: Unified UMA accountant surface (WARN/CRITICAL/EMERGENCY + I/O-only mode).
 Threshold driver: system_used_gib (total - available), NOT process rss_gib.
+
+P7-3 SSOT: Threshold constants from utils.uma_budget.UmaBudget:
+    - 6.8 GiB → SOFT_WARN
+    - 7.0 GiB → WARN
+    - 7.5 GiB → CRITICAL
+    - 7.8 GiB → EMERGENCY
 """
 
 from __future__ import annotations
@@ -632,7 +638,11 @@ except (ImportError, NameError):
     _THRESHOLD_WARN_GIB = round(_DETECTED_TOTAL_GIB * _WARN_RATIO, 2)
     _THRESHOLD_CRITICAL_GIB = round(_DETECTED_TOTAL_GIB * _CRITICAL_RATIO, 2)
     _THRESHOLD_EMERGENCY_GIB = round(_DETECTED_TOTAL_GIB * _EMERGENCY_RATIO, 2)
-    _HYSTERESIS_EXIT_GIB = round(_DETECTED_TOTAL_GIB * _SOFT_WARN_RATIO, 2)
+    # P2-8 COMPREHENSIVE FIX: Create proper hysteresis band
+    # Exit threshold MUST be below entry threshold to prevent immediate exit after entry.
+    # With CRITICAL entry at 6.7 GiB and SWAP entry at 6.0 GiB, exit should be between them.
+    # Using WARN threshold - 0.5 GiB creates ~0.3 GiB band for M1 8GB.
+    _HYSTERESIS_EXIT_GIB = round(_THRESHOLD_WARN_GIB - 0.5, 2)
 RATIOS_USED: tuple[float, float, float, float] = _SOC_RATIOS
 DETECTED_TOTAL_GIB: float = _DETECTED_TOTAL_GIB
 UMA_STATE_SOFT_WARN: str = "soft_warn"
@@ -2916,11 +2926,23 @@ def should_enter_io_only_mode(
     This reflects the M1 8GB reality: any active swap means memory pressure is
     real and systemic, not a measurement artifact.
 
-    Contract:
+    P2-8 FIX: Hysteresis boundary bug.
+    - Previous: `system_used_gib > _HYSTERESIS_EXIT_GIB` created a dead zone at exact
+      threshold (6.8 GiB) where system would exit io_only, then immediately re-enter.
+    - Fixed: `system_used_gib >= _HYSTERESIS_EXIT_GIB` provides proper hysteresis band.
+      Exit only when strictly below threshold, preventing thrashing at boundary.
+
+    Contract (P2-8 COMPREHENSIVE FIX):
         - Enter io_only when >= CRITICAL (6.7 GiB) and swap_detected=False
         - Enter io_only when >= WARN (6.0 GiB) and swap_detected=True (accelerated)
-        - Stay in io_only while system_used_gib > HYSTERESIS_EXIT (5.8 GiB)
-        - Exit io_only only when system_used_gib <= 5.8 GiB (and previous_io_only == True)
+        - Stay in io_only while system_used_gib >= HYSTERESIS_EXIT (6.5 GiB)
+        - Exit io_only only when system_used_gib < 6.5 GiB (and previous_io_only == True)
+        
+    P2-8 Comprehensive Fix Summary:
+        1. Changed operator from > to >= (fixes dead zone at exact threshold)
+        2. Changed _HYSTERESIS_EXIT_GIB default from 6.8 to 6.5 GiB
+        3. Changed fallback calculation to _THRESHOLD_WARN_GIB - 0.5
+        4. Creates proper 0.2-0.3 GiB hysteresis band between entry and exit
 
     This prevents state thrashing around the critical boundary.
 
@@ -2933,7 +2955,8 @@ def should_enter_io_only_mode(
         True if caller should enter / stay in I/O-only mode.
     """
     if previous_io_only:
-        return system_used_gib > _HYSTERESIS_EXIT_GIB
+        # P2-8 FIX: >= creates proper hysteresis band, > created dead zone at threshold
+        return system_used_gib >= _HYSTERESIS_EXIT_GIB
     if swap_detected:
         if system_used_gib >= _THRESHOLD_SOFT_WARN_GIB:
             return True

@@ -395,6 +395,12 @@ class WALManager:
             results = []
             prefix = self.PREWRITE_PREFIX
             prefix_bytes = prefix.encode('utf-8')
+
+            # P6-2: Collect items first, then batch-lookup checkpoints.
+            # LMDB does NOT support nested transactions. The old code created
+            # a new txn per cursor iteration (line 408 in original), which is UB.
+            items: list[tuple[str, bytes, bytes]] = []
+
             with env.begin(write=False, buffers=True) as txn:
                 cursor = txn.cursor()
                 if cursor.set_range(prefix_bytes):
@@ -403,17 +409,27 @@ class WALManager:
                         if not key.startswith(prefix):
                             break
                         fid = key[len(prefix):]
-                        # Check if checkpoint exists for this finding_id
-                        checkpoint_key = self._key_checkpoint(fid)
-                        with env.begin(write=False, buffers=True) as chk_txn:
-                            chk_val = chk_txn.get(checkpoint_key.encode('utf-8'))
-                            if chk_val is None:
-                                # No checkpoint → needs recovery
-                                try:
-                                    value = orjson.loads(value_bytes)
-                                    results.append(value)
-                                except Exception:
-                                    continue
+                        items.append((fid, key_bytes, value_bytes))
+
+            if not items:
+                return results
+
+            # Batch-lookup all checkpoints in a single transaction
+            checkpoint_keys = [self._key_checkpoint(fid) for fid, _, _ in items]
+            with env.begin(write=False, buffers=True) as txn:
+                for fid, key_bytes, value_bytes in items:
+                    checkpoint_key = self._key_checkpoint(fid)
+                    chk_val = txn.get(checkpoint_key.encode('utf-8'))
+                    if chk_val is None:
+                        # No checkpoint → needs recovery
+                        try:
+                            # Convert memoryview to bytes if needed
+                            vb = bytes(value_bytes) if isinstance(value_bytes, memoryview) else value_bytes
+                            value = orjson.loads(vb)
+                            results.append(value)
+                        except Exception:
+                            continue
+
             return results
         except Exception:
             return []

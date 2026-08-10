@@ -32,10 +32,16 @@ from hledac.universal.utils.async_helpers import async_getaddrinfo, safe_create_
 
 # [PHYSICS]-03: Lazy check for rust.dns availability — True when dns feature
 # is enabled in the Rust build (default since [PHYSICS]-03/04 fix).
+#
+# MODERN-09: Prefer async API (resolve_async_await) over sync (resolve_async).
+# Async API returns awaitables directly — no run_in_executor needed!
 _HAS_RUST_DNS: bool = False
+_HAS_RUST_DNS_ASYNC: bool = False
 try:
     import rust
     _HAS_RUST_DNS = hasattr(rust, "dns") and hasattr(rust.dns, "resolve_async")
+    # MODERN-09: Check for async version
+    _HAS_RUST_DNS_ASYNC = hasattr(rust.dns, "resolve_async_await")
 except Exception:  # noqa: BLE001
     pass
 
@@ -80,16 +86,26 @@ class DnsCache:
         self._prefetch_semaphore = asyncio.Semaphore(prefetch_concurrency)
 
     async def _resolve_via_rust_dns(self, real_host: str) -> list[str] | None:
-        """[PHYSICS]-03: Direct rust.dns resolution — DoT to Cloudflare.
+        """[PHYSICS]-03/09: Direct rust.dns resolution — DoT to Cloudflare.
 
         Bypasses mDNSResponder entirely. Returns list of IP strings or None
         on failure (caller falls back to async_getaddrinfo).
+
+        MODERN-09: Uses async API (resolve_async_await) when available, which
+        returns awaitables directly — no run_in_executor needed!
         """
         if not _HAS_RUST_DNS:
             return None
+
         try:
+            # MODERN-09: Use async API if available (preferred)
+            if _HAS_RUST_DNS_ASYNC:
+                ips: list[str] = await rust.dns.resolve_async_await(real_host, "A")
+                return ips if ips else None
+
+            # Fallback: use sync API with run_in_executor
             loop = asyncio.get_running_loop()
-            ips: list[str] = await loop.run_in_executor(
+            ips = await loop.run_in_executor(
                 None,
                 lambda: rust.dns.resolve_async(real_host, "A"),
             )
@@ -112,6 +128,8 @@ class DnsCache:
             return None
 
         now = time.monotonic()
+        inflight_fut: asyncio.Future[list[str] | None] | None = None
+        
         async with self._lock:
             if host in self._cache:
                 ips, cached_at = self._cache[host]
@@ -122,12 +140,17 @@ class DnsCache:
                 self._order.pop(host, None)
             # Single-flight: if another task is already resolving this host, wait on it
             if host in self._inflight:
-                return await self._inflight[host]
-            # Reserve slot for new resolution
-            fut: asyncio.Future[list[str] | None] = asyncio.get_event_loop().create_future()
-            self._inflight[host] = fut
+                inflight_fut = self._inflight[host]
+        
+        # P4-2a FIX: Await OUTSIDE the lock - prevents deadlock when set_result needs the lock
+        if inflight_fut is not None:
+            return await inflight_fut
 
-        # Resolution outside the lock — only one task per host reaches here
+        # Reserve slot for new resolution (only one task per host reaches here)
+        fut: asyncio.Future[list[str] | None] = asyncio.get_event_loop().create_future()
+        self._inflight[host] = fut
+
+        # Resolution outside the lock
         try:
             # Extract port from host:port if present
             if ':' in host:
@@ -176,6 +199,8 @@ class DnsCache:
         DoT resolver is never overwhelmed — excess hosts are skipped
         (fire-and-forget semantics preserved).
 
+        MODERN-09: When rust.dns.prefetch_async is available, uses it for
+        single-round batch resolution (more efficient than individual tasks).
         Each resolve() call uses rust.dns DoT as the primary path,
         bypassing mDNSResponder entirely.
         """
@@ -193,7 +218,31 @@ class DnsCache:
                     hosts.add(clean_host)
             except (ValueError, OSError):
                 continue
-        for host in hosts:
+
+        host_list = list(hosts)
+        if not host_list:
+            return
+
+        # MODERN-09: Use Rust batch prefetch when available (single round-trip)
+        if _HAS_RUST_DNS_ASYNC:
+            try:
+                # rust.dns.prefetch_async returns dict[str, list[str]] of resolved IPs
+                results: dict[str, list[str]] = await rust.dns.prefetch_async(host_list)
+                # Update cache with batch results
+                now = time.monotonic()
+                async with self._lock:
+                    for host, ips in results.items():
+                        if ips:  # Only cache positive results
+                            self._cache[host] = (ips, now)
+                            self._order[host] = None
+                            self._order.move_to_end(host)
+                return
+            except Exception:  # noqa: BLE001
+                # Fallback to individual resolution below
+                pass
+
+        # Fallback: individual async resolutions with semaphore gating
+        for host in host_list:
             # [PHYSICS]-05: Bounded semaphore — skip when saturated instead
             # of queueing, preserving fire-and-forget semantics.
             if self._prefetch_semaphore.locked():

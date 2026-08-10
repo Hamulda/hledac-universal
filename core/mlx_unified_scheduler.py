@@ -444,7 +444,8 @@ class MLXUnifiedScheduler:
         self._finalizer.detach()
         if self._ane_mutex is not None:
             try:
-                self._ane_mutex.release(runtime='ane')
+                # Issue-1 FIX: Use correct runtime name 'embed_ane' not 'ane'
+                self._ane_mutex.release(runtime='embed_ane')
             except Exception:  # noqa: BLE001
                 pass
             try:
@@ -454,31 +455,73 @@ class MLXUnifiedScheduler:
         logger.info('[MLXScheduler] Shutdown complete')
 
     async def _submit_interactive(self, prompt: str, temperature: float | None, max_tokens: int, system_msg: str | None) -> str:
-        """Submit to interactive LLM lane — highest priority, no batching."""
-        if self._batcher is not None:
-            try:
-                return await self._batcher.execute(prompt=prompt, temperature=temperature, max_tokens=max_tokens, system_msg=system_msg, priority=0)
-            except Exception as e:
-                logger.debug('[MLXScheduler] Batcher unavailable: %s', e)
-        if self._worker_thread is not None and hasattr(self._worker_thread, 'is_active') and self._worker_thread.is_active():
-            coro = self._llm_engine.generate(prompt=prompt, temperature=temperature, max_tokens=max_tokens, system_msg=system_msg)
-            result = await self._worker_thread.submit(coro, timeout=60.0)
+        """Submit to interactive LLM lane — highest priority, no batching.
+        
+        P3-7 FIX: Acquire ANE mutex with 'llm' runtime to prevent concurrent ANE embeddings.
+        This enforces U.M2 invariant: ANE/MLX mutual exclusion.
+        """
+        llm_mutex_acquired = False
+        try:
+            # P3-7 FIX: Acquire ANE mutex to prevent ANE embeddings from running concurrently
+            if self._ane_mutex is not None:
+                try:
+                    self._ane_mutex.acquire_llm(model_size_mb=1750)  # Hermes model size
+                    llm_mutex_acquired = True
+                except MemoryError:
+                    logger.warning('[MLXScheduler] ANE mutex acquisition failed for LLM - proceeding anyway')
+            
+            if self._batcher is not None:
+                try:
+                    return await self._batcher.execute(prompt=prompt, temperature=temperature, max_tokens=max_tokens, system_msg=system_msg, priority=0)
+                except Exception as e:
+                    logger.debug('[MLXScheduler] Batcher unavailable: %s', e)
+            if self._worker_thread is not None and hasattr(self._worker_thread, 'is_active') and self._worker_thread.is_active():
+                coro = self._llm_engine.generate(prompt=prompt, temperature=temperature, max_tokens=max_tokens, system_msg=system_msg)
+                result = await self._worker_thread.submit(coro, timeout=60.0)
+                self._post_inference_hook()
+                return result
+            result = await self._llm_engine.generate(prompt=prompt, temperature=temperature, max_tokens=max_tokens, system_msg=system_msg)
             self._post_inference_hook()
             return result
-        result = await self._llm_engine.generate(prompt=prompt, temperature=temperature, max_tokens=max_tokens, system_msg=system_msg)
-        self._post_inference_hook()
-        return result
+        finally:
+            # P3-7 FIX: Release ANE mutex when done
+            if llm_mutex_acquired and self._ane_mutex is not None:
+                try:
+                    self._ane_mutex.release(runtime='llm')
+                except Exception as e:
+                    logger.debug('[MLXScheduler] ANE mutex release failed: %s', e)
 
     async def _submit_background(self, prompt: str, temperature: float | None, max_tokens: int, system_msg: str | None) -> str:
-        """Submit to background LLM lane — lowest priority, batched."""
-        if self._batcher is not None:
-            try:
-                return await self._batcher.execute(prompt=prompt, temperature=temperature, max_tokens=max_tokens, system_msg=system_msg, priority=10)
-            except Exception as e:
-                logger.debug('[MLXScheduler] Batcher unavailable for background: %s', e)
-        result = await self._llm_engine.generate(prompt=prompt, temperature=temperature, max_tokens=max_tokens, system_msg=system_msg)
-        self._post_inference_hook()
-        return result
+        """Submit to background LLM lane — lowest priority, batched.
+        
+        P3-7 FIX: Acquire ANE mutex with 'llm' runtime to prevent concurrent ANE embeddings.
+        This enforces U.M2 invariant: ANE/MLX mutual exclusion.
+        """
+        llm_mutex_acquired = False
+        try:
+            # P3-7 FIX: Acquire ANE mutex to prevent ANE embeddings from running concurrently
+            if self._ane_mutex is not None:
+                try:
+                    self._ane_mutex.acquire_llm(model_size_mb=1750)  # Hermes model size
+                    llm_mutex_acquired = True
+                except MemoryError:
+                    logger.warning('[MLXScheduler] ANE mutex acquisition failed for background LLM - proceeding anyway')
+            
+            if self._batcher is not None:
+                try:
+                    return await self._batcher.execute(prompt=prompt, temperature=temperature, max_tokens=max_tokens, system_msg=system_msg, priority=10)
+                except Exception as e:
+                    logger.debug('[MLXScheduler] Batcher unavailable for background: %s', e)
+            result = await self._llm_engine.generate(prompt=prompt, temperature=temperature, max_tokens=max_tokens, system_msg=system_msg)
+            self._post_inference_hook()
+            return result
+        finally:
+            # P3-7 FIX: Release ANE mutex when done
+            if llm_mutex_acquired and self._ane_mutex is not None:
+                try:
+                    self._ane_mutex.release(runtime='llm')
+                except Exception as e:
+                    logger.debug('[MLXScheduler] ANE mutex release failed: %s', e)
 
     async def _do_embedding_batch(self, texts: list[str], batch_size: int) -> list[list[float]]:
         """Execute embedding batch with adaptive sizing."""
@@ -585,7 +628,8 @@ def _scheduler_at_exit(instance: MLXUnifiedScheduler) -> None:
     try:
         if hasattr(instance, '_ane_mutex') and instance._ane_mutex is not None:
             try:
-                instance._ane_mutex.release(runtime='ane')
+                # Issue-1 FIX: Use correct runtime name 'embed_ane' not 'ane'
+                instance._ane_mutex.release(runtime='embed_ane')
             except Exception:  # noqa: BLE001
                 pass
             try:

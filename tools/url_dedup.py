@@ -1222,6 +1222,7 @@ def dedupe_url_list(
     filter_strategy: DeduplicationStrategy,
     *,
     normalize: bool = True,
+    add_to_filter: bool = True,
 ) -> tuple[list[str], int]:
     """
     Deduplicate a list of URLs against the given filter, in order.
@@ -1234,6 +1235,11 @@ def dedupe_url_list(
             before the filter check. Matches the F214AD contract used
             by FetchCoordinator (URLs in ``_processed_urls`` are stored
             normalized).
+        add_to_filter: if True (default), add surviving URLs to the filter.
+            If False, only check for duplicates without mutation. This is
+            useful when bloom filter addition should be deferred until
+            after successful processing (P4-4 fix: prevents permanent seed
+            loss when URLs fail validation after dedup check).
 
     Returns:
         (unique_urls, dropped_count) where:
@@ -1241,9 +1247,10 @@ def dedupe_url_list(
             ``urls``, after normalization, with duplicates removed.
           - dropped_count is the number of URLs that were already
             present in the filter (or duplicates within the input).
-          - Only the surviving URLs are added to the filter. Duplicates
-            that were already in the filter are NOT re-added (the
-            underlying strategy's ``add`` is called once per unique URL).
+          - Only the surviving URLs are added to the filter when
+            add_to_filter=True. Duplicates that were already in the
+            filter are NOT re-added (the underlying strategy's ``add``
+            is called once per unique URL when add_to_filter=True).
 
     Invariants:
       - Pure function on the input list (no in-place mutation of ``urls``).
@@ -1255,6 +1262,10 @@ def dedupe_url_list(
     F7.2: Large batches (≥256 URLs) use ``normalize_url_parallel`` via
     ThreadPoolExecutor for parallel URL normalization — up to 4× speedup
     on M1 4P cores for the normalization step.
+
+    P4-4: Use add_to_filter=False when bloom filter addition should be
+    deferred until after successful URL processing. This prevents permanent
+    seed loss when URLs are marked as "seen" in bloom but fail validation.
     """
     if not urls:
         return ([], 0)
@@ -1275,9 +1286,13 @@ def dedupe_url_list(
 
     # F7.5: Try batch add first — falls back to per-item on AttributeError.
     # Batch path uses Rust add_batch (xxHash3-64, rayon) for 20× speedup.
+    # P4-4: Only add to filter when add_to_filter=True.
     try:
-        batch_results = filter_strategy.add_batch(keys)
-        # batch_results[i] = True → new (added), False → duplicate
+        if add_to_filter:
+            batch_results = filter_strategy.add_batch(keys)
+            # batch_results[i] = True → new (added), False → duplicate
+        else:
+            batch_results = [key not in filter_strategy for key in keys]
         unique = []
         dropped = 0
         seen_in_input: set[str] = set()
@@ -1323,7 +1338,9 @@ def dedupe_url_list(
             seen_in_input.add(key)
             dropped += 1
             continue
-        filter_strategy.add(key)
+        # P4-4: Only add to filter when add_to_filter=True.
+        if add_to_filter:
+            filter_strategy.add(key)
         seen_in_input.add(key)
         unique.append(raw_url)
 

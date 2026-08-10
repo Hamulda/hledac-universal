@@ -25,6 +25,11 @@ aho-corasick = "1.1"
 #
 # CI ban: with_gil / allow_threads removed from all code (only comments remain).
 pyo3 = { version = "0.29", features = ["extension-module"] }
+# [MODERN-08]: pyo3-async-runtimes — optional, only when shared_tokio is enabled.
+# Provides future_into_py() for returning awaitables directly to Python asyncio.
+# Feature "tokio-runtime": Uses our shared tokio runtime as the async backend.
+# This eliminates the need for asyncio.to_thread() wrappers on the Python side.
+pyo3-async-runtimes = { version = "0.29", optional = true, features = ["tokio-runtime"] }
 rayon = "1.10"
 # GRAPH-01: petgraph for graph algorithms (PageRank, Louvain community detection)
 # Provides: GraphMap, UnGraph, DiGraph, NodeIndex, algo::kosaraju_scc
@@ -61,6 +66,14 @@ ipnetwork = "0.20"
 lru = "0.10"
 duckdb = { version = "1.105", optional = true }
 
+# MODERN-17: Arrow IPC for proper Arrow RecordBatch encoding
+# Replaces hand-rolled ARROW1\xff framing with real Arrow IPC via StreamWriter.
+# Feature-gated: ~3MB additional compile (M1 8GB safe).
+# Enables: pa.ipc.open_stream() in Python — real zero-copy deserialization.
+#
+# NOTE: Using arrow 58 to match duckdb's arrow dependency (avoids version conflicts).
+arrow = { version = "58", optional = true, features = ["ipc"] }
+
 # R24: OpenTelemetry-compatible tracing via tracing-subscriber JSON stdout
 # Python reads spans from stdout JSON — no opentelemetry dep conflicts
 tracing = { version = "0.1", optional = true, features = ["std"] }
@@ -82,7 +95,9 @@ zip = { version = "2", default-features = false, features = ["deflate"], optiona
 # TLS 1.3 fingerprinting — JA4 + ECH detection
 # Feature-gated: ~2MB additional compile, M1 8GB safe
 # Enables: rust.tls.ja4_from_client_hello(), connect_and_ja4(), batch_ja4()
+# rustls 0.23: Modern TLS with webpki-roots for system root certificates
 rustls = { version = "0.23", default-features = false, features = ["std", "tls12", "ring"], optional = true }
+webpki-roots = { version = "0.26", optional = true }  # System root CAs
 hex = "0.4"
 # ISSUE [ULTIMATE]-005: msgspec removed — not available on crates.io
 # Using serde::Serialize derive instead
@@ -108,7 +123,12 @@ tantivy = { version = "0.22", optional = true }
 # hickory-resolver does NOT depend on SQLite — only hickory-server has optional sqlite.
 # This avoids any conflict with arti-client's rusqlite dependency.
 # Rustls is used for TLS (rustls-platform-verifier on macOS).
-hickory-resolver = { version = "0.26", optional = true, features = ["tokio", "rustls-platform-verifier"] }
+# hickory-proto: Required for RecordType and DNS protocol types.
+hickory-proto = { version = "0.26", optional = true }
+# TLS feature enables ResolverConfig::tls() and ResolverConfig::https() methods
+# Note: __tls is the internal feature gate, enabled by tls-ring or tls-aws-lc-rs
+# rustls-platform-verifier handles certificate verification
+hickory-resolver = { version = "0.26", optional = true, features = ["tokio", "tls-ring", "rustls-platform-verifier"] }
 
 # HEIST-02: Embedded Tor via Arti — in-process Tor client.
 # Feature-gated: ~15MB additional compile, M1 8GB safe (~25-30MB resident).
@@ -136,7 +156,8 @@ tokio = { version = "1.40", optional = true, features = ["rt-multi-thread", "net
 # Feature-gated: ~8MB additional compile, M1 8GB safe
 # Enables: rust.quic.fetch() — true HTTP/3 over QUIC
 # M1 8GB: bounded to 3 concurrent connections, immediate memory release on drop
-quinn = { version = "0.11", default-features = false, features = ["runtime-tokio", "ring"], optional = true }
+# [FIX]: Added "rustls-ring" + "platform-verifier" for rustls + platform cert verification
+quinn = { version = "0.11", default-features = false, features = ["runtime-tokio", "rustls-ring", "platform-verifier"], optional = true }
 h3 = { version = "0.0.8", default-features = false, optional = true }
 h3-quinn = { version = "0.0.10", optional = true }
 # ISSUE-014: Missing crates that were used but not declared
@@ -213,10 +234,13 @@ whisper-rs = { version = "0.13", optional = true }
 #   native_db: ~50 KB compile (pure Rust), ~200 KB resident per session
 # Enable explicitly: --features "dns,native_db" or set HLEDAC_ENABLE_DNS=1 / HLEDAC_ENABLE_NATIVE_DB=1
 #
-# IO-4 fix: Added metal_shared to default — enables zero-copy IOSurface pipeline on M1.
+# IO-4 fix: Added metal_shared + iosurface to default — enables zero-copy IOSurface pipeline on M1.
 # Metal is compiled with minimal extra cost (it's already on Apple Silicon).
 # SharedMetalBuffer enables: CVPixelBuffer→Metal→MLX zero-copy sharing.
-default = ["core", "data", "metal_shared"]
+# MODERN-13: Added swarm_dag to default — work-stealing task DAG with ROI-based
+# adaptive pool sizing. Uses shared tokio runtime (M1 8GB safe, ~10MB additional RAM).
+# MODERN-19 fix: Added iosurface to default — zero-copy CVPixelBuffer→IOSurface→MTLTexture pipeline
+default = ["core", "data", "metal_shared", "iosurface", "swarm_dag"]
 
 # core: IOC extraction, URL ops, hashing, compression, HTML parsing
 # Always compiled. No heavy deps. Available even with --no-default-features.
@@ -229,6 +253,7 @@ core = [
 # Adds: duckdb crate (~20 MB compile, ~15 MB resident)
 data = [
     "dep:duckdb",
+    "dep:arrow",
     "arrow_batch_builder",
     "graph_traverse",
     "link_predictor",
@@ -278,7 +303,17 @@ advanced = [
 #   HLEDAC_ENABLE_MACH_REMAP=1 AND file_size >= 100MB.
 mach = []
 
-full = ["core", "data", "graph", "advanced", "tls13", "pdf", "office", "quic", "ane", "coreml_ane", "stix", "metal", "metal_shared", "iosurface", "otel", "fulltext", "native_db", "simdjson", "nw_framework", "whisper"]
+full = ["core", "data", "graph", "advanced", "tls13", "pdf", "office", "quic", "ane", "coreml_ane", "stix", "metal", "metal_shared", "iosurface", "otel", "fulltext", "native_db", "simdjson", "nw_framework", "whisper", "dns", "embedded_tor"]
+
+# [MODERN-07]: Shared Tokio runtime for all async modules.
+# Consolidates 3 separate runtimes (dns, quic, arti) into 1 shared runtime.
+# Memory savings: ~16MB (3 × ~8MB → 1 shared)
+# This feature is automatically enabled by dns, quic, and embedded_tor features.
+# [MODERN-08]: Also enables pyo3-async-runtimes for Python asyncio integration.
+shared_tokio = [
+    "dep:tokio",
+    "dep:pyo3-async-runtimes",
+]
 
 # simdjson: Zero-alloc JSON Pointer extraction via simd-json (ARM NEON native)
 # Adds: simdjson_extract.json_pointer_extract() — 2-4x faster than serde_json on M1
@@ -303,9 +338,12 @@ native_db = []
 # FIX [SWARM]-009: Using hickory-resolver instead of hickory-dns.
 # hickory-resolver does NOT depend on SQLite — only hickory-server has optional sqlite.
 # This avoids conflict with arti-client's rusqlite dependency.
+#
+# [MODERN-07]: Uses shared_tokio feature for consolidated runtime.
 dns = [
     "dep:hickory-resolver",
-    "dep:tokio",
+    "dep:hickory-proto",
+    "shared_tokio",
 ]
 
 # HEIST-02: Embedded Tor via Arti — in-process Tor client.
@@ -319,11 +357,13 @@ dns = [
 # CRITICAL: arti-client depends on rusqlite for persistent state cache.
 # Compile time: ~15MB. Memory: ~25-30MB resident (consensus cache + circuits).
 # Enable explicitly: --features "embedded_tor" or HLEDAC_ENABLE_EMBEDDED_TOR=1
+#
+# [MODERN-07]: Uses shared_tokio feature for consolidated runtime.
 embedded_tor = [
     "dep:arti-client",
     "arti-client/tokio",
     "dep:tor-rtcompat",
-    "dep:tokio",
+    "shared_tokio",
 ]
 
 # Individual module features — the actual gating is via #[cfg(feature)] in lib.rs.
@@ -333,7 +373,9 @@ bloom = []           # Referenced by core; #[cfg(feature = "bloom")] in lib.rs
 regex_lz4 = []        # Referenced by advanced; #[cfg(feature = "advanced")] in lib.rs
 content_hasher = []   # Referenced by advanced; #[cfg(feature = "advanced")] in lib.rs
 adaptive_scheduler = []  # Referenced by advanced; #[cfg(feature = "advanced")] in lib.rs
-swarm_dag = []          # SILICON-07: Work-stealing task DAG; #[cfg(feature = "advanced")]
+# MODERN-13: Added shared_tokio dep for tokio::spawn integration.
+# Uses shared runtime for M1 8GB memory savings (~16MB reduction vs 3 separate runtimes).
+swarm_dag = ["shared_tokio"]  # SILICON-07: Work-stealing task DAG
 simd_similarity = []  # Referenced by advanced; #[cfg(feature = "advanced")] in lib.rs
 feed_decision = []    # Referenced by advanced; #[cfg(feature = "advanced")] in lib.rs
 pipeline_compose = [] # Referenced by advanced; #[cfg(feature = "advanced")] in lib.rs
@@ -375,8 +417,15 @@ metal_shared = ["dep:metal", "dep:objc2-metal"]
 # Provides: IOSurfaceTextureDescriptor PyClass for zero-copy IOSurface handling,
 #   CVPixelBuffer → IOSurface → MTLTexture pipeline,
 #   Vision/OCR zero-copy integration via CIImage(ioSurface:).
-# Requires: metal feature (MTLTexture creation from IOSurface).
+# Requires: metal_shared feature (MTLTexture creation from IOSurface).
 iosurface = ["metal_shared"]
+
+# MODERN-19: mlx_fabric — composite feature for MLX tensor pipeline on Apple Silicon.
+# Combines: metal_shared (zero-copy Rust↔Python↔MLX buffer) + iosurface (zero-copy CVPixelBuffer).
+# Compile-cost guarded: Metal.framework is always available on Apple Silicon,
+# ~3 MB additional dylib for the combined feature set.
+# Use this feature for MLX inference workloads requiring zero-copy tensor pipelines.
+mlx_fabric = ["metal_shared", "iosurface"]
 
 # R24: OpenTelemetry-compatible tracing via tracing-subscriber JSON stdout
 # Python reads spans from stdout JSON — no opentelemetry dep conflicts
@@ -416,11 +465,25 @@ tls13 = [
 # M1 8GB: ~8MB compile, bounded to 3 concurrent connections
 # Fallback path when curl_cffi Alt-Svc H3 upgrade fails
 # P1-FIX: quic needs rustls for TLS (was only in tls13 feature)
+#
+# [MODERN-07]: Uses shared_tokio feature for consolidated runtime.
+# [RUSTLS-0.23]: Uses webpki-roots for system root certificates
 quic = [
     "dep:quinn",
     "dep:h3",
     "dep:h3-quinn",
     "dep:rustls",
+    "dep:webpki-roots",
+    "shared_tokio",
+]
+
+# MODERN-16: stealth_bridge — Python↔Rust async FFI bridge for stealth HTTP transport.
+# Python keeps curl_cffi JA3/TLS impersonation; Rust owns raw I/O (DNS, QUIC).
+# Adds: rust.stealth_bridge.* — async DNS/QUIC bridges for curl_cffi_fetch.py
+# Requires: shared_tokio only (uses tokio::net::lookup_host directly)
+# Arrow IPC for bulk data transfer (when arrow feature also enabled).
+stealth_bridge = [
+    "shared_tokio",
 ]
 
 # fulltext: Tantivy full-text search (mmap-backed BM25, zero-copy, persistent)
@@ -430,12 +493,14 @@ quic = [
 # ISSUE-011: Replace Python in-memory BM25Index with mmap-backed Tantivy index
 fulltext = [
     "dep:tantivy",
+    "dep:arrow",  # MODERN-17: Arrow IPC for proper Arrow RecordBatch encoding
 ]
 
 # SILICON-03: nw_framework — Apple Network.framework user-space networking.
 # Replaces BSD socket path with user-space TCP + hardware-accelerated TLS 1.3.
 # For non-anti-bot clearnet targets (open APIs, CT logs, NoSQL ports).
 # Requires: objc2 + block2 (Objective-C runtime + block support).
+# MODERN-12: Also requires shared_tokio for async FFI bridge (tokio::sync::Notify).
 # Platform: aarch64-apple-darwin ONLY.
 # M1 8GB: ~3 MB compile, ~200 KB resident. Pool: max 200 connections × 50 KB.
 # Python fallback: existing curl_cffi/httpx path when unavailable.
@@ -443,6 +508,7 @@ nw_framework = [
     "dep:objc2",
     "dep:objc2-foundation",
     "dep:block2",
+    "shared_tokio",  # MODERN-12: Required for async FFI bridge
 ]
 
 # pdf: PDF text extraction and IOC extraction via lopdf

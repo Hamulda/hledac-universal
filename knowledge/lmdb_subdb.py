@@ -350,7 +350,16 @@ class UnifiedLMDBStore:
             self._ensure_init()
             prefixed_key = prefix.encode() + b":" + key
             with self._env.begin(buffers=True) as txn:
-                return txn.get(prefixed_key)
+                val = txn.get(prefixed_key)
+                if val is None:
+                    return None
+                # P6-1: Convert memoryview to bytes before returning.
+                # txn.get() returns memoryview when buffers=True, but memoryview
+                # is only valid while txn is open. Convert to bytes to ensure
+                # caller can safely use the returned data after txn ends.
+                if isinstance(val, memoryview):
+                    return bytes(val)
+                return val
         except Exception:
             return None
 

@@ -21,11 +21,15 @@
 //! Rayon thread pool: shared `crate::cpu_pool()` (4 workers, 6 MiB total —
 //! M1 8GB safe, ~75% less stack memory than the default global pool).
 //!
-//! Fail-soft: any panic is converted to a Python RuntimeError via PyO3's
-//! automatic `#[pyfunction]` wrapping. `unwrap()` is used in runtime paths
-//! (e.g. URL fingerprint extraction in `assess_single_finding`) where the
-//! caller guarantees non-empty provenance. `LazyLock::new` uses `expect()`
-//! for one-time regex compilation of hard-coded patterns.
+//! ## Panic Handling Strategy
+//!
+//! All batch functions that release the GIL (`release_gil()`) check for panics
+//! after the parallel work completes. On panic, they return `PyRuntimeError`
+//! to inform the caller that results may be incomplete.
+//!
+//! RUST-PANIC-001: `release_gil()` uses `catch_unwind` internally and sets a
+//! thread-local flag on panic. Callers MUST check `release_gil_caught_panic()`
+//! after the call and propagate the error to Python.
 
 use blake2::digest::{Update, VariableOutput};
 use blake2::Blake2bVar;
@@ -527,17 +531,18 @@ const BATCH_PARALLEL_THRESHOLD: usize = 25;
 const BATCH_PARALLEL_MIN_CHUNK: usize = 32;
 
 /// Parallel batch: compute entropy for many texts.
+/// Returns `PyResult<Vec<f64>>` — Err on panic in rayon worker.
 #[pyfunction]
-pub fn batch_entropy(py: Python<'_>, texts: Vec<String>) -> Vec<f64> {
+pub fn batch_entropy(py: Python<'_>, texts: Vec<String>) -> PyResult<Vec<f64>> {
     use rayon::prelude::*;
     let n_valid = validate_batch_slice(&texts);
     if n_valid == 0 {
-        return vec![];
+        return Ok(vec![]);
     }
     let slice = cap_slice(&texts);
     let n = slice.len();
     if n < BATCH_PARALLEL_THRESHOLD {
-        slice.iter().map(|t| compute_entropy(t)).collect()
+        Ok(slice.iter().map(|t| compute_entropy(t)).collect())
     } else {
         // R-16.3 FIX: Release GIL during rayon work so asyncio event loop can run.
         // cpu_pool: 4 threads for BLAKE2b SIMD-bound work — pure Rust compute.
@@ -552,27 +557,30 @@ pub fn batch_entropy(py: Python<'_>, texts: Vec<String>) -> Vec<f64> {
             })
         });
         if release_gil_caught_panic() {
-            return vec![];
+            return Err(PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(
+                "Rust panic in batch_entropy",
+            ));
         }
-        return result;
+        Ok(result)
     }
 }
 
 /// Parallel batch: dedup fingerprints for many texts.
+/// Returns `PyResult<Vec<String>>` — Err on panic in rayon worker.
 #[pyfunction]
-pub fn batch_dedup_fingerprints(py: Python<'_>, texts: Vec<String>) -> Vec<String> {
+pub fn batch_dedup_fingerprints(py: Python<'_>, texts: Vec<String>) -> PyResult<Vec<String>> {
     use rayon::prelude::*;
     let n_valid = validate_batch_slice(&texts);
     if n_valid == 0 {
-        return vec![];
+        return Ok(vec![]);
     }
     let slice = cap_slice(&texts);
     let n = slice.len();
     if n < BATCH_PARALLEL_THRESHOLD {
-        slice.iter().map(|t| dedup_fingerprint(t)).collect()
+        Ok(slice.iter().map(|t| dedup_fingerprint(t)).collect())
     } else {
-        // R-16.3 FIX: Release GIL during rayon work so asyncio event loop can run.
-        // RUST-PANIC-001 FIX: release_gil wraps py.detach in catch_unwind.
+        // Release GIL during rayon work so asyncio event loop can run.
+        // GIL is released via release_gil() for CPU-bound parallel work.
         let result: Vec<String> = release_gil(py, move || {
             crate::cpu_pool().install(|| {
                 slice
@@ -583,27 +591,30 @@ pub fn batch_dedup_fingerprints(py: Python<'_>, texts: Vec<String>) -> Vec<Strin
             })
         });
         if release_gil_caught_panic() {
-            return vec![];
+            return Err(PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(
+                "Rust panic in batch_dedup_fingerprints",
+            ));
         }
-        return result;
+        Ok(result)
     }
 }
 
 /// Parallel batch: URL fingerprints for many URLs.
+/// Returns `PyResult<Vec<String>>` — Err on panic in rayon worker.
 #[pyfunction]
-pub fn batch_url_fingerprints(py: Python<'_>, urls: Vec<String>) -> Vec<String> {
+pub fn batch_url_fingerprints(py: Python<'_>, urls: Vec<String>) -> PyResult<Vec<String>> {
     use rayon::prelude::*;
     let n_valid = validate_batch_slice(&urls);
     if n_valid == 0 {
-        return vec![];
+        return Ok(vec![]);
     }
     let slice = cap_slice(&urls);
     let n = slice.len();
     if n < BATCH_PARALLEL_THRESHOLD {
-        slice.iter().map(|u| url_fingerprint(u)).collect()
+        Ok(slice.iter().map(|u| url_fingerprint(u)).collect())
     } else {
-        // R-16.3 FIX: Release GIL during rayon work so asyncio event loop can run.
-        // RUST-PANIC-001 FIX: release_gil wraps py.detach in catch_unwind.
+        // Release GIL during rayon work so asyncio event loop can run.
+        // GIL is released via release_gil() for CPU-bound parallel work.
         let result: Vec<String> = release_gil(py, move || {
             crate::cpu_pool().install(|| {
                 slice
@@ -614,27 +625,30 @@ pub fn batch_url_fingerprints(py: Python<'_>, urls: Vec<String>) -> Vec<String> 
             })
         });
         if release_gil_caught_panic() {
-            return vec![];
+            return Err(PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(
+                "Rust panic in batch_url_fingerprints",
+            ));
         }
-        return result;
+        Ok(result)
     }
 }
 
 /// Parallel batch: normalize text for quality assessment.
+/// Returns `PyResult<Vec<String>>` — Err on panic in rayon worker.
 #[pyfunction]
-pub fn batch_normalize_quality_text(py: Python<'_>, texts: Vec<String>) -> Vec<String> {
+pub fn batch_normalize_quality_text(py: Python<'_>, texts: Vec<String>) -> PyResult<Vec<String>> {
     use rayon::prelude::*;
     let n_valid = validate_batch_slice(&texts);
     if n_valid == 0 {
-        return vec![];
+        return Ok(vec![]);
     }
     let slice = cap_slice(&texts);
     let n = slice.len();
     if n < BATCH_PARALLEL_THRESHOLD {
-        slice.iter().map(|t| normalize_quality_text(t)).collect()
+        Ok(slice.iter().map(|t| normalize_quality_text(t)).collect())
     } else {
-        // R-16.3 FIX: Release GIL during rayon work so asyncio event loop can run.
-        // RUST-PANIC-001 FIX: release_gil wraps py.detach in catch_unwind.
+        // Release GIL during rayon work so asyncio event loop can run.
+        // GIL is released via release_gil() for CPU-bound parallel work.
         let result: Vec<String> = release_gil(py, move || {
             crate::cpu_pool().install(|| {
                 slice
@@ -645,9 +659,11 @@ pub fn batch_normalize_quality_text(py: Python<'_>, texts: Vec<String>) -> Vec<S
             })
         });
         if release_gil_caught_panic() {
-            return vec![];
+            return Err(PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(
+                "Rust panic in batch_normalize_quality_text",
+            ));
         }
-        return result;
+        Ok(result)
     }
 }
 

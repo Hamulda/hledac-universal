@@ -43,6 +43,7 @@ use aho_corasick::AhoCorasick;
 use memmap2::Mmap;
 use parking_lot::Mutex;
 use pyo3::prelude::*;
+use pyo3::types::PyBytes;
 use std::collections::HashMap;
 use std::fs::File;
 
@@ -449,6 +450,181 @@ impl StreamingIocScanner {
         })?;
 
         Ok(self.automaton.find_iter(&mmap).count())
+    }
+
+    // ---------------------------------------------------------------------------
+    // MODERN-24: Arrow IPC Zero-Copy Export
+    // ---------------------------------------------------------------------------
+    // These methods export scan results as Arrow IPC bytes instead of
+    // Vec<StreamPatternHit>. This eliminates Python heap allocations for
+    // per-item PyObject creation.
+    //
+    // Performance comparison:
+    //   - scan_mmap() -> Vec<StreamPatternHit>: N × PyObject allocs
+    //   - scan_mmap_arrow_ipc() -> PyBytes: 1 × PyBytes alloc + Arrow IPC serialization
+    //
+    // Arrow IPC serialization is O(N) byte copy, but:
+    //   - Single Python allocation (PyBytes)
+    //   - pyarrow reads with zero-copy views into the buffer
+    //   - No per-item Python object overhead
+
+    /// Scan an mmap'd file and return results as Arrow IPC bytes.
+    ///
+    /// This is the MODERN-24 zero-copy optimized version of `scan_mmap()`.
+    /// Instead of returning `Vec<StreamPatternHit>` (which requires N Python heap
+    /// allocations), it builds an Arrow RecordBatch and returns the IPC bytes.
+    ///
+    /// Python usage:
+    /// ```python
+    /// import pyarrow as pa
+    ///
+    /// scanner = StreamingIocScanner(patterns=["malware", "phishing"])
+    /// ipc_bytes = scanner.scan_mmap_arrow_ipc("/path/to/file.bin")
+    ///
+    /// # Zero-copy deserialization via Arrow IPC
+    /// reader = pa.ipc.open_stream(ipc_bytes)
+    /// batch = reader.read_next_batch()
+    ///
+    /// # Access columns
+    /// patterns = batch.column("pattern").to_pylist()
+    /// starts = batch.column("start").to_pylist()
+    /// ```
+    ///
+    /// Args:
+    ///     path: Filesystem path to the file to scan.
+    ///
+    /// Returns:
+    ///     PyBytes containing Arrow IPC stream format.
+    ///     Python calls `pa.ipc.open_stream()` to deserialize.
+    ///
+    /// Raises:
+    ///     IOError: If the file cannot be opened or mmap'd.
+    #[cfg(feature = "data")]
+    fn scan_mmap_arrow_ipc(&self, path: &str, py: Python<'_>) -> PyResult<Bound<'_, PyBytes>> {
+        use crate::arrow_c_data::ipc;
+        
+        let file = File::open(path).map_err(|e| {
+            pyo3::exceptions::PyIOError::new_err(format!("Failed to open file '{}': {}", path, e))
+        })?;
+
+        let mmap = unsafe { Mmap::map(&file) }.map_err(|e| {
+            pyo3::exceptions::PyIOError::new_err(format!("Failed to mmap file '{}': {}", path, e))
+        })?;
+
+        // Scan and convert to IPC bytes
+        let hits = self._scan_slice(&mmap);
+        let ipc_bytes = ipc::hits_to_ipc_bytes(&hits)
+            .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(format!(
+                "Arrow IPC serialization failed: {}", e
+            )))?;
+
+        // Return as PyBytes (Python will copy into its heap)
+        // Note: This is still better than Vec<StreamPatternHit> because:
+        //   - Single allocation instead of N × PyObject + PyUnicode
+        //   - pyarrow reads IPC with zero-copy views
+        Ok(PyBytes::new(py, &ipc_bytes))
+    }
+
+    /// Scan bytes buffer and return results as Arrow IPC bytes.
+    ///
+    /// MODERN-24: Zero-copy optimized version of `scan_bytes()`.
+    ///
+    /// See `scan_mmap_arrow_ipc()` for Python usage example.
+    #[cfg(feature = "data")]
+    fn scan_bytes_arrow_ipc(&self, buffer: &[u8], py: Python<'_>) -> PyResult<Bound<'_, PyBytes>> {
+        use crate::arrow_c_data::ipc;
+        
+        let hits = self._scan_slice(buffer);
+        let ipc_bytes = ipc::hits_to_ipc_bytes(&hits)
+            .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(format!(
+                "Arrow IPC serialization failed: {}", e
+            )))?;
+
+        Ok(PyBytes::new(py, &ipc_bytes))
+    }
+
+    /// Stream-scan an mmap'd file and return results as Arrow IPC bytes.
+    ///
+    /// MODERN-24: Zero-copy optimized version of `scan_iter_mmap()`.
+    ///
+    /// Memory bounded by chunk_size regardless of file size.
+    /// See `scan_mmap_arrow_ipc()` for Python usage example.
+    #[cfg(feature = "data")]
+    fn scan_iter_mmap_arrow_ipc(
+        &self,
+        path: &str,
+        chunk_size: Option<usize>,
+        py: Python<'_>,
+    ) -> PyResult<Bound<'_, PyBytes>> {
+        use crate::arrow_c_data::ipc;
+        
+        let chunk_size = chunk_size.unwrap_or(65536).max(4096);
+
+        let file = File::open(path).map_err(|e| {
+            pyo3::exceptions::PyIOError::new_err(format!("Failed to open file '{}': {}", path, e))
+        })?;
+
+        let mmap = unsafe { Mmap::map(&file) }.map_err(|e| {
+            pyo3::exceptions::PyIOError::new_err(format!("Failed to mmap file '{}': {}", path, e))
+        })?;
+
+        let file_len = mmap.len();
+        if file_len == 0 {
+            // Return empty IPC stream
+            let empty_ipc = ipc::hits_to_ipc_bytes(&[])
+                .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(format!(
+                    "Arrow IPC serialization failed: {}", e
+                )))?;
+            return Ok(PyBytes::new(py, &empty_ipc));
+        }
+
+        // Determine max pattern length for overlap window
+        let max_pattern_len = self
+            .patterns
+            .iter()
+            .map(|p| p.len())
+            .max()
+            .unwrap_or(1)
+            .min(chunk_size / 2);
+
+        let mut all_hits: Vec<(String, Option<String>, String, usize, usize)> = Vec::new();
+        let mut offset: usize = 0;
+
+        while offset < file_len {
+            let end = (offset + chunk_size).min(file_len);
+            let slice = &mmap[offset..end];
+            let mut hits = self._scan_slice(slice);
+
+            // Adjust offsets to be absolute (file-relative)
+            for hit in &mut hits {
+                hit.start += offset;
+                hit.end += offset;
+            }
+
+            // Convert to tuple format for IPC builder
+            for hit in hits {
+                all_hits.push((
+                    hit.pattern,
+                    hit.label,
+                    hit.value,
+                    hit.start,
+                    hit.end,
+                ));
+            }
+
+            if end >= file_len {
+                break;
+            }
+
+            offset = end.saturating_sub(max_pattern_len);
+        }
+
+        let ipc_bytes = ipc::hits_to_ipc_bytes(&all_hits)
+            .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(format!(
+                "Arrow IPC serialization failed: {}", e
+            )))?;
+
+        Ok(PyBytes::new(py, &ipc_bytes))
     }
 
     /// Release the automaton and free memory.

@@ -125,8 +125,9 @@ class IOCGraph:
     - Applies temporal decay to confidence at flush_buffers()
     """
     __slots__ = tuple(('_BUFFER_FLUSH_SIZE', '_closed', '_conn', '_db', '_db_path',
-                       '_executor', '_ioc_buffer', '_is_memory_mode', '_obs_buffer',
-                       '_jtms', '_decay_lambda', '_schema_has_temporal'))
+                       '_executor', '_flush_lock', '_ioc_buffer', '_is_memory_mode',
+                       '_obs_buffer', '_jtms', '_decay_lambda', '_schema_has_temporal',
+                       '_schema_has_embeddings', '_schema_has_gnn_scores'))
 
     def __init__(self, db_path: Path | None=None, decay_lambda: float = 0.01,
                  *, memory_mode: bool = False) -> None:
@@ -162,6 +163,11 @@ class IOCGraph:
         self._jtms: JTMS = JTMS()
         self._decay_lambda: float = decay_lambda
         self._schema_has_temporal: bool = False
+        # SAFE-4: Flush lock to prevent concurrent flushes from corrupting buffers
+        self._flush_lock = asyncio.Lock()
+        # SAFE-4: Schema flags for GNN embedding support
+        self._schema_has_embeddings: bool = False
+        self._schema_has_gnn_scores: bool = False
 
     async def buffer_ioc(
         self,
@@ -392,18 +398,36 @@ class IOCGraph:
         JTMS INTEGRATION: Applies temporal decay to confidence scores before
         flushing to Kuzu. Decay formula: conf * exp(-λ * Δt_hours)
 
+        SAFE-4: Uses _flush_lock to prevent concurrent flushes from corrupting
+        buffer state. Only one flush can run at a time.
+
         Returns:
             ioc_created: count of IOC nodes NEWLY CREATED in this flush.
                          IOCs that already existed are updated (last_seen bump)
                          but NOT counted here. Call graph_stats() for total count.
             obs_flushed: count of observation edges written to the graph.
         """
+        # SAFE-4: Acquire flush lock to prevent concurrent flushes
+        if not self._flush_lock.locked():
+            async with self._flush_lock:
+                return await self._flush_buffers_impl()
+        else:
+            # Another flush is in progress, skip this one
+            import logging
+            logging.debug('[IOCGraph] flush_buffers: another flush in progress, skipping')
+            return {'ioc_created': 0, 'obs_flushed': 0}
+
+    async def _flush_buffers_impl(self) -> dict[str, int]:
+        """
+        Internal flush implementation — caller must hold _flush_lock.
+        
+        CRITICAL FIX: Clear buffers ONLY after successful write to prevent data loss.
+        If write fails, data remains in buffer for retry.
+        """
         if not self._ioc_buffer and (not self._obs_buffer):
             return {'ioc_created': 0, 'obs_flushed': 0}
         ioc_copy = self._ioc_buffer[:]
         obs_copy = self._obs_buffer[:]
-        # CRITICAL FIX: Clear buffers ONLY after successful write to prevent data loss
-        # If write fails, data remains in buffer for retry
 
         # Apply temporal decay to IOC confidences if JTMS has facts
         # Also resolve observed_at: None → time.time()
@@ -704,7 +728,11 @@ class IOCGraph:
         return target_db, target_conn
 
     async def persist_to_disk(self, target_path: Path) -> int:
-        """BLITZ-08: Export in-memory graph to a file-backed Kuzu database."""
+        """BLITZ-08: Export in-memory graph to a file-backed Kuzu database.
+
+        SAFE-4: Clears buffers after successful persistence to prevent
+        duplicate data when transitioning from memory mode to disk mode.
+        """
         if self._closed or self._conn is None:
             logger.warning('[IOCGraph] persist_to_disk: graph is closed')
             return 0
@@ -720,6 +748,13 @@ class IOCGraph:
             total = (self._copy_nodes(target_conn) + self._copy_observed_edges(target_conn)
                      + self._copy_predicted_edges(target_conn))
             logger.info('[IOCGraph] persist_to_disk: %d total entities written to %s', total, target_path)
+
+            # SAFE-4: Clear buffers after successful persistence
+            # This prevents duplicate data when transitioning from memory to disk mode
+            self._ioc_buffer.clear()
+            self._obs_buffer.clear()
+            logger.info('[IOCGraph] persist_to_disk: buffers cleared after successful export')
+
             return total
         except Exception as exc:
             logger.error('[IOCGraph] persist_to_disk failed: %s', exc)

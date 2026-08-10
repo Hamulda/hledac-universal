@@ -22,7 +22,7 @@ Podporuje 3 export path (M1 8GB safe, fail-safe):
    - orjson → Polars Struct → Parquet
 
 Schema odpovídá canonical_findings table:
-  id, query, source_type, confidence, ts, provenance_json, payload_text
+  id, query, source_type, confidence, ts, provenance_json, payload_text, claims_json
 
 M1 8GB bounds:
   - CHUNK_SIZE: 50_000 rows per Parquet file (max 50 MB compressed)
@@ -92,6 +92,7 @@ def _check_duckdb_available() -> bool:
 # Schema definition (shared s duckdb_store)
 # ---------------------------------------------------------------------------
 
+# MODERN-20: Extended to 8 columns including claims_json
 _PARQUET_SCHEMA: list[tuple[str, str]] = [
     ("id", "string"),
     ("query", "string"),
@@ -100,6 +101,7 @@ _PARQUET_SCHEMA: list[tuple[str, str]] = [
     ("ts", "float64"),
     ("provenance_json", "string"),
     ("payload_text", "string"),
+    ("claims_json", "string"),  # MODERN-20: Added for 8-column schema consistency
 ]
 
 
@@ -107,6 +109,7 @@ def _get_pyarrow_schema() -> Any:
     """Get PyArrow schema for Parquet writing (lazy import)."""
     import pyarrow as pa
 
+    # MODERN-20: Extended to 8 columns including claims_json
     return pa.schema(
         [
             ("id", pa.string()),
@@ -116,6 +119,7 @@ def _get_pyarrow_schema() -> Any:
             ("ts", pa.float64()),
             ("provenance_json", pa.string()),
             ("payload_text", pa.string()),
+            ("claims_json", pa.string()),  # MODERN-20: Added
         ]
     )
 
@@ -250,7 +254,8 @@ class ParquetExporter:
                     confidence DOUBLE,
                     ts DOUBLE,
                     provenance_json VARCHAR,
-                    payload_text VARCHAR
+                    payload_text VARCHAR,
+                    claims_json VARCHAR  -- MODERN-20: Added for 8-column schema
                 )
             """)
 
@@ -266,10 +271,11 @@ class ParquetExporter:
                 arr_ts = self._pa.array([r[4] for r in rows], type=self._pa.float64())
                 arr_prov = self._pa.array([r[5] for r in rows], type=self._pa.string())
                 arr_payload = self._pa.array([r[6] for r in rows], type=self._pa.string())
+                arr_claims = self._pa.array([r[7] if len(r) > 7 else "" for r in rows], type=self._pa.string())  # MODERN-20: Added
 
                 batch = self._pa.record_batch(
-                    [arr_id, arr_query, arr_st, arr_conf, arr_ts, arr_prov, arr_payload],
-                    names=["id", "query", "source_type", "confidence", "ts", "provenance_json", "payload_text"],
+                    [arr_id, arr_query, arr_st, arr_conf, arr_ts, arr_prov, arr_payload, arr_claims],
+                    names=["id", "query", "source_type", "confidence", "ts", "provenance_json", "payload_text", "claims_json"],  # MODERN-20: Added
                 )
                 # pa.Table required by DuckDB.register — not RecordBatchStreamReader
                 arrow_table = self._pa.Table.from_batches([batch])
@@ -287,14 +293,15 @@ class ParquetExporter:
                 _arr_ts = _pa.array([r[4] for r in rows], type=_pa.float64())
                 _arr_prov = _pa.array([r[5] for r in rows], type=_pa.string())
                 _arr_payload = _pa.array([r[6] for r in rows], type=_pa.string())
+                _arr_claims = _pa.array([r[7] if len(r) > 7 else "" for r in rows], type=_pa.string())  # MODERN-20: Added
                 _tbl = _pa.Table.from_arrays(
-                    [_arr_id, _arr_query, _arr_st, _arr_conf, _arr_ts, _arr_prov, _arr_payload],
-                    names=["id", "query", "source_type", "confidence", "ts", "provenance_json", "payload_text"],
+                    [_arr_id, _arr_query, _arr_st, _arr_conf, _arr_ts, _arr_prov, _arr_payload, _arr_claims],
+                    names=["id", "query", "source_type", "confidence", "ts", "provenance_json", "payload_text", "claims_json"],  # MODERN-20: Added
                 )
                 conn.register("tmp_findings", _tbl)
                 conn.execute(
                     "INSERT INTO tmp_findings "
-                    "SELECT id, query, source_type, confidence, ts, provenance_json, payload_text "
+                    "SELECT id, query, source_type, confidence, ts, provenance_json, payload_text, claims_json "  # MODERN-20: Added
                     "FROM tmp_findings"
                 )
 
@@ -431,8 +438,9 @@ class ParquetExporter:
             import orjson
 
             # Build columns
+            # MODERN-20: Extended to 8 columns including claims_jsons
             ids, queries, source_types, confidences = [], [], [], []
-            timestamps, provenance_jsons, payloads = [], [], []
+            timestamps, provenance_jsons, payloads, claims_jsons = [], [], [], []
 
             for f in findings:
                 ids.append(f.finding_id)
@@ -444,8 +452,11 @@ class ParquetExporter:
                     orjson.dumps(list(f.provenance)).decode("utf-8") if f.provenance else "[]"
                 )
                 payloads.append(f.payload_text or "")
+                # MODERN-20: claims_json extraction (default empty array if not available)
+                claims_jsons.append(getattr(f, "claims_json", None) or "[]")
 
             # PyArrow arrays → Polars lazy (zero-copy, streaming)
+            # MODERN-20: Extended to 8 columns including claims_jsons
             arr_id = self._pa.array(ids, type=self._pa.string())
             arr_query = self._pa.array(queries, type=self._pa.string())
             arr_st = self._pa.array(source_types, type=self._pa.string())
@@ -453,10 +464,11 @@ class ParquetExporter:
             arr_ts = self._pa.array(timestamps, type=self._pa.float64())
             arr_prov = self._pa.array(provenance_jsons, type=self._pa.string())
             arr_payload = self._pa.array(payloads, type=self._pa.string())
+            arr_claims = self._pa.array(claims_jsons, type=self._pa.string())  # MODERN-20: Added
 
             batch = self._pa.record_batch(
-                [arr_id, arr_query, arr_st, arr_conf, arr_ts, arr_prov, arr_payload],
-                names=["id", "query", "source_type", "confidence", "ts", "provenance_json", "payload_text"],
+                [arr_id, arr_query, arr_st, arr_conf, arr_ts, arr_prov, arr_payload, arr_claims],
+                names=["id", "query", "source_type", "confidence", "ts", "provenance_json", "payload_text", "claims_json"],  # MODERN-20: Added
             )
 
             # PyArrow RecordBatch → Polars DataFrame (zero-copy)
@@ -691,8 +703,9 @@ def export_parquet_to_path(
 
             import orjson
 
+            # MODERN-20: Extended to 8 columns including claims_jsons
             ids, queries, source_types, confidences = [], [], [], []
-            timestamps, provenance_jsons, payloads = [], [], []
+            timestamps, provenance_jsons, payloads, claims_jsons = [], [], [], []
 
             for f in findings:
                 ids.append(f.finding_id)
@@ -704,6 +717,8 @@ def export_parquet_to_path(
                     orjson.dumps(list(f.provenance)).decode("utf-8") if f.provenance else "[]"
                 )
                 payloads.append(f.payload_text or "")
+                # MODERN-20: claims_json extraction (default empty array if not available)
+                claims_jsons.append(getattr(f, "claims_json", None) or "[]")
 
             arr_id = exporter._pa.array(ids, type=exporter._pa.string())
             arr_query = exporter._pa.array(queries, type=exporter._pa.string())
@@ -712,10 +727,11 @@ def export_parquet_to_path(
             arr_ts = exporter._pa.array(timestamps, type=exporter._pa.float64())
             arr_prov = exporter._pa.array(provenance_jsons, type=exporter._pa.string())
             arr_payload = exporter._pa.array(payloads, type=exporter._pa.string())
+            arr_claims = exporter._pa.array(claims_jsons, type=exporter._pa.string())  # MODERN-20: Added
 
             batch = exporter._pa.record_batch(
-                [arr_id, arr_query, arr_st, arr_conf, arr_ts, arr_prov, arr_payload],
-                names=["id", "query", "source_type", "confidence", "ts", "provenance_json", "payload_text"],
+                [arr_id, arr_query, arr_st, arr_conf, arr_ts, arr_prov, arr_payload, arr_claims],
+                names=["id", "query", "source_type", "confidence", "ts", "provenance_json", "payload_text", "claims_json"],  # MODERN-20: Added
             )
 
             # PyArrow RecordBatch → Polars DataFrame (zero-copy)

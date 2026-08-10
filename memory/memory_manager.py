@@ -36,7 +36,6 @@ import time
 from pathlib import Path
 from typing import Any
 from hledac.universal.utils.msgspec_json import dumps_str as _msgspec_dumps_str, loads as _msgspec_loads
-from operator import attrgetter, itemgetter
 try:
     import orjson
     ORJSON_AVAILABLE = True
@@ -187,17 +186,23 @@ class MemoryManager:
             try:
                 full_key = self._make_session_key(session_id, key)
                 session_index_key = self._make_session_index_key(session_id)
+
+                # Phase 1: Read-only txn for data retrieval (zero-copy via buffers=True)
                 with self._env.begin(write=False, buffers=True, db=self._sub_db) as txn:
                     value = txn.get(full_key)
                     if value is None:
                         return None
                     session_meta_bytes = txn.get(session_index_key)
-                    if session_meta_bytes:
-                        session_meta = _json_loads(session_meta_bytes)
-                        if session_meta:
-                            session_meta['last_access'] = time.time()
-                            txn.put(session_index_key, _json_dumps(session_meta))
-                    return _json_loads(value)
+                    session_meta = _json_loads(session_meta_bytes) if session_meta_bytes else None
+
+                # Phase 2: Separate write txn only if session_meta needs update
+                # (P1-3 fix: txn.put() in read-only txn caused silent ReadonlyError)
+                if session_meta:
+                    session_meta['last_access'] = time.time()
+                    with self._env.begin(write=True, db=self._sub_db) as txn:
+                        txn.put(session_index_key, _json_dumps(session_meta))
+
+                return _json_loads(value)
             except Exception as e:
                 logger.error(f'MemoryManager get failed: {e}')
                 return None
@@ -216,8 +221,31 @@ class MemoryManager:
         async with self._lock:
             try:
                 full_key = self._make_session_key(session_id, key)
+                session_index_key = self._make_session_index_key(session_id)
+                prefix = f'session:{session_id}:'.encode()
+
                 with self._env.begin(write=True, db=self._sub_db) as txn:
-                    return txn.delete(full_key)
+                    # Check if this is the last key in session
+                    remaining_keys = 0
+                    cursor = txn.cursor()
+                    cursor.set_range(prefix)
+                    while cursor.key():
+                        k = cursor.key()
+                        if not k.startswith(prefix):
+                            break
+                        remaining_keys += 1
+                        if remaining_keys > 1:
+                            break
+                        cursor.next()
+
+                    # Delete the key
+                    deleted = txn.delete(full_key)
+
+                    # If this was the last key, clean up session_index_key to prevent orphan
+                    if remaining_keys == 1:
+                        txn.delete(session_index_key)
+
+                    return deleted
             except Exception as e:
                 logger.error(f'MemoryManager delete failed: {e}')
                 return False
@@ -236,7 +264,8 @@ class MemoryManager:
             try:
                 keys = []
                 prefix = f'session:{session_id}:'.encode()
-                with self._env.begin(write=False, db=self._sub_db) as txn:
+                # buffers=True for zero-copy reads, consistent with get() optimization
+                with self._env.begin(write=False, buffers=True, db=self._sub_db) as txn:
                     cursor = txn.cursor()
                     cursor.set_range(prefix)
                     while cursor.key():
@@ -265,11 +294,18 @@ class MemoryManager:
         """
         keys = await self.get_session_keys(session_id)
         history = []
-        for key in keys[:limit]:
-            value = await self.get(session_id, key)
-            if value is not None:
-                history.append({'key': key, 'value': value})
-        history.sort(key=itemgetter("'").get('timestamp', 0) if isinstance(x['value'], dict) else 0, reverse=True)
+        # Direct LMDB read to avoid triggering last_access update on every history access
+        full_prefix = f'session:{session_id}:'.encode()
+        with self._env.begin(write=False, buffers=True, db=self._sub_db) as txn:
+            for key in keys[:limit]:
+                full_key = full_prefix + key.encode()
+                value_bytes = txn.get(full_key)
+                if value_bytes is not None:
+                    value = _json_loads(value_bytes)
+                    if value is not None:
+                        history.append({'key': key, 'value': value})
+        # Sort by timestamp if available, otherwise maintain insertion order
+        history.sort(key=lambda item: item.get('value', {}).get('timestamp', 0), reverse=True)
         return history[:limit]
 
     async def clear_session(self, session_id: str) -> bool:
@@ -307,7 +343,8 @@ class MemoryManager:
             try:
                 sessions = []
                 prefix = b'sessions:'
-                with self._env.begin(write=False, db=self._sub_db) as txn:
+                # buffers=True for zero-copy reads, consistent with other read paths
+                with self._env.begin(write=False, buffers=True, db=self._sub_db) as txn:
                     cursor = txn.cursor()
                     cursor.set_range(prefix)
                     while cursor.key():
@@ -427,15 +464,22 @@ async def export_session(session_id: str) -> dict[str, Any]:
     findings: list[dict] = []
     hypotheses: list[dict] = []
     other: list[dict] = []
-    for key in keys:
-        value = await mgr.get(session_id, key)
-        if value is None:
-            continue
-        if key.startswith('finding:'):
-            findings.append(value)
-        elif key.startswith('hypothesis:'):
-            hypotheses.append(value)
-        else:
-            other.append({'key': key, 'value': value})
+    # Direct LMDB read to avoid triggering last_access update during export
+    full_prefix = f'session:{session_id}:'.encode()
+    with mgr._env.begin(write=False, buffers=True, db=mgr._sub_db) as txn:
+        for key in keys:
+            full_key = full_prefix + key.encode()
+            value_bytes = txn.get(full_key)
+            if value_bytes is None:
+                continue
+            value = _json_loads(value_bytes)
+            if value is None:
+                continue
+            if key.startswith('finding:'):
+                findings.append(value)
+            elif key.startswith('hypothesis:'):
+                hypotheses.append(value)
+            else:
+                other.append({'key': key, 'value': value})
     return {'session_id': session_id, 'findings': findings, 'hypotheses': hypotheses, 'other': other, 'findings_count': len(findings), 'hypotheses_count': len(hypotheses)}
 __all__ = ['MemoryManager', 'get_memory_manager', 'close_memory_manager', 'memory_put', 'memory_get', 'memory_delete', 'memory_get_history', 'export_session']

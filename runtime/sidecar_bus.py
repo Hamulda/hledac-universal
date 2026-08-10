@@ -699,9 +699,11 @@ class FindingSidecarBus:
             if not stage_tasks:
                 continue
             try:
+                # P4-5 FIX: policy="log" returns list[T], not ParallelResult.
+                # Use the result directly as it already contains only successes.
                 gathered = await parallel(stage_tasks, policy="log", ctx='sidecar_bus:stage')
-                self._check_gathered(list(gathered.ok))
-                _collect_sidecar_results(gathered.ok, all_results)
+                self._check_gathered(list(gathered))
+                _collect_sidecar_results(gathered, all_results)
             except asyncio.CancelledError:
                 await self._cancel_stage_tasks(stage_tasks)
                 raise
@@ -710,9 +712,11 @@ class FindingSidecarBus:
         remaining_tasks = self._collect_remaining_tasks(findings, store, batch.query, runners_executed)
         if remaining_tasks:
             try:
+                # P4-5 FIX: policy="log" returns list[T], not ParallelResult.
+                # Use the result directly as it already contains only successes.
                 gathered = await parallel(list(remaining_tasks), policy="log", ctx='sidecar_bus:remaining')
-                self._check_gathered(list(gathered.ok))
-                _collect_sidecar_results(gathered.ok, all_results)
+                self._check_gathered(list(gathered))
+                _collect_sidecar_results(gathered, all_results)
             except asyncio.CancelledError:
                 await self._cancel_stage_tasks(remaining_tasks)
                 raise

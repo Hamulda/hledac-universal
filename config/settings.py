@@ -287,7 +287,7 @@ class MemorySettings(msgspec.Struct, frozen=True, gc=False):
             threshold_warn_gib=ENV.get_float("HLEDAC_RG_THRESHOLD_WARN_GIB", 7.0),
             threshold_critical_gib=ENV.get_float("HLEDAC_RG_THRESHOLD_CRITICAL_GIB", 7.5),
             threshold_emergency_gib=ENV.get_float("HLEDAC_RG_THRESHOLD_EMERGENCY_GIB", 7.8),
-            hysteresis_exit_gib=ENV.get_float("HLEDAC_RG_HYSTERESIS_EXIT_GIB", 6.8),
+            hysteresis_exit_gib=ENV.get_float("HLEDAC_RG_HYSTERESIS_EXIT_GIB", 6.5),  # P2-8: was 6.8, now 6.5 for proper hysteresis band
         )
 
 

@@ -21,7 +21,7 @@
 //! - Pre-allocated `PyBytes::new()` avoids intermediate Vec<u8> copy on output
 
 use pyo3::buffer::PyBuffer;
-use pyo3::exceptions::{PyTypeError, PyValueError};
+use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 use pyo3::types::{PyBytes, PyList};
 use rayon::prelude::*;
@@ -32,10 +32,55 @@ use crate::mixed_pool;
 
 // Shared NEON histogram and entropy from quality_gate (avoids duplicate SIMD code)
 use crate::_entropy::{compute_histogram_neon, entropy_from_histogram, ENTROPY_NEON_THRESHOLD};
+
 // R4-09 FIX: Use adaptive_scheduler threshold instead of hardcoded 50.
 // mixed_threshold() returns 16/32/64 based on memory pressure — aligns
 // zero_copy parallel decisions with pool sizing in mixed_pool(n).
 use crate::adaptive_scheduler;
+
+// ─────────────────────────────────────────────────────────────────────────────
+// MODERN-18 FIX: True Zero-Copy Buffer Extraction
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Result of buffer extraction for entropy computation.
+///
+/// MODERN-18: This function provides safe buffer access without panicking:
+/// 1. **PyBuffer first** - Direct memory access for numpy, bytearray, memoryview
+/// 2. **PyBytes fallback** - Direct view of bytes objects
+/// 3. **extract fallback** - Safe conversion for other types
+///
+/// Key insight: We convert to owned Vec<u8> because:
+/// - `compute_entropy_zc` needs to iterate over bytes
+/// - rayon parallelization requires 'static lifetime
+/// - The copy is O(n) memcpy, which is fast compared to Python->Rust protocol overhead
+///
+/// This is still much more efficient than the previous `.bytes().unwrap()` approach
+/// which could panic on numpy/memoryview objects.
+#[inline]
+fn extract_buffer_bytes(input: &Bound<'_, PyAny>) -> PyResult<Vec<u8>> {
+    // Try PyBuffer first — efficient access for buffer-backed objects.
+    // This handles numpy arrays, bytearray, memoryview, array.array, etc.
+    if let Ok(buffer) = PyBuffer::<u8>::get(input) {
+        // as_slice() returns None for non-contiguous or multi-dimensional buffers.
+        // In that case, we fall through to extract() rather than trying PyBytes,
+        // since PyBytes is a different type than PyBuffer-backed objects.
+        if let Some(cells) = buffer.as_slice(input.py()) {
+            // MODERN-18-FIX: Idiomatic Rust - map + collect with pre-allocated capacity.
+            // MODERN-18-OPT: Pre-allocate to avoid reallocations (M1 8GB friendly).
+            return Ok(cells.iter().map(|cell| cell.get()).collect());
+        }
+        // Buffer exists but not slice-able — fall through to generic extract.
+    }
+
+    // Fallback: try PyBytes for direct view of Python bytes objects.
+    if let Ok(bytes) = input.cast::<PyBytes>() {
+        return Ok(bytes.as_bytes().to_vec());
+    }
+
+    // Final fallback: extract from any object that supports Python buffer protocol.
+    // This handles str, list of ints, and other types that extract to Vec<u8>.
+    input.extract::<Vec<u8>>()
+}
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -182,15 +227,17 @@ pub trait ZeroCopyBatch: Send + Sync {
     ) -> PyResult<usize> {
         let n = texts.len();
         // R4-09 FIX: Use adaptive threshold aligned with mixed_pool sizing.
+        // MODERN-05-OPT: Removed redundant Python::attach — `_py` from #[pyfunction] is valid GIL token.
         let results: Vec<String> = if n < adaptive_scheduler::mixed_threshold() {
             texts.iter().map(|t| self.process_one(t)).collect()
         } else {
-            Python::attach(|py| {
-                release_gil(py, || {
+            release_gil(
+                _py,
+                std::panic::AssertUnwindSafe(|| {
                     mixed_pool(n)
                         .install(|| texts.par_iter().map(|t| self.process_one(t)).collect())
-                })
-            })
+                }),
+            )
         };
 
         for result in &results {
@@ -217,57 +264,49 @@ pub trait ZeroCopyBatch: Send + Sync {
 /// * `f64` - Shannon entropy in bits
 ///
 /// # Performance
-/// - PyBuffer: TRUE zero-copy — directly accesses underlying memory (numpy, bytearray)
-/// - PyBytes: Zero-copy view of Python bytes object
+/// - PyBuffer: Efficient buffer access — O(1) to acquire, O(n) memcpy to own
+/// - PyBytes: Direct view of Python bytes object (then copied for rayon 'static)
 /// - List of strings: Copies to Vec<String> then processes
 #[pyfunction]
 pub fn buffer_entropy(input: &Bound<'_, PyAny>, py: Python<'_>) -> PyResult<f64> {
-    // ISSUE-005 FIX: Try PyBuffer first — TRUE zero-copy from any buffer-backed object.
-    // This handles numpy arrays, bytearray, memoryview, and other buffer protocol objects
-    // WITHOUT creating an intermediate Python bytes object.
-    // PyBuffer::as_bytes() returns &[u8] directly from the object's memory.
-    if let Ok(_buffer) = input.extract::<PyBuffer<u8>>() {
-        // Copy buffer contents to Vec<u8>
-        let bytes: Vec<u8> = input.call_method0("bytes").unwrap().extract().unwrap();
-        return Ok(compute_entropy_zc(&bytes));
-    }
-
-    // Fallback: PyBytes — direct access to underlying buffer (zero-copy view)
-    if let Ok(bytes) = input.cast::<PyBytes>() {
-        return Ok(compute_entropy_zc(bytes.as_bytes()));
-    }
-
-    // Fallback: list of strings
-    if let Ok(list) = input.cast::<PyList>() {
-        let _n = validate_batch(&list, py)?;
-        // R4-09: Vec<String> via to_string_lossy() — efficient for ASCII/UTF-8.
-        // Clone the Bound to avoid lifetime issues with the iterator.
-        let texts: Vec<String> = PyStrListIter::new(list.clone()).collect();
-        if texts.is_empty() {
-            return Ok(0.0);
+    // MODERN-18 FIX: Use extract_buffer_bytes() for safe buffer access.
+    // This handles numpy arrays, bytearray, memoryview via PyBuffer protocol.
+    // Never calls .bytes() which panics on numpy/memoryview objects.
+    match extract_buffer_bytes(input) {
+        Ok(bytes) => return Ok(compute_entropy_zc(&bytes)),
+        Err(buffer_err) => {
+            // Try list fallback, but preserve original error if list also fails.
+            if let Ok(list) = input.cast::<PyList>() {
+                let _n = validate_batch(&list, py)?;
+                // R4-09: Vec<String> via to_string_lossy() — efficient for ASCII/UTF-8.
+                let texts: Vec<String> = PyStrListIter::new(list.clone()).collect();
+                if texts.is_empty() {
+                    return Ok(0.0);
+                }
+                // R4-09 FIX: Use adaptive threshold aligned with mixed_pool sizing.
+                if texts.len() < adaptive_scheduler::mixed_threshold() {
+                    return Ok(texts.iter().map(|t| compute_entropy_zc(t.as_bytes())).sum());
+                }
+                // ISSUE-063: release GIL during mixed_pool rayon scope.
+                // MODERN-05-OPT: Removed redundant Python::attach — `py` from #[pyfunction] is valid GIL token.
+                let pool = mixed_pool(texts.len());
+                let result = release_gil(
+                    py,
+                    std::panic::AssertUnwindSafe(|| {
+                        pool.install(|| {
+                            texts
+                                .par_iter()
+                                .map(|t| compute_entropy_zc(t.as_bytes()))
+                                .sum()
+                        })
+                    }),
+                );
+                return Ok(result);
+            }
+            // Both buffer extraction and list fallback failed — return original error.
+            return Err(buffer_err);
         }
-        // R4-09 FIX: Use adaptive threshold aligned with mixed_pool sizing.
-        if texts.len() < adaptive_scheduler::mixed_threshold() {
-            return Ok(texts.iter().map(|t| compute_entropy_zc(t.as_bytes())).sum());
-        }
-        // ISSUE-063: release GIL during mixed_pool rayon scope.
-        let pool = mixed_pool(texts.len());
-        let result = Python::attach(|py| {
-            release_gil(py, || {
-                pool.install(|| {
-                    texts
-                        .par_iter()
-                        .map(|t| compute_entropy_zc(t.as_bytes()))
-                        .sum()
-                })
-            })
-        });
-        return Ok(result);
     }
-
-    Err(PyTypeError::new_err(
-        "Expected buffer, bytes, or list of strings",
-    ))
 }
 
 /// Batch zero-copy entropy computation from a list of buffer-backed objects.
@@ -289,29 +328,29 @@ pub fn buffer_entropy_batched<'py>(
 ) -> PyResult<Vec<f64>> {
     let _n = validate_batch(&buffers, py)?;
 
-    // Collect buffer byte slices — zero-copy from each buffer-backed object
+    // MODERN-18 FIX: Use extract_buffer_bytes() for safe buffer access per item.
+    // This handles numpy arrays, bytearray, memoryview via PyBuffer protocol.
+    // Never calls .bytes() which panics on numpy/memoryview objects.
+    //
+    // Note: We collect to Owned(Vec<u8>) since rayon needs 'static lifetime.
+    // The PyBuffer path still provides efficiency: O(1) buffer access + O(n) memcpy
+    // vs slower Python->Rust protocol conversion.
     let mut buffer_views: Vec<Vec<u8>> = Vec::with_capacity(buffers.len());
 
     for item in buffers.iter() {
-        // ISSUE-005 / ISSUE-005-FIX2: Extract PyBuffer for true zero-copy access.
-        // This avoids the PyBytes intermediate copy for numpy arrays/bytearray.
-        let _buffer: PyBuffer<u8> = match item.extract() {
-            Ok(b) => b,
-            Err(_) => {
-                // Item doesn't support buffer protocol — try bytes as fallback.
-                // ISSUE-005-FIX2: use ok() instead of ? for graceful degradation:
-                // skip items that are neither buffer-backed nor bytes (e.g. int, float).
-                // For entropy batch, partial results are better than hard fail.
-                let Ok(bytes) = item.cast::<PyBytes>() else {
-                    continue; // non-buffer, non-bytes item — skip silently
-                };
-                buffer_views.push(bytes.as_bytes().to_vec());
-                continue;
+        match extract_buffer_bytes(&item) {
+            Ok(bytes) => {
+                buffer_views.push(bytes);
             }
-        };
-        // Copy buffer contents to Vec<u8>
-        let bytes: Vec<u8> = item.call_method0("bytes").unwrap().extract().unwrap();
-        buffer_views.push(bytes);
+            Err(_) => {
+                // Not buffer-backed — try raw PyBytes as fallback.
+                // Graceful degradation — skip non-buffer, non-bytes items.
+                if let Ok(bytes) = item.cast::<PyBytes>() {
+                    buffer_views.push(bytes.as_bytes().to_vec());
+                }
+                // Other types (int, float, etc.) are silently skipped.
+            }
+        }
     }
 
     if buffer_views.is_empty() {
@@ -320,19 +359,22 @@ pub fn buffer_entropy_batched<'py>(
 
     // Compute entropies in parallel using rayon's par_iter
     // R4-09 FIX: Use adaptive threshold aligned with mixed_pool sizing.
+    // MODERN-18-OPT FIX: Removed redundant Python::attach — matches buffer_entropy pattern.
+    // MODERN-05-OPT: Removed redundant Python::attach — `py` from #[pyfunction] is valid GIL token.
     let results: Vec<f64> = if buffer_views.len() < adaptive_scheduler::mixed_threshold() {
         buffer_views.iter().map(|b| compute_entropy_zc(b)).collect()
     } else {
-        Python::attach(|py| {
-            release_gil(py, || {
+        release_gil(
+            py,
+            std::panic::AssertUnwindSafe(|| {
                 mixed_pool(buffer_views.len()).install(|| {
                     buffer_views
                         .par_iter()
                         .map(|b| compute_entropy_zc(b))
                         .collect()
                 })
-            })
-        })
+            }),
+        )
     };
 
     Ok(results)
@@ -385,19 +427,22 @@ pub fn batch_url_fingerprints_zc<'py>(
     let n = urls_slice.len();
 
     // R4-09 FIX: Use adaptive threshold aligned with mixed_pool sizing.
+    // MODERN-18-OPT FIX: Removed redundant Python::attach — consistent pattern.
+    // MODERN-05-OPT: Removed redundant Python::attach — `py` from #[pyfunction] is valid GIL token.
     let results: Vec<String> = if n < adaptive_scheduler::mixed_threshold() {
         urls_slice.iter().map(|u| url_fingerprint_zc(u)).collect()
     } else {
-        Python::attach(|py| {
-            release_gil(py, || {
+        release_gil(
+            py,
+            std::panic::AssertUnwindSafe(|| {
                 mixed_pool(n).install(|| {
                     urls_slice
                         .par_iter()
                         .map(|u| url_fingerprint_zc(u))
                         .collect()
                 })
-            })
-        })
+            }),
+        )
     };
 
     let output = PyList::new(py, &results)?;
@@ -427,22 +472,25 @@ pub fn batch_dedup_fingerprints_zc<'py>(
     let n = texts_slice.len();
 
     // R4-09 FIX: Use adaptive threshold aligned with mixed_pool sizing.
+    // MODERN-18-OPT FIX: Removed redundant Python::attach — consistent pattern.
+    // MODERN-05-OPT: Removed redundant Python::attach — `py` from #[pyfunction] is valid GIL token.
     let results: Vec<String> = if n < adaptive_scheduler::mixed_threshold() {
         texts_slice
             .iter()
             .map(|t| crate::quality_gate::dedup_fingerprint(t))
             .collect()
     } else {
-        Python::attach(|py| {
-            release_gil(py, || {
+        release_gil(
+            py,
+            std::panic::AssertUnwindSafe(|| {
                 mixed_pool(n).install(|| {
                     texts_slice
                         .par_iter()
                         .map(|t| crate::quality_gate::dedup_fingerprint(t))
                         .collect()
                 })
-            })
-        })
+            }),
+        )
     };
 
     let output = PyList::new(py, &results)?;
@@ -464,22 +512,25 @@ pub fn batch_entropy_zc<'py>(
     let n = texts_slice.len();
 
     // R4-09 FIX: Use adaptive threshold aligned with mixed_pool sizing.
+    // MODERN-18-OPT FIX: Removed redundant Python::attach — consistent pattern.
+    // MODERN-05-OPT: Removed redundant Python::attach — `py` from #[pyfunction] is valid GIL token.
     let results: Vec<f64> = if n < adaptive_scheduler::mixed_threshold() {
         texts_slice
             .iter()
             .map(|t| compute_entropy_zc(t.as_bytes()))
             .collect()
     } else {
-        Python::attach(|py| {
-            release_gil(py, || {
+        release_gil(
+            py,
+            std::panic::AssertUnwindSafe(|| {
                 mixed_pool(n).install(|| {
                     texts_slice
                         .par_iter()
                         .map(|t| compute_entropy_zc(t.as_bytes()))
                         .collect()
                 })
-            })
-        })
+            }),
+        )
     };
 
     let output = PyList::new(py, &results)?;
@@ -514,23 +565,25 @@ pub fn batch_ioc_extract_into<'py>(
 
     // Process with rayon — returns Vec<Vec<...>>, no Python access in closure
     // ISSUE-063: release GIL during mixed_pool rayon scope.
-    // R4-09 FIX: Use adaptive threshold aligned with mixed_pool sizing.
+    // MODERN-05-OPT: Removed redundant Python::attach — `_py` from #[pyfunction] is valid GIL token.
+    // MODERN-18-FIX: Added AssertUnwindSafe for consistent panic handling with rayon.
     let all_results: Vec<Vec<(String, String)>> = if n < adaptive_scheduler::mixed_threshold() {
         texts_slice
             .iter()
             .map(|text| extract_iocs_from_text(text))
             .collect()
     } else {
-        Python::attach(|py| {
-            release_gil(py, || {
+        release_gil(
+            _py,
+            std::panic::AssertUnwindSafe(|| {
                 mixed_pool(n).install(|| {
                     texts_slice
                         .par_iter()
                         .map(|text| extract_iocs_from_text(text))
                         .collect()
                 })
-            })
-        })
+            }),
+        )
     };
 
     // Write results to Python heap — GIL held by #[pyfunction] caller
@@ -551,8 +604,10 @@ pub fn batch_ioc_extract_into<'py>(
 /// Compute SHA256 hash of input bytes and return as Py<PyBytes>.
 /// Zero-copy output: returns pre-allocated PyBytes without intermediate Vec<u8>.
 ///
+/// MODERN-18-FIX: Now supports buffer-backed objects (numpy, bytearray, memoryview).
+///
 /// # Arguments
-/// * `data` - Python bytes object
+/// * `data` - Python bytes, buffer-backed object, or string
 ///
 /// # Returns
 /// * `Py<PyBytes>` - SHA256 hash as bytes (not hex-encoded)
@@ -563,13 +618,12 @@ pub fn sha256_buffer<'py>(
 ) -> PyResult<Bound<'py, PyBytes>> {
     use sha2::{Digest, Sha256};
 
-    let bytes = data
-        .cast::<PyBytes>()
-        .map_err(|_| pyo3::exceptions::PyValueError::new_err("Expected bytes object"))?;
+    // MODERN-18-FIX: Use extract_buffer_bytes for consistent buffer protocol support.
+    let bytes = extract_buffer_bytes(&data)?;
 
     // Compute hash into fixed-size array (no intermediate Vec)
     let mut hasher = Sha256::new();
-    hasher.update(bytes.as_bytes());
+    hasher.update(&bytes);
     let result = hasher.finalize();
 
     // Return directly as PyBytes (zero-copy output)
@@ -578,17 +632,21 @@ pub fn sha256_buffer<'py>(
 
 /// Compute BLAKE3 hash of input bytes and return as Py<PyBytes>.
 /// Zero-copy output: returns pre-allocated PyBytes without intermediate Vec<u8>.
+///
+/// MODERN-18-FIX: Now supports buffer-backed objects (numpy, bytearray, memoryview).
+///
+/// # Arguments
+/// * `data` - Python bytes, buffer-backed object, or string
 #[pyfunction]
 pub fn blake3_buffer<'py>(
     data: Bound<'py, PyAny>,
     py: Python<'py>,
 ) -> PyResult<Bound<'py, PyBytes>> {
-    let bytes = data
-        .cast::<PyBytes>()
-        .map_err(|_| pyo3::exceptions::PyValueError::new_err("Expected bytes object"))?;
+    // MODERN-18-FIX: Use extract_buffer_bytes for consistent buffer protocol support.
+    let bytes = extract_buffer_bytes(&data)?;
 
     // Compute hash into fixed-size array (no intermediate Vec)
-    let hash = blake3::hash(bytes.as_bytes());
+    let hash = blake3::hash(&bytes);
 
     // Return directly as PyBytes (zero-copy output)
     Ok(PyBytes::new(py, hash.as_bytes()))
@@ -597,6 +655,11 @@ pub fn blake3_buffer<'py>(
 /// Compute BLAKE2b-128 hash of input bytes and return as Py<PyBytes>.
 /// Zero-copy output: returns pre-allocated PyBytes without intermediate Vec<u8>.
 /// Matches Python `hashlib.blake2b(digest_size=16)`.
+///
+/// MODERN-18-FIX: Now supports buffer-backed objects (numpy, bytearray, memoryview).
+///
+/// # Arguments
+/// * `data` - Python bytes, buffer-backed object, or string
 #[pyfunction]
 pub fn blake2b_128_buffer<'py>(
     data: Bound<'py, PyAny>,
@@ -606,14 +669,13 @@ pub fn blake2b_128_buffer<'py>(
     use blake2::digest::{Update, VariableOutput};
     use blake2::Blake2bVar;
 
-    let bytes = data
-        .cast::<PyBytes>()
-        .map_err(|_| pyo3::exceptions::PyValueError::new_err("Expected bytes object"))?;
+    // MODERN-18-FIX: Use extract_buffer_bytes for consistent buffer protocol support.
+    let bytes = extract_buffer_bytes(&data)?;
 
     // Compute hash with 16-byte output
     // blake2::Blake2bVar::new(output_len) can fail for len > 64; 16 is safe
     let mut hasher = Blake2bVar::new(16).expect("BLAKE2b-128: output size <= 64");
-    hasher.update(bytes.as_bytes());
+    hasher.update(&bytes);
     let result: Box<[u8]> = hasher.finalize_boxed();
 
     // Return directly as PyBytes (zero-copy output)

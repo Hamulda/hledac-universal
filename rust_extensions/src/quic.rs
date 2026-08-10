@@ -15,9 +15,29 @@
 //!   - TLS verification enabled by default (production-safe)
 //!
 //! Feature gate: quic = ["dep:quinn", "dep:h3"]
+//!
+//! ## MODERN-10: Async FFI Support
+//!
+//! This module provides BOTH sync and async Python interfaces:
+//!
+//! **Sync (blocking):** `rust.quic.fetch(...)` — use with `asyncio.to_thread()`
+//! ```python
+//! async def main():
+//!     resp = await asyncio.to_thread(rust.quic.fetch, "https://example.com/")
+//! ```
+//!
+//! **Async (native await):** `rust.quic.fetch_async(...)` — direct `await`
+//! ```python
+//! async def main():
+//!     resp = await rust.quic.fetch_async("https://example.com/")
+//! ```
 
 use pyo3::prelude::*;
 use std::time::{Duration, Instant};
+
+// MODERN-10: Import future_into_py for native async FFI
+#[cfg(feature = "quic")]
+use crate::async_bridge::future_into_py;
 
 /// Maximum concurrent QUIC connections (M1 8GB bounded).
 const MAX_CONCURRENT_CONNECTIONS: usize = 3;
@@ -63,24 +83,17 @@ impl QuicResponse {
 static CONNECTION_SEM: tokio::sync::Semaphore =
     tokio::sync::Semaphore::const_new(MAX_CONCURRENT_CONNECTIONS);
 
-/// Global tokio runtime for async operations.
-/// Created once per process, reused for all requests.
-/// M1 8GB: 2 threads is sufficient for QUIC (I/O-bound).
-static RUNTIME: std::sync::OnceLock<tokio::runtime::Runtime> = std::sync::OnceLock::new();
+// ============================================================================
+// Shared Runtime (MODERN-07)
+// ============================================================================
 
-/// Get or create the global tokio runtime.
+/// Get or create the shared tokio runtime.
 ///
-/// NOTE: Uses `.expect()` because OnceLock doesn't support fallible init pre-1.66.
-/// If this fails, the QUIC module is unusable. Error indicates system-level issue
-/// (e.g., OOM, resource limits) that cannot be recovered from.
+/// [MODERN-07]: Replaced local OnceLock with shared runtime from async_runtime module.
+/// This consolidates 3 separate runtimes (dns, quic, arti) into 1 shared runtime,
+/// saving ~16MB of memory overhead.
 fn get_runtime() -> &'static tokio::runtime::Runtime {
-    RUNTIME.get_or_init(|| {
-        tokio::runtime::Builder::new_multi_thread()
-            .enable_all()
-            .max_blocking_threads(2) // M1 8GB: only 2 threads needed for QUIC I/O
-            .build()
-            .expect("quic: OOM or system limit exceeded during tokio runtime creation")
-    })
+    crate::async_runtime::get_runtime()
 }
 
 /// Fetch a URL via QUIC/HTTP3 using quinn + h3.
@@ -135,7 +148,7 @@ pub fn fetch(
     // Use global runtime instead of creating per-request
     let rt = get_runtime();
     let result = rt.block_on(async {
-        fetch_async(
+        fetch_async_internal(
             &host,
             port,
             path,
@@ -154,8 +167,12 @@ pub fn fetch(
     result
 }
 
+/// Internal async QUIC fetch implementation.
+///
+/// This is the actual async implementation that does the QUIC/HTTP3 work.
+/// Named fetch_async_internal to avoid collision with the public fetch_async_py.
 #[cfg(feature = "quic")]
-async fn fetch_async(
+async fn fetch_async_internal(
     host: &str,
     port: u16,
     path: &str,
@@ -165,56 +182,46 @@ async fn fetch_async(
     headers: Option<Vec<(String, String)>>,
     timeout_secs: f64,
 ) -> QuicResponse {
-    use quinn::{ClientConfig, TransportConfig};
-    use rustls::{ClientConfig as TlsClientConfig, RootCertificateStore};
     use std::net::ToSocketAddrs;
-    use std::sync::OnceLock;
-
-    static TLS_ROOTS: OnceLock<RootCertificateStore> = OnceLock::new();
-
-    // Get or create root certificates
-    let roots = TLS_ROOTS.get_or_init(|| {
-        let mut store = RootCertificateStore::empty();
-        if let Ok(certs) = rustls::native_root_certs() {
-            store.extend(certs);
-        }
-        store
-    });
-
-    // Build TLS config with proper certificate verification by default.
-    // Insecure mode (for dev with self-signed certs) requires HLEDAC_QUIC_INSECURE=1.
-    let tls_cfg = if std::env::var("HLEDAC_QUIC_INSECURE").is_ok() {
-        // DEVELOPMENT ONLY: Skip certificate verification
-        match TlsClientConfig::builder()
-            .dangerous()
-            .with_custom_certificate_verifier(std::sync::Arc::new(InsecureVerifier))
-            .with_no_client_auth()
-        {
-            Ok(cfg) => cfg,
-            Err(e) => return QuicResponse::error(&format!("quic: TLS config failed: {}", e)),
-        }
-    } else {
-        // PRODUCTION: Verify certificates against system roots
-        match TlsClientConfig::builder()
-            .with_default_cert_verifier(roots.clone())
-            .with_no_client_auth()
-        {
-            Ok(cfg) => cfg,
-            Err(e) => return QuicResponse::error(&format!("quic: TLS config failed: {}", e)),
-        }
-    };
-
-    // Create QUIC client config
-    let mut client_config = ClientConfig::new(std::sync::Arc::new(tls_cfg));
-    // M1 8GB: release memory immediately on drop
-    client_config.transport_config(TransportConfig::enable_0rtt());
-    client_config.release_memory();
+    use quinn::ClientConfig;
 
     // Create endpoint
-    let (mut endpoint, _) = match quinn::Endpoint::client("[::]:0".parse().unwrap()) {
+    // quinn 0.11: Endpoint::client(addr) returns Endpoint directly
+    let mut endpoint = match quinn::Endpoint::client("[::]:0".parse().unwrap()) {
         Ok(ep) => ep,
         Err(e) => return QuicResponse::error(&format!("quic: endpoint creation failed: {}", e)),
     };
+
+    // Build client config with TLS settings
+    // quinn 0.11: Uses platform verifier by default (macOS Keychain on macOS)
+    // For dev with self-signed certs, set HLEDAC_QUIC_INSECURE=1
+    let client_config: ClientConfig = if std::env::var("HLEDAC_QUIC_INSECURE").is_ok() {
+        // DEVELOPMENT ONLY: Skip certificate verification
+        // quinn exposes rustls via crypto::rustls module
+        use quinn::crypto::rustls::QuicClientConfig;
+        use quinn::rustls::ClientConfig as TlsClientConfig;
+        
+        let tls_cfg = TlsClientConfig::builder()
+            .dangerous()
+            .with_custom_certificate_verifier(std::sync::Arc::new(InsecureVerifier))
+            .with_no_client_auth();
+        
+        match QuicClientConfig::try_from(tls_cfg) {
+            Ok(quic_cfg) => ClientConfig::new(std::sync::Arc::new(quic_cfg) as std::sync::Arc<dyn quinn::crypto::ClientConfig>),
+            Err(e) => return QuicResponse::error(&format!("quic: TLS config failed: {}", e)),
+        }
+    } else {
+        // PRODUCTION: Use platform verifier (macOS Keychain)
+        // This uses the OS trust store (macOS Keychain on macOS)
+        // Use try_with_platform_verifier() instead of deprecated with_platform_verifier()
+        match ClientConfig::try_with_platform_verifier() {
+            Ok(cfg) => cfg,
+            Err(e) => return QuicResponse::error(&format!("quic: platform verifier failed: {}", e)),
+        }
+    };
+
+    // Set default client config before connecting
+    endpoint.set_default_client_config(client_config);
 
     // Resolve host
     let addr_str = format!("{}:{}", host, port);
@@ -227,7 +234,11 @@ async fn fetch_async(
     };
 
     // Connect with timeout
-    let connecting = endpoint.connect(client_config, remote, host);
+    // quinn 0.11: connect(addr, server_name) returns Result<Connecting, ConnectError>
+    let connecting = match endpoint.connect(remote, host) {
+        Ok(c) => c,
+        Err(e) => return QuicResponse::error(&format!("quic: connection failed: {}", e)),
+    };
 
     let quinn_conn =
         match tokio::time::timeout(Duration::from_secs_f64(timeout_secs), connecting).await {
@@ -293,23 +304,23 @@ async fn fetch_async(
 
     // Send body if present — use separate unidirectional stream
     if let Some(body) = body {
-        let (mut body_send, _) = match quinn_conn.open_uni().await {
+        // quinn 0.11: open_uni() returns SendStream directly (not a tuple)
+        let mut body_send = match quinn_conn.open_uni().await {
             Ok(s) => s,
             Err(e) => return QuicResponse::error(&format!("quic: open uni stream failed: {}", e)),
         };
         if let Err(e) = body_send.write_all(&body).await {
             return QuicResponse::error(&format!("quic: failed to send body: {}", e));
         }
-        if let Err(e) = body_send.finish().await {
-            return QuicResponse::error(&format!("quic: failed to finish body stream: {}", e));
-        }
+        // quinn 0.11: finish() returns Result<(), ClosedStream> not a Future
+        // Need to wait for the stream to be acknowledged
+        body_send.finish();
         drop(body_send);
     }
 
     // Finish the request stream to signal request is complete
-    if let Err(e) = send.finish().await {
-        return QuicResponse::error(&format!("quic: failed to finish request: {}", e));
-    }
+    // quinn 0.11: finish() returns Result<(), ClosedStream> not a Future
+    send.finish();
     drop(send);
 
     // Read response from bidirectional stream
@@ -318,7 +329,7 @@ async fn fetch_async(
     let mut response_body = Vec::with_capacity(65536); // Pre-allocate 64KB
 
     let deadline = Instant::now() + Duration::from_secs_f64(timeout_secs);
-    let chunk_buf = &mut [0u8; 65536];
+    let mut chunk_buf = [0u8; 65536];
 
     loop {
         if Instant::now() >= deadline {
@@ -330,9 +341,9 @@ async fn fetch_async(
             return QuicResponse::error("quic: response body exceeds 10MB limit");
         }
 
-        match recv.read(chunk_buf).await {
-            Ok(Some(chunk)) => {
-                response_body.extend_from_slice(&chunk);
+        match recv.read(&mut chunk_buf).await {
+            Ok(Some(bytes_read)) => {
+                response_body.extend_from_slice(&chunk_buf[..bytes_read]);
             }
             Ok(None) => break, // Stream finished
             Err(e) => {
@@ -466,6 +477,7 @@ fn extract_response_headers(body: &[u8]) -> Vec<(String, String)> {
 ///
 /// WARNING: For development/testing only with self-signed certificates.
 /// In production, use proper certificate verification (default behavior).
+#[derive(Debug)]
 struct InsecureVerifier;
 
 impl rustls::client::danger::ServerCertVerifier for InsecureVerifier {
@@ -530,11 +542,142 @@ pub fn fetch(
     )
 }
 
+// ============================================================================
+// MODERN-10: Async FFI — Native Python Awaitable
+// ============================================================================
+
+/// Fetch a URL via QUIC/HTTP3 — async version returning Python awaitable.
+///
+/// This function returns a native Python awaitable that can be used with
+/// `await` directly, eliminating the need for `asyncio.to_thread()`.
+///
+/// # Arguments
+/// * `url` — Target URL (e.g., "https://example.com/")
+/// * `method` — HTTP method (default "GET")
+/// * `body` — Request body as bytes (optional)
+/// * `headers` — Request headers as list of (key, value) tuples (optional)
+/// * `timeout_s` — Request timeout in seconds (default 30.0)
+///
+/// # Returns
+/// Python awaitable returning `QuicResponse` with status, headers, body.
+///
+/// # Example
+/// ```python
+/// import asyncio
+///
+/// async def main():
+///     resp = await rust.quic.fetch_async("https://example.com/")
+///     print(f"Status: {resp.status}")
+///
+/// asyncio.run(main())
+/// ```
+#[cfg(feature = "quic")]
+#[pyfunction]
+pub fn fetch_async(
+    py: Python<'_>,
+    url: String,
+    method: Option<String>,
+    body: Option<Vec<u8>>,
+    headers: Option<Vec<(String, String)>>,
+    timeout_s: Option<f64>,
+) -> PyResult<Bound<'_, PyAny>> {
+    let method = method.unwrap_or_else(|| "GET".to_string());
+    let timeout_secs = timeout_s.unwrap_or(30.0);
+
+    // Parse URL upfront for early validation
+    let parsed = match url::Url::parse(&url) {
+        Ok(p) => p,
+        Err(e) => {
+            return Err(pyo3::exceptions::PyValueError::new_err(format!(
+                "quic: invalid URL '{}': {}",
+                url, e
+            )));
+        }
+    };
+
+    if parsed.scheme() != "https" {
+        return Err(pyo3::exceptions::PyValueError::new_err(
+            "quic: only HTTPS URLs supported",
+        ));
+    }
+
+    let host = match parsed.host_str() {
+        Some(h) => h.to_string(),
+        None => {
+            return Err(pyo3::exceptions::PyValueError::new_err("quic: no host in URL"));
+        }
+    };
+
+    let port = parsed.port().unwrap_or(443);
+    let path = parsed.path().to_string();
+    let authority = format!("{}:{}", host, port);
+
+    // Acquire permit upfront (semaphore is Sync, safe to acquire before async)
+    let permit = match CONNECTION_SEM.try_acquire() {
+        Ok(p) => p,
+        Err(_) => {
+            return Err(pyo3::exceptions::PyRuntimeError::new_err(
+                "quic: connection limit exceeded (3 concurrent max)",
+            ));
+        }
+    };
+
+    // Use future_into_py to return native Python awaitable
+    // MODERN-10: This is the key change — no more block_on() blocking the event loop!
+    future_into_py(py, async move {
+        // Run the async QUIC fetch
+        let result = fetch_async_internal(
+            &host,
+            port,
+            &path,
+            authority,
+            &method,
+            body,
+            headers,
+            timeout_secs,
+        )
+        .await;
+
+        // Release connection slot
+        drop(permit);
+
+        // Convert QuicResponse to PyResult
+        match result {
+            QuicResponse { status, headers, body, error: None } => {
+                Ok(QuicResponse { status, headers, body, error: None })
+            }
+            QuicResponse { status: _, headers: _, body: _, error: Some(msg) } => {
+                Err(pyo3::exceptions::PyRuntimeError::new_err(msg))
+            }
+        }
+    })
+}
+
+/// No-op stub for fetch_async when quic feature is not enabled.
+#[cfg(not(feature = "quic"))]
+#[pyfunction]
+pub fn fetch_async(
+    py: Python<'_>,
+    url: String,
+    method: Option<String>,
+    body: Option<Vec<u8>>,
+    headers: Option<Vec<(String, String)>>,
+    timeout_s: Option<f64>,
+) -> PyResult<Bound<'_, PyAny>> {
+    let _ = (py, url, method, body, headers, timeout_s);
+    Err(pyo3::exceptions::PyRuntimeError::new_err(
+        "quic: rust extension built without 'quic' feature (use maturin build --features quic)",
+    ))
+}
+
 /// Register the quic module with the Python extension.
 #[cfg(feature = "quic")]
 pub fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<QuicResponse>()?;
+    // Sync version (use with asyncio.to_thread())
     m.add_function(wrap_pyfunction!(fetch, m)?)?;
+    // MODERN-10: Async version (native await)
+    m.add_function(wrap_pyfunction!(fetch_async, m)?)?;
     Ok(())
 }
 

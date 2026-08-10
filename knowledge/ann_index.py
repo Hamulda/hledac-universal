@@ -162,6 +162,8 @@ class _ANNIndex:
         "_mrl_target_dim",
         # SAFE-4: Desync observability counter
         "_usearch_desync_count",
+        # SAFE-4: Eviction lock to prevent race with upsert
+        "_evict_lock",
     )
 
     def __init__(self, db_path: Path, embed_dim: int = _EMBEDDING_DIM) -> None:
@@ -191,6 +193,10 @@ class _ANNIndex:
         # SAFE-4: Desync observability - counts failed usearch.add() after label was potentially appended
         # This metric indicates data integrity issues requiring reconciliation
         self._usearch_desync_count: int = 0
+
+        # SAFE-4: Eviction lock to prevent race with upsert operations
+        # Prevents concurrent evict() and upsert() from causing index/label desync
+        self._evict_lock = threading.Lock()
 
         # SWARM-002: Multilingual table name
         self._multilingual_table_name = "semantic_dedup_multilingual_v1"
@@ -530,27 +536,38 @@ class _ANNIndex:
 
         try:
             mx.eval([])  # Barrier before Metal ops
-            # SILICON-04: Batch numpy stack then single mx.array() call
-            # instead of per-vector mx.array(v) in a loop.
-            # BEFORE: mx.stack([mx.array(v) for v in candidate_vectors]) — N copies
-            # AFTER:  np.stack() → mx.array() — 1 copy total
-            # For 100 candidates × 256d × 4B = 100KB: 99% fewer L2 cache evictions
-            candidates_np = np.stack(candidate_vectors).astype(np.float32, copy=False)
-            c_mx = mx.array(candidates_np)
-            q_mx = mx.array(query_emb.astype(np.float32, copy=False))
 
-            # SILICON-04 fast-path: use SharedTensor.from_batch() when Rust is available
-            # This allocates one MTLBuffer for all candidates — the MLX array
-            # then references the same physical pages on M1 UMA.
-            # try:
-            #     from hledac.universal.utils.mlx_memory import SharedTensor
-            #     st = SharedTensor.from_batch(candidate_vectors, dtype="float32")
-            #     c_mx = st.array
-            #     q_mx = mx.array(query_emb.astype(np.float32, copy=False))
-            # except ImportError:
-            #     candidates_np = np.stack(candidate_vectors).astype(np.float32, copy=False)
-            #     c_mx = mx.array(candidates_np)
-            #     q_mx = mx.array(query_emb.astype(np.float32, copy=False))
+            # SILICON-04 MODERN-23: Fast-path using SharedTensor.from_batch()
+            # -------------------------------------------------------------------------
+            # Architecture: Arrow/numpy batch → Metal buffer → MLX array (M1 UMA zero-copy)
+            #
+            # Path 1 (SharedTensor, preferred):
+            #   candidate_vectors → np.stack → SharedMetalBuffer → MLX array
+            #   - One contiguous Metal buffer for all candidates
+            #   - MLX accesses MTLBuffer pages directly (no additional copy on M1 UMA)
+            #
+            # Path 2 (Fallback, always works):
+            #   candidate_vectors → np.stack → mx.array()
+            #   - Standard MLX allocation path
+            #
+            # For 100 candidates × 256d × 4B = 100KB: 99% fewer L2 cache evictions
+            # -------------------------------------------------------------------------
+            # Type annotation uses string to avoid issues with mx imported in try block
+            c_mx: "mx.array"
+            try:
+                # MODERN-23: Use SharedTensor for zero-copy Metal buffer backing
+                # This is the preferred path on M1 with metal_shared_buf available.
+                # Falls back to standard mx.array() if SharedMetalBuffer unavailable.
+                from hledac.universal.utils.mlx_memory import SharedTensor
+
+                st = SharedTensor.from_batch(candidate_vectors, dtype="float32")
+                c_mx = st.array
+            except Exception:
+                # SILICON-04 fallback: standard numpy → MLX path
+                candidates_np = np.stack(candidate_vectors).astype(np.float32, copy=False)
+                c_mx = mx.array(candidates_np)
+
+            q_mx = mx.array(query_emb.astype(np.float32, copy=False))
 
             scores = _mlx_cosine_similarity_batch(q_mx, c_mx)
             scores_np = np.array(scores)
@@ -969,8 +986,9 @@ class _ANNIndex:
                         # Increment desync counter for observability
                         self._usearch_desync_count += 1
 
-            # Evict oldest if over cap
-            self._maybe_evict()
+            # Evict oldest if over cap (SAFE-4: evict lock prevents race with concurrent upserts)
+            with self._evict_lock:
+                self._maybe_evict()
 
             # Compaction scheduler
             self._insert_count_since_compact += 1
@@ -1009,6 +1027,8 @@ class _ANNIndex:
         Now: collect indices first, sort descending, remove from end to beginning.
 
         PERFORMANCE OPTIMIZATION: Combined to_arrow() call instead of two separate calls.
+
+        NOTE: Caller must hold _evict_lock before calling this method.
         """
         # Evict English index
         try:
@@ -1115,6 +1135,48 @@ class _ANNIndex:
             return None
         except Exception:
             return None
+
+    def get_desync_stats(self) -> dict[str, int]:
+        """
+        Return desync observability metrics for SAFE-4 monitoring.
+
+        SAFE-4: Exposes USEARCH label↔vector desync detection metrics.
+        Call this periodically to detect data integrity issues.
+
+        Returns:
+            dict with:
+            - usearch_desync_count: Number of failed usearch.add() calls
+                                   (vector not added but LanceDB succeeded)
+            - usearch_index_size: Current number of vectors in USEARCH index
+            - usearch_labels_size: Current number of labels in parallel list
+            - lancedb_rows: Current number of rows in LanceDB
+        """
+        try:
+            usearch_size = len(self._usearch_labels) if self._usearch_labels else 0
+            if self._usearch_index is not None:
+                try:
+                    usearch_size = int(self._usearch_index.size)
+                except Exception:
+                    pass
+            lancedb_size = 0
+            if self._table is not None:
+                try:
+                    lancedb_size = self._table.count_rows()
+                except Exception:
+                    pass
+            return {
+                'usearch_desync_count': self._usearch_desync_count,
+                'usearch_index_size': usearch_size,
+                'usearch_labels_size': len(self._usearch_labels) if self._usearch_labels else 0,
+                'lancedb_rows': lancedb_size,
+            }
+        except Exception:
+            return {
+                'usearch_desync_count': self._usearch_desync_count,
+                'usearch_index_size': 0,
+                'usearch_labels_size': 0,
+                'lancedb_rows': 0,
+            }
 
     def prewarm(self, top_k: int = 128) -> None:
         """

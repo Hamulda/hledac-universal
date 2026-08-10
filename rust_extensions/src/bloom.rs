@@ -769,7 +769,7 @@ impl MmapBloomFilter {
         // ISSUE-D1: py.allow_threads() enables true rayon parallelism.
         let ptr_guard = self.ptr.read();
         let results: Vec<(Vec<usize>, bool)> = Python::attach(|py| {
-            release_gil(py, || {
+            release_gil(py, std::panic::AssertUnwindSafe(|| {
                 items
                     .par_iter()
                     .map(|item| {
@@ -781,7 +781,7 @@ impl MmapBloomFilter {
                         (indices, is_new)
                     })
                     .collect()
-            })
+            }))
         });
         drop(ptr_guard); // Release read guard before write
 
@@ -876,12 +876,12 @@ impl MmapBloomFilter {
         // ISSUE-D1: py.allow_threads() enables true rayon parallelism.
         let _ptr_guard = self.ptr.read();
         Python::attach(|py| {
-            release_gil(py, || {
+            release_gil(py, std::panic::AssertUnwindSafe(|| {
                 items
                     .par_iter()
                     .map(|item| self.check_indices(self.indices(item)))
                     .collect()
-            })
+            }))
         })
     }
 
@@ -908,7 +908,7 @@ impl MmapBloomFilter {
         // ISSUE-D1: py.allow_threads() enables true rayon parallelism.
         let ptr_guard = self.ptr.read();
         let results: Vec<(Vec<usize>, bool, bool)> = Python::attach(|py| {
-            release_gil(py, || {
+            release_gil(py, std::panic::AssertUnwindSafe(|| {
                 items
                     .par_iter()
                     .map(|item| {
@@ -930,7 +930,7 @@ impl MmapBloomFilter {
                         (indices, seen_before, is_new)
                     })
                     .collect()
-            })
+            }))
         });
         drop(ptr_guard); // Release read guard before write
 

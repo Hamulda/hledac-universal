@@ -28,6 +28,17 @@ Provides identity stitching capabilities using LanceDB with:
 Sprint 71: Bounded, fail-safe, MLX fallback for similarity.
 Sprint 77: Embedding optimization (float16, writeback buffer, batched embedding, health check).
 """
+import warnings
+
+# P6-4: Emit deprecation warning on import
+warnings.warn(
+    "knowledge.lancedb_store is deprecated. "
+    "Use knowledge.duckdb_rag_store.get_identity_store() instead. "
+    "See F350M-R migration guide.",
+    DeprecationWarning,
+    stacklevel=2,
+)
+
 import asyncio
 from hledac.universal.utils.async_helpers import safe_wait_for, bounded_parallel_map
 from hledac.universal.utils.locks import LazyAsyncioLock
@@ -375,13 +386,15 @@ class LanceDBIdentityStore:
         '_mlx_id_to_idx', '_mlx_ids', '_mlx_load_chunk_size', '_orch', '_table', 'db', 'uri',
         '_binary_embeddings', '_compact_in_flight', '_insert_count_since_compact', '_last_compact_ts',
         # MRL-2 FIX: Added missing __slots__ attributes that were causing AttributeError
-        '_colbert_reranker', '_flashrank_reranker', '_colbert_loaded', '_flashrank_loaded',
+        '_colbert_reranker', '_flashrank_ranker', '_colbert_loaded', '_flashrank_loaded',
         '_memory_history', '_eviction_threshold', '_usearch_index', '_usearch_loaded', '_lancedb_has_fts',
         '_embedder', '_embedder_type', '_embed_lock', '_current_mrl_dim', '_mrl_enabled',
         '_mlx_embed_manager', '_fallback_dim', '_writeback_buffer', '_writeback_lock',
         '_access_counts', '_index_build_status', '_index_cache', '_index_cache_time',
         '_index_build_deferred', '_metrics', '_large_override_enabled', '_ivfpq_enabled',
-        '_ivfpq_num_partitions', '_ivfpq_num_sub_vectors', '_usearch_index_multilingual',
+        '_ivfpq_num_partitions', '_ivfpq_num_sub_vectors', '_ivfpq_nprobes', '_ivfpq_trained', '_ivfpq_lock',
+        '_autotune',
+        '_usearch_index_multilingual',
         '_usearch_loaded_multilingual', '_usearch_labels_multilingual', '_multilingual_table_name',
         '_mrl_truncator', '_mrl_source_dim', '_mrl_target_dim',
     ))
@@ -451,6 +464,8 @@ class LanceDBIdentityStore:
             self._autotune = make_default_tuner(table_name='entities', state_dir=Path(uri).parent, num_sub_vectors=self._ivfpq_num_sub_vectors, vector_column='embedding', key_column='id')
         except Exception:
             self._autotune = None
+        # Start background cache maintenance
+        self._cache_maintenance_task = asyncio.create_task(self._cache_maintenance_loop())
         self._initialize()
 
     def _get_mlx_chunk_size(self) -> int:
@@ -1018,7 +1033,7 @@ class LanceDBIdentityStore:
                 padded[:, :dim] = signs
                 packed = mx.zeros((batch, padded_dim // 8), dtype=mx.uint8)
                 for i in range(8):
-                    packed |= padded[:, i::8] << 7 - i
+                    packed |= padded[:, i::8] << (7 - i)
                 all_embeddings.append(packed)
                 base_idx = len(all_ids)
                 for i, row_id in enumerate(ids_chunk):
@@ -1439,8 +1454,7 @@ class LanceDBIdentityStore:
             return
         if self._table is None or getattr(self, '_ivfpq_trained', False):
             return
-        if not hasattr(self, '_ivfpq_lock'):
-            self._ivfpq_lock = asyncio.Lock()
+        # _ivfpq_lock is always initialized in __init__ via __slots__
         async with self._ivfpq_lock:
             if self._ivfpq_trained:
                 return

@@ -10,11 +10,16 @@ This module is NOT part of the public API - it exists solely to concentrate
 SQL string templates and transaction patterns that were previously copy-pasted
 across 38 _sync_* methods.
 
+MODERN-20: Uses core.canonical_schema as single source of truth for
+canonical_findings schema. This fixes the arity mismatch (7 vs 8 columns)
+that broke DuckDB COPY FROM Arrow.
+
 Design:
 - All SQL templates are class-level string constants
 - Transaction framing (_begin/_commit/_rollback) is shared
 - Connection routing (MODE A file conn vs MODE B persistent conn) is shared
 - Arrow->dict conversion helpers are shared
+- Schema constants imported from core.canonical_schema
 
 Usage:
     qe = DuckDBQueryExecutor(store)  # store is DuckDBShadowStore instance
@@ -30,6 +35,14 @@ if TYPE_CHECKING:
     from hledac.universal.knowledge.duckdb_store import DuckDBShadowStore
 
 import logging as _logging
+
+# MODERN-20: Import canonical schema as single source of truth
+from hledac.universal.core.canonical_schema import (
+    CANONICAL_FINDINGS_ARITY,
+    CANONICAL_FINDINGS_COLUMNS,
+    get_duckdb_temp_table_ddl,
+    pad_row_to_schema,
+)
 
 _logger = _logging.getLogger(__name__)
 
@@ -272,6 +285,9 @@ class DuckDBQueryExecutor:
         """
         R2: DuckDBAppender insert — bypasses SQL parser for direct columnar write.
 
+        MODERN-20 FIX: Uses canonical schema (8 columns) instead of hardcoded 7.
+        The schema is imported from core.canonical_schema as single source of truth.
+
         Strategy: append to a temporary table, then INSERT...SELECT with
         ON CONFLICT DO NOTHING into canonical_findings. This preserves
         conflict semantics that raw DuckDBAppender doesn't support.
@@ -282,28 +298,22 @@ class DuckDBQueryExecutor:
         import uuid as _uuid
         _TEMP_TABLE = f"_appender_bulk_{_uuid.uuid4().hex[:8]}"
         try:
-            # Create temp table with same schema as canonical_findings (subset of columns)
-            conn.execute(f"""
-                CREATE TEMP TABLE {_TEMP_TABLE} (
-                    id VARCHAR, query VARCHAR, source_type VARCHAR,
-                    confidence DOUBLE, ts DOUBLE, provenance_json VARCHAR,
-                    claims_json VARCHAR
-                )
-            """)
+            # MODERN-20: Use canonical schema DDL (single source of truth)
+            conn.execute(f"CREATE TEMP TABLE {_TEMP_TABLE} {get_duckdb_temp_table_ddl(_TEMP_TABLE)}")
             # DuckDBAppender — zero-SQL-parser columnar write
             appender = conn.append(_TEMP_TABLE)
             try:
                 for row in rows:
-                    # Pad rows to 7 columns (appender expects exact column count)
-                    padded = list(row) + [None] * (7 - len(row))
-                    appender.append_row(padded[:7])
+                    # MODERN-20: Pad to 8 columns using canonical schema
+                    padded = pad_row_to_schema(list(row))
+                    appender.append_row(padded)
             finally:
                 appender.close()
-            # Atomic move with conflict handling
+            # MODERN-20: Include all 8 columns in INSERT...SELECT
             result = conn.execute(f"""
                 INSERT INTO canonical_findings
-                    (id, query, source_type, confidence, ts, provenance_json, claims_json)
-                SELECT id, query, source_type, confidence, ts, provenance_json, claims_json
+                    (id, query, source_type, confidence, ts, provenance_json, payload_text, claims_json)
+                SELECT id, query, source_type, confidence, ts, provenance_json, payload_text, claims_json
                 FROM {_TEMP_TABLE}
                 ON CONFLICT (id) DO NOTHING
             """)
@@ -547,15 +557,8 @@ class DuckDBQueryExecutor:
         _TEMP_TABLE = f"_copy_arrow_batch_{_uuid.uuid4().hex[:8]}"
         try:
             with self._wal_delete_mode():
-                # Step 1: Create temp table with same schema as canonical_findings
-                conn.execute(f"""
-                    CREATE TEMP TABLE {_TEMP_TABLE} (
-                        id VARCHAR, query VARCHAR, source_type VARCHAR,
-                        confidence DOUBLE, ts DOUBLE,
-                        provenance_json VARCHAR, payload_text VARCHAR,
-                        claims_json VARCHAR
-                    )
-                """)
+                # Step 1: MODERN-20: Use canonical schema DDL (single source of truth)
+                conn.execute(f"CREATE TEMP TABLE {_TEMP_TABLE} {get_duckdb_temp_table_ddl(_TEMP_TABLE)}")
                 # Step 2: COPY FROM Arrow — zero-copy columnar ingestion
                 conn.execute(
                     f"COPY {_TEMP_TABLE} FROM ? (FORMAT 'arrow')",

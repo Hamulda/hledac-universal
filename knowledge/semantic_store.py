@@ -487,7 +487,7 @@ class SemanticStore:
             emb.tolist(),
         )
 
-    async def flush(self) -> int:
+    async def flush(self) -> dict[str, int | dict]:
         """
         Batch embed + LanceDB upsert.
 
@@ -497,18 +497,18 @@ class SemanticStore:
 
         ANE path: CoreMLEmbedder.embed() → CoreML → ANE (F228B, preferred)
         Hash fallback: deterministic zero-RAM hash when MLX/ANE unavailable
+
+        SAFE-4: Returns detailed dict with counts and error info for observability.
         """
         if not self._initialized:
-            return 0
+            return {'total': 0, 'english': 0, 'multilingual': 0, 'errors': {}}
         if not self._pending_texts:
-            return 0
+            return {'total': 0, 'english': 0, 'multilingual': 0, 'errors': {}}
 
+        # Capture items BEFORE clearing to enable retry on failure
         texts = list(self._pending_texts)
         meta = list(self._pending_meta)
         languages = list(self._pending_languages)
-        self._pending_texts.clear()
-        self._pending_meta.clear()
-        self._pending_languages.clear()
 
         english_indices, multilingual_indices, english_texts, multilingual_texts, multilingual_langs = \
             self._split_by_language(texts, meta, languages)
@@ -523,17 +523,43 @@ class SemanticStore:
         embeddings_multilingual = await self._embed_multilingual(multilingual_texts) if multilingual_texts else None
 
         # Write English embeddings
-        total_records = 0
-        total_records += self._write_english_embeddings(
-            embeddings_english, english_indices, texts, meta,
-        )
+        english_count = 0
+        english_errors = {}
+        if embeddings_english is not None:
+            english_count = self._write_english_embeddings(
+                embeddings_english, english_indices, texts, meta,
+            )
+            if english_count < len(english_indices):
+                english_errors['partial_write'] = len(english_indices) - english_count
 
         # Write multilingual embeddings
-        total_records += self._write_multilingual_embeddings(
-            embeddings_multilingual, multilingual_indices, multilingual_langs, texts, meta,
-        )
+        multilingual_count = 0
+        multilingual_errors = {}
+        if embeddings_multilingual is not None:
+            multilingual_count = self._write_multilingual_embeddings(
+                embeddings_multilingual, multilingual_indices, multilingual_langs, texts, meta,
+            )
+            if multilingual_count < len(multilingual_indices):
+                multilingual_errors['partial_write'] = len(multilingual_indices) - multilingual_count
 
-        return total_records
+        # Only clear buffers after successful write
+        # SAFE-4: If write fails, items remain for retry
+        total_written = english_count + multilingual_count
+        if total_written > 0:
+            self._pending_texts.clear()
+            self._pending_meta.clear()
+            self._pending_languages.clear()
+
+        return {
+            'total': total_written,
+            'english': english_count,
+            'multilingual': multilingual_count,
+            'pending_items': len(texts),
+            'errors': {
+                'english': english_errors,
+                'multilingual': multilingual_errors,
+            }
+        }
 
     def _write_english_embeddings(
         self,
@@ -819,16 +845,18 @@ class SemanticStore:
         self, embeddings: np.ndarray, texts: list[str]
     ) -> tuple[np.ndarray | None, list[int]]:
         """SAFE-2.4/2.5: Validate batch of embeddings before LanceDB storage.
-        
+
         Returns (validated_embeddings, failed_indices) tuple.
         failed_indices contains indices of embeddings that failed validation.
+
+        SAFE-4: Ensures validated array maintains same length as input for safe indexing.
         """
         if embeddings is None or len(embeddings) == 0:
             return None, []
-        
+
         failed_indices = []
         validated = []
-        
+
         for i, emb in enumerate(embeddings):
             safe_emb = self._safe_validate_embedding(np.asarray(emb))
             if safe_emb is not None:
@@ -837,13 +865,21 @@ class SemanticStore:
                 failed_indices.append(i)
                 # Use zero embedding as fallback for failed ones
                 validated.append(np.zeros(self._SAFE_EMBED_DIM, dtype=np.float32))
-        
+
+        # SAFE-4: Ensure output length matches input for safe indexing
+        if len(validated) != len(embeddings):
+            logger.error(
+                "[SAFE-4] Validation output length mismatch: input=%d, output=%d",
+                len(embeddings), len(validated)
+            )
+            return None, failed_indices
+
         if failed_indices:
             logger.warning(
                 "[SAFE-2.4] %d/%d embeddings failed validation",
                 len(failed_indices), len(embeddings)
             )
-        
+
         return np.array(validated, dtype=np.float32), failed_indices
 
     def _validate_search_result(self, result: dict) -> dict | None:

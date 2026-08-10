@@ -21,6 +21,7 @@ Performance:
 from __future__ import annotations
 
 import json
+import logging
 import re
 import threading
 import time
@@ -29,6 +30,8 @@ from collections import OrderedDict
 from dataclasses import dataclass, field
 from enum import Enum, auto
 from typing import Any, Callable, Optional
+
+logger = logging.getLogger(__name__)
 
 import mlx.core as mx
 import mlx_lm
@@ -246,7 +249,10 @@ class MicroModelSwarmRouter:
                 )
                 return (result, model_id, task_type)
             except Exception as e:
-                print(f"[MicroModelSwarmRouter] Micro-model failed: {e}, falling back")
+                # P3-5 FIX: Use proper logging instead of print
+                logger.warning(
+                    f"[MicroModelSwarmRouter] Micro-model '{model_id}' failed: {e}, falling back to main model"
+                )
         
         # Fall back to main model
         main = self._pool.get_main_model()
@@ -265,15 +271,35 @@ class MicroModelSwarmRouter:
         return (result, None, task_type)
     
     def get_stats(self) -> dict[str, Any]:
-        """Get comprehensive router statistics."""
+        """
+        Get comprehensive router statistics.
+        
+        P3-4 FIX: memory_wiring now reflects actual state, not hardcoded.
+        """
         pool_stats = self._pool.get_stats()
+        
+        # P3-4 FIX: Determine actual wiring state
+        wired_count = pool_stats.get("wired_count", 0)
+        loaded_count = pool_stats.get("loaded_count", 0)
+        
+        if loaded_count == 0:
+            wiring_state = "none_loaded"
+        elif wired_count == loaded_count:
+            wiring_state = "UMA_wired"
+        elif wired_count > 0:
+            wiring_state = "partial_wired"  # Some models wired, some not
+        else:
+            wiring_state = "UMA_shared"  # No explicit wiring, using shared UMA
+        
         return {
             "pool": pool_stats,
             "cache_size": len(self._routing_cache),
             "enable_fallback": self._enable_fallback,
-            "zero_copy_ready": self._zero_copy_ready,
-            "swap_type": "pointer_swap",  # TRUE ZERO-COPY: pointer swap only
-            "memory_wiring": "UMA_wired",  # TRUE ZERO-COPY: weights wired to UMA
+            "zero_copy_ready": self._zero_copy_ready and wired_count == loaded_count,
+            "swap_type": "pointer_swap",
+            "memory_wiring": wiring_state,  # P3-4 FIX: Actual state, not hardcoded
+            "wired_count": wired_count,
+            "loaded_count": loaded_count,
         }
     
     @property

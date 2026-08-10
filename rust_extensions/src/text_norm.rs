@@ -7,7 +7,12 @@ use pyo3::prelude::*;
 use rayon::prelude::*;
 use unicode_normalization::UnicodeNormalization;
 
-use crate::gil::release_gil;
+use crate::gil::{release_gil, release_gil_caught_panic};
+
+// ## GIL Handling
+// All batch functions release the GIL via `release_gil()` during rayon
+// parallel work. This allows asyncio event loop to run on other threads
+// and enables true CPU parallelism for multi-core workloads.
 
 const BATCH_HARD_CAP: usize = 50_000;
 
@@ -125,7 +130,7 @@ pub fn nfd_normalize(text: &str) -> String {
 }
 
 /// Batch NFC normalization via rayon, capped at `BATCH_HARD_CAP`.
-/// Returns `ValueError` if the cap is exceeded.
+/// Returns `ValueError` if the cap is exceeded, or RuntimeError on panic.
 #[pyfunction]
 pub fn batch_nfc_normalize(texts: Vec<String>) -> Result<Vec<String>, PyErr> {
     if texts.len() > BATCH_HARD_CAP {
@@ -149,6 +154,11 @@ pub fn batch_nfc_normalize(texts: Vec<String>) -> Result<Vec<String>, PyErr> {
             })
         })
     });
+    if release_gil_caught_panic() {
+        return Err(PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(
+            "Rust panic in batch_nfc_normalize",
+        ));
+    }
     Ok(out)
 }
 
@@ -169,7 +179,7 @@ pub fn strip_diacritics(text: &str) -> String {
 }
 
 /// Batch diacritic stripping via rayon, capped at `BATCH_HARD_CAP`.
-/// Returns `ValueError` if the cap is exceeded.
+/// Returns `ValueError` if the cap is exceeded, or RuntimeError on panic.
 #[pyfunction]
 pub fn batch_strip_diacritics(texts: Vec<String>) -> Result<Vec<String>, PyErr> {
     if texts.len() > BATCH_HARD_CAP {
@@ -198,6 +208,11 @@ pub fn batch_strip_diacritics(texts: Vec<String>) -> Result<Vec<String>, PyErr> 
             })
         })
     });
+    if release_gil_caught_panic() {
+        return Err(PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(
+            "Rust panic in batch_strip_diacritics",
+        ));
+    }
     Ok(out)
 }
 
@@ -251,6 +266,11 @@ pub fn batch_nfc_normalize_fast(texts: Vec<String>) -> Result<Vec<String>, PyErr
             })
         })
     });
+    if release_gil_caught_panic() {
+        return Err(PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(
+            "Rust panic in batch_nfc_normalize_fast",
+        ));
+    }
     Ok(out)
 }
 
@@ -301,6 +321,11 @@ pub fn batch_strip_diacritics_fast(texts: Vec<String>) -> Result<Vec<String>, Py
             })
         })
     });
+    if release_gil_caught_panic() {
+        return Err(PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(
+            "Rust panic in batch_strip_diacritics_fast",
+        ));
+    }
     Ok(out)
 }
 

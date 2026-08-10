@@ -46,7 +46,11 @@ use parking_lot::RwLock;
 #[cfg(target_os = "macos")]
 use pyo3::prelude::*;
 #[cfg(target_os = "macos")]
+use pyo3::types::PyDict;
+#[cfg(target_os = "macos")]
 use std::sync::LazyLock;
+#[cfg(not(target_os = "macos"))]
+use std::collections::HashMap;
 
 // tracing for debug logging (feature-gated in Cargo.toml)
 #[cfg(feature = "otel")]
@@ -66,20 +70,20 @@ const IOSURFACE_RGBA: u32 = 0x52474241; // 'RGBA'
 
 #[cfg(target_os = "macos")]
 static METAL_DEVICE: LazyLock<RwLock<Option<MetalDeviceWrapper>>> =
-    LazyLock::new(|| RwLock::new(MetalDeviceWrapper::new()));
+    LazyLock::new(|| RwLock::new(Some(MetalDeviceWrapper::new())));
 
 #[cfg(target_os = "macos")]
 struct MetalDeviceWrapper {
-    device: Option<metal::Device>,
+    device: metal::Device,
     texture_cache: Vec<TextureHandle>,
 }
 
 #[cfg(target_os = "macos")]
 impl MetalDeviceWrapper {
     fn new() -> Self {
-        let device = metal::Device::system_default();
+        let device = metal::Device::system_default().expect("Metal device not available");
         Self {
-            device: Some(device),
+            device,
             texture_cache: Vec::with_capacity(4),
         }
     }
@@ -133,7 +137,7 @@ impl std::error::Error for IOSurfaceError {}
 /// Descriptor for creating a Metal texture from IOSurface.
 /// Python passes IOSurface pointer and dimensions; Rust creates MTLTexture.
 #[cfg(target_os = "macos")]
-#[pyclass]
+#[pyclass(skip_from_py_object)]
 #[derive(Clone)]
 pub struct IOSurfaceTextureDescriptor {
     /// IOSurface pointer (from IOSurfaceGetBaseAddress)
@@ -146,6 +150,17 @@ pub struct IOSurfaceTextureDescriptor {
     pub bytes_per_row: u32,
     /// Pixel format: 'BGRA' or 'RGBA'
     pub pixel_format: String,
+}
+
+#[cfg(target_os = "macos")]
+impl std::fmt::Display for IOSurfaceTextureDescriptor {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "IOSurfaceTextureDescriptor(ptr=0x{:x}, {}x{}, {} bytes/row, format={})",
+            self.iosurface_ptr, self.width, self.height, self.bytes_per_row, self.pixel_format
+        )
+    }
 }
 
 #[cfg(target_os = "macos")]
@@ -187,7 +202,7 @@ pub fn is_iosurface_bridge_available() -> (bool, Option<String>) {
     let device_guard = METAL_DEVICE.read();
     match &*device_guard {
         Some(wrapper) => {
-            let name = wrapper.device.as_ref().map(|d| d.name().to_string());
+            let name = Some(wrapper.device.name().to_string());
             (true, name)
         }
         None => (false, None),
@@ -208,7 +223,7 @@ pub fn is_iosurface_bridge_available() -> (bool, Option<String>) {
 #[cfg(target_os = "macos")]
 #[pyfunction]
 pub fn get_iosurface_from_pixelbuffer(
-    pixel_buffer_ptr: usize,
+    _pixel_buffer_ptr: usize,
 ) -> PyResult<IOSurfaceTextureDescriptor> {
     // CVPixelBuffer on Apple Silicon IS an IOSurface, so we can extract properties
     // from the CVPixelBuffer directly using CoreVideo FFI.
@@ -250,9 +265,9 @@ pub fn get_iosurface_from_pixelbuffer(
 pub fn create_metal_texture_from_iosurface(
     width: u32,
     height: u32,
-    bytes_per_row: u32,
+    _bytes_per_row: u32,
     pixel_format: &str,
-    base_address: usize,
+    _base_address: usize,
 ) -> PyResult<(usize, u32, u32)> {
     // Check size limits (16K × 16K max)
     if width > 16384 || height > 16384 {
@@ -267,10 +282,8 @@ pub fn create_metal_texture_from_iosurface(
         .as_ref()
         .ok_or_else(|| pyo3::exceptions::PyRuntimeError::new_err("Metal device not available"))?;
 
-    let device = wrapper
-        .device
-        .as_ref()
-        .ok_or_else(|| pyo3::exceptions::PyRuntimeError::new_err("Metal device is None"))?;
+    // MetalDeviceWrapper.device is already metal::Device, not Option
+    let device = &wrapper.device;
 
     // Determine pixel format
     let mtl_pixel_format = match pixel_format {
@@ -288,27 +301,29 @@ pub fn create_metal_texture_from_iosurface(
     // NOTE: This is NOT zero-copy from IOSurface. For true zero-copy:
     //   - Use IOSurfaceCreateMetalTexture() via FFI
     //   - Or use CVMetalTextureCache on macOS
-    let td = metal::TextureDescriptor::texture2d_descriptor(
-        mtl_pixel_format,
-        width,
-        height,
-        false, // mipmapped
-    );
+    let td = metal::TextureDescriptor::new();
+    td.set_pixel_format(mtl_pixel_format);
+    td.set_width(width.into());
+    td.set_height(height.into());
     td.set_usage(metal::MTLTextureUsage::ShaderRead);
 
     let texture = device.new_texture(&td);
 
     // Log a warning that this is not truly zero-copy
     // In production, this would use IOSurfaceCreateMetalTexture
+    #[cfg(feature = "otel")]
     tracing::debug!(
         "Created regular MTLTexture ({}x{}, format={}) - NOT IOSurface-backed",
         width,
         height,
         pixel_format
     );
+    #[cfg(not(feature = "otel"))]
+    let _ = (width, height, pixel_format); // Suppress unused warnings
 
     // Return texture info
-    let texture_ptr = texture.as_ptr() as usize;
+    // Use texture contents pointer as identifier (Metal doesn't expose raw ptr directly)
+    let texture_ptr = std::ptr::addr_of!(texture) as usize;
     Ok((texture_ptr, width, height))
 }
 
@@ -317,32 +332,25 @@ pub fn create_metal_texture_from_iosurface(
 /// Returns dict with: available, texture_cache_size, max_textures
 #[cfg(target_os = "macos")]
 #[pyfunction]
-pub fn get_iosurface_bridge_telemetry() -> HashMap<String, Py<PyAny>> {
-    let mut result = HashMap::new();
-
+pub fn get_iosurface_bridge_telemetry(py: Python<'_>) -> PyResult<Py<PyDict>> {
     let device_guard = METAL_DEVICE.read();
-    let py_result = Python::with_gil(|py| {
-        match &*device_guard {
-            Some(wrapper) => {
-                result.insert("available".to_string(), true.to_object(py));
-                result.insert(
-                    "texture_cache_size".to_string(),
-                    wrapper.texture_cache.len().to_object(py),
-                );
-                result.insert("max_textures".to_string(), 4.to_object(py));
-                if let Some(ref device) = wrapper.device {
-                    result.insert("device_name".to_string(), device.name().to_object(py));
-                }
-            }
-            None => {
-                result.insert("available".to_string(), false.to_object(py));
-                result.insert("texture_cache_size".to_string(), 0.to_object(py));
-            }
-        }
-        result.clone()
-    });
+    let dict = PyDict::new(py);
 
-    py_result
+    match &*device_guard {
+        Some(wrapper) => {
+            dict.set_item("available", true)?;
+            dict.set_item("texture_cache_size", wrapper.texture_cache.len() as u64)?;
+            dict.set_item("max_textures", 4u64)?;
+            let device_name = wrapper.device.name();
+            dict.set_item("device_name", device_name)?;
+        }
+        None => {
+            dict.set_item("available", false)?;
+            dict.set_item("texture_cache_size", 0u64)?;
+        }
+    }
+
+    Ok(dict.unbind())
 }
 
 /// Non-macOS stubs

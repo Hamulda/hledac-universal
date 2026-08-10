@@ -376,6 +376,8 @@ class RustWorkerPool:
         rayon_submit_channel = rust.raw.rayon_submit_channel
         rayon_join_channel = rust.raw.rayon_join_channel
         rayon_abort_channel = rust.raw.rayon_abort_channel
+        # P0-4 FIX: Explicit Arc release to prevent UAF/double-free
+        rayon_drop_channel = rust.raw.rayon_drop_channel
 
         async_lock = await self._get_async_lock()
         async with async_lock:
@@ -439,17 +441,24 @@ class RustWorkerPool:
             return await _await_result()
 
         finally:
-            # Abort the rayon task on any exit path (timeout, cancellation, error).
-            # rayon_abort_channel is safe to call even if the task already completed
-            # (condvar already notified, no-op after result is set).
-            # This prevents dispatcher thread leaks on asyncio.timeout fires.
+            # MODERN-04: Order matters! Abort BEFORE drop to prevent UAF.
+            # 1. rayon_abort_channel reconstructs Arc via Arc::from_raw to set cancel_flag
+            # 2. rayon_drop_channel drops the Arc after abort completes
+            # Reversing this order (drop first, then abort) causes UAF because
+            # Arc::from_raw would access already-freed memory.
+            #
+            # For PyCapsule handles (default), the destructor auto-releases Arc on GC,
+            # but we keep explicit cleanup for immediate release and backward compatibility.
             try:
-                from hledac.universal.core.rust_backend import rust
-                _abort = rust.raw.rayon_abort_channel
-                if _abort is not None:
-                    _abort(handle)
+                if rayon_abort_channel is not None:
+                    rayon_abort_channel(handle)
             except Exception:  # noqa: BLE001
                 pass  # Best-effort — don't mask original errors
+            try:
+                if rayon_drop_channel is not None:
+                    rayon_drop_channel(handle)
+            except Exception:  # noqa: BLE001
+                pass  # Best-effort — auto-release via capsule destructor handles this
             async with async_lock:
                 self._active_count -= 1
 
@@ -469,6 +478,10 @@ class RustWorkerPool:
         # R6: Centralized Rust access via core.rust_backend
         from hledac.universal.core.rust_backend import rust
         rayon_submit_channel = rust.raw.rayon_submit_channel
+        rayon_join_channel = rust.raw.rayon_join_channel
+        rayon_abort_channel = rust.raw.rayon_abort_channel
+        # P0-4 FIX: Explicit Arc release to prevent UAF/double-free
+        rayon_drop_channel = rust.raw.rayon_drop_channel
 
         handle = rayon_submit_channel(self._pool_type, n_items, fn, args)
         try:
@@ -488,6 +501,20 @@ class RustWorkerPool:
             except Exception:  # noqa: BLE001
                 pass
             raise
+        finally:
+            # MODERN-04: Abort BEFORE drop to prevent UAF (critical for raw usize handles).
+            # For PyCapsule handles (default), the destructor auto-releases Arc on GC,
+            # but we keep explicit cleanup for immediate release and backward compatibility.
+            try:
+                if rayon_abort_channel is not None:
+                    rayon_abort_channel(handle)
+            except Exception:  # noqa: BLE001
+                pass  # Best-effort — don't mask original errors
+            try:
+                if rayon_drop_channel is not None:
+                    rayon_drop_channel(handle)
+            except Exception:  # noqa: BLE001
+                pass  # Best-effort — auto-release via capsule destructor handles this
 
     @property
     def active_count(self) -> int:

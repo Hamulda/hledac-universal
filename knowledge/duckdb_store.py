@@ -121,6 +121,130 @@ except ImportError:
 
 
 # ---------------------------------------------------------------------------
+# MODERN-25: Unified Arrow IPC → RecordBatch helper
+# ---------------------------------------------------------------------------
+# Single source of truth for all IPC-read sites. Centralizes:
+#   - Magic-byte validation (ARROW/0xFFFFFFFF)
+#   - PyArrow availability check with graceful fallback
+#   - Consistent error logging (ISSUE-16 tag)
+#   - Ready for MODERN-17 Rust zero-copy byte integration
+#
+# Usage: record_batch = arrow_ipc_to_record_batch(ipc_bytes, source="rust_findings")
+# Returns: RecordBatch on success, None on failure
+# ---------------------------------------------------------------------------
+
+_ARROW_IPC_MIN_SIZE = 8  # IPC header is at least 8 bytes
+
+
+def arrow_ipc_to_record_batch(
+    ipc_bytes: bytes | bytearray | memoryview,
+    source: str = "unknown",
+) -> Any | None:
+    """
+    MODERN-25: Unified Arrow IPC bytes → RecordBatch converter.
+
+    Replaces 4 divergent _pa.ipc.open_stream() sites:
+      1. _arrow_build_rust_rows()       — line 9738
+      2. _arrow_build_rust_cols()        — line 9779
+      3. _arrow_build_rust_dict()        — line 9806
+      4. _arrow_insert_rust_findings()   — line 9969
+      5. _arrow_insert_rust_cols()       — line 10045
+      6. shared_memory_manager.py:102   — separate module
+
+    After MODERN-17: Rust path provides zero-copy bytes via
+    metal_shared_buf → iosurface_bridge; this helper becomes the
+    single ingestion point for all IPC streams.
+
+    Args:
+        ipc_bytes: Raw IPC bytes from Rust Arrow builder or shared memory.
+        source: Human-readable origin for log messages (e.g., "rust_findings").
+
+    Returns:
+        RecordBatch on success, None on any failure (fail-open).
+
+    Raises:
+        No exceptions — all errors are logged and return None.
+    """
+    import io as _io
+
+    # Lazy import to avoid pyarrow load overhead when not using Arrow path
+    try:
+        import pyarrow as _pa
+    except ImportError:  # noqa: BLE001 — fail-open; pyarrow unavailable
+        _logging.getLogger("duckdb_store").debug(
+            "[MODERN-25] %s: PyArrow unavailable", source
+        )
+        return None
+
+    # Guard: empty or truncated buffer
+    if not ipc_bytes or len(ipc_bytes) < _ARROW_IPC_MIN_SIZE:
+        _logging.getLogger("duckdb_store").debug(
+            "[MODERN-25] %s: IPC buffer too small (%d bytes)",
+            source,
+            len(ipc_bytes) if ipc_bytes else 0,
+        )
+        return None
+
+    try:
+        reader = _pa.ipc.open_stream(_io.BytesIO(ipc_bytes))
+        return reader.read_record_batch()
+    except StopIteration:  # noqa: TRY200 — empty schema-only batch
+        _logging.getLogger("duckdb_store").debug(
+            "[MODERN-25] %s: empty RecordBatch (StopIteration)", source
+        )
+        return None
+    except Exception as _exc:  # noqa: BLE001 — best-effort fail-open
+        _logging.getLogger("duckdb_store").debug(
+            "[MODERN-25] %s: Arrow IPC read failed: %s", source, _exc
+        )
+        return None
+
+
+def arrow_ipc_to_table(
+    ipc_bytes: bytes | bytearray | memoryview,
+    source: str = "shared_memory",
+) -> dict[str, list[Any]] | None:
+    """
+    MODERN-25: Unified Arrow IPC → dict converter for shared memory deserialization.
+
+    Reads IPC stream and converts all columns to Python lists.
+    Used by ArrowSharedMemory.deserialize() as replacement for inline pa.ipc.open_stream().
+
+    Args:
+        ipc_bytes: Raw IPC bytes from shared memory buffer.
+        source: Human-readable origin (default: "shared_memory").
+
+    Returns:
+        dict[str, list] on success, None on failure.
+    """
+    import io as _io
+
+    try:
+        import pyarrow as _pa
+    except ImportError:  # noqa: BLE001
+        _logging.getLogger("duckdb_store").debug(
+            "[MODERN-25] %s: PyArrow unavailable", source
+        )
+        return None
+
+    if not ipc_bytes or len(ipc_bytes) < _ARROW_IPC_MIN_SIZE:
+        return None
+
+    try:
+        reader = _pa.ipc.open_stream(_io.BytesIO(ipc_bytes))
+        table = reader.read_all()
+        result: dict[str, list[Any]] = {}
+        for col in table.column_names:
+            result[col] = table.column(col).to_pylist()
+        return result
+    except Exception as _exc:  # noqa: BLE001
+        _logging.getLogger("duckdb_store").debug(
+            "[MODERN-25] %s: IPC→table failed: %s", source, _exc
+        )
+        return None
+
+
+# ---------------------------------------------------------------------------
 # SEC-02: DuckDB file permission hardening
 # ---------------------------------------------------------------------------
 
@@ -9734,12 +9858,8 @@ class DuckDBShadowStore:
         if not ipc_bytes or len(ipc_bytes) <= 8:
             return None
 
-        try:
-            reader = _pa.ipc.open_stream(_io.BytesIO(ipc_bytes))
-            return reader.read_record_batch()
-        except Exception as exc:  # noqa: BLE001 — best-effort
-            _logger.debug("[ISSUE-16] Arrow IPC read failed: %s", exc)
-            return None
+        # MODERN-25: Unified Arrow IPC helper
+        return arrow_ipc_to_record_batch(ipc_bytes, source="rust_rows")
 
     def _arrow_build_rust_cols(
         self, findings: list[CanonicalFinding], findings_dicts: list[dict] | None = None
@@ -9775,12 +9895,8 @@ class DuckDBShadowStore:
         if not ipc_bytes or len(ipc_bytes) <= 8:
             return None
 
-        try:
-            reader = _pa.ipc.open_stream(_io.BytesIO(ipc_bytes))
-            return reader.read_record_batch()
-        except Exception as exc:  # noqa: BLE001 — best-effort
-            _logger.debug("[ISSUE-16] Arrow IPC read failed: %s", exc)
-            return None
+        # MODERN-25: Unified Arrow IPC helper
+        return arrow_ipc_to_record_batch(ipc_bytes, source="rust_cols")
 
     def _arrow_build_rust_dict(
         self, findings: list[CanonicalFinding], findings_dicts: list[dict] | None = None
@@ -9802,12 +9918,8 @@ class DuckDBShadowStore:
         if not ipc_bytes or len(ipc_bytes) <= 8:
             return None
 
-        try:
-            reader = _pa.ipc.open_stream(_io.BytesIO(ipc_bytes))
-            return reader.read_record_batch()
-        except Exception as exc:  # noqa: BLE001 — best-effort
-            _logger.debug("[ISSUE-16] Arrow IPC read failed: %s", exc)
-            return None
+        # MODERN-25: Unified Arrow IPC helper
+        return arrow_ipc_to_record_batch(ipc_bytes, source="rust_dict")
 
     def _arrow_build_python(
         self, findings: list[CanonicalFinding], findings_dicts: list[dict] | None = None
@@ -9936,11 +10048,23 @@ class DuckDBShadowStore:
             raw = f.payload_text or ""
             payload_list.append(_scrub(raw) if raw else "")
 
+        # MODERN-20 FIX: Extract claims_jsons for 8-column schema.
+        # claims_json may be in findings_dicts if enriched, otherwise empty array.
+        claims_jsons_list: list[str] = []
+        if findings_dicts:
+            for d in findings_dicts:
+                claims_jsons_list.append(d.get("claims_json") or "[]")
+        else:
+            claims_jsons_list = ["[]"] * n
+
         # Call Rust single-pass builder: passes findings list + pre-processed columns.
         # Rust accesses finding_id, query, source_type, confidence, ts via msgspec
-        # get_item(). Provenance and payload_text are pre-encoded/scrubbed by Python.
+        # get_item(). Provenance, payload_text, and claims_json are pre-processed by Python.
+        # MODERN-20: Now requires 4 PyList parameters (added claims_jsons).
         try:
-            ipc_bytes = _rust_record_batch_findings_func(findings, provenance_native_list, payload_list)
+            ipc_bytes = _rust_record_batch_findings_func(
+                findings, provenance_native_list, payload_list, claims_jsons_list
+            )
         except Exception as _e:  # noqa: BLE001 — best-effort; non-critical fallback
             _logger.debug(
                 "[Arrow-Rust-findings] build_record_batch_from_findings failed: %s", _e
@@ -9953,14 +10077,11 @@ class DuckDBShadowStore:
             # "Rust failed, try next path" (fall through via non-None error).
             return (0, "rust_failed")
 
-        try:
-            reader = _pa.ipc.open_stream(_io.BytesIO(ipc_bytes))
-            record_batch = reader.read_record_batch()
-        except Exception as _e:  # noqa: BLE001 — best-effort; DB build failure
+        # MODERN-25: Unified Arrow IPC helper
+        record_batch = arrow_ipc_to_record_batch(ipc_bytes, source="rust_findings")
+        if record_batch is None:
             _logging.getLogger(__name__).error(
-                "[Arrow] RecordBatch from Rust findings stream failed: %s: %s",
-                type(_e).__name__,
-                _e,
+                "[MODERN-25] RecordBatch from Rust findings stream failed"
             )
             return (0, None)
 
@@ -9977,8 +10098,9 @@ class DuckDBShadowStore:
     ) -> tuple[int, str | None]:
         """
         Path 1: Rust zero-copy column-path via build_record_batch_from_structs.
+        MODERN-20: Extended to 8 PyList columns (added claims_jsons).
 
-        Builds IPC bytes by passing 7 pre-separated Python list columns to Rust,
+        Builds IPC bytes by passing 8 pre-separated Python list columns to Rust,
         which iterates them via PyO3 Bound API (zero GIL overhead per item).
         Returns (count, None) on success, (0, None) on empty batch,
         (0, error_type) on failure.
@@ -10005,9 +10127,19 @@ class DuckDBShadowStore:
             else:
                 payload_list.append("")
 
+        # MODERN-20 FIX: Build claims_jsons list for 8-column schema.
+        # Extract from findings_dicts if available, otherwise use empty JSON array.
+        claims_jsons_list: list[str] = []
+        if findings_dicts:
+            for d in findings_dicts:
+                claims_jsons_list.append(d.get("claims_json") or "[]")
+        else:
+            claims_jsons_list = ["[]"] * n
+
+        # MODERN-20 FIX: Now requires 8 PyList parameters (added claims_jsons).
         try:
             ipc_bytes = _rust_record_batch_cols_func(
-                ids_list, queries_list, src_types_list, conf_list, ts_list, prov_list, payload_list
+                ids_list, queries_list, src_types_list, conf_list, ts_list, prov_list, payload_list, claims_jsons_list
             )
         except Exception as _e:  # noqa: BLE001 — best-effort; non-critical fallback path
             _logger.debug("[Arrow-Rust] record_batch_cols failed: %s", _e)
@@ -10019,10 +10151,11 @@ class DuckDBShadowStore:
             # Path 1 both receive non-empty findings, this is a safety net.
             return (0, "rust_cols_failed")  # fall through
 
-        reader = _pa.ipc.open_stream(_io.BytesIO(ipc_bytes))
-        try:
-            record_batch = reader.read_next_batch()
-        except StopIteration:
+        # MODERN-25: Unified Arrow IPC helper (uses read_record_batch for first batch)
+        # Note: This path uses read_record_batch() instead of read_next_batch()
+        # for consistency with the unified helper
+        record_batch = arrow_ipc_to_record_batch(ipc_bytes, source="rust_cols")
+        if record_batch is None:
             return (0, None)  # empty schema-only batch — treat as success
 
         _n_cols = len(findings)

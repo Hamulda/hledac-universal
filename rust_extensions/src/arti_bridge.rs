@@ -38,6 +38,22 @@
 //! Compile with: `--features embedded_tor`
 //! Python fallback: `TorTransport` in `transport/tor_transport.py` uses
 //! external `tor` binary when ArtiNode is not available.
+//!
+//! ## MODERN-11: Async FFI Support
+//!
+//! This module provides BOTH sync and async Python interfaces:
+//!
+//! **Sync (blocking):** `node.fetch_onion(...)` — use with `asyncio.to_thread()`
+//! ```python
+//! async def main():
+//!     resp = await asyncio.to_thread(node.fetch_onion, "http://example.onion/")
+//! ```
+//!
+//! **Async (native await):** `arti_bridge.fetch_onion_async(node, url, timeout)`
+//! ```python
+//! async def main():
+//!     resp = await arti_bridge.fetch_onion_async(node, "http://example.onion/")
+//! ```
 
 use parking_lot::Mutex;
 use pyo3::prelude::*;
@@ -47,6 +63,9 @@ use std::time::{Duration, Instant}; // parking_lot: no PoisonError, no unwrap ne
 
 use arti_client::{TorClient, TorClientConfig};
 use tor_rtcompat::PreferredRuntime;
+
+// MODERN-11: Import future_into_py for native async FFI
+use crate::async_bridge::future_into_py;
 
 // ---------------------------------------------------------------------------
 // Constants (Optimized)
@@ -170,11 +189,9 @@ pub struct ArtiNode {
     /// TorClient handle. Clone is cheap (Arc-based).
     client: Mutex<Option<TorClient<PreferredRuntime>>>,
 
-    /// Tokio runtime — kept alive for struct lifetime.
-    runtime: Mutex<Option<tokio::runtime::Runtime>>,
-
+    /// [MODERN-07]: Removed owned `runtime` field — now uses shared runtime.
     /// Tokio Handle — Clone + Send + Sync.
-    /// Thread-safe access to the runtime for block_on().
+    /// Thread-safe access to the shared runtime for block_on().
     handle: tokio::runtime::Handle,
 
     /// Data directory for Arti state.
@@ -221,22 +238,12 @@ impl ArtiNode {
             ))
         })?;
 
-        let runtime = tokio::runtime::Builder::new_multi_thread()
-            .worker_threads(2) // M1 8GB: 2 workers for Tor
-            .enable_all()
-            .build()
-            .map_err(|e| {
-                pyo3::exceptions::PyRuntimeError::new_err(format!(
-                    "Failed to create tokio runtime: {}",
-                    e
-                ))
-            })?;
-
-        let handle = runtime.handle().clone();
+        // [MODERN-07]: Use shared runtime instead of creating owned runtime.
+        // This consolidates 3 separate runtimes into 1 shared runtime (~16MB saved).
+        let handle = crate::async_runtime::get_handle();
 
         Ok(Self {
             client: Mutex::new(None),
-            runtime: Mutex::new(Some(runtime)),
             handle,
             data_dir,
             bootstrap_status: Mutex::new("not started".to_string()),
@@ -250,19 +257,12 @@ impl ArtiNode {
     ///
     /// First run: 3-8s (downloads consensus + pre-builds circuits).
     /// Subsequent: ~1s (cached consensus).
+    ///
+    /// [MODERN-07]: Runtime check removed — shared runtime is always alive.
     fn start(&self) -> PyResult<bool> {
         *self.bootstrap_status.lock() = "bootstrapping...".to_string();
 
-        // Verify runtime alive
-        {
-            let guard = self.runtime.lock();
-            if guard.is_none() {
-                return Err(pyo3::exceptions::PyRuntimeError::new_err(
-                    "Runtime destroyed (close() was called?)",
-                ));
-            }
-        }
-
+        // [MODERN-07]: Removed runtime alive check — shared runtime lives for entire process.
         let handle = self.handle.clone();
         let result: Result<(TorClient<PreferredRuntime>, usize), String> =
             handle.block_on(async {
@@ -327,16 +327,7 @@ impl ArtiNode {
                 .clone()
         };
 
-        // Verify runtime alive
-        {
-            let guard = self.runtime.lock();
-            if guard.is_none() {
-                return Err(pyo3::exceptions::PyRuntimeError::new_err(
-                    "Runtime destroyed",
-                ));
-            }
-        }
-
+        // [MODERN-07]: Removed runtime alive check — shared runtime is always alive.
         let handle = self.handle.clone();
 
         // Try with retry
@@ -447,15 +438,14 @@ impl ArtiNode {
     }
 
     /// Close the Tor client and free resources. Idempotent.
+    ///
+    /// [MODERN-07]: Runtime shutdown removed — shared runtime lives for entire process.
     fn close(&mut self) {
         // Clear pool first
         self.pool.lock().connections.clear();
         // Drop TorClient
         *self.client.lock() = None;
-        // Drop runtime last
-        if let Some(r) = self.runtime.lock().take() {
-            r.shutdown_background();
-        }
+        // [MODERN-07]: Removed runtime shutdown — shared runtime is global and lives for process.
         *self.bootstrap_status.lock() = "closed".to_string();
         *self.bootstrapped.lock() = false;
         *self.circuits_prebuilt.lock() = 0;
@@ -700,10 +690,202 @@ fn parse_http_response(data: &[u8]) -> Result<(u16, HashMap<String, String>, usi
 }
 
 // ---------------------------------------------------------------------------
+// MODERN-11: Async FFI — Native Python Awaitables
+// ---------------------------------------------------------------------------
+
+/// Fetch a URL through Tor — async version returning Python awaitable.
+///
+/// This function returns a native Python awaitable that can be used with
+/// `await` directly, eliminating the need for `asyncio.to_thread()`.
+///
+/// # Arguments
+/// * `node` — An ArtiNode instance (must be bootstrapped via start())
+/// * `url` — Target URL (http:// or https://)
+/// * `timeout_s` — Request timeout in seconds (default 30.0)
+///
+/// # Returns
+/// Python awaitable returning raw bytes (Vec<u8>).
+///
+/// # Example
+/// ```python
+/// import asyncio
+///
+/// async def main():
+///     node = arti_bridge.ArtiNode()
+///     await asyncio.to_thread(node.start)  # Bootstrap first
+///
+///     # Now use async fetch
+///     resp = await arti_bridge.fetch_onion_async(node, "http://example.onion/")
+///     print(f"Got {len(resp)} bytes")
+///
+/// asyncio.run(main())
+/// ```
+#[cfg(feature = "embedded_tor")]
+#[pyfunction]
+pub fn fetch_onion_async(
+    py: Python<'_>,
+    node: &ArtiNode,
+    url: String,
+    timeout_s: Option<f64>,
+) -> PyResult<Bound<'_, PyAny>> {
+    let timeout = Duration::from_secs_f64(timeout_s.unwrap_or(DEFAULT_TIMEOUT_S));
+
+    // Validate URL upfront
+    let parsed = match parse_http_url(&url) {
+        Ok(p) => p,
+        Err(e) => {
+            return Err(pyo3::exceptions::PyValueError::new_err(format!(
+                "Invalid URL '{}': {}",
+                url, e
+            )));
+        }
+    };
+
+    // Get TorClient reference
+    let tc = {
+        let guard = node.client.lock();
+        match guard.as_ref() {
+            Some(c) => c.clone(),
+            None => {
+                return Err(pyo3::exceptions::PyRuntimeError::new_err(
+                    "Tor not bootstrapped — call start() first",
+                ));
+            }
+        }
+    };
+
+    // MODERN-11: Use temporary pool for async context.
+    // parking_lot::Mutex::lock() is sync and would block the async executor.
+    // Creating a temporary pool per request is efficient for async usage.
+    let temp_pool = parking_lot::Mutex::new(ConnectionPool::new(MAX_POOL_SIZE));
+
+    // Use future_into_py to return native Python awaitable
+    // MODERN-11: This is the key change — no more block_on() blocking!
+    future_into_py(py, async move {
+        // Try with retry
+        let mut last_error = String::new();
+        for attempt in 0..MAX_RETRIES {
+            if attempt > 0 {
+                // Exponential backoff
+                let delay = RETRY_BASE_DELAY_MS * 2u64.pow(attempt as u32);
+                tokio::time::sleep(Duration::from_millis(delay)).await;
+            }
+
+            // Run async fetch with temporary pool
+            match fetch_with_pool(&tc, &parsed, timeout, &temp_pool).await {
+                Ok(data) => return Ok(data),
+                Err(e) => {
+                    last_error = e;
+                    // Don't retry non-transient errors
+                    if !is_transient_error(&last_error) {
+                        break;
+                    }
+                }
+            }
+        }
+        Err(pyo3::exceptions::PyRuntimeError::new_err(last_error))
+    })
+}
+
+/// Fetch multiple URLs through Tor — async version returning Python awaitable.
+///
+/// This function returns a native Python awaitable that can be used with
+/// `await` directly, eliminating the need for `asyncio.to_thread()`.
+///
+/// # Arguments
+/// * `node` — An ArtiNode instance (must be bootstrapped via start())
+/// * `urls` — List of URLs to fetch
+/// * `timeout_s` — Per-request timeout in seconds (default 30.0)
+///
+/// # Returns
+/// Python awaitable returning list of (status, body) tuples.
+/// status=0 means error, body contains error message.
+///
+/// # Example
+/// ```python
+/// import asyncio
+///
+/// async def main():
+///     node = arti_bridge.ArtiNode()
+///     await asyncio.to_thread(node.start)  # Bootstrap first
+///
+///     # Batch fetch with async
+///     results = await arti_bridge.fetch_batch_async(
+///         node,
+///         ["http://example.onion/", "http://test.onion/"],
+///     )
+///     for status, body in results:
+///         print(f"Status: {status}, Body: {len(body)} bytes")
+///
+/// asyncio.run(main())
+/// ```
+#[cfg(feature = "embedded_tor")]
+#[pyfunction]
+pub fn fetch_batch_async(
+    py: Python<'_>,
+    node: &ArtiNode,
+    urls: Vec<String>,
+    timeout_s: Option<f64>,
+) -> PyResult<Bound<'_, PyAny>> {
+    let timeout = Duration::from_secs_f64(timeout_s.unwrap_or(DEFAULT_TIMEOUT_S));
+
+    // Get TorClient reference
+    let tc = {
+        let guard = node.client.lock();
+        match guard.as_ref() {
+            Some(c) => c.clone(),
+            None => {
+                return Err(pyo3::exceptions::PyRuntimeError::new_err(
+                    "Tor not bootstrapped — call start() first",
+                ));
+            }
+        }
+    };
+
+    // Use future_into_py to return native Python awaitable
+    future_into_py(py, async move {
+        // Run the batch in tokio
+        let mut handles = Vec::with_capacity(urls.len());
+
+        for url in urls {
+            let tc_clone = tc.clone();
+            let timeout_clone = timeout;
+            let pool = ConnectionPool::new(MAX_POOL_SIZE);
+
+            handles.push(tokio::spawn(async move {
+                let parsed = parse_http_url(&url)?;
+                let pool_mutex = parking_lot::Mutex::new(pool);
+                fetch_with_pool(&tc_clone, &parsed, timeout_clone, &pool_mutex).await
+            }));
+        }
+
+        let mut results = Vec::with_capacity(handles.len());
+        for join_handle in handles {
+            match join_handle.await {
+                Ok(Ok(data)) => results.push((200u16, data)),
+                Ok(Err(e)) => results.push((0u16, e.into_bytes())),
+                Err(_) => results.push((0u16, b"task panicked".to_vec())),
+            }
+        }
+        Ok(results)
+    })
+}
+
+// ---------------------------------------------------------------------------
 // Module registration
 // ---------------------------------------------------------------------------
 
+#[cfg(feature = "embedded_tor")]
 pub fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<ArtiNode>()?;
+    // MODERN-11: Register async FFI functions
+    m.add_function(wrap_pyfunction!(fetch_onion_async, m)?)?;
+    m.add_function(wrap_pyfunction!(fetch_batch_async, m)?)?;
+    Ok(())
+}
+
+#[cfg(not(feature = "embedded_tor"))]
+pub fn register(_m: &Bound<'_, PyModule>) -> PyResult<()> {
+    // Stub only — embedded_tor feature not enabled
     Ok(())
 }

@@ -495,9 +495,11 @@ class ForensicsEnricher:
                     log.debug('Batch enrichment failed for %s: %s', finding_id, exc)
                     return (finding_id, None)
         tasks = [enrich_one(f) for f in findings]
+        # P4-5 FIX: policy="log" returns list[T], not ParallelResult.
+        # Use results directly as they already contain only successes.
         results = await parallel(tasks, policy="log", concurrency=8, ctx="enrichment_service:540")
         out = {}
-        for item in results.ok:
+        for item in results:
             if isinstance(item, Exception):
                 continue
             fid, enrich_data = item
@@ -595,10 +597,11 @@ class ForensicsEnricher:
                     ioc_one(texts[i], source_finding_ids[i], queries[i])
                     for i in range(len(texts))
                 ]
+                # P4-5 FIX: policy="log" returns list[T], not ParallelResult.
                 ioc_results = await parallel(
                     ioc_tasks, policy="log", concurrency=8, ctx="enrichment_service:ioc_bulk"
                 )
-                for item in ioc_results.ok:
+                for item in ioc_results:
                     if isinstance(item, Exception):
                         continue
                     sfid, ioc_list = item

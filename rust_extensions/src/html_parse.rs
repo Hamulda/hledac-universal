@@ -14,7 +14,7 @@ use rayon::prelude::*;
 use std::collections::{BTreeSet, HashSet};
 use std::sync::Arc;
 
-use crate::gil::release_gil;
+use crate::gil::{release_gil, release_gil_caught_panic};
 
 /// Maximum HTML document size for parsing (5 MB).
 /// OSINT-03: Prevents OOM on M1 8GB by bounding DOM node allocation in lol_html.
@@ -358,16 +358,16 @@ pub fn extract_links_with_text(html: &str, base_url: &str) -> Vec<(String, Strin
 /// Uses `mixed_pool(n)` — adaptive 1-2 threads based on batch size.
 /// Caps at `BATCH_EXTRACT_CAP` (1_000) items.
 ///
-/// Returns `Vec<Vec<(url, text)>>` in the same order as the input.
+/// Returns `Vec<Vec<(url, text)>>` in the same order as the input, or Err on panic.
 #[pyfunction]
-pub fn batch_extract_links_with_text(items: Vec<(String, String)>) -> Vec<Vec<(String, String)>> {
+pub fn batch_extract_links_with_text(items: Vec<(String, String)>) -> PyResult<Vec<Vec<(String, String)>>> {
     let items: Vec<(String, String)> = items.into_iter().take(BATCH_EXTRACT_CAP).collect();
     if items.is_empty() {
-        return Vec::new();
+        return Ok(Vec::new());
     }
     let n = items.len();
 
-    Python::attach(|py| {
+    let result: Vec<Vec<(String, String)>> = Python::attach(|py| {
         release_gil(py, || {
             crate::mixed_pool(n).install(|| {
                 items
@@ -376,7 +376,13 @@ pub fn batch_extract_links_with_text(items: Vec<(String, String)>) -> Vec<Vec<(S
                     .collect()
             })
         })
-    })
+    });
+    if release_gil_caught_panic() {
+        return Err(PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(
+            "Rust panic in batch_extract_links_with_text",
+        ));
+    }
+    Ok(result)
 }
 
 /// Extract email addresses from an HTML document.
@@ -480,13 +486,13 @@ fn extract_html_text_single(html: &str) -> String {
 /// Falls back to sequential Python HTMLParser in `public_patterns._batch_html_to_text`
 /// if Rust is unavailable.
 #[pyfunction]
-pub fn batch_extract_html_text(items: Vec<String>) -> Vec<String> {
+pub fn batch_extract_html_text(items: Vec<String>) -> PyResult<Vec<String>> {
     let items: Vec<String> = items.into_iter().take(BATCH_EXTRACT_CAP).collect();
     if items.is_empty() {
-        return Vec::new();
+        return Ok(Vec::new());
     }
 
-    Python::attach(|py| {
+    let result: Vec<String> = Python::attach(|py| {
         release_gil(py, || {
             crate::cpu_pool().install(|| {
                 items
@@ -495,7 +501,13 @@ pub fn batch_extract_html_text(items: Vec<String>) -> Vec<String> {
                     .collect()
             })
         })
-    })
+    });
+    if release_gil_caught_panic() {
+        return Err(PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(
+            "Rust panic in batch_extract_html_text",
+        ));
+    }
+    Ok(result)
 }
 
 // ISSUE-014: module-level LazyLock instead of lazy_static! inside function
@@ -531,16 +543,16 @@ fn extract_title_impl(html: &str) -> Option<String> {
 /// Uses `mixed_pool(n)` — adaptive 1-2 threads based on batch size.
 /// Caps at `BATCH_EXTRACT_CAP` (1_000) items.
 ///
-/// Returns `Vec<Vec<String>>` in the same order as the input.
+/// Returns `Vec<Vec<String>>` in the same order as the input, or Err on panic.
 #[pyfunction]
-pub fn batch_extract_emails(items: Vec<String>) -> Vec<Vec<String>> {
+pub fn batch_extract_emails(items: Vec<String>) -> PyResult<Vec<Vec<String>>> {
     let items: Vec<String> = items.into_iter().take(BATCH_EXTRACT_CAP).collect();
     if items.is_empty() {
-        return Vec::new();
+        return Ok(Vec::new());
     }
     let n = items.len();
 
-    Python::attach(|py| {
+    let result: Vec<Vec<String>> = Python::attach(|py| {
         release_gil(py, || {
             crate::mixed_pool(n).install(|| {
                 items
@@ -549,7 +561,13 @@ pub fn batch_extract_emails(items: Vec<String>) -> Vec<Vec<String>> {
                     .collect()
             })
         })
-    })
+    });
+    if release_gil_caught_panic() {
+        return Err(PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(
+            "Rust panic in batch_extract_emails",
+        ));
+    }
+    Ok(result)
 }
 
 // ---------------------------------------------------------------------------
@@ -561,16 +579,16 @@ pub fn batch_extract_emails(items: Vec<String>) -> Vec<Vec<String>> {
 /// Uses `mixed_pool(n)` — adaptive 1-2 threads based on batch size.
 /// Caps at `BATCH_EXTRACT_CAP` (1_000) items.
 ///
-/// Returns `Vec<Option<String>>` in the same order as the input.
+/// Returns `Vec<Option<String>>` in the same order as the input, or Err on panic.
 #[pyfunction]
-pub fn batch_extract_titles(items: Vec<String>) -> Vec<Option<String>> {
+pub fn batch_extract_titles(items: Vec<String>) -> PyResult<Vec<Option<String>>> {
     let items: Vec<String> = items.into_iter().take(BATCH_EXTRACT_CAP).collect();
     if items.is_empty() {
-        return Vec::new();
+        return Ok(Vec::new());
     }
     let n = items.len();
 
-    Python::attach(|py| {
+    let result: Vec<Option<String>> = Python::attach(|py| {
         release_gil(py, || {
             crate::mixed_pool(n).install(|| {
                 items
@@ -579,7 +597,13 @@ pub fn batch_extract_titles(items: Vec<String>) -> Vec<Option<String>> {
                     .collect()
             })
         })
-    })
+    });
+    if release_gil_caught_panic() {
+        return Err(PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(
+            "Rust panic in batch_extract_titles",
+        ));
+    }
+    Ok(result)
 }
 
 /// Extract the `content` attribute of `<meta name="description">`.
@@ -656,16 +680,16 @@ pub fn extract_title(html: &str) -> Option<String> {
 /// Uses `mixed_pool(n)` — adaptive 1-2 threads based on batch size.
 /// Caps at `BATCH_EXTRACT_CAP` (1_000) items.
 ///
-/// Returns `Vec<Vec<String>>` in the same order as the input.
+/// Returns `Vec<Vec<String>>` in the same order as the input, or Err on panic.
 #[pyfunction]
-pub fn batch_extract_links(items: Vec<(String, String)>) -> Vec<Vec<String>> {
+pub fn batch_extract_links(items: Vec<(String, String)>) -> PyResult<Vec<Vec<String>>> {
     let items: Vec<(String, String)> = items.into_iter().take(BATCH_EXTRACT_CAP).collect();
     if items.is_empty() {
-        return Vec::new();
+        return Ok(Vec::new());
     }
     let n = items.len();
 
-    Python::attach(|py| {
+    let result: Vec<Vec<String>> = Python::attach(|py| {
         release_gil(py, || {
             crate::mixed_pool(n).install(|| {
                 items
@@ -674,7 +698,13 @@ pub fn batch_extract_links(items: Vec<(String, String)>) -> Vec<Vec<String>> {
                     .collect()
             })
         })
-    })
+    });
+    if release_gil_caught_panic() {
+        return Err(PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(
+            "Rust panic in batch_extract_links",
+        ));
+    }
+    Ok(result)
 }
 
 // ---------------------------------------------------------------------------
@@ -854,16 +884,16 @@ fn _get_itemprop_value(el: &lol_html::html_content::Element) -> Option<String> {
 /// Uses `mixed_pool(n)` — adaptive 1-2 threads based on batch size.
 /// Caps at `BATCH_EXTRACT_CAP` (1_000) items.
 ///
-/// Returns `Vec<Vec<MicrodataItem>>` in the same order as the input.
+/// Returns `Vec<Vec<MicrodataItem>>` in the same order as the input, or Err on panic.
 #[pyfunction]
-pub fn batch_extract_microdata(items: Vec<String>) -> Vec<Vec<MicrodataItem>> {
+pub fn batch_extract_microdata(items: Vec<String>) -> PyResult<Vec<Vec<MicrodataItem>>> {
     let items: Vec<String> = items.into_iter().take(BATCH_EXTRACT_CAP).collect();
     if items.is_empty() {
-        return Vec::new();
+        return Ok(Vec::new());
     }
     let n = items.len();
 
-    Python::attach(|py| {
+    let result: Vec<Vec<MicrodataItem>> = Python::attach(|py| {
         release_gil(py, || {
             crate::mixed_pool(n).install(|| {
                 items
@@ -872,7 +902,13 @@ pub fn batch_extract_microdata(items: Vec<String>) -> Vec<Vec<MicrodataItem>> {
                     .collect()
             })
         })
-    })
+    });
+    if release_gil_caught_panic() {
+        return Err(PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(
+            "Rust panic in batch_extract_microdata",
+        ));
+    }
+    Ok(result)
 }
 
 // ---------------------------------------------------------------------------
