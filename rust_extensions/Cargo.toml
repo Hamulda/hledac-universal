@@ -99,6 +99,10 @@ zip = { version = "2", default-features = false, features = ["deflate"], optiona
 rustls = { version = "0.23", default-features = false, features = ["std", "tls12", "ring"], optional = true }
 webpki-roots = { version = "0.26", optional = true }  # System root CAs
 hex = "0.4"
+
+# DEEP modules dependencies
+# flate2: Streaming zlib decompression for git_forensics packfiles
+flate2 = "0.2"
 # ISSUE [ULTIMATE]-005: msgspec removed — not available on crates.io
 # Using serde::Serialize derive instead
 
@@ -303,7 +307,26 @@ advanced = [
 #   HLEDAC_ENABLE_MACH_REMAP=1 AND file_size >= 100MB.
 mach = []
 
-full = ["core", "data", "graph", "advanced", "tls13", "pdf", "office", "quic", "ane", "coreml_ane", "stix", "metal", "metal_shared", "iosurface", "otel", "fulltext", "native_db", "simdjson", "nw_framework", "whisper", "dns", "embedded_tor"]
+full = ["core", "data", "graph", "advanced", "tls13", "pdf", "office", "quic", "ane", "coreml_ane", "stix", "metal", "metal_shared", "iosurface", "otel", "fulltext", "native_db", "simdjson", "nw_framework", "whisper", "dns", "embedded_tor", "deep_git", "deep_warc", "deep_unindexed", "deep_ac"]
+
+# DEEP features: Forensics and Storage modules
+# deep_git: Git packfile forensics — mmap, streaming zlib, delta chains
+# M1 8GB: ~1MB compile, zero-copy mmap access
+deep_git = []
+
+# deep_warc: WARC file parser — byte-seek certificate extraction (F-5/F-6/3.4)
+# M1 8GB: ~500KB compile, streaming record parsing
+deep_warc = []
+
+# deep_unindexed: MinIO/rsync/S3 listing scanner
+# Reuses native_db streaming (50 MB cap per native_db.rs:53)
+# M1 8GB: ~500KB compile, parallel directory scanning
+deep_unindexed = []
+
+# deep_ac: NEON SIMD Aho-Corasick — high-performance payload scanning
+# ARM NEON acceleration for Apple Silicon (M1/M2/M3)
+# M1 8GB: ~1MB compile, batch parallel via rayon
+deep_ac = []
 
 # [MODERN-07]: Shared Tokio runtime for all async modules.
 # Consolidates 3 separate runtimes (dns, quic, arti) into 1 shared runtime.

@@ -63,11 +63,27 @@ class GraphBackendUnavailableError(Exception):
 GraphBackendUnavailable = GraphBackendUnavailableError
 _KUZU_DB_ROOT: Path = Path.home() / '.hledac' / 'kuzu'
 _IOC_GRAPH_FILENAME: str = 'ioc_graph'
-IOC_TYPES: frozenset[str] = frozenset(('cve', 'ip', 'hash_sha256', 'hash_md5', 'onion', 'i2p', 'domain', 'apt', 'malware', 'info_hash', 'magnet_uri', 'threat_actor', 'malware_family'))
+# 3.1 FIX: Added email and ssh_key types for git forensics pivot
+IOC_TYPES: frozenset[str] = frozenset((
+    'cve', 'ip', 'hash_sha256', 'hash_md5', 'hash_sha1',
+    'onion', 'i2p', 'domain', 'apt', 'malware',
+    'info_hash', 'magnet_uri', 'threat_actor', 'malware_family',
+    'email', 'ssh_key',  # 3.1 FIX: git forensics IOCs
+))
 _RE_IP_PUBLIC = re.compile('\\b(?!10\\.|127\\.|169\\.254\\.|172\\.(?:1[6-9]|2\\d|3[01])\\.|192\\.168\\.)(?:\\d{1,3}\\.){3}\\d{1,3}\\b')
 _RE_SHA256 = re.compile('\\b[0-9a-fA-F]{64}\\b')
+_RE_SHA1 = re.compile('\\b[0-9a-fA-F]{40}\\b')
+_RE_MD5 = re.compile('\\b[0-9a-fA-F]{32}\\b')
 _RE_ONION_V3 = re.compile('\\b[a-z2-7]{56}\\.onion\\b')
 _RE_ONION_V2 = re.compile('\\b[a-z2-7]{16}\\.onion\\b')
+# 3.1 FIX: Email and SSH key patterns
+_RE_EMAIL = re.compile(r'\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b')
+# SSH key patterns: various formats (ssh-rsa, ecdsa-sha2-nistp256, ssh-ed25519, sk-ssh-ed25519@openssh.com)
+# FIX: Use [\s\S] instead of \s+ for multiline text compatibility
+# SSH keys in git configs may span multiple lines or have embedded newlines
+_RE_SSH_KEY = re.compile(
+    r'(?:ssh-rsa|ecdsa-sha2-nistp\d+|ssh-ed25519|sk-ssh-ed25519@openssh\.com)[\s\S]{10,1024}?(?=\n|$)'
+)
 
 def _make_ioc_id(ioc_type: str, value: str) -> str:
     """Generate a deterministic 64-bit hex ID for an IOC."""
@@ -90,14 +106,33 @@ def extract_iocs_from_text(text: str, pattern_matches: list[tuple[str, str]]) ->
             results.append((match_value, 'apt'))
         elif label == 'ransomware_group':
             results.append((match_value, 'malware'))
+        elif label == 'email':
+            results.append((match_value, 'email'))
+        elif label == 'ssh_key':
+            results.append((match_value, 'ssh_key'))
     for m in _RE_IP_PUBLIC.finditer(text):
         results.append((m.group(), 'ip'))
     for m in _RE_SHA256.finditer(text):
         results.append((m.group().lower(), 'hash_sha256'))
+    for m in _RE_SHA1.finditer(text):
+        results.append((m.group().lower(), 'hash_sha1'))
+    for m in _RE_MD5.finditer(text):
+        results.append((m.group().lower(), 'hash_md5'))
     for m in _RE_ONION_V3.finditer(text):
         results.append((m.group(), 'onion'))
     for m in _RE_ONION_V2.finditer(text):
         results.append((m.group(), 'onion'))
+    # 3.1 FIX: Extract emails directly from text (git forensics pivot)
+    for m in _RE_EMAIL.finditer(text):
+        email = m.group()
+        # Filter out common noise patterns
+        if not any(n in email.lower() for n in ('example.com', 'test.com', 'localhost')):
+            results.append((email, 'email'))
+    # 3.1 FIX: Extract SSH public keys (git forensics pivot)
+    for m in _RE_SSH_KEY.finditer(text):
+        ssh_key = m.group()
+        # Store first 256 chars to avoid huge keys
+        results.append((ssh_key[:256], 'ssh_key'))
     seen: set[tuple[str, str]] = set()
     unique: list[tuple[str, str]] = []
     for item in results:
@@ -124,10 +159,13 @@ class IOCGraph:
     - Supports retract_source() to remove all facts from a source
     - Applies temporal decay to confidence at flush_buffers()
     """
-    __slots__ = tuple(('_BUFFER_FLUSH_SIZE', '_closed', '_conn', '_db', '_db_path',
+    # 3.2 FIX: Separate flush sizes for IOCs and observations
+    _OBS_BUFFER_FLUSH_SIZE: int = 500  # Match IOC buffer flush size
+
+    __slots__ = tuple(('_BUFFER_FLUSH_SIZE', '_buffer_lock', '_closed', '_conn', '_db', '_db_path',
                        '_executor', '_flush_lock', '_ioc_buffer', '_is_memory_mode',
                        '_obs_buffer', '_jtms', '_decay_lambda', '_schema_has_temporal',
-                       '_schema_has_embeddings', '_schema_has_gnn_scores'))
+                       '_schema_has_embeddings', '_schema_has_gnn_scores', '_OBS_BUFFER_FLUSH_SIZE'))
 
     def __init__(self, db_path: Path | None=None, decay_lambda: float = 0.01,
                  *, memory_mode: bool = False) -> None:
@@ -160,11 +198,15 @@ class IOCGraph:
         self._ioc_buffer: list[tuple[str, str, float, float | None]] = []
         self._obs_buffer: list[tuple[str, str, str, float, str]] = []
         self._BUFFER_FLUSH_SIZE: int = 500
+        self._OBS_BUFFER_FLUSH_SIZE: int = 500  # 3.2 FIX: Auto-flush cap
         self._jtms: JTMS = JTMS()
         self._decay_lambda: float = decay_lambda
         self._schema_has_temporal: bool = False
         # SAFE-4: Flush lock to prevent concurrent flushes from corrupting buffers
         self._flush_lock = asyncio.Lock()
+        # FIX: Buffer write lock to prevent race condition on concurrent buffer_ioc calls
+        # Without this, concurrent writes can overflow the buffer before flush triggers
+        self._buffer_lock = asyncio.Lock()
         # SAFE-4: Schema flags for GNN embedding support
         self._schema_has_embeddings: bool = False
         self._schema_has_gnn_scores: bool = False
@@ -186,22 +228,37 @@ class IOCGraph:
 
         After close() the buffer is closed: new writes are silently dropped
         so no buffered data can be lost or observed in an inconsistent state.
+
+        FIX: Uses _buffer_lock to prevent race condition on concurrent writes.
+        Without locking, concurrent buffer_ioc() calls can overflow the buffer
+        before the flush threshold is checked.
         """
         if self._closed:
             return
-        self._ioc_buffer.append((ioc_type, value, confidence, observed_at))
-        if len(self._ioc_buffer) >= self._BUFFER_FLUSH_SIZE:
-            await self.flush_buffers()
+        async with self._buffer_lock:
+            self._ioc_buffer.append((ioc_type, value, confidence, observed_at))
+            if len(self._ioc_buffer) >= self._BUFFER_FLUSH_SIZE:
+                await self.flush_buffers()
 
     async def buffer_observation(self, id_a: str, id_b: str, finding_id: str, ts: float, source_type: str) -> None:
         """
         Add observation to in-memory buffer — ZERO Kuzu I/O in ACTIVE phase.
 
         After close() the buffer is closed: new writes are silently dropped.
+
+        3.2 FIX: Added auto-flush limit like buffer_ioc().
+        Previous implementation had unbounded _obs_buffer growth → RAM exhaustion.
+        Now flushes when _OBS_BUFFER_FLUSH_SIZE (500) entries accumulated.
+
+        FIX: Uses _buffer_lock to prevent race condition on concurrent writes.
         """
         if self._closed:
             return
-        self._obs_buffer.append((id_a, id_b, finding_id, ts, source_type))
+        async with self._buffer_lock:
+            self._obs_buffer.append((id_a, id_b, finding_id, ts, source_type))
+            # 3.2 FIX: Auto-flush to prevent unbounded buffer growth
+            if len(self._obs_buffer) >= self._OBS_BUFFER_FLUSH_SIZE:
+                await self.flush_buffers()
 
     async def buffer_ioc_with_justification(
         self,
@@ -250,9 +307,11 @@ class IOCGraph:
         )
 
         # Buffer for flush (temporal decay applied at flush time)
-        self._ioc_buffer.append((ioc_type, value, confidence, observed_at))
-        if len(self._ioc_buffer) >= self._BUFFER_FLUSH_SIZE:
-            await self.flush_buffers()
+        # FIX: Use _buffer_lock to prevent race condition on concurrent writes
+        async with self._buffer_lock:
+            self._ioc_buffer.append((ioc_type, value, confidence, observed_at))
+            if len(self._ioc_buffer) >= self._BUFFER_FLUSH_SIZE:
+                await self.flush_buffers()
 
         return fact_id
 

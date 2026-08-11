@@ -154,10 +154,12 @@ class MetalDevice:
             required_bytes: Memory requirement in bytes
 
         Returns:
-            True if memory available within soft ceiling (5.5GB)
+            True if memory available within MISSION_PEAK_RSS_GIB (5.5GB)
         """
         active = self.get_active_memory()
-        soft_ceiling = 5.5 * 1024**3  # 5.5 GiB per M1 8GB UMA budget
+        # SSOT: Use UmaBudget.MISSION_PEAK_RSS_GIB instead of hardcoded 5.5 GiB
+        from hledac.universal.utils.uma_budget import UmaBudget
+        soft_ceiling = UmaBudget.MISSION_PEAK_RSS_GIB * 1024**3  # 5.5 GiB (SSOT)
         return (active + required_bytes) <= soft_ceiling
 
 

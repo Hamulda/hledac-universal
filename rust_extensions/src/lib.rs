@@ -86,6 +86,8 @@ pub mod link_predictor; // Graph ML link prediction (common neighbors, Adamic-Ad
 
 pub mod aho_corasick; // Multi-pattern matching
 pub mod query_terms; // Query-context scanning
+#[cfg(feature = "deep_ac")]
+pub mod aho_corasick_simd; // DEEP-AC: NEON SIMD Aho-Corasick (F-8)
 
 // ============================================================================
 // Data Structures & Storage
@@ -288,6 +290,14 @@ pub mod fulltext_index;
 pub mod lmdb_dht; // ISSUE-004: Rust LMDB DHT backend
 #[cfg(feature = "native_db")]
 pub mod native_db; // HEIST-03: Wire-protocol DB extraction // ISSUE-011: Tantivy fulltext search
+
+// DEEP modules - Forensics and Storage
+#[cfg(feature = "deep_git")]
+pub mod git_forensics; // DEEP-GIT: Git packfile forensics
+#[cfg(feature = "deep_warc")]
+pub mod warc_parser; // DEEP-WARC: WARC file parser
+#[cfg(feature = "deep_unindexed")]
+pub mod unindexed_scanner; // DEEP-UNINDEXED: MinIO/rsync/S3 listing
 
 // ============================================================================
 // External Integrations
@@ -1260,6 +1270,28 @@ fn hledac_rust_extensions(m: &Bound<'_, PyModule>) -> PyResult<()> {
     // Feature-gated: native_db — compile with --features native_db
     #[cfg(feature = "native_db")]
     native_db::register(m)?;
+
+    // DEEP-GIT: Git forensics crate for packfile analysis
+    // Extracts author/committer emails, PGP keyIDs, timestamps, SSH keys
+    // Uses mmap, streaming zlib, delta chains — <500ms target for 500MB packfiles
+    #[cfg(feature = "deep_git")]
+    git_forensics::register_module(m)?;
+
+    // DEEP-WARC: WARC file byte-seek engine for certificate extraction
+    // Extracts F-5/F-6/3.4 data (fingerprints, issuer chain, SANs) from WARC files
+    // Memory-mapped access with streaming record parsing
+    #[cfg(feature = "deep_warc")]
+    warc_parser::register_module(m)?;
+
+    // DEEP-UNINDEXED: Unindexed storage scanner (MinIO, rsync, S3)
+    // Reuses native_db streaming (50 MB cap at native_db.rs:53)
+    #[cfg(feature = "deep_unindexed")]
+    unindexed_scanner::register_module(m)?;
+
+    // DEEP-AC: NEON SIMD Aho-Corasick as shared primitive for payload scan
+    // F-8: High-performance multi-pattern matching with ARM NEON acceleration
+    #[cfg(feature = "deep_ac")]
+    aho_corasick_simd::register_module(m)?;
 
     // Raw lz4 frame for JSONL streaming pipeline.
     // jsonl_lz4_writer: batch-compress JSONL lines → lz4 frame → disk.

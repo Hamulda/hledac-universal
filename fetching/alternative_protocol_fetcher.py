@@ -15,7 +15,7 @@ Gating:
   - HLEDAC_ENABLE_FREENET=1 enables Freenet/Hyphanet protocol
   - HLEDAC_ENABLE_SOCIAL=1 enables social protocols (Fediverse, Matrix)
   - Per-protocol concurrency limits (IPFS=3, Gemini=2, Gopher=2, I2P=1, ZeroNet=2, Freenet=1, Fediverse=2, Matrix=1)
-  - Total max concurrent: 13 I/O-bound operations (M1 8GB safe)
+  - Total max concurrent: 14 I/O-bound operations (M1 8GB safe, all are I/O-bound)
   - Fail-soft: individual protocol failures don't block others
 
 Returns list[CanonicalFinding] with appropriate source_type per protocol.

@@ -62,6 +62,7 @@ class ServiceType(Enum):
     CERTIFICATE = 'certificate'
     SWAGGER = 'swagger'
     DIRECTORY_LISTING = 'directory_listing'
+    RSYNC = 'rsync'
 
 
 class ExposureType(Enum):
@@ -181,28 +182,108 @@ class S3BucketEnumerator:
         return findings
 
     async def _check_bucket_exists(self, bucket_name: str) -> ExposedService | None:
-        """Check if an S3 bucket exists and is accessible."""
+        """Check if an S3 bucket exists and is accessible.
+
+        1.1/1.2/1.3 FIX: Uses GET ?list-type=2 (ListObjectsV2) to detect listability.
+        HEAD request is insufficient because:
+        - MinIO/self-hosted S3 may not return 200 on HEAD but allow listing
+        - HEAD doesn't reveal actual read/list permissions accurately
+        - Some S3-compatible services (MinIO, SeaweedFS) require explicit list ops
+
+        Also checks MinIO-specific endpoint patterns.
+        """
         if not self.session:
             return None
+
         regions_to_try = [None] + self.S3_REGIONS[:5]
+        # MinIO/self-hosted S3 patterns (common custom endpoints)
+        minio_patterns = [
+            None,  # standard s3.amazonaws.com
+            'localhost:9000',
+            'minio.local:9000',
+            's3.local',
+        ]
+
         for region in regions_to_try:
-            try:
-                if region:
-                    url = f'https://s3.{region}.amazonaws.com/{bucket_name}'
-                else:
-                    url = f'https://{bucket_name}.s3.amazonaws.com'
-                async with self.session.head(url, follow_redirects=True) as resp:
-                    if resp.status == 200:
-                        return ExposedService(service_type=ServiceType.S3_BUCKET.value, host=f'{bucket_name}.s3.amazonaws.com', port=443, exposure_type=ExposureType.OPEN.value, risk_level=RiskLevel.CRITICAL.value, metadata={'bucket_name': bucket_name, 'region': region, 'listable': True, 'url': url})
-                    elif resp.status == 403:
-                        return ExposedService(service_type=ServiceType.S3_BUCKET.value, host=f'{bucket_name}.s3.amazonaws.com', port=443, exposure_type=ExposureType.PUBLIC.value, risk_level=RiskLevel.LOW.value, metadata={'bucket_name': bucket_name, 'region': region, 'listable': False, 'exists': True, 'url': url})
-                    elif resp.status == 404:
-                        continue
-            except TimeoutError:
-                continue
-            except Exception as e:
-                logger.debug(f'Error checking bucket {bucket_name}: {e}')
-                continue
+            for endpoint in minio_patterns:
+                try:
+                    if region:
+                        if endpoint:
+                            url = f'https://{endpoint}/minio/{bucket_name}'
+                        else:
+                            url = f'https://s3.{region}.amazonaws.com/{bucket_name}'
+                    else:
+                        if endpoint and endpoint != 'localhost:9000':
+                            url = f'https://{endpoint}/{bucket_name}'
+                        else:
+                            url = f'https://{bucket_name}.s3.amazonaws.com'
+
+                    # 1.1/1.2/1.3 FIX: Use GET ?list-type=2 for actual listability check
+                    # This is the S3 ListObjectsV2 API and properly indicates if bucket is listable
+                    list_url = f'{url}?list-type=2&max-keys=1'
+                    async with self.session.get(list_url, follow_redirects=True, timeout=10) as resp:
+                        if resp.status == 200:
+                            # Check for XML listing response
+                            text = resp.text or ''
+                            # S3 returns <ListBucketResult> or <ListAllMyBucketsResult>
+                            # ListAllMyBucketsResult = listing ALL buckets = more severe exposure
+                            # <Contents> indicates bucket has objects
+                            # <CommonPrefixes> indicates prefix listing
+                            is_listable = '<ListBucketResult' in text or '<ListAllMyBucketsResult' in text
+                            has_objects = '<Contents' in text
+                            has_prefixes = '<CommonPrefixes' in text
+                            
+                            # Determine severity based on what we found
+                            if '<ListAllMyBucketsResult' in text:
+                                # Listing all buckets - most severe
+                                exposure = ExposureType.OPEN.value
+                                risk = RiskLevel.CRITICAL.value
+                            elif is_listable:
+                                exposure = ExposureType.OPEN.value
+                                risk = RiskLevel.HIGH.value
+                            else:
+                                exposure = ExposureType.PUBLIC.value
+                                risk = RiskLevel.LOW.value
+                            return ExposedService(
+                                service_type=ServiceType.S3_BUCKET.value,
+                                host=urlparse(url).netloc or f'{bucket_name}.s3.amazonaws.com',
+                                port=443,
+                                exposure_type=exposure,
+                                risk_level=risk,
+                                metadata={
+                                    'bucket_name': bucket_name,
+                                    'region': region,
+                                    'listable': is_listable,
+                                    'has_objects': has_objects,
+                                    'has_prefixes': has_prefixes,
+                                    'url': url,
+                                    'is_minio': endpoint is not None,
+                                }
+                            )
+                        elif resp.status == 403:
+                            # Denied - bucket exists but no access
+                            return ExposedService(
+                                service_type=ServiceType.S3_BUCKET.value,
+                                host=urlparse(url).netloc or f'{bucket_name}.s3.amazonaws.com',
+                                port=443,
+                                exposure_type=ExposureType.PUBLIC.value,
+                                risk_level=RiskLevel.LOW.value,
+                                metadata={
+                                    'bucket_name': bucket_name,
+                                    'region': region,
+                                    'listable': False,
+                                    'exists': True,
+                                    'url': url,
+                                    'is_minio': endpoint is not None,
+                                }
+                            )
+                        elif resp.status == 404:
+                            continue
+                except TimeoutError:
+                    continue
+                except Exception as e:
+                    logger.debug(f'Error checking bucket {bucket_name}: {e}')
+                    continue
         return None
 
     async def check_bucket_permissions(self, bucket_name: str) -> dict[str, Any]:
@@ -562,6 +643,157 @@ class AzureBlobEnumerator:
         return permissions
 
 
+class RsyncScanner:
+    """
+    1.1/1.2/1.3 FIX: rsync/873 module enumeration.
+
+    Rsync servers expose named modules via the rsync protocol on port 873.
+    Each module maps to a filesystem path on the server. Modules can be
+    publicly accessible without authentication.
+
+    Enumeration approach:
+    1. Connect to rsync daemon (no auth)
+    2. Send list request to enumerate modules
+    3. Attempt anonymous access to discovered modules
+    
+    Supports context manager protocol for proper connection cleanup.
+    """
+    RSYNC_PORT = 873
+    RSYNC_TIMEOUT = 5.0
+    _DEFAULT_MODULE_TIMEOUT = 3.0
+
+    async def __aenter__(self) -> "RsyncScanner":
+        """Async context manager entry."""
+        return self
+
+    async def __aexit__(self, exc_type, exc_val, exc_tb) -> None:
+        """Async context manager exit - no cleanup needed for raw sockets."""
+        pass
+
+    async def check_rsync(self, host: str) -> list[ExposedService]:
+        """Check if rsync is exposed and enumerate modules."""
+        findings = []
+        try:
+            modules = await self._enumerate_modules(host)
+            if modules:
+                for module in modules:
+                    is_readable = await self._check_module_readable(host, module)
+                    exposure = ExposureType.OPEN.value if is_readable else ExposureType.PUBLIC.value
+                    risk = RiskLevel.HIGH.value if is_readable else RiskLevel.MEDIUM.value
+                    findings.append(ExposedService(
+                        service_type=ServiceType.RSYNC.value,
+                        host=host,
+                        port=self.RSYNC_PORT,
+                        exposure_type=exposure,
+                        risk_level=risk,
+                        metadata={
+                            'module': module,
+                            'is_readable': is_readable,
+                            'server_type': 'rsync',
+                        }
+                    ))
+                    if is_readable:
+                        logger.info(f'[RSYNC] Module "{module}" readable on {host}')
+        except Exception as e:
+            logger.debug(f'Error checking rsync on {host}: {e}')
+        return findings
+
+    async def _enumerate_modules(self, host: str) -> list[str]:
+        """Enumerate rsync modules by connecting to daemon."""
+        try:
+            reader, writer = await asyncio.wait_for(
+                asyncio.open_connection(host, self.RSYNC_PORT),
+                timeout=self.RSYNC_TIMEOUT
+            )
+            # Send @RSYNCD:30.0 protocol initiation
+            writer.write(b'@RSYNCD:30.0\n')
+            await writer.drain()
+
+            # Read modules list (terminated by @RSYNCD:EXIT)
+            modules = []
+            async with asyncio.timeout(self.RSYNC_TIMEOUT):
+                while True:
+                    line = await reader.readline()
+                    if not line:
+                        break
+                    line_str = line.decode('utf-8', errors='ignore').strip()
+                    if line_str == '@RSYNCD:EXIT':
+                        break
+                    if line_str and not line_str.startswith('@'):
+                        # Format: "modulename\tdescription"
+                        parts = line_str.split('\t')
+                        modules.append(parts[0])
+
+            writer.close()
+            await writer.wait_closed()
+            return modules
+        except Exception:
+            return []
+
+    async def _check_module_readable(self, host: str, module: str) -> bool:
+        """Check if a module is readable without authentication.
+        
+        Enumerates files in the module to verify actual read access.
+        A module may not require auth but still deny file listing.
+        """
+        try:
+            reader, writer = await asyncio.wait_for(
+                asyncio.open_connection(host, self.RSYNC_PORT),
+                timeout=self.RSYNC_TIMEOUT
+            )
+            # Protocol initiation
+            writer.write(b'@RSYNCD:30.0\n')
+            await writer.drain()
+
+            # Read initial greeting
+            async with asyncio.timeout(self._DEFAULT_MODULE_TIMEOUT):
+                greeting = await reader.readline()
+                greeting_str = greeting.decode('utf-8', errors='ignore').strip()
+                
+                # Check for error in greeting
+                if '@RSYNCD:ERR' in greeting_str or '@RSYNCD:CHKL' in greeting_str:
+                    writer.close()
+                    await writer.wait_closed()
+                    return False
+
+            # Request module listing
+            writer.write(f'{module}\n'.encode())
+            await writer.drain()
+
+            # Read module response - should contain file listing or confirmation
+            responses: list[bytes] = []
+            async with asyncio.timeout(self._DEFAULT_MODULE_TIMEOUT):
+                while True:
+                    chunk = await reader.read(512)
+                    if not chunk:
+                        break
+                    responses.append(chunk)
+                    # rsync sends @RSYNCD:EXIT when done
+                    if b'@RSYNCD:EXIT' in chunk:
+                        break
+
+            writer.close()
+            await writer.wait_closed()
+
+            # Combine responses and check for success indicators
+            full_response = b''.join(responses).decode('utf-8', errors='ignore')
+            
+            # Error responses
+            if '@RSYNCD:ERR' in full_response or '@RSYNCD:CHKL' in full_response:
+                return False
+            
+            # Success indicators:
+            # 1. File listing entries (d=directory, f=file, etc.)
+            # 2. Module confirmation without error
+            # 3. Non-empty response
+            has_file_entries = any(c in full_response for c in ('\t', 'd', 'f', '-', 'l'))
+            is_readable = '@RSYNCD:OK' in full_response or has_file_entries or len(full_response) > 50
+            
+            return is_readable
+        except Exception:
+            return False
+
+
 class DatabasePortScanner:
     """
     Scanner for exposed database ports.
@@ -580,7 +812,7 @@ class DatabasePortScanner:
     _EXTRACTABLE_PORTS: dict[int, str] = {
         27017: 'mongodb',
         27018: 'mongodb',
-        27019: 'mongodb',
+        27027019: 'mongodb',
         6379: 'redis',
         6380: 'redis',
         9200: 'elasticsearch',
@@ -635,13 +867,19 @@ class DatabasePortScanner:
             risk_level = RiskLevel.CRITICAL.value if port in [27017, 6379, 9200, 5984] else RiskLevel.HIGH.value
             result = ExposedService(service_type=service_type.value if isinstance(service_type, ServiceType) else service_type, host=host, port=port, exposure_type=ExposureType.OPEN.value, risk_level=risk_level, metadata={'service_name': service_name, 'banner': banner[:200] if banner else None, 'protocol': 'tcp'})
 
-            # HEIST-03: Trigger native extraction for unauthenticated databases
+            # HEIST-03 FIX: Await extraction result and attach actual data.
+            # Previous implementation stored task object (not data) and never awaited —
+            # results were lost and concurrency was unbounded.
             if port in self._EXTRACTABLE_PORTS:
-                extraction_task = asyncio.create_task(
-                    self._extract_database_data(host, port)
-                )
-                # Store task reference for optional await; result logged async
-                result.metadata['_extraction_task'] = extraction_task
+                try:
+                    extraction_data = await self._extract_database_data(host, port)
+                    if extraction_data:
+                        result.metadata['extraction_data'] = extraction_data
+                        logger.debug(
+                            f'[HEIST-03] extraction result attached for {host}:{port}'
+                        )
+                except Exception as e:
+                    logger.debug(f'[HEIST-03] extraction await failed for {host}:{port}: {e}')
 
             return result
         except TimeoutError:
@@ -1694,6 +1932,234 @@ class SwaggerEnumerator:
         return result
 
 
+class GitExposer:
+    """
+    1.7 FIX: Git repository forensics via direct .git file access.
+
+    The previous implementation relied solely on "Index of" directory listing
+    signatures, which misses many exposed git repos. This class performs
+    direct forensics:
+
+    1. Fetches .git/HEAD to verify it's a git repo (contains refs/heads/ refs)
+    2. Fetches .git/config for repo metadata (user emails, remote URLs)
+    3. Fetches .git/packed-refs for branch/tag enumeration
+    4. Detects packfiles for forensics (objects/pack/*.pack)
+    5. Analyzes packfile headers to determine exposure severity
+
+    Packfile forensics:
+    - Packfiles contain compressed git objects
+    - Can reveal commit history, file contents, secrets
+    - Even without listing, packfile access is a finding
+    """
+    GIT_PATHS = (
+        '.git/HEAD',
+        '.git/config',
+        '.git/packed-refs',
+        '.git/objects/pack/',
+        '.git/refs/heads/',
+        '.git/index',
+    )
+
+    # Packfile magic bytes (Git pack format v2)
+    PACKFILE_MAGIC = b'PACK'
+    PACKFILE_MIN_HEADER = 12  # 8-byte header + 4-byte footer signature
+
+    _RE_GIT_HEAD = re.compile(r'^ref:\s*refs/heads/(\S+)$', re.MULTILINE)
+    _RE_GIT_COMMIT = re.compile(r'\b[0-9a-f]{40}\b')
+    _RE_GIT_EMAIL = re.compile(r'[\w.+-]+@[\w.-]+\.[a-zA-Z]{2,}')
+    # Quoted email pattern for git config (e.g., "user" = "name <email@domain.com>")
+    _RE_GIT_EMAIL_QUOTED = re.compile(r'"([\w.+-]+@[\w.-]+\.[a-zA-Z]{2,})"')
+
+    def __init__(self, session: httpx.AsyncClient | None = None):
+        """Initialize GitExposer with optional session."""
+        self.session: httpx.AsyncClient | None = session
+
+    async def _analyze_packfiles(self, base: str) -> dict[str, Any]:
+        """Analyze packfiles to determine exposure severity.
+        
+        Packfile header forensics:
+        - PACK magic bytes indicate valid packfile
+        - Version 2 is most common, version 3 supported
+        - Object count reveals repository size/complexity
+        
+        Returns dict with packfile analysis results.
+        """
+        packfile_info: dict[str, Any] = {
+            'detected': False,
+            'count': 0,
+            'total_objects': 0,
+            'versions': set(),
+        }
+        
+        if not self.session:
+            return packfile_info
+        
+        base = base.rstrip('/')
+        # Try to fetch packfile list from objects/pack/ directory
+        pack_url = f'{base}/.git/objects/pack/'
+        
+        try:
+            async with self.session.get(pack_url, timeout=10, follow_redirects=True) as resp:
+                if resp.status != 200:
+                    return packfile_info
+                
+                text = resp.text or ''
+                # Extract .pack file names from directory listing
+                pack_files = re.findall(r'pack-([a-f0-9]{40})\.pack', text, re.IGNORECASE)
+                packfile_info['count'] = len(pack_files)
+                packfile_info['detected'] = len(pack_files) > 0
+                
+                if pack_files:
+                    # Analyze first packfile for header info
+                    sample_pack = pack_files[0]
+                    header_info = await self._fetch_packfile_header(base, sample_pack)
+                    if header_info:
+                        packfile_info.update(header_info)
+                        
+        except Exception:  # noqa: BLE001
+            pass
+        
+        return packfile_info
+
+    async def _fetch_packfile_header(self, base: str, pack_hash: str) -> dict[str, Any]:
+        """Fetch and analyze packfile header to get object count and version.
+        
+        Git packfile format:
+        - 4 bytes: magic "PACK"
+        - 4 bytes: version (2 or 3)
+        - 4 bytes: number of objects (big-endian)
+        """
+        info: dict[str, Any] = {
+            'total_objects': 0,
+            'versions': set(),
+        }
+        
+        if not self.session:
+            return info
+        
+        pack_url = f'{base}/.git/objects/pack/pack-{pack_hash}.pack'
+        
+        try:
+            # Only fetch first 16 bytes for header analysis
+            async with self.session.get(
+                pack_url, 
+                timeout=10, 
+                follow_redirects=True,
+                headers={'Range': 'bytes=0-15'}
+            ) as resp:
+                if resp.status not in (200, 206):
+                    return info
+                
+                content = resp.content
+                if len(content) < 12:
+                    return info
+                
+                # Check PACK magic
+                if content[:4] == b'PACK':
+                    info['versions'].add(int.from_bytes(content[4:8], 'big'))
+                    info['total_objects'] = int.from_bytes(content[8:12], 'big')
+                    # Cap object count for safety
+                    if info['total_objects'] > 1000000:
+                        info['total_objects'] = 1000000
+                        
+        except Exception:  # noqa: BLE001
+            pass
+        
+        info['versions'] = list(info['versions'])
+        return info
+
+    async def check_git_exposure(self, base_url: str) -> ExposedService | None:
+        """Check if a URL exposes a git repository."""
+        if not self.session:
+            return None
+
+        base = base_url.rstrip('/')
+        git_info: dict[str, Any] = {}
+        found_files: list[str] = []
+
+        for path in self.GIT_PATHS:
+            try:
+                url = f'{base}/.git/{path.lstrip(".git/")}'
+                async with self.session.get(url, timeout=10, follow_redirects=True) as resp:
+                    if resp.status == 200:
+                        found_files.append(path)
+                        content = resp.text[:4096] if resp.text else ''
+                        git_info[path] = content[:500]  # Truncate for safety
+            except Exception:  # noqa: BLE001
+                pass
+
+        if not found_files:
+            return None
+
+        # Analyze .git/HEAD
+        is_git_repo = False
+        branch = None
+        if '.git/HEAD' in git_info:
+            head_content = git_info.get('.git/HEAD', '')
+            match = self._RE_GIT_HEAD.match(head_content)
+            if match:
+                is_git_repo = True
+                branch = match.group(1)
+            elif self._RE_GIT_COMMIT.search(head_content):
+                # Detached HEAD
+                is_git_repo = True
+
+        if not is_git_repo:
+            return None
+
+        # Extract emails from .git/config (both standard and quoted formats)
+        emails = []
+        if '.git/config' in git_info:
+            config_text = git_info.get('.git/config', '')
+            # Standard email format: user@domain.com
+            emails.extend(self._RE_GIT_EMAIL.findall(config_text)[:3])
+            # Quoted email format: "name <email@domain.com>"
+            emails.extend(self._RE_GIT_EMAIL_QUOTED.findall(config_text)[:3])
+            # Deduplicate and limit
+            emails = list(dict.fromkeys(emails))[:5]
+
+        # Check for packfiles with header analysis
+        has_packfiles = '.git/objects/pack/' in found_files
+        packfile_count = len([f for f in found_files if 'pack' in f])
+        packfile_info = await self._analyze_packfiles(base) if has_packfiles else {}
+
+        # Determine risk level
+        risk = RiskLevel.HIGH.value
+        if emails or has_packfiles:
+            risk = RiskLevel.CRITICAL.value
+        elif len(found_files) >= 3:
+            risk = RiskLevel.HIGH.value
+
+        # Elevate risk based on packfile analysis
+        if packfile_info.get('detected') and packfile_info.get('total_objects', 0) > 1000:
+            risk = RiskLevel.CRITICAL.value
+
+        host = urlparse(base).netloc
+        port = 443 if base.startswith('https') else 80
+
+        return ExposedService(
+            service_type='git_repo',
+            host=host,
+            port=port,
+            exposure_type=ExposureType.LEAKED.value,
+            risk_level=risk,
+            metadata={
+                'url': base,
+                'files_exposed': found_files,
+                'branch': branch,
+                'emails_found': emails,
+                'has_packfiles': has_packfiles,
+                'packfile_count': packfile_count,
+                'packfile_analysis': packfile_info,
+                'forensics': {
+                    'git_head': git_info.get('.git/HEAD', '')[:200],
+                    'git_config': git_info.get('.git/config', '')[:500],
+                    'packed_refs': git_info.get('.git/packed-refs', '')[:500] if '.git/packed-refs' in git_info else None,
+                }
+            }
+        )
+
+
 class DirectoryListingDetector:
     """
     Directory listing detection for exposed web servers.
@@ -1704,6 +2170,8 @@ class DirectoryListingDetector:
     - Log files (.log, access_log, error_log)
     - SQL dumps (.sql, .sql.gz)
     - Archive/archive files (.zip, .tar.gz)
+
+    1.7 FIX: Now includes dedicated GitExposer for reliable git repo detection.
 
     Detection signatures:
     - "Index of /" in page title or body
@@ -1762,15 +2230,17 @@ class DirectoryListingDetector:
         '.htpasswd', '.htaccess', '.passwd', '.shadow',
         '.DS_Store', '.gitignore', '.dockerignore',
     )
-    __slots__ = tuple(('_owned_session', 'session'))
+    __slots__ = tuple(('_owned_session', 'session', '_git_exposer'))
 
     def __init__(self, session: httpx.AsyncClient | None = None):
         self.session = session
         self._owned_session = session is None
+        self._git_exposer = GitExposer()
 
     async def __aenter__(self):
         if self._owned_session:
             self.session = httpx.AsyncClient(timeout=httpx.Timeout(total=15))
+        self._git_exposer.session = self.session
         return self
 
     async def __aexit__(self, exc_type, exc_val, exc_tb):
@@ -1788,6 +2258,9 @@ class DirectoryListingDetector:
 
         For each URL, checks common sub-paths for directory listing indicators.
         Uses bounded response reading (first 8KB) to avoid downloading large listings.
+
+        1.7 FIX: Now also performs dedicated git forensics via GitExposer,
+        checking .git/HEAD, .git/config, .git/packed-refs, and packfiles.
 
         Args:
             urls: List of base URLs to scan (e.g., ['https://example.com'])
@@ -1820,6 +2293,18 @@ class DirectoryListingDetector:
         for result in results:
             if result:
                 findings.append(result)
+
+        # 1.7 FIX: Perform git forensics on discovered URLs
+        # This catches git repos that don't expose via "Index of" listing
+        for base_url in urls:
+            try:
+                git_result = await self._git_exposer.check_git_exposure(base_url)
+                if git_result:
+                    logger.info(f'[1.7] Git repo exposed: {base_url}')
+                    findings.append(git_result)
+            except Exception as e:
+                logger.debug(f'Error checking git exposure for {base_url}: {e}')
+
         return findings
 
     async def scan_host(

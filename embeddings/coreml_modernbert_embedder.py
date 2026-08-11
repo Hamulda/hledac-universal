@@ -16,6 +16,7 @@ Conversion: coremltools.convert(model, compute_units=ComputeUnit.ANE)
 
 Canonical import: from hledac.universal.embeddings.coreml_modernbert_embedder import CoreMLModernBERTEmbedder
 """
+import asyncio
 import logging
 import os
 from dataclasses import dataclass, field
@@ -228,9 +229,12 @@ class CoreMLModernBERTEmbedder:
         """True if ANE model or MLX fallback is loaded."""
         return self._encoder is not None or self._mlx_embedder is not None
 
-    def encode(self, texts: str | list[str], **kwargs: Any) -> np.ndarray:
+    async def encode(self, texts: str | list[str], **kwargs: Any) -> np.ndarray:
         """
         Encode texts via CoreML ANE (or MLX fallback).
+
+        FIX-F-13: All methods are now async — embed_batch uses asyncio.to_thread
+        for ANE offload. Call with `await encode(...)` or from async context.
 
         Args:
             texts: Single text or list of texts.
@@ -240,13 +244,14 @@ class CoreMLModernBERTEmbedder:
             np.ndarray embedding matrix (N, 768) for list, (768,) for single.
         """
         if isinstance(texts, str):
-            result = self.embed(texts, **kwargs)
-            return result
-        return self.embed_batch(list(texts), **kwargs)
+            return await self.embed(texts, **kwargs)
+        return await self.embed_batch(list(texts), **kwargs)
 
-    def embed(self, text: str, **kwargs: Any) -> np.ndarray:
+    async def embed(self, text: str, **kwargs: Any) -> np.ndarray:
         """
         Encode single text via CoreML ANE (or MLX fallback).
+
+        FIX-F-13: Delegates to async embed_batch() with asyncio.to_thread offload.
 
         Args:
             text: Text to encode.
@@ -255,15 +260,18 @@ class CoreMLModernBERTEmbedder:
         Returns:
             np.ndarray embedding vector (768,)
         """
-        result = self.embed_batch([text], **kwargs)
+        result = await self.embed_batch([text], **kwargs)
         if result is None or len(result) == 0:
             import numpy as np
             return np.zeros(self.config.embed_dim, dtype=np.float32)
         return result[0]
 
-    def embed_batch(self, texts: list[str], **kwargs: Any) -> np.ndarray:
+    async def embed_batch(self, texts: list[str], **kwargs: Any) -> np.ndarray:
         """
         Encode batch of texts via CoreML ANE (or MLX fallback).
+
+        FIX-F-13: ANE encode is blocking (CPU→ANE transfer takes 50-200ms).
+        Wrapped with asyncio.to_thread() to avoid blocking the event loop.
 
         Args:
             texts: List of texts to encode.
@@ -274,13 +282,14 @@ class CoreMLModernBERTEmbedder:
         """
         import numpy as np
         if self._ensure_ane() and self._encoder is not None:
-            vectors = self._encoder.encode(texts)
+            # FIX-F-13: to_thread offload — ANE encode blocks event loop.
+            vectors = await asyncio.to_thread(self._encoder.encode, texts)
             if vectors is not None:
                 return np.array(vectors, dtype=np.float32)
         if self.config.fallback_to_mlx:
             logger.debug('[CoreML-ANE] Falling back to MLX embedder')
             mlx_emb = self._load_mlx_fallback()
-            return mlx_emb.embed_batch(texts, **kwargs)
+            return await mlx_emb.embed_batch(texts, **kwargs)
         logger.warning('[CoreML-ANE] ANE unavailable, fallback disabled — returning zeros')
         return np.zeros((len(texts), self.config.embed_dim), dtype=np.float32)
 

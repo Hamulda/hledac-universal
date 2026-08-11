@@ -203,17 +203,22 @@ fn build_adjacency_list(conn: &Connection, cfg: &LinkPredictorConfig) -> PyResul
     }
 
     // SAFE-2.1: Query with parameterized values - NO string interpolation
+    // DuckDB 1.x: use stmt.query with params
     let mut stmt = duckdb_ok!(conn.prepare(&sql));
     
-    // SAFE-2.1: Bind parameters safely - each value is bound as a separate parameter
+    // SAFE-2.1: Bind parameters safely using duckdb's Params tuple API
+    // DuckDB 1.x accepts params as a tuple or single value for simple cases
     let mut rows = if params.is_empty() {
         duckdb_ok!(stmt.query([]))
     } else {
-        // Convert params to DuckDB values for binding
-        let mut param_refs: Vec<duckdb::Value> = params.iter()
-            .map(|s| duckdb::Value::TEXT(s.clone()))
-            .collect();
-        duckdb_ok!(stmt.query(param_refs.as_slice()))
+        // For multiple params, use duckdb::params! macro
+        // Build params dynamically based on the filter list
+        match params.len() {
+            1 => duckdb_ok!(stmt.query([params[0].as_str()])),
+            2 => duckdb_ok!(stmt.query([params[0].as_str(), params[1].as_str()])),
+            3 => duckdb_ok!(stmt.query([params[0].as_str(), params[1].as_str(), params[2].as_str()])),
+            _ => duckdb_ok!(stmt.query([params[0].as_str(), params[1].as_str(), params[2].as_str(), params[3].as_str()])),
+        }
     };
 
     while let Some(row) = duckdb_ok!(rows.next()) {

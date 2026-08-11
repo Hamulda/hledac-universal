@@ -24,6 +24,7 @@ uma_budget.py absolute-MB thresholds. These serve different purposes:
 - uma_budget.py: absolute system+MLX used (Calibrated for M1 8GB UMA)
 - resource_allocator.py: percent-based system pressure (for AdaptiveSemaphore decisions)
 """
+import asyncio
 import logging
 import time
 from dataclasses import dataclass
@@ -32,6 +33,7 @@ from typing import Any, Self
 from hledac.universal.core.psutil_shim import PSUTIL_AVAILABLE as _PSUTIL_AVAILABLE
 from hledac.universal.core.psutil_shim import process as _process
 from hledac.universal.utils.uma_budget import M1_FETCH_SOFT_CEILING_GB, UmaBudget
+from hledac.universal.fetching.memory_budget_gate import _rss_gib as _cached_rss_gib
 from hledac.universal.utils.config_introspection import safe_attr_get
 from operator import attrgetter, itemgetter
 logger = logging.getLogger(__name__)
@@ -191,10 +193,9 @@ class ResourceAllocator:
         try:
             if not _PSUTIL_AVAILABLE:
                 return
-            proc = _process()
-            if proc is None:
+            current_rss = _cached_rss_gib()
+            if current_rss <= 0.0:
                 return
-            current_rss = proc.memory_info().rss / (1024 ** 3)
 
             # HARD LIMIT: UmaBudget.UMA_HARD_CEILING_GIB = 6.25 GiB (SSOT)
             if current_rss >= self.RSS_HARD_LIMIT_GIB:
@@ -246,10 +247,9 @@ class ResourceAllocator:
         try:
             if not _PSUTIL_AVAILABLE:
                 return
-            proc = _process()
-            if proc is None:
+            current_rss = _cached_rss_gib()
+            if current_rss <= 0.0:
                 return
-            current_rss = proc.memory_info().rss / (1024 ** 3)
 
             # HARD LIMIT: emergency flush + abort
             if current_rss >= self.RSS_HARD_LIMIT_GIB:
@@ -296,10 +296,14 @@ class ResourceAllocator:
         Called when RSS >= UmaBudget.UMA_HARD_CEILING_GIB = 6.25 GiB (HARD limit).
         NEW-M4: This is the last line of defense before OOM kill. Clears Metal
         cache and triggers full gc.
+
+        B1 fix: Uses asyncio.to_thread to offload blocking mx.eval([]) + clear_cache()
+        calls from MLX to prevent event-loop blocking (GIL acquisition).
+        Pattern mirrors mlx_cleanup_sync() usage in other async contexts.
         """
         try:
-            # 1. Clear MLX cache (mx.eval([]) before clear_cache is mandatory)
-            cleared = clear_mlx_cache_if_needed(threshold_mb=0.0)
+            # 1. Clear MLX cache via asyncio.to_thread (B1 fix: offload sync MLX calls)
+            cleared = await asyncio.to_thread(clear_mlx_cache_if_needed, 0.0)
             if cleared:
                 logger.info("[MEM-UMA-002] MLX cache cleared during emergency flush")
             else:
@@ -387,7 +391,8 @@ def get_recommended_concurrency() -> dict[str, int]:
     if concurrency['fetch'] < 4:
         concurrency['fetch'] = 4
     return concurrency
-import asyncio
+
+
 from hledac.universal.utils.async_helpers import safe_wait_for
 import platform
 _CONCURRENCY_FLOOR = 1

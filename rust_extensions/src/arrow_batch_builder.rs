@@ -26,6 +26,15 @@
 //! - IPC buffer allocated once: `Vec<u8>` with exact capacity
 //! - Hard cap: 50_000 findings per call (prevents OOM)
 //!
+//! ## ISSUE F5-FIX: WARC Provenance Columns
+//!
+//! Schema extended to 13 columns for court-admissible evidence replay:
+//! - warc_record_id: URN-UUID of WARC record
+//! - warc_path: Absolute path to .warc.gz file
+//! - compressed_offset: Compressed (seekable) byte offset
+//! - compressed_size: Compressed record block size
+//! - warc_url: Archived URL from WARC-Target-URI
+//!
 //! ## Fallback
 //!
 //! Any parse/serialize error → returns `None` (Python falls back to
@@ -36,7 +45,7 @@ use pyo3::prelude::*;
 use pyo3::types::{PyBytes, PyList, PyTuple};
 use rayon::prelude::*;
 
-use arrow::array::{ArrayRef, Float64Array, RecordBatch, StringArray};
+use arrow::array::{ArrayRef, Float64Array, Int64Array, RecordBatch, StringArray};
 use arrow::datatypes::{DataType, Field, Schema};
 use arrow::ipc::writer::StreamWriter;
 
@@ -57,7 +66,9 @@ const MAX_FINDINGS_PER_CALL: usize = 50_000;
 /// build_columns / build_columns_parallel. GIL held only during this collect().
 ///
 /// MODERN-20 FIX: Added claims_json field (8-column schema).
-/// Schema: id, query, source_type, confidence, ts, provenance_json, payload_text, claims_json
+/// ISSUE F5-FIX: Added WARC provenance fields (13-column schema).
+/// Schema: id, query, source_type, confidence, ts, provenance_json, payload_text, claims_json,
+///         warc_record_id, warc_path, compressed_offset, compressed_size, warc_url
 #[derive(Debug, Clone, Default)]
 struct FindingsRow {
     id: String,
@@ -68,6 +79,12 @@ struct FindingsRow {
     provenance_json: String,
     payload_text: String,
     claims_json: String,  // MODERN-20: Added for 8-column schema consistency
+    // ISSUE F5-FIX: WARC provenance fields
+    warc_record_id: String,
+    warc_path: String,
+    compressed_offset: i64,
+    compressed_size: i64,
+    warc_url: String,
 }
 
 impl FindingsRow {
@@ -76,6 +93,8 @@ impl FindingsRow {
     /// is GIL-free. Replaces the old ISSUE-007 pattern of repeated get_item(i)
     /// in the main loop — here we pay the dict traversal cost once per row,
     /// then clone into column vectors (which build_columns_serial handles).
+    ///
+    /// ISSUE F5-FIX: Extracts WARC provenance fields from CanonicalFinding dict.
     fn from_dict(item: &Bound<'_, PyAny>) -> Self {
         Self {
             id: item
@@ -118,6 +137,30 @@ impl FindingsRow {
                 .and_then(|v| v.str())
                 .map(|s| s.to_string_lossy().into_owned())
                 .unwrap_or_default(),
+            // ISSUE F5-FIX: WARC provenance fields
+            warc_record_id: item
+                .get_item("warc_record_id")
+                .and_then(|v| v.str())
+                .map(|s| s.to_string_lossy().into_owned())
+                .unwrap_or_default(),
+            warc_path: item
+                .get_item("warc_path")
+                .and_then(|v| v.str())
+                .map(|s| s.to_string_lossy().into_owned())
+                .unwrap_or_default(),
+            compressed_offset: item
+                .get_item("compressed_offset")
+                .and_then(|v| v.extract::<i64>())
+                .unwrap_or(0),
+            compressed_size: item
+                .get_item("compressed_size")
+                .and_then(|v| v.extract::<i64>())
+                .unwrap_or(0),
+            warc_url: item
+                .get_item("warc_url")
+                .and_then(|v| v.str())
+                .map(|s| s.to_string_lossy().into_owned())
+                .unwrap_or_default(),
         }
     }
 }
@@ -134,6 +177,7 @@ impl FindingsRow {
 /// ARROW1\xff\xff\xff\xff magic. This produces valid Arrow IPC stream format
 /// that PyArrow's pa.ipc.open_stream() can parse.
 /// MODERN-20 FIX: Added claims_json field for 8-column schema consistency.
+/// ISSUE F5-FIX: Added WARC provenance fields for 13-column schema.
 fn build_ipc_bytes(
     ids: Vec<String>,
     queries: Vec<String>,
@@ -143,9 +187,15 @@ fn build_ipc_bytes(
     provenance_jsons: Vec<String>,
     payload_texts: Vec<String>,
     claims_jsons: Vec<String>,  // MODERN-20: Added for 8-column schema
+    // ISSUE F5-FIX: WARC provenance columns
+    warc_record_ids: Vec<String>,
+    warc_paths: Vec<String>,
+    compressed_offsets: Vec<i64>,
+    compressed_sizes: Vec<i64>,
+    warc_urls: Vec<String>,
     _n: usize,  // Kept for API compatibility (actual length derived from column arrays)
 ) -> Result<Vec<u8>, String> {
-    // Build Arrow Schema with 8 fields (MODERN-20: includes claims_json)
+    // Build Arrow Schema with 13 fields (ISSUE F5-FIX: includes WARC provenance)
     let schema = Schema::new(vec![
         Field::new("id", DataType::Utf8, true),
         Field::new("query", DataType::Utf8, true),
@@ -155,6 +205,12 @@ fn build_ipc_bytes(
         Field::new("provenance_json", DataType::Utf8, true),
         Field::new("payload_text", DataType::Utf8, true),
         Field::new("claims_json", DataType::Utf8, true),  // MODERN-20: Added
+        // ISSUE F5-FIX: WARC provenance columns
+        Field::new("warc_record_id", DataType::Utf8, true),
+        Field::new("warc_path", DataType::Utf8, true),
+        Field::new("compressed_offset", DataType::Int64, true),
+        Field::new("compressed_size", DataType::Int64, true),
+        Field::new("warc_url", DataType::Utf8, true),
     ]);
 
     // Build column arrays
@@ -166,6 +222,12 @@ fn build_ipc_bytes(
     let provenance_jsons_array: ArrayRef = std::sync::Arc::new(StringArray::from(provenance_jsons));
     let payload_texts_array: ArrayRef = std::sync::Arc::new(StringArray::from(payload_texts));
     let claims_jsons_array: ArrayRef = std::sync::Arc::new(StringArray::from(claims_jsons));  // MODERN-20: Added
+    // ISSUE F5-FIX: WARC provenance arrays
+    let warc_record_ids_array: ArrayRef = std::sync::Arc::new(StringArray::from(warc_record_ids));
+    let warc_paths_array: ArrayRef = std::sync::Arc::new(StringArray::from(warc_paths));
+    let compressed_offsets_array: ArrayRef = std::sync::Arc::new(Int64Array::from(compressed_offsets));
+    let compressed_sizes_array: ArrayRef = std::sync::Arc::new(Int64Array::from(compressed_sizes));
+    let warc_urls_array: ArrayRef = std::sync::Arc::new(StringArray::from(warc_urls));
 
     // Create RecordBatch (requires Arc<Schema>)
     let schema_ref: std::sync::Arc<arrow::datatypes::Schema> = std::sync::Arc::new(schema);
@@ -180,6 +242,12 @@ fn build_ipc_bytes(
             provenance_jsons_array,
             payload_texts_array,
             claims_jsons_array,  // MODERN-20: Added
+            // ISSUE F5-FIX: WARC provenance columns
+            warc_record_ids_array,
+            warc_paths_array,
+            compressed_offsets_array,
+            compressed_sizes_array,
+            warc_urls_array,
         ],
     )
     .map_err(|e| format!("Failed to create RecordBatch: {}", e))?;
@@ -201,7 +269,7 @@ fn build_ipc_bytes(
 }
 
 // ---------------------------------------------------------------------------
-// Column builders (serial + parallel) — MODERN-20: 8 columns
+// Column builders (serial + parallel) — ISSUE F5-FIX: 13 columns
 // ---------------------------------------------------------------------------
 
 fn build_columns(
@@ -215,6 +283,12 @@ fn build_columns(
     Vec<String>,
     Vec<String>,
     Vec<String>,  // MODERN-20: Added claims_json
+    // ISSUE F5-FIX: WARC provenance columns
+    Vec<String>,
+    Vec<String>,
+    Vec<i64>,
+    Vec<i64>,
+    Vec<String>,
 ) {
     let n = rows.len();
     let mut ids = Vec::with_capacity(n);
@@ -225,6 +299,12 @@ fn build_columns(
     let mut provenance_jsons = Vec::with_capacity(n);
     let mut payload_texts = Vec::with_capacity(n);
     let mut claims_jsons = Vec::with_capacity(n);  // MODERN-20: Added
+    // ISSUE F5-FIX: WARC provenance columns
+    let mut warc_record_ids = Vec::with_capacity(n);
+    let mut warc_paths = Vec::with_capacity(n);
+    let mut compressed_offsets = Vec::with_capacity(n);
+    let mut compressed_sizes = Vec::with_capacity(n);
+    let mut warc_urls = Vec::with_capacity(n);
     for row in rows {
         ids.push(row.id.clone());
         queries.push(row.query.clone());
@@ -234,6 +314,12 @@ fn build_columns(
         provenance_jsons.push(row.provenance_json.clone());
         payload_texts.push(row.payload_text.clone());
         claims_jsons.push(row.claims_json.clone());  // MODERN-20: Added
+        // ISSUE F5-FIX: WARC provenance fields
+        warc_record_ids.push(row.warc_record_id.clone());
+        warc_paths.push(row.warc_path.clone());
+        compressed_offsets.push(row.compressed_offset);
+        compressed_sizes.push(row.compressed_size);
+        warc_urls.push(row.warc_url.clone());
     }
     (
         ids,
@@ -244,6 +330,12 @@ fn build_columns(
         provenance_jsons,
         payload_texts,
         claims_jsons,  // MODERN-20: Added
+        // ISSUE F5-FIX: WARC provenance columns
+        warc_record_ids,
+        warc_paths,
+        compressed_offsets,
+        compressed_sizes,
+        warc_urls,
     )
 }
 
@@ -262,6 +354,12 @@ fn build_columns_parallel(
     Vec<String>,
     Vec<String>,
     Vec<String>,  // MODERN-20: Added claims_json
+    // ISSUE F5-FIX: WARC provenance columns
+    Vec<String>,
+    Vec<String>,
+    Vec<i64>,
+    Vec<i64>,
+    Vec<String>,
 ) {
     const CHUNK_SIZE: usize = 1024;
 
@@ -275,6 +373,12 @@ fn build_columns_parallel(
             let mut provenance_jsons = Vec::with_capacity(chunk.len());
             let mut payload_texts = Vec::with_capacity(chunk.len());
             let mut claims_jsons = Vec::with_capacity(chunk.len());  // MODERN-20: Added
+            // ISSUE F5-FIX: WARC provenance columns
+            let mut warc_record_ids = Vec::with_capacity(chunk.len());
+            let mut warc_paths = Vec::with_capacity(chunk.len());
+            let mut compressed_offsets = Vec::with_capacity(chunk.len());
+            let mut compressed_sizes = Vec::with_capacity(chunk.len());
+            let mut warc_urls = Vec::with_capacity(chunk.len());
 
             for row in chunk {
                 ids.push(row.id.clone());
@@ -285,6 +389,12 @@ fn build_columns_parallel(
                 provenance_jsons.push(row.provenance_json.clone());
                 payload_texts.push(row.payload_text.clone());
                 claims_jsons.push(row.claims_json.clone());  // MODERN-20: Added
+                // ISSUE F5-FIX: WARC provenance fields
+                warc_record_ids.push(row.warc_record_id.clone());
+                warc_paths.push(row.warc_path.clone());
+                compressed_offsets.push(row.compressed_offset);
+                compressed_sizes.push(row.compressed_size);
+                warc_urls.push(row.warc_url.clone());
             }
 
             (
@@ -296,6 +406,12 @@ fn build_columns_parallel(
                 provenance_jsons,
                 payload_texts,
                 claims_jsons,  // MODERN-20: Added
+                // ISSUE F5-FIX: WARC provenance columns
+                warc_record_ids,
+                warc_paths,
+                compressed_offsets,
+                compressed_sizes,
+                warc_urls,
             )
         })
         .reduce(
@@ -309,10 +425,18 @@ fn build_columns_parallel(
                     Vec::new(),
                     Vec::new(),
                     Vec::new(),  // MODERN-20: Added
+                    // ISSUE F5-FIX: WARC provenance columns
+                    Vec::new(),
+                    Vec::new(),
+                    Vec::new(),
+                    Vec::new(),
+                    Vec::new(),
                 )
             },
-            |(mut a_ids, mut a_q, mut a_st, mut a_c, mut a_ts, mut a_p, mut a_pl, mut a_cl),
-             (b_ids, b_q, b_st, b_c, b_ts, b_p, b_pl, b_cl)| {
+            |(mut a_ids, mut a_q, mut a_st, mut a_c, mut a_ts, mut a_p, mut a_pl, mut a_cl,
+              mut a_wri, mut a_wp, mut a_co, mut a_cs, mut a_wu),
+             (b_ids, b_q, b_st, b_c, b_ts, b_p, b_pl, b_cl,
+              b_wri, b_wp, b_co, b_cs, b_wu)| {
                 a_ids.extend(b_ids);
                 a_q.extend(b_q);
                 a_st.extend(b_st);
@@ -321,7 +445,14 @@ fn build_columns_parallel(
                 a_p.extend(b_p);
                 a_pl.extend(b_pl);
                 a_cl.extend(b_cl);  // MODERN-20: Added
-                (a_ids, a_q, a_st, a_c, a_ts, a_p, a_pl, a_cl)
+                // ISSUE F5-FIX: WARC provenance columns
+                a_wri.extend(b_wri);
+                a_wp.extend(b_wp);
+                a_co.extend(b_co);
+                a_cs.extend(b_cs);
+                a_wu.extend(b_wu);
+                (a_ids, a_q, a_st, a_c, a_ts, a_p, a_pl, a_cl,
+                 a_wri, a_wp, a_co, a_cs, a_wu)
             },
         )
 }
@@ -334,6 +465,8 @@ fn build_columns_parallel(
 ///
 /// Replaces 6× Python list-comprehension loops in
 /// `_findings_to_arrow_batch()` with a single-pass Rust function.
+///
+/// ISSUE F5-FIX: Extended to 13 columns including WARC provenance.
 ///
 /// Args:
 ///     findings: Python list of CanonicalFinding dicts
@@ -361,15 +494,19 @@ pub fn build_arrow_batch_from_findings<'py>(
         .map(|item| FindingsRow::from_dict(&item))
         .collect();
 
-    // Build columns (parallel if N >= threshold) — MODERN-20: 8 columns
-    let (ids, queries, source_types, confidences, timestamps, provenance_jsons, payload_texts, claims_jsons) =
-        if n < PARALLEL_THRESHOLD {
-            build_columns(&rows)
-        } else {
-            mixed_pool(n).install(|| build_columns_parallel(&rows))
-        };
+    // Build columns (parallel if N >= threshold) — ISSUE F5-FIX: 13 columns
+    let (
+        ids, queries, source_types, confidences, timestamps,
+        provenance_jsons, payload_texts, claims_jsons,
+        // ISSUE F5-FIX: WARC provenance columns
+        warc_record_ids, warc_paths, compressed_offsets, compressed_sizes, warc_urls,
+    ) = if n < PARALLEL_THRESHOLD {
+        build_columns(&rows)
+    } else {
+        mixed_pool(n).install(|| build_columns_parallel(&rows))
+    };
 
-    // Serialize to IPC — MODERN-20: includes claims_json
+    // Serialize to IPC — ISSUE F5-FIX: includes WARC provenance
     let ipc_bytes = match build_ipc_bytes(
         ids,
         queries,
@@ -379,6 +516,12 @@ pub fn build_arrow_batch_from_findings<'py>(
         provenance_jsons,
         payload_texts,
         claims_jsons,
+        // ISSUE F5-FIX: WARC provenance columns
+        warc_record_ids,
+        warc_paths,
+        compressed_offsets,
+        compressed_sizes,
+        warc_urls,
         n,
     ) {
         Ok(bytes) => bytes,
@@ -394,7 +537,7 @@ pub fn build_arrow_batch_from_findings<'py>(
 /// Wire format: [4-byte uncompressed size][LZ4-compressed IPC bytes]
 /// MODERN-17: Uses arrow::ipc::writer::StreamWriter — proper Arrow IPC encoding.
 /// Python pa.ipc.open_stream() now works correctly after decompression.
-/// MODERN-20: Now includes claims_json in 8-column schema.
+/// ISSUE F5-FIX: Extended to 13 columns including WARC provenance.
 ///
 /// Args:
 ///     findings: Python list of CanonicalFinding dicts
@@ -422,15 +565,19 @@ pub fn build_compressed_arrow_batch_from_findings<'py>(
         .map(|item| FindingsRow::from_dict(&item))
         .collect();
 
-    // Build columns (parallel if N >= threshold) — MODERN-20: 8 columns
-    let (ids, queries, source_types, confidences, timestamps, provenance_jsons, payload_texts, claims_jsons) =
-        if n < PARALLEL_THRESHOLD {
-            build_columns(&rows)
-        } else {
-            mixed_pool(n).install(|| build_columns_parallel(&rows))
-        };
+    // Build columns (parallel if N >= threshold) — ISSUE F5-FIX: 13 columns
+    let (
+        ids, queries, source_types, confidences, timestamps,
+        provenance_jsons, payload_texts, claims_jsons,
+        // ISSUE F5-FIX: WARC provenance columns
+        warc_record_ids, warc_paths, compressed_offsets, compressed_sizes, warc_urls,
+    ) = if n < PARALLEL_THRESHOLD {
+        build_columns(&rows)
+    } else {
+        mixed_pool(n).install(|| build_columns_parallel(&rows))
+    };
 
-    // Serialize to IPC — MODERN-20: includes claims_json
+    // Serialize to IPC — ISSUE F5-FIX: includes WARC provenance
     let ipc_bytes = match build_ipc_bytes(
         ids,
         queries,
@@ -440,6 +587,12 @@ pub fn build_compressed_arrow_batch_from_findings<'py>(
         provenance_jsons,
         payload_texts,
         claims_jsons,
+        // ISSUE F5-FIX: WARC provenance columns
+        warc_record_ids,
+        warc_paths,
+        compressed_offsets,
+        compressed_sizes,
+        warc_urls,
         n,
     ) {
         Ok(bytes) => bytes,
@@ -627,6 +780,7 @@ pub fn build_record_batch_from_structs<'py>(
     }
 
     // Build IPC bytes — MODERN-20: includes claims_json
+    // ISSUE F5-FIX: Added WARC provenance fields (empty for struct-path entries)
     let ipc_bytes = match build_ipc_bytes(
         ids_out,
         queries_out,
@@ -636,6 +790,11 @@ pub fn build_record_batch_from_structs<'py>(
         provenance_jsons_out,
         payload_texts_out,
         claims_jsons_out,
+        vec![],  // warc_record_ids (empty for struct entries)
+        vec![],  // warc_paths (empty for struct entries)
+        vec![],  // compressed_offsets (empty for struct entries)
+        vec![],  // compressed_sizes (empty for struct entries)
+        vec![],  // warc_urls (empty for struct entries)
         n,
     ) {
         Ok(bytes) => bytes,
@@ -818,6 +977,7 @@ pub fn build_record_batch_from_findings<'py>(
 
     // Build IPC bytes — shared encoder handles all entry points
     // MODERN-20: includes claims_json
+    // ISSUE F5-FIX: Added WARC provenance fields (empty for map-path entries)
     let ipc_bytes = match build_ipc_bytes(
         ids_out,
         queries_out,
@@ -827,6 +987,11 @@ pub fn build_record_batch_from_findings<'py>(
         provenance_jsons_out,
         payload_texts_out,
         claims_jsons_out,
+        vec![],  // warc_record_ids (empty for map-path entries)
+        vec![],  // warc_paths (empty for map-path entries)
+        vec![],  // compressed_offsets (empty for map-path entries)
+        vec![],  // compressed_sizes (empty for map-path entries)
+        vec![],  // warc_urls (empty for map-path entries)
         n,
     ) {
         Ok(bytes) => bytes,
@@ -968,6 +1133,7 @@ pub fn build_findings_from_iocs<'py>(
     }
 
     // Serialize to IPC — MODERN-20: includes claims_jsons
+    // ISSUE F5-FIX: Added WARC provenance fields (empty for map-path entries)
     let ipc_bytes = match build_ipc_bytes(
         ids,
         queries,
@@ -977,6 +1143,11 @@ pub fn build_findings_from_iocs<'py>(
         provenance_jsons,
         payload_texts,
         claims_jsons,
+        vec![],  // warc_record_ids (empty for map-path entries)
+        vec![],  // warc_paths (empty for map-path entries)
+        vec![],  // compressed_offsets (empty for map-path entries)
+        vec![],  // compressed_sizes (empty for map-path entries)
+        vec![],  // warc_urls (empty for map-path entries)
         actual_n,
     ) {
         Ok(bytes) => bytes,

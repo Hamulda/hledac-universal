@@ -67,7 +67,14 @@ class DuckDBQueryExecutor:
 
     # ── SQL Templates ─────────────────────────────────────────────────────────────
 
-    _SQL_INSERT_SHADOW_FINDING = "INSERT INTO canonical_findings (id, query, source_type, confidence, ts, provenance_json, payload_text, claims_json) VALUES (?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT (id) DO NOTHING"
+    # ISSUE F5-FIX: Extended to 13 columns for WARC provenance
+    _SQL_INSERT_SHADOW_FINDING = (
+        "INSERT INTO canonical_findings "
+        "(id, query, source_type, confidence, ts, provenance_json, payload_text, claims_json, "
+        "warc_record_id, warc_path, compressed_offset, compressed_size, warc_url) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
+        "ON CONFLICT (id) DO NOTHING"
+    )
     _SQL_INSERT_SHADOW_RUN = (
         "INSERT INTO shadow_runs (run_id, started_at, ended_at, total_fds, rss_mb) VALUES (?, ?, ?, ?, ?)"
     )
@@ -207,12 +214,25 @@ class DuckDBQueryExecutor:
         confidence: float,
         ts: float | None,
         provenance_json: str | None,
+        # ISSUE F5-FIX: WARC provenance parameters (optional for backward compat)
+        payload_text: str | None = None,
+        claims_json: str | None = None,
+        warc_record_id: str | None = None,
+        warc_path: str | None = None,
+        compressed_offset: int = 0,
+        compressed_size: int = 0,
+        warc_url: str | None = None,
     ) -> bool:
         """Insert a single shadow finding. Returns True on success."""
         conn = self._conn()
         if conn is None:
             return False
-        params = [finding_id, query, source_type, confidence, ts, provenance_json, None]
+        # ISSUE F5-FIX: 13 parameters including WARC provenance
+        params = [
+            finding_id, query, source_type, confidence, ts, provenance_json,
+            payload_text, claims_json,
+            warc_record_id, warc_path, compressed_offset, compressed_size, warc_url
+        ]
         try:
             stmt = self._get_insert_stmt(conn)
 
@@ -751,7 +771,8 @@ class DuckDBQueryExecutor:
         conn = self._conn()
         if conn is None:
             return []
-        sql = "SELECT id, query, source_type, confidence, ts, provenance_json, payload_text, claims_json FROM canonical_findings ORDER BY ts DESC LIMIT ?"
+        # ISSUE F5-FIX: Extended to 13 columns including WARC provenance
+        sql = "SELECT id, query, source_type, confidence, ts, provenance_json, payload_text, claims_json, warc_record_id, warc_path, compressed_offset, compressed_size, warc_url FROM canonical_findings ORDER BY ts DESC LIMIT ?"
         try:
             t0 = perf_counter_ns()
             raw_result = list(self._store.arrow_fetch_batch(conn, sql, [limit]))
@@ -767,6 +788,14 @@ class DuckDBQueryExecutor:
                     "confidence": row[3],
                     "ts": row[4],
                     "provenance_json": row[5],
+                    "payload_text": row[6],
+                    "claims_json": row[7],
+                    # ISSUE F5-FIX: WARC provenance fields
+                    "warc_record_id": row[8],
+                    "warc_path": row[9],
+                    "compressed_offset": row[10],
+                    "compressed_size": row[11],
+                    "warc_url": row[12],
                 }
                 for row in raw_result
             ]

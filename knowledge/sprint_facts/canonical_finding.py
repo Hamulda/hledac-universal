@@ -35,6 +35,13 @@ class CanonicalFinding(Struct, frozen=True):
     Volitelná pole:
       - payload_text: str | None - supplementary text payload
 
+    ISSUE F5-FIX: WARC provenance fields for court-admissible evidence replay:
+      - warc_record_id: URN-UUID of WARC record
+      - warc_path: Absolute path to .warc.gz file
+      - compressed_offset: Compressed (seekable) byte offset in WARC file
+      - compressed_size: Compressed record block size
+      - warc_url: Archived URL from WARC-Target-URI
+
     DTO invariants:
       - frozen=True  - immutabilní instance
       -      - zakázán garbage collector tracking (výkon)
@@ -54,6 +61,14 @@ class CanonicalFinding(Struct, frozen=True):
 
     # Volitelné doplňkové pole - jde do LMDB WAL payloadu, ne do DuckDB INSERT
     payload_text: str | None = None
+
+    # ISSUE F5-FIX: WARC provenance fields for court-admissible evidence replay
+    # These fields are populated when the finding was extracted from archived web content
+    warc_record_id: str | None = None  # URN-UUID from WARC-Record-ID header
+    warc_path: str | None = None  # Absolute path to .warc.gz file
+    compressed_offset: int = 0  # Compressed (seekable) byte offset
+    compressed_size: int = 0  # Compressed record block size
+    warc_url: str | None = None  # Archived URL from WARC-Target-URI
 
     @classmethod
     def dynamic_schema(cls) -> dict[str, Any]:

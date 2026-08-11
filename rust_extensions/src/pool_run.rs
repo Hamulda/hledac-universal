@@ -61,12 +61,13 @@ use crate::tracing::{clear_tls_trace_context, is_tracing_enabled, set_tls_trace_
 const RAYON_HANDLE_CAPSULE_NAME: &str = "hledac.universal._rayon_handle";
 
 // Module-level FFI imports for Python 3.14+ compatibility (stable PyCapsule C API)
+#[allow(unused_imports)]
 use pyo3::ffi::{PyCapsule_GetPointer, PyCapsule_IsValid, PyCapsule_New};
 
 /// Tombstone set to prevent double-free on drop_rayon_handle_internal.
 /// Once a handle is dropped, its pointer value is kept PERMANENTLY.
 /// This is safe because Arc::into_raw returns unique, never-reused pointer values.
-static DROPPED_HANDLES: LazyLock<parking_lot::RwLock<std::collections::HashSet<usize>>, fn() -> _> =
+static DROPPED_HANDLES: LazyLock<parking_lot::RwLock<std::collections::HashSet<usize>>, fn() -> parking_lot::RwLock<std::collections::HashSet<usize>>> =
     LazyLock::new(|| parking_lot::RwLock::new(std::collections::HashSet::new()));
 
 /// Internal helper to drop a rayon handle (Arc::from_raw + drop).
@@ -534,7 +535,9 @@ pub fn rayon_submit_channel_(
             Some(rayon_handle_destructor),
         )
     };
-    Ok(Py::from(capsule))
+    // Convert raw PyObject* to Py<PyAny> using from_owned_ptr with GIL token
+    // SAFETY: capsule is a valid PyObject* from PyCapsule_New
+    Ok(unsafe { Py::from_owned_ptr(py, capsule) })
 }
 
 // ---------------------------------------------------------------------------
@@ -763,21 +766,31 @@ pub fn rayon_shutdown_channel_() -> PyResult<()> {
 ///     None on success. Raises PyRuntimeError if handle is invalid.
 #[pyfunction]
 #[pyo3(name = "rayon_drop_channel")]
-pub fn rayon_drop_channel_(handle: &PyAny) -> PyResult<()> {
-    let ptr = if let Ok(ptr) = handle.extract::<usize>() {
-        // Raw usize handle (backward compatibility)
-        ptr
-    } else if let Ok(capsule_ptr) = handle.extract::<*mut std::ffi::c_void>() {
-        // PyCapsule handle — extract the pointer
-        capsule_ptr as usize
-    } else {
-        return Err(PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(
-            "Invalid handle type: expected usize or PyCapsule",
-        ));
-    };
-
-    drop_rayon_handle_internal(ptr);
-    Ok(())
+pub fn rayon_drop_channel_(py: Python<'_>, handle: &Bound<'_, PyAny>) -> PyResult<()> {
+    // Try to extract as usize first (raw handle)
+    if let Ok(ptr) = handle.extract::<usize>() {
+        drop_rayon_handle_internal(ptr);
+        return Ok(());
+    }
+    
+    // If not a usize, try PyCapsule handling
+    // Get Py<PyAny> via AsRef trait, then extract raw pointer
+    let py_ref: &Py<PyAny> = <Bound<'_, PyAny> as AsRef<Py<PyAny>>>::as_ref(handle).as_ref();
+    let raw_ptr: *mut pyo3::ffi::PyObject = py_ref.as_ptr() as *mut _;
+    let capsule_name = RAYON_HANDLE_CAPSULE_NAME.as_ptr() as *const std::ffi::c_char;
+    
+    // SAFETY: Check if it's a valid capsule with our name, then extract pointer
+    if unsafe { pyo3::ffi::PyCapsule_IsValid(raw_ptr, capsule_name) } != 0 {
+        let capsule_ptr = unsafe { 
+            pyo3::ffi::PyCapsule_GetPointer(raw_ptr, capsule_name)
+        };
+        drop_rayon_handle_internal(capsule_ptr as usize);
+        return Ok(());
+    }
+    
+    Err(PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(
+        "Invalid handle type: expected usize or PyCapsule",
+    ))
 }
 
 // ---------------------------------------------------------------------------

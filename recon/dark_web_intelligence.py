@@ -259,6 +259,7 @@ class DarkWebCrawler:
     MAX_VISITED_URLS: int = 5000
     MAX_DISCOVERED_SERVICES: int = 1000
     MAX_URL_QUEUE: int = 200
+    MAX_BFS_QUEUE_SIZE: int = 5000  # FIX-2.4: capped BFS frontier (was unbounded list)
     ONION_V2_PATTERN = re.compile('[a-z2-7]{16}\\.onion')
     ONION_V3_PATTERN = re.compile('[a-z2-7]{56}\\.onion')
     I2P_PATTERN = re.compile('[a-zA-Z0-9\\-\\.]+\\.i2p')
@@ -367,6 +368,9 @@ class DarkWebCrawler:
         task = CrawlTask(url=url, depth=depth, parent_url=None)
         async with self._get_bfs_lock():
             self._bfs_queue.append(task)
+            # FIX-2.4: Cap BFS queue to prevent unbounded memory growth
+            if len(self._bfs_queue) > self.MAX_BFS_QUEUE_SIZE:
+                self._bfs_queue = self._bfs_queue[-self.MAX_BFS_QUEUE_SIZE:]
         if self._bfs_sem is None:
             self._bfs_sem = asyncio.Semaphore(5)
         while True:
@@ -461,6 +465,9 @@ class DarkWebCrawler:
                             new_tasks.append(CrawlTask(url=link_url, depth=task.depth + 1, parent_url=task.url))
                     async with self._get_bfs_lock():
                         self._bfs_queue.extend(new_tasks)
+                        # FIX-2.4: Cap BFS queue to prevent unbounded memory growth
+                        if len(self._bfs_queue) > self.MAX_BFS_QUEUE_SIZE:
+                            self._bfs_queue = self._bfs_queue[-self.MAX_BFS_QUEUE_SIZE:]
         except Exception as e:
             logger.debug('Error crawling %s: %s', task.url, e)
             self.stats['errors'] += 1
@@ -833,10 +840,12 @@ class CryptocurrencyAnalyzer:
 
     Tracks transactions, balances (where possible), and relationships.
     """
-    __slots__ = tuple(('address_cache',))
+    __slots__ = tuple(('address_cache', '_address_cache_max'))
 
     def __init__(self):
+        # FIX-2.4: Bounded cache — prevents unbounded memory growth on large crawls.
         self.address_cache: dict[str, dict[str, Any]] = {}
+        self._address_cache_max: int = 10000
 
     def analyze_bitcoin_address(self, address: str) -> dict[str, Any]:
         """
@@ -845,6 +854,15 @@ class CryptocurrencyAnalyzer:
         Note: Without external APIs, we can only do basic validation.
         For full analysis, would need blockchain.info or similar API.
         """
+        # FIX-2.4: Enforce bounded cache — evict oldest entries if at capacity.
+        if len(self.address_cache) >= self._address_cache_max:
+            # Remove oldest ~20% when full
+            evict_count = max(1, self._address_cache_max // 5)
+            for _ in range(evict_count):
+                try:
+                    self.address_cache.pop(next(iter(self.address_cache)))
+                except StopIteration:
+                    break
         is_valid = self._validate_bitcoin_address(address)
         analysis = {'address': address, 'type': self._get_bitcoin_address_type(address), 'is_valid': is_valid, 'possible_type': 'segwit' if address.startswith('bc1') else 'legacy/p2sh'}
         return analysis

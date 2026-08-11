@@ -249,6 +249,11 @@ class AcquisitionOrchestrator:
 
         await self._ensure_dedup_loaded(ctx)
 
+        # F-2/F-3 FIX: WARMUP→ACTIVE transition must happen before acquisition loop.
+        # Without this, _on_degraded_enter callback and ACTIVE re-prioritization
+        # are dead code. This ensures DEGRADED phase and phase transitions work.
+        _runner.ensure_active()
+
         try:
             while not _runner.is_terminal():
                 now_monotonic = _time.monotonic()

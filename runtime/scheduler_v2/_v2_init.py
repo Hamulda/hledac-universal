@@ -268,17 +268,25 @@ class V2Init:
     ) -> None:
         """Bootstrap core services concurrently."""
         from hledac.universal.runtime.sprint_lifecycle import SprintLifecycleManager
+        from hledac.universal.runtime.scheduler.core.lifecycle import SprintLifecycleAdapter
+        from hledac.universal.runtime.sprint_lifecycle_runner import SprintLifecycleRunner
 
         # Store cancel_event on scheduler (used by scheduler.run() and aclose)
         object.__setattr__(self._scheduler, "_cancel_event", cancel_event)
 
-        # Lifecycle manager
+        # Lifecycle manager (canonical state machine)
         _lifecycle_mgr = SprintLifecycleManager(
             sprint_duration_s=self._config.sprint_duration_s if self._config else 1800.0,
             windup_lead_s=self._config.windup_lead_s if self._config else 180.0,
         )
         object.__setattr__(self._scheduler, "_lifecycle", _lifecycle_mgr)
-        object.__setattr__(self._scheduler, "_runner", _lifecycle_mgr)
+
+        # [F-1 P0] Lifecycle runner: wraps manager via adapter to provide
+        # windup_guard() and string current_phase (SprintLifecycleManager lacks both).
+        # Runner is the mechanical boundary; manager is the canonical state.
+        _lifecycle_adapter = SprintLifecycleAdapter(_lifecycle_mgr)
+        _lifecycle_runner = SprintLifecycleRunner(_lifecycle_mgr, _lifecycle_adapter)
+        object.__setattr__(self._scheduler, "_runner", _lifecycle_runner)
 
         # [ULTIMATE]-002: Wire cognitive saturation detector into lifecycle manager.
         # The detector monitors entity discovery rate and triggers WINDUP when
@@ -347,6 +355,9 @@ class V2Init:
         # Without this, _started_at stays None, phase stays BOOT forever,
         # tick() is a no-op, and DEGRADED/WINDUP phases are unreachable.
         _lifecycle_mgr.start()
+        # [F-1 P0] Initialize runner: sets _wall_clock_start and prev_phase.
+        # Must be called after manager.start() so adapter has valid phase state.
+        _lifecycle_runner.setup()
 
         # META-001: Inject DuckDB store into CrossSprintGate for pre-fetch gating
         try:
@@ -374,7 +385,7 @@ class V2Init:
             governor=_governor,
             hermes_engine=_hermes_engine,
             evidence_log=_evidence_log,
-            runner=_lifecycle_mgr,
+            runner=_lifecycle_runner,  # [F-1 P0] SprintLifecycleRunner (has windup_guard + string current_phase)
             lifecycle=_lifecycle_mgr,
         )
         object.__setattr__(self._scheduler, "_ctx", _updated_ctx)

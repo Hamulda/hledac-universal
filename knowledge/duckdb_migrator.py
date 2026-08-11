@@ -53,7 +53,7 @@ logger = logging.getLogger("hledac.universal.knowledge.duckdb_migrator")
 
 _MIGRATIONS_DIR: Path = Path(__file__).parent / "duckdb_migrations"
 _SCHEMA_VERSION_TABLE: str = "schema_version"
-_CURRENT_SCHEMA_VERSION: int = 10  # highest migration number
+_CURRENT_SCHEMA_VERSION: int = 12  # highest migration number
 
 # Legacy DBs (pre-migration, created before the migration system existed) have
 # their baseline schema already applied via the inline _SCHEMA_SQL era.

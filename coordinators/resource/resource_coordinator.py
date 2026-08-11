@@ -87,6 +87,35 @@ _GC_FREEZE_ENABLED: bool = _BLITZ_GC_FREEZE_NATIVE
 _configured = False
 _configure_lock = threading.Lock()
 
+# FIX-B4: 10s TTL cache for system-wide virtual_memory() — mirrors _rss_gib pattern.
+# Called from get_recommended_concurrency() on every AIMD evaluation tick.
+# Using the same 10s TTL prevents psutil syscall storm on M1 event loop.
+_SYSTEM_MEM_CACHE_TTL_S: float = 10.0
+_SYSTEM_MEM_CACHE: tuple[float, float] | None = None  # (timestamp, percent)
+_SYSTEM_MEM_LOCK: threading.Lock = threading.Lock()
+
+
+def _get_system_memory_percent() -> float:
+    """System-wide memory percent with 10s TTL cache (thread-safe)."""
+    global _SYSTEM_MEM_CACHE
+    now = _time_module.monotonic()
+    with _SYSTEM_MEM_LOCK:
+        if _SYSTEM_MEM_CACHE is not None:
+            ts, val = _SYSTEM_MEM_CACHE
+            if now - ts < _SYSTEM_MEM_CACHE_TTL_S:
+                return val
+    # Cache miss or expired — measure
+    percent: float = 0.0
+    try:
+        from hledac.universal.core.psutil_shim import psutil as _psutil
+        if _psutil is not None:
+            percent = float(_psutil.virtual_memory().percent)
+    except Exception:  # noqa: BLE001
+        pass
+    with _SYSTEM_MEM_LOCK:
+        _SYSTEM_MEM_CACHE = (now, percent)
+    return percent
+
 
 def _ensure_configured() -> None:
     """Apply gc.set_threshold and gc.freeze() — called once at startup.
@@ -590,7 +619,6 @@ class _CapacitySampler:
         assert _ps is not None
         ps = _ps
         cpu_percent = ps.cpu_percent(interval=0.0)
-        ps.virtual_memory()
         gpu_memory = 0.0
         gpu_usage = cpu_percent * 0.7
         return (cpu_percent, gpu_memory, gpu_usage)
@@ -718,21 +746,16 @@ class M1ResourceCoordinator:
         M1 8GB bounds:
             - io: base=10, clamped by memory
             - cpu: base=4, clamped by memory
+
+        FIX-B4: Uses _get_system_memory_percent() with 10s TTL cache
+        to avoid blocking psutil.virtual_memory() on every call.
         """
-        try:
-            from hledac.universal.core.psutil_shim import psutil as _psutil
-
-            assert _psutil is not None
-            psutil = _psutil
-        except (ImportError, AssertionError):
-            return 10 if task_type == "io" else 4
-
-        mem = psutil.virtual_memory()
+        mem_percent = _get_system_memory_percent()
         base = 10 if task_type == "io" else 4
 
-        if mem.percent > 75:
+        if mem_percent > 75:
             return max(1, base // 4)
-        elif mem.percent > 60:
+        elif mem_percent > 60:
             return max(1, base // 2)
         return base
 

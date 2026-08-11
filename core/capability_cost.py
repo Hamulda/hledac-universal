@@ -318,7 +318,9 @@ def capability_cost(
 # ─── QoS Ladder Controller ────────────────────────────────────────────────────
 
 _DEFAULT_WINDUP_LEAD_S = 30
-_DEFAULT_MISSION_PEAK_MB = 5.5 * 1024  # 5632 MB on M1 8GB
+# SSOT: Use UmaBudget.MISSION_PEAK_RSS_GIB instead of hardcoded 5.5 GiB
+from hledac.universal.utils.uma_budget import MISSION_PEAK_RSS_GIB
+_DEFAULT_MISSION_PEAK_MB = MISSION_PEAK_RSS_GIB * 1024  # 5632 MB on M1 8GB (SSOT)
 
 
 class QoSLadderController:

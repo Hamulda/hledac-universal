@@ -22,10 +22,14 @@ logger = logging.getLogger(__name__)
 _PLATFORM = "darwin-arm64"  # M1 MacBook Air 8GB, single-target build
 
 # M1 8GB unified memory thresholds
-# Soft: camoufox allowed only for high-confidence JS + high-priority requests
-# Hard: no browser launch regardless of request priority
+# SSOT: derived from UmaBudget (MODERN-36 P7-3). Do NOT hardcode here.
+# - UmaBudget.MISSION_PEAK_RSS_GIB = 5.5 GiB — process-RSS hard cap
+# - UmaBudget.THRESHOLD_WARN_GIB ~5.94 GiB — soft warning (elevated)
+# - UmaBudget.UMA_HARD_CEILING_GIB = 6.25 GiB — system-used ceiling
+from hledac.universal.utils.uma_budget import UmaBudget
+
 _SOFT_GIB = float(os.environ.get("HLEDAC_MEM_SOFT_GIB", "4.5"))
-_HARD_GIB = float(os.environ.get("HLEDAC_MEM_HARD_GIB", "6.0"))
+_HARD_GIB = float(os.environ.get("HLEDAC_MEM_HARD_GIB", str(UmaBudget.MISSION_PEAK_RSS_GIB)))  # SSOT: 5.5 GiB
 _BROWSER_THRESHOLD_GIB = float(os.environ.get("HLEDAC_BROWSER_MEM_THRESHOLD_GIB", "1.5"))
 _CURL_CFFI_POOL_SIZE = int(os.environ.get("HLEDAC_CURL_CFFI_POOL_SIZE", "4"))
 
@@ -49,10 +53,10 @@ _RSS_CACHE_LOCK: threading.Lock = threading.Lock()
 
 def _rss_gib() -> float:
     """
-    RSS in GiB with 5s TTL cache (thread-safe).
+    RSS in GiB with 10s TTL cache (thread-safe).
 
     ISSUE-018: Cached to avoid psutil call on every request in hot path.
-    Cache is process-global (module-level), refreshed every 5s.
+    Cache is process-global (module-level), refreshed every 10s (updated from 5s in B4 fix).
 
     Priority:
       0. Rust extension (sysinfo) — cross-platform, no subprocess.

@@ -62,7 +62,10 @@ logger = logging.getLogger(__name__)
 
 _CONNECT_TIMEOUT_S: float = 5.0
 _READ_TIMEOUT_S: float = 30.0
-_DEFAULT_DOC_LIMIT: int = 500       # MongoDB documents per collection
+# FIX-1.5: Explicit MAX_* caps for MongoDB enumeration (was unbounded).
+_MAX_MONGO_DATABASES: int = 10       # Max databases to enumerate
+_MAX_MONGO_COLLECTIONS: int = 20     # Max collections per database
+_DEFAULT_DOC_LIMIT: int = 500        # MongoDB documents per collection
 _DEFAULT_KEY_LIMIT: int = 500       # Redis keys via SCAN
 _DEFAULT_ES_SIZE: int = 100         # Elasticsearch documents per index
 _MAX_ES_INDICES: int = 10           # Max indices to sample from

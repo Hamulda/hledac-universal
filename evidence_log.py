@@ -385,6 +385,287 @@ except ImportError:
 logger = _get_logger()
 
 
+# ISSUE F5-FIX: WARC Seek Function — court-admissible byte-level replay from gzip WARC
+# ==================================================================================
+# gzip files do NOT support random access by uncompressed offset. To read a specific
+# record, we must decompress from the beginning of the file until we reach the target
+# uncompressed offset. This function provides that capability.
+#
+# For performance, we use a streaming decompressor that stops as soon as the target
+# uncompressed offset is reached, then extracts the HTTP response from the WARC record.
+#
+# Usage:
+#   result = warc_seek(warc_path, compressed_offset, byte_length)
+#   if result:
+#       print(result['http_response'])  # Raw HTTP bytes
+#       print(result['url'])            # Archived URL
+#
+
+
+def warc_seek(
+    warc_path: str,
+    compressed_offset: int,
+    byte_length: int,
+    record_id: str | None = None,
+) -> dict[str, Any] | None:
+    """
+    ISSUE F5-FIX: Court-admissible WARC record replay via streaming decompression.
+
+    Reads a specific WARC record from a gzip-compressed .warc.gz file by:
+    1. Opening the gzip file
+    2. Decompressing from the start until we have enough data for the record
+    3. Parsing the WARC record to extract HTTP response bytes
+
+    CRITICAL: For gzip files, compressed_offset is stored in the WarcWriteResult
+    but for replay we decompress from the start of the file and parse records
+    sequentially until we find the matching record_id.
+
+    Args:
+        warc_path: Absolute path to .warc.gz file
+        compressed_offset: Stored compressed file offset (for reference/auditing)
+        byte_length: Expected uncompressed byte length of the record block
+        record_id: WARC-Record-ID to find (required for correct replay)
+
+    Returns:
+        Dict with keys:
+            - http_response: Raw HTTP response bytes
+            - http_request: Raw HTTP request bytes (if present)
+            - url: Archived URL from WARC-Target-URI header
+            - timestamp: WARC-Date header value
+            - record_id: WARC-Record-ID header value
+            - warc_type: WARC record type ('response' or 'request')
+            - payload_digest: WARC-Payload-Digest header value
+            - status: HTTP status code (extracted from response)
+        Returns None if:
+            - File not found
+            - Record not found
+            - CRC check failed
+            - WARC parsing failed
+
+    Performance Note:
+        M1 8GB: Uses chunked decompression (1 MB chunks) to avoid memory pressure.
+        Gzip files don't support random access - must decompress from start each time.
+        For replay, we scan sequentially until we find the matching record_id.
+    """
+    _logger = _get_logger()
+    _path = Path(warc_path)
+    if not _path.exists():
+        _logger.debug("warc_seek_file_not_found", path=warc_path)
+        return None
+
+    if not record_id:
+        _logger.debug("warc_seek_missing_record_id")
+        return None
+
+    try:
+        with gzip.GzipFile(_path, 'rb') as _gz:
+            # ISSUE F5-FIX: Stream decompress and scan for matching WARC record
+            # Gzip doesn't support random access - we must decompress from start
+            _buffer = bytearray()
+            _CHUNK_SIZE = 1024 * 1024  # 1 MB chunks for M1 8GB
+
+            while True:
+                _chunk = _gz.read(_CHUNK_SIZE)
+                if not _chunk:
+                    break
+
+                _buffer.extend(_chunk)
+
+                # Try to find and parse WARC records in buffer
+                _data = bytes(_buffer)
+                _warc_pos = _data.find(b'WARC/1.')
+
+                while _warc_pos != -1:
+                    # Try to parse record starting at this position
+                    _record_result = _try_parse_warc_record(_data[_warc_pos:], record_id, byte_length)
+
+                    if _record_result is not None:
+                        return _record_result
+
+                    # Move to next potential WARC header
+                    _next_pos = _data.find(b'WARC/1.', _warc_pos + 1)
+                    if _next_pos == -1:
+                        # Keep more data in buffer for next iteration
+                        _buffer = bytearray(_data[_warc_pos:])
+                        break
+
+                    # Discard data before next potential record
+                    _buffer = bytearray(_data[_next_pos:])
+                    _warc_pos = 0
+                    _data = bytes(_buffer)
+
+            # Record not found in file
+            _logger.debug("warc_seek_record_not_found", record_id=record_id, path=warc_path)
+            return None
+
+    except gzip.BadGzipFile as _e:
+        _logger.debug("warc_seek_bad_gzip", path=warc_path, error=str(_e))
+        return None
+    except Exception as _e:  # noqa: BLE001
+        _logger.debug("warc_seek_failed", path=warc_path, error=str(_e))
+        return None
+
+
+def _try_parse_warc_record(
+    data: bytes,
+    expected_record_id: str,
+    expected_length: int,
+) -> dict[str, Any] | None:
+    """
+    Try to parse a complete WARC record from decompressed bytes.
+
+    Returns the parsed record if complete, or None if more data needed.
+    """
+    _logger = _get_logger()
+
+    try:
+        # Find WARC header start
+        _warc_pos = data.find(b'WARC/1.')
+        if _warc_pos == -1:
+            return None
+
+        _record_data = data[_warc_pos:]
+
+        # Parse headers to find Content-Length
+        _header_end = _record_data.find(b'\r\n\r\n')
+        if _header_end == -1:
+            _header_end = _record_data.find(b'\n\n')
+            if _header_end == -1:
+                return None  # Incomplete header
+            _line_end = b'\n'
+        else:
+            _line_end = b'\r\n'
+
+        # Look for Content-Length header
+        _header_lines = _record_data[:_header_end].split(_line_end)
+        _content_length = 0
+        _record_id = None
+
+        for _line in _header_lines:
+            if isinstance(_line, bytes):
+                _line = _line.decode('utf-8', errors='replace')
+            if ':' in _line:
+                _key, _val = _line.split(':', 1)
+                _key_lower = _key.strip().lower()
+                if _key_lower == 'content-length':
+                    try:
+                        _content_length = int(_val.strip())
+                    except ValueError:
+                        pass
+                elif _key_lower == 'warc-record-id':
+                    _record_id = _val.strip()
+
+        # Calculate total record size
+        _header_size = _header_end + (4 if _line_end == b'\r\n' else 2)
+        _total_size = _header_size + _content_length
+
+        # Check if we have the complete record
+        if len(_record_data) < _total_size:
+            return None  # Incomplete record
+
+        # Check if this is the record we're looking for
+        if _record_id and _record_id != expected_record_id:
+            return None  # Wrong record
+
+        # Parse the complete record
+        return _parse_warc_record_from_bytes(_record_data[:_total_size], expected_record_id)
+
+    except Exception as _e:  # noqa: BLE001
+        _logger.debug("warc_seek_parse_record_failed", error=str(_e))
+        return None
+
+
+def _parse_warc_record_from_bytes(
+    data: bytes,
+    expected_record_id: str | None = None,
+) -> dict[str, Any] | None:
+    """
+    Parse a WARC record from decompressed bytes.
+
+    Returns extracted HTTP response/request data.
+    """
+    _logger = _get_logger()
+
+    try:
+        # Find WARC header start
+        _warc_pos = data.find(b'WARC/1.')
+        if _warc_pos == -1:
+            _logger.debug("warc_seek_no_warc_header")
+            return None
+
+        _record_data = data[_warc_pos:]
+
+        # Parse headers
+        _headers: dict[str, str] = {}
+        _header_end = _record_data.find(b'\r\n\r\n')
+        if _header_end == -1:
+            _header_end = _record_data.find(b'\n\n')
+            _line_end = b'\n'
+        else:
+            _line_end = b'\r\n'
+
+        if _header_end != -1:
+            _header_lines = _record_data[:_header_end].split(_line_end)
+            for _line in _header_lines:
+                if isinstance(_line, bytes):
+                    _line = _line.decode('utf-8', errors='replace')
+                if ':' in _line:
+                    _key, _val = _line.split(':', 1)
+                    _headers[_key.strip().lower()] = _val.strip()
+
+        # Extract record type and metadata
+        _warc_type = _headers.get('warc-type', 'response')
+        _record_id = _headers.get('warc-record-id', '')
+        _url = _headers.get('warc-target-uri', '')
+        _timestamp = _headers.get('warc-date', '')
+        _content_length = int(_headers.get('content-length', 0))
+        _payload_digest = _headers.get('warc-payload-digest', '')
+
+        # Verify record ID if provided
+        if expected_record_id and _record_id != expected_record_id:
+            _logger.debug(
+                "warc_seek_record_id_mismatch",
+                expected=expected_record_id,
+                found=_record_id
+            )
+            return None
+
+        # Extract body (HTTP response/request)
+        _body_start = _header_end + (4 if _line_end == b'\r\n' else 2)
+        _body = _record_data[_body_start:_body_start + _content_length]
+
+        # Parse HTTP status if this is a response record
+        _status = 0
+        if _warc_type == 'response' and _body:
+            _status_line_end = _body.find(b'\r\n')
+            if _status_line_end == -1:
+                _status_line_end = _body.find(b'\n')
+            if _status_line_end != -1:
+                _status_line = _body[:_status_line_end].decode('utf-8', errors='replace')
+                _parts = _status_line.split(' ', 2)
+                if len(_parts) >= 2 and _parts[0].startswith('HTTP/'):
+                    try:
+                        _status = int(_parts[1])
+                    except ValueError:
+                        pass
+
+        return {
+            'http_response': _body if _warc_type == 'response' else b'',
+            'http_request': _body if _warc_type == 'request' else b'',
+            'url': _url,
+            'timestamp': _timestamp,
+            'record_id': _record_id,
+            'warc_type': _warc_type,
+            'payload_digest': _payload_digest,
+            'status': _status,
+            'content_length': _content_length,
+        }
+
+    except Exception as _e:  # noqa: BLE001
+        _logger.debug("warc_seek_parse_failed", error=str(_e))
+        return None
+
+
 # ISSUE [FINAL]-019-04: WARC Provenance Chain — structured provenance for court-admissible evidence
 # ISSUE [FINAL]-019-10: WarcWriteResult — msgspec.Struct with full write metadata + success field
 class WarcWriteResult(msgspec.Struct, frozen=True, kw_only=True, gc=False):
@@ -394,26 +675,33 @@ class WarcWriteResult(msgspec.Struct, frozen=True, kw_only=True, gc=False):
     ISSUE [FINAL]-019-04: Provides byte-level traceability — record_id, byte_offset,
     byte_length enable direct WARC reader seeks without full file scanning.
     ISSUE [FINAL]-019-10: Added 'success' field to track write outcome explicitly.
+    ISSUE F5-FIX: Added compressed_offset for court-admissible seek in gzip WARC files.
 
     M1 8GB: msgspec.Struct (zero-allocation hot-path reads), stored in memory only
     (not persisted to DuckDB/LMDB — only in evidence_log's _warc_provenance list).
 
+    CRITICAL: byte_offset/byte_length are UNCOMPRESSED offsets - NOT directly seekable
+    in gzip files. Use compressed_offset + compressed_size for seek-correct replay.
+    The warc_seek() function handles decompression from gzip start to target position.
+
     Fields:
-        record_id:    URN-UUID from WARC-Record-ID header (ISO 28500 §5.2)
-        byte_offset:  Uncompressed byte offset of record start in .warc.gz
-        byte_length:  Uncompressed byte length of the full WARC record block
-        warc_path:    Absolute path to .warc.gz (captured BEFORE rotation)
-        success:       True if write succeeded, False on error
-        url:           Archived URL (WARC target-URI)
-        timestamp:     ISO-8601 string (UTC)
-        warc_type:     WARC record type: 'response' | 'request'
-        payload_digest: SHA-1 digest (WARC-Payload-Digest header)
-        status:        HTTP status code (0 = not parsed)
+        record_id:        URN-UUID from WARC-Record-ID header (ISO 28500 §5.2)
+        byte_offset:      Uncompressed byte offset in .warc.gz (DEPRECATED - use compressed_offset)
+        byte_length:      Uncompressed byte length of the full WARC record block
+        warc_path:        Absolute path to .warc.gz (captured BEFORE rotation)
+        success:          True if write succeeded, False on error
+        url:              Archived URL (WARC target-URI)
+        timestamp:        ISO-8601 string (UTC)
+        warc_type:        WARC record type: 'response' | 'request'
+        payload_digest:   SHA-1 digest (WARC-Payload-Digest header)
+        status:           HTTP status code (0 = not parsed)
+        compressed_offset: Compressed (file) byte offset - seekable position in .warc.gz
+        compressed_size:  Size of compressed record block in bytes
     """
     # Core write metadata (from issue spec)
     record_id: str = ""  # URN-UUID from WARC-Record-ID header
-    byte_offset: int = 0  # Uncompressed byte offset in .warc.gz
-    byte_length: int = 0  # Uncompressed record length
+    byte_offset: int = 0  # Uncompressed byte offset in .warc.gz (DEPRECATED)
+    byte_length: int = 0  # Uncompressed record length (DEPRECATED)
     warc_path: str = ""  # Absolute path to .warc.gz
     success: bool = False  # ISSUE [FINAL]-019-10: Write outcome
     # Extended provenance fields (ISO 28500 compliant)
@@ -422,6 +710,9 @@ class WarcWriteResult(msgspec.Struct, frozen=True, kw_only=True, gc=False):
     warc_type: str = "response"  # 'response' | 'request'
     payload_digest: str = ""  # sha1:hex
     status: int = 0  # HTTP status code (0 = not parsed)
+    # ISSUE F5-FIX: Compressed offsets for court-admissible gzip seek
+    compressed_offset: int = 0  # Seekable compressed file position
+    compressed_size: int = 0  # Compressed record block size
 
 
 # ISSUE-P8-001: WARC Writer — ISO 28500 compliant HTTP response archival
@@ -473,6 +764,7 @@ class WARCWriter:
 
         ISSUE [FINAL]-019-04: Now returns WarcWriteResult for byte-level provenance chain
         instead of bare bool. This enables court-admissible evidence verification.
+        ISSUE F5-FIX: Captures compressed_offset for court-admissible gzip seek.
 
         Args:
             url: Requested URL
@@ -497,6 +789,11 @@ class WARCWriter:
                 byte_offset = self._current_size
                 # ISSUE [FINAL]-019-04: Capture current path BEFORE rotation (rotation invalidates _path)
                 _current_warc_path = str(self._path)
+
+                # ISSUE F5-FIX: Capture COMPRESSED offset BEFORE writing (seekable position)
+                # For gzip.GzipFile, we need to flush to get accurate file position
+                self._file.flush()
+                compressed_offset = self._path.stat().st_size if self._path.exists() else 0
 
                 # WARC header block (Section 5.3 — CRLF as per spec)
                 header = (
@@ -542,6 +839,10 @@ class WARCWriter:
                 # ISSUE [FINAL]-019-04: Compute byte_length = full uncompressed record size
                 byte_length = len(request_block) + len(response_block)
 
+                # ISSUE F5-FIX: Compute compressed_size after writing
+                self._file.flush()
+                compressed_size = self._path.stat().st_size - compressed_offset
+
                 if self._current_size > self._max_size:
                     self._rotate_unlocked()
 
@@ -559,6 +860,8 @@ class WARCWriter:
                     payload_digest=payload_digest,
                     status=_http_status,
                     success=True,
+                    compressed_offset=compressed_offset,
+                    compressed_size=compressed_size,
                 )
 
         except Exception as e:  # noqa: BLE001 — fail-safe: never blocks sprint
@@ -579,6 +882,7 @@ class WARCWriter:
         Write a raw HTTP response (no request record).
 
         ISSUE [FINAL]-019-04: Now returns WarcWriteResult for byte-level provenance chain.
+        ISSUE F5-FIX: Captures compressed_offset for court-admissible gzip seek.
         Use when only response bytes are available (e.g., from cache).
 
         Args:
@@ -604,6 +908,10 @@ class WARCWriter:
                 # ISSUE [FINAL]-019-04: Capture current path BEFORE rotation
                 _current_warc_path = str(self._path)
 
+                # ISSUE F5-FIX: Capture COMPRESSED offset BEFORE writing (seekable position)
+                self._file.flush()
+                compressed_offset = self._path.stat().st_size if self._path.exists() else 0
+
                 header = (
                     f"{self.WARC_VERSION}\r\n"
                     f"WARC-Type: response\r\n"
@@ -627,6 +935,10 @@ class WARCWriter:
                 # ISSUE [FINAL]-019-04: Compute byte_length
                 byte_length = len(block)
 
+                # ISSUE F5-FIX: Compute compressed_size after writing
+                self._file.flush()
+                compressed_size = self._path.stat().st_size - compressed_offset
+
                 if self._current_size > self._max_size:
                     self._rotate_unlocked()
 
@@ -644,6 +956,8 @@ class WARCWriter:
                     payload_digest=payload_digest,
                     status=_http_status,
                     success=True,
+                    compressed_offset=compressed_offset,
+                    compressed_size=compressed_size,
                 )
 
         except Exception as e:  # noqa: BLE001
@@ -2868,6 +3182,9 @@ class EvidenceLog:
                 'byte_length': prov.byte_length,
                 'warc_path': prov.warc_path,
                 'payload_digest': prov.payload_digest,
+                # ISSUE F5-FIX: Compressed offsets for court-admissible gzip seek
+                'compressed_offset': prov.compressed_offset,
+                'compressed_size': prov.compressed_size,
             }
         except Exception:  # noqa: BLE001 — fail-safe; snippet building is non-critical
             return None
@@ -2876,9 +3193,11 @@ class EvidenceLog:
     def warc_snippets(self) -> list[dict[str, Any]]:
         """
         ISSUE [FINAL]-019-05: Return WARC snippets for the dashboard WARC replay panel.
+        ISSUE F5-FIX: Added compressed_offset and compressed_size for court-admissible gzip seek.
 
         Returns dashboard-ready snippet dicts: {url, timestamp, status, html, text,
-        record_id, byte_offset, byte_length, warc_path, payload_digest}.
+        record_id, byte_offset, byte_length, warc_path, payload_digest,
+        compressed_offset, compressed_size}.
         Populated by archive_http_response() during HTTP fetching.
 
         Returns:

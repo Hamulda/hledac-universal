@@ -185,19 +185,21 @@ class DuckDBSettings(msgspec.Struct, frozen=True, gc=False):
     checkpoint_policy: str = "auto"
     arrow_ingest: bool = True  # HLEDAC_ARROW_INGEST (default ON, zero-copy)
 
-    # Memory (M1 8GB: 2GB default, 4GB ceiling)
+    # Memory (M1 8GB SSOT: 2GB default, 5.5GB ceiling from UmaBudget.MISSION_PEAK_RSS_GIB)
     memory_limit_gib: float = 2.0
-    memory_ceiling_gib: float = 4.0
+    memory_ceiling_gib: float = 5.5  # SSOT: MISSION_PEAK_RSS_GIB (was 4.0 - WRONG!)
 
     @classmethod
     def from_env(cls) -> "DuckDBSettings":
+        # SSOT: Import UmaBudget for correct ceiling
+        from hledac.universal.utils.uma_budget import MISSION_PEAK_RSS_GIB
         return cls(
             in_process=ENV.get_bool("HLEDAC_DUCKDB_INPROCESS", True),
             threads=min(ENV.get_int("HLEDAC_DUCKDB_THREADS", 2), 4),  # M1 cap: 4
             checkpoint_policy=ENV.get_str("HLEDAC_DUCKDB_CHECKPOINT", "auto"),
             arrow_ingest=ENV.get_bool("HLEDAC_ARROW_INGEST", True),
-            memory_limit_gib=min(ENV.get_float("HLEDAC_DUCKDB_MEMORY", 2.0), 4.0),
-            memory_ceiling_gib=ENV.get_float("HLEDAC_DUCKDB_MEMORY_CEILING", 4.0),
+            memory_limit_gib=min(ENV.get_float("HLEDAC_DUCKDB_MEMORY", 2.0), MISSION_PEAK_RSS_GIB),
+            memory_ceiling_gib=ENV.get_float("HLEDAC_DUCKDB_MEMORY_CEILING", MISSION_PEAK_RSS_GIB),
         )
 
 

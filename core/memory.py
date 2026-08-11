@@ -158,10 +158,10 @@ def memory_pressure_level() -> int:
     """
     Memory pressure level (0=normal, 1=elevated, 2=critical).
 
-    Thresholds (M1 8GB):
-        0 (normal)     — RSS < 4.0 GiB
-        1 (elevated)  — RSS 4.0–5.5 GiB
-        2 (critical)   — RSS > 5.5 GiB
+    Thresholds (M1 8GB SSOT - UmaBudget):
+        0 (normal)     — RSS < 5.5 GiB (THRESHOLD_SOFT_WARN_GIB)
+        1 (elevated)  — RSS 5.5–5.94 GiB (SOFT→WARN)
+        2 (critical)   — RSS >= 5.94 GiB (THRESHOLD_WARN_GIB)
     """
     if _ensure_rust():
         try:
@@ -225,13 +225,21 @@ def _get_metal_active_python() -> int:
 
 
 def _calc_pressure_level(rss_bytes: int) -> int:
-    """Calculate pressure level from RSS bytes."""
-    SOFT = 4 * 1024**3  # 4 GiB
-    # P0-2 Fix: Was `(11 * 1024 // 2) * 1024**3` = 5.6 TiB (!)
-    # Operator precedence: // binds before *, so 11*1024//2 = 5632, then * 1024**3
-    # Correct: 5.5 GiB = int(5.5 * 1024**3) using SSOT constant
+    """Calculate pressure level from RSS bytes.
+    
+    ISSUE-3 fix: Uses two distinct SSOT thresholds instead of SOFT==HARD bug.
+    - SOFT threshold: THRESHOLD_SOFT_WARN_GIB (5.5 GiB) — first signal of pressure
+    - HARD threshold: THRESHOLD_WARN_GIB (5.94 GiB) — critical, reduce concurrency
+    
+    Pressure levels:
+        0 (normal)     — RSS < 5.5 GiB (SOFT threshold)
+        1 (elevated)  — RSS 5.5–5.94 GiB (SOFT→WARN zone)
+        2 (critical)   — RSS >= 5.94 GiB (HARD threshold)
+    """
     from hledac.universal.utils.uma_budget import UmaBudget
-    HARD = int(UmaBudget.MISSION_PEAK_RSS_GIB * 1024**3)  # 5.5 GiB
+    # ISSUE-3 fix: Use distinct thresholds for SOFT vs HARD
+    SOFT = int(UmaBudget.THRESHOLD_SOFT_WARN_GIB * 1024**3)  # 5.5 GiB (SSOT)
+    HARD = int(UmaBudget.THRESHOLD_WARN_GIB * 1024**3)  # 5.94 GiB (SSOT) — NOT MISSION_PEAK_RSS
     if rss_bytes > HARD:
         return 2
     elif rss_bytes > SOFT:

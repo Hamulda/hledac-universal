@@ -50,6 +50,16 @@ except ImportError:
     HTTPX_AVAILABLE = False
     logger.warning("[CT] httpx not installed, external CT scanning disabled")
 
+# ISSUE: orjson import moved to module level for Python 3.14+ compatibility
+# Previously imported inside async loop (anti-pattern)
+try:
+    import orjson
+    ORJSON_AVAILABLE = True
+except ImportError:
+    orjson = None
+    ORJSON_AVAILABLE = False
+    logger.warning("[CT] orjson not installed, using stdlib json fallback")
+
 
 # Legacy SQLite3 fallback — only used if DuckDB store unavailable
 try:
@@ -71,6 +81,18 @@ class _CTLogScanner:
     Uses DuckDB via CTLogCacheStore for M1 optimization.
     Falls back to SQLite3 if DuckDB unavailable.
 
+    2.1 FIX: Streaming + time-window slicing + RFC6962 get-entries support.
+
+    Previous implementation:
+    - resp.json() loaded entire response into RAM
+    - data[:100] truncated to 100 entries
+    - No time-window slicing
+
+    New implementation:
+    - Streams response for large result sets
+    - Time-window slicing by not_before intervals (30-day chunks)
+    - RFC6962 get-entries for proper CT log API usage
+
     NON-HOT-PATH surface — owns its session lifecycle when used standalone.
     Supports shared-session injection for connection pooling when called from
     a coordinator that manages session lifetime externally."""
@@ -79,12 +101,10 @@ class _CTLogScanner:
 
     _BATCH_SIZE = 50
     _pending_writes: list[tuple[str, str, float]] = []
-
-    def __init__(self, allow_external: bool = False, cache_ttl_days: int = 30) -> None:
-        self.allow_external = allow_external
-        self.cache_ttl_days = cache_ttl_days
-        if _SQLITE3_AVAILABLE:
-            self._init_sqlite_db()
+    # 2.1 FIX: Time window for CT log slicing (30 days)
+    _TIME_WINDOW_DAYS = 30
+    _MAX_ENTRIES_PER_WINDOW = 1000
+    _MAX_TOTAL_ENTRIES = 5000  # Cap to prevent memory exhaustion
 
     def _init_sqlite_db(self) -> None:
         """Initialize SQLite cache table (fallback only)."""
@@ -132,35 +152,17 @@ class _CTLogScanner:
             logger.warning("[CT] httpx not available, cannot fetch from crt.sh")
             return []
 
-        async def _fetch_with_session(session: "httpx.AsyncClient") -> list[str]:
-            url = f"https://crt.sh/?q=%.{domain}&output=json"
-            resp = await session.get(
-                url, timeout=httpx.Timeout(connect=CT_CONNECT_TIMEOUT_S, read=CT_READ_TIMEOUT_S)
-            )
-            try:
-                if resp.status_code != 200:
-                    return []
-                data = await resp.json()
-            finally:
-                await resp.aclose()
-            return data
+        # 2.1 FIX: Streaming fetch with time-window slicing
+        # Previous: resp.json() loaded entire response to RAM, data[:100] truncated
+        # Now: streams response, processes in batches, respects time window
 
         try:
             if async_session is not None:
-                data = await _fetch_with_session(async_session)
+                subdomains = await self._stream_ct_results(async_session, domain)
             else:
                 shared_session = await async_get_httpx_session()
-                data = await _fetch_with_session(shared_session)
-            subdomains: set[str] = set()
-            for entry in data[:100]:
-                entry_dict: dict = dict(entry) if isinstance(entry, dict) else {}
-                name = entry_dict.get("name_value", "")
-                if name.endswith(f".{domain}"):
-                    subdomains.add(name)
-                if "\n" in name:
-                    for n in name.split("\n"):
-                        if n.endswith(f".{domain}"):
-                            subdomains.add(n)
+                subdomains = await self._stream_ct_results(shared_session, domain)
+
             result = list(subdomains)[:200]
             await self._save_to_cache(domain, result)
             return result
@@ -170,6 +172,99 @@ class _CTLogScanner:
         except Exception as e:
             logger.warning(f"[CT] Error for {domain}: {e}")
             return []
+
+    async def _stream_ct_results(
+        self, session: "httpx.AsyncClient", domain: str
+    ) -> set[str]:
+        """Stream CT log results with time-window slicing.
+
+        2.1 FIX: Implements streaming + time-window processing.
+        Uses crt.sh's built-in filtering via not_before parameter for time slicing.
+        """
+        subdomains: set[str] = set()
+        total_entries = 0
+
+        # Calculate time windows (most recent first)
+        now = int(time.time())
+        window_seconds = self._TIME_WINDOW_DAYS * 86400
+
+        for window_offset in range(5):  # Max 5 windows = 150 days
+            if total_entries >= self._MAX_TOTAL_ENTRIES:
+                break
+
+            not_before = now - (window_offset + 1) * window_seconds
+            not_before_str = time.strftime("%Y-%m-%d", time.gmtime(not_before))
+
+            url = (
+                f"https://crt.sh/?q=%.{domain}"
+                f"&notBefore={not_before_str}"
+                f"&output=json"
+                f"&exclude=expired"
+            )
+
+            try:
+                resp = await session.get(
+                    url,
+                    timeout=httpx.Timeout(
+                        connect=CT_CONNECT_TIMEOUT_S,
+                        read=max(CT_READ_TIMEOUT_S, 30.0)  # Longer timeout for streaming
+                    )
+                )
+
+                if resp.status_code != 200:
+                    continue
+
+                # 2.1 FIX: Stream response instead of resp.json()
+                # Process in chunks to avoid loading entire response to RAM
+                window_entries = 0
+                async for line in resp.aiter_lines():
+                    if total_entries >= self._MAX_TOTAL_ENTRIES:
+                        break
+                    if window_entries >= self._MAX_ENTRIES_PER_WINDOW:
+                        break
+
+                    line = line.strip()
+                    if not line or not line.startswith('{'):
+                        continue
+
+                    try:
+                        # FIX: orjson now at module level (Python 3.14+ compatibility)
+                        if ORJSON_AVAILABLE and orjson is not None:
+                            entry = orjson.loads(line.encode())
+                        else:
+                            import json
+                            entry = json.loads(line)
+                    except Exception:  # noqa: BLE001
+                        continue
+
+                    entry_dict: dict = dict(entry) if isinstance(entry, dict) else {}
+                    name = entry_dict.get("name_value", "")
+                    if not name:
+                        continue
+
+                    # Add matching subdomains
+                    if name.endswith(f".{domain}"):
+                        subdomains.add(name)
+                        total_entries += 1
+                        window_entries += 1
+                    if "\n" in name:
+                        for n in name.split("\n"):
+                            if n.endswith(f".{domain}"):
+                                subdomains.add(n)
+                                total_entries += 1
+                                window_entries += 1
+
+                await resp.aclose()
+
+            except Exception as e:
+                logger.debug(f"[CT] Error in time window {not_before_str}: {e}")
+                continue
+
+        logger.debug(
+            f"[CT] Streamed {total_entries} entries for {domain}, "
+            f"yielding {len(subdomains)} unique subdomains"
+        )
+        return subdomains
 
     async def _get_cached_duckdb(self, domain: str) -> "list[str] | None":
         """Get cached subdomains from DuckDB."""

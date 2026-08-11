@@ -315,7 +315,6 @@ class BudgetManager:
         elapsed = (datetime.now(UTC) - self.state.start_time).total_seconds()
         utilization = {'iterations': min(100.0, self.state.iteration / self.config.max_iterations * 100), 'docs': min(100.0, self.state.docs_collected / self.config.max_docs * 100), 'time': min(100.0, elapsed / self.config.max_time_sec * 100), 'tool_calls': min(100.0, self.state.tool_calls / self.config.max_tool_calls * 100)}
         budgets = {'max_iterations': self.config.max_iterations, 'max_docs': self.config.max_docs, 'max_time_sec': self.config.max_time_sec, 'max_tool_calls': self.config.max_tool_calls, 'min_confidence': self.config.min_confidence, 'stagnation_threshold': self.config.stagnation_threshold}
-        any((u >= 80 for u in utilization.values()))
         return BudgetStatus(should_stop=self._stop_triggered, stop_reason=self._stop_reason, reason_message=self._stop_message, iteration=self.state.iteration, docs_collected=self.state.docs_collected, tool_calls=self.state.tool_calls, elapsed_time_sec=elapsed, stagnation_counter=self.state.stagnation_counter, current_confidence=self.state.current_confidence, budgets=budgets, utilization=utilization)
 
     def get_summary(self) -> dict[str, Any]:

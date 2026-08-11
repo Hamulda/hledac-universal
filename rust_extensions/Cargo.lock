@@ -943,7 +943,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ce2548391e9c1929c21bf6aa2680af86fe4c1b33e6cea9ac1cfeec0bd11218cf"
 dependencies = [
  "compression-core",
- "flate2",
+ "flate2 1.1.9",
 ]
 
 [[package]]
@@ -1809,6 +1809,16 @@ dependencies = [
 
 [[package]]
 name = "flate2"
+version = "0.2.20"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e6234dd4468ae5d1e2dbb06fe2b058696fdc50a339c68a393aefbf00bc81e423"
+dependencies = [
+ "libc",
+ "miniz-sys",
+]
+
+[[package]]
+name = "flate2"
 version = "1.1.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "843fba2746e448b37e26a819579957415c8cef339bf08564fe8b7ddbd959573c"
@@ -2402,6 +2412,7 @@ dependencies = [
  "dirs",
  "docx-rs",
  "duckdb",
+ "flate2 0.2.20",
  "h3",
  "h3-quinn",
  "hex",
@@ -2950,7 +2961,7 @@ version = "1.10505.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6cb514dab5e271e849235c1cb98bd65a2ae107fbd619a6740219319c54a71d95"
 dependencies = [
- "flate2",
+ "flate2 1.1.9",
  "pkg-config",
  "serde",
  "serde_json",
@@ -3055,7 +3066,7 @@ checksum = "c5c8ecfc6c72051981c0459f75ccc585e7ff67c70829560cda8e647882a9abff"
 dependencies = [
  "chrono",
  "encoding_rs",
- "flate2",
+ "flate2 1.1.9",
  "indexmap 2.14.0",
  "itoa",
  "log",
@@ -3197,6 +3208,16 @@ name = "minimal-lexical"
 version = "0.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "68354c5c6bd36d73ff3feceb05efa59b6acb7626617f4962be322a825e61f79a"
+
+[[package]]
+name = "miniz-sys"
+version = "0.1.12"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1e9e3ae51cea1576ceba0dde3d484d30e6e5b86dee0b2d412fe3a16a15c98202"
+dependencies = [
+ "cc",
+ "libc",
+]
 
 [[package]]
 name = "miniz_oxide"
@@ -3850,7 +3871,7 @@ dependencies = [
  "bitflags 2.13.1",
  "crc32fast",
  "fdeflate",
- "flate2",
+ "flate2 1.1.9",
  "miniz_oxide",
 ]
 
@@ -5497,7 +5518,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b63feaf3343d35b6ca4d50483f94843803b0f51634937cc2ec519fc32232bc52"
 dependencies = [
  "fax",
- "flate2",
+ "flate2 1.1.9",
  "half",
  "quick-error",
  "weezl",
@@ -7297,7 +7318,7 @@ dependencies = [
  "crc32fast",
  "crossbeam-utils",
  "displaydoc",
- "flate2",
+ "flate2 1.1.9",
  "indexmap 2.14.0",
  "memchr",
  "thiserror 2.0.19",
@@ -7312,7 +7333,7 @@ checksum = "eb2a05c7c36fde6c09b08576c9f7fb4cda705990f73b58fe011abf7dfb24168b"
 dependencies = [
  "arbitrary",
  "crc32fast",
- "flate2",
+ "flate2 1.1.9",
  "indexmap 2.14.0",
  "memchr",
  "zopfli",
@@ -7325,7 +7346,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2d04a6b5381502aa6087c94c669499eb1602eb9c5e8198e534de571f7154809b"
 dependencies = [
  "crc32fast",
- "flate2",
+ "flate2 1.1.9",
  "indexmap 2.14.0",
  "memchr",
  "typed-path",

@@ -55,7 +55,6 @@ logger = logging.getLogger(__name__)
 
 CERTSTREAM_URL = 'wss://certstream.calidog.io/'
 MAX_CERTS_PER_SECOND = 1000
-MAX_QUEUE_SIZE = 5000
 RECONNECT_BASE_DELAY = 1.0
 RECONNECT_MAX_DELAY = 60.0
 PING_INTERVAL = 20.0
@@ -141,11 +140,11 @@ class CertstreamWebSocketClient:
         '_websocket',
         '_websockets_module',
         '_aho_matcher',
+        '_fallback_automaton',
         '_stats',
         '_running',
         '_stop_event',
         '_monitor_task',
-        '_rate_limiter',
         '_last_cert_time',
         '_certs_in_window',
         '_reconnect_delay',
@@ -174,7 +173,7 @@ class CertstreamWebSocketClient:
         self._running = False
         self._stop_event = asyncio.Event()
         self._monitor_task: asyncio.Task | None = None
-        self._rate_limiter = asyncio.Semaphore(MAX_CERTS_PER_SECOND)
+        self._fallback_automaton: Any = None
         self._last_cert_time = 0.0
         self._certs_in_window = 0
         self._reconnect_delay = RECONNECT_BASE_DELAY
@@ -380,6 +379,7 @@ class CertstreamWebSocketClient:
         except ImportError:
             logger.warning('[Certstream] Aho-Corasick unavailable, using substring matching')
             self._aho_matcher = None
+            self._fallback_automaton = None  # built lazily in fallback path
 
     def _certificate_matches_watchlist(self, cert: CertstreamCertificate) -> bool:
         """Check if certificate matches any watched domain.
@@ -425,11 +425,30 @@ class CertstreamWebSocketClient:
                 except Exception:  # noqa: BLE001
                     pass
 
-        # Fallback: substring matching
+        # Fallback: word-boundary matching via Python ahocorasick (built once, cached).
+        # FIX-2.3: Replaces naive `in` substring matching that caused FP
+        # (e.g. "example.com" matching "notexample.com" in CN).
+        # Uses pyahocorasick Automaton built from _watch_domains when Rust AC is unavailable.
+        # Automaton is built once and cached in _fallback_automaton.
         if self._aho_matcher is None:
-            for domain in self._watch_domains:
-                if domain in cn_lower or any(domain in san.lower() for san in cert.san_names):
+            if not self._watch_domains:
+                return False
+            if self._fallback_automaton is None:
+                try:
+                    import ahocorasick
+                    ac = ahocorasick.Automaton()
+                    for domain in self._watch_domains:
+                        ac.add_word(domain.lower(), domain)
+                    ac.make_automaton()
+                    self._fallback_automaton = ac
+                except Exception:  # noqa: BLE001
+                    self._fallback_automaton = False  # sentinel: not available
+            if self._fallback_automaton:
+                for _ in self._fallback_automaton.iter(cn_lower):
                     return True
+                for san in cert.san_names:
+                    for _ in self._fallback_automaton.iter(san.lower()):
+                        return True
 
         return False
 

@@ -122,8 +122,10 @@ class SprintLifecycleRunner:
         Handles the WARMUP→ACTIVE transition that follows initial setup.
         """
         phase = self._adapter.tick(now_monotonic)
-        phase_str = str(phase)
-        if phase_str == "SprintPhase.WARMUP" or phase_str.endswith(".WARMUP"):
+        phase_str = self.current_phase  # Use string current_phase (not raw enum str repr)
+        # F320: Use proper enum comparison instead of fragile string matching.
+        # phase is the SprintPhase enum; WARMUP is a SprintPhase enum member.
+        if hasattr(phase, "name") and phase.name == "WARMUP":
             try:
                 self._adapter.mark_warmup_done()
             except Exception:  # noqa: BLE001
@@ -260,6 +262,21 @@ class SprintLifecycleRunner:
         """Signal abort on the lifecycle."""
         self._adapter.request_abort(reason)
 
+    # ── Windup request ──────────────────────────────────────────────────────
+
+    def request_windup(self) -> None:
+        """Request the lifecycle to enter WINDUP phase.
+        
+        Delegates to the underlying lifecycle manager.
+        Used by acquisition.py to force windup before the time-based threshold.
+        """
+        lc = self._lc
+        if hasattr(lc, "request_windup"):
+            lc.request_windup()
+        elif hasattr(lc, "transition_to"):
+            from hledac.universal.runtime.sprint_lifecycle import SprintPhase
+            lc.transition_to(SprintPhase.WINDUP)
+
     # ── Abort check ─────────────────────────────────────────────────────────
 
     @property
@@ -379,8 +396,16 @@ class SprintLifecycleRunner:
 
     @property
     def current_phase(self) -> str:
-        """Current phase as string for scheduler callbacks."""
-        return self._adapter._current_phase
+        """Current phase as string for scheduler callbacks.
+        
+        Returns the phase name as a plain string (e.g., "ACTIVE", "WINDUP")
+        not the enum representation. This is critical for acquisition.py
+        comparisons like `_runner.current_phase == "ACTIVE"`.
+        """
+        v = self._adapter._current_phase
+        if hasattr(v, "name"):
+            return v.name
+        return str(v) if v is not None else "BOOT"
 
     # ── Wall clock ───────────────────────────────────────────────────────────
 

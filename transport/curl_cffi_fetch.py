@@ -1460,6 +1460,7 @@ def _process_curl_response(
 
 
 # F350M-R: Extracted WARC archival helper for fetch_via_curl_cffi
+# ISSUE F5-FIX: Now persists full byte-seek tuple for court-admissible evidence replay
 def _archive_warc_response(
     result: dict[str, Any],
     url: str,
@@ -1467,7 +1468,14 @@ def _archive_warc_response(
 ) -> dict[str, Any]:
     """Archive response to WARC if enabled (fail-safe).
 
-    Modifies result dict in-place to add warc_record_id and warc_archived.
+    Modifies result dict in-place to add:
+    - warc_record_id: URN-UUID from WARC-Record-ID header
+    - warc_path: Absolute path to .warc.gz file
+    - compressed_offset: Compressed (seekable) byte offset
+    - compressed_size: Compressed record block size
+    - warc_url: Archived URL from WARC-Target-URI
+    - warc_archived: Boolean flag indicating success
+
     Returns the modified result dict.
     """
     _warc_archived = False
@@ -1484,7 +1492,12 @@ def _archive_warc_response(
             )
             if _warc_prov is not None:
                 _warc_archived = True
+                # ISSUE F5-FIX: Persist full byte-seek tuple for court-admissible replay
                 result['warc_record_id'] = _warc_prov.record_id
+                result['warc_path'] = _warc_prov.warc_path
+                result['compressed_offset'] = _warc_prov.compressed_offset
+                result['compressed_size'] = _warc_prov.compressed_size
+                result['warc_url'] = _warc_prov.url
         except Exception:  # noqa: BLE001 — fail-safe; WARC archival never blocks fetching
             pass
     result['warc_archived'] = _warc_archived
