@@ -60,10 +60,12 @@ class _DuckDBQueryCache:
 
             lmdb_path.parent.mkdir(parents=True, exist_ok=True)
             # SEC-02: open_lmdb_with_guard provides umask + mode=0o600 + chmod hardening
+            # POTENTIAL-3 Fix: Use critical=False for consistent fast crash-inconsistent pattern
+            # query cache is recoverable — fast writes acceptable
             env = open_lmdb_with_guard(
                 str(lmdb_path),
                 map_size=16 * 1024 * 1024,
-                writemap=False,
+                critical=False,  # recoverable data — fast writes acceptable
                 readahead=False,
                 meminit=False,
             )

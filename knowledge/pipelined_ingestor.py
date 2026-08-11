@@ -186,7 +186,10 @@ class PipelinedIngestor:
             items = [(f'finding:{f.finding_id}', self._fingerprint_payload(f)) for f in findings]
             if not items:
                 return True
-            lmdb_ok = wal.wal_put_many(items) if hasattr(wal, 'wal_put_many') else False
+            # P0-3 Fix: wal_put_many returns list[bool]; check with all() not truthiness
+            # bool([False, False]) = True (truthy list!) but all([False, False]) = False
+            wal_results = wal.wal_put_many(items) if hasattr(wal, 'wal_put_many') else False
+            lmdb_ok = all(wal_results) if isinstance(wal_results, list) else bool(wal_results)
             if not lmdb_ok:
                 logger.warning('[PIPELINE WAL] batch WAL failed for %d items', len(items))
             return lmdb_ok

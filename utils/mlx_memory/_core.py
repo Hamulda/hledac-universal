@@ -24,11 +24,8 @@ Model caching: Používej brain._hermes_cache.hermes_cache() — jediný canonic
 """
 
 import asyncio
-import functools
 import gc
-import importlib.util
 import logging
-import sys
 import threading
 import time as _time
 from collections.abc import Callable
@@ -139,7 +136,7 @@ try:
     )
     _MLX_BUDGET_GIB: float = UmaBudget.UMA_HARD_CEILING_GIB  # 6.25 GiB (SSOT)
     # MLX-specific thresholds derived from SSOT
-    MLX_WARNING_GIB: float = round(_MLX_BUDGET_GIB * MISSION_PEAK_RSS_RATIO, 2)  # 5.5 GiB
+    MLX_WARNING_GIB: float = round(_MLX_BUDGET_GIB * UmaBudget.MISSION_PEAK_RSS_RATIO, 2)  # 5.5 GiB
     MLX_CRITICAL_GIB: float = round(_MLX_BUDGET_GIB * UmaBudget.CRITICAL_RATIO, 2)  # 6.191 GiB
     MAX_MEMORY_MB: int = int(_MLX_BUDGET_GIB * 1024)  # 6_400 MB
 except ImportError:
@@ -581,19 +578,22 @@ def metal_reclaim() -> None:
     """
     if not MLX_AVAILABLE:
         return
+    mx = get_mx()
+    if mx is None:
+        return
     try:
         gc.collect()
         try:
-            get_mx().eval([])
+            mx.eval([])
         except Exception as _e:
             logger.warning(f"[CRITICAL] mx.eval([]) barrier failed: {_e}")
-        mx = get_mx()
-        if mx is None:
-            return
+        # OPTIMIZE-1: get_mx() called once, stored in mx variable
         if hasattr(mx, "clear_cache"):
             mx.clear_cache()
         elif hasattr(mx, "metal") and hasattr(mx.metal, "clear_cache"):
             mx.metal.clear_cache()
+        else:
+            logger.debug("metal_reclaim: no clear_cache available")
         # MEM-2: dynamic cache ceiling after reclaim
         new_limit = get_dynamic_metal_cache_limit()
         safe_set_cache_limit(new_limit)
@@ -615,19 +615,22 @@ def mlx_cleanup_sync() -> None:
     """
     if not MLX_AVAILABLE:
         return
+    mx = get_mx()
+    if mx is None:
+        return
     try:
         gc.collect()
         try:
-            get_mx().eval([])
+            mx.eval([])
         except Exception as _e:
             logger.warning(f"[CRITICAL] mx.eval([]) barrier failed: {_e}")
-        mx = get_mx()
-        if mx is None:
-            return
+        # OPTIMIZE-1: get_mx() called once, stored in mx variable
         if hasattr(mx, "clear_cache"):
             mx.clear_cache()
         elif hasattr(mx, "metal") and hasattr(mx.metal, "clear_cache"):
             mx.metal.clear_cache()
+        else:
+            logger.debug("mlx_cleanup_sync: no clear_cache available")
         gc.collect()
         _release_slab_pool()
     except Exception as e:
@@ -887,17 +890,10 @@ _MIN_EVAL_INTERVAL: float = 0.05  # 50ms throttle
 _last_eval_time: float = 0.0
 
 
-def _get_mlx_safe():
-    """Safe lazy accessor for mlx.core (fallback None)."""
-    if not MLX_AVAILABLE:
-        return None
-    return sys.modules.get("mlx.core")
-
-
 async def _maybe_eval_async() -> None:
     """Throttled mx.eval([]) to prevent excessive GPU sync."""
     global _last_eval_time
-    mx = _get_mlx_safe()
+    mx = get_mx()
     if mx is None:
         return
     now = _time.monotonic()
@@ -912,7 +908,7 @@ async def _maybe_eval_async() -> None:
 def _maybe_eval_sync() -> None:
     """Synchronous throttled mx.eval([])."""
     global _last_eval_time
-    mx = _get_mlx_safe()
+    mx = get_mx()
     if mx is None:
         return
     now = _time.monotonic()
@@ -928,7 +924,7 @@ async def _clear_metal_cache_async() -> None:
     """Async wrapper around safe_clear_metal_cache()."""
     if not MLX_AVAILABLE:
         return
-    mx = _get_mlx_safe()
+    mx = get_mx()
     if mx is None:
         return
     try:
@@ -1048,7 +1044,7 @@ def mlx_cleanup_after(func: Fn) -> Fn:
 
 def get_mlx_memory_stats() -> dict[str, Any]:
     """Získat aktuální MLX memory statistiky."""
-    mx = _get_mlx_safe()
+    mx = get_mx()
     if mx is None:
         return {"available": False, "active_mb": None, "peak_mb": None, "cache_mb": None}
 
@@ -1081,7 +1077,7 @@ def get_mlx_memory_stats() -> dict[str, Any]:
 
 def reset_metal_peak() -> None:
     """Reset MLX peak memory counter."""
-    mx = _get_mlx_safe()
+    mx = get_mx()
     if mx is None:
         return
     try:

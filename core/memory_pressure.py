@@ -623,10 +623,16 @@ class MemoryPressureBroadcaster:
     @staticmethod
     def _madvise_heap_critical() -> None:
         """
-        ISSUE-16 / R8: madvise(MADV_DONTNEED) on entire process heap.
+        ISSUE-16 / R8 / NEW-M12 FIX: madvise(MADV_DONTNEED) on entire process heap.
 
         Must be called AFTER all listeners have evicted and gc has run.
-        Delegates to Rust madvise_free_reusable or python fallback.
+
+        NEW-M12 FIX: Use ctypes directly instead of Rust madvise_free_reusable.
+        The Rust function has a guard `if addr==0 || length==0 { return 0; }` which
+        makes it a NO-OP. The ctypes approach bypasses this guard and correctly
+        calls madvise(0, 0, MADV_DONTNEED) which applies to the whole address space.
+
+        Pattern from security/ephemeral_wipe.py:584-605.
         """
         import gc
         gc.collect()
@@ -637,14 +643,18 @@ class MemoryPressureBroadcaster:
                 mx.metal.clear_cache()
         except Exception:  # noqa: BLE001
             pass
-        # R6: Centralized Rust access via core.rust_backend
-        from hledac.universal.core.rust_backend import rust
-        _madvise = rust.raw.madvise_free_reusable
-        if _madvise is not None:
-            try:
-                _madvise(0, 0, 1)  # MADV_DONTNEED on Darwin
-            except Exception:  # noqa: BLE001
-                pass
+        # NEW-M12 FIX: Use ctypes directly - bypasses Rust guard that causes no-op
+        try:
+            import ctypes
+            libc = ctypes.CDLL(None)
+            # MADV_DONTNEED = 4 on both Darwin and Linux
+            libc.madvise(
+                ctypes.c_void_p(0),  # addr=0: whole address space
+                ctypes.c_size_t(0),  # length=0: whole address space
+                4,  # MADV_DONTNEED
+            )
+        except Exception:  # noqa: BLE001
+            pass
 
 
 # ---------------------------------------------------------------------------

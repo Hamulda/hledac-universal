@@ -24,6 +24,9 @@ from dataclasses import dataclass, field
 import msgspec
 from typing import ClassVar
 
+# MODERN-41 Fix: Import SWAP_TIERS SSOT for swap thresholds
+from hledac.universal.utils.uma_budget import SWAP_TIERS
+
 
 # ─────────────────────────────────────────────────────────────────────────────
 # M1AirConfig — frozen hardware profile for MacBook Air M1 8GB UMA
@@ -135,8 +138,9 @@ class M1AirConfig(msgspec.Struct, frozen=True, gc=False):
     threshold_warn_gib: ClassVar[float] = UmaBudget.THRESHOLD_WARN_GIB  # 5.938 GiB (95%)
     threshold_critical_gib: ClassVar[float] = UmaBudget.THRESHOLD_CRITICAL_GIB  # 6.191 GiB (99%)
     threshold_emergency_gib: ClassVar[float] = UmaBudget.THRESHOLD_EMERGENCY_GIB  # 6.25 GiB (100%)
-    clean_swap_max_gib: ClassVar[float] = 3.0
-    diagnostic_swap_max_gib: ClassVar[float] = 5.0
+    # MODERN-41 Fix: Derive from SWAP_TIERS SSOT (was 3.0/5.0)
+    clean_swap_max_gib: ClassVar[float] = SWAP_TIERS.CLEAN  # 3.3 GiB
+    diagnostic_swap_max_gib: ClassVar[float] = SWAP_TIERS.DIAGNOSTIC  # 4.675 GiB
 
     # ── Brain/LLM bounds ────────────────────────────────────────────────────
 

@@ -639,8 +639,11 @@ class DuckDBWriteCoordinator:
             # DuckDBWALManager.wal_put_many has wrong type hint (bytes vs dict).
             # In practice it accepts dict and delegates to WALManager.wal_put_many(dict).
             # The hasattr guard + duckdb type ignore handles the mismatch.
+            # P0-3 Fix: wal_put_many returns list[bool]; check with all() not bool()
+            # bool([False, False]) = True (truthy list!) but all([False, False]) = False
             if hasattr(self._wal_manager, "wal_put_many"):
-                return bool(self._wal_manager.wal_put_many(items))  # type: ignore[arg-type]
+                results = self._wal_manager.wal_put_many(items)  # type: ignore[arg-type]
+                return all(results) if isinstance(results, list) else bool(results)
             return False
         except Exception as e:
             logger.error(f"[WriteCoordinator] WAL putmany sync error: {e}")

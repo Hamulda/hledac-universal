@@ -46,11 +46,14 @@ def _open_lmdb_env() -> Any | None:
         from hledac.universal.knowledge.lmdb_boot_guard import open_lmdb_with_guard
 
         lmdb_path = str(LMDB_ROOT / "clearance.lmdb")
+        # POTENTIAL-1 Fix: critical=True for auth cookies (session data)
+        # According to lmdb_boot_guard.py docs: "cookies, auth tokens MUST use critical=True
+        # to avoid losing authentication state on crash (up to 5s of re-auth on every crash)."
         env = open_lmdb_with_guard(
             lmdb_path,
             map_size=2 * 1024 * 1024,  # 2 MB — 500 entries max
             readahead=False,
-            critical=False,
+            critical=True,  # POTENTIAL-1 Fix: auth cookies need durability
         )
         return env
     except Exception:  # noqa: BLE001 — fail-soft

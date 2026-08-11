@@ -947,9 +947,11 @@ class FeatureFlags:
     Singleton pattern: use class methods only, no instance needed.
     """
 
-    # RAM budget thresholds (M1 8GB)
-    RAM_WARN_MB: ClassVar[int] = 5500
-    RAM_FATAL_MB: ClassVar[int] = 7000
+    # MODERN-M4+ NEW-ISSUE Fix: Import from SSOT UmaBudget instead of hardcoding
+    # NOTE: RAM_FATAL_MB was 7000 (7.0 GiB) which EXCEEDED SSOT ceiling (6.25 GiB)!
+    from hledac.universal.utils.uma_budget import FLAG_RAM_WARN_MB, FLAG_RAM_FATAL_MB
+    RAM_WARN_MB: ClassVar[int] = FLAG_RAM_WARN_MB  # 5632 MB (was 5500)
+    RAM_FATAL_MB: ClassVar[int] = FLAG_RAM_FATAL_MB  # 6400 MB (was 7000 — EXCEEDED CEILING!)
 
     # Cached metadata
     _metadata: ClassVar[dict | None] = None

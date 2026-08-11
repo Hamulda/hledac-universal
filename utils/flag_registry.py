@@ -216,8 +216,14 @@ def is_enabled(name: str, default: str='0') -> bool:
         return raw.strip().lower() in _TRUTHY
     except (AttributeError, TypeError):
         return False
-_RAM_WARN_MB: int = 5500
-_RAM_FATAL_MB: int = 7000
+
+# MODERN-M4+ NEW-ISSUE Fix: Import from SSOT UmaBudget instead of hardcoding
+# NOTE: _RAM_FATAL_MB was 7000 (7.0 GiB) which EXCEEDED SSOT ceiling (6.25 GiB)!
+from hledac.universal.utils.uma_budget import FLAG_RAM_WARN_MB, FLAG_RAM_FATAL_MB
+
+# Aliases for backward compatibility
+_RAM_WARN_MB: int = FLAG_RAM_WARN_MB  # 5632 MB (was 5500)
+_RAM_FATAL_MB: int = FLAG_RAM_FATAL_MB  # 6400 MB (was 7000 — EXCEEDED CEILING!)
 
 def validate_flag_combo() -> tuple[list[str], list[str]]:
     """Fail-fast combo validation for the current process env.

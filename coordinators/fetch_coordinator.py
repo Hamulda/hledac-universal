@@ -459,6 +459,9 @@ class _PrefetchResult:
     host_sem: asyncio.Semaphore | None = None
     privacy_lane: str = 'clearnet'
     quinn_viable: bool = False
+    # P1-6 FIX: Track whether AIMD semaphore was acquired to avoid
+    # spurious release (early skip) or double-release (DNS blocked).
+    aimd_acquired: bool = False
 
 
 @dataclasses.dataclass(slots=True, frozen=True)
@@ -478,6 +481,10 @@ class _DnsCircuitResult:
     route_decision: Any = None
     proxy: str | None = None
     quinn_viable: bool = False
+    # P1-6 CRITICAL FIX: Track whether AIMD was acquired in preflight phase.
+    # When DNS blocks, _execute_dns_circuit_phase releases the semaphore.
+    # _cleanup_fetch_resources uses this to skip its own release, preventing double-release.
+    aimd_acquired: bool = False
 
 
 class FetchCoordinatorConfig(Struct, frozen=True):
@@ -2338,7 +2345,7 @@ class FetchCoordinator(UniversalCoordinator):
         1. Preflight: offline check, rate limiting, privacy, AIMD, governor
         2. DNS/Circuit: DNS validation + circuit breaker + transport setup
         3. Retry loop: transport dispatch with retry logic
-        4. Cleanup: release resources
+        4. Cleanup: release resources (ALWAYS via finally block)
         5. Post-process: paywall bypass, content-type, CAPTCHA
 
         Returns:
@@ -2347,47 +2354,52 @@ class FetchCoordinator(UniversalCoordinator):
         from urllib.parse import urlparse
         from ..project_types import OfflineModeError, is_offline_mode
 
-        # Phase 0: Offline check (early exit)
-        if is_offline_mode():
-            raise OfflineModeError(f'Offline mode enabled, skipping fetch: {url}')
-
         # Phase 1: Preflight - rate limiting, privacy, AIMD, governor checks
         _pf = await self._execute_preflight_phase(url)
-        if _pf.skip_fetch:
-            return None
 
-        # Phase 2: DNS/Circuit + transport pre-acquisition
-        _parsed = urlparse(url)
-        _dc = await self._execute_dns_circuit_phase(url, _parsed, _pf.host_name, _pf.quinn_viable)
+        try:
+            # Phase 0: Offline check (early exit)
+            if is_offline_mode():
+                raise OfflineModeError(f'Offline mode enabled, skipping fetch: {url}')
 
-        # Handle DNS blocked case
-        if _dc.skip_fetch:
-            return _dc.skip_result
+            # Handle skip case from preflight
+            if _pf.skip_fetch:
+                return None
 
-        # Phase 3: Main retry loop
-        trace_fetch_start(url, 'pending', {'attempt': attempt, 'aimd_window': self._aimd_concurrency})
-        result = await self._fetch_with_retry_loop(
-            url=url,
-            attempt=attempt,
-            max_retries=getattr(self, '_max_retries', 3),
-            base_delay=getattr(self, '_base_retry_delay', 1.0),
-            url_transport=_dc.url_transport,
-            route_decision=_dc.route_decision,
-            canonical_allowed=_dc.canonical_allowed,
-            canonical_reason=_dc.canonical_reason,
-            _host_name=_pf.host_name,
-            _resolve=_dc.resolve,
-            _quinn_viable=_dc.quinn_viable,
-            _pre_acquired_tor_session=_dc.pre_acquired_tor_session,
-            _pre_acquired_i2p_session=_dc.pre_acquired_i2p_session,
-            proxy=_dc.proxy,
-        )
+            # Phase 2: DNS/Circuit + transport pre-acquisition
+            _parsed = urlparse(url)
+            _dc = await self._execute_dns_circuit_phase(url, _parsed, _pf.host_name, _pf.quinn_viable, _pf.aimd_acquired)  # P1-6 CRITICAL FIX: propagate AIMD acquisition state
 
-        # Phase 4: Cleanup - release semaphores
-        self._cleanup_fetch_resources(_pf)
+            # Handle DNS blocked case
+            if _dc.skip_fetch:
+                return _dc.skip_result
 
-        # Phase 5: Post-processing
-        return self._fetch_url_postprocess(result, url, _pf.host_name)
+            # Phase 3: Main retry loop
+            trace_fetch_start(url, 'pending', {'attempt': attempt, 'aimd_window': self._aimd_concurrency})
+            result = await self._fetch_with_retry_loop(
+                url=url,
+                attempt=attempt,
+                max_retries=getattr(self, '_max_retries', 3),
+                base_delay=getattr(self, '_base_retry_delay', 1.0),
+                url_transport=_dc.url_transport,
+                route_decision=_dc.route_decision,
+                canonical_allowed=_dc.canonical_allowed,
+                canonical_reason=_dc.canonical_reason,
+                _host_name=_pf.host_name,
+                _resolve=_dc.resolve,
+                _quinn_viable=_dc.quinn_viable,
+                _pre_acquired_tor_session=_dc.pre_acquired_tor_session,
+                _pre_acquired_i2p_session=_dc.pre_acquired_i2p_session,
+                proxy=_dc.proxy,
+            )
+
+            # Phase 5: Post-processing
+            return self._fetch_url_postprocess(result, url, _pf.host_name)
+        finally:
+            # P1-7 FIX: Centralized cleanup via finally block ensures resources are ALWAYS released
+            # even on early returns, exceptions, or cancellation.
+            # Resources cleaned: _aimd_semaphore, privacy_lane, host_sem
+            self._cleanup_fetch_resources(_pf)
 
     async def _execute_preflight_phase(self, url: str) -> _PrefetchResult:
         """
@@ -2430,9 +2442,11 @@ class FetchCoordinator(UniversalCoordinator):
             self._telemetry['io_only_skipped' if 'io_only' in _skip_reason else 'entity_confirmation_skipped'] += 1
             return _PrefetchResult(skip_fetch=True, skip_reason=_skip_reason, host_name=_host_name)
 
-        # AIMD acquisition
+        # AIMD acquisition (only if not skipping)
+        _aimd_acquired = False
         if _privacy_acquired:
             await self._aimd_acquire()
+            _aimd_acquired = True
 
         # QUINN viability check (F350M-R)
         _quinn_viable = self._check_quinn_viability(url)
@@ -2443,6 +2457,7 @@ class FetchCoordinator(UniversalCoordinator):
             host_sem=_host_sem,
             privacy_lane=_privacy_lane,
             quinn_viable=_quinn_viable,
+            aimd_acquired=_aimd_acquired,
         )
 
     async def _check_governor_early_exit(self, url: str) -> str | None:
@@ -2479,6 +2494,7 @@ class FetchCoordinator(UniversalCoordinator):
         parsed: Any,  # urllib.parse.ParseResult
         host_name: str,
         quinn_viable: bool = False,
+        aimd_acquired: bool = False,  # P1-6 CRITICAL FIX: track if AIMD was acquired in preflight
     ) -> _DnsCircuitResult:
         """
         F360-R: Phase 2 - DNS + circuit breaker validation + transport setup.
@@ -2496,7 +2512,11 @@ class FetchCoordinator(UniversalCoordinator):
         if not dns_safe:
             logger.warning("DNS rebinding defense blocked: %s for %s", dns_meta.get('blocked_reason'), host_name)
             trace_fetch_end(url, 'dns_rebind_defense', 'blocked', 0.0, {'reason': dns_meta.get('blocked_reason')})
-            self._aimd_semaphore.release()
+            # P1-6 CRITICAL FIX: Only release AIMD semaphore if it was acquired in preflight.
+            # _cleanup_fetch_resources will skip its own release when aimd_acquired=True,
+            # so this is the ONLY release point for DNS-blocked paths.
+            if aimd_acquired:
+                self._aimd_semaphore.release()
             return _DnsCircuitResult(
                 skip_fetch=True,
                 skip_result={'error': 'blocked', 'blocked_reason': dns_meta.get('blocked_reason'), 'meta': dns_meta},
@@ -2557,6 +2577,7 @@ class FetchCoordinator(UniversalCoordinator):
             route_decision=route_decision,
             proxy=_proxy,
             quinn_viable=quinn_viable,
+            aimd_acquired=aimd_acquired,  # P1-6 CRITICAL FIX: pass through to cleanup
         )
 
     def _compute_resolve_binding(
@@ -2615,7 +2636,11 @@ class FetchCoordinator(UniversalCoordinator):
     def _cleanup_fetch_resources(self, preflight: _PrefetchResult) -> None:
         """F360-R: Release all semaphores and resources after fetch."""
         try:
-            self._aimd_semaphore.release()
+            # P1-6 FIX: Only release AIMD if it was actually acquired.
+            # This prevents spurious release (early skip) and double-release
+            # (when DNS phase already released after blocking).
+            if preflight.aimd_acquired:
+                self._aimd_semaphore.release()
             if preflight.privacy_lane != 'clearnet':
                 self._privacy_release(preflight.privacy_lane)
             if preflight.host_sem is not None:
@@ -3111,48 +3136,54 @@ class FetchCoordinator(UniversalCoordinator):
     async def _cover_tor(self, url: str) -> None:
         """Cover traffic via Tor transport."""
         try:
-            from ..transport.base import TransportConfig
-            from ..transport.tor_transport import get_tor_transport
-            tor = get_tor_transport()
-            if tor and await tor.is_running():
-                config = TransportConfig(url=url, method='GET', headers=None, body=None, timeout=10.0)
-                await tor.fetch(config)
-        except* asyncio.CancelledError:
-            # P0-3 FIX: Re-raise CancelledError to honour cancellation propagation.
+            try:
+                from ..transport.base import TransportConfig
+                from ..transport.tor_transport import get_tor_transport
+                tor = get_tor_transport()
+                if tor and await tor.is_running():
+                    config = TransportConfig(url=url, method='GET', headers=None, body=None, timeout=10.0)
+                    await tor.fetch(config)
+            except* Exception:
+                # Best-effort; Tor transport fetch failure; fire-and-forget cover traffic
+                pass
+        except asyncio.CancelledError:
+            # P1-8 FIX: Use plain 'except' to catch CancelledError nested in ExceptionGroup
+            # (e.g., from TaskGroup cancellation). except* cannot catch nested exceptions.
             raise
-        except* Exception:
-            # Best-effort; Tor transport fetch failure; fire-and-forget cover traffic
-            pass
 
     async def _cover_i2p(self, url: str) -> None:
         """Cover traffic via I2P transport."""
         try:
-            from ..transport.base import TransportConfig
-            from ..transport.i2p_transport import get_i2p_transport
-            i2p = get_i2p_transport()
-            if i2p and i2p.is_running():
-                config = TransportConfig(url=url, method='GET', headers=None, body=None, timeout=10.0)
-                await i2p.fetch(config)
-        except* asyncio.CancelledError:
-            # P0-3 FIX: Re-raise CancelledError to honour cancellation propagation.
+            try:
+                from ..transport.base import TransportConfig
+                from ..transport.i2p_transport import get_i2p_transport
+                i2p = get_i2p_transport()
+                if i2p and i2p.is_running():
+                    config = TransportConfig(url=url, method='GET', headers=None, body=None, timeout=10.0)
+                    await i2p.fetch(config)
+            except* Exception:
+                # Best-effort; I2P transport fetch failure; fire-and-forget cover traffic
+                pass
+        except asyncio.CancelledError:
+            # P1-8 FIX: Use plain 'except' to catch CancelledError nested in ExceptionGroup
+            # (e.g., from TaskGroup cancellation). except* cannot catch nested exceptions.
             raise
-        except* Exception:
-            # Best-effort; I2P transport fetch failure; fire-and-forget cover traffic
-            pass
 
     async def _cover_clearnet(self, url: str) -> None:
         """Cover traffic via clearnet (curl_cffi)."""
         try:
-            from hledac.universal.transport.curl_cffi_fetch import async_get_curl_cffi_session_for_host
-            ok, session, used_profile, host = await async_get_curl_cffi_session_for_host(url, profile='chrome131')
-            if ok and session is not None:
-                await session.get(url, timeout=10.0)
-        except* asyncio.CancelledError:
-            # P0-3 FIX: Re-raise CancelledError to honour cancellation propagation.
+            try:
+                from hledac.universal.transport.curl_cffi_fetch import async_get_curl_cffi_session_for_host
+                ok, session, used_profile, host = await async_get_curl_cffi_session_for_host(url, profile='chrome131')
+                if ok and session is not None:
+                    await session.get(url, timeout=10.0)
+            except* Exception:
+                # Best-effort; curl_cffi fetch failure; fire-and-forget cover traffic
+                pass
+        except asyncio.CancelledError:
+            # P1-8 FIX: Use plain 'except' to catch CancelledError nested in ExceptionGroup
+            # (e.g., from TaskGroup cancellation). except* cannot catch nested exceptions.
             raise
-        except* Exception:
-            # Best-effort; curl_cffi fetch failure; fire-and-forget cover traffic
-            pass
 
     async def _fire_cover_traffic(self, url: str, delay: float, transport: str) -> None:
         """Legacy wrapper — redirect to transport-aware implementation."""

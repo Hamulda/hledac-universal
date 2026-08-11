@@ -1843,8 +1843,26 @@ def run_pre_sprint_checks() -> bool:
     Run mandatory pre-sprint checks.
 
     Returns True if safe to proceed, False to abort.
+
+    D) PRE-FLIGHT 2s SELF-DIAGNOSTIC: Runs 4 critical checks in <2s:
+        1. Native Rust extension (no silent fallback)
+        2. LMDB WAL round-trip
+        3. RLIMIT_NOFILE >= 4096
+        4. System memory via sys_metrics (NOT Rust mach)
     """
     checks_passed = True
+
+    # D) PRE-FLIGHT 2s SELF-DIAGNOSTIC — runs 4 critical checks, sys.exit(2) on failure
+    # Uses function-local import to avoid circular dependency (sprint_lifecycle.py:280/293 pattern)
+    try:
+        from hledac.universal.core.preflight_diagnostics import run_preflight_diagnostics
+
+        run_preflight_diagnostics(max_duration_ms=2000.0)
+    except SystemExit:
+        # Preflight diagnostics already called sys.exit(2)
+        raise
+    except Exception as _exc:
+        logger.warning("[PREFLIGHT] Diagnostic module unavailable: %s — skipping", _exc)
 
     # F273G: macOS malloc pressure relief — release fragmented pages before any allocation.
     # Must run FIRST, before MLX buffers or any memory-heavy init.

@@ -88,6 +88,9 @@ from typing import TYPE_CHECKING, Any, Callable, Final
 if TYPE_CHECKING:
     from types import FrameType
 
+# MODERN-36 Fix: Import UmaBudget at module level for SSOT constant derivation
+from hledac.universal.utils.uma_budget import UmaBudget
+
 logger = logging.getLogger(__name__)
 
 
@@ -97,7 +100,11 @@ logger = logging.getLogger(__name__)
 
 _TOTAL_THREAD_CAP: Final[int] = int(os.environ.get("HLEDAC_TOTAL_THREAD_CAP", "24"))
 _TOTAL_PROCESS_CAP: Final[int] = int(os.environ.get("HLEDAC_TOTAL_PROCESS_CAP", "2"))
-_RSS_BLOCK_GIB: Final[float] = float(os.environ.get("HLEDAC_RSS_BLOCK_GIB", "5.5"))
+# MODERN-36 Fix: Derive fallback from UmaBudget SSOT (was literal "5.5")
+_RSS_BLOCK_GIB: Final[float] = float(os.environ.get(
+    "HLEDAC_RSS_BLOCK_GIB",
+    str(UmaBudget.MISSION_PEAK_RSS_GIB)  # 5.5 GiB from SSOT
+))
 _SHUTDOWN_TIMEOUT_PER_LAYER_S: Final[float] = float(
     os.environ.get("HLEDAC_SHUTDOWN_TIMEOUT_LAYER_S", "10.0")
 )

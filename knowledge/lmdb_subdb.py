@@ -135,10 +135,14 @@ class UnifiedLMDBStore:
         p = pathlib.Path(self._path)
         p.mkdir(parents=True, exist_ok=True)
 
+        # P0-3 Fix: critical=True ensures durable writes (sync=True, metasync=True, writemap=False)
+        # WAL stores findings that can be recovered from DuckDB, but we want crash-consistency.
+        # critical=False uses writemap=True (fast but crash-inconsistent).
         self._env = open_lmdb_with_guard(
             self._path,
             map_size=self._map_size,
             max_dbs=1,  # Single DB, prefixes isolate namespaces
+            critical=True,  # P0-3 Fix: ensure WAL durability
         )
         self._initialized = True
         logger.debug(
@@ -231,9 +235,14 @@ class UnifiedLMDBStore:
             self._ensure_init()
             with self._env.begin(buffers=True) as txn:
                 raw = txn.get(self._key_str(prefix, key))
-            if raw is None:
-                return None
-            # _msgspec_loads (codec.decode) handles memoryview natively
+                if raw is None:
+                    return None
+                # P0-4 FIX: Convert memoryview to bytes INSIDE the with block.
+                # With buffers=True, LMDB returns memoryview tied to txn's buffer.
+                # After txn closes, memoryview is invalid → ValueError on bytes().
+                # Exception swallowed → get_str returns None for existing keys.
+                if isinstance(raw, memoryview):
+                    raw = bytes(raw)
             return _msgspec_loads(raw)
         except Exception:
             return None

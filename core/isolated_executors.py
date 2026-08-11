@@ -348,6 +348,10 @@ class IsolatedInterpreter:
             with asyncio.Runner() as runner:
                 result = runner.run(self.run_async(func_name, *args, **kwargs))
             return result  # type: ignore[return-value]
+        # P1-4 FIX: Check if loop is running before calling run_until_complete.
+        if loop.is_running():
+            coro = self.run_async(func_name, *args, **kwargs)
+            return asyncio.run_coroutine_threadsafe(coro, loop).result()  # type: ignore[return-value]
         return loop.run_until_complete(self.run_async(func_name, *args, **kwargs))  # type: ignore[return-value]
 
 
@@ -417,6 +421,10 @@ class IsolatedInterpreterPool:
             with asyncio.Runner() as runner:
                 result = runner.run(self.run_async(func_name, *args, **kwargs))
             return result  # type: ignore[return-value]
+        # P1-4 FIX: Check if loop is running before calling run_until_complete.
+        if loop.is_running():
+            coro = self.run_async(func_name, *args, **kwargs)
+            return asyncio.run_coroutine_threadsafe(coro, loop).result()  # type: ignore[return-value]
         return loop.run_until_complete(self.run_async(func_name, *args, **kwargs))  # type: ignore[return-value]
 
 
@@ -513,6 +521,11 @@ class IsolatedDuckDBExecutor:
             with asyncio.Runner() as runner:
                 result = runner.run(self.execute_query_async(query_func, *args, **kwargs))
             return result
+        # P1-4 FIX: Use loop.run_until_complete() only when loop is not running.
+        # If loop is running, use run_coroutine_threadsafe() to avoid RuntimeError.
+        if loop.is_running():
+            coro = self.execute_query_async(query_func, *args, **kwargs)
+            return asyncio.run_coroutine_threadsafe(coro, loop).result()
         return loop.run_until_complete(self.execute_query_async(query_func, *args, **kwargs))
 
     def close(self) -> None:
@@ -607,12 +620,17 @@ class IsolatedMLXExecutor:
         try:
             loop = asyncio.get_running_loop()
         except RuntimeError:
+            # No running loop - create a new one
             with asyncio.Runner() as runner:
                 result = runner.run(self.run_inference_async(inference_func, *args, **kwargs))
             return result
-        # NEW-H5b FIX: Use loop.run_until_complete() instead of
-        # run_coroutine_threadsafe().result() to avoid self-deadlock
-        # when called from an executor thread while loop is already running.
+        # P1-4 FIX: Use loop.run_until_complete() only when loop is not running.
+        # If loop is running (e.g., called from within event loop), use
+        # run_coroutine_threadsafe() to avoid RuntimeError.
+        if loop.is_running():
+            # Schedule on running loop from potentially different thread
+            coro = self.run_inference_async(inference_func, *args, **kwargs)
+            return asyncio.run_coroutine_threadsafe(coro, loop).result()
         return loop.run_until_complete(
             self.run_inference_async(inference_func, *args, **kwargs)
         )
@@ -716,6 +734,10 @@ class IsolatedEvidenceBatchWriter:
             with asyncio.Runner() as runner:
                 result = runner.run(self.process_batch_async(process_func, items, *args, **kwargs))
             return result
+        # P1-4 FIX: Check if loop is running before calling run_until_complete.
+        if loop.is_running():
+            coro = self.process_batch_async(process_func, items, *args, **kwargs)
+            return asyncio.run_coroutine_threadsafe(coro, loop).result()
         return loop.run_until_complete(self.process_batch_async(process_func, items, *args, **kwargs))
 
     def close(self) -> None:

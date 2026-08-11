@@ -7,11 +7,10 @@ The bug was using mlx_lm.generate(model=engine.model_path, cache=True) which:
 1. Passed string path instead of model instance
 2. Used non-existent cache=True parameter
 
-The fix uses:
-1. make_prompt_cache(engine._model) - creates KV cache
-2. engine._model(mx.array([tokens]), cache=cache) - prefill
-3. mx.eval(cache) - settle lazy ops
-4. Stores in _PREFETCH_CACHE[prompt_hash]
+P1-9 FIX: Removed unused _PREFETCH_CACHE module-level cache.
+Caches were built but never retrieved during generation, violating the invariant
+that stored caches should be used. On M1 8GB, storing 32 KV caches wasted ~1-2GB
+of Metal memory. Now computes prefill directly without caching (fire-and-forget).
 
 Run: pytest tests/test_mlx_bridge_prefetch_reusable.py -v
 """
@@ -22,7 +21,7 @@ import importlib
 
 
 class TestMLXBridgePrefetchReusable:
-    """Test suite for M-06: mlx_bridge prefetch reusable cache."""
+    """Test suite for M-06: mlx_bridge prefetch (P1-9: no caching)."""
 
     def test_prefetch_uses_correct_api_no_generate(self):
         """
@@ -61,16 +60,37 @@ class TestMLXBridgePrefetchReusable:
         # Should call mx.eval to settle lazy ops
         assert mock_eval.call_count >= 1, "Should call mx.eval at least once"
 
-        # Second call with same prompt should use cache
-        with patch('utils.mlx_memory.get_mlx_memory_pressure', return_value=(0.5, "normal")):
-            with patch('mlx_lm.models.cache.make_prompt_cache', return_value=mock_cache) as mock_make2:
-                with patch('mlx.core.eval', return_value=None):
-                    with patch('mlx.core.array', return_value=mock_tokens):
-                        result2 = mlx_bridge_mod._sync_prefetch(mock_engine, "test prompt")
+    def test_prefetch_computes_without_caching(self):
+        """
+        P1-9 FIX: Verify every call recomputes (no caching).
 
-        assert result2 == "test prompt"
-        # On cache HIT, make_prompt_cache should NOT be called again
-        assert mock_make2.call_count == 0, "make_prompt_cache should NOT be called on cache HIT"
+        Previously, caches were stored but never used. Now we verify
+        that every call to _sync_prefetch recomputes the prefill.
+        """
+        import brain.mlx_bridge as mlx_bridge_mod
+        importlib.reload(mlx_bridge_mod)
+
+        mock_engine = MagicMock()
+        mock_engine._model = MagicMock()
+        mock_engine._tokenizer = MagicMock()
+        mock_engine._tokenizer.apply_chat_template = MagicMock(
+            return_value="<|im_start|>user\ntest<|im_end|>\n"
+        )
+        mock_engine._tokenizer.encode = MagicMock(return_value=[1, 2, 3, 4, 5])
+
+        mock_cache = MagicMock()
+
+        # Multiple calls with same prompt should each recompute
+        for i in range(3):
+            with patch('utils.mlx_memory.get_mlx_memory_pressure', return_value=(0.5, "normal")):
+                with patch('mlx_lm.models.cache.make_prompt_cache', return_value=mock_cache) as mock_make:
+                    with patch('mlx.core.eval', return_value=None):
+                        with patch('mlx.core.array', return_value=MagicMock()):
+                            result = mlx_bridge_mod._sync_prefetch(mock_engine, "same prompt")
+
+            assert result == "same prompt", f"Call {i+1}: Should return prompt"
+            # Each call should recompute (no caching)
+            assert mock_make.call_count == 1, f"Call {i+1}: Should recompute each time"
 
     def test_prefetch_skipped_on_critical_memory(self):
         """Verify prefetch is skipped when memory pressure is CRITICAL."""
@@ -98,39 +118,6 @@ class TestMLXBridgePrefetchReusable:
 
         result = mlx_bridge_mod._sync_prefetch(mock_engine, "any prompt")
         assert result == "", "Should return empty string when model not loaded"
-
-    def test_prefetch_lru_eviction_at_capacity(self):
-        """Verify LRU eviction when cache reaches max capacity."""
-        import brain.mlx_bridge as mlx_bridge_mod
-        importlib.reload(mlx_bridge_mod)
-
-        mock_engine = MagicMock()
-        mock_engine._model = MagicMock()
-        mock_engine._tokenizer = MagicMock()
-        mock_engine._tokenizer.apply_chat_template = MagicMock(
-            side_effect=lambda *a, **kw: f"formatted: {a[0][1]['content']}"
-        )
-        mock_engine._tokenizer.encode = MagicMock(return_value=[1, 2, 3])
-
-        mock_cache = MagicMock()
-
-        original_maxsize = mlx_bridge_mod._PREFETCH_CACHE_MAXSIZE
-        mlx_bridge_mod._PREFETCH_CACHE_MAXSIZE = 2
-
-        try:
-            with patch('utils.mlx_memory.get_mlx_memory_pressure', return_value=(0.5, "normal")):
-                with patch('mlx_lm.models.cache.make_prompt_cache', return_value=mock_cache):
-                    with patch('mlx.core.eval', return_value=None):
-                        mock_tokens = MagicMock()
-                        with patch('mlx.core.array', return_value=mock_tokens):
-                            for p in ["prompt1", "prompt2", "prompt3"]:
-                                result = mlx_bridge_mod._sync_prefetch(mock_engine, p)
-                                assert result == p, f"Failed for {p}"
-
-                            # Cache should not exceed maxsize
-                            assert len(mlx_bridge_mod._PREFETCH_CACHE) <= mlx_bridge_mod._PREFETCH_CACHE_MAXSIZE
-        finally:
-            mlx_bridge_mod._PREFETCH_CACHE_MAXSIZE = original_maxsize
 
 
 if __name__ == "__main__":

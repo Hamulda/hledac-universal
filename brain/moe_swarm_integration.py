@@ -214,10 +214,10 @@ class SwappableMicroModelPool(MicroModelPool):
         Initialize SwappableMicroModelPool.
         
         Args:
-            memory_budget_mb: Initial memory budget (default: adaptive via ResourceGovernor)
+            memory_budget_mb: Initial memory budget (default: adaptive via AdaptiveMemoryManager)
             eviction_threshold: When to start evicting
             preload_all: Whether to preload all models at startup
-            use_adaptive_budget: Use ResourceGovernor for dynamic budget
+            use_adaptive_budget: Use AdaptiveMemoryManager for dynamic budget
         """
         # Calculate adaptive budget first if needed
         if use_adaptive_budget:
@@ -597,17 +597,17 @@ def create_swappable_pool(
     """
     Create a MicroModelPool with adaptive memory management.
     
-    Uses adaptive budget by default (ResourceGovernor calculates optimal
+    Uses adaptive budget by default (AdaptiveMemoryManager calculates optimal
     memory allocation for M1 8GB: ~3.2 GB).
     
     Args:
-        memory_budget_mb: Initial memory budget (default: adaptive via ResourceGovernor)
-        use_adaptive_budget: Use ResourceGovernor for dynamic budget (default: True)
+        memory_budget_mb: Initial memory budget (default: adaptive via AdaptiveMemoryManager)
+        use_adaptive_budget: Use AdaptiveMemoryManager for dynamic budget (default: True)
         
     Returns:
         SwappableMicroModelPool instance
     """
-    # If memory_budget_mb is None, ResourceGovernor will calculate optimal value
+    # If memory_budget_mb is None, AdaptiveMemoryManager will calculate optimal value
     initial_budget = memory_budget_mb if memory_budget_mb is not None else 4096  # Temporary high value, will be adjusted
     
     return SwappableMicroModelPool(
@@ -712,8 +712,8 @@ class MoERouterWithSwarm:
         Args:
             config: MoERouterConfig (or None for defaults)
             enable_swarm: Enable micro-model routing (default: True)
-            memory_budget_mb: Memory budget for micro-models (default: adaptive via ResourceGovernor)
-            use_adaptive_budget: Use ResourceGovernor for dynamic budget
+            memory_budget_mb: Memory budget for micro-models (default: adaptive via AdaptiveMemoryManager)
+            use_adaptive_budget: Use AdaptiveMemoryManager for dynamic budget
         """
         self._config = config
         self._enable_swarm = enable_swarm
@@ -761,7 +761,7 @@ class MoERouterWithSwarm:
         self._main_tokenizer = tokenizer
         
         if self._enable_swarm:
-            # Pass None for memory_budget_mb if not explicitly set - let ResourceGovernor calculate
+            # Pass None for memory_budget_mb if not explicitly set - let AdaptiveMemoryManager calculate
             budget = None if self._memory_budget is None else self._memory_budget
             self._swarm_router = create_swarm_router(
                 memory_budget_mb=budget,
@@ -772,7 +772,7 @@ class MoERouterWithSwarm:
             if model is not None and tokenizer is not None:
                 self._swarm_router.register_main_model(model, tokenizer)
             
-            # Get actual budget (may have been adjusted by ResourceGovernor)
+            # Get actual budget (may have been adjusted by AdaptiveMemoryManager)
             actual_budget = int(self._swarm_router._pool._memory_budget / (1024 * 1024))
             logger.info(
                 f"[SWARM] MicroModelSwarm initialized "
@@ -958,7 +958,7 @@ def enable_swarm_routing(
     Args:
         router: Existing MoERouter instance
         memory_budget_mb: Memory budget for micro-models (default: adaptive)
-        use_adaptive_budget: Use ResourceGovernor for dynamic budget
+        use_adaptive_budget: Use AdaptiveMemoryManager for dynamic budget
     
     Returns:
         The MicroModelSwarmRouter instance

@@ -80,6 +80,9 @@ fn build_cpu_pool(num_threads: usize) -> Result<ThreadPool, String> {
                             0,
                         );
                     }
+                    // NEW-M11 FIX: Also apply P/E core affinity for macOS
+                    // Same issue as lib.rs:build_mixed_pool! - Linux path calls apply_affinity_hint but macOS doesn't
+                    apply_affinity_hint(n);
                 }
                 #[cfg(all(target_os = "linux", not(target_env = "musl")))]
                 apply_affinity_hint(n);
@@ -112,6 +115,9 @@ fn build_io_pool(num_threads: usize) -> Result<ThreadPool, String> {
                             0,
                         );
                     }
+                    // NEW-M11 FIX: Also apply P/E core affinity for macOS
+                    // Same issue as lib.rs:build_mixed_pool! - Linux path calls apply_affinity_hint but macOS doesn't
+                    apply_affinity_hint(n);
                 }
                 #[cfg(all(target_os = "linux", not(target_env = "musl")))]
                 apply_affinity_hint(n);

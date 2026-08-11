@@ -21,6 +21,7 @@ run in the asyncio envelope with structured exit codes.
 """
 
 import asyncio
+import contextlib
 import gc
 import logging
 import signal
@@ -333,7 +334,10 @@ def build_runtime(
     from hledac.universal.runtime.sprint_entrypoint import run_pre_sprint_checks
 
     if not run_pre_sprint_checks():
-        logger.warning("[PREFLIGHT] Pre-sprint checks returned False — continuing in degraded mode")
+        # D) PRE-FLIGHT: fail-loud — preflight checks must pass
+        # Changed from warning to sys.exit(2) per sprint requirements
+        import sys
+        sys.exit(2)
 
     # Signal handling
     restore_signals = install_signal_handler(loop, shutdown_event)
@@ -411,7 +415,7 @@ def shutdown_runtime(
 
     if not sprint_task.done():
         sprint_task.cancel()
-        with __import__("contextlib").suppress(asyncio.CancelledError):
+        with contextlib.suppress(asyncio.CancelledError):
             loop.run_until_complete(sprint_task)
 
     loop.run_until_complete(_cancel_all_tasks())

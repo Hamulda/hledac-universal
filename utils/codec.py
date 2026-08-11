@@ -586,10 +586,10 @@ def decode_fast(data: bytes | str | bytearray) -> Any:
 # =============================================================================
 
 json_dumps = encode
-"""Alias for :func:`encode` (legacy naming from memory/shared_memory_manager)."""
+"""Alias for :func:`encode` (legacy naming from shared memory serialization)."""
 
 json_loads = decode
-"""Alias for :func:`decode` (legacy naming from memory/shared_memory_manager)."""
+"""Alias for :func:`decode` (legacy naming from shared memory serialization)."""
 
 dumps_str = encode_str
 """Alias for :func:`encode_str` (legacy naming from msgspec_json.py)."""

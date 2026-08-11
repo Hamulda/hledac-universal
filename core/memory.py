@@ -227,7 +227,11 @@ def _get_metal_active_python() -> int:
 def _calc_pressure_level(rss_bytes: int) -> int:
     """Calculate pressure level from RSS bytes."""
     SOFT = 4 * 1024**3  # 4 GiB
-    HARD = (11 * 1024 // 2) * 1024**3  # 5.5 GiB
+    # P0-2 Fix: Was `(11 * 1024 // 2) * 1024**3` = 5.6 TiB (!)
+    # Operator precedence: // binds before *, so 11*1024//2 = 5632, then * 1024**3
+    # Correct: 5.5 GiB = int(5.5 * 1024**3) using SSOT constant
+    from hledac.universal.utils.uma_budget import UmaBudget
+    HARD = int(UmaBudget.MISSION_PEAK_RSS_GIB * 1024**3)  # 5.5 GiB
     if rss_bytes > HARD:
         return 2
     elif rss_bytes > SOFT:

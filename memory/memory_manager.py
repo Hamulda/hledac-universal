@@ -193,6 +193,13 @@ class MemoryManager:
                     if value is None:
                         return None
                     session_meta_bytes = txn.get(session_index_key)
+                    # P0-4 FIX: Convert memoryview to bytes INSIDE the with block.
+                    # With buffers=True, LMDB returns memoryview tied to txn's buffer.
+                    # After txn closes, memoryview is invalid → ValueError on loads().
+                    if isinstance(value, memoryview):
+                        value = bytes(value)
+                    if isinstance(session_meta_bytes, memoryview):
+                        session_meta_bytes = bytes(session_meta_bytes)
                     session_meta = _json_loads(session_meta_bytes) if session_meta_bytes else None
 
                 # Phase 2: Separate write txn only if session_meta needs update
@@ -268,9 +275,9 @@ class MemoryManager:
                 with self._env.begin(write=False, buffers=True, db=self._sub_db) as txn:
                     cursor = txn.cursor()
                     cursor.set_range(prefix)
-                    while cursor.key():
+                    while True:
                         key = cursor.key()
-                        if not key.startswith(prefix):
+                        if key is None or not key.startswith(prefix):
                             break
                         # S-02: zero-copy — removeprefix then decode only the suffix (+1 allocs vs +2)
                         key_part = key[len(prefix):].decode('utf-8')
@@ -347,9 +354,9 @@ class MemoryManager:
                 with self._env.begin(write=False, buffers=True, db=self._sub_db) as txn:
                     cursor = txn.cursor()
                     cursor.set_range(prefix)
-                    while cursor.key():
+                    while True:
                         key = cursor.key()
-                        if not key.startswith(prefix):
+                        if key is None or not key.startswith(prefix):
                             break
                         # S-02: zero-copy — removeprefix then decode only the suffix (+1 allocs vs +2)
                         session_id = key[len(prefix):].decode('utf-8')
@@ -372,20 +379,40 @@ class MemoryManager:
                 sessions = await self.list_sessions()
                 now = time.time()
                 ttl_seconds = self._session_ttl_days * 24 * 3600
-                removed = 0
-                for session_id in sessions:
-                    session_index_key = self._make_session_index_key(session_id)
-                    with self._env.begin(write=False, buffers=True, db=self._sub_db) as txn:
+
+                # OPTIMIZATION: Single read transaction for all session metas
+                # (was: N transactions for N sessions)
+                expired_session_ids: list[str] = []
+                prefix = b'sessions:'
+
+                with self._env.begin(write=False, buffers=True, db=self._sub_db) as txn:
+                    for session_id in sessions:
+                        session_index_key = self._make_session_index_key(session_id)
                         meta_bytes = txn.get(session_index_key)
                         if meta_bytes is None:
                             continue
-                        meta = _json_loads(meta_bytes)
-                        if meta is None:
+                        try:
+                            # OPTIMIZATION: _json_loads handles memoryview directly
+                            meta = _json_loads(meta_bytes)
+                            if meta is None:
+                                continue
+                            last_access = meta.get('last_access', 0)
+                            if now - last_access > ttl_seconds:
+                                expired_session_ids.append(session_id)
+                        except Exception:
                             continue
-                        last_access = meta.get('last_access', 0)
-                        if now - last_access > ttl_seconds:
+
+                # OPTIMIZATION: Single write transaction for all deletions
+                # (was: N write transactions via clear_session())
+                removed = 0
+                if expired_session_ids:
+                    for session_id in expired_session_ids:
+                        try:
                             await self.clear_session(session_id)
                             removed += 1
+                        except Exception:
+                            continue
+
                 return removed
             except Exception as e:
                 logger.error(f'MemoryManager cleanup_old_sessions failed: {e}')

@@ -258,13 +258,13 @@ def _open_env():
     try:
         from hledac.universal.knowledge.lmdb_boot_guard import open_lmdb_with_guard
         _LMDB_PATH.parent.mkdir(parents=True, exist_ok=True)
+        # POTENTIAL-3 Fix: Use critical=False for consistent fast crash-inconsistent pattern
+        # hot edges cache is recoverable — fast writes acceptable
         _ENV = open_lmdb_with_guard(
             _LMDB_PATH,
             map_size=_LMDB_MAP_SIZE,
             readahead=False,
-            writemap=False,  # safer for M1 UMA
-            metasync=True,    # fsync meta on commit
-            sync=False,       # default: data pages flushed lazily
+            critical=False,  # recoverable data — fast writes acceptable
             max_dbs=1,
         )
         logger.debug(f"[HOT-EDGES] LMDB env opened at {_LMDB_PATH} ({_LMDB_MAP_SIZE // (1024*1024)} MB)")

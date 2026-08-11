@@ -78,6 +78,7 @@ pub mod graph_centrality; // Centrality metrics
 pub mod graph_traverse; // DuckPGQ graph traversal
 pub mod hot_edges_rs;
 pub mod lsh_index; // LSH near-duplicate detection // Hot edge counter
+pub mod link_predictor; // Graph ML link prediction (common neighbors, Adamic-Adar)
 
 // ============================================================================
 // Aho-Corasick & Pattern Matching
@@ -1094,6 +1095,10 @@ fn hledac_rust_extensions(m: &Bound<'_, PyModule>) -> PyResult<()> {
     // F320+: LSH index for O(1) near-duplicate detection at scale
     #[cfg(feature = "graph")]
     lsh_index::register_functions(m)?;
+
+    // [M7-FIX] link_predictor: Graph ML link prediction (common neighbors, Adamic-Adar)
+    // Previously undeclared despite having register_functions() and Python callers
+    link_predictor::register_functions(m)?;
 
     // R25: Text similarity via trigram Jaccard — group_similar_texts()
     // ISSUE-025 FIX: restored from git history, was never connected

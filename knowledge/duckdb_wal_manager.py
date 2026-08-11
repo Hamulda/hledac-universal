@@ -144,8 +144,9 @@ class DuckDBWALManager:
         """Get finding WAL truth record by ID."""
         return self._wal_manager.wal_get_finding(finding_id)
 
-    def wal_put_many(self, items: list[tuple[str, bytes]]) -> int:
-        """Bulk WAL write (finding:{id}, value)."""
+    def wal_put_many(self, items: list[tuple[str, bytes]]) -> list[bool]:
+        """Bulk WAL write (finding:{id}, value). Returns per-item success list."""
+        # ISSUE-2 Fix: Type hint was wrong — delegates to WALManager.wal_put_many which returns list[bool]
         return self._wal_manager.wal_put_many(items)
 
     def wal_delete(self, finding_id: str) -> None:

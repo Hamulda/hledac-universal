@@ -143,16 +143,15 @@ def arrow_ipc_to_record_batch(
     """
     MODERN-25: Unified Arrow IPC bytes → RecordBatch converter.
 
-    Replaces 4 divergent _pa.ipc.open_stream() sites:
-      1. _arrow_build_rust_rows()       — line 9738
-      2. _arrow_build_rust_cols()        — line 9779
-      3. _arrow_build_rust_dict()        — line 9806
-      4. _arrow_insert_rust_findings()   — line 9969
-      5. _arrow_insert_rust_cols()       — line 10045
-      6. shared_memory_manager.py:102   — separate module
+    Replaces divergent _pa.ipc.open_stream() sites:
+      1. _arrow_build_rust_rows()       — inline
+      2. _arrow_build_rust_cols()        — inline
+      3. _arrow_build_rust_dict()        — inline
+      4. _arrow_insert_rust_findings()   — inline
+      5. _arrow_insert_rust_cols()       — inline
 
     After MODERN-17: Rust path provides zero-copy bytes via
-    metal_shared_buf → iosurface_bridge; this helper becomes the
+    metal_shared_buf → iosurface_bridge; this helper is the
     single ingestion point for all IPC streams.
 
     Args:
@@ -205,14 +204,14 @@ def arrow_ipc_to_table(
     source: str = "shared_memory",
 ) -> dict[str, list[Any]] | None:
     """
-    MODERN-25: Unified Arrow IPC → dict converter for shared memory deserialization.
+    MODERN-25: Unified Arrow IPC → dict converter for Arrow IPC deserialization.
 
     Reads IPC stream and converts all columns to Python lists.
-    Used by ArrowSharedMemory.deserialize() as replacement for inline pa.ipc.open_stream().
+    Centralized helper for Arrow IPC handling.
 
     Args:
-        ipc_bytes: Raw IPC bytes from shared memory buffer.
-        source: Human-readable origin (default: "shared_memory").
+        ipc_bytes: Raw IPC bytes from Arrow builder.
+        source: Human-readable origin (default: "arrow_ipc").
 
     Returns:
         dict[str, list] on success, None on failure.
@@ -6873,9 +6872,14 @@ class DuckDBShadowStore:
                 items[i] = (f"finding:{f.finding_id}", raw_dict)
             if items:
                 loop = asyncio.get_running_loop()
+                # P0-3 Fix: wal_put_many returns list[bool]; check with all() not truthiness
+                # bool([False, False]) = True (truthy list!) but all([False, False]) = False
+                def _wal_put_wrapper():
+                    results = self._wal_manager.wal_put_many(items) if hasattr(self._wal_manager, "wal_put_many") else False
+                    return all(results) if isinstance(results, list) else bool(results)
                 lmdb_ok = await loop.run_in_executor(
                     self._wal_executor,
-                    lambda: self._wal_manager.wal_put_many(items) if hasattr(self._wal_manager, "wal_put_many") else False,
+                    _wal_put_wrapper,
                 )
                 if not lmdb_ok:
                     _logger.warning(f"[D7] Batch WAL failed for {len(items)} items")
@@ -10491,7 +10495,10 @@ class DuckDBShadowStore:
                         pass
                 items[i] = (f"finding:{f.finding_id}", raw_dict)
             if items:
-                lmdb_ok = self._wal_manager.wal_put_many(items) if hasattr(self._wal_manager, "wal_put_many") else False
+                # P0-3 Fix: wal_put_many returns list[bool]; check with all() not truthiness
+                # bool([False, False]) = True (truthy list!) but all([False, False]) = False
+                wal_results = self._wal_manager.wal_put_many(items) if hasattr(self._wal_manager, "wal_put_many") else False
+                lmdb_ok = all(wal_results) if isinstance(wal_results, list) else bool(wal_results)
                 if not lmdb_ok:
                     _logger.warning(f"[Arrow-standalone] WAL failed for {len(items)} items")
                     for i in range(len(items)):

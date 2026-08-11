@@ -184,9 +184,9 @@ class ResourceAllocator:
         MEM-UMA-002: Synchronous RSS check + throttle.
         Called from can_accept() and acquire() to fail fast before resource use.
 
-        Two-tier response:
-        - SOFT (>= 6.5 GiB): reduce concurrency by 50%, save original for recovery
-        - HARD (>= 7.2 GiB): raises MemoryError (caller should abort)
+        Two-tier response (NEW-M4: values from UmaBudget SSOT):
+        - SOFT (>= THRESHOLD_WARN ~5.94 GiB): reduce concurrency by 50%, save original for recovery
+        - HARD (>= UMA_HARD_CEILING 6.25 GiB): raises MemoryError (caller should abort)
         """
         try:
             if not _PSUTIL_AVAILABLE:
@@ -196,7 +196,7 @@ class ResourceAllocator:
                 return
             current_rss = proc.memory_info().rss / (1024 ** 3)
 
-            # HARD LIMIT: 7.2 GiB — M1 8GB SWAP limit exceeded
+            # HARD LIMIT: UmaBudget.UMA_HARD_CEILING_GIB = 6.25 GiB (SSOT)
             if current_rss >= self.RSS_HARD_LIMIT_GIB:
                 logger.critical(
                     f"[MEM-UMA-002-HARD] RSS {current_rss:.2f} GiB >= HARD limit "
@@ -207,7 +207,7 @@ class ResourceAllocator:
                     f"{self.RSS_HARD_LIMIT_GIB}GiB"
                 )
 
-            # SOFT LIMIT: >= 6.5 GiB — reduce concurrency by 50%
+            # SOFT LIMIT: >= THRESHOLD_WARN ~5.94 GiB — reduce concurrency by 50%
             if current_rss >= self.RSS_SOFT_LIMIT_GIB:
                 if self._throttle_level < 1:
                     old_limit = self.MAX_CONCURRENT
@@ -293,8 +293,9 @@ class ResourceAllocator:
         """
         MEM-UMA-002: Emergency heap flush — clear MLX cache + gc.collect().
 
-        Called when RSS >= 7.2 GiB (HARD limit). This is the last line of
-        defense before OOM kill. Clears Metal cache and triggers full gc.
+        Called when RSS >= UmaBudget.UMA_HARD_CEILING_GIB = 6.25 GiB (HARD limit).
+        NEW-M4: This is the last line of defense before OOM kill. Clears Metal
+        cache and triggers full gc.
         """
         try:
             # 1. Clear MLX cache (mx.eval([]) before clear_cache is mandatory)

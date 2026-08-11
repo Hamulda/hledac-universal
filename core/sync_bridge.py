@@ -23,15 +23,15 @@ This pattern is M1-safe because:
   - The event loop is never blocked; it only waits on q.get().
   - The queue is unbounded (maxsize=0) so the producer NEVER blocks —
     always at a clean cancellation point (work_queue.get()).
-  - Cancellation via Future.cancel() stops the executor thread promptly.
-  - threading.Condition coordinates completion between producer and consumer
-    (R4-02 fix: eliminates race condition in done_event + queue drain).
+  - Cancellation via threading.Event + Future.cancel() stops the executor thread.
+  - done_event (threading.Event) signals completion to the consumer.
 
 Usage:
     async for token in stream_via_queue(sync_gen_fn, arg1, arg2):
         yield token
 
-P2-6 fix: Uses nonlocal declaration for _high_water in _producer().
+P1-3 fix: Thread-safe queue ops via call_soon_threadsafe, non-blocking consumer loop,
+          threading.Event for graceful executor termination.
 P0-4 fix: Always releases Arc ownership after task completes (rayon_drop_channel).
 """
 
@@ -92,17 +92,11 @@ async def stream_via_queue(
     # finished (when done_event is set). M1-safe because MLX Metal ops run
     # under get_metal_stream_context() in deephermes3_engine._stream_tokens().
     q: asyncio.Queue[_T] = asyncio.Queue(maxsize=0)  # unbounded
-    # S1-01 FIX: High-water mark metrics for unbounded queue monitoring.
-    # Tracks peak queue size to detect producer/consumer imbalance.
-    _high_water = 0
-    _high_water_lock = threading.Lock()
+    # P1-3 FIX: threading.Event for graceful producer termination.
+    # Unlike fut.cancel() which only affects asyncio.Future, this flag is checked
+    # by the producer thread itself, allowing it to exit cleanly.
+    _stop_event: threading.Event = threading.Event()
     done_event: threading.Event = threading.Event()
-    # R4-02 FIX: threading.Condition coordinates completion between producer and
-    # consumer threads. The consumer waits on the condition until done_event
-    # is set AND the queue is drained. This eliminates the race condition
-    # where done_event.set() + queue drain were not atomic, causing the
-    # consumer to exit early and hang waiting for items that were already in q.
-    _completion_cv: threading.Condition = threading.Condition()
     # A5-04 FIX: Store producer exception so caller can see it.
     # Uses a list of one element as a mutable container (thread-safe for our purposes).
     _producer_error: list[Exception | None] = [None]
@@ -111,28 +105,24 @@ async def stream_via_queue(
 
     def _producer() -> None:
         """Runs in executor thread — produces tokens and signals completion."""
-        # P2-6 FIX: Add nonlocal declaration so _high_water refers to the outer
-        # scope variable. Without this, Python treats _high_water as a local
-        # variable in _producer(), causing UnboundLocalError on the first token.
-        nonlocal _high_water
         try:
             for token in gen_fn(*args):
-                q.put_nowait(token)  # type: ignore[arg-type]
-                # S1-01 FIX: Track high-water mark for monitoring
-                with _high_water_lock:
-                    current_size = q.qsize()
-                    if current_size > _high_water:
-                        _high_water = current_size
+                # P1-3 FIX: Check stop flag BEFORE producing to allow clean shutdown.
+                # This is the primary mechanism for stopping a running executor thread.
+                if _stop_event.is_set():
+                    break
+                # P1-3 FIX: Use call_soon_threadsafe for thread-safe queue operations.
+                # asyncio.Queue.put_nowait() is NOT thread-safe when called from
+                # non-event-loop threads. call_soon_threadsafe schedules the operation
+                # on the event loop, ensuring proper synchronization.
+                loop.call_soon_threadsafe(q.put_nowait, token)  # type: ignore[arg-type]
         except Exception as e:  # A5-04: store exception instead of swallowing
             _producer_error[0] = e
             logger.warning("[stream_via_queue] producer raised: %s", e)
         finally:
+            # P1-3 FIX: Signal both done AND stopped states
             done_event.set()
-            # R4-02: Notify consumer that completion is ready.
-            # Acquiring the condition lock before notifying ensures the consumer
-            # sees done_event set before we call notify (no lost wakeup).
-            with _completion_cv:
-                _completion_cv.notify_all()
+            _stop_event.set()
 
     # run_in_executor returns a Future (not a coroutine) — supports .cancel().
     loop = asyncio.get_running_loop()
@@ -140,13 +130,13 @@ async def stream_via_queue(
 
     _DRAIN_TIMEOUT_S = 0.05  # 50 ms — balance between responsiveness and CPU
 
-    # R4-02 FIX: Use threading.Condition to coordinate producer/consumer.
-    # The condition wraps done_event, allowing the consumer to wait until:
-    #   1. done_event is set (producer finished), AND
-    #   2. the queue is drained (all tokens consumed).
-    # This eliminates the race where done_event.set() and q.empty() were
-    # checked separately, causing early exit when done_event was set but
-    # q still had pending tokens.
+    # P1-3 FIX: Consumer loop uses non-blocking q.get_nowait() instead of
+    # blocking Condition.wait() on the event loop thread. This prevents event
+    # loop hangs when the producer is blocked on I/O.
+    # S1-01 FIX: Track high-water mark from consumer side (where qsize() is reliable).
+    _consumed = 0
+    _high_water = 0
+
     try:
         while True:
             # Fast path: check if done AND empty without waiting
@@ -154,20 +144,24 @@ async def stream_via_queue(
                 break
 
             try:
-                async with asyncio.timeout(_DRAIN_TIMEOUT_S):
-                    item = await q.get()
-            except asyncio.TimeoutError:
-                # Timed out waiting for next item — check if producer is done
-                with _completion_cv:
-                    # Wait until done_event is set AND queue is drained
-                    while not (done_event.is_set() and q.empty()):
-                        # R4-02: Wait on condition — notified when producer calls notify_all()
-                        # Timeout prevents indefinite blocking; re-check on wakeup
-                        _completion_cv.wait(timeout=_DRAIN_TIMEOUT_S)
-                # Re-check after wait
-                if done_event.is_set() and q.empty():
+                # P1-3 FIX: Non-blocking get with brief sleep instead of blocking wait.
+                # This yields control to the event loop periodically, preventing hangs
+                # when producer is blocked. Avoids the threading.Condition.wait() issue
+                # where blocking on the event loop thread could cause deadlocks.
+                item = q.get_nowait()  # type: ignore[assignment]
+            except asyncio.QueueEmpty:
+                # Queue empty — check if producer is done
+                if done_event.is_set():
                     break
+                # Brief sleep to avoid busy-spinning while waiting for producer
+                await asyncio.sleep(0.001)
                 continue
+
+            # S1-01 FIX: Track high-water from consumer (qsize() is safe here on event loop).
+            _consumed += 1
+            current_depth = q.qsize() + 1  # +1 because we just got one
+            if current_depth > _high_water:
+                _high_water = current_depth
 
             yield item  # type: ignore[assignment]
 
@@ -181,6 +175,11 @@ async def stream_via_queue(
                     pass
                 break
     except asyncio.CancelledError:
+        # P1-3 FIX: Signal stop event BEFORE cancelling future.
+        # The stop flag tells the producer thread to exit cleanly at its next
+        # cancellation point, rather than waiting for fut.cancel() to take effect.
+        # This prevents zombie executor threads that outlive their consumer.
+        _stop_event.set()
         # NEW-H5a FIX: Track cancellation state explicitly.
         # Using a flag instead of fut.cancelled() to avoid race conditions
         # where the executor future hasn't propagated cancellation yet.
@@ -188,11 +187,13 @@ async def stream_via_queue(
         fut.cancel()
         raise
     finally:
+        # P1-3 FIX: Ensure stop event is set even if exception occurs before
+        # the CancelledError handler. This prevents orphaned producer threads.
+        _stop_event.set()
         # S1-01 FIX: Log high-water mark for queue monitoring.
         # Helps detect producer/consumer imbalance in MLX streaming scenarios.
-        with _high_water_lock:
-            if _high_water > 0:
-                logger.debug("[stream_via_queue] high_water=%d", _high_water)
+        if _high_water > 0:
+            logger.debug("[stream_via_queue] high_water=%d", _high_water)
         # A5-04 + NEW-H5a FIX: Re-raise producer exception only when not cancelled.
         # If the consumer was cancelled, let CancelledError take precedence —
         # the caller expects it for shutdown. Producer errors are only propagated

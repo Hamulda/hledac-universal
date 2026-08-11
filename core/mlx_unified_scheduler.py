@@ -478,10 +478,10 @@ class MLXUnifiedScheduler:
             if self._worker_thread is not None and hasattr(self._worker_thread, 'is_active') and self._worker_thread.is_active():
                 coro = self._llm_engine.generate(prompt=prompt, temperature=temperature, max_tokens=max_tokens, system_msg=system_msg)
                 result = await self._worker_thread.submit(coro, timeout=60.0)
-                self._post_inference_hook()
+                await self._post_inference_hook_async()
                 return result
             result = await self._llm_engine.generate(prompt=prompt, temperature=temperature, max_tokens=max_tokens, system_msg=system_msg)
-            self._post_inference_hook()
+            await self._post_inference_hook_async()
             return result
         finally:
             # P3-7 FIX: Release ANE mutex when done
@@ -513,7 +513,7 @@ class MLXUnifiedScheduler:
                 except Exception as e:
                     logger.debug('[MLXScheduler] Batcher unavailable for background: %s', e)
             result = await self._llm_engine.generate(prompt=prompt, temperature=temperature, max_tokens=max_tokens, system_msg=system_msg)
-            self._post_inference_hook()
+            await self._post_inference_hook_async()
             return result
         finally:
             # P3-7 FIX: Release ANE mutex when done
@@ -612,6 +612,24 @@ class MLXUnifiedScheduler:
         try:
             import mlx.core as mx
             mx.eval([])
+            if hasattr(mx, 'clear_cache'):
+                mx.clear_cache()
+            elif hasattr(mx.metal, 'clear_cache'):
+                mx.metal.clear_cache()
+        except Exception:  # noqa: BLE001
+            pass
+
+    async def _post_inference_hook_async(self) -> None:
+        """
+        NEW-FIX: Async-safe version of _post_inference_hook.
+
+        Offloads blocking mx.eval([]) to thread pool to avoid blocking the event loop.
+
+        Use this when called from async context (async def functions).
+        """
+        try:
+            import mlx.core as mx
+            await asyncio.to_thread(mx.eval)
             if hasattr(mx, 'clear_cache'):
                 mx.clear_cache()
             elif hasattr(mx.metal, 'clear_cache'):

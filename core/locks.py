@@ -36,7 +36,11 @@ UŽITÍ:
     register_lock(LockCategory.CACHE, _my_lock, "mymodule._my_lock")
 
     # Akvizice více locků v pořadí:
-    async with acquire_in_order(LockCategory.CACHE, LockCategory.NETWORK):
+    # PRO SYNC KÓD:
+    with acquire_in_order(LockCategory.CACHE, LockCategory.NETWORK):
+        ...
+    # PRO ASYNC KÓD (použij acquire_in_order_async):
+    async with acquire_in_order_async(LockCategory.CACHE, LockCategory.NETWORK):
         ...
 
 PYTHON 3.14 KOMPATIBILITA:
@@ -62,6 +66,7 @@ import platform
 import threading
 import weakref
 from collections.abc import Callable, Sequence
+from contextlib import asynccontextmanager
 from enum import IntEnum
 from typing import TYPE_CHECKING, Any, TypeVar
 
@@ -229,19 +234,50 @@ def register_lock(
         _register_lock(category, lock, name, frame_info)
 
 
+def _collect_and_sort_locks(
+    *categories: LockCategory,
+) -> tuple[list, list[LockCategory]]:
+    """
+    Sbírá a sortuje locks podle kategorie (internal helper).
+
+    Vrací tuple (collected_locks, sorted_categories).
+    """
+    if not categories:
+        return [], []
+
+    seen: set[LockCategory] = set()
+    unique: list[LockCategory] = []
+    for cat in categories:
+        if cat not in seen:
+            seen.add(cat)
+            unique.append(cat)
+
+    sorted_cats = sorted(unique, key=attrgetter("value"))
+
+    collected_locks: list = []
+    with _REGISTRY_LOCK:
+        for cat in sorted_cats:
+            locks_in_cat = _LOCKS_BY_CATEGORY.get(cat, [])
+            for lock in locks_in_cat:
+                collected_locks.append(lock)
+
+    return collected_locks, sorted_cats
+
+
 def acquire_in_order(
     *categories: LockCategory,
 ) -> contextlib.AbstractContextManager:
     """
-    Akvizice více locků v konzistentním ascending order.
+    Akvizice více locků v konzistentním ascending order (SYNCHRONNÍ).
 
     Použij místo přímého `with lock:` kdykoli akvizuješ více než jeden lock.
+    PRO ASYNC KÓD použij `acquire_in_order_async()`.
 
     Args:
         *categories: LockCategory hodnoty k akvizici
 
     Returns:
-        contextlib.AbstractContextManager pro `with` (sync i async kontext).
+        contextlib.AbstractContextManager pro synchronní `with` blok.
 
     Example:
         # SPRÁVNĚ — ascending order, všechny locks v kategorii
@@ -258,29 +294,12 @@ def acquire_in_order(
     NEW-H5d fix: Locks se sbírají pod _REGISTRY_LOCK, ale enter_context()
     se volá MIMO zámek — aby se neprodlužovalo držení _REGISTRY_LOCK.
     NOTE: Pro kategorie se stejným priority se používá původí pořadí.
+    P1-2 fix: Přidána async varianta acquire_in_order_async().
     """
     if not categories:
         return contextlib.nullcontext(None)
 
-    # Deduplikace + sorting
-    seen: set[LockCategory] = set()
-    unique: list[LockCategory] = []
-    for cat in categories:
-        if cat not in seen:
-            seen.add(cat)
-            unique.append(cat)
-
-    sorted_cats = sorted(unique, key=attrgetter("value"))
-
-    # NEW-H5d fix: Collect locks under registry lock, but enter them outside.
-    # This minimizes the time _REGISTRY_LOCK is held, preventing blocking
-    # other threads that need to register/unregister locks.
-    collected_locks: list = []
-    with _REGISTRY_LOCK:
-        for cat in sorted_cats:
-            locks_in_cat = _LOCKS_BY_CATEGORY.get(cat, [])
-            for lock in locks_in_cat:
-                collected_locks.append(lock)
+    collected_locks, _ = _collect_and_sort_locks(*categories)
 
     # Enter all collected locks (outside _REGISTRY_LOCK)
     # ExitStack.__enter__() acquires each lock synchronously.
@@ -290,6 +309,45 @@ def acquire_in_order(
         stack.enter_context(lock)
 
     return stack
+
+
+@asynccontextmanager
+async def acquire_in_order_async(
+    *categories: LockCategory,
+):
+    """
+    Akvizice více locků v konzistentním ascending order (ASYNCHRONNÍ).
+
+    PRO ASYNC KÓD. Pro sync kód použij `acquire_in_order()`.
+
+    Args:
+        *categories: LockCategory hodnoty k akvizici
+
+    Example:
+        # SPRÁVNĚ — async context manager
+        async with acquire_in_order_async(LockCategory.CACHE, LockCategory.NETWORK):
+            await some_async_operation()
+
+    NOTE:
+        Lock acquisition itself remains synchronous (threading.Lock is not async).
+        This context manager wraps the sync acquisition in an async context.
+        For very long hold times, consider using asyncio.to_thread() instead.
+    """
+    if not categories:
+        yield
+        return
+
+    collected_locks, _ = _collect_and_sort_locks(*categories)
+
+    # Acquire all locks synchronously first
+    stack = contextlib.ExitStack()
+    for lock in collected_locks:
+        stack.enter_context(lock)
+
+    try:
+        yield stack
+    finally:
+        stack.__exit__(None, None, None)
 
 
 def get_lock_by_name(name: str) -> threading.Lock | threading.RLock | None:
@@ -547,6 +605,7 @@ __all__ = [
     "LockInfo",
     "register_lock",
     "acquire_in_order",
+    "acquire_in_order_async",  # NEW: async variant for asyncio code
     "get_registered_locks",
     "get_locks_by_category",
     "assert_lock_registered",

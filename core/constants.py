@@ -42,6 +42,11 @@ import time
 from dataclasses import dataclass, field
 import msgspec
 from typing import TYPE_CHECKING
+
+# MODERN-36/37/38 Fix: SSOT imports for UmaBudget constants
+# Import at module level to enable class attribute derivation
+from hledac.universal.utils.uma_budget import UmaBudget
+
 __all__ = ['NetworkTimeouts', 'M1MemoryBounds', 'MLXInference', 'ProtocolPorts', 'HTTPCodes', 'SemanticRatios', 'DuckDBStorage', 'NETWORK', 'M1_BOUNDS', 'MLX', 'PORTS', 'HTTP', 'RATIOS', 'DUCKDB', 'get_m1_uma_mb']
 
 def _detect_uma_mb() -> int:
@@ -155,9 +160,10 @@ class MLXInference(msgspec.Struct, frozen=True, gc=False):
     max_system_msg_chars: int = 8192
     prompt_long_threshold: int = 12000
     tokens_long_threshold: int = 2048
-    memory_warn_threshold: float = 6.0
-    memory_critical_threshold: float = 6.5
-    memory_emergency_threshold: float = 7.0
+    # MODERN-36/37/38 Fix: Derive from UmaBudget SSOT (was 6.0/6.5/7.0)
+    memory_warn_threshold: float = UmaBudget.THRESHOLD_WARN_GIB  # 5.938 GiB
+    memory_critical_threshold: float = UmaBudget.THRESHOLD_CRITICAL_GIB  # 6.191 GiB
+    memory_emergency_threshold: float = UmaBudget.THRESHOLD_EMERGENCY_GIB  # 6.25 GiB
     metal_pressure_bytes: int = 2 * 1024 * 1024 * 1024
     memory_ema_alpha: float = 0.15
     pid_kp: float = 0.5

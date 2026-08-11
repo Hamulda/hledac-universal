@@ -296,7 +296,15 @@ class AsyncLMDBKVStore:
 
                 def _get():
                     with self._env.begin(buffers=True) as txn:
-                        return txn.get(key_bytes)
+                        raw = txn.get(key_bytes)
+                        if raw is None:
+                            return None
+                        # P0-4 FIX: Convert memoryview to bytes INSIDE the with block.
+                        # With buffers=True, LMDB returns memoryview tied to txn's buffer.
+                        # After txn closes, memoryview is invalid → ValueError on decode().
+                        if isinstance(raw, memoryview):
+                            return bytes(raw)
+                        return raw
                 val = await asyncio.to_thread(_get)
                 if val is None:
                     return None

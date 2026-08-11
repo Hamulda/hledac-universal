@@ -1622,7 +1622,7 @@ class DeepHermes3Engine:
 
         New implementation:
         - Uses SmolLM-360M (~200MB) — 3.5× smaller, fits in 8GB UMA
-        - UMA eviction: if system usage > 85% (6.8GB), draft model is evicted
+        - UMA eviction: if system usage > 85%, draft model is evicted
         - Lazy loading: draft model only loaded when explicitly enabled via env var
         - Default: DISABLED (safe mode) — opt-in via HLEDAC_ENABLE_SPEC_DECODE=1
         - BLITZ-11: When blitz mode + HLEDAC_ENABLE_BLITZ_TRIAGE=1, loads model for
@@ -1668,7 +1668,8 @@ class DeepHermes3Engine:
             uma_snap = get_uma_snapshot()
             uma_usage_pct = uma_snap.get('uma_usage_pct', 0)
 
-            # 85% threshold = 6.8GB on 8GB M1
+            # 85% threshold — evict draft model when approaching critical memory pressure
+            # Note: 85% of 6.25 GiB ceiling ≈ 5.31 GiB, but we use percentage directly
             if uma_usage_pct > 85:
                 logger.warning(f'[{_mode_label}] UMA usage {uma_usage_pct}% > 85% threshold — skipping draft model init')
                 self._speculative_enabled = False
@@ -1732,7 +1733,7 @@ class DeepHermes3Engine:
         """
         SOVEREIGN-004: Register UMA watchdog callback for draft model eviction.
 
-        If UMA usage exceeds 85% (6.8GB on 8GB), the draft model is automatically
+        If UMA usage exceeds 85% threshold, the draft model is automatically
         evicted to free ~200MB of unified memory.
 
         Uses the existing UmaWatchdog system with a custom callback class.

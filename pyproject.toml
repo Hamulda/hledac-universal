@@ -90,7 +90,6 @@ dependencies = [
     # ruff_ext custom rule TCH909 (plugin entry point) is the automated enforcement path.
     # legacy stdlib json: 12 remaining occurrences — all inside except-blocks as fallbacks
     # F3XX: Retry modernization — replaces manual exponential-backoff retry loops
-    # F3XX: Retry modernization — replaces manual exponential-backoff retry loops
     "tenacity>=9.0.0",
     # ── Storage ───────────────────────────────────────────────────────────────
     # NOTE: DuckDB maintains backward compatibility within major version (1.x).

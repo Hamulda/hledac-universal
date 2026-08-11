@@ -748,10 +748,14 @@ class GlobalPeakLoadCoordinator:
 
             # MODERN-37 Fix: Derive from SSOT UmaBudget instead of hardcoded 0.90
             # SSOT ceiling = 6.25 GiB; WARN threshold = 95% = 5.938 GiB
-            # System limit = min(95% of actual total, SSOT ceiling * 1.10 for headroom)
-            # This ensures the coordinator's limit stays consistent with its own budget
+            # System limit = min(95% of actual total, ceiling * 1.10 for headroom)
+            # MODERN-45 Fix: Cap at UMA_HARD_CEILING_GIB to avoid exceeding SSOT ceiling
+            # (warn * 1.10 = 6.53 > 6.25 ceiling)
             uma_budget_warn_gib = UmaBudget.THRESHOLD_WARN_GIB  # 5.938 GiB
-            system_limit_gib = min(system_total_gib * 0.90, uma_budget_warn_gib * 1.10)
+            system_limit_gib = min(
+                system_total_gib * 0.90,
+                min(uma_budget_warn_gib * 1.10, UmaBudget.UMA_HARD_CEILING_GIB)
+            )
             projected_used_gib = system_used_gib + (estimated_mb / 1024)
 
             if projected_used_gib > system_limit_gib:

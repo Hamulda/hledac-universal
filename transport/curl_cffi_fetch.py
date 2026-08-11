@@ -276,7 +276,7 @@ def _route_tld_to_proxy(url: str, proxies: dict[str, str] | None) -> dict[str, s
 
     # Verify both http and https schemes are configured for darknet
     # (Darknet can be accessed via http://...onion even if URL uses http://)
-    if "http" not in proxies and "https" not in proxies:
+    if "http" not in proxies or "https" not in proxies:
         raise RuntimeError(
             f"MODERN-02 P0 SECURITY VIOLATION: Darknet URL '{url}' has malformed "
             f"proxies={proxies} — missing 'http' and/or 'https' scheme. "

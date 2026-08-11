@@ -486,6 +486,13 @@ UMA_CRITICAL_GIB: float = UmaBudget.THRESHOLD_CRITICAL_GIB  # 6.191 GiB (99% of 
 UMA_EMERGENCY_GIB: float = UmaBudget.THRESHOLD_EMERGENCY_GIB  # 6.25 GiB (100% = ceiling)
 M1_FETCH_SOFT_CEILING_GB: float = UmaBudget.MISSION_PEAK_RSS_GIB  # 5.5 GiB (88% = MISSION_PEAK_RSS)
 
+# MODERN-M4+ NEW-ISSUE Fix: Flag registry RAM thresholds as SSOT
+# These are used by flag_registry.py and feature_flags.py to validate
+# estimated RAM usage (sum of min_ram_mb for active flags).
+# CRITICAL: FATAL threshold must be <= UmaBudget ceiling (6.25 GiB = 6400 MB)
+FLAG_RAM_WARN_MB: int = int(UmaBudget.MISSION_PEAK_RSS_GIB * 1024)  # 5632 MB (5.5 GiB)
+FLAG_RAM_FATAL_MB: int = int(UmaBudget.UMA_HARD_CEILING_GIB * 1024)  # 6400 MB (6.25 GiB) — MUST NOT exceed ceiling!
+
 # Diagnostic info for snapshot (computed once at import time)
 _RATIOS_USED: tuple[float, float, float, float] = (
     UmaBudget.THRESHOLD_SOFT_WARN_GIB / UmaBudget.TOTAL_GIB,  # 5.5/6.25 = 0.88
@@ -543,7 +550,6 @@ except Exception as _e:
         f"Original error: {_e}"
     ) from _e
 
-GENERAL_HIGH_WATER_RATIO: float = 0.85
 MAX_L2_CACHE_SIZE_MB: int = 50
 from hledac.universal.core.memory import get_memory_snapshot as _rust_snapshot
 from hledac.universal.core.psutil_shim import psutil_module as _psutil_mod

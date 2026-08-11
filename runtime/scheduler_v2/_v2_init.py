@@ -343,6 +343,11 @@ class V2Init:
         object.__setattr__(self._scheduler, "_hermes_engine", _hermes_engine)
         object.__setattr__(self._scheduler, "_evidence_log", _evidence_log)
 
+        # P0-5 FIX: Start the lifecycle manager (BOOT → WARMUP transition).
+        # Without this, _started_at stays None, phase stays BOOT forever,
+        # tick() is a no-op, and DEGRADED/WINDUP phases are unreachable.
+        _lifecycle_mgr.start()
+
         # META-001: Inject DuckDB store into CrossSprintGate for pre-fetch gating
         try:
             from hledac.universal.knowledge.cross_sprint_gate import get_cross_sprint_gate

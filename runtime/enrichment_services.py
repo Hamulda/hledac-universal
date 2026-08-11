@@ -263,7 +263,14 @@ class EnrichmentServices:
             from hledac.universal.knowledge.lmdb_boot_guard import open_lmdb_with_guard
             db_path = _get_forensics_lmdb_path()
             db_path.parent.mkdir(parents=True, exist_ok=True)
-            self._forensics_lmdb_env = open_lmdb_with_guard(db_path, map_size=50 * 1024 * 1024, max_dbs=1, writemap=False, sync=False)
+            # POTENTIAL-2 Fix: Explicit fast crash-inconsistent pattern for recoverable caches
+            # forensics data is recoverable from source, so writemap=True + sync=False is acceptable
+            self._forensics_lmdb_env = open_lmdb_with_guard(
+                db_path,
+                map_size=50 * 1024 * 1024,
+                max_dbs=1,
+                critical=False,  # recoverable data — fast writes acceptable
+            )
         except Exception as exc:
             log.debug('Forensics LMDB open failed: %s', exc)
             self._forensics_lmdb_env = None
@@ -300,7 +307,14 @@ class EnrichmentServices:
             from hledac.universal.knowledge.lmdb_boot_guard import open_lmdb_with_guard
             db_path = _get_multimodal_lmdb_path()
             db_path.parent.mkdir(parents=True, exist_ok=True)
-            self._multimodal_lmdb_env = open_lmdb_with_guard(db_path, map_size=50 * 1024 * 1024, max_dbs=1, writemap=False, sync=False)
+            # POTENTIAL-2 Fix: Explicit fast crash-inconsistent pattern for recoverable caches
+            # multimodal embeddings are recoverable from source, so writemap=True + sync=False is acceptable
+            self._multimodal_lmdb_env = open_lmdb_with_guard(
+                db_path,
+                map_size=50 * 1024 * 1024,
+                max_dbs=1,
+                critical=False,  # recoverable data — fast writes acceptable
+            )
         except Exception as exc:
             log.debug('Multimodal LMDB open failed: %s', exc)
             self._multimodal_lmdb_env = None

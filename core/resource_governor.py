@@ -3458,7 +3458,9 @@ class AdaptiveMPCController:
         _ALPHA_SLOW = 0.15
         _MPC_HORIZON_S = 10.0
         _TARGET_HEADROOM_GIB = 0.5
-        _EMERGENCY_THRESHOLD_GIB = 7.8
+        # MODERN-M4+ NEW-ISSUE Fix: Changed from 7.8 to UmaBudget ceiling (6.25 GiB)
+        # Was EXCEEDING SSOT ceiling! MPC must use ceiling as emergency threshold.
+        _EMERGENCY_THRESHOLD_GIB = UmaBudget.UMA_HARD_CEILING_GIB  # 6.25 GiB
     __slots__ = ("_ema_v", "_ema_a", "_last_t", "_last_mem", "_enabled")
 
     def __init__(self) -> None:
