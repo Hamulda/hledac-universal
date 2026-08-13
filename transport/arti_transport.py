@@ -59,6 +59,10 @@ from .base import Transport, TransportConfig, TransportResult
 if TYPE_CHECKING:
     pass
 
+# M1 Resource Ledger imports
+from hledac.universal.core.resource_ledger import get_resource_ledger
+from hledac.universal.transport.resource_admission import TransportAdmission
+
 # NEXTGEN-06: Rust embedded Tor detection
 _RUST: object | None = None
 _HAS_RUST_ARTI: bool = False
@@ -979,6 +983,7 @@ class ArtiTransport(Transport):
     __slots__ = (
         'available', '_client', '_client_mode', '_data_dir',
         '_socks_port', '_control_port', '_ready',
+        '_ledger', '_resource_active',  # M1 Resource Ledger integration
     )
 
     # Client mode enum
@@ -1003,60 +1008,94 @@ class ArtiTransport(Transport):
         self._control_port = control_port
         self._ready = asyncio.Event()
 
+        # M1 Resource Ledger: Initialize resource tracking for Arti
+        self._ledger = get_resource_ledger()
+        self._resource_active = False
+
     async def start(self) -> bool:
         """
         Start Arti in hybrid mode (NEXTGEN-06).
 
         Tries in-process Rust embedding first, then falls back to subprocess.
+
+        M1 Resource Ceiling Drift Fix: Uses resource admission to track
+        resources used by Arti transport with guaranteed cleanup on failure.
         """
-        # NEXTGEN-06: Try Rust embedded Arti first
-        _init_rust_arti()
-        embedded_forced = os.environ.get('HLEDAC_EMBEDDED_TOR', '').lower()
-        prefer_embedded = embedded_forced not in ('0', 'false', 'no')
+        # M1 Resource Admission: Check if we can start Arti
+        can_start, reason = TransportAdmission.can_start_transport("arti", self._ledger)
+        if not can_start:
+            logger.warning(f"[ArtiTransport] Cannot start: {reason}")
+            return False
 
-        if _HAS_RUST_ARTI and prefer_embedded:
-            logger.info('NEXTGEN-06: Trying in-process Rust ArtiNode...')
-            try:
-                self._client = ArtiNodeClient(
-                    data_dir=str(self._data_dir),
-                )
-                ok = await self._client.connect()
-                if ok:
-                    self._client_mode = self.MODE_EMBEDDED
-                    self._ready.set()
-                    logger.info(
-                        'NEXTGEN-06: ArtiTransport ready (embedded mode)'
-                        f' data_dir={self._data_dir}'
+        # M1 Resource Admission: Use context manager for guaranteed cleanup
+        with TransportAdmission.for_transport("arti", self._ledger):
+            # NEXTGEN-06: Try Rust embedded Arti first
+            _init_rust_arti()
+            embedded_forced = os.environ.get('HLEDAC_EMBEDDED_TOR', '').lower()
+            prefer_embedded = embedded_forced not in ('0', 'false', 'no')
+
+            if _HAS_RUST_ARTI and prefer_embedded:
+                logger.info('NEXTGEN-06: Trying in-process Rust ArtiNode...')
+                try:
+                    self._client = ArtiNodeClient(
+                        data_dir=str(self._data_dir),
                     )
-                    return True
-                else:
-                    logger.warning('NEXTGEN-06: Rust ArtiNode bootstrap failed, trying subprocess...')
-            except Exception as e:
-                logger.warning(f'NEXTGEN-06: Rust ArtiNode init failed: {e}, trying subprocess...')
+                    ok = await self._client.connect()
+                    if ok:
+                        self._client_mode = self.MODE_EMBEDDED
+                        self._resource_active = True  # M1 FIX: Mark resources as active
+                        self._ready.set()
+                        logger.info(
+                            'NEXTGEN-06: ArtiTransport ready (embedded mode)'
+                            f' data_dir={self._data_dir}'
+                        )
+                        return True
+                    else:
+                        logger.warning('NEXTGEN-06: Rust ArtiNode bootstrap failed, trying subprocess...')
+                except Exception as e:
+                    logger.warning(f'NEXTGEN-06: Rust ArtiNode init failed: {e}, trying subprocess...')
 
-        # Fallback to subprocess ArtiClient
-        logger.info('ArtiTransport: Using subprocess mode (fallback)')
-        self._client_mode = self.MODE_SUBPROCESS
-        self._client = ArtiClient(
-            port=self._socks_port,
-            control_port=self._control_port,
-            data_dir=str(self._data_dir),
-        )
-        ok = await self._client.connect()
-        if ok:
-            self._ready.set()
-            logger.info(
-                f'ArtiTransport ready (subprocess mode)'
-                f' socks={self._socks_port}'
+            # Fallback to subprocess ArtiClient
+            logger.info('ArtiTransport: Using subprocess mode (fallback)')
+            self._client_mode = self.MODE_SUBPROCESS
+            self._client = ArtiClient(
+                port=self._socks_port,
+                control_port=self._control_port,
+                data_dir=str(self._data_dir),
             )
-        else:
-            logger.warning('ArtiTransport start failed — Arti unavailable')
-            self.available = False
-        return ok
+            ok = await self._client.connect()
+            if ok:
+                # M1 FIX: Register Arti subprocess with resource ledger
+                if hasattr(self._client, '_arti_process') and self._client._arti_process:
+                    proc = self._client._arti_process
+                    if proc.pid:
+                        self._ledger.register_child_process(proc.pid, "arti")
+                self._resource_active = True  # M1 FIX: Mark resources as active
+                self._ready.set()
+                logger.info(
+                    f'ArtiTransport ready (subprocess mode)'
+                    f' socks={self._socks_port}'
+                )
+                return True
+            else:
+                logger.warning('ArtiTransport start failed — Arti unavailable')
+                self.available = False
+                # M1 FIX: Context manager will release resources on exit
+                return False
 
     async def stop(self) -> None:
-        """Graceful shutdown."""
+        """
+        Graceful shutdown.
+
+        M1 Resource Ceiling Drift Fix: Releases resources from ledger.
+        """
         await self._client.close()
+
+        # M1 Resource Cleanup: Release all remaining resources for "arti"
+        self._ledger.release_all("arti")
+        self._resource_active = False
+
+        logger.info('[ArtiTransport] Stopped and resources released')
 
     async def is_running(self) -> bool:
         return self.available and self._client.is_connected

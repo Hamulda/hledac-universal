@@ -79,33 +79,39 @@ class BGPAdvisorAdapter:
 
 
 def _sync_enrich_ips(adapter: BGPAdapter, ips: list[str]) -> None:
-    """Sync wrapper: run async enrich_ip for each IP in a dedicated session.
+    """Sync wrapper: run batch enrich_ips in a dedicated session.
     
-    MODERN-06 FIX: Ensures event loop is properly closed in all code paths.
+    BUG-E FIX: Switches from sequential enrich_ip() to batch enrich_ips()
+    for better performance. Ensures adapter.close() in finally block.
     """
     loop: asyncio.AbstractEventLoop | None = None
     try:
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
-        for ip in ips:
-            try:
-                result = loop.run_until_complete(adapter.enrich_ip(ip))
+        # BUG-E FIX: Use batch enrich_ips() instead of sequential enrich_ip() loop
+        try:
+            results = loop.run_until_complete(adapter.enrich_ips(ips))
+            for result in results:
                 if result and result.asn:
                     logger.debug(
                         "[BGP] %s → ASN %s / %s / %s",
-                        ip,
+                        result.ip,
                         result.asn,
                         result.prefix or "unknown",
                         result.org_name or "unknown",
                     )
-            except Exception:  # noqa: BLE001
-                pass  # fail-soft per-IP
+        except Exception:  # noqa: BLE001
+            pass  # fail-soft on batch operation
     except Exception:  # noqa: BLE001
         pass  # fail-soft overall
     finally:
-        # MODERN-06 FIX: Always close the loop if we created it.
+        # BUG-E FIX: Always close adapter session AND loop in finally block
         if loop is not None and not loop.is_closed():
+            try:
+                loop.run_until_complete(adapter.close())
+            except Exception:  # noqa: BLE001
+                pass  # Best-effort adapter cleanup
             try:
                 loop.close()
             except Exception:  # noqa: BLE001
-                pass  # Best-effort cleanup
+                pass  # Best-effort loop cleanup

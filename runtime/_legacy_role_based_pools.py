@@ -32,7 +32,7 @@ M1 8GB THREAD BUDGET:
   │ REGEX_WORKERS  │ Rayon cpu_pool    │  4 P    │ ~50 MB       │
   │ ASYNC_IO       │ asyncio.to_thread  │  4      │ ~10 MB       │
   └─────────────────────────────────────────────────────────────┘
-  Total: 11 threads (fits 8-core M1 with QoS)
+  Total: 7-8 threads (M1 8GB: 4P + 4E = 8 logical cores)
 
 ROLE SEMANTICS:
   HASH_WORKERS   — xxhash, blake3 checksums, content hashing

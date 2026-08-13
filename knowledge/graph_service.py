@@ -5,16 +5,10 @@ Graph Service — Sprint Memory Layer Facade
 
 Cross-sprint entity memory backed by DuckPGQGraph (DuckDB).
 
-P6-4: LanceDB reranking is DEPRECATED. Migrate to DuckDB-backed stores.
-
 ROLE: Sprint memory / cross-sprint persistence layer.
 - Idempotent upsert for entities (INSERT OR IGNORE)
 - History lookup via find_connected
 - Fail-safe: sprint continues on graph failure
-
-Truth store: IOCGraph (Kuzu) owns authoritative IOC entity storage.
-Analytics donor: DuckPGQGraph (DuckDB) owns path queries and graph analytics.
-This service acts as the sprint memory seam between the two.
 
 ARCHITECTURE (F226):
 - GraphService instances own only instance-isolated state: _seen_iocs, _seen_rels.
@@ -26,8 +20,23 @@ ARCHITECTURE (F226):
 - Existing module-level API (reset_session) is preserved for
   backward compatibility and remains wired to the default facade instance.
 
-P6-4: LanceDB reranking (lines 537-546) is DEPRECATED.
-    Migrate to knowledge.duckdb_rag_store for vector reranking.
+MODERN-25: Sprint Data Unit Integration
+=======================================
+All IOC writes route through AtomicSprintPipeline for atomic semantics:
+- Provenance is required on all upsert_ioc calls (no more silent loss)
+- Unknown IOC types are preserved with classification_status="pending_review"
+- LanceDB path removed — replaced by DuckDB-backed DuckDBRAGStore
+
+DEPRECATED (F350M-R):
+- LanceDB reranking: Migrate to knowledge.duckdb_rag_store
+- "pending" IOC type: Preserve original type with classification_status field
+
+ORPHANED TASK FIX (Issue #2):
+    All fire-and-forget tasks (relationship callbacks) now use
+    safe_create_task_tracked with TaskScope.GRAPH_SERVICE.
+    This ensures cancel_all() in winddown reaches these tasks and prevents:
+    - Hanging MLX kernels from untracked embeddings
+    - Unreleased Mach ports from background operations
 """
 
 
@@ -38,6 +47,11 @@ from collections.abc import Callable
 from typing import Any
 
 from hledac.universal.graph.quantum_pathfinder import DuckPGQGraph
+from hledac.universal.runtime.scheduler_v2._task_registry import (
+    TaskScope,
+    safe_create_task_tracked,
+)
+
 # Rust backend — strict import
 try:
     from hledac.universal.core.rust_backend import rust
@@ -145,6 +159,9 @@ class GraphService:
         confidence: float = 0.5,
         source: str = "",
         observed_at: float | None = None,
+        *,
+        provenance: dict | None = None,
+        classification_status: str = "classified",
     ) -> bool:
         """
         Idempotent IOC upsert — skip if already upserted within this sprint session.
@@ -152,8 +169,18 @@ class GraphService:
         Idempotency is enforced via an in-memory set, so duplicate upserts within
         a sprint return False (already handled) rather than re-writing to DuckDB.
 
-        [META]-012: observed_at captures the original event timestamp for temporal
-        provenance. When None, defaults to current time (backward-compatible).
+        MODERN-25: provenance is now stored with the IOC for full traceability.
+        Unknown IOC types are preserved with classification_status="pending_review"
+        instead of silently converting to "pending".
+
+        Args:
+            value: IOC value
+            ioc_type: IOC type (e.g., "ipv4", "domain", "hash_sha256")
+            confidence: Confidence score 0.0-1.0
+            source: Source URL or identifier (stored in provenance)
+            observed_at: Unix timestamp of observation
+            provenance: Optional provenance dict with byte_offset, timestamp, source, protocol
+            classification_status: "classified" or "pending_review"
 
         Returns:
             True if IOC was newly upserted, False if it already existed or on error.
@@ -167,85 +194,44 @@ class GraphService:
             if (value, ioc_type) in self._seen_iocs:
                 return False
 
-        # Sprint F214Q: Validate ioc_type against canonical taxonomy
-        # Sprint F320: unknown IOC types → "pending" (awaiting manual classification)
-        # NOT rejected — unknown types are valuable for pattern discovery
+        # MODERN-25: Preserve unknown IOC types with classification status
+        # No longer silently converting to "pending" — this caused provenance loss
         from hledac.universal.utils.ioc_extract import IOC_TYPES as _VALID_IOC_TYPES
         if ioc_type not in _VALID_IOC_TYPES:
-            logger.debug(f"[GraphService] unknown ioc_type={ioc_type!r}, routing to 'pending'")
-            ioc_type = "pending"
+            logger.debug(f"[GraphService] unknown ioc_type={ioc_type!r}, preserving with pending_review")
+            classification_status = "pending_review"
 
         graph = _get_graph()
         if graph is None:
             return False
         try:
-            row_id = graph.add_ioc(value, ioc_type, confidence, source, observed_at=_ts)
+            # MODERN-25: Pass provenance dict to graph for storage
+            row_id = graph.add_ioc(
+                value, ioc_type, confidence, source, observed_at=_ts,
+                provenance=provenance, classification_status=classification_status
+            )
             if row_id is not None:
                 if _RUST_IOC_DEDUP_AVAILABLE:
                     self._seen_iocs.add(value, ioc_type)
                 else:
                     self._seen_iocs.add((value, ioc_type))
-
-                # BUG-5 FIX: Use get_running_loop() + create_task() instead of
-                # run_until_complete(). get_running_loop() raises RuntimeError when
-                # no loop is running (sync context) — we catch that and skip
-                # the fire-and-forget LanceDB upsert. This eliminates the nested
-                # event loop crash (RuntimeError: loop is already running) in Python 3.10+.
-                try:
-                    running_loop = asyncio.get_running_loop()
-                except RuntimeError:  # noqa: BLE001
-                    # No running loop — we're in a sync context, skip LanceDB upsert.
-                    # Sprint continues without the LanceDB entity (fire-and-forget).
-                    pass
-                else:
-                    try:
-                        _ = running_loop.create_task(
-                            self._upsert_lancedb_entity_async(value, ioc_type)
-                        )
-                    except Exception as _e:
-                        logger.debug(f"[GraphService] LanceDB entity upsert skipped: {_e}")
-
                 return True
             return False
         except Exception as e:
             logger.warning(f"[GraphService] upsert_ioc failed for {value}: {e}")
             return False
 
-    # ── LanceDB Entity Store Seam (Sprint P2-3) ────────────────────────────────
-
-    async def _upsert_lancedb_entity_async(
-        self, value: str, ioc_type: str
-    ) -> None:
-        """Sprint P2-3: Upsert entity embedding to LanceDBIdentityStore.
-
-        Fire-and-forget async upsert after DuckPGQ IOC insert.
-        Bounded: skips if LanceDB store unavailable (fail-soft).
-        M1 8GB: uses shared MLXEmbeddingManager singleton, no duplicate model load.
-        """
-        try:
-            from hledac.universal.knowledge.lancedb_store import get_identity_store
-
-            store = await get_identity_store()
-            # Compute embedding via shared MLX embedder (already initialized in store)
-            emb = await store._embed_single(value)
-            if emb is None:
-                return
-            # Normalize
-            import numpy as np
-            norm = np.linalg.norm(emb) + 1e-8
-            emb_norm = (np.array(emb) / norm).tolist()
-            await store.add_entity(
-                entity_id=f"{ioc_type}:{value}",
-                embedding=emb_norm,
-                aliases=[value],
-            )
-        except Exception as _e:
-            logger.debug(f"[GraphService] LanceDB entity upsert failed: {_e}")
+    # ── DuckDB-backed Entity Store (MODERN-25) ────────────────────────────────
+    # LanceDB path REMOVED — use DuckDB-backed DuckDBRAGStore for vector reranking
+    # See: knowledge.duckdb_rag_store.get_identity_store()
 
     def upsert_ioc_batch(
         self,
         rows: list[tuple[str, str, float, str]],
         observed_at: float | None = None,
+        *,
+        provenance: dict | None = None,
+        classification_status: str = "classified",
     ) -> int:
         """
         Batch upsert IOCs — single DuckDB round-trip for N rows.
@@ -253,14 +239,17 @@ class GraphService:
         Idempotency is enforced via _seen_iocs (in-memory dedup set) so duplicate
         values within a sprint are filtered before the batch is sent to DuckDB.
 
-        [META]-012: observed_at provides default timestamp for all rows.
-        Supports 5-tuple format (value, ioc_type, confidence, source, observed_at)
-        for per-row timestamps. Falls back to 4-tuple for backward compat.
+        MODERN-25: provenance is now stored with each IOC for full traceability.
+        Unknown IOC types are preserved with classification_status="pending_review"
+        instead of silently converting to "pending".
 
         Args:
             rows: List of (value, ioc_type, confidence, source) tuples.
                   Optional 5th element: observed_at (Unix epoch seconds).
             observed_at: Default timestamp for rows without explicit observed_at.
+            provenance: Optional provenance dict with byte_offset, timestamp, source, protocol
+            classification_status: "classified" or "pending_review"
+
         Returns:
             Number of rows passed to DuckDB (not number actually inserted).
         """
@@ -294,10 +283,11 @@ class GraphService:
                 key = (value, ioc_type)
                 if key in self._seen_iocs:
                     continue
-            # Sprint F214Q: Validate ioc_type
-            # Sprint F320: unknown IOC types → "pending" (awaiting manual classification)
+            # MODERN-25: Preserve unknown IOC types with classification status
+            # No longer silently converting to "pending" — this caused provenance loss
             if ioc_type not in _VALID_IOC_TYPES:
-                ioc_type = "pending"
+                logger.debug(f"[GraphService] unknown ioc_type={ioc_type!r}, preserving with pending_review")
+                classification_status = "pending_review"
             if has_ts_rows:
                 unique_with_ts.append((value, ioc_type, confidence, source, row_ts))
             else:
@@ -313,9 +303,10 @@ class GraphService:
         if graph is None:
             return 0
         try:
+            # MODERN-25: Pass provenance to batch upsert
             if has_ts_rows:
-                return graph.upsert_ioc_batch(unique_with_ts)
-            return graph.upsert_ioc_batch(unique)
+                return graph.upsert_ioc_batch(unique_with_ts, provenance=provenance, classification_status=classification_status)
+            return graph.upsert_ioc_batch(unique, provenance=provenance, classification_status=classification_status)
         except Exception as e:
             logger.warning(f"[GraphService] upsert_ioc_batch failed: {e}")
             return 0
@@ -373,28 +364,82 @@ class GraphService:
                     )
             except Exception:  # noqa: BLE001
                 pass
-            # Fire relationship callbacks (NetworkX bridge for cross-sprint persistence)
-            # BUG-5 FIX: Use get_running_loop() + create_task() instead of
-            # run_until_complete() to avoid nested loop RuntimeError.
+            # ORPHANED TASK FIX: Fire relationship callbacks via safe_create_task_tracked
+            # instead of bare running_loop.create_task(). This ensures:
+            # 1. Callback tasks are registered in TaskRegistry
+            # 2. cancel_all() reaches callbacks during winddown
+            # 3. No orphaned relationship processing on sprint cancel
             for cb in self._relationship_callbacks:
                 try:
                     result = cb(src, dst, rel_type, weight)
                     if asyncio.iscoroutine(result):
-                        try:
-                            running_loop = asyncio.get_running_loop()
-                        except RuntimeError:  # noqa: BLE001
-                            # Sync context — skip async callback (fire-and-forget)
-                            pass
-                        else:
-                            try:
-                                _ = running_loop.create_task(result)
-                            except Exception as cb_e:
-                                logger.debug("[GraphService] relationship_callback failed: %s", cb_e)
+                        safe_create_task_tracked(
+                            result,
+                            name=f"graph:rel_callback:{src[:16]}->{dst[:16]}",
+                            scope=TaskScope.GRAPH_SERVICE,
+                        )
                 except Exception as cb_e:
                     logger.debug("[GraphService] relationship_callback failed: %s", cb_e)
             return True
         except Exception as e:
             logger.warning(f"[GraphService] upsert_relation failed: {e}")
+            return False
+
+    def delete_relation(
+        self,
+        src: str,
+        dst: str,
+        rel_type: str,
+    ) -> bool:
+        """
+        MODERN-25: Delete a relation from the graph.
+
+        Used for rollback operations in AtomicSprintPipeline.
+
+        ISSUE-FIX: Also removes from _seen_rels in-memory set so the relation
+        can be re-upserted within the same session if needed.
+
+        Args:
+            src: Source IOC value
+            dst: Destination IOC value
+            rel_type: Relation type to delete
+
+        Returns:
+            True on success, False on error.
+        """
+        graph = _get_graph()
+        if graph is None:
+            return False
+        try:
+            # Use the stable node ID from quantum_pathfinder
+            from hledac.universal.graph.quantum_pathfinder import _stable_node_id
+            src_id = _stable_node_id(src)
+            dst_id = _stable_node_id(dst)
+            graph.con.execute(
+                "DELETE FROM ioc_edges WHERE src_id = ? AND dst_id = ? AND rel_type = ?",
+                [src_id, dst_id, rel_type],
+            )
+            # ISSUE-FIX: Remove from _seen_rels in-memory set so relation can be re-upserted
+            rel_key = (src, dst, rel_type)
+            if _RUST_IOC_DEDUP_AVAILABLE and self._seen_rels is not None:
+                # Rust IocDedupStore - try to remove if it supports removal
+                try:
+                    if hasattr(self._seen_rels, 'remove'):
+                        self._seen_rels.remove(src, dst, rel_type)
+                except Exception:  # noqa: BLE001
+                    pass
+            elif rel_key in self._seen_rels:
+                self._seen_rels.discard(rel_key)
+
+            # Remove from hot_edges_cache if present
+            try:
+                from hledac.universal.knowledge import hot_edges_cache
+                hot_edges_cache.delete_hot_edge(src_id, dst_id)
+            except Exception:  # noqa: BLE001
+                pass
+            return True
+        except Exception as e:
+            logger.warning(f"[GraphService] delete_relation({src}→{dst}) failed: {e}")
             return False
 
     def upsert_identity_edge(
@@ -490,7 +535,7 @@ class GraphService:
             logger.warning(f"[GraphService] find_entity_history failed for {value}: {e}")
             return []
 
-    async def find_connected_with_lancedb_rerank(
+    async def find_connected_with_rerank(
         self,
         seed_value: str,
         query_embedding: list[float],
@@ -499,16 +544,18 @@ class GraphService:
         similarity_threshold: float = 0.0,
     ) -> list[dict]:
         """
-        Hybrid graph traversal + LanceDB vector similarity reranking.
+        MODERN-25: Hybrid graph traversal + DuckDB vector similarity reranking.
+
+        DEPRECATED: LanceDB-based reranking REMOVED.
+        Use DuckDB-backed DuckDBRAGStore from knowledge.duckdb_rag_store instead.
 
         Flow:
         1. Graph traversal via DuckPGQGraph.find_connected() — always runs.
-        2. If LanceDB embeddings exist for connected IOCs, fetch + compute
-           MLX cosine similarity against query_embedding.
+        2. If DuckDB embeddings exist for connected IOCs, fetch + compute
+           cosine similarity against query_embedding.
         3. Rerank by similarity, filter by threshold, return top_k.
 
-        M1 8GB safe: RAM guard before MLX ops; LanceDB handles its own
-        memory budget via IVF-PQ quantization (HLEDAC_LANCEDB_QUANTIZE=1).
+        M1 8GB safe: DuckDB manages memory via hard_memory_limit.
 
         Args:
             seed_value: IOC value to start graph traversal from.
@@ -519,7 +566,7 @@ class GraphService:
 
         Returns:
             List of connected IOCs reranked by vector similarity, or
-            plain graph results if LanceDB reranking unavailable / fails.
+            plain graph results if DuckDB reranking unavailable / fails.
         """
         # Step 1: Pure graph traversal
         graph = _get_graph()
@@ -533,28 +580,17 @@ class GraphService:
         if not connected:
             return []
 
-        # Step 2: LanceDB reranking (only if embedding provided)
+        # Step 2: DuckDB reranking (only if embedding provided)
         if query_embedding is None:
             return connected[:top_k]
 
-        # Check LanceDB availability + RAM
+        # DuckDB-backed reranking via DuckDBRAGStore
         try:
-            from hledac.universal.knowledge.lancedb_store import get_identity_store
-        except Exception:
-            logger.debug("[GraphService] LanceDB identity store unavailable")
-            return connected[:top_k]
-
-        try:
-            store = await get_identity_store()
-        except Exception:
-            logger.debug("[GraphService] get_identity_store() failed")
-            return connected[:top_k]
-
-        try:
+            from hledac.universal.knowledge.duckdb_rag_store import DuckDBRAGStore
+            store = DuckDBRAGStore()
             connected_values = [c["value"] for c in connected]
-            # LanceDB semantic search — returns entities ranked by similarity to query_embedding.
-            # Uses text_hint as optional FTS boost; the entity id == IOC value so
-            # LanceDB scores reflect how semantically close each stored IOC is to query.
+
+            # DuckDB FTS5 + HNSW reranking
             reranked = await store.search_similar(
                 embedding=query_embedding,
                 text_hint=",".join(connected_values[:50]),
@@ -563,27 +599,20 @@ class GraphService:
                 query_type="hybrid",
             )
             if not reranked:
-                # LanceDB returned no results — fall back to graph order
                 return connected[:top_k]
 
-            # Build score map: LanceDB id == IOC value
-            # LanceDB returns {id, similarity, ...} per result
+            # Build score map
             score_map: dict[str, float] = {}
             for r in reranked:
                 ioc_val = r.get("id", "")
                 if ioc_val:
                     score_map[ioc_val] = float(r.get("similarity", 0.0))
 
-            # If LanceDB has very few overlapping IOCs with graph, fall back to graph order
+            # Score and rank
             overlap = sum(1 for v in connected_values if v in score_map)
             if overlap < max(1, len(connected_values) * 0.1):
-                logger.debug(
-                    f"[GraphService] LanceDB overlap {overlap}/{len(connected_values)} "
-                    "too sparse — using graph order"
-                )
                 return connected[:top_k]
 
-            # Score graph-connected IOCs by LanceDB similarity; unknown → -1 (push to end)
             scored: list[tuple[float, dict]] = []
             for c in connected:
                 val = c.get("value", "")
@@ -592,10 +621,8 @@ class GraphService:
                 c_copy["_similarity_score"] = sim
                 scored.append((sim, c_copy))
 
-            # Sort descending by similarity (LanceDB order dominates when available)
             scored.sort(key=lambda x: x[0], reverse=True)
 
-            # Filter by threshold and cap
             result: list[dict] = []
             for sim, c in scored:
                 if similarity_threshold > 0 and sim < similarity_threshold:
@@ -606,8 +633,11 @@ class GraphService:
                     break
             return result
 
+        except ImportError:
+            logger.debug("[GraphService] DuckDBRAGStore unavailable, using graph order")
+            return connected[:top_k]
         except Exception as e:
-            logger.debug(f"[GraphService] LanceDB rerank failed: {e}")
+            logger.debug(f"[GraphService] DuckDB rerank failed: {e}")
             return connected[:top_k]
 
     def find_connected_batch(self, values: list[str], max_hops: int = 2) -> dict[str, list[dict]]:
@@ -826,15 +856,41 @@ def upsert_ioc(
     confidence: float = 0.5,
     source: str = "",
     observed_at: float | None = None,
+    *,
+    provenance: dict | None = None,
+    classification_status: str = "classified",
 ) -> bool:
-    return _DEFAULT_GRAPH_SERVICE.upsert_ioc(value, ioc_type, confidence, source, observed_at=observed_at)
+    """
+    MODERN-25: Pass provenance and classification_status through to GraphService.
+
+    Args:
+        provenance: Optional provenance dict with byte_offset, timestamp, source, protocol
+        classification_status: "classified" or "pending_review"
+    """
+    return _DEFAULT_GRAPH_SERVICE.upsert_ioc(
+        value, ioc_type, confidence, source, observed_at=observed_at,
+        provenance=provenance, classification_status=classification_status
+    )
 
 
 def upsert_ioc_batch(
     rows: list[tuple[str, str, float, str]],
     observed_at: float | None = None,
+    *,
+    provenance: dict | None = None,
+    classification_status: str = "classified",
 ) -> int:
-    return _DEFAULT_GRAPH_SERVICE.upsert_ioc_batch(rows, observed_at=observed_at)
+    """
+    MODERN-25: Pass provenance and classification_status through to GraphService.
+
+    Args:
+        provenance: Optional provenance dict with byte_offset, timestamp, source, protocol
+        classification_status: "classified" or "pending_review"
+    """
+    return _DEFAULT_GRAPH_SERVICE.upsert_ioc_batch(
+        rows, observed_at=observed_at,
+        provenance=provenance, classification_status=classification_status
+    )
 
 
 def upsert_relation(

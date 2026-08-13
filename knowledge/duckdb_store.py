@@ -81,6 +81,26 @@ from typing import TYPE_CHECKING, Any, cast
 
 from hledac.universal.transport.circuit_breaker import CBState
 
+# Resilience: Sprint Health Ledger integration for failure visibility
+try:
+    from utils.resilience import (
+        SprintHealthLedger,
+        get_ledger,
+        FailureSeverity,
+        CircuitBreaker,
+        CircuitBreakers,
+        CircuitBreakerConfig,
+        CircuitBreakerOpen,
+    )
+except ImportError:
+    SprintHealthLedger = None  # type: ignore[assignment,misc]
+    get_ledger = None  # type: ignore[assignment,misc]
+    FailureSeverity = None  # type: ignore[assignment,misc]
+    CircuitBreaker = None  # type: ignore[assignment,misc]
+    CircuitBreakers = None  # type: ignore[assignment,misc]
+    CircuitBreakerConfig = None  # type: ignore[assignment,misc]
+    CircuitBreakerOpen = None  # type: ignore[assignment,misc]
+
 # SourceType — strict import
 try:
     from hledac.universal.utils.source_types import SourceType, canonical_source_type
@@ -93,6 +113,16 @@ try:
     from hledac.universal.utils.async_utils import BoundedTaskSet
 except ImportError:
     BoundedTaskSet = None  # type: ignore[assignment,misc]
+
+
+# RESILIENCE-01: Module-level circuit breaker for DuckDB operations
+# This provides fast-fail protection for critical ingest operations
+def _get_duckdb_circuit() -> CircuitBreaker | None:
+    """Get or create the DuckDB ingest circuit breaker."""
+    if CircuitBreakers is None:
+        return None
+    return CircuitBreakers.duckdb_ingest()
+
 
 import msgspec
 from hledac.universal.compat.msgspec_gc_compat import Struct
@@ -2304,6 +2334,18 @@ class DuckDBShadowStore:
         self._read_executor: ThreadPoolExecutor = self._shared_executor
         self._wal_executor: ThreadPoolExecutor = self._shared_executor
         self._duckdb_arrow_executor: ThreadPoolExecutor = self._shared_executor
+
+        # M1 Resource Ledger: Initialize resource tracking for DuckDB
+        # DuckDB uses FDs for database files, mmap regions for indexes,
+        # and temp space for queries
+        try:
+            from hledac.universal.core.resource_ledger import get_resource_ledger
+            self._resource_ledger = get_resource_ledger()
+            self._resource_active = False
+        except Exception:
+            self._resource_ledger = None
+            self._resource_active = False
+
         from hledac.universal.core.concurrency import ConcurrencyCategory, get_semaphore
 
         self._executor_semaphore: asyncio.Semaphore = get_semaphore(ConcurrencyCategory.GRAPH_RAG)
@@ -4788,6 +4830,9 @@ class DuckDBShadowStore:
             In lazy mode, _startup_ready is cleared here BEFORE connecting, then
             set again AFTER connecting. This ensures writes always wait for the
             connection to be ready (no spurious proceeds before connection exists).
+
+        M1 Resource Ceiling Drift Fix: Registers DuckDB resources (FDs, mmap regions)
+        with ResourceLedger on first connection.
         """
         if not self._lazy:
             return
@@ -4799,6 +4844,20 @@ class DuckDBShadowStore:
         self._init_connection()
         self._duckdb_module = _get_duckdb()
         self._startup_ready.set()
+
+        # M1 Resource Admission: Register DuckDB resources after first connection
+        # DuckDB typically opens 3-5 FDs (main DB, WAL, lock file) and
+        # may mmap data files for reads
+        if self._resource_ledger is not None and not self._resource_active:
+            try:
+                from hledac.universal.transport.resource_admission import TransportAdmission
+                can_start, reason = TransportAdmission.can_start_transport("duckdb", self._resource_ledger)
+                if can_start:
+                    self._resource_active = True
+                else:
+                    logger.warning(f"[DuckDBShadowStore] Resource admission denied: {reason}")
+            except Exception:
+                pass
 
     def _get_read_conn(self) -> Any | None:
         """
@@ -9202,6 +9261,55 @@ class DuckDBShadowStore:
 
         return index_to_result, all_accepted
 
+    def _record_ingest_failure(
+        self,
+        error: Exception,
+        context: dict[str, Any] | None = None,
+    ) -> None:
+        """
+        Record DuckDB ingest failure to SprintHealthLedger.
+
+        RESILIENCE-01: This replaces silent exception swallowing with explicit
+        failure recording, enabling orchestrator visibility into degradation.
+
+        DuckDB ingest is CRITICAL - failures here affect sprint data integrity.
+
+        Args:
+            error: The exception that occurred
+            context: Additional context for the failure record
+        """
+        if get_ledger is None or SprintHealthLedger is None:
+            return
+
+        try:
+            ledger = get_ledger()
+            # DuckDB ingest is always CRITICAL - affects sprint data integrity
+            severity = FailureSeverity.CRITICAL
+            task = asyncio.create_task(ledger.record_failure(
+                component="duckdb.ingest",  # Use dot notation for consistency
+                severity=severity,
+                error=error,
+                context=context or {},
+            ))
+
+            # Best-effort error handling for fire-and-forget task
+            def _log_failure(t: asyncio.Task) -> None:
+                try:
+                    t.result()
+                except Exception as recorded_exc:
+                    _FAILURE_LOGGER.warning(
+                        "[RESILIENCE] Failed to record DuckDB ingest failure: %s",
+                        recorded_exc,
+                    )
+            task.add_done_callback(_log_failure)
+
+        except RuntimeError:
+            # No active sprint ledger
+            pass
+        except Exception:
+            # Don't let recording failures compound original error
+            pass
+
     def _handle_storage_failure(
         self,
         chunk_indices: list[int],
@@ -9212,11 +9320,18 @@ class DuckDBShadowStore:
         Handle storage task failure — populate DLQ and return error results.
 
         OPS-DLQ-001: Prevents single malformed batch from causing total data loss.
+        RESILIENCE-01: Records failure to SprintHealthLedger for visibility.
         """
         error_results: dict[int, ActivationResult] = {}
         dlq = getattr(self, "_dlq_manager", None)
         if dlq is None:
             dlq = self._get_dlq_manager()
+
+        # RESILIENCE-01: Record failure to ledger
+        self._record_ingest_failure(error, {
+            "chunk_size": len(chunk_indices),
+            "findings_count": len(findings),
+        })
 
         for idx in chunk_indices:
             finding = findings[idx]
@@ -10591,7 +10706,11 @@ class DuckDBShadowStore:
         )
 
     async def _do_shutdown(self) -> None:
-        """Inner cleanup — called by aclose() via shutdown_aclose()."""
+        """
+        Inner cleanup — called by aclose() via shutdown_aclose().
+
+        M1 Resource Ceiling Drift Fix: Releases DuckDB resources from ledger.
+        """
         if self._checkpoint_task is not None:
             self._checkpoint_task.cancel()
             self._checkpoint_task = None
@@ -10600,6 +10719,11 @@ class DuckDBShadowStore:
             await _bg.cancel()
         self._do_sync_close(emergency=False)
         await self._do_async_close()
+
+        # M1 Resource Cleanup: Release DuckDB resources from ledger
+        if self._resource_ledger is not None and self._resource_active:
+            self._resource_ledger.release_all("duckdb")
+            self._resource_active = False
 
     async def rrf_rank_findings(self, query: str, k: int = 30) -> list[dict]:
         """

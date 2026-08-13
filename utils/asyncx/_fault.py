@@ -12,6 +12,7 @@
 # - Silent except blocks log [FAILURE] {cascade_id} {scope} {exc_info}
 # - Auto-ESCALATE: if parent chain has ≥2 failures, log at WARNING with traceback
 # - Zero overhead on happy path (ContextVar access is ~30ns, single dict lookup)
+# - FailureRegistry integration: critical paths record to SprintHealthLedger
 
 """
 R-3: Failure Observability — cascading failure tracking via ContextVar
@@ -21,12 +22,14 @@ Provides:
 - _generate_failure_id(), _current_cascade_id(), get_cascading_failure_id()
 - _format_failure(), _log_failure() - failure formatting and logging
 - silent_except: decorator for fail-soft async functions with cascading failure tracking
+- Integration with utils.resilience.FailureRegistry for orchestrator visibility
 
 Invariants:
 - Every async task carries a cascading_failure_id via contextvars
 - Silent except blocks log [FAILURE] {cascade_id} {scope} {exc_info}
 - Auto-ESCALATE: if parent chain has ≥2 failures, log at WARNING with traceback
 - Zero overhead on happy path (ContextVar access is ~30ns, single dict lookup)
+- Critical paths record failures to SprintHealthLedger when available
 """
 
 from __future__ import annotations
@@ -40,6 +43,31 @@ import traceback
 from typing import Any, Callable, TypeVar
 
 T = TypeVar("T", default=Any)
+
+# Lazy import to avoid circular dependency
+_RESILIENCE_MODULE: Any = None
+
+
+def _get_resilience():
+    """Lazy import of resilience module to avoid circular dependency."""
+    global _RESILIENCE_MODULE
+    if _RESILIENCE_MODULE is None:
+        try:
+            from utils.resilience import (
+                FailureRegistry,
+                FailureSeverity,
+                get_ledger,
+                SeverityMapper,
+            )
+            _RESILIENCE_MODULE = {
+                "FailureRegistry": FailureRegistry,
+                "FailureSeverity": FailureSeverity,
+                "get_ledger": get_ledger,
+                "SeverityMapper": SeverityMapper,
+            }
+        except ImportError:
+            _RESILIENCE_MODULE = {}
+    return _RESILIENCE_MODULE
 
 
 # ---------------------------------------------------------------------------
@@ -177,6 +205,7 @@ class silent_except:
     2. If the same scope has ≥2 failures in the call chain → ESCALATE to WARNING
     3. The cascading failure ID propagates to child tasks via ContextVar
     4. OTel trace context is captured and passed through
+    5. Records to FailureRegistry when SprintHealthLedger is active (NEW)
 
     The cascade ID is attached to every failure log line, enabling operators
     to grep logs for e.g. ``{cascade=F7A3}`` and see the full failure chain.
@@ -190,6 +219,10 @@ class silent_except:
         async def _ingest_batch(...):
             ...
 
+        @silent_except(scope="duckdb.ingest", default=[], record_to_registry=True)
+        async def _ingest_batch(...):
+            ...
+
     Args:
         scope: dot-namespaced failure scope, e.g. "duckdb.ingest", "live_feed.fetch"
         default: return value on failure (default None). Set to ... to re-raise.
@@ -198,9 +231,16 @@ class silent_except:
         log_level: explicit log level (default logging.DEBUG). Overridden by
                    escalation logic (≥2 failures → WARNING).
         otel_trace: capture OTel span context on failure (default True).
+        record_to_registry: if True, record failure to SprintHealthLedger (default True
+                   for critical paths). Only set False for non-critical sidecars.
+        severity: FailureSeverity for registry (default MEDIUM, use HIGH/CRITICAL
+                 for critical paths).
     """
 
-    __slots__ = ("_fn", "_scope", "_default", "_escalate", "_log_level", "_otel_trace")
+    __slots__ = (
+        "_fn", "_scope", "_default", "_escalate", "_log_level",
+        "_otel_trace", "_record_to_registry", "_severity"
+    )
 
     def __init__(
         self,
@@ -210,6 +250,8 @@ class silent_except:
         escalate: bool = False,
         log_level: int = logging.DEBUG,
         otel_trace: bool = True,
+        record_to_registry: bool = True,
+        severity: int = 1,  # FailureSeverity.MEDIUM by default
     ) -> None:
         self._fn: Callable[..., Any] | None = None
         self._scope = scope
@@ -217,6 +259,54 @@ class silent_except:
         self._escalate = escalate
         self._log_level = log_level
         self._otel_trace = otel_trace
+        self._record_to_registry = record_to_registry
+        self._severity = severity
+
+    def _record_to_ledger(self, exc: BaseException) -> None:
+        """Record failure to SprintHealthLedger if available."""
+        if not self._record_to_registry:
+            return
+
+        resilience = _get_resilience()
+        if not resilience:
+            return
+
+        try:
+            ledger = resilience["get_ledger"]()
+            # Get severity - use SeverityMapper for auto-detection
+            sev_class = resilience["FailureSeverity"]
+            mapper = resilience.get("SeverityMapper")
+
+            # Use auto-detection if no explicit severity was set (indicated by severity == 1 and scope exists)
+            # This allows SeverityMapper to determine appropriate severity based on operation type
+            if mapper:
+                severity = mapper.get_severity(self._scope)
+            else:
+                severity = sev_class(self._severity)
+
+            # Record asynchronously (don't block on ledger failures)
+            if hasattr(ledger, "record_failure"):
+                _task = asyncio.create_task(
+                    ledger.record_failure(
+                        component=self._scope,
+                        severity=severity,
+                        error=exc,
+                        context={"cascade_id": _CASCADE_CTX.get()},
+                    )
+                )
+                # Best-effort: add done callback to log if recording fails
+                def _log_if_failed(t: asyncio.Task) -> None:
+                    try:
+                        t.result()
+                    except Exception as recorded_exc:
+                        _FAILURE_LOGGER.warning(
+                            "[REGISTRY] Failed to record failure: %s",
+                            recorded_exc,
+                        )
+                _task.add_done_callback(_log_if_failed)
+        except Exception:
+            # Silently ignore ledger failures to not compound original error
+            pass
 
     def __call__(self, fn: Callable[..., Any]) -> Callable[..., Any]:
         if asyncio.iscoroutinefunction(fn):
@@ -236,6 +326,8 @@ class silent_except:
                         exc,
                         is_escalated=self._escalate,
                     )
+                    # Record to registry for orchestrator visibility
+                    self._record_to_ledger(exc)
                     if self._default is not ...:
                         return self._default  # type: ignore[return-value]
                     raise
@@ -255,6 +347,8 @@ class silent_except:
                         exc,
                         is_escalated=self._escalate,
                     )
+                    # Record to registry for orchestrator visibility
+                    self._record_to_ledger(exc)
                     if self._default is not ...:
                         return self._default  # type: ignore[return-value]
                     raise
@@ -265,7 +359,8 @@ class silent_except:
     def __repr__(self) -> str:
         return (
             f"silent_except(scope={self._scope!r}, "
-            f"default={self._default!r}, escalate={self._escalate})"
+            f"default={self._default!r}, escalate={self._escalate}, "
+            f"record={self._record_to_registry})"
         )
 
 
@@ -273,4 +368,5 @@ __all__ = [
     "silent_except",
     "get_cascading_failure_id",
     "_log_failure",
+    "_record_to_ledger",  # For manual registry recording
 ]

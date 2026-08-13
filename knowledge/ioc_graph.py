@@ -2719,17 +2719,29 @@ class IOCGraph:
     def _try_rust_centrality(self, centrality, node_ids, node_map, edges, value_to_id):
         """Try Rust petgraph for centrality (GRAPH-01)."""
         try:
+            # B8-fix: Use batch_centrality_all with adjacency-list builder (matches graph_rag.py:945)
             from hledac.universal.core.rust_backend import rust
-            nodes_compact = [(i + 1, node_map[nid]['value'], node_map[nid]['ioc_type']) for i, nid in enumerate(node_ids)]
-            edges_compact = [(value_to_id[e['source']], value_to_id[e['target']], e['confidence']) for e in edges
-                           if e['source'] in value_to_id and e['target'] in value_to_id]
-            if nodes_compact and edges_compact:
-                result = rust.raw.module.rust_graph_analytics_all(nodes_compact, edges_compact, 0.85, 1.0)
-                if result and (rust_c := result.get('centrality', {})):
-                    for nid in node_ids:
-                        if (cv := rust_c.get(value_to_id[nid])) and isinstance(cv, dict):
-                            for key in ['pagerank', 'betweenness', 'closeness', 'eigenvector']:
-                                centrality[nid][key] = float(cv.get(key, 0.0))
+            _rust_ext = rust.raw.module
+            # Build adjacency list: {node_id: [neighbor_ids]}
+            adjacency: dict[int, list[int]] = {value_to_id[nid]: [] for nid in node_ids}
+            for e in edges:
+                src = value_to_id.get(e['source'])
+                dst = value_to_id.get(e['target'])
+                if src is not None and dst is not None:
+                    adjacency.setdefault(src, [])
+                    adjacency.setdefault(dst, [])
+                    adjacency[src].append(dst)
+                    adjacency[dst].append(src)
+            adj_list: list[tuple[int, list[int]]] = [(nid, neighbors) for nid, neighbors in adjacency.items()]
+            if adj_list:
+                rust_result = _rust_ext.batch_centrality_all(adj_list)
+                if rust_result:
+                    for nid, metrics in rust_result:
+                        if isinstance(metrics, dict):
+                            centrality[nid]['pagerank'] = float(metrics.get('pagerank', 0.0))
+                            centrality[nid]['betweenness'] = float(metrics.get('betweenness', 0.0))
+                            centrality[nid]['closeness'] = float(metrics.get('closeness', 0.0))
+                            centrality[nid]['eigenvector'] = float(metrics.get('eigenvector', 0.0))
                     return True
         except Exception:
             pass

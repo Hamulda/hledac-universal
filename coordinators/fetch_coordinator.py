@@ -4968,11 +4968,82 @@ class FetchCoordinator(UniversalCoordinator):
         return evidence_ids
 
     async def _handle_bgp(self, entity_id: str) -> list[str]:
-        """Handle BGP enrichment protocol."""
+        """
+        Handle BGP enrichment protocol.
+
+        Gap D FIX: Replaced stub with real ASN lookup via BGPAdapter.enrich_ips().
+
+        Flow:
+          1. Check if entity_id is an IP address (BGP works on IPs)
+          2. Call BGPAdapter.enrich_ips() for real ASN/path lookup
+          3. Create evidence IDs from BGP result (ASN, prefix, org, country)
+          4. Log enrichment for telemetry
+          5. Close adapter to release resources
+
+        Args:
+            entity_id: IP address or entity identifier
+
+        Returns:
+            List of evidence IDs from BGP enrichment
+        """
         evidence_ids = []
-        if FeatureFlags.get(FeatureFlag.BGP):
-            evidence_ids.append(f"bgp:{entity_id}:prefix_lookup")
-            logger.debug('[UNIFIED-004] BGP lookup queued for %s (async sidecar)', entity_id)
+        if not FeatureFlags.get(FeatureFlag.BGP):
+            logger.debug('[UNIFIED-004] BGP skipped for %s (HLEDAC_ENABLE_BGP=0)', entity_id)
+            return evidence_ids
+
+        # BGP works on IP addresses - skip if not IP
+        try:
+            import ipaddress
+            ipaddress.ip_address(entity_id)
+        except ValueError:
+            logger.debug('[UNIFIED-004] BGP skipped for non-IP entity: %s', entity_id)
+            return evidence_ids
+
+        adapter = None
+        try:
+            from ..recon.bgp_lane import BGPAdapter
+
+            adapter = BGPAdapter()
+            results = await adapter.enrich_ips([entity_id])
+
+            if results and len(results) > 0:
+                result = results[0]
+                if result.asn:
+                    # Create structured evidence IDs from BGP result
+                    evidence_ids.append(f"bgp:{entity_id}:asn:{result.asn}")
+                    if result.prefix:
+                        evidence_ids.append(f"bgp:{entity_id}:prefix:{result.prefix}")
+                    if result.org_name:
+                        evidence_ids.append(f"bgp:{entity_id}:org:{result.org_name}")
+                    if result.country_code:
+                        evidence_ids.append(f"bgp:{entity_id}:cc:{result.country_code}")
+                    if result.rir:
+                        evidence_ids.append(f"bgp:{entity_id}:rir:{result.rir}")
+
+                    logger.info(
+                        '[UNIFIED-004] BGP enriched: %s → ASN %s / %s / %s',
+                        entity_id,
+                        result.asn,
+                        result.prefix or 'unknown',
+                        result.org_name or 'unknown',
+                    )
+                else:
+                    logger.debug('[UNIFIED-004] BGP no ASN found for %s', entity_id)
+            else:
+                logger.debug('[UNIFIED-004] BGP no result for %s', entity_id)
+
+        except ImportError:
+            logger.warning('[UNIFIED-004] BGP adapter unavailable, skipping enrichment')
+        except Exception as e:
+            logger.debug('[UNIFIED-004] BGP enrichment failed for %s: %s', entity_id, e)
+        finally:
+            # Gap D FIX: Always close adapter to release HTTP session resources
+            if adapter is not None:
+                try:
+                    await adapter.close()
+                except Exception:  # noqa: BLE001 — best-effort cleanup
+                    pass
+
         return evidence_ids
 
     async def _handle_shodan(self, entity_id: str) -> list[str]:

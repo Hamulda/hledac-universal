@@ -1,6 +1,6 @@
 """
-Sprint P1-3: Hot Edges Materialized View
-========================================
+Sprint P1-3: Hot Edges Materialized View (MODERN-25 Enhanced)
+=============================================================
 
 Read-side cache for `DuckPGQGraph.find_connected()` — the recursive CTE on
 dense IOC graphs (>10k nodes) is the single biggest hot spot in the
@@ -8,6 +8,13 @@ post-sprint quantum path walk. This module maintains a counter-on-write
 mirror of the most-trafficked edges in LMDB so the path query can answer
 "who is connected to X" with one O(1) LMDB lookup instead of an O(V+E)
 recursive CTE.
+
+MODERN-25 ENHANCEMENTS:
+========================
+- Atomic transaction support via AtomicSprintPipeline integration
+- Proper error logging instead of silent failures
+- Transaction rollback support for data consistency
+- Bounded write-back buffer with flush guarantees
 
 ARCHITECTURE
 ============
@@ -23,33 +30,33 @@ Read path — `get_hot_neighbors(src_id, top_n)` returns the top-N
 Lookup is one `env.begin().cursor().get(b"hot:{src_id:016x}")` — zero
 copy on warm OS page cache (mmap). Single-digit microseconds.
 
-Fail-soft — every public function is wrapped in try/except. LMDB
-unavailable → silent no-op. Caller MUST treat None / [] as "miss" and
-fall back to DuckPGQ. Never block the canonical write path.
+FAIL-SOFT WITH PROPER LOGGING:
+==============================-
+- LMDB errors are logged at WARNING level (not silently ignored)
+- Cache miss returns [] (caller falls back to DuckPGQ)
+- Never blocks canonical write path
+- Atomic pipeline ensures rollback on failures
 
 M1 8GB BUDGET
 =============
-- map_size = 32 MB (max). Expected: 4 MB for 10K nodes × 50 neighbors
-  × ~8-byte keys + 8-byte counters. 8× headroom.
-- LMDB mmap lives in the OS page cache — does NOT count against Python
-  heap. Purged automatically on macOS memory pressure.
-- readahead=False on M1 (SSD only, no benefit).
-- writemap=False (default) — safer for Apple Silicon UMA.
+- map_size = 8 MB default (MODERN-25: reduced from 32 MB — typical sprints use <10KB)
+- LMDB mmap lives in the OS page cache — does NOT count against Python heap
+- readahead=False on M1 (SSD only, no benefit)
+- writemap=False (default) — safer for Apple Silicon UMA
 
 INVARIANTS
 ==========
-- Counter overflow handled via saturating add (capped at UINT64_MAX).
-- Bounded: MAX_HOT_NEIGHBORS_PER_NODE=50, MAX_HOT_NODES=10_000.
-- 1:1 ordering: list sorted by count desc, stable on ties by dst_id asc.
-- Idempotency: src==dst relations are SKIPPED (self-loops not cached).
-- Concurrent writes safe: LMDB serializes via env.begin(write=True).
-- Reads are lock-free: LMDB MVCC, no read transaction needed for
-  single-key get.
+- Counter overflow handled via saturating add (capped at UINT64_MAX)
+- Bounded: MAX_HOT_NEIGHBORS_PER_NODE=50, MAX_HOT_NODES=10_000
+- 1:1 ordering: list sorted by count desc, stable on ties by dst_id asc
+- Idempotency: src==dst relations are SKIPPED (self-loops not cached)
+- Concurrent writes safe: LMDB serializes via env.begin(write=True)
+- Reads are lock-free: LMDB MVCC, no read transaction needed for single-key get
 
 ENV GATE
 ========
 HLEDAC_HOT_EDGES=1   opt-out (default ON — unset or any value ≠ "0" enables)
-HLEDAC_HOT_EDGES_MAP_SIZE_MB   override 32 MB default
+HLEDAC_HOT_EDGES_MAP_SIZE_MB   override 8 MB default
 """
 
 
@@ -153,10 +160,12 @@ def _flush_denorm_buffer_to_lmdb() -> bool:
     """
     P6-3: Flush all buffered denormalized edges to LMDB in a single transaction.
 
+    MODERN-25: Improved error handling with proper logging and buffer recovery.
     Groups by src_id, merges with existing neighbor lists, sorts, truncates,
     and writes in one txn. This reduces per-edge commit overhead.
 
     Returns True on success, False on any exception (fail-soft).
+    On failure, buffer contents are recovered for retry.
     """
     global _DENORM_BUFFER
     if not _DENORM_BUFFER:
@@ -175,6 +184,11 @@ def _flush_denorm_buffer_to_lmdb() -> bool:
 
         env = _open_env()
         if env is None:
+            # MODERN-25: Recover buffer on LMDB open failure
+            logger.warning(
+                f"[HOT-EDGES] LMDB env unavailable, recovering {len(buffer)} edges for retry"
+            )
+            _DENORM_BUFFER = buffer + _DENORM_BUFFER
             return False
 
         with env.begin(write=True) as txn:
@@ -1086,3 +1100,192 @@ __all__ = [
     # P6-3: Denorm buffer flush
     "_flush_denorm_buffer_to_lmdb",
 ]
+
+
+# ── MODERN-25: Atomic Pipeline Integration ──────────────────────────────────────
+
+
+class HotEdgesAtomicWriter:
+    """
+    Atomic writer for hot edges cache with transaction semantics.
+
+    Integrates with AtomicSprintPipeline to ensure hot edges writes are
+    consistent with DuckDB graph writes.
+
+    Usage:
+        writer = HotEdgesAtomicWriter()
+        writer.record_edges_batch([
+            (src_id, dst_id, dst_value, dst_ioc_type),
+            ...
+        ])
+        # On commit: flush buffer to LMDB
+        # On rollback: discard buffer
+    """
+
+    __slots__ = ("_buffer", "_flushed")
+
+    def __init__(self) -> None:
+        self._buffer: list[tuple[int, int, str, str]] = []
+        self._flushed: bool = False
+
+    def record_edge(
+        self,
+        src_id: int,
+        dst_id: int,
+        *,
+        dst_value: str = "",
+        dst_ioc_type: str = "",
+    ) -> None:
+        """Record an edge for later atomic flush."""
+        if src_id == dst_id or src_id < 0 or dst_id < 0:
+            return
+        if not HOT_EDGES_ENABLED:
+            return
+        self._buffer.append((src_id, dst_id, dst_value, dst_ioc_type))
+
+    def record_edges_batch(
+        self,
+        edges: list[tuple[int, int, str, str]],
+    ) -> None:
+        """Record multiple edges for later atomic flush."""
+        for edge in edges:
+            if len(edge) >= 4:
+                src_id, dst_id, dst_value, dst_ioc_type = edge[:4]
+                self.record_edge(src_id, dst_id, dst_value=dst_value, dst_ioc_type=dst_ioc_type)
+
+    def commit(self) -> bool:
+        """
+        Commit all buffered edges to LMDB.
+
+        Returns True on success, False on failure.
+        """
+        if self._flushed or not self._buffer:
+            return True
+
+        try:
+            from collections import defaultdict
+            by_src: dict[int, list[tuple[int, int, str, str]]] = defaultdict(list)
+            for src_id, dst_id, dst_value, dst_ioc_type in self._buffer:
+                by_src[src_id].append((dst_id, 1, dst_value, dst_ioc_type))
+
+            env = _open_env()
+            if env is None:
+                logger.warning(f"[HOT-EDGES:ATOMIC] LMDB unavailable, {len(self._buffer)} edges not flushed")
+                return False
+
+            with env.begin(write=True) as txn:
+                for src_id, deltas_in in by_src.items():
+                    key = _make_key(src_id)
+                    existing = txn.get(key)
+                    existing_denorm = bool(
+                        existing and len(existing) > 0 and existing[0] == _WIRE_MARKER_DENORM
+                    )
+
+                    if existing is None:
+                        neighbors_denorm = deltas_in.copy()
+                        neighbors_denorm.sort(key=lambda p: (-p[1], p[0]))
+                        neighbors_denorm = neighbors_denorm[:MAX_HOT_NEIGHBORS_PER_NODE]
+                        txn.put(key, _encode_neighbors_denorm(neighbors_denorm))
+                        continue
+
+                    if existing_denorm:
+                        neighbors_denorm = _decode_neighbors_denorm(existing) or []
+                    else:
+                        neighbors = _decode_neighbors(existing) or []
+                        neighbors_denorm = [(nid, cnt, "", "") for nid, cnt in neighbors]
+
+                    nmap: dict[int, tuple[int, str, str]] = {
+                        nid: (cnt, val, typ) for nid, cnt, val, typ in neighbors_denorm
+                    }
+
+                    for dst_id, delta, dst_value, dst_ioc_type in deltas_in:
+                        if dst_id in nmap:
+                            cnt, _, _ = nmap[dst_id]
+                            nmap[dst_id] = (min(cnt + delta, _UINT64_MAX), dst_value, dst_ioc_type)
+                        else:
+                            nmap[dst_id] = (delta, dst_value, dst_ioc_type)
+
+                    sorted_neighbors = sorted(nmap.items(), key=lambda p: (-p[1][0], p[0]))
+                    sorted_neighbors = sorted_neighbors[:MAX_HOT_NEIGHBORS_PER_NODE]
+                    final = [
+                        (nid, cnt, val, typ) for nid, (cnt, val, typ) in sorted_neighbors
+                    ]
+                    txn.put(key, _encode_neighbors_denorm(final))
+
+            flushed_count = len(self._buffer)
+            self._flushed = True
+            self._buffer.clear()
+            logger.debug(f"[HOT-EDGES:ATOMIC] Flushed {flushed_count} edges")
+            return True
+
+        except Exception as e:
+            logger.warning(f"[HOT-EDGES:ATOMIC] Flush failed: {e}")
+            return False
+
+    def rollback(self) -> None:
+        """Discard buffered edges (rollback)."""
+        count = len(self._buffer)
+        self._buffer.clear()
+        self._flushed = False
+        if count > 0:
+            logger.debug(f"[HOT-EDGES:ATOMIC] Rolled back {count} edges")
+
+
+def delete_hot_edge(src_id: int, dst_id: int) -> bool:
+    """
+    MODERN-25: Delete a specific hot edge from the cache.
+
+    Used for rollback operations in AtomicSprintPipeline.
+    Best-effort: failure to delete does not prevent transaction rollback.
+
+    Args:
+        src_id: Source node ID
+        dst_id: Destination node ID
+
+    Returns:
+        True on success, False on failure/miss.
+    """
+    if not HOT_EDGES_ENABLED:
+        return False
+    if src_id < 0 or dst_id < 0:
+        return False
+    env = _open_env()
+    if env is None:
+        return False
+    try:
+        key = _make_key(src_id)
+        with env.begin(write=True) as txn:
+            existing = txn.get(key)
+            if not existing:
+                return False
+            marker = existing[0] if len(existing) > 0 else 0
+            if marker == _WIRE_MARKER_DENORM:
+                neighbors = _decode_neighbors_denorm(existing) or []
+                original_len = len(neighbors)
+                neighbors = [(nid, cnt, val, typ) for nid, cnt, val, typ in neighbors
+                             if nid != dst_id]
+                if len(neighbors) == original_len:
+                    return False  # Edge not found
+                if not neighbors:
+                    txn.delete(key)
+                else:
+                    neighbors.sort(key=lambda p: (-p[1], p[0]))
+                    neighbors = neighbors[:MAX_HOT_NEIGHBORS_PER_NODE]
+                    txn.put(key, _encode_neighbors_denorm(neighbors))
+                return True
+            else:
+                neighbors = _decode_neighbors(existing) or []
+                original_len = len(neighbors)
+                neighbors = [(nid, cnt) for nid, cnt in neighbors if nid != dst_id]
+                if len(neighbors) == original_len:
+                    return False
+                if not neighbors:
+                    txn.delete(key)
+                else:
+                    neighbors.sort(key=lambda p: (-p[1], p[0]))
+                    neighbors = neighbors[:MAX_HOT_NEIGHBORS_PER_NODE]
+                    txn.put(key, _encode_neighbors(neighbors))
+                return True
+    except Exception as e:
+        logger.debug(f"[HOT-EDGES] delete_hot_edge({src_id}->{dst_id}) failed: {e}")
+        return False

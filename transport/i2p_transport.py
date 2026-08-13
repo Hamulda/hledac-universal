@@ -528,7 +528,7 @@ class I2PTransport(Transport):
         '_ready', '_session_http', '_session_socks',
         '_sam_v3_client', 'available', 'data_dir',
         'http_port', 'i2p_address', 'sam_port', 'socks_port',
-        'transport_mode',
+        'transport_mode', '_ledger', '_resource_active',
     )
 
     def __init__(self, data_dir: str | None=None, socks_port: int=I2P_SOCKS_PORT, sam_port: int=I2P_SAM_PORT, http_port: int=I2P_HTTP_PORT) -> None:
@@ -551,32 +551,50 @@ class I2PTransport(Transport):
         self._sam_v3_client: I2PSAMv3Client | None = None
         self._ready = asyncio.Event()
 
+        # M1 Resource Ledger: Initialize resource tracking
+        self._ledger = get_resource_ledger()
+        self._resource_active = False
+
     async def start(self) -> bool:
         """
         Start I2P transport by detecting available mode.
 
+        M1 Resource Ceiling Drift Fix: Uses resource admission to track
+        socket connections used by I2P sessions.
+
         Returns True if any I2P mode is operational.
         """
-        if not self.available:
+        # M1 Resource Admission: Check if we can start I2P transport
+        can_start, reason = TransportAdmission.can_start_transport("i2p", self._ledger)
+        if not can_start:
+            logger.warning(f"[I2PTransport] Cannot start: {reason}")
             return False
-        if await self._try_sam_mode():
-            self.transport_mode = 'sam'
-            logger.info(f'I2PTransport ready via SAM v3 protocol (127.0.0.1:{self.sam_port})')
-            self._ready.set()
-            return True
-        if await self._try_socks_mode():
-            self.transport_mode = 'socks'
-            logger.info(f'I2PTransport ready via SOCKS5 proxy (127.0.0.1:{self.socks_port})')
-            self._ready.set()
-            return True
-        if await self._try_http_mode():
-            self.transport_mode = 'http'
-            logger.info(f'I2PTransport ready via HTTP proxy (127.0.0.1:{self.http_port})')
-            self._ready.set()
-            return True
-        logger.warning('No I2P transport mode available')
-        self.available = False
-        return False
+
+        # M1 Resource Admission: Acquire resources via context manager
+        with TransportAdmission.for_transport("i2p", self._ledger):
+            if not self.available:
+                return False
+            if await self._try_sam_mode():
+                self.transport_mode = 'sam'
+                logger.info(f'I2PTransport ready via SAM v3 protocol (127.0.0.1:{self.sam_port})')
+                self._ready.set()
+                self._resource_active = True
+                return True
+            if await self._try_socks_mode():
+                self.transport_mode = 'socks'
+                logger.info(f'I2PTransport ready via SOCKS5 proxy (127.0.0.1:{self.socks_port})')
+                self._ready.set()
+                self._resource_active = True
+                return True
+            if await self._try_http_mode():
+                self.transport_mode = 'http'
+                logger.info(f'I2PTransport ready via HTTP proxy (127.0.0.1:{self.http_port})')
+                self._ready.set()
+                self._resource_active = True
+                return True
+            logger.warning('No I2P transport mode available')
+            self.available = False
+            return False
 
     async def _try_socks_mode(self) -> bool:
         """Try to connect to existing I2P SOCKS5 proxy."""
@@ -695,7 +713,12 @@ class I2PTransport(Transport):
         return False
 
     async def stop(self) -> None:
-        """Graceful I2P transport shutdown."""
+        """
+        Graceful I2P transport shutdown with resource cleanup.
+
+        M1 Resource Ceiling Drift Fix: Properly releases all resources
+        via ResourceLedger.
+        """
         from hledac.universal.utils.secure_zero import wipe_i2p_identity
 
         # G1: Secure wipe of I2P identity material before shutdown
@@ -712,8 +735,13 @@ class I2PTransport(Transport):
         if self._session_http:
             await self._session_http.aclose()
             self._session_http = None
+
+        # M1 Resource Cleanup: Release all resources for this transport
+        self._ledger.release_all("i2p")
+        self._resource_active = False
+
         self._ready.clear()
-        logger.info('I2P transport stopped')
+        logger.info('[I2PTransport] Stopped and resources released')
 
     async def wait_ready(self) -> None:
         """Wait for transport to be ready."""

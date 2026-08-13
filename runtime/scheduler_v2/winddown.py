@@ -440,6 +440,11 @@ class WinddownOrchestrator:
 
         Awaits the batch upsert before returning to ensure no relationships
         are lost when winddown ends.
+
+        ORPHANED TASK FIX (Issue #2):
+            Creates tracked task and awaits it to ensure relationships are
+            persisted before winddown exits. Uses 10s timeout to prevent
+            blocking Phase 1 if the batch upsert hangs.
         """
         try:
             if ctx.graph_service and hasattr(ctx.graph_service, 'upsert_relationship_batch'):
@@ -447,12 +452,29 @@ class WinddownOrchestrator:
                 if _engine and hasattr(_engine, 'get_latent_relationships'):
                     rels = _engine.get_latent_relationships()
                     if rels:
-                        # Await the tracked task so relationships are persisted before winddown exits
-                        await safe_create_task_tracked(
+                        # Create tracked task and await it with timeout
+                        _task = safe_create_task_tracked(
                             ctx.graph_service.upsert_relationship_batch(rels),
                             name="winddown:upsert_relationship_batch",
                             scope=TaskScope.WINDUP,
                         )
+                        try:
+                            async with asyncio.timeout(10.0):
+                                await _task
+                        except asyncio.TimeoutError:
+                            _task.cancel()
+                            try:
+                                await _task
+                            except asyncio.CancelledError:
+                                pass
+                            except Exception:  # noqa: BLE001
+                                pass
+                        except asyncio.CancelledError:
+                            raise
+                        except Exception:  # noqa: BLE001
+                            pass
+        except asyncio.CancelledError:
+            raise
         except Exception:  # noqa: BLE001
             pass
 
@@ -481,19 +503,40 @@ class WinddownOrchestrator:
         """Run all advisory steps via SidecarOrchestrator.
 
         Awaits the advisory runner task before returning so all sidecar
-        work completes during winddown.
+        work completes during winddown. Uses timeout to prevent blocking
+        Phase 1 if sidecars hang (e.g., C-extension I/O hangs).
+
+        ORPHANED TASK FIX (Issue #2):
+            Properly awaits the advisory runner task within Phase 1's
+            execution window. The task is tracked via TaskRegistry
+            and will be cancelled by cancel_all() if it exceeds timeout.
         """
         _so = getattr(ctx, '_sidecar_orchestrator', None)
         if _so is None and hasattr(ctx, 'sidecar_orchestrator'):
             _so = ctx.sidecar_orchestrator
         if _so and hasattr(_so, 'run_advisory_runner'):
             try:
-                # Await so sidecar work completes before winddown exits
-                await safe_create_task_tracked(
+                # ORPHANED TASK FIX: Await the task with timeout instead of fire-and-forget.
+                # This ensures sidecar work completes before Phase 1 exits.
+                # The task is tracked via TaskRegistry - cancel_all() will cancel it if needed.
+                _sidecar_task = safe_create_task_tracked(
                     _so.run_advisory_runner(),
                     name="winddown:advisory_runner",
                     scope=TaskScope.WINDUP_SIDECAR,
                 )
+                # Await with 15s timeout - sidecars should complete within this window
+                # If timeout fires, cancel_all() in Phase 1 cleanup will handle the task
+                try:
+                    async with asyncio.timeout(15.0):
+                        await _sidecar_task
+                except asyncio.TimeoutError:
+                    _sidecar_task.cancel()
+                    try:
+                        await _sidecar_task
+                    except asyncio.CancelledError:
+                        pass
+                    except Exception:  # noqa: BLE001
+                        pass
             except Exception:  # noqa: BLE001
                 pass
 

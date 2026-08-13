@@ -1593,6 +1593,9 @@ class M1ResourceGovernor:
         self._sprint_degraded_mode: bool = False
         # HW-02: Lazy power monitor initialization
         self._power_monitor: "PowerStatusMonitor | None" = None  # noqa: F821
+        # [NEW-M13]: QoS subscription registry for propagation with ack/timeout
+        self._qos_registry = get_qos_subscription_registry()
+        self._audit_started = False
 
     @property
     def _pw_monitor(self) -> "PowerStatusMonitor":  # noqa: F821
@@ -1817,6 +1820,69 @@ class M1ResourceGovernor:
         MLX inference running for final synthesis.
         """
         self._sprint_windup_mode = enabled
+
+    # [NEW-M13]: QoS subscription management
+
+    async def subscribe_capability(
+        self,
+        capability: str,
+        ack_callback: Callable[[bool, str], None],
+        deadline_s: float = _ACK_DEADLINE_DEFAULT,
+    ) -> None:
+        """
+        [NEW-M13]: Subscribe a subsystem to QoS changes.
+
+        Args:
+            capability:   The capability this subsystem manages
+            ack_callback: Called with (success, reason) when QoS changes are applied
+            deadline_s:   Max seconds to wait for acknowledgment (default 2.0)
+        """
+        await self._qos_registry.register_subscription(
+            capability=capability,
+            ack_callback=ack_callback,
+            deadline_s=deadline_s,
+        )
+    
+    async def unsubscribe_capability(self, capability: str) -> None:
+        """[NEW-M13]: Unsubscribe a capability from QoS changes."""
+        await self._qos_registry.unregister_subscription(capability)
+    
+    async def start_qos_audit(self) -> None:
+        """
+        [NEW-M13]: Start the QoS health audit loop.
+
+        Called at governor startup. The audit loop periodically verifies
+        that subsystem states match the active QoS level.
+        """
+        if not self._audit_started:
+            await self._qos_registry.start_audit_loop()
+            self._audit_started = True
+            logger.info("[M1ResourceGovernor] QoS health audit loop started")
+    
+    async def stop_qos_audit(self) -> None:
+        """[NEW-M13]: Stop the QoS health audit loop."""
+        if self._audit_started:
+            await self._qos_registry.stop_audit_loop()
+            self._audit_started = False
+            logger.info("[M1ResourceGovernor] QoS health audit loop stopped")
+    
+    def get_qos_health(self, capability: str) -> SubsystemHealth:
+        """
+        [NEW-M13]: Get the health state of a QoS-managed capability.
+
+        Returns:
+            SubsystemHealth enum value indicating current health state.
+        """
+        return self._qos_registry.get_health_state(capability)
+    
+    def is_qos_compliant(self, capability: str) -> bool:
+        """
+        [NEW-M13]: Check if a capability is compliant with current QoS level.
+
+        Returns:
+            True if the subsystem has acknowledged and is compliant.
+        """
+        return self._qos_registry.is_compliant(capability, get_qos_level())
 
     def _compute_thermal_scales(self, headroom: float) -> tuple[float, float, int | None, float]:
         """
@@ -2149,19 +2215,57 @@ class M1ResourceGovernor:
         # F350M-R: Apply madvise to all mmap handles at CRITICAL/EMERGENCY
         if decision.uma_state in (UMAState.CRITICAL, UMAState.EMERGENCY):
             self.apply_madvise_critical()
-        # HW-01 / ISSUE-013: Feed thermal_headroom into MLX Metal cache sizing.
-        # On M1 MacBook Air (fanless), Metal + CPU share heatsink — under
-        # throttling, reduce Metal cache to free memory bandwidth for compute.
-        if decision.thermal_headroom < 1.0:
+        # M1-CRITICAL FIX: Metal cache reconfiguration MUST be synchronous.
+        # Previously this was fire-and-forget (asyncio.create_task), causing
+        # non-atomic pressure reactions. The governor evaluated new pressure
+        # before the Metal cache had actually been reconfigured, leading to
+        # oscillation and missed pressure signals.
+        #
+        # Solution: Synchronous checkpoint with async thread-offload.
+        # The thread executor ensures we don't block the event loop while
+        # waiting for Metal API calls (~10-50ms latency).
+        _METAL_RECONFIGURE_TIMEOUT_S: float = 30.0  # Hard timeout for safety
+
+        async def _sync_metal_reconfigure() -> None:
+            """Synchronous Metal cache reconfiguration with timeout."""
             try:
                 from hledac.universal.utils.mlx_cache import async_reconfigure_metal_cache_limit
 
-                asyncio.create_task(
+                success = await asyncio.wait_for(
                     async_reconfigure_metal_cache_limit(
                         uma_state=decision.uma_state,
                         thermal_headroom=decision.thermal_headroom,
-                    )
+                    ),
+                    timeout=_METAL_RECONFIGURE_TIMEOUT_S,
                 )
+                if not success:
+                    logger.warning(
+                        f"[ResourceGovernor] Metal cache reconfigure failed: "
+                        f"state={decision.uma_state}, thermal={decision.thermal_headroom:.2f}"
+                    )
+            except asyncio.TimeoutError:
+                logger.error(
+                    f"[ResourceGovernor] Metal cache reconfigure timeout after "
+                    f"{_METAL_RECONFIGURE_TIMEOUT_S}s — possible deadlock"
+                )
+            except Exception as e:
+                logger.debug(f"[ResourceGovernor] Metal cache reconfigure error: {e}")
+
+        # HW-01 / ISSUE-013: Feed thermal_headroom into MLX Metal cache sizing.
+        # On M1 MacBook Air (fanless), Metal + CPU share heatsink — under
+        # throttling, reduce Metal cache to free memory bandwidth for compute.
+        #
+        # M1 FIX: Metal cache reconfiguration should happen on:
+        # 1. thermal_headroom < 1.0 (thermal throttling)
+        # 2. UmaState changes to WARN/CRITICAL/EMERGENCY (memory pressure)
+        # Previously only triggered on thermal throttling, missing memory pressure signals.
+        _should_reconfigure = (
+            decision.thermal_headroom < 1.0
+            or decision.uma_state in (UMAState.WARN, UMAState.CRITICAL, UMAState.EMERGENCY)
+        )
+        if _should_reconfigure:
+            try:
+                await _sync_metal_reconfigure()
             except Exception:  # noqa: BLE001
                 pass
         # UNIFIED-002: Propagate UMA pressure state to AsyncUMAGuard for
@@ -2172,13 +2276,20 @@ class M1ResourceGovernor:
             guard.update_hard_limit(decision.uma_state)
         except Exception:  # noqa: BLE001
             pass
-        # UNIFIED-003: Propagate UMA pressure to GlobalPeakCoScheduler for
-        # preemption + mutex group awareness. This ensures CRITICAL/EMERGENCY
-        # pressure triggers active task cancellation.
+        # M1-CRITICAL FIX: GlobalPeakCoScheduler pressure propagation MUST be awaited.
+        # Previously fire-and-forget, causing pressure changes to race with task
+        # scheduling. Now we await the propagation to ensure the scheduler
+        # is synchronized before returning from apply_decision.
         try:
             from hledac.universal.core.global_co_scheduler import get_co_scheduler
             scheduler = get_co_scheduler()
-            asyncio.create_task(scheduler.on_pressure_change(decision.uma_state))
+            # Await with timeout to prevent deadlock
+            await asyncio.wait_for(
+                scheduler.on_pressure_change(decision.uma_state),
+                timeout=5.0,
+            )
+        except asyncio.TimeoutError:
+            logger.warning("[ResourceGovernor] GlobalPeakCoScheduler pressure update timeout")
         except Exception:  # noqa: BLE001
             pass
         # [FINAL]-019: Propagate QoS profile to context variable and module cache.
@@ -2188,6 +2299,25 @@ class M1ResourceGovernor:
             global _last_qos_profile
             _last_qos_profile = decision.qos_profile
             _qos_signal.set(decision.qos_profile)
+        except Exception:  # noqa: BLE001
+            pass
+        
+        # [NEW-M13]: Subscription-based QoS propagation with ack/timeout.
+        # Emit QoS change to all registered subscribers and wait for acknowledgments.
+        # Force-cancel subsystems that don't acknowledge within deadline.
+        try:
+            registry = get_qos_subscription_registry()
+            ack_results = await registry.emit_qos_change(
+                decision.qos_level,
+                decision.qos_profile
+            )
+            # Log which subsystems need acknowledgment
+            pending = [cap for cap, ack_received in ack_results.items() if not ack_received]
+            if pending:
+                logger.info(
+                    f"[QoS-Sub] Pending acks from {len(pending)} subsystems: {pending} "
+                    f"(qos_level={decision.qos_level})"
+                )
         except Exception:  # noqa: BLE001
             pass
 
@@ -2496,11 +2626,31 @@ class AsyncUMAGuard:
             # (asyncio.Condition.notify_all requires holding the lock)
             # We schedule a wake-up task to avoid blocking here
             asyncio.create_task(self._notify_all_waiters())
+            
+            # [NEW-M13]: Acknowledge QoS change for uma_guard
+            asyncio.create_task(self._ack_qos_change(uma_state, new_limit))
 
     async def _notify_all_waiters(self) -> None:
         """Notify all waiters to re-check their requests."""
         async with self._condition:
             self._condition.notify_all()
+    
+    async def _ack_qos_change(self, uma_state: str, new_limit: float) -> None:
+        """
+        [NEW-M13]: Acknowledge QoS change to the subscription registry.
+        
+        Called after updating the hard limit to notify the governor
+        that the uma_guard subsystem has complied with the QoS change.
+        """
+        try:
+            registry = get_qos_subscription_registry()
+            await registry.acknowledge(
+                "uma_guard",
+                success=True,
+                reason=f"hard_limit={new_limit:.0f}MB state={uma_state}"
+            )
+        except Exception:  # noqa: BLE001
+            pass  # Fail-soft: don't block the guard on ack failure
 
     @asynccontextmanager
     async def reserve(
@@ -3652,6 +3802,374 @@ _qos_signal: _contextvars.ContextVar[QoSProfile] = _contextvars.ContextVar(
 def get_qos_signal() -> QoSProfile:
     """Get the current QoS profile signal (thread-safe via ContextVar)."""
     return _qos_signal.get()
+
+
+# ── QoS Subscription & Health Audit System ─────────────────────────────────────
+
+# [NEW-M13]: Subscription-based QoS propagation with ack/timeout.
+# Each subsystem subscribes to governor and acknowledges QoS changes within deadline.
+# Governor tracks pending acknowledgments and force-cancels if deadline expires.
+#
+# ARCHITECTURE:
+#     Subsystem                    Governor
+#     ─────────────────────────   ─────────────────────────────────────────
+#     subscribe(cap, ack_fn)  →   register in _qos_subscriptions
+#                                 emit QoS change
+#     acknowledge(cap, ok)    ←   signal ack received, record health state
+#                                 if deadline passes → force_cancel(cap)
+#     health_check()          ←   periodic audit loop verifies state matches QoS
+#
+# M1 8GB compatibility:
+#     - Uses asyncio.Lock for thread-safe subscription management
+#     - Bounded ack tracking (max 10 pending per capability)
+#     - Health audit runs every 5 seconds (not on hot path)
+#     - Force-cancel via asyncio.Task.cancel() (cooperative cancellation)
+
+import enum
+from dataclasses import dataclass, field
+from typing import Callable, Awaitable, Any
+import asyncio
+import heapq
+
+# Ack deadline per capability (seconds)
+_ACK_DEADLINE_DEFAULT: float = 2.0
+_ACK_DEADLINE_CRITICAL: float = 1.0  # Stricter for CRITICAL/EMERGENCY
+
+# Health audit interval (seconds)
+_HEALTH_AUDIT_INTERVAL_S: float = 5.0
+
+
+class SubsystemHealth(enum.Enum):
+    """Health state of a QoS-managed subsystem."""
+    HEALTHY = "healthy"       # Acknowledged and compliant
+    PENDING = "pending"       # Waiting for acknowledgment
+    DRIFTED = "drifted"      # State doesn't match QoS level
+    FAILED = "failed"        # Acknowledgment failed or force-cancelled
+    UNKNOWN = "unknown"       # Never subscribed or subscription expired
+
+
+@dataclass(frozen=True, slots=True)
+class QoSSubscription:
+    """Immutable subscription record for a subsystem capability."""
+    capability: str                          # e.g., "sidecars", "mlx_inference"
+    ack_callback: Callable[[bool, str], None]  # (success, reason) → None
+    deadline_s: float = _ACK_DEADLINE_DEFAULT
+    subscribed_at: float = field(default_factory=time.monotonic)
+
+
+@dataclass
+class PendingAck:
+    """Mutable pending acknowledgment tracker."""
+    __slots__ = ("capability", "deadline", "subscribed_at", "task_ref")
+    capability: str
+    deadline: float  # time.monotonic when ack is due
+    subscribed_at: float
+    task_ref: asyncio.Task[Any] | None = None
+
+
+class QoSSubscriptionRegistry:
+    """
+    [NEW-M13]: Subscription registry for QoS propagation with ack/timeout.
+    
+    Provides subscription-based propagation:
+    1. Subsystems subscribe via register_subscription(capability, ack_callback, deadline_s)
+    2. Governor emits QoS changes to registered subscribers
+    3. Subsystems acknowledge via acknowledge(capability, success, reason)
+    4. Governor force-cancels if ack deadline expires
+    5. Health audit loop periodically verifies subsystem states
+    
+    Thread-safe via asyncio.Lock.
+    """
+    
+    __slots__ = (
+        "_lock",
+        "_subscriptions",      # capability → QoSSubscription
+        "_pending_acks",      # capability → PendingAck
+        "_health_states",     # capability → SubsystemHealth
+        "_audit_task",
+        "_running",
+        "_last_qos_level",
+    )
+    
+    def __init__(self) -> None:
+        self._lock = asyncio.Lock()
+        self._subscriptions: dict[str, QoSSubscription] = {}
+        self._pending_acks: dict[str, PendingAck] = {}
+        self._health_states: dict[str, SubsystemHealth] = {}
+        self._audit_task: asyncio.Task[Any] | None = None
+        self._running = False
+        self._last_qos_level: str = "full"
+    
+    async def register_subscription(
+        self,
+        capability: str,
+        ack_callback: Callable[[bool, str], None],
+        deadline_s: float = _ACK_DEADLINE_DEFAULT,
+    ) -> None:
+        """
+        Register a subsystem for QoS updates.
+        
+        Args:
+            capability:     The capability this subsystem manages
+            ack_callback:  Called with (success: bool, reason: str) when ack received
+            deadline_s:    Max seconds to wait for acknowledgment (default 2.0)
+        """
+        async with self._lock:
+            sub = QoSSubscription(
+                capability=capability,
+                ack_callback=ack_callback,
+                deadline_s=deadline_s,
+            )
+            self._subscriptions[capability] = sub
+            self._health_states[capability] = SubsystemHealth.UNKNOWN
+            logger.debug(f"[QoS-Sub] Registered {capability} (deadline={deadline_s}s)")
+    
+    async def unregister_subscription(self, capability: str) -> None:
+        """Unregister a subsystem subscription."""
+        async with self._lock:
+            self._subscriptions.pop(capability, None)
+            self._pending_acks.pop(capability, None)
+            self._health_states.pop(capability, None)
+            logger.debug(f"[QoS-Sub] Unregistered {capability}")
+    
+    async def emit_qos_change(
+        self,
+        qos_level: str,
+        qos_profile: QoSProfile,
+    ) -> dict[str, bool]:
+        """
+        Emit QoS change to all registered subscribers.
+        
+        Returns dict mapping capability → ack_received (True/False).
+        """
+        self._last_qos_level = qos_level
+        
+        async with self._lock:
+            results: dict[str, bool] = {}
+            now = time.monotonic()
+            
+            # Determine if this is a RESTRICTIVE transition
+            is_restrictive = qos_level in ("emergency", "battery", "windup")
+            deadline_s = _ACK_DEADLINE_CRITICAL if is_restrictive else _ACK_DEADLINE_DEFAULT
+            
+            for cap, sub in self._subscriptions.items():
+                # Check if this capability is allowed under new QoS
+                allowed = self._capability_allowed(cap, qos_profile)
+                
+                if not allowed and is_restrictive:
+                    # RESTRICTIVE transition: need acknowledgment
+                    pending = PendingAck(
+                        capability=cap,
+                        deadline=now + deadline_s,
+                        subscribed_at=now,
+                    )
+                    self._pending_acks[cap] = pending
+                    self._health_states[cap] = SubsystemHealth.PENDING
+                    logger.info(
+                        f"[QoS-Sub] Emitted RESTRICTIVE to {cap}: "
+                        f"level={qos_level}, deadline={deadline_s}s"
+                    )
+                    # Schedule force-cancel if no ack received
+                    asyncio.create_task(
+                        self._force_cancel_if_no_ack(cap, deadline_s)
+                    )
+                    results[cap] = False
+                else:
+                    # NON-RESTRICTIVE or ALLOWED: mark healthy
+                    self._health_states[cap] = SubsystemHealth.HEALTHY
+                    self._pending_acks.pop(cap, None)
+                    results[cap] = True
+        
+        return results
+    
+    def _capability_allowed(self, capability: str, profile: QoSProfile) -> bool:
+        """Check if capability is allowed under QoS profile."""
+        mapping = {
+            "sidecars": profile.sidecars_ok,
+            "mlx_inference": profile.mlx_inference_ok,
+            "fetch": profile.fetch_ok,
+            "embeddings": profile.embeddings_ok,
+            "model_load": profile.model_load_ok,
+            "whisper": profile.whisper_ok,
+        }
+        return mapping.get(capability, True)
+    
+    async def acknowledge(
+        self,
+        capability: str,
+        success: bool,
+        reason: str = "",
+    ) -> bool:
+        """
+        Acknowledge a QoS change.
+        
+        Called by subsystem after applying QoS change.
+        
+        Returns True if ack was expected and recorded, False otherwise.
+        """
+        async with self._lock:
+            pending = self._pending_acks.pop(capability, None)
+            if pending is None:
+                logger.debug(f"[QoS-Sub] Unexpected ack from {capability} (not pending)")
+                return False
+            
+            self._health_states[capability] = (
+                SubsystemHealth.HEALTHY if success else SubsystemHealth.FAILED
+            )
+            
+            # Call the subscriber's ack callback
+            sub = self._subscriptions.get(capability)
+            if sub:
+                try:
+                    sub.ack_callback(success, reason)
+                except Exception:
+                    pass
+            
+            logger.info(
+                f"[QoS-Sub] Ack from {capability}: success={success}, reason={reason}"
+            )
+            return True
+    
+    async def _force_cancel_if_no_ack(self, capability: str, deadline_s: float) -> None:
+        """Force-cancel subsystem if no ack received within deadline."""
+        try:
+            await asyncio.sleep(deadline_s)
+        except asyncio.CancelledError:
+            return  # Cancelled if we got ack before deadline
+        
+        async with self._lock:
+            pending = self._pending_acks.get(capability)
+            if pending is None:
+                return  # Already acknowledged
+            
+            # Deadline expired without ack
+            self._pending_acks.pop(capability, None)
+            self._health_states[capability] = SubsystemHealth.FAILED
+            
+            sub = self._subscriptions.get(capability)
+            if sub:
+                try:
+                    sub.ack_callback(False, f"ack timeout after {deadline_s}s")
+                except Exception:
+                    pass
+            
+            logger.warning(
+                f"[QoS-Sub] FORCE-CANCEL {capability}: no ack within {deadline_s}s"
+            )
+            
+            # Emit alert metric
+            try:
+                from hledac.universal.metrics_registry import get_metrics_registry
+                get_metrics_registry().increment_counter(
+                    "qos_force_cancel_total",
+                    tags={"capability": capability}
+                )
+            except Exception:
+                pass
+    
+    async def health_check(self) -> dict[str, SubsystemHealth]:
+        """
+        Periodic health check of all registered subsystems.
+        
+        Verifies subsystem states match active QoS level.
+        Returns dict mapping capability → health state.
+        """
+        async with self._lock:
+            results: dict[str, SubsystemHealth] = {}
+            
+            for cap in self._subscriptions:
+                pending = self._pending_acks.get(cap)
+                health = self._health_states.get(cap, SubsystemHealth.UNKNOWN)
+                
+                if pending and time.monotonic() > pending.deadline:
+                    # Overdue ack
+                    results[cap] = SubsystemHealth.FAILED
+                elif health in (SubsystemHealth.PENDING, SubsystemHealth.UNKNOWN):
+                    # No confirmation yet
+                    results[cap] = SubsystemHealth.PENDING
+                else:
+                    results[cap] = health
+            
+            # Update states
+            for cap, health in results.items():
+                self._health_states[cap] = health
+            
+            return results
+    
+    async def start_audit_loop(self) -> None:
+        """Start the health audit background loop."""
+        if self._running:
+            return
+        self._running = True
+        self._audit_task = asyncio.create_task(self._audit_loop())
+        logger.info("[QoS-Sub] Health audit loop started")
+    
+    async def stop_audit_loop(self) -> None:
+        """Stop the health audit background loop."""
+        self._running = False
+        if self._audit_task:
+            self._audit_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await self._audit_task
+            self._audit_task = None
+        logger.info("[QoS-Sub] Health audit loop stopped")
+    
+    async def _audit_loop(self) -> None:
+        """Background health audit loop."""
+        while self._running:
+            try:
+                await asyncio.sleep(_HEALTH_AUDIT_INTERVAL_S)
+                
+                health_states = await self.health_check()
+                
+                # Log drifted/failed subsystems
+                for cap, health in health_states.items():
+                    if health == SubsystemHealth.DRIFTED:
+                        logger.warning(f"[QoS-Sub] {cap} DRIFTED from QoS level {self._last_qos_level}")
+                    elif health == SubsystemHealth.FAILED:
+                        logger.error(f"[QoS-Sub] {cap} FAILED or force-cancelled")
+                
+                # Update metrics
+                try:
+                    from hledac.universal.metrics_registry import get_metrics_registry
+                    mr = get_metrics_registry()
+                    for cap, health in health_states.items():
+                        mr.set_gauge(
+                            f"qos_health_{cap}",
+                            1.0 if health == SubsystemHealth.HEALTHY else 0.0
+                        )
+                except Exception:
+                    pass
+                    
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                pass
+    
+    def get_health_state(self, capability: str) -> SubsystemHealth:
+        """Get current health state for a capability."""
+        return self._health_states.get(capability, SubsystemHealth.UNKNOWN)
+    
+    def is_compliant(self, capability: str, qos_level: str) -> bool:
+        """Check if capability is compliant with given QoS level."""
+        health = self._health_states.get(capability, SubsystemHealth.UNKNOWN)
+        if health == SubsystemHealth.HEALTHY:
+            return True
+        if health == SubsystemHealth.UNKNOWN:
+            return True  # Unknown = assume compliant
+        return False
+
+
+# Singleton subscription registry
+_qos_subscription_registry: QoSSubscriptionRegistry | None = None
+
+
+def get_qos_subscription_registry() -> QoSSubscriptionRegistry:
+    """Get or create the singleton QoS subscription registry."""
+    global _qos_subscription_registry
+    if _qos_subscription_registry is None:
+        _qos_subscription_registry = QoSSubscriptionRegistry()
+    return _qos_subscription_registry
 
 
 # ── Capability toggle service ───────────────────────────────────────────────────

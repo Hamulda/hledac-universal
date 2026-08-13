@@ -68,6 +68,20 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+# M1 Resource Ledger: Lazy import to avoid circular dependencies
+_resource_ledger = None
+
+def _get_ledger():
+    """Get ResourceLedger instance lazily."""
+    global _resource_ledger
+    if _resource_ledger is None:
+        try:
+            from hledac.universal.core.resource_ledger import get_resource_ledger
+            _resource_ledger = get_resource_ledger()
+        except Exception:
+            _resource_ledger = None
+    return _resource_ledger
+
 
 class PoolKind(Enum):
     """Session pool kind for telemetry."""
@@ -342,6 +356,9 @@ async def httpx_client() -> httpx.AsyncClient:
     If HTTP/1.1 fallback is detected, connection limits are reduced to 10
     to mitigate TIME_WAIT pressure from non-multiplexed connections.
 
+    M1 Resource Ceiling Drift Fix: Tracks FDs via ResourceLedger to prevent
+    exhaustion on 8GB M1 Air during long-running collection sprints.
+
     Returns:
         httpx.AsyncClient: HTTP/2 capable async client
 
@@ -384,6 +401,22 @@ async def httpx_client() -> httpx.AsyncClient:
                 f"[SessionPool] httpx.AsyncClient created (HTTP/2, "
                 f"max_conn={preset.max_connections}, max_keep={preset.max_keepalive})"
             )
+
+            # M1 FIX: Track session pool FDs via ResourceLedger
+            # Session pool consumes file descriptors for each connection in the pool
+            ledger = _get_ledger()
+            if ledger is not None:
+                try:
+                    from hledac.universal.core.resource_ledger import ResourceType
+                    # Track FDs: estimated max_connections FDs for the pool
+                    for i in range(preset.max_connections):
+                        ledger.allocate(
+                            ResourceType.FILE_DESCRIPTOR,
+                            handle=f"session_pool:httpx:{i}",
+                            owner="session_pool",
+                        )
+                except Exception:  # noqa: BLE001
+                    pass  # Fail-safe: don't block client creation
 
             # ISSUE-P6-001: Patch socket TCP keep-alive options on existing pooled connections.
             # httpx HTTP/2 connections are stored in _transport._pool._connections.
@@ -457,6 +490,8 @@ async def close_httpx() -> None:
     Close httpx client if open (idempotent).
 
     After close, next httpx_client() creates a fresh instance.
+
+    M1 Resource Ceiling Drift Fix: Also releases session pool resources from ledger.
     """
     global _httpx_client, _active_connections
 
@@ -477,6 +512,17 @@ async def close_httpx() -> None:
     async with _pool_metrics_lock:
         _active_connections = max(0, _active_connections - 1)
         _record_pool_metrics()
+
+    # M1 Resource Cleanup: Release session pool FDs from ledger
+    ledger = _get_ledger()
+    if ledger is not None:
+        try:
+            from hledac.universal.core.resource_ledger import ResourceType
+            # Release all session pool resources (tracked FDs will be released)
+            ledger.release_all("session_pool")
+            logger.debug("[SessionPool] Released session pool resources from ledger")
+        except Exception as e:
+            logger.debug(f"[SessionPool] Resource ledger cleanup error: {e}")
 
 
 # =============================================================================

@@ -81,6 +81,17 @@ _SUBMODULE_DISPATCH: dict[str, str] = {
 }
 
 
+# F-ISSUE-005: Capability registry exports
+_CAPABILITY_DISPATCH: dict[str, tuple[str, tuple[str, ...]] | tuple[str, str]] = {
+    "TransportCapability": (".capability_registry", "TransportCapability"),
+    "get_capability": (".capability_registry", "get_capability"),
+    "is_protocol_ready": (".capability_registry", "is_protocol_ready"),
+    "get_all_capabilities": (".capability_registry", "get_all_capabilities"),
+    "get_capability_summary": (".capability_registry", "get_capability_summary"),
+    "clear_capability_cache": (".capability_registry", "clear_capability_cache"),
+    "get_skip_reason": (".capability_registry", "get_skip_reason"),
+}
+
 # Module-level import cache
 _IMPORT_CACHE: dict[str, object] = {}
 
@@ -90,11 +101,21 @@ def __getattr__(name: str):
 
     All submodule imports are deferred to __getattr__ to avoid circular
     dependency: base.py ↔ __init__.py via transport_router/transport_resolver.
+
+    F-ISSUE-005: Also handles capability registry exports.
     """
     if name in _IMPORT_CACHE:
         return _IMPORT_CACHE[name]
     if name in _IMPORT_DISPATCH:
         module_path, attr_name = _IMPORT_DISPATCH[name]
+        import importlib
+        module = importlib.import_module(f'{__name__}{module_path}')
+        obj = getattr(module, attr_name)
+        _IMPORT_CACHE[name] = obj
+        return obj
+    # F-ISSUE-005: Capability registry lazy imports
+    if name in _CAPABILITY_DISPATCH:
+        module_path, attr_name = _CAPABILITY_DISPATCH[name]
         import importlib
         module = importlib.import_module(f'{__name__}{module_path}')
         obj = getattr(module, attr_name)
@@ -123,6 +144,14 @@ __all__ = [
     'async_is_tor_available',
     'GopherTransport',
     'get_gopher_transport',
+    # F-ISSUE-005: Transport Capability Registry
+    'TransportCapability',
+    'get_capability',
+    'is_protocol_ready',
+    'get_all_capabilities',
+    'get_capability_summary',
+    'clear_capability_cache',
+    'get_skip_reason',
     # DTOs
     'TransportConfig',
     'TransportResult',

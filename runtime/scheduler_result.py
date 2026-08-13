@@ -11,6 +11,27 @@ from dataclasses import dataclass, field
 from typing import Any
 _UNSET: Any = object()
 
+
+def _run_async_safe(coro: Any) -> Any:
+    """
+    Run an async coroutine safely from sync context.
+    
+    Handles the case where there's already a running event loop.
+    Returns a fallback value if we can't run the coroutine.
+    """
+    import asyncio
+    try:
+        loop = asyncio.get_running_loop()
+        # There's a running loop - can't use run_until_complete
+        # Return a minimal fallback
+        return None
+    except RuntimeError:
+        # No running loop - safe to use asyncio.run
+        try:
+            return asyncio.run(coro)
+        except Exception:
+            return None
+
 @dataclass(slots=True)
 class SprintSchedulerResult:
     """Outcome of one sprint run.
@@ -146,6 +167,15 @@ class SprintSchedulerResult:
     malloc_pressure_relief_last_at_s: float = 0.0
     captcha_hits: int = 0
     circuit_breaker_opens: int = 0
+    # RESILIENCE-01: Sprint Health & Degradation Mode Tracking
+    # Added fields for FailureRegistry visibility in sprint results
+    health_mode: str = 'HEALTHY'  # HEALTHY, DEGRADED, IO_ONLY, EMERGENCY
+    health_score: float = 100.0  # 0-100 score
+    health_grade: str = 'A'  # A, B, C, D, F
+    total_failures_recorded: int = 0
+    high_critical_failures: int = 0
+    components_degraded: tuple[str, ...] = ()  # Components that experienced failures
+    health_transitions: int = 0  # Number of mode transitions during sprint
     branch_timeout_count: int = 0
     branch_skipped_remaining_too_low: int = 0
     dynamic_branch_floor_s: float = 0.0
@@ -595,6 +625,90 @@ class SprintResultBuilder:
 
     def with_pre_active_starved(self, v: bool) -> "SprintResultBuilder":
         return self._set("pre_active_starved", v) or self
+
+    # RESILIENCE-01: Health field setters
+    def with_health_mode(self, v: str) -> "SprintResultBuilder":
+        """Set health mode (HEALTHY, DEGRADED, IO_ONLY, EMERGENCY)."""
+        return self._set("health_mode", v) or self
+
+    def with_health_score(self, v: float) -> "SprintResultBuilder":
+        """Set health score (0-100)."""
+        return self._set("health_score", v) or self
+
+    def with_health_grade(self, v: str) -> "SprintResultBuilder":
+        """Set health grade (A, B, C, D, F)."""
+        return self._set("health_grade", v) or self
+
+    def with_total_failures_recorded(self, v: int) -> "SprintResultBuilder":
+        """Set total failures recorded to FailureRegistry."""
+        return self._set("total_failures_recorded", v) or self
+
+    def with_high_critical_failures(self, v: int) -> "SprintResultBuilder":
+        """Set high/critical failure count."""
+        return self._set("high_critical_failures", v) or self
+
+    def with_components_degraded(self, v: tuple[str, ...]) -> "SprintResultBuilder":
+        """Set list of degraded components."""
+        return self._set("components_degraded", v) or self
+
+    def with_health_transitions(self, v: int) -> "SprintResultBuilder":
+        """Set number of health mode transitions."""
+        return self._set("health_transitions", v) or self
+
+    def update_health_from_ledger(self, ledger: Any) -> "SprintResultBuilder":
+        """
+        Update all health fields from SprintHealthLedger.
+
+        Usage:
+            from utils.resilience import get_current_ledger
+            ledger = get_current_ledger()
+            if ledger:
+                builder.update_health_from_ledger(ledger)
+        """
+        try:
+            from utils.resilience import HealthScore
+            score = HealthScore.from_ledger(ledger)
+            self.with_health_mode(ledger.degradation_mode.name)
+            self.with_health_score(score.total)
+            self.with_health_grade(score.grade)
+            
+            # Get summary synchronously if possible
+            summary = None
+            if hasattr(ledger, 'get_health_summary'):
+                import asyncio
+                try:
+                    # Try to get running loop first
+                    loop = asyncio.get_running_loop()
+                    # Can't use run_until_complete from running loop - use fallback
+                    summary = {
+                        "registry": {"total_failures": 0, "high_critical_count": 0, "component_details": {}},
+                        "transitions": []
+                    }
+                except RuntimeError:
+                    # No running loop - safe to use run_until_complete
+                    try:
+                        summary = asyncio.get_event_loop().run_until_complete(
+                            ledger.get_health_summary()
+                        )
+                    except RuntimeError:
+                        summary = {
+                            "registry": {"total_failures": 0, "high_critical_count": 0, "component_details": {}},
+                            "transitions": []
+                        }
+            else:
+                summary = {
+                    "registry": {"total_failures": 0, "high_critical_count": 0, "component_details": {}},
+                    "transitions": []
+                }
+            registry = summary.get("registry", {})
+            self.with_total_failures_recorded(registry.get("total_failures", 0))
+            self.with_high_critical_failures(registry.get("high_critical_count", 0))
+            components = list(registry.get("component_details", {}).keys())
+            self.with_components_degraded(tuple(components))
+            self.with_health_transitions(len(summary.get("transitions", [])))
+        except Exception:
+            pass  # Don't fail if health update fails
+        return self
 
     def with_(self, field: str, value: object) -> "SprintResultBuilder":
         """

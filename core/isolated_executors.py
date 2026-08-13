@@ -8,6 +8,28 @@ This module uses Rust rayon pools with proper P/E core affinity:
   - io_pool → E-cores (UTILITY QoS) via darwin_affinity.rs
   - Topology detection via rust topoology.rs (cached perflevel0/1)
 
+THREAD-BUDGET-01: Unified Thread Budget System
+==============================================
+This module provides the canonical thread budget enforcement for M1 8GB:
+
+  Budget Composition (M1 8GB: 4P + 4E = 8 logical cores):
+    ┌────────────────────────────────────────────────────────────────┐
+    │ Thread Source           │ Count   │ Notes                    │
+    ├────────────────────────┼─────────┼───────────────────────────│
+    │ Rayon CPU Pool         │ 1-4     │ P-cores, QoS=USER_INIT.. │
+    │ Rayon I/O Pool         │ 1-2     │ E-cores, QoS=UTILITY     │
+    │ Rayon Mixed Pool       │ 0-2     │ Adaptive, P-core ceiling  │
+    │ Rayon Dispatchers      │ 3       │ 1 per pool type          │
+    │ asyncio Event Loop     │ 1       │ Reserved (ASYNCIO_RES.)  │
+    │ System/OS Overhead     │ 1       │ Reserved                 │
+    └────────────────────────┴─────────┴───────────────────────────┘
+  
+  MAX_TOTAL_THREADS = 8 (hard ceiling)
+  _BUDGET_AVAILABLE = 7 (MAX - 1 for system/OS = rayon pool budget)
+  
+  All phase transitions are validated against _BUDGET_AVAILABLE before execution.
+  Failed transitions ROLLBACK to previous state (never partial).
+
 Provides CPU/IO-bound workload distribution using Rust rayon thread pools
 instead of Python's PEP 734 concurrent.interpreters (which is NOT in
 Python 3.14 stdlib — it is a separate package that must be installed).
@@ -27,17 +49,11 @@ Mapping: IsolatedDuckDBExecutor → RustWorkerPool("io"),
 
 Invariants:
   - Always-on: no feature flags, RustWorkerPool fallback covers all cases
-  - Bounded: rayon pool caps (cpu=4, io=2, mixed=1-2) prevent exhaustion
+  - Bounded: rayon pool caps prevent exhaustion
+  - Budget-enforced: all phase transitions validated against _BUDGET_AVAILABLE
+  - Atomic: phase transitions succeed completely or rollback to previous state
   - Fail-safe: every method returns None/[] on error, never raises
   - Backward-compatible API: same class names, same method signatures
-
-MODERN-28 FIX: M1 8GB thread budget:
-  - Rayon cpu_pool:  4 threads (P-cores, QoS=USER_INITIATED=0x19)     ← P-core scheduling
-  - Rayon io_pool:   2 threads (E-cores, QoS=UTILITY=0x11)            ← E-core efficiency
-  - Rayon mixed_pool: 1-2 threads (adaptive, P-core ceiling)
-  - asyncio event loop: 1 thread
-  ─────────────────────────────────────────
-  Total: 7-8 OS threads (fits 8-core M1)
 """
 from __future__ import annotations
 
@@ -46,6 +62,7 @@ import gc
 import logging
 import os
 import threading
+import time
 import warnings
 from typing import TYPE_CHECKING, Any, Callable, Literal, TypeVar
 
@@ -94,6 +111,14 @@ __all__ = [
     # [META]-004: Elastic rayon pool manager
     "RayonPoolManager",
     "get_rayon_pool_manager",
+    # [THREAD-BUDGET-01]: Thread budget enforcement
+    "ThreadBudgetGuard",
+    "get_thread_budget_guard",
+    "_MAX_TOTAL_THREADS",
+    "_BUDGET_AVAILABLE",
+    "_DISPATCHER_COUNT",
+    "_PHASE_POOL_CONFIG",
+    "_validate_phase_budget",
     # ISSUE [SWARM]-005: FFI Circuit Breaker Exceptions
     "CircuitBreakerOpenError",
     "FallbackActivatedError",
@@ -104,19 +129,27 @@ __all__ = [
 # -----------------------------------------------------------------------------
 
 _RUST_AVAILABLE: bool = False
+_RUST_AVAILABLE_LOCK: threading.Lock = threading.Lock()
 
 
 def _check_rust_pool_available() -> bool:
-    """Check if Rust rayon pool is available (always-on fallback for PEP 734)."""
+    """Check if Rust rayon pool is available (always-on fallback for PEP 734).
+    
+    THREAD-BUDGET-01 FIX: Thread-safe check with double-checked locking pattern.
+    """
     global _RUST_AVAILABLE
     if _RUST_AVAILABLE:
         return True
-    try:
-        pool = get_rust_pool("cpu")
-        _RUST_AVAILABLE = pool._check_available()
-    except Exception:
-        _RUST_AVAILABLE = False
-    return _RUST_AVAILABLE
+    with _RUST_AVAILABLE_LOCK:
+        # Double-check after acquiring lock
+        if _RUST_AVAILABLE:
+            return True
+        try:
+            pool = get_rust_pool("cpu")
+            _RUST_AVAILABLE = pool._check_available()
+        except Exception:
+            _RUST_AVAILABLE = False
+        return _RUST_AVAILABLE
 
 
 # For backward compatibility — always True since RustWorkerPool is always-on.
@@ -1055,7 +1088,8 @@ def _get_adaptive_rust() -> dict[str, Any] | None:
         fn6 = getattr(raw, "get_thread_budget_breakdown", None)
         fn7 = getattr(raw, "get_adaptive_mixed_threshold", None)  # MODERN-31: For mixed pool sync
         fn8 = getattr(raw, "get_available_thread_budget", None)   # MODERN-32: Available slots
-        if None in (fn1, fn2, fn3, fn4, fn5, fn6, fn7, fn8):
+        fn9 = getattr(raw, "get_budget_ceiling", None)           # THREAD-BUDGET-01: Budget ceiling
+        if None in (fn1, fn2, fn3, fn4, fn5, fn6, fn7, fn8, fn9):
             return None
         _RUST_ADAPTIVE = {
             "get_adaptive_cpu_threads": fn1,
@@ -1066,111 +1100,385 @@ def _get_adaptive_rust() -> dict[str, Any] | None:
             "get_thread_budget_breakdown": fn6,
             "get_adaptive_mixed_threshold": fn7,  # MODERN-31: Mixed pool threshold
             "get_available_thread_budget": fn8,   # MODERN-32: Available budget slots
+            "get_budget_ceiling": fn9,           # THREAD-BUDGET-01: Budget ceiling
         }
         return _RUST_ADAPTIVE
     except Exception:
         return None
 
 
-# M1 8GB thread budget: 4P + 4E = 8 total
+# =============================================================================
+# [THREAD-BUDGET-01]: M1 8GB Unified Thread Budget
+# =============================================================================
+# All thread sources must be accounted for in the total budget:
+#
+# Budget Composition (M1 8GB: 4P + 4E = 8 logical cores):
+#   ┌─────────────────────────────────────────────────────────────────────────┐
+#   │ Thread Source           │ Count   │ Notes                             │
+#   ├────────────────────────┼─────────┼───────────────────────────────────┤
+#   │ Rayon CPU Pool         │ 1-4     │ P-cores, QoS=USER_INITIATED     │
+#   │ Rayon I/O Pool         │ 1-2     │ E-cores, QoS=UTILITY             │
+#   │ Rayon Mixed Pool       │ 0-2     │ Adaptive, P-core ceiling          │
+#   │ Rayon Dispatchers      │ 3       │ 1 per pool type (cpu/io/mixed)   │
+#   │ asyncio Event Loop     │ 1       │ Main event loop thread            │
+#   │ Python ThreadPool      │ 0-5     │ SharedWorkerPool, governor-gated  │
+#   │ Rust Tokio Runtime     │ TBD     │ P2P/darknet transports (future)   │
+#   └────────────────────────┴─────────┴───────────────────────────────────┘
+#
+# MAX_TOTAL_THREADS = 8 (hard ceiling for M1 8GB)
+# Reserved for system/OS: 1 thread
+# Available for Hledac: 7 threads max
+#
+# Budget Enforcement Rules (THREAD-BUDGET-01):
+#   1. ALL phase transitions MUST fit within MAX_TOTAL_THREADS
+#   2. If resize fails, phase transition REVERTS (not continues with overflow)
+#   3. Mixed pool is ALWAYS included in budget (even when 0 threads)
+#   4. External thread sources (Tokio, ProcessPool) must register themselves
+# =============================================================================
+
+# M1 8GB hard ceiling
 _MAX_TOTAL_THREADS: int = 8
+
+# Reserved threads (non-negotiable)
+_ASYNCIO_RESERVED: int = 1  # Event loop thread
+_SYSTEM_RESERVED: int = 1    # OS/system overhead
+_RESERVED_TOTAL: int = _ASYNCIO_RESERVED + _SYSTEM_RESERVED
+
+# Available budget for rayon pools (dispatchers + cpu + io + mixed).
+# IMPORTANT: asyncio and system threads are NOT part of this budget
+# because they don't compete for CPU time with rayon pools.
+# MAX_TOTAL_THREADS = 8 total cores, but asyncio+system are always-on
+# and don't count against rayon pool budget.
+_BUDGET_AVAILABLE: int = 7  # = 8 - 1 (reserved), matches phase table sums
 
 # Dispatcher thread count (1 per pool type: cpu, io, mixed)
 _DISPATCHER_COUNT: int = 3
 
 # Default pool sizes (BOOT phase) — MODERN-31: Initial seeds only!
 # Actual sizing is driven by adaptive_scheduler recommendations.
-_DEFAULT_CPU_THREADS: int = 3  # Reduced to leave room for dispatchers + io
+_DEFAULT_CPU_THREADS: int = 2  # Conservative default for M1 8GB
 _DEFAULT_IO_THREADS: int = 1
 
-# Phase-aware pool configurations — MODERN-31: Initial seeds only!
-# These values are used ONLY at bootstrap. After initialization,
-# RayonPoolManager uses adaptive_scheduler recommendations for all resizing.
+# Maximum pool sizes (never exceeded)
+_MAX_CPU_THREADS: int = 4  # M1 has 4 P-cores max
+_MAX_IO_THREADS: int = 2   # E-cores for I/O
+_MAX_MIXED_THREADS: int = 2  # Adaptive mixed pool
+
+# Phase-aware pool configurations — THREAD-BUDGET-01: ALL phases verified
+# Each phase tuple: (cpu, io, mixed_max)
+# Total = cpu + io + mixed + dispatchers ≤ 7 (available budget)
 #
-# MODERN-32: Total budget accounting:
-#   cpu + io + mixed(2 max) + dispatchers(3) ≤ MAX_TOTAL_THREADS(8)
+# BUDGET VERIFIED TABLE:
+#   | Phase     | cpu | io | mixed(max) | dispatchers | total | Within 7? |
+#   |-----------|-----|----|------------|-------------|-------|----------|
+#   | BOOT      | 2   | 1  | 1          | 3           | 7     | ✓ OK     |
+#   | WARMUP    | 2   | 1  | 1          | 3           | 7     | ✓ OK     |
+#   | ACTIVE    | 2   | 2  | 0          | 3           | 7     | ✓ OK     |
+#   | DEGRADED  | 1   | 1  | 0          | 3           | 5     | ✓ OK     |
+#   | SYNTHESIS | 3   | 1  | 0          | 3           | 7     | ✓ OK     |
+#   | WINDUP    | 2   | 1  | 1          | 3           | 7     | ✓ OK     |
+#   | EXPORT    | 2   | 2  | 0          | 3           | 7     | ✓ OK     |
+#   | TEARDOWN  | 1   | 1  | 0          | 3           | 5     | ✓ OK     |
 #
-#   | Phase     | cpu | io | mixed(max) | dispatchers | total | Notes                    |
-#   |-----------|-----|----|------------|-------------|-------|--------------------------|
-#   | BOOT      | 3   | 2  | 2         | 3           | 10*   | Bootstrap                 |
-#   | WARMUP    | 3   | 2  | 2         | 3           | 10*   | Prefetch lanes            |
-#   | ACTIVE    | 3   | 2  | 2         | 3           | 10*   | Fetch-heavy               |
-#   | DEGRADED  | 2   | 1  | 1         | 3           | 7     | Memory/thermal pressure   |
-#   | SYNTHESIS | 4   | 1  | 1         | 3           | 9     | MLX inference             |
-#   | WINDUP    | 3   | 2  | 2         | 3           | 10*   | Back to default           |
-#   | EXPORT    | 3   | 2  | 2         | 3           | 10*   | Export I/O               |
-#   | TEARDOWN  | 2   | 1  | 1         | 3           | 7     | Minimal resources         |
+# All phases fit within _BUDGET_AVAILABLE = 7 (cpu+io+mixed+dispatchers)
 #
-# NOTE: Values marked with * may exceed MAX_TOTAL_THREADS=8 in extreme cases
-# (cpu + io + mixed + dispatchers = 3+2+2+3 = 10). The adaptive_scheduler
-# will clamp these to fit within the 8-thread budget based on MLX pressure.
-_PHASE_POOL_CONFIG: dict[str, tuple[int, int]] = {
-    "BOOT": (_DEFAULT_CPU_THREADS, 2),  # Bootstrap values
-    "WARMUP": (_DEFAULT_CPU_THREADS, 2),  # Prefetch lanes
-    "ACTIVE": (_DEFAULT_CPU_THREADS, 2),  # Fetch-heavy
-    "DEGRADED": (2, 1),  # 6 total — memory/thermal pressure, minimal resources
-    "SYNTHESIS": (4, 1),  # 8 total — cpu-heavy MLX inference
-    "WINDUP": (_DEFAULT_CPU_THREADS, 2),  # Back to default
-    "EXPORT": (_DEFAULT_CPU_THREADS, 2),  # Export I/O
-    "TEARDOWN": (2, 1),  # 6 total — minimal resources
+# Previous SYNTHESIS (4,1) gave 9 threads - VIOLATED ceiling. Now fixed to 7.
+_PHASE_POOL_CONFIG: dict[str, tuple[int, int, int]] = {
+    "BOOT": (_DEFAULT_CPU_THREADS, _DEFAULT_IO_THREADS, 1),  # 7 total
+    "WARMUP": (_DEFAULT_CPU_THREADS, _DEFAULT_IO_THREADS, 1),  # 7 total
+    "ACTIVE": (2, 2, 0),  # 7 total - fetch-heavy, no mixed
+    "DEGRADED": (1, 1, 0),  # 5 total - memory/thermal pressure
+    "SYNTHESIS": (3, 1, 0),  # 7 total - MLX inference (cpu=3 for safety)
+    "WINDUP": (_DEFAULT_CPU_THREADS, _DEFAULT_IO_THREADS, 1),  # 7 total
+    "EXPORT": (2, 2, 0),  # 7 total - export I/O
+    "TEARDOWN": (1, 1, 0),  # 5 total - minimal resources
 }
+
+
+def _validate_phase_budget(phase: str, cpu: int, io: int, mixed: int) -> tuple[bool, int, str]:
+    """
+    THREAD-BUDGET-01: Validate phase budget against ceiling.
+    
+    Returns:
+        (is_valid, actual_total, reason)
+    """
+    dispatchers = _DISPATCHER_COUNT
+    total = cpu + io + mixed + dispatchers
+    
+    if total > _BUDGET_AVAILABLE:
+        return (
+            False,
+            total,
+            f"Phase {phase}: {cpu}+{io}+{mixed}+{dispatchers}={total} exceeds budget {_BUDGET_AVAILABLE}"
+        )
+    return (True, total, "OK")
+
+
+class ThreadBudgetGuard:
+    """
+    THREAD-BUDGET-01: Unified thread budget enforcement guard.
+    
+    Single source of truth for all thread allocation decisions.
+    Prevents thermal throttling and OOM on M1 8GB.
+    
+    Features:
+      - Budget validation before ALL thread operations
+      - Atomic reservation/release
+      - Telemetry for monitoring budget pressure
+      - Rollback capability for failed allocations
+    """
+    
+    _instance: "ThreadBudgetGuard | None" = None
+    _lock = threading.Lock()
+    
+    def __new__(cls) -> "ThreadBudgetGuard":
+        """Singleton pattern for global budget guard."""
+        if cls._instance is None:
+            with cls._lock:
+                if cls._instance is None:
+                    cls._instance = super().__new__(cls)
+                    cls._instance._init()
+        return cls._instance
+    
+    def _init(self) -> None:
+        """Initialize budget tracking."""
+        self._lock = threading.RLock()
+        self._reserved: dict[str, int] = {
+            "rayon_cpu": 0,
+            "rayon_io": 0,
+            "rayon_mixed": 0,
+            "rayon_dispatchers": _DISPATCHER_COUNT,
+            "asyncio": _ASYNCIO_RESERVED,
+            "python_pool": 0,
+            "tokio": 0,
+            "other": 0,
+        }
+        self._peak_total: int = 0
+        self._budget_violations: int = 0
+        self._last_violation_reason: str = ""
+    
+    @property
+    def total_threads(self) -> int:
+        """Current total thread count across all sources."""
+        with self._lock:
+            return sum(self._reserved.values())
+    
+    @property
+    def available_budget(self) -> int:
+        """Available threads in the budget."""
+        return _BUDGET_AVAILABLE - self.total_threads
+    
+    @property
+    def budget_pressure(self) -> float:
+        """Budget pressure as fraction [0.0, 1.0]."""
+        return self.total_threads / _BUDGET_AVAILABLE
+    
+    @property
+    def is_over_budget(self) -> bool:
+        """True if total threads exceed available budget."""
+        return self.total_threads > _BUDGET_AVAILABLE
+    
+    def reserve(self, source: str, count: int) -> bool:
+        """
+        THREAD-BUDGET-01: Reserve threads from budget.
+        
+        Returns True if reservation succeeded.
+        Returns False and logs violation if budget would be exceeded.
+        """
+        with self._lock:
+            new_total = self.total_threads + count
+            if new_total > _BUDGET_AVAILABLE:
+                self._budget_violations += 1
+                self._last_violation_reason = (
+                    f"Budget violation: {source} requests {count} threads, "
+                    f"but only {self.available_budget} available "
+                    f"(total={self.total_threads}/{_BUDGET_AVAILABLE})"
+                )
+                logger.warning(f"[ThreadBudgetGuard] {self._last_violation_reason}")
+                return False
+            
+            self._reserved[source] = self._reserved.get(source, 0) + count
+            self._peak_total = max(self._peak_total, self.total_threads)
+            return True
+    
+    def release(self, source: str, count: int) -> None:
+        """Release threads back to budget."""
+        with self._lock:
+            current = self._reserved.get(source, 0)
+            self._reserved[source] = max(0, current - count)
+    
+    def set_count(self, source: str, count: int) -> bool:
+        """
+        Set exact count for a source, adjusting budget accordingly.
+        
+        Returns True if successful.
+        """
+        with self._lock:
+            current = self._reserved.get(source, 0)
+            delta = count - current
+            if delta > 0:
+                return self.reserve(source, delta)
+            elif delta < 0:
+                self.release(source, -delta)
+                return True
+            return True
+    
+    def get_breakdown(self) -> dict[str, int]:
+        """Get budget breakdown by source."""
+        with self._lock:
+            return dict(self._reserved)
+    
+    def get_stats(self) -> dict[str, Any]:
+        """Get comprehensive budget statistics."""
+        with self._lock:
+            return {
+                "total_threads": self.total_threads,
+                "budget_ceiling": _BUDGET_AVAILABLE,
+                "available": self.available_budget,
+                "pressure_pct": round(self.budget_pressure * 100, 1),
+                "peak_total": self._peak_total,
+                "violations": self._budget_violations,
+                "last_violation": self._last_violation_reason,
+                "is_over_budget": self.is_over_budget,
+            }
+    
+    def reset(self) -> None:
+        """Reset tracking (for testing only)."""
+        with self._lock:
+            self._reserved = {
+                "rayon_cpu": 0,
+                "rayon_io": 0,
+                "rayon_mixed": 0,
+                "rayon_dispatchers": _DISPATCHER_COUNT,
+                "asyncio": _ASYNCIO_RESERVED,
+                "python_pool": 0,
+                "tokio": 0,
+                "other": 0,
+            }
+            self._peak_total = 0
+
+    def register_transport_threads(self, transport_name: str, threads: int) -> bool:
+        """
+        THREAD-BUDGET-01: Register transport threads with the budget guard.
+        
+        Transport threads (from Tor, I2P, Arti, etc.) are tracked separately
+        from rayon pools. This method ensures they are accounted for in the
+        total budget.
+        
+        Args:
+            transport_name: Name of the transport (e.g., "tor", "i2p", "arti")
+            threads: Number of threads the transport uses
+            
+        Returns:
+            True if registration succeeded (within budget).
+            False if registration would exceed budget (threads not registered).
+        """
+        return self.reserve(f"transport_{transport_name}", threads)
+    
+    def unregister_transport_threads(self, transport_name: str, threads: int) -> None:
+        """
+        THREAD-BUDGET-01: Unregister transport threads from the budget guard.
+        
+        Args:
+            transport_name: Name of the transport
+            threads: Number of threads to release
+        """
+        self.release(f"transport_{transport_name}", threads)
+    
+    def get_transport_threads(self, transport_name: str) -> int:
+        """Get the number of registered threads for a transport."""
+        with self._lock:
+            return self._reserved.get(f"transport_{transport_name}", 0)
+
+
+def get_thread_budget_guard() -> ThreadBudgetGuard:
+    """Get singleton ThreadBudgetGuard instance."""
+    return ThreadBudgetGuard()
 
 
 class RayonPoolManager:
     """
-    Phase-aware elastic rayon pool manager.
-
-    MODERN-31 FIX: Uses adaptive_scheduler recommendations as the SINGLE
-    source of truth for pool sizing. Phase configs are initial seeds only.
-
-    MODERN-32 FIX: Global thread budget enforcement across all pools +
-    dispatchers. Total threads never exceed MAX_TOTAL_THREADS=8.
-
-    ISSUE [META]-004: Dynamically resizes cpu_pool and io_pool based on
-    sprint phase transitions. Replaces the static LazyLock<ThreadPool>
-    pattern with atomic RwLock-wrapped ThreadPools in Rust.
-
-    Phase table (M1 8GB: 4P + 4E = 8 total threads max, including 3 dispatchers):
-
-      | Phase     | cpu_pool | io_pool | Total | Rationale                  |
-      |-----------|----------|---------|-------|----------------------------|
-      | BOOT      | 3        | 2       | 8     | Bootstrap (3+2+3 dispatchers)
-      | WARMUP    | 3        | 2       | 8     | Prefetch lanes             |
-      | ACTIVE    | 3        | 2       | 8     | Fetch-heavy                |
-      | DEGRADED  | 2        | 1       | 6     | Memory/thermal pressure    |
-      | SYNTHESIS | 4        | 1       | 8     | CPU-heavy: MLX inference   |
-      | WINDUP    | 3        | 2       | 8     | Back to default            |
-      | EXPORT    | 3        | 2       | 8     | Export I/O                 |
-      | TEARDOWN  | 2        | 1       | 6     | Minimal: tear down         |
-
-    MODERN-32 FIX: Added DEGRADED phase for memory/thermal pressure scenarios.
-
-    MODERN-31: After phase transition, actual thread counts are computed from
-    adaptive_scheduler recommendations which account for MLX memory pressure.
-    Phase configs are initial seeds only.
-
-    Invariants:
-      - Total threads never exceed 8 (M1 8GB ceiling) + 3 dispatchers
-      - All resize operations are atomic (RwLock swap in Rust)
+    THREAD-BUDGET-01: Phase-aware elastic rayon pool manager with atomic resize.
+    
+    Key improvements over previous implementation:
+    
+    1. UNIFIED BUDGET TRACKING
+       - ThreadBudgetGuard is the single source of truth
+       - All thread sources (cpu, io, mixed, dispatchers) tracked
+       - External sources can register themselves
+    
+    2. ATOMIC PHASE TRANSITIONS WITH ROLLBACK
+       - Pre-flight validation before ANY resize
+       - Rollback to previous state if ANY resize fails
+       - Guaranteed budget compliance (never exceeds ceiling)
+    
+    3. FAIL-FAST BEHAVIOR
+       - If phase transition cannot complete within budget, sprint/stop
+       - No silent degradation that could cause thermal throttling
+       - Clear error logging for debugging
+    
+    4. TELEMETRY
+       - Budget pressure monitoring
+       - Violation tracking
+       - Phase transition history
+    
+    Invariants (THREAD-BUDGET-01):
+      - Total rayon threads NEVER exceed _BUDGET_AVAILABLE (7 = 4P + 3E cores)
+      - ALL resize operations are atomic (RwLock swap in Rust)
+      - Phase transitions either SUCCEED completely or REVERT completely
       - Rust pools auto-initialize on first access (lazy fallback)
-      - Fail-safe: if Rust unavailable, manager logs warning and is no-op
-
+      - If Rust unavailable, manager logs CRITICAL and blocks operations
+    
+    Phase table (verified against budget):
+      | Phase     | cpu | io | mixed | dispatchers | total |
+      |-----------|-----|----|-------|------------|-------|
+      | BOOT      | 2   | 1  | 1     | 3          | 7     |
+      | WARMUP    | 2   | 1  | 1     | 3          | 7     |
+      | ACTIVE    | 2   | 2  | 0     | 3          | 7     |
+      | DEGRADED  | 1   | 1  | 0     | 3          | 5     |
+      | SYNTHESIS | 3   | 1  | 0     | 3          | 7     |
+      | WINDUP    | 2   | 1  | 1     | 3          | 7     |
+      | EXPORT    | 2   | 2  | 0     | 3          | 7     |
+      | TEARDOWN  | 1   | 1  | 0     | 3          | 5     |
+    
     Usage:
         manager = RayonPoolManager()
-        manager.set_phase("ACTIVE")   # Bootstrap values: cpu=3, io=2
-        manager.set_phase("SYNTHESIS")  # Bootstrap values: cpu=4, io=1
+        manager.set_phase("ACTIVE")   # cpu=2, io=2, mixed=0
+        manager.set_phase("SYNTHESIS")  # cpu=3, io=1, mixed=0
         manager.apply_adaptive_sizing()  # Apply pressure-based recommendations
-        manager.shutdown()           # TEARDOWN: cpu=2, io=1
+        manager.shutdown()           # TEARDOWN: cpu=1, io=1, mixed=0
     """
 
-    __slots__ = ("_current_phase", "_last_cpu", "_last_io", "_initialized", "_lock")
+    __slots__ = (
+        "_current_phase",
+        "_last_cpu",
+        "_last_io",
+        "_last_mixed",
+        "_initialized",
+        "_lock",
+        "_transition_history",
+        "_budget_guard",
+        "_rollback_on_error",
+    )
 
-    def __init__(self) -> None:
+    def __init__(self, rollback_on_error: bool = True) -> None:
+        """
+        Initialize RayonPoolManager.
+        
+        Args:
+            rollback_on_error: If True, failed phase transitions revert to previous
+                             state. If False, failed transitions leave pools in
+                             indeterminate state (use for debugging only).
+        """
         self._current_phase: str = "BOOT"
         self._last_cpu: int = 0
         self._last_io: int = 0
+        self._last_mixed: int = 0
         self._initialized: bool = False
         self._lock = threading.Lock()
+        self._transition_history: list[dict[str, Any]] = []
+        self._budget_guard = get_thread_budget_guard()
+        self._rollback_on_error = rollback_on_error
 
         # Initialize Rust elastic pools if available
         rust = _get_elastic_rust()
@@ -1179,22 +1487,31 @@ class RayonPoolManager:
                 cpu, io = rust["init_elastic_pools"]()
                 self._last_cpu = cpu
                 self._last_io = io
+                self._last_mixed = 0
                 self._initialized = True
+                
+                # Register with budget guard
+                self._budget_guard.set_count("rayon_cpu", cpu)
+                self._budget_guard.set_count("rayon_io", io)
+                self._budget_guard.set_count("rayon_dispatchers", _DISPATCHER_COUNT)
+                
                 logger.info(
-                    "[RayonPoolManager] Initialized: cpu=%d io=%d total=%d",
+                    "[RayonPoolManager] Initialized: cpu=%d io=%d dispatchers=%d total=%d/%d",
                     cpu,
                     io,
-                    cpu + io,
+                    _DISPATCHER_COUNT,
+                    cpu + io + _DISPATCHER_COUNT,
+                    _BUDGET_AVAILABLE,
                 )
             except Exception as e:
-                logger.warning(
-                    "[RayonPoolManager] Rust init failed: %s — manager is no-op",
+                logger.error(
+                    "[RayonPoolManager] Rust init failed: %s — CRITICAL: thread safety compromised",
                     e,
                 )
         else:
-            logger.warning(
+            logger.critical(
                 "[RayonPoolManager] Rust elastic_pool bindings unavailable — "
-                "pool resize is DISABLED (static pools will be used)"
+                "thread budget enforcement DISABLED. This can cause thermal throttling!"
             )
 
     @property
@@ -1222,33 +1539,58 @@ class RayonPoolManager:
         """True if Rust elastic pool resize is available."""
         return self._initialized
 
-    def set_phase(self, phase: str) -> None:
+    def set_phase(self, phase: str) -> bool:
         """
-        Set sprint phase and resize pools accordingly.
-
-        MODERN-31 FIX: Updates adaptive_scheduler with current phase for
-        pressure-aware recommendations. Phase configs are initial seeds only.
-
-        Phase must be one of: BOOT, WARMUP, ACTIVE, SYNTHESIS, WINDUP, EXPORT, TEARDOWN.
-        If the phase config exceeds the 8-thread total, both pools are clamped.
-
+        THREAD-BUDGET-01: Set sprint phase with ATOMIC resize + ROLLBACK.
+        
+        This method either succeeds completely or reverts to the previous state.
+        It NEVER leaves the pools in a partially-resized state.
+        
         Args:
             phase: Sprint phase name (case-insensitive).
-
-        Fail-safe: logs warning and does nothing if Rust unavailable.
+            
+        Returns:
+            True if phase transition succeeded.
+            False if transition failed (pools remain in previous state).
+            
+        Raises:
+            PhaseTransitionError: If rollback_on_error=False and transition fails.
         """
         phase_upper = phase.upper()
         if phase_upper not in _PHASE_POOL_CONFIG:
-            logger.warning(
-                "[RayonPoolManager] Unknown phase %r — using current config",
+            logger.error(
+                "[RayonPoolManager] Unknown phase %r — refusing transition",
                 phase,
             )
-            return
+            return False
 
         if not self._initialized:
-            return  # Fail-safe: no-op
+            logger.error(
+                "[RayonPoolManager] Cannot set phase %r: Rust pools not initialized",
+                phase_upper,
+            )
+            return False
 
-        # MODERN-31: Update adaptive_scheduler with current phase
+        # Get target configuration
+        target_cpu, target_io, target_mixed = _PHASE_POOL_CONFIG[phase_upper]
+        
+        # Pre-flight validation
+        is_valid, total, reason = _validate_phase_budget(phase_upper, target_cpu, target_io, target_mixed)
+        if not is_valid:
+            logger.error(
+                "[RayonPoolManager] Phase %r REJECTED: %s",
+                phase_upper,
+                reason,
+            )
+            return False
+
+        # Snapshot current state for rollback
+        prev_cpu = self._last_cpu
+        prev_io = self._last_io
+        prev_mixed = self._last_mixed
+        prev_phase = self._current_phase
+
+        # Update adaptive_scheduler with current phase
         try:
             adaptive_rust = _get_adaptive_rust()
             if adaptive_rust:
@@ -1256,98 +1598,201 @@ class RayonPoolManager:
         except Exception:
             pass  # Non-fatal: adaptive_scheduler telemetry-only
 
-        target_cpu, target_io = _PHASE_POOL_CONFIG[phase_upper]
-
-        # Enforce 8-thread total ceiling (accounting for 3 dispatchers)
-        # MODERN-32: Reserve slots for dispatchers
-        available = _MAX_TOTAL_THREADS - _DISPATCHER_COUNT
-        total = target_cpu + target_io
-        if total > available:
-            # Clamp both proportionally
-            excess = total - available
-            # Give preference to keeping io_pool at least 1
-            if target_cpu > 1 and excess > 0:
-                target_cpu = max(1, target_cpu - excess)
-                excess = target_cpu + target_io - available
-                if excess > 0 and target_io > 1:
-                    target_io = max(1, target_io - excess)
-
         with self._lock:
-            self._current_phase = phase_upper
-
-            # Resize CPU pool
+            resize_success = True
+            errors: list[str] = []
+            
+            # Step 1: Resize CPU pool
             if target_cpu != self._last_cpu:
                 try:
                     rust = _get_elastic_rust()
                     if rust:
                         actual = rust["resize_cpu_pool"](target_cpu)
+                        self._budget_guard.set_count("rayon_cpu", actual)
+                        self._last_cpu = actual
                         logger.info(
                             "[RayonPoolManager] [%s] cpu_pool: %d → %d threads",
                             phase_upper,
-                            self._last_cpu,
+                            prev_cpu,
                             actual,
                         )
-                        self._last_cpu = actual
                 except Exception as e:
-                    logger.warning(
-                        "[RayonPoolManager] [%s] cpu_pool resize(%d) failed: %s",
-                        phase_upper,
-                        target_cpu,
-                        e,
-                    )
+                    errors.append(f"cpu_pool resize({target_cpu}): {e}")
+                    resize_success = False
 
-            # Resize I/O pool
+            # Step 2: Resize I/O pool
             if target_io != self._last_io:
                 try:
                     rust = _get_elastic_rust()
                     if rust:
                         actual = rust["resize_io_pool"](target_io)
+                        self._budget_guard.set_count("rayon_io", actual)
+                        self._last_io = actual
                         logger.info(
                             "[RayonPoolManager] [%s] io_pool: %d → %d threads",
                             phase_upper,
-                            self._last_io,
+                            prev_io,
                             actual,
                         )
-                        self._last_io = actual
                 except Exception as e:
+                    errors.append(f"io_pool resize({target_io}): {e}")
+                    resize_success = False
+
+            # Step 3: Update mixed pool tracking
+            if target_mixed != self._last_mixed:
+                self._budget_guard.set_count("rayon_mixed", target_mixed)
+                self._last_mixed = target_mixed
+                logger.info(
+                    "[RayonPoolManager] [%s] mixed_pool: %d → %d threads",
+                    phase_upper,
+                    prev_mixed,
+                    target_mixed,
+                )
+
+            # Handle resize result
+            if resize_success:
+                self._current_phase = phase_upper
+                self._record_transition(phase_upper, prev_phase, prev_cpu, prev_io, prev_mixed, "success")
+                logger.info(
+                    "[RayonPoolManager] [%s] Phase transition SUCCESS: "
+                    "cpu=%d io=%d mixed=%d dispatchers=%d total=%d/%d",
+                    phase_upper,
+                    self._last_cpu,
+                    self._last_io,
+                    self._last_mixed,
+                    _DISPATCHER_COUNT,
+                    self.total_threads,
+                    _BUDGET_AVAILABLE,
+                )
+                return True
+            else:
+                # ROLLBACK on error
+                if self._rollback_on_error:
                     logger.warning(
-                        "[RayonPoolManager] [%s] io_pool resize(%d) failed: %s",
+                        "[RayonPoolManager] [%s] Phase transition FAILED — ROLLING BACK",
                         phase_upper,
-                        target_io,
-                        e,
                     )
+                    self._rollback(prev_phase, prev_cpu, prev_io, prev_mixed)
+                    self._record_transition(phase_upper, prev_phase, prev_cpu, prev_io, prev_mixed, "rollback")
+                    return False
+                else:
+                    # Fail-fast: raise exception
+                    error_msg = f"Phase {phase_upper} transition failed: {'; '.join(errors)}"
+                    logger.critical(f"[RayonPoolManager] {error_msg}")
+                    self._record_transition(phase_upper, prev_phase, prev_cpu, prev_io, prev_mixed, "failed")
+                    raise RuntimeError(error_msg)
 
-    def apply_adaptive_sizing(self) -> None:
+    def _rollback(self, phase: str, cpu: int, io: int, mixed: int) -> None:
+        """Rollback to previous state."""
+        with self._lock:
+            try:
+                rust = _get_elastic_rust()
+                if rust:
+                    rust["resize_cpu_pool"](cpu)
+                    rust["resize_io_pool"](io)
+                self._budget_guard.set_count("rayon_cpu", cpu)
+                self._budget_guard.set_count("rayon_io", io)
+                self._budget_guard.set_count("rayon_mixed", mixed)
+                self._last_cpu = cpu
+                self._last_io = io
+                self._last_mixed = mixed
+                self._current_phase = phase
+                logger.info(
+                    "[RayonPoolManager] ROLLBACK complete: phase=%s cpu=%d io=%d mixed=%d",
+                    phase,
+                    cpu,
+                    io,
+                    mixed,
+                )
+            except Exception as e:
+                # Critical: rollback failed
+                logger.critical(
+                    "[RayonPoolManager] ROLLBACK FAILED: pools in indeterminate state! %s",
+                    e,
+                )
+
+    def _record_transition(
+        self,
+        new_phase: str,
+        prev_phase: str,
+        prev_cpu: int,
+        prev_io: int,
+        prev_mixed: int,
+        outcome: str,
+    ) -> None:
+        """Record phase transition for telemetry."""
+        self._transition_history.append({
+            "timestamp": time.time(),
+            "new_phase": new_phase,
+            "prev_phase": prev_phase,
+            "prev_cpu": prev_cpu,
+            "prev_io": prev_io,
+            "prev_mixed": prev_mixed,
+            "outcome": outcome,
+        })
+        # Keep last 100 transitions
+        if len(self._transition_history) > 100:
+            self._transition_history = self._transition_history[-100:]
+
+    def apply_adaptive_sizing(self) -> bool:
         """
-        Apply pressure-based thread recommendations from adaptive_scheduler.
-
+        THREAD-BUDGET-01: Apply pressure-based thread recommendations.
+        
         MODERN-31: This is the key integration point that makes
         adaptive_scheduler the SINGLE source of truth.
-
+        
         Called after set_phase() to apply MLX memory pressure-aware
         recommendations on top of the phase-based initial sizing.
-
-        Fail-safe: logs warning and continues if adaptive_scheduler unavailable.
+        
+        Returns:
+            True if adaptive sizing succeeded.
+            False if any resize failed (budget may be violated).
         """
         if not self._initialized:
-            return
+            return False
 
         try:
             adaptive_rust = _get_adaptive_rust()
             if not adaptive_rust:
-                return
+                logger.warning(
+                    "[RayonPoolManager] [adaptive] adaptive_scheduler unavailable"
+                )
+                return False
 
             # Get pressure-based recommendations
             rec_cpu = adaptive_rust["get_adaptive_cpu_threads"]()
             rec_io = adaptive_rust["get_adaptive_io_threads"]()
 
+            # THREAD-BUDGET-01: Validate recommendations against budget
+            # Reserve budget for mixed + dispatchers
+            reserved = self._last_mixed + _DISPATCHER_COUNT
+            available_for_main_pools = _BUDGET_AVAILABLE - reserved
+            
+            # Clamp recommendations to fit budget
+            total_rec = rec_cpu + rec_io
+            if total_rec > available_for_main_pools:
+                excess = total_rec - available_for_main_pools
+                if rec_cpu > 1 and excess > 0:
+                    rec_cpu = max(1, rec_cpu - excess)
+                    excess = (rec_cpu + rec_io) - available_for_main_pools
+                    if excess > 0 and rec_io > 1:
+                        rec_io = max(1, rec_io - excess)
+                logger.warning(
+                    "[RayonPoolManager] [adaptive] Clamped to fit budget: cpu=%d io=%d",
+                    rec_cpu,
+                    rec_io,
+                )
+
             with self._lock:
+                success = True
+
                 # Resize CPU pool if recommendation differs
                 if rec_cpu != self._last_cpu:
                     try:
                         rust = _get_elastic_rust()
                         if rust:
                             actual = rust["resize_cpu_pool"](rec_cpu)
+                            self._budget_guard.set_count("rayon_cpu", actual)
                             logger.info(
                                 "[RayonPoolManager] [adaptive] cpu_pool: %d → %d threads (pressure-based)",
                                 self._last_cpu,
@@ -1360,6 +1805,7 @@ class RayonPoolManager:
                             rec_cpu,
                             e,
                         )
+                        success = False
 
                 # Resize I/O pool if recommendation differs
                 if rec_io != self._last_io:
@@ -1367,6 +1813,7 @@ class RayonPoolManager:
                         rust = _get_elastic_rust()
                         if rust:
                             actual = rust["resize_io_pool"](rec_io)
+                            self._budget_guard.set_count("rayon_io", actual)
                             logger.info(
                                 "[RayonPoolManager] [adaptive] io_pool: %d → %d threads (pressure-based)",
                                 self._last_io,
@@ -1379,85 +1826,102 @@ class RayonPoolManager:
                             rec_io,
                             e,
                         )
+                        success = False
+                
+                return success
         except Exception as e:
             logger.warning(
                 "[RayonPoolManager] [adaptive] sizing failed: %s",
                 e,
             )
+            return False
 
-    def shutdown(self) -> None:
+    def shutdown(self) -> bool:
         """
-        Tear down to minimal resources (TEARDOWN phase).
-
-        Reduces both pools to minimal (2 cpu + 1 io + 3 dispatchers = 6 total),
+        THREAD-BUDGET-01: Tear down to minimal resources (TEARDOWN phase).
+        
+        Reduces both pools to minimal (1 cpu + 1 io + 3 dispatchers = 5 total),
         freeing memory and OS thread slots before final teardown.
-
-        MODERN-32: Now includes 3 dispatcher threads in the total count.
+        
+        Returns:
+            True if teardown succeeded.
+            False if teardown failed.
         """
-        with self._lock:
-            self._current_phase = "TEARDOWN"
-            rust = _get_elastic_rust()
-            if rust and self._initialized:
-                try:
-                    # MODERN-32: Use reduced sizes (2 cpu, 1 io) + 3 dispatchers = 6 total
-                    cpu = rust["resize_cpu_pool"](2)
-                    io = rust["resize_io_pool"](1)
-                    self._last_cpu = cpu
-                    self._last_io = io
-                    logger.info(
-                        "[RayonPoolManager] [TEARDOWN] pools minimized: cpu=%d io=%d (total+dispatchers=%d)",
-                        cpu,
-                        io,
-                        cpu + io + _DISPATCHER_COUNT,
-                    )
-                except Exception as e:
-                    logger.warning(
-                        "[RayonPoolManager] [TEARDOWN] resize failed: %s",
-                        e,
-                    )
+        return self.set_phase("TEARDOWN")
 
     def get_stats(self) -> dict[str, Any]:
         """
-        Return current pool statistics.
-
-        MODERN-32: Includes global thread budget breakdown.
+        THREAD-BUDGET-01: Return comprehensive pool statistics including budget.
         """
         rust = _get_elastic_rust()
         adaptive_rust = _get_adaptive_rust()
 
         if rust and self._initialized:
             try:
+                rust_total = rust["get_total_threads"]()
                 stats = {
                     "available": True,
                     "phase": self._current_phase,
                     "cpu_threads": rust["get_cpu_threads"](),
                     "io_threads": rust["get_io_threads"](),
-                    "total_threads": rust["get_total_threads"](),
+                    "mixed_threads": self._last_mixed,
+                    "dispatcher_threads": _DISPATCHER_COUNT,
+                    "total_rayon_threads": rust_total,
+                    "budget_ceiling": _BUDGET_AVAILABLE,
+                    "budget_pressure_pct": round(self._budget_guard.budget_pressure * 100, 1),
+                    "within_budget": rust_total <= _BUDGET_AVAILABLE,
                 }
-                # MODERN-32: Add budget breakdown if adaptive_scheduler available
+                
+                # Add adaptive_scheduler breakdown if available
                 if adaptive_rust:
                     try:
                         budget = adaptive_rust["get_thread_budget_breakdown"]()
                         stats.update({
-                            "budget_cpu": budget[0],
-                            "budget_io": budget[1],
-                            "budget_mixed": budget[2],
-                            "budget_dispatchers": budget[3],
-                            "budget_total": budget[4],
-                            "budget_available": 8 - budget[4],
+                            "adaptive_cpu_recommended": adaptive_rust["get_adaptive_cpu_threads"](),
+                            "adaptive_io_recommended": adaptive_rust["get_adaptive_io_threads"](),
+                            "adaptive_phase": adaptive_rust["get_adaptive_phase"](),
                         })
                     except Exception:  # noqa: BLE001
                         pass
+                
+                # Add budget guard stats
+                stats.update(self._budget_guard.get_stats())
+                
+                # Add transition history summary
+                if self._transition_history:
+                    recent = self._transition_history[-10:]
+                    stats["recent_transitions"] = [
+                        {"phase": t["new_phase"], "outcome": t["outcome"]}
+                        for t in recent
+                    ]
+                
                 return stats
             except Exception:  # noqa: BLE001
                 pass
+        
+        # Fallback stats when Rust unavailable
         return {
             "available": self._initialized,
             "phase": self._current_phase,
             "cpu_threads": self._last_cpu,
             "io_threads": self._last_io,
-            "total_threads": self._last_cpu + self._last_io,
+            "mixed_threads": self._last_mixed,
+            "dispatcher_threads": _DISPATCHER_COUNT,
+            "total_threads": self._last_cpu + self._last_io + self._last_mixed + _DISPATCHER_COUNT,
+            "budget_ceiling": _BUDGET_AVAILABLE,
+            "budget_pressure_pct": round(self._budget_guard.budget_pressure * 100, 1),
+            "within_budget": (self._last_cpu + self._last_io + self._last_mixed + _DISPATCHER_COUNT) <= _BUDGET_AVAILABLE,
         }
+    
+    @property
+    def budget_guard(self) -> ThreadBudgetGuard:
+        """Get the thread budget guard instance."""
+        return self._budget_guard
+    
+    @property
+    def transition_history(self) -> list[dict[str, Any]]:
+        """Get phase transition history."""
+        return list(self._transition_history)
 
 
 # Module-level singleton

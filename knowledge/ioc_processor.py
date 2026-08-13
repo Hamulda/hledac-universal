@@ -42,10 +42,13 @@ from forensics.ioc_patterns_generated import (  # noqa: F401,E402
 
 # ─── IOC type constants ───────────────────────────────────────────────────────
 
+# MODERN-25: "pending" REMOVED from IOC_TYPES — unknown IOC types should be
+# preserved with their original type and classification_status="pending_review".
+# Using "pending" as an IOC type causes provenance/type information loss.
 IOC_TYPES: frozenset[str] = frozenset(
     ("cve", "ip", "ipv4", "ipv6", "hash_sha256", "hash_md5", "onion", "i2p",
      "domain", "apt", "malware", "info_hash", "magnet_uri", "threat_actor",
-     "malware_family", "email", "mac", "btc", "eth", "pending")
+     "malware_family", "email", "mac", "btc", "eth")
 )
 
 # ─── Helpers ───────────────────────────────────────────────────────────────────

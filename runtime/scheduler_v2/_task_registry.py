@@ -30,6 +30,7 @@ Invariants:
 from __future__ import annotations
 
 import asyncio
+import contextvars
 import gc
 import sys
 import typing
@@ -40,7 +41,15 @@ from hledac.universal.utils.asyncx import parallel, _check_gathered
 
 _CancelledError: type = asyncio.CancelledError  # type: ignore[misc,assignment] — Python 3.14+: builtin
 
-__all__ = ["TaskRegistry", "get_task_registry", "safe_create_task_tracked", "TaskScope"]
+__all__ = [
+    "TaskRegistry",
+    "get_task_registry",
+    "safe_create_task_tracked",
+    "safe_create_managed_task",
+    "TaskScope",
+    "get_current_scope",
+    "TaskScopeContext",
+]
 
 # ── Module-level singleton ─────────────────────────────────────────────────
 
@@ -100,7 +109,7 @@ class TaskScope:
     """Logical scope for task grouping (phase or lane).
 
     Used to cancel all tasks belonging to a specific phase.
-    Scopes areDurable: defined as module-level constants.
+    Scopes are durable: defined as module-level constants.
     """
 
     # Prelude phase
@@ -127,6 +136,13 @@ class TaskScope:
     # Scorecard / winddown teardown
     SCORECARD = "scorecard"
 
+    # Sidecar/background tasks (orphaned task prevention)
+    SIDECAR = "sidecar"
+    SIDECAR_PLUGIN = "sidecar:plugin"
+    SIDECAR_ADVISORY = "sidecar:advisory"
+    GRAPH_SERVICE = "graph:service"
+    GRAPH_LANCEDB = "graph:lancedb"
+
     @classmethod
     def parent(cls, scope: str) -> str | None:
         """Return parent scope or None if scope is a top-level group."""
@@ -134,7 +150,73 @@ class TaskScope:
             return cls.ACQUISITION
         if scope.startswith("windup:"):
             return cls.WINDUP
+        if scope.startswith("sidecar:"):
+            return cls.SIDECAR
+        if scope.startswith("graph:"):
+            return cls.ADVISORY  # Graph service tasks under advisory for cancellation
         return None
+
+
+# ── TaskScopeContext ──────────────────────────────────────────────────────────
+# Hierarchical task scoping via ContextVar for orphaned task prevention
+
+# ContextVar holding the current task scope string
+_current_scope: contextvars.ContextVar[str] = contextvars.ContextVar(
+    "hledac_task_scope", default=TaskScope.ACQUISITION
+)
+
+# Optional: ContextVar holding the parent TaskGroup for structured concurrency
+_current_task_group: contextvars.ContextVar["asyncio.TaskGroup | None"] = contextvars.ContextVar(
+    "hledac_task_group", default=None
+)
+
+
+def get_current_scope() -> str:
+    """Return the current task scope from ContextVar."""
+    return _current_scope.get()
+
+
+def set_current_scope(scope: str) -> contextvars.Token:
+    """Set the current task scope, returning a token for restore."""
+    return _current_scope.set(scope)
+
+
+def reset_current_scope(token: contextvars.Token) -> None:
+    """Reset the current scope to the previous value."""
+    _current_scope.reset(token)
+
+
+class TaskScopeContext:
+    """Context manager for setting task scope within a block.
+
+    Usage:
+        async with TaskScopeContext(TaskScope.WINDUP):
+            # All safe_create_task_tracked calls here use WINDUP scope
+            task = safe_create_task_tracked(coro(), name="winddown:task")
+    """
+
+    __slots__ = ("_scope", "_token", "_task_group_token")
+
+    def __init__(
+        self,
+        scope: str,
+        task_group: "asyncio.TaskGroup | None" = None,
+    ) -> None:
+        self._scope = scope
+        self._token: contextvars.Token | None = None
+        self._task_group_token: contextvars.Token | None = None
+
+    def __enter__(self) -> "TaskScopeContext":
+        self._token = _current_scope.set(self._scope)
+        if self._task_group_token is not None:
+            self._task_group_token = _current_task_group.set(None)
+        return self
+
+    def __exit__(self, *args: Any) -> None:
+        if self._token is not None:
+            _current_scope.reset(self._token)
+        if self._task_group_token is not None:
+            _current_task_group.reset(self._task_group_token)
 
 
 # ── TaskRegistry ────────────────────────────────────────────────────────────
@@ -240,14 +322,6 @@ class TaskRegistry:
         # M1 FIX: Use monotonic counter for reliable task ordering
         task_id = self._task_counter
         self._task_counter += 1
-
-        # Simplified: since all callers are async, dict ops are GIL-protected
-        # For true thread-safety (future-proofing), we use asyncio.Lock in async methods
-        try:
-            loop = asyncio.get_running_loop()
-        except RuntimeError:  # noqa: BLE001
-            # Not in async context - still safe due to GIL
-            pass
 
         # Evict oldest if at capacity
         if len(self._tasks) >= self.MAX_TASKS and self._EVICT_OLDEST:
@@ -650,7 +724,7 @@ def safe_create_task_tracked(
     coro: Any,
     *,
     name: str | None = None,
-    scope: str = TaskScope.ACQUISITION,
+    scope: str | None = None,
     **kwargs: Any,
 ) -> asyncio.Task[Any]:
     """Wrap safe_create_task with TaskRegistry tracking.
@@ -667,6 +741,7 @@ def safe_create_task_tracked(
         coro: Coroutine to wrap in a task.
         name: Task name (required for debugging).
         scope: TaskScope constant — groups tasks for scoped cancellation.
+               If None, uses the current scope from ContextVar.
         **kwargs: Passed to safe_create_task.
 
     Returns:
@@ -674,22 +749,74 @@ def safe_create_task_tracked(
     """
     from hledac.universal.utils.asyncx import parallel, safe_create_task as _safe_create_task
 
+    # Use ContextVar scope if not explicitly provided
+    _effective_scope = scope if scope is not None else _current_scope.get()
+
     task = _safe_create_task(coro, name=name, **kwargs)
     _registry = get_task_registry()
-    _registry.register(name or f"anon:{id(task)}", task, scope=scope)
+    _registry.register(name or f"anon:{id(task)}", task, scope=_effective_scope)
 
     # Auto-unregister when done (task returned, raised, or cancelled)
-    task.add_done_callback(_make_unregister_callback(id(task)))
+    task.add_done_callback(_make_unregister_callback(task))
 
     return task
 
 
-def _make_unregister_callback(_task_id: int) -> Any:
-    """Create a done-callback that unregisters a task by ID."""
-    def _cb(task: asyncio.Task[Any]) -> None:
+def safe_create_managed_task(
+    coro: Any,
+    task_group: "asyncio.TaskGroup",
+    *,
+    name: str | None = None,
+    scope: str | None = None,
+) -> asyncio.Task[Any]:
+    """Create a task that is both tracked AND a child of the given TaskGroup.
+
+    This combines TaskRegistry tracking (for cancel_all propagation) with
+    TaskGroup structured concurrency (for automatic child cancellation).
+
+    Use this instead of bare task_group.create_task() when you need both:
+      1. TaskRegistry.cancel_all() to reach the task
+      2. TaskGroup cancellation to propagate to the task
+
+    Args:
+        coro: Coroutine to wrap in a task.
+        task_group: The asyncio.TaskGroup this task belongs to.
+        name: Task name (required for debugging).
+        scope: TaskScope constant — groups tasks for scoped cancellation.
+               If None, uses the current scope from ContextVar.
+
+    Returns:
+        asyncio.Task, registered in TaskRegistry and created via TaskGroup.
+    """
+    # Use ContextVar scope if not explicitly provided
+    _effective_scope = scope if scope is not None else _current_scope.get()
+
+    # Create task via TaskGroup (structured concurrency)
+    task = task_group.create_task(coro, name=name)
+
+    # Register in TaskRegistry for cancel_all() propagation
+    _registry = get_task_registry()
+    _registry.register(name or f"managed:{id(task)}", task, scope=_effective_scope)
+
+    # Auto-unregister when done
+    task.add_done_callback(_make_unregister_callback(task))
+
+    return task
+
+
+def _make_unregister_callback(task: asyncio.Task[Any]) -> Any:
+    """Create a done-callback that unregisters a task by identity.
+
+    BUG FIX (Issue #2 review): Pass the task object itself, not id(task).
+    unregister() does identity-based lookup (if t is task), not key-based lookup.
+    Using id(task) caused orphaned entries in _tasks dict since the registry
+    key (_task_id from monotonic counter) never matched id(task).
+    """
+    def _cb(done_task: asyncio.Task[Any]) -> None:
+        # done_task is the same object as task (passed via closure)
         try:
             registry = get_task_registry()
-            registry.unregister(task)
+            registry.unregister(done_task)
         except Exception:  # noqa: BLE001
             pass
     return _cb

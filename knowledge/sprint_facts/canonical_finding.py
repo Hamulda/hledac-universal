@@ -82,6 +82,134 @@ class CanonicalFinding(Struct, frozen=True):
         """
         return msgspec.json.schema(cls)
 
+    @classmethod
+    def from_warc_record(
+        cls,
+        *,
+        warc_record_id: str,
+        warc_path: str,
+        compressed_offset: int,
+        compressed_size: int,
+        warc_url: str,
+        query: str,
+        source_type: str = "warc_replay",
+        confidence: float = 0.9,
+        payload_text: str | None = None,
+        provenance: tuple[str, ...] | None = None,
+    ) -> "CanonicalFinding":
+        """
+        ISSUE F5-FIX: Factory method to create CanonicalFinding from WARC record metadata.
+
+        Single aggregation point for all WARC → CanonicalFinding conversions.
+        Called by:
+          - duckdb_store.py (replay path)
+          - warc_replay.py (playback extraction)
+          - 5+ other call sites via this factory
+
+        Args:
+            warc_record_id: URN-UUID from WARC-Record-ID header
+            warc_path: Absolute path to .warc.gz file
+            compressed_offset: Compressed (seekable) byte offset in WARC file
+            compressed_size: Compressed record block size
+            warc_url: Archived URL from WARC-Target-URI
+            query: Research query that triggered this archive fetch
+            source_type: Source type (default "warc_replay")
+            confidence: Confidence score (default 0.9 for archived content)
+            payload_text: Optional extracted text from WARC record
+            provenance: Provenance chain (auto-prepended with WARC metadata)
+
+        Returns:
+            CanonicalFinding with WARC fields populated for court-admissible replay
+        """
+        import hashlib
+        import time as _time
+
+        # Generate stable finding_id from WARC metadata (deterministic)
+        fid_input = f"{warc_record_id}\x00{warc_url}\x00{compressed_offset}"
+        finding_id = hashlib.sha256(fid_input.encode()).hexdigest()[:16]
+
+        # Build provenance chain with WARC metadata
+        warc_provenance = (
+            f"warc:{warc_record_id}",
+            f"offset:{compressed_offset}",
+            f"size:{compressed_size}",
+        )
+        if provenance:
+            final_provenance = tuple(list(provenance) + list(warc_provenance))
+        else:
+            final_provenance = warc_provenance
+
+        return cls(
+            finding_id=finding_id,
+            query=query,
+            source_type=source_type,
+            confidence=confidence,
+            ts=_time.time(),
+            provenance=final_provenance,
+            payload_text=payload_text,
+            warc_record_id=warc_record_id,
+            warc_path=warc_path,
+            compressed_offset=compressed_offset,
+            compressed_size=compressed_size,
+            warc_url=warc_url,
+        )
+
+    @classmethod
+    def from_adapters(
+        cls,
+        adapters: list[Any],
+        query: str,
+        source_type: str,
+    ) -> list["CanonicalFinding"]:
+        """
+        Gap C FIX: Unified factory for adapter-based finding creation.
+
+        Replaces scattered to_canonical_findings() calls across 7 adapters:
+          - discovery/academic/arxiv_adapter.py
+          - discovery/academic/core_adapter.py
+          - discovery/academic/openalex_adapter.py
+          - discovery/academic/s2orc_adapter.py
+          - discovery/academic/unpaywall_adapter.py
+          - recon/bgp_lane.py
+          - recon/wayback_cdx.py
+
+        Single entry point: adapters implement to_canonical_findings() and this
+        factory aggregates them.
+
+        Args:
+            adapters: List of adapters with to_canonical_findings(query) method
+            query: Research query
+            source_type: Base source type for all findings
+
+        Returns:
+            List of CanonicalFinding from all adapters
+        """
+        import logging
+        _logger = logging.getLogger(__name__)
+        
+        findings: list[CanonicalFinding] = []
+        for adapter in adapters:
+            adapter_name = type(adapter).__name__
+            try:
+                if hasattr(adapter, "to_canonical_findings"):
+                    results = adapter.to_canonical_findings(query)
+                    if results:
+                        findings.extend(results)
+                        _logger.debug(
+                            "[CanonicalFinding] %s produced %d findings for query '%s'",
+                            adapter_name,
+                            len(results),
+                            query[:50],
+                        )
+            except Exception as e:  # noqa: BLE001 — fail-soft per adapter
+                _logger.warning(
+                    "[CanonicalFinding] %s.to_canonical_findings() failed for query '%s': %s",
+                    adapter_name,
+                    query[:50],
+                    e,
+                )
+        return findings
+
 
 # FindingQualityDecision is defined in knowledge/_quality_types.py.
 # Re-exported here for backward compatibility with code that imports it from this module.

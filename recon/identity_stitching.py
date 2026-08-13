@@ -425,6 +425,360 @@ class IdentityMatch:
         """Convert match to dictionary."""
         return {'profile_a': self.profile_a, 'profile_b': self.profile_b, 'match_score': self.match_score, 'match_signals': self.match_signals, 'confidence': self.confidence, 'evidence': self.evidence}
 
+
+# --------------------------------------------------------------------------- #
+# Gap A FIX: Cross-Modal LSH Identity Matching
+# --------------------------------------------------------------------------- #
+# ISSUE ULTIMATE-005: Simhash-based cross-modal identity matching
+# Reuses existing content_hasher.rs infrastructure for face/voice similarity
+# --------------------------------------------------------------------------- #
+
+class CrossModalLSHMatcher:
+    """
+    Gap A FIX: LSH-based cross-modal identity matching using SimHash.
+
+    This class provides cross-modal identity deduplication by computing
+    simhash signatures for face and voice embeddings, enabling O(1) lookup
+    for near-duplicate identity detection across modalities.
+
+    Architecture:
+      1. Face embeddings → SimHash signature → LSH bucket lookup
+      2. Voice embeddings → SimHash signature → LSH bucket lookup
+      3. Combined cross-modal score = weighted fusion of face + voice similarity
+
+    Integration with existing LSH infrastructure:
+      - Uses content_hasher.rs simhash via rust_backend
+      - Falls back to numpy-based implementation if Rust unavailable
+      - Compatible with M1 8GB (memory-bounded, streaming)
+
+    Usage:
+        matcher = CrossModalLSHMatcher()
+        matcher.add_profile(profile)
+        candidates = matcher.find_similar(profile_id, threshold=0.85)
+    """
+
+    __slots__ = (
+        '_face_lsh',
+        '_voice_lsh',
+        '_profiles',
+        '_simhash_available',
+    )
+
+    # Simhash dimensions (output bit length)
+    SIMHASH_BITS: int = 64
+
+    # LSH parameters
+    BAND_SIZE: int = 8  # Rows per band (64/8 = 8 bands)
+    NUM_BANDS: int = 8  # Total bands
+
+    def __init__(
+        self,
+        band_size: int = 8,
+        num_bands: int | None = None,
+    ) -> None:
+        """
+        Initialize cross-modal LSH matcher.
+
+        Args:
+            band_size: Rows per band (determines false positive rate)
+            num_bands: Total bands (default: 64/bandsize for 64-bit simhash)
+        """
+        self._face_lsh: dict[int, list[tuple[str, list[float]]]] = defaultdict(list)
+        self._voice_lsh: dict[int, list[tuple[str, list[float]]]] = defaultdict(list)
+        self._profiles: dict[str, IdentityProfile] = {}
+        self._simhash_available: bool = self._check_simhash_available()
+
+        # Calculate num_bands from simhash size
+        if num_bands is None:
+            num_bands = self.SIMHASH_BITS // band_size
+        self.BAND_SIZE = band_size
+        self.NUM_BANDS = num_bands
+
+    def _check_simhash_available(self) -> bool:
+        """Check if Rust simhash backend is available."""
+        try:
+            from hledac.universal.core.rust_backend import rust
+            return hasattr(rust.raw, 'compute_simhash')
+        except Exception:
+            return False
+
+    def _compute_simhash(self, embedding: list[float]) -> int:
+        """
+        Compute simhash for an embedding vector.
+
+        Uses Rust backend if available, otherwise falls back to proper
+        weighted bit accumulation simhash algorithm.
+
+        Args:
+            embedding: Float embedding vector
+
+        Returns:
+            64-bit simhash as integer
+        """
+        if self._simhash_available:
+            try:
+                from hledac.universal.core.rust_backend import rust
+                return rust.raw.compute_simhash(embedding)
+            except Exception:
+                pass
+
+        # Proper SimHash implementation for float vectors
+        # SimHash works by:
+        # 1. Compute weighted hash components (v > 0 contributes to bit 1, v < 0 contributes to bit 0)
+        # 2. Accumulate weights for each bit position
+        # 3. Final hash: bit i is 1 if accumulated weight > 0
+        
+        import hashlib
+        import struct
+        
+        vector = embedding
+        if len(vector) == 0:
+            return 0
+
+        # Accumulate weighted bits for each of the 64 output bits
+        accumulators = [0.0] * self.SIMHASH_BITS
+
+        # Map embedding dimensions to bit positions (wrap around if embedding < 64)
+        for dim_idx, val in enumerate(vector):
+            # Compute a hash for this dimension to spread it across bit positions
+            dim_hash = hashlib.sha256(f"simhash_dim:{dim_idx}".encode()).digest()
+            # Use first 8 bytes as a stable hash for dimension-to-bits mapping
+            dim_weights = struct.unpack('<Q', dim_hash[:8])[0]
+            
+            # Weight is the actual embedding value
+            weight = float(val)
+            
+            # Distribute weight across multiple bit positions
+            for bit_pos in range(self.SIMHASH_BITS):
+                # Check if this bit should be set based on dimension hash
+                if (dim_weights >> bit_pos) & 1:
+                    accumulators[bit_pos] += weight
+                else:
+                    accumulators[bit_pos] -= weight
+
+        # Convert accumulators to final hash
+        result = 0
+        for i, acc in enumerate(accumulators):
+            if acc > 0:
+                result |= (1 << i)
+
+        return result
+
+    def _hash_to_buckets(self, simhash: int) -> list[int]:
+        """
+        Map simhash to LSH bucket indices.
+
+        Args:
+            simhash: 64-bit simhash value
+
+        Returns:
+            List of bucket indices for this hash
+        """
+        buckets: list[int] = []
+        for band in range(self.NUM_BANDS):
+            start = band * self.BAND_SIZE
+            # Extract band bits
+            band_bits = (simhash >> start) & ((1 << self.BAND_SIZE) - 1)
+            # Hash band to bucket
+            bucket = hash((band, band_bits)) % (1 << 20)  # 1M buckets
+            buckets.append(bucket)
+        return buckets
+
+    def add_profile(self, profile: IdentityProfile) -> None:
+        """
+        Add a profile to the LSH index.
+
+        Args:
+            profile: Identity profile with face/voice embeddings
+        """
+        self._profiles[profile.id] = profile
+
+        # Index face embeddings
+        for embedding in profile.face_embeddings:
+            sig = self._compute_simhash(embedding)
+            buckets = self._hash_to_buckets(sig)
+            for bucket in buckets:
+                self._face_lsh[bucket].append((profile.id, embedding))
+
+        # Index voice embeddings
+        for embedding in profile.voice_embeddings:
+            sig = self._compute_simhash(embedding)
+            buckets = self._hash_to_buckets(sig)
+            for bucket in buckets:
+                self._voice_lsh[bucket].append((profile.id, embedding))
+
+    def _cosine_similarity(self, a: list[float], b: list[float]) -> float:
+        """Compute cosine similarity between two vectors."""
+        import numpy as np
+
+        va = np.array(a, dtype=np.float64)
+        vb = np.array(b, dtype=np.float64)
+
+        norm_a = np.linalg.norm(va)
+        norm_b = np.linalg.norm(vb)
+
+        if norm_a == 0 or norm_b == 0:
+            return 0.0
+
+        return float(np.dot(va, vb) / (norm_a * norm_b))
+
+    def _hamming_distance(self, a: int, b: int) -> int:
+        """Compute Hamming distance between two 64-bit integers."""
+        xor = a ^ b
+        return bin(xor).count('1')
+
+    def _simhash_similarity(self, sig_a: int, sig_b: int) -> float:
+        """Compute similarity from simhash Hamming distance."""
+        dist = self._hamming_distance(sig_a, sig_b)
+        # 64-bit hash: distance 0 = 1.0, distance 64 = 0.0
+        return max(0.0, 1.0 - dist / self.SIMHASH_BITS)
+
+    def find_similar(
+        self,
+        profile_id: str,
+        *,
+        threshold: float = 0.85,
+        face_weight: float = 0.6,
+        voice_weight: float = 0.4,
+    ) -> list[tuple[str, float]]:
+        """
+        Find profiles with similar face/voice embeddings.
+
+        Gap A FIX: Cross-modal identity deduplication using LSH pre-filtering
+        + exact cosine similarity for final scoring.
+
+        Args:
+            profile_id: ID of query profile
+            threshold: Minimum similarity score (0-1)
+            face_weight: Weight for face similarity (default 0.6)
+            voice_weight: Weight for voice similarity (default 0.4)
+
+        Returns:
+            List of (profile_id, score) tuples above threshold
+        """
+        if profile_id not in self._profiles:
+            return []
+
+        query_profile = self._profiles[profile_id]
+        candidates: dict[str, tuple[list[float], list[float]]] = defaultdict(
+            lambda: ([], [])
+        )
+
+        # LSH lookup for face embeddings
+        for embedding in query_profile.face_embeddings:
+            sig = self._compute_simhash(embedding)
+            buckets = self._hash_to_buckets(sig)
+            for bucket in buckets:
+                for pid, emb in self._face_lsh.get(bucket, []):
+                    if pid != profile_id:
+                        candidates[pid][0].append(emb)
+
+        # LSH lookup for voice embeddings
+        for embedding in query_profile.voice_embeddings:
+            sig = self._compute_simhash(embedding)
+            buckets = self._hash_to_buckets(sig)
+            for bucket in buckets:
+                for pid, emb in self._voice_lsh.get(bucket, []):
+                    if pid != profile_id:
+                        candidates[pid][1].append(emb)
+
+        # Compute final scores
+        results: list[tuple[str, float]] = []
+        for pid, (face_cands, voice_cands) in candidates.items():
+            face_score = 0.0
+            voice_score = 0.0
+
+            # Best face match
+            if face_cands and query_profile.face_embeddings:
+                best_face = max(
+                    self._cosine_similarity(q, c)
+                    for q in query_profile.face_embeddings
+                    for c in face_cands
+                )
+                face_score = best_face
+
+            # Best voice match
+            if voice_cands and query_profile.voice_embeddings:
+                best_voice = max(
+                    self._cosine_similarity(q, c)
+                    for q in query_profile.voice_embeddings
+                    for c in voice_cands
+                )
+                voice_score = best_voice
+
+            # Weighted fusion
+            if face_score > 0 or voice_score > 0:
+                combined = (face_weight * face_score) + (voice_weight * voice_score)
+                if combined >= threshold:
+                    results.append((pid, combined))
+
+        # Sort by score descending
+        results.sort(key=lambda x: x[1], reverse=True)
+        return results
+
+    def get_cross_modal_score(
+        self,
+        profile_a: IdentityProfile,
+        profile_b: IdentityProfile,
+    ) -> float:
+        """
+        Compute cross-modal similarity score between two profiles.
+
+        Args:
+            profile_a: First identity profile
+            profile_b: Second identity profile
+
+        Returns:
+            Cross-modal similarity score (0-1)
+        """
+        if not profile_a.face_embeddings and not profile_a.voice_embeddings:
+            return 0.0
+        if not profile_b.face_embeddings and not profile_b.voice_embeddings:
+            return 0.0
+
+        face_score = 0.0
+        voice_score = 0.0
+
+        # Face similarity
+        if profile_a.face_embeddings and profile_b.face_embeddings:
+            max_face_sim = 0.0
+            for fa in profile_a.face_embeddings:
+                for fb in profile_b.face_embeddings:
+                    sim = self._cosine_similarity(fa, fb)
+                    max_face_sim = max(max_face_sim, sim)
+            face_score = max_face_sim
+
+        # Voice similarity
+        if profile_a.voice_embeddings and profile_b.voice_embeddings:
+            max_voice_sim = 0.0
+            for va in profile_a.voice_embeddings:
+                for vb in profile_b.voice_embeddings:
+                    sim = self._cosine_similarity(va, vb)
+                    max_voice_sim = max(max_voice_sim, sim)
+            voice_score = max_voice_sim
+
+        # Weighted fusion
+        total_weight = 0.0
+        weighted_sum = 0.0
+
+        if profile_a.face_embeddings and profile_b.face_embeddings:
+            weighted_sum += 0.6 * face_score
+            total_weight += 0.6
+
+        if profile_a.voice_embeddings and profile_b.voice_embeddings:
+            weighted_sum += 0.4 * voice_score
+            total_weight += 0.4
+
+        if total_weight > 0:
+            return weighted_sum / total_weight
+        return 0.0
+
+    def clear(self) -> None:
+        """Clear all indexes and profiles."""
+        self._face_lsh.clear()
+        self._voice_lsh.clear()
+        self._profiles.clear()
+
 class StitchedIdentity(msgspec.Struct, frozen=True, gc=False):
     """
     Represents a stitched identity combining multiple profiles.

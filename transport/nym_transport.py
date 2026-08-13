@@ -49,6 +49,10 @@ from hledac.universal.utils.uuid7 import new_runtime_id
 from .base import Transport
 logger = logging.getLogger(__name__)
 
+# M1 Resource Ledger imports
+from hledac.universal.core.resource_ledger import get_resource_ledger
+from hledac.universal.transport.resource_admission import TransportAdmission
+
 
 def _nym_json_dumps(obj: Any) -> str:
     """Serialize to JSON string.
@@ -75,7 +79,7 @@ def set_nym_transport_singleton(transport: Any) -> None:
     _NYM_TRANSPORT_SINGLETON = transport
 
 class NymTransport(Transport):
-    __slots__ = tuple(('_health_check_task', '_outgoing_queue', '_ready', '_receiver_task', '_sender_task', '_stderr_task', '_stdout_task', '_stop_event', '_websockets', 'circuit_breaker_failures', 'circuit_breaker_last_failure', 'circuit_breaker_open', 'circuit_breaker_threshold', 'circuit_breaker_timeout', 'client_process', 'data_dir', 'handlers', 'max_queue_size', 'nym_address', 'nym_client_path', 'websocket', 'websocket_port'))
+    __slots__ = tuple(('_health_check_task', '_outgoing_queue', '_ready', '_receiver_task', '_sender_task', '_stderr_task', '_stdout_task', '_stop_event', '_websockets', 'circuit_breaker_failures', 'circuit_breaker_last_failure', 'circuit_breaker_open', 'circuit_breaker_threshold', 'circuit_breaker_timeout', 'client_process', 'data_dir', 'handlers', 'max_queue_size', 'nym_address', 'nym_client_path', 'websocket', 'websocket_port', '_ledger', '_resource_active'))  # M1 Resource Ledger integration
 
     def __init__(self, data_dir: str | None=None, nym_client_path: str='nym-client', websocket_port: int=1977, max_queue_size: int=100):
         try:
@@ -110,52 +114,89 @@ class NymTransport(Transport):
         self.circuit_breaker_timeout = 60
         self.circuit_breaker_last_failure = 0.0
 
+        # M1 Resource Ledger: Initialize resource tracking for Nym
+        self._ledger = get_resource_ledger()
+        self._resource_active = False
+
     async def start(self):
+        """
+        Start Nym transport with resource admission control.
+
+        M1 Resource Ceiling Drift Fix: Uses resource admission to track
+        resources used by Nym transport with guaranteed cleanup on failure.
+        """
+        # M1 Resource Admission: Check if we can start Nym
+        can_start, reason = TransportAdmission.can_start_transport("nym", self._ledger)
+        if not can_start:
+            logger.warning(f"[NymTransport] Cannot start: {reason}")
+            self.available = False
+            return
+
         if not NYM_CLIENT_AVAILABLE:
             logger.info('[Nym] nym-client not found — transport disabled')
             self.available = False
             return
-        try:
-            self.client_process = await asyncio.create_subprocess_exec(self.nym_client_path, '--id', 'hledac', '--config-dir', str(self.data_dir), '--port', str(self.websocket_port), stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
-        except FileNotFoundError:
-            logger.info('[Nym] nym-client not found at %s — transport disabled', self.nym_client_path)
-            self.available = False
-            return
-        self.available = True
-        set_nym_transport_singleton(self)
-        self._stdout_task = safe_create_task(self._drain_stream(self.client_process.stdout, 'stdout'), name='nym:stdout_drain')
-        self._stderr_task = safe_create_task(self._drain_stream(self.client_process.stderr, 'stderr'), name='nym:stderr_drain')
-        for _ in range(10):
-            try:
-                self.websocket = await self._websockets.connect(f'ws://127.0.0.1:{self.websocket_port}')
-                break
-            except ConnectionRefusedError:
-                await asyncio.sleep(1)
-        else:
-            raise RuntimeError('Nym client websocket not available after 10s')
 
-        async def wait_for_self_address():
-            ws = self.websocket
-            if ws is None:
-                raise RuntimeError('Nym websocket unavailable after connect loop')
-            while True:
-                async with asyncio.timeout(5.0):
-                    response = await ws.recv()
-                data = _nym_json_loads(response)
-                if data.get('type') == 'selfAddress':
-                    return data['address']
-                else:
-                    logger.debug(f"Ignored non-selfAddress message: {data.get('type')}")
-        try:
-            async with asyncio.timeout(10.0):
-                await wait_for_self_address()
-            logger.info(f'Nym address: {self.nym_address}')
-        except TimeoutError:
-            raise RuntimeError('Nym client did not send selfAddress')
-        self._ready.set()
-        self._sender_task = safe_create_task(self._sender_loop(), name='nym:sender')
-        self._receiver_task = safe_create_task(self._receiver_loop(), name='nym:receiver')
-        self._health_check_task = safe_create_task(self._health_check_loop(), name='nym:health_check')
+        # M1 FIX: Use context manager to ensure subprocess is spawned AFTER admission
+        # This prevents orphaning the subprocess if admission fails
+        with TransportAdmission.for_transport("nym", self._ledger):
+            try:
+                self.client_process = await asyncio.create_subprocess_exec(
+                    self.nym_client_path, '--id', 'hledac', '--config-dir',
+                    str(self.data_dir), '--port', str(self.websocket_port),
+                    stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
+                )
+            except FileNotFoundError:
+                logger.info('[Nym] nym-client not found at %s — transport disabled', self.nym_client_path)
+                self.available = False
+                return
+
+            self.available = True
+            set_nym_transport_singleton(self)
+
+            # M1 Resource: Drain subprocess stdout/stderr
+            self._stdout_task = safe_create_task(self._drain_stream(self.client_process.stdout, 'stdout'), name='nym:stdout_drain')
+            self._stderr_task = safe_create_task(self._drain_stream(self.client_process.stderr, 'stderr'), name='nym:stderr_drain')
+
+            # Connect to Nym websocket
+            for _ in range(10):
+                try:
+                    self.websocket = await self._websockets.connect(f'ws://127.0.0.1:{self.websocket_port}')
+                    break
+                except ConnectionRefusedError:
+                    await asyncio.sleep(1)
+            else:
+                raise RuntimeError('Nym client websocket not available after 10s')
+
+            async def wait_for_self_address():
+                ws = self.websocket
+                if ws is None:
+                    raise RuntimeError('Nym websocket unavailable after connect loop')
+                while True:
+                    async with asyncio.timeout(5.0):
+                        response = await ws.recv()
+                    data = _nym_json_loads(response)
+                    if data.get('type') == 'selfAddress':
+                        return data['address']
+                    else:
+                        logger.debug(f"Ignored non-selfAddress message: {data.get('type')}")
+
+            try:
+                async with asyncio.timeout(10.0):
+                    await wait_for_self_address()
+                logger.info(f'Nym address: {self.nym_address}')
+            except TimeoutError:
+                raise RuntimeError('Nym client did not send selfAddress')
+
+            # M1 Resource: Register child process with ledger AFTER successful start
+            if self.client_process and self.client_process.pid:
+                self._ledger.register_child_process(self.client_process.pid, "nym")
+            self._resource_active = True
+
+            self._ready.set()
+            self._sender_task = safe_create_task(self._sender_loop(), name='nym:sender')
+            self._receiver_task = safe_create_task(self._receiver_loop(), name='nym:receiver')
+            self._health_check_task = safe_create_task(self._health_check_loop(), name='nym:health_check')
 
     def health_cost(self) -> float:
         """NymTransport: ~50-80 MB for websocket + process + queues."""
@@ -220,6 +261,11 @@ class NymTransport(Transport):
                 break
 
     async def stop(self, graceful: bool=True):
+        """
+        Graceful Nym shutdown with resource cleanup.
+
+        M1 Resource Ceiling Drift Fix: Releases resources from ledger.
+        """
         self._stop_event.set()
         if graceful:
             try:
@@ -247,6 +293,12 @@ class NymTransport(Transport):
                 logger.warning('Nym process did not terminate gracefully, killing')
                 self.client_process.kill()
                 await self.client_process.wait()
+
+        # M1 Resource Cleanup: Release all remaining resources for "nym"
+        self._ledger.release_all("nym")
+        self._resource_active = False
+
+        logger.info('[NymTransport] Stopped and resources released')
 
     async def wait_ready(self):
         await self._ready.wait()

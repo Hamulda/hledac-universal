@@ -1,6 +1,6 @@
 {
   "version": "1.0.0",
-  "generated_at": "2026-08-13T16:30:09.102655+00:00",
+  "generated_at": "2026-08-13T18:28:43.494646+00:00",
   "capability": "NEXTGEN-05",
   "description": "Build-time FFI type-safety manifest",
   "classes": {
@@ -5315,6 +5315,22 @@
       "name": "get_available_thread_budget",
       "signature": "()",
       "return_type": "int",
+      "is_async": false,
+      "doc_comment": null
+    },
+    "adaptive_scheduler.get_budget_ceiling": {
+      "module": "adaptive_scheduler",
+      "name": "get_budget_ceiling",
+      "signature": "()",
+      "return_type": "int",
+      "is_async": false,
+      "doc_comment": null
+    },
+    "adaptive_scheduler.check_budget_allows": {
+      "module": "adaptive_scheduler",
+      "name": "check_budget_allows",
+      "signature": "(extra: int)",
+      "return_type": "bool",
       "is_async": false,
       "doc_comment": null
     },

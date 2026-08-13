@@ -55,6 +55,7 @@ __all__ = [
     "ParquetExporter",
     "export_findings_parquet",
     "export_parquet_to_path",
+    "AsyncParquetStreamingReader",
 ]
 
 
@@ -62,6 +63,175 @@ __all__ = [
 _CHUNK_SIZE: int = 50_000  # rows per Parquet file
 _ROW_GROUP_SIZE: int = 10_000  # Parquet row group (MR optimal)
 _MAX_CONCURRENT_WRITES: int = 2  # bounded for M1 RAM
+
+
+class AsyncParquetStreamingReader:
+    """
+    Gap E FIX: Lock-free async parquet streaming reader using Arrow IPC.
+
+    Replaces COPY TO operations that required DuckDB lock contention.
+    This class reads parquet files directly via pyarrow without DB involvement.
+
+    Features:
+      - Async I/O for non-blocking reads
+      - Streaming batches (memory efficient for large files)
+      - No DuckDB dependency for reads
+      - Supports both single-file and directory patterns
+      - Row-group level streaming for M1 8GB memory bounds
+
+    Usage:
+        reader = AsyncParquetStreamingReader()
+        async for batch in reader.stream_batches("findings_2024.parquet"):
+            for row in batch.to_pydict():
+                process(row)
+    """
+
+    def __init__(self, max_concurrent_reads: int = 2) -> None:
+        """
+        Initialize the streaming reader.
+
+        Args:
+            max_concurrent_reads: Maximum concurrent read operations (bounded for M1 8GB)
+        """
+        self._max_concurrent_reads = max_concurrent_reads
+        self._read_semaphore = asyncio.Semaphore(max_concurrent_reads)
+        self._pa: Any = None
+
+    def _lazy_pyarrow(self) -> Any:
+        """Lazy import pyarrow."""
+        if self._pa is None:
+            import pyarrow.parquet as pq
+            self._pa = pq
+        return self._pa
+
+    async def stream_batches(
+        self,
+        path: str | Path,
+        *,
+        batch_size: int = 4096,
+        columns: list[str] | None = None,
+    ) -> AsyncIterator[Any]:
+        """
+        Stream record batches from a parquet file asynchronously.
+
+        Gap E FIX: This method replaces duckdb_conn.execute("COPY ... TO")
+        with direct pyarrow parquet reading. No DB lock needed.
+
+        Args:
+            path: Path to parquet file or directory
+            batch_size: Number of rows per batch (default 4096 for M1 cache)
+            columns: Optional column projection (reduces memory)
+
+        Yields:
+            RecordBatch objects for streaming processing
+        """
+        path = Path(path)
+        if not path.exists():
+            logger.warning("[PARQUET-READ] File not found: %s", path)
+            return
+
+        async with self._read_semaphore:
+            loop = asyncio.get_running_loop()
+            pq = self._lazy_pyarrow()
+
+            # Determine files to read
+            if path.is_dir():
+                files = sorted(path.glob("*.parquet"))
+            else:
+                files = [path]
+
+            for file_path in files:
+                try:
+                    # Open parquet file in thread pool (pyarrow is sync)
+                    pf: Any = await loop.run_in_executor(
+                        None,
+                        lambda fp=file_path: pq.ParquetFile(fp),
+                    )
+
+                    # Get metadata for row group iteration
+                    metadata = pf.metadata
+                    num_row_groups = metadata.num_row_groups
+
+                    for rg_idx in range(num_row_groups):
+                        # Read row group as batch in thread pool
+                        batch: Any = await loop.run_in_executor(
+                            None,
+                            lambda: pf.read_row_group(rg_idx, columns=columns).to_batches(
+                                batch_size
+                            )[0],
+                        )
+                        yield batch
+
+                except Exception as e:
+                    logger.error("[PARQUET-READ] Error reading %s: %s", file_path, e)
+                    continue
+
+    async def read_all_as_table(
+        self,
+        path: str | Path,
+        *,
+        columns: list[str] | None = None,
+    ) -> Any | None:
+        """
+        Read entire parquet file as Arrow Table (for smaller files).
+
+        Args:
+            path: Path to parquet file
+            columns: Optional column projection
+
+        Returns:
+            Arrow Table or None on error
+        """
+        path = Path(path)
+        if not path.exists():
+            return None
+
+        async with self._read_semaphore:
+            loop = asyncio.get_running_loop()
+            pq = self._lazy_pyarrow()
+            try:
+                table = await loop.run_in_executor(
+                    None,
+                    lambda: pq.read_table(path, columns=columns),
+                )
+                return table
+            except Exception as e:
+                logger.error("[PARQUET-READ] Error reading table %s: %s", path, e)
+                return None
+
+    async def read_findings(
+        self,
+        path: str | Path,
+        *,
+        batch_size: int = 4096,
+    ) -> AsyncIterator[dict[str, Any]]:
+        """
+        Stream findings as dictionaries with WARC metadata support.
+
+        Args:
+            path: Path to parquet file
+            batch_size: Rows per yield
+
+        Yields:
+            Dictionary per finding with all WARC fields if present
+        """
+        async for batch in self.stream_batches(path, batch_size=batch_size):
+            # Convert batch to dicts
+            data = batch.to_pydict()
+            for i in range(batch.num_rows):
+                yield {k: v[i] if v is not None and i < len(v) else None for k, v in data.items()}
+
+
+# Convenience singleton for common usage
+_streaming_reader: AsyncParquetStreamingReader | None = None
+
+
+def get_streaming_reader() -> AsyncParquetStreamingReader:
+    """Get or create the global streaming reader instance."""
+    global _streaming_reader
+    if _streaming_reader is None:
+        _streaming_reader = AsyncParquetStreamingReader()
+    return _streaming_reader
 
 
 def _check_pyarrow_available() -> bool:
@@ -224,7 +394,7 @@ class ParquetExporter:
             import duckdb
             import orjson
 
-            # Zapis do dočasné tabulky
+            # Zapis do dočasné tabulky - include claims_json
             rows = []
             for f in findings:
                 rows.append((
@@ -235,6 +405,7 @@ class ParquetExporter:
                     f.ts or 0.0,
                     orjson.dumps(list(f.provenance)).decode("utf-8") if f.provenance else "[]",
                     f.payload_text or "",
+                    getattr(f, "claims_json", None) or "[]",  # MODERN-20: claims_json field
                 ))
 
             # Vytvoř dočasnou tabulku
@@ -260,9 +431,9 @@ class ParquetExporter:
             """)
 
             # Bulk insert pres Arrow (zero-copy)
-            # FXXX FIX: DuckDB.register() expects pa.Table, not RecordBatchStreamReader.
-            # DuckDB 0.10+ supports register(name, pa.Table) directly.
-            # Build pa.Table.from_batches([batch]) then register — eliminates raw SQL INSERT.
+            # Gap E FIX: DuckDB.register() with pyarrow Table is the correct approach.
+            # The table data is already loaded via register, so we don't need INSERT.
+            # Using a view instead of table allows COPY to work directly.
             if self._pa is not None:
                 arr_id = self._pa.array([r[0] for r in rows], type=self._pa.string())
                 arr_query = self._pa.array([r[1] for r in rows], type=self._pa.string())
@@ -277,33 +448,18 @@ class ParquetExporter:
                     [arr_id, arr_query, arr_st, arr_conf, arr_ts, arr_prov, arr_payload, arr_claims],
                     names=["id", "query", "source_type", "confidence", "ts", "provenance_json", "payload_text", "claims_json"],  # MODERN-20: Added
                 )
-                # pa.Table required by DuckDB.register — not RecordBatchStreamReader
+                # pa.Table required by DuckDB.register — data is immediately available
                 arrow_table = self._pa.Table.from_batches([batch])
                 conn.register("tmp_findings", arrow_table)  # type: ignore[attr-defined]
 
             else:
-                # Fallback: Arrow-based bulk insert via DuckDB register + INSERT...SELECT
-                # Repository pattern — no raw INSERT VALUES
-                import pyarrow as _pa
-
-                _arr_id = _pa.array([r[0] for r in rows], type=_pa.string())
-                _arr_query = _pa.array([r[1] for r in rows], type=_pa.string())
-                _arr_st = _pa.array([r[2] for r in rows], type=_pa.string())
-                _arr_conf = _pa.array([r[3] for r in rows], type=_pa.float64())
-                _arr_ts = _pa.array([r[4] for r in rows], type=_pa.float64())
-                _arr_prov = _pa.array([r[5] for r in rows], type=_pa.string())
-                _arr_payload = _pa.array([r[6] for r in rows], type=_pa.string())
-                _arr_claims = _pa.array([r[7] if len(r) > 7 else "" for r in rows], type=_pa.string())  # MODERN-20: Added
-                _tbl = _pa.Table.from_arrays(
-                    [_arr_id, _arr_query, _arr_st, _arr_conf, _arr_ts, _arr_prov, _arr_payload, _arr_claims],
-                    names=["id", "query", "source_type", "confidence", "ts", "provenance_json", "payload_text", "claims_json"],  # MODERN-20: Added
-                )
-                conn.register("tmp_findings", _tbl)
-                conn.execute(
-                    "INSERT INTO tmp_findings "
-                    "SELECT id, query, source_type, confidence, ts, provenance_json, payload_text, claims_json "  # MODERN-20: Added
-                    "FROM tmp_findings"
-                )
+                # Fallback: pure Python list-based INSERT
+                # Gap E FIX: Insert directly from rows list, not from registered table
+                for row in rows:
+                    conn.execute(
+                        "INSERT INTO tmp_findings VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                        row,
+                    )
 
             # COPY TO Parquet
             output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -355,7 +511,7 @@ class ParquetExporter:
             return None
 
         try:
-            # Convert findings to dicts for Rust
+            # Convert findings to dicts for Rust - include claims_json
             findings_dicts: list[dict[str, Any]] = []
             for f in findings:
                 findings_dicts.append({
@@ -369,6 +525,7 @@ class ParquetExporter:
                         if f.provenance else "[]"
                     ),
                     "payload_text": f.payload_text or "",
+                    "claims_json": getattr(f, "claims_json", None) or "[]",  # MODERN-20: Added claims_json
                 })
 
             # Call Rust arrow batch builder (uncompressed Arrow IPC bytes)

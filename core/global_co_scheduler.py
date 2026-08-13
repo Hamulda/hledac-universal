@@ -561,6 +561,14 @@ class GlobalPeakCoScheduler:
                 self._state = CoSchedulerState.ACTIVE
         except Exception:  # noqa: BLE001
             pass  # Fail-soft
+        
+        # [NEW-M13]: Acknowledge QoS change for peak_coordinator
+        try:
+            from hledac.universal.core.resource_governor import get_qos_subscription_registry
+            registry = get_qos_subscription_registry()
+            await registry.acknowledge("peak_coordinator", True, f"pressure={uma_state}")
+        except Exception:  # noqa: BLE001
+            pass
 
 
 # =============================================================================

@@ -1635,9 +1635,11 @@ class DuckPGQGraph:
 
             # Call Rust rayon-parallel centrality
             try:
+                # BUG-F FIX: Use hasattr pattern (matches graph_rag.py:945) instead of _rust.graph_centrality is not None
                 from hledac.universal.core.rust_backend import rust as _rust
-                if _rust is not None and _rust.is_available and _rust.graph_centrality is not None:
-                    raw = _rust.graph_centrality.batch_centrality_all(adjacency)
+                _rust_ext = _rust.raw.module
+                if _rust is not None and _rust.is_available and hasattr(_rust_ext, 'batch_centrality_all'):
+                    raw = _rust_ext.batch_centrality_all(adjacency)
                     # raw: {node_id: {"degree": float, "betweenness": float, ...}}
                     # Sort by degree desc, return top_k
                     sorted_nodes = sorted(
@@ -1725,7 +1727,8 @@ class DuckPGQGraph:
 
     def _init_schema(self):
         # [META]-006: Schema includes earliest_observed, latest_observed, observation_count
-        self.con.execute('\n            CREATE TABLE IF NOT EXISTS ioc_nodes (\n                id               BIGINT PRIMARY KEY,\n                value            VARCHAR NOT NULL UNIQUE,\n                ioc_type         VARCHAR,\n                confidence       FLOAT,\n                source           VARCHAR,\n                first_seen       TIMESTAMP DEFAULT now(),\n                observed_at      DOUBLE,\n                earliest_observed DOUBLE,\n                latest_observed  DOUBLE,\n                observation_count INTEGER DEFAULT 1\n            )\n        ')
+        # MODERN-25: Added classification_status and provenance columns for full traceability
+        self.con.execute('\n            CREATE TABLE IF NOT EXISTS ioc_nodes (\n                id               BIGINT PRIMARY KEY,\n                value            VARCHAR NOT NULL UNIQUE,\n                ioc_type         VARCHAR,\n                confidence       FLOAT,\n                source           VARCHAR,\n                first_seen       TIMESTAMP DEFAULT now(),\n                observed_at      DOUBLE,\n                earliest_observed DOUBLE,\n                latest_observed  DOUBLE,\n                observation_count INTEGER DEFAULT 1,\n                classification_status VARCHAR DEFAULT \'classified\',\n                provenance       TEXT\n            )\n        ')
         self.con.execute('\n            CREATE TABLE IF NOT EXISTS ioc_edges (\n                src_id   BIGINT REFERENCES ioc_nodes(id),\n                dst_id   BIGINT REFERENCES ioc_nodes(id),\n                rel_type VARCHAR,\n                weight   FLOAT DEFAULT 1.0,\n                evidence VARCHAR\n            )\n        ')
         self.con.execute('CREATE INDEX IF NOT EXISTS idx_edges_src_id ON ioc_edges(src_id)')
         self.con.execute('CREATE INDEX IF NOT EXISTS idx_edges_dst_id ON ioc_edges(dst_id)')
@@ -1737,8 +1740,15 @@ class DuckPGQGraph:
         confidence: float = 0.5,
         source: str = '',
         observed_at: float | None = None,
+        *,
+        provenance: dict | None = None,
+        classification_status: str = "classified",
     ) -> int:
-        """Add an IOC node with [META]-006 temporal provenance.
+        """
+        Add an IOC node with MODERN-25 provenance tracking.
+
+        MODERN-25: provenance dict contains byte_offset, timestamp, source, protocol.
+        classification_status indicates if the IOC type was auto-classified or needs review.
 
         Args:
             value: IOC value (domain, IP, hash, etc.)
@@ -1747,6 +1757,8 @@ class DuckPGQGraph:
             source: Source identifier
             observed_at: Original event timestamp (Unix epoch seconds).
                          When None, defaults to current time.
+            provenance: Optional provenance dict with byte_offset, timestamp, source, protocol
+            classification_status: "classified" or "pending_review"
 
         Returns:
             Stable node id (xxhash64-based).
@@ -1757,14 +1769,26 @@ class DuckPGQGraph:
         import time as _time
         row_id = _stable_node_id(value)
         ts = observed_at if observed_at is not None else _time.time()
+
+        # MODERN-25: Serialize provenance to JSON for storage
+        provenance_json = None
+        if provenance is not None:
+            try:
+                import orjson
+                provenance_json = orjson.dumps(provenance).decode('utf-8')
+            except Exception:
+                provenance_json = None
+
         self.con.execute(
-            'INSERT INTO ioc_nodes (id, value, ioc_type, confidence, source, observed_at, earliest_observed, latest_observed, observation_count)\n'
-            '               VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1)\n'
+            'INSERT INTO ioc_nodes (id, value, ioc_type, confidence, source, observed_at, earliest_observed, latest_observed, observation_count, classification_status, provenance)\n'
+            '               VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)\n'
             '               ON CONFLICT (id) DO UPDATE SET\n'
             '               latest_observed = CASE WHEN ioc_nodes.latest_observed IS NULL OR excluded.observed_at > ioc_nodes.latest_observed\n'
             '                                      THEN excluded.observed_at ELSE ioc_nodes.latest_observed END,\n'
-            '               observation_count = ioc_nodes.observation_count + 1',
-            [row_id, value, ioc_type, confidence, source, ts, ts, ts]
+            '               observation_count = ioc_nodes.observation_count + 1,\n'
+            '               classification_status = excluded.classification_status,\n'
+            '               provenance = COALESCE(excluded.provenance, ioc_nodes.provenance)',
+            [row_id, value, ioc_type, confidence, source, ts, ts, ts, classification_status, provenance_json]
         )
         return row_id
 
@@ -1775,11 +1799,16 @@ class DuckPGQGraph:
         confidence: float = 0.5,
         source: str = '',
         observed_at: float | None = None,
+        *,
+        provenance: dict | None = None,
+        classification_status: str = "classified",
     ) -> int | None:
         """Idempotent IOC upsert — delegates to add_ioc().
 
         [META]-012: observed_at captures the original event timestamp.
         Falls back to current time when None (backward-compatible).
+
+        MODERN-25: provenance and classification_status are now properly passed.
 
         Args:
             ioc_value: IOC value (domain, IP, hash, etc.)
@@ -1787,28 +1816,37 @@ class DuckPGQGraph:
             confidence: Base confidence (0..1)
             source: Source identifier
             observed_at: Original event timestamp (Unix epoch seconds).
+            provenance: Optional provenance dict with byte_offset, timestamp, source, protocol
+            classification_status: "classified" or "pending_review"
 
         Returns:
             Stable node id (xxhash64-based).
         """
-        return self.add_ioc(ioc_value, ioc_type, confidence, source, observed_at=observed_at)
+        return self.add_ioc(
+            ioc_value, ioc_type, confidence, source, observed_at=observed_at,
+            provenance=provenance, classification_status=classification_status
+        )
 
     def upsert_ioc_batch(
         self,
         rows: list[tuple[str, str, float, str]],
         observed_at: float | None = None,
+        *,
+        provenance: dict | None = None,
+        classification_status: str = "classified",
     ) -> int:
         """
         Batch upsert IOCs — single DuckDB round-trip for N rows.
 
-        [META]-012: observed_at provides default timestamp for all rows.
-        Supports 5-tuple format (value, ioc_type, confidence, source, observed_at)
-        for per-row timestamps. Falls back to 4-tuple for backward compat.
+        MODERN-25: provenance and classification_status are stored with each IOC.
 
         Args:
             rows: List of (value, ioc_type, confidence, source) tuples.
                   Optional 5th element: observed_at (Unix epoch seconds).
             observed_at: Default timestamp for rows without explicit observed_at.
+            provenance: Optional provenance dict with byte_offset, timestamp, source, protocol
+            classification_status: "classified" or "pending_review"
+
         Returns:
             Number of rows attempted (DuckDB executes all or none).
         """
@@ -1830,10 +1868,31 @@ class DuckPGQGraph:
                 obs = _now
             normalized_rows.append((_stable_node_id(value), value, ioc_type, confidence, source, obs))
 
+        # MODERN-25: Serialize provenance to JSON for storage
+        provenance_json = None
+        if provenance is not None:
+            try:
+                import orjson
+                provenance_json = orjson.dumps(provenance).decode('utf-8')
+            except Exception:
+                provenance_json = None
+
         # Use INSERT with ON CONFLICT DO UPDATE for upsert
+        # MODERN-25: Add provenance and classification_status columns
         self.con.executemany(
-            'INSERT INTO ioc_nodes (id, value, ioc_type, confidence, source, observed_at)\n             VALUES (?, ?, ?, ?, ?, ?)\n             ON CONFLICT (id) DO UPDATE SET\n             observed_at = CASE WHEN excluded.observed_at > ioc_nodes.observed_at OR ioc_nodes.observed_at IS NULL\n                               THEN excluded.observed_at ELSE ioc_nodes.observed_at END,\n             earliest_observed = CASE WHEN ioc_nodes.earliest_observed IS NULL OR excluded.observed_at < ioc_nodes.earliest_observed\n                                     THEN excluded.observed_at ELSE ioc_nodes.earliest_observed END,\n             latest_observed = CASE WHEN ioc_nodes.latest_observed IS NULL OR excluded.observed_at > ioc_nodes.latest_observed\n                                    THEN excluded.observed_at ELSE ioc_nodes.latest_observed END,\n             observation_count = ioc_nodes.observation_count + 1',
-            normalized_rows
+            'INSERT INTO ioc_nodes (id, value, ioc_type, confidence, source, observed_at, classification_status, provenance)\n'
+            '             VALUES (?, ?, ?, ?, ?, ?, ?, ?)\n'
+            '             ON CONFLICT (id) DO UPDATE SET\n'
+            '             observed_at = CASE WHEN excluded.observed_at > ioc_nodes.observed_at OR ioc_nodes.observed_at IS NULL\n'
+            '                               THEN excluded.observed_at ELSE ioc_nodes.observed_at END,\n'
+            '             earliest_observed = CASE WHEN ioc_nodes.earliest_observed IS NULL OR excluded.observed_at < ioc_nodes.earliest_observed\n'
+            '                                     THEN excluded.observed_at ELSE ioc_nodes.earliest_observed END,\n'
+            '             latest_observed = CASE WHEN ioc_nodes.latest_observed IS NULL OR excluded.observed_at > ioc_nodes.latest_observed\n'
+            '                                    THEN excluded.observed_at ELSE ioc_nodes.latest_observed END,\n'
+            '             observation_count = ioc_nodes.observation_count + 1,\n'
+            '             classification_status = CASE WHEN ioc_nodes.classification_status = \'classified\' THEN ioc_nodes.classification_status ELSE excluded.classification_status END,\n'
+            '             provenance = COALESCE(excluded.provenance, ioc_nodes.provenance)',
+            [(row[0], row[1], row[2], row[3], row[4], row[5], classification_status, provenance_json) for row in normalized_rows]
         )
         return len(normalized_rows)
 

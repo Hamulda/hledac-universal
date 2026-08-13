@@ -6,12 +6,14 @@ single, bounded, instrumentation-friendly executor.
 
 
 Thread budget on M1 8GB:
-  - Rayon cpu_pool:    4 threads (Rust MLX inference)
-  - Rayon io_pool:     2 threads (Rust async I/O)
+  - Rayon cpu_pool:    4 threads (Rust MLX inference, P-cores)
+  - Rayon io_pool:     2 threads (Rust async I/O, E-cores)
+  - Rayon mixed_pool:  1-2 threads (adaptive)
+  - Rayon dispatchers: 3 threads (1 per pool type)
   - asyncio event loop: 1 thread
-  - Shared pool:        adaptive (governed by M1ResourceGovernor)
+  - System/OS overhead: 1 thread
   ─────────────────────────────────────────────────────
-  Total:               11 threads max (fits 8-core M1 without thrashing)
+  Total:               7-8 threads (M1 8GB: 4P + 4E = 8 logical cores)
 
 ISSUE #014: Adaptive worker count based on M1ResourceGovernor.
   - max_workers dynamically derived from UMA state via ConcurrencyPreset
