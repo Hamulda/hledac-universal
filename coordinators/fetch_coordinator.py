@@ -778,20 +778,6 @@ class SpeculativePrefetcher:
             ioc_value: Optional IOC value string (domain name, URL, IP, etc.)
         """
         self.add_ioc_node(node_id, neighbors, ioc_value)
-    
-    def report_ioc_discovery(self, node_id: int, neighbors: list[int], ioc_value: str | None = None) -> None:
-        """
-        BREAKTHROUGH #2: Report IOC discovery to SpeculativePrefetcher.
-        
-        Called by fetch_coordinator when new IOCs are extracted from fetched content.
-        This enables real-time link prediction during ACTIVE phase.
-        
-        Args:
-            node_id: IOC node ID (typically xxhash64 of IOC value)
-            neighbors: List of neighbor node IDs (observed edges from fetch)
-            ioc_value: Optional IOC value string (domain name, URL, IP, etc.)
-        """
-        self.add_ioc_node(node_id, neighbors, ioc_value)
 
 
 # =============================================================================
@@ -2237,6 +2223,7 @@ class FetchCoordinator(UniversalCoordinator):
                 logger.debug('[META-002] DeltaSyncEngine config/load failed (fail-soft): %s', exc)
         
         # [NEXTGEN-04]: Register prior sprint bundles in MmapDeltaIndex for zero-latency caching
+        # Also inject into CrossSprintGate to enable tier-1 zero-latency lookups
         try:
             _prior = ctx.get('prior_sprint_ids', [])
             if _prior and self._mmap_delta_index is not None:
@@ -2252,6 +2239,11 @@ class FetchCoordinator(UniversalCoordinator):
                         '[NEXTGEN-04] MmapDeltaIndex loaded: %d entities from %d sprints',
                         _registered, len(_prior),
                     )
+                # [NEXTGEN-04] CRITICAL: Inject MmapDeltaIndex into CrossSprintGate
+                # This enables tier-1 zero-latency lookups in should_skip_batch()
+                if self._cross_sprint_gate is not None:
+                    self._cross_sprint_gate.inject_mmap_delta_index()
+                    logger.info('[NEXTGEN-04] MmapDeltaIndex injected into CrossSprintGate for tier-1 lookups')
         except Exception as exc:
             logger.debug('[NEXTGEN-04] MmapDeltaIndex bundle registration failed (fail-soft): %s', exc)
         logger.info('FetchCoordinator started with %s URLs in frontier', len(self._frontier))
@@ -2478,51 +2470,50 @@ class FetchCoordinator(UniversalCoordinator):
         return (raw_hosts, unique_batch)
 
     async def _apply_gate_filters(self, unique_batch: list[str]) -> tuple[set[str], set[str], list[Any]]:
-        """Phase 3: Apply cross-sprint gate and entity confirmation filters."""
+        """
+        Phase 3: Apply cross-sprint gate and entity confirmation filters.
+        
+        [NEXTGEN-04] UNIFIED ARCHITECTURE: 
+        Now uses CrossSprintGate as single entry point for tiered skip decisions.
+        CrossSprintGate.should_skip_batch() handles:
+          1. MmapDeltaIndex.is_fresh_batch() — bundle-based, O(1), zero-latency
+          2. SprintDeltaIndex.is_known_good_batch() — DuckDB-based confirmation
+          3. DuckDB deep query — full historical analysis
+        
+        This ensures MmapDeltaIndex is consistently wired as tier 1 and eliminates
+        redundant direct calls.
+        """
         skip_set: set[str] = set()
         freshness_list: list[Any] = []
         confirmed_set: set[str] = set()
 
-        # [NEXTGEN-04]: MmapDeltaIndex pre-fetch gate — ZERO-LATENCY check
-        # Uses instance variable initialized in __init__ (no redundant singleton call)
-        if self._mmap_delta_index is not None and self._mmap_delta_index.enabled:
-            try:
-                # Extract entity tuples from URLs
-                entity_tuples: list[tuple[str, str]] = []
-                for url in unique_batch:
-                    _host = _fast_url_host(url)
-                    if _host:
-                        entity_tuples.append((_host.lower(), "domain"))
-                
-                if entity_tuples:
-                    # Batch O(1) freshness check
-                    fresh_results = self._mmap_delta_index.is_fresh_batch(entity_tuples)
-                    
-                    # Add fresh entities to skip_set (no fetch needed)
-                    for (ev, ioc_type), is_fresh in fresh_results.items():
-                        if is_fresh:
-                            skip_set.add(ev)
-                            self._telemetry["mmap_delta_skipped"] += 1
-                            
-            except Exception:  # noqa: BLE001
-                pass  # Fail-soft: continue to DuckDB path
-
-        # META-001: Cross-sprint pre-fetch gate (DuckDB fallback)
+        # [NEXTGEN-04] UNIFIED: CrossSprintGate handles all tiered lookups
+        # including MmapDeltaIndex as tier 1 (zero-latency bundle check)
         try:
             if self._cross_sprint_gate is not None and self._cross_sprint_gate.enabled:
-                # Filter to only non-mmap-skipped entities
+                # Build entity list from URLs
                 gate_entities: list[dict[str, str]] = []
                 for url in unique_batch:
                     _host = _fast_url_host(url)
-                    if _host and _host not in skip_set:
+                    if _host:
                         gate_entities.append({"entity_value": _host.lower(), "entity_type": "domain"})
+                
                 if gate_entities:
+                    # CrossSprintGate handles:
+                    #   - MmapDeltaIndex tier 1 (bundle freshness)
+                    #   - SprintDeltaIndex tier 2 (DuckDB confirmation)
+                    #   - DuckDB deep query tier 3 (full history)
                     cs_skip_set, freshness_list = await self._cross_sprint_gate.should_skip_batch(gate_entities)
                     skip_set.update(cs_skip_set)
+                    
+                    # Track telemetry for MmapDeltaIndex hits
+                    mmap_stats = self._cross_sprint_gate.get_stats()
+                    self._telemetry["mmap_delta_skipped"] = mmap_stats.get("mmap_delta_skips", 0)
+                    
         except Exception:  # noqa: BLE001
-            pass
+            pass  # Fail-soft: continue without cross-sprint filtering
 
-        # [META]-014: Entity confirmation check
+        # [META]-014: Entity confirmation check (additional validation layer)
         if self._entity_confirmation_service is not None and self._entity_confirmation_service.enabled:
             try:
                 conf_tuples = [

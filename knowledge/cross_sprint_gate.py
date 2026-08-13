@@ -180,6 +180,12 @@ class CrossSprintGate:
     ) -> tuple[set[str], list[EntityFreshness]]:
         """Check a batch of entities for skip eligibility.
 
+        [NEXTGEN-04] Four-tier lookup (true zero-latency path):
+          1. MmapDeltaIndex.is_fresh_batch() — bundle-based, O(1), zero network I/O
+          2. In-memory skip cache — previously evaluated entities
+          3. SprintDeltaIndex.is_known_good_batch() — DuckDB-based, O(1) via index
+          4. DuckDB async_get_entity_observations_by_entity() — deep query, full history
+
         Args:
             entities: List of dicts with 'entity_value' (required) and
                       optional 'entity_type' (defaults to 'domain').
@@ -195,16 +201,124 @@ class CrossSprintGate:
         self._stats["queries"] += 1
         self._stats["entities_checked"] += len(entities)
 
-        skip_set, uncached, now = await self._check_cache(entities)
+        now = _time.time()
+        all_freshness: list[EntityFreshness] = []
+        skip_set: set[str] = set()
+        
+        # [NEXTGEN-04] TIER 1: MmapDeltaIndex zero-latency bundle check
+        mmap_skip_set, mmap_fresh_results, uncached_for_tier2 = await self._query_mmap_delta_index(entities)
+        skip_set.update(mmap_skip_set)
+        
+        # Build freshness entries for tier 1 skipped entities
+        for ev, ioc_type, entry in mmap_fresh_results:
+            freshness = EntityFreshness(
+                entity_value=ev,
+                entity_type=ioc_type,
+                freshness="confirmed",
+                distinct_sources=entry.get("source_count", 1),
+                distinct_sprints=1,
+                avg_confidence=0.75,
+                last_confirmed_ts=entry.get("last_confirmed_ts", 0.0),
+                last_seen_ts=entry.get("first_seen_ts", 0.0),
+                observations_count=entry.get("source_count", 1),
+                source_types=entry.get("sources", []),
+                sprint_ids=[entry.get("_sprint_id", "")],
+                should_skip=True,
+                skip_reason="delta_bundle_confirmed",
+            )
+            all_freshness.append(freshness)
+        
+        # TIER 2: In-memory skip cache for previously evaluated entities
+        cache_skip, uncached, _ = await self._check_cache(uncached_for_tier2)
+        skip_set.update(cache_skip)
+        
         if not uncached:
-            return (skip_set, [])
-
+            await self._evict_stale_cache(now)
+            return (skip_set, all_freshness)
+        
+        # TIER 3: SprintDeltaIndex DuckDB fast path
         delta_index_results = await self._query_delta_index(uncached)
+        
+        # TIER 4: DuckDB deep query (full historical)
         freshness_map = await self._query_duckdb(uncached)
-        all_freshness = await self._evaluate_entities(skip_set, uncached, freshness_map, delta_index_results, now)
+        
+        # Evaluate remaining entities and build freshness list
+        tier2_4_freshness = await self._evaluate_entities(
+            skip_set, uncached, freshness_map, delta_index_results, now,
+        )
+        all_freshness.extend(tier2_4_freshness)
+        
         await self._evict_stale_cache(now)
 
         return (skip_set, all_freshness)
+    
+    async def _query_mmap_delta_index(
+        self,
+        entities: list[dict[str, str]],
+    ) -> tuple[set[str], list[tuple[str, str, dict[str, Any]]], list[dict[str, str]]]:
+        """
+        [NEXTGEN-04] TIER 1: MmapDeltaIndex zero-latency bundle lookup.
+        
+        Checks if entities are fresh based on bundle-registered entity data.
+        Returns (skip_set, fresh_entries, uncached_entities) for downstream tiers.
+        
+        Zero-latency because:
+        - Data is pre-loaded from bundles at sprint start
+        - Uses dict hash table O(1) lookup
+        - No network I/O (bundles are local or in disk cache)
+        
+        Args:
+            entities: List of entity dicts
+            
+        Returns:
+            - skip_set: entity_values confirmed by bundle index
+            - fresh_entries: list of (ev, ioc_type, index_entry) for confirmed entities
+            - uncached: entities not found in bundle index
+        """
+        if self._mmap_delta_index is None or not self._mmap_delta_index.enabled:
+            return (set(), [], entities)
+        
+        skip_set: set[str] = set()
+        fresh_entries: list[tuple[str, str, dict[str, Any]]] = []
+        uncached: list[dict[str, str]] = []
+        
+        try:
+            # Build entity tuples for batch lookup
+            entity_tuples: list[tuple[str, str]] = [
+                (ent["entity_value"], ent.get("entity_type", "domain"))
+                for ent in entities
+            ]
+            
+            # Batch O(1) freshness check via MmapDeltaIndex
+            fresh_results = self._mmap_delta_index.is_fresh_batch(entity_tuples)
+            
+            # Separate fresh (skip) from non-fresh (continue to tier 2)
+            for ent in entities:
+                ev = ent["entity_value"]
+                ioc_type = ent.get("entity_type", "domain")
+                idx_key = f"{ioc_type}:{ev}"
+                
+                if fresh_results.get(idx_key, False):
+                    skip_set.add(ev)
+                    # Get the full index entry for freshness metadata
+                    full_entry = self._mmap_delta_index.get_entry(ev, ioc_type) or {}
+                    fresh_entries.append((ev, ioc_type, full_entry))
+                    self._stats["mmap_delta_skips"] += 1
+                else:
+                    uncached.append(ent)
+            
+            if skip_set:
+                logger.debug(
+                    "[CrossSprintGate] MmapDeltaIndex tier 1: %d/%d entities skipped (fresh)",
+                    len(skip_set), len(entities),
+                )
+            
+        except Exception as e:
+            logger.debug("[CrossSprintGate] MmapDeltaIndex tier 1 failed: %s", e)
+            # Fail-soft: continue to tier 2
+            uncached = entities
+        
+        return (skip_set, fresh_entries, uncached)
 
     async def _check_cache(self, entities: list[dict[str, str]]) -> tuple[set[str], list[dict[str, str]], float]:
         """Check cache for entities, return (skip_set, uncached, now)."""

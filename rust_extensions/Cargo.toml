@@ -98,7 +98,7 @@ zip = { version = "2", default-features = false, features = ["deflate"], optiona
 rustls = { version = "0.23", default-features = false, features = ["std", "tls12", "ring"], optional = true }
 webpki-roots = { version = "0.26", optional = true }  # System root CAs
 hex = "0.4"
-lazy_static = "1.4"
+lazy_static = { version = "1.4", optional = true }
 
 # DEEP modules dependencies
 # flate2: Streaming zlib decompression for git_forensics packfiles
@@ -219,22 +219,12 @@ hound = { version = "3.5", optional = true }
 # libp2p: IPFS Kademlia + BitSwap peer routing
 # Features: kademlia, noise, yamux, tcp — minimal for DHT crawling
 # M1 8GB: ~5MB compile, ~2MB resident
-libp2p = { version = "0.55", optional = true, default-features = false, features = [
-    "kademlia",
-    "noise",
-    "tcp",
-    "udp",
-    "async-trait",
-    "yamux",
-    "serde",
-    "bytes",
-] }
-# multiaddr: libp2p addressing format (e.g., /ip4/1.2.3.4/tcp/8080/p2p/Qm...)
-multiaddr = { version = "0.18", optional = true }
+# libp2p removed: conflicts with tor-llcrypto from arti-client
+# Use HTTP-based IPFS gateway approach instead
 # cid: IPFS Content Identifiers (multihash format)
-cid = { version = "0.10", optional = true, features = ["serde", "scale"] }
+# cid: IPFS Content Identifiers (NOT USED - cid 0.10 has yanked core2 dep)
+# cid = { version = "0.10", optional = true, features = ["serde"] }
 # unsigned-varint: required by libp2p for protocol negotiation
-unsigned-varint = { version = "0.8", optional = true }
 # bincode: Fast binary serialization for BT DHT
 bincode = { version = "2.0", optional = true, features = ["derive", "serde"] }
 # sha1: SHA1 hash for BitTorrent DHT info_hash computation
@@ -266,9 +256,8 @@ reqwest = { version = "0.12", optional = true, default-features = false, feature
 # NEXTGEN-02: Anti-analysis evasion engine — pre-fetch TLS/HTTP2 challenge detection
 # M1 8GB: ~2MB additional compile, pure Rust
 # Dependencies: rustls (TLS), webpki-roots (CA certs), lazy_static (global state)
-anti_analysis = ["dep:rustls", "dep:webpki-roots", "dep:lazy_static"]
-
 [features]
+evasive_tls = ["dep:rustls", "dep:webpki-roots", "dep:lazy_static"]
 # Default = core + data (DuckDB wired) — standard Hledac build
 # R6: dns and native_db are OPT-IN (not default) — they add compile time + deps
 #   dns:     ~5 MB compile (hickory-dns + tokio), ~8 MB resident
@@ -295,7 +284,7 @@ anti_analysis = ["dep:rustls", "dep:webpki-roots", "dep:lazy_static"]
 #   - SAM-v3 parity API: isolate_circuit(), open_stream(), session_status()
 # M1 8GB: Shared tokio runtime (~10MB), Arti ~25-30MB, total ~35-40MB (safe).
 # Python fallback: transport/arti_transport.py uses external Arti subprocess.
-default = ["core", "data", "ane", "metal", "metal_shared", "iosurface", "swarm_dag", "whisper", "shared_tokio", "simd_similarity", "embedded_tor", "anti_analysis"]
+default = ["core", "data", "ane", "metal", "metal_shared", "iosurface", "swarm_dag", "whisper", "shared_tokio", "simd_similarity", "embedded_tor", "evasive_tls"]
 
 # SILICON-02: Added whisper to default — ANE-based speech-to-text via whisper.cpp.
 # Only tiny (39 MB) and base (74 MB) models for M1 8GB safety.
@@ -404,12 +393,9 @@ deep_ac = []
 #
 # Python fallback: dht/kademlia_node.py (simulated, no real network)
 p2p_harvest = [
-    "dep:libp2p",
-    "dep:multiaddr",
-    "dep:cid",
-    "dep:bincode",
-    "dep:sha1",
     "dep:reqwest",
+    "dep:arrow",
+    "dep:sha1",
     "shared_tokio",
 ]
 

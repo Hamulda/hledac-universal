@@ -574,16 +574,88 @@ class IdentityFusion:
         return result
 
     def _compute_face_score(self, face_vector: list[float], confidence: float) -> float:
-        """Compute normalized face score from embedding and detection confidence."""
-        # Face score = detection confidence (no cross-reference available yet)
-        # In future: compare with known face database for recognition
-        return confidence
+        """
+        Compute normalized face score from embedding using LSH similarity search.
+        
+        Uses Rust-backed cross-modal LSH index for O(1) candidate retrieval,
+        then cosine similarity verification for accurate scoring.
+        
+        Returns the highest similarity found in the face database, or the
+        detection confidence if no matches found or LSH unavailable.
+        """
+        if not self._lsh_available or self._crossmodal_store is None:
+            # Fallback to detection confidence if LSH unavailable
+            return confidence
+            
+        try:
+            # Query LSH index for similar faces
+            matches = self._crossmodal_store.crossmodal_query_face(
+                face_vector,
+                max_results=5,
+                min_similarity=0.5,  # Lower threshold to find any potential matches
+            )
+            
+            if not matches:
+                # No matches found - this is a new face
+                # Score is just detection confidence
+                return confidence
+                
+            # Return the best match similarity, boosted by detection confidence
+            best_similarity = max(sim for _, sim in matches)
+            
+            # Combine LSH similarity with detection confidence
+            # LSH similarity is the recognition score, confidence is detection quality
+            # Use geometric mean to balance both signals
+            combined_score = (best_similarity * confidence) ** 0.5
+            
+            # Cap at 1.0 and ensure at least the detection confidence
+            return min(1.0, max(confidence, combined_score))
+            
+        except Exception:
+            # On any error, fall back to detection confidence
+            return confidence
 
     def _compute_voice_score(self, voice_vector: list[float], confidence: float) -> float:
-        """Compute normalized voice score from embedding and quality confidence."""
-        # Voice score = quality confidence
-        # In future: compare with speaker database for identification
-        return confidence
+        """
+        Compute normalized voice score from embedding using LSH similarity search.
+        
+        Uses Rust-backed cross-modal LSH index for O(1) candidate retrieval,
+        then cosine similarity verification for accurate scoring.
+        
+        Returns the highest similarity found in the voiceprint database, or the
+        quality confidence if no matches found or LSH unavailable.
+        """
+        if not self._lsh_available or self._crossmodal_store is None:
+            # Fallback to quality confidence if LSH unavailable
+            return confidence
+            
+        try:
+            # Query LSH index for similar voiceprints
+            matches = self._crossmodal_store.crossmodal_query_voice(
+                voice_vector,
+                max_results=5,
+                min_similarity=0.5,  # Lower threshold to find any potential matches
+            )
+            
+            if not matches:
+                # No matches found - this is a new voice
+                # Score is just quality confidence
+                return confidence
+                
+            # Return the best match similarity, boosted by quality confidence
+            best_similarity = max(sim for _, sim in matches)
+            
+            # Combine LSH similarity with quality confidence
+            # LSH similarity is the recognition score, confidence is quality
+            # Use geometric mean to balance both signals
+            combined_score = (best_similarity * confidence) ** 0.5
+            
+            # Cap at 1.0 and ensure at least the quality confidence
+            return min(1.0, max(confidence, combined_score))
+            
+        except Exception:
+            # On any error, fall back to quality confidence
+            return confidence
 
     def _compute_text_score(self, text_iocs: dict[str, Any], confidence: float) -> float:
         """Compute normalized text IOC score."""
@@ -671,9 +743,28 @@ class IdentityFusion:
         face_vector: list[float] | None,
         voice_vector: list[float] | None,
     ) -> None:
-        """Persist identity to Kuzu graph."""
+        """
+        Persist identity to Kuzu graph with full cross-modal linking.
+        
+        Creates:
+        1. IOC identity node (via buffer_ioc)
+        2. FACE node (via buffer_face)
+        3. VOICEPRINT node (via buffer_voiceprint)
+        4. HAS_FACE relationship (via link_identity_face)
+        5. HAS_VOICEPRINT relationship (via link_identity_voice)
+        6. CROSS_MODAL relationship (via link_face_to_voice)
+        """
+        import time
+        
+        identity_id = identity.get('identity_id')
+        if not identity_id:
+            logger.debug('IdentityFusion: no identity_id to persist')
+            return
+            
         try:
-            # Store face embedding in cross-modal index
+            now = time.time()
+            
+            # 1. Store face embedding in cross-modal LSH index
             if face_vector is not None and identity.get('face_id'):
                 try:
                     self._crossmodal_store.crossmodal_store_face(
@@ -683,7 +774,7 @@ class IdentityFusion:
                 except Exception:
                     pass
 
-            # Store voiceprint embedding in cross-modal index
+            # 2. Store voiceprint embedding in cross-modal LSH index
             if voice_vector is not None and identity.get('voice_id'):
                 try:
                     self._crossmodal_store.crossmodal_store_voice(
@@ -693,7 +784,16 @@ class IdentityFusion:
                 except Exception:
                     pass
 
-            # Buffer to IOCGraph
+            # 3. Create IOC identity node via buffer_ioc
+            if hasattr(self._graph, 'buffer_ioc'):
+                await self._graph.buffer_ioc(
+                    ioc_type='identity',
+                    value=identity_id,
+                    confidence=identity.get('confidence', 0.5),
+                    observed_at=now,
+                )
+
+            # 4. Buffer FACE node
             if hasattr(self._graph, 'buffer_face') and face_vector is not None:
                 await self._graph.buffer_face(
                     face_id=identity.get('face_id', ''),
@@ -702,6 +802,7 @@ class IdentityFusion:
                     confidence=identity.get('face_score', 0.9),
                 )
 
+            # 5. Buffer VOICEPRINT node
             if hasattr(self._graph, 'buffer_voiceprint') and voice_vector is not None:
                 await self._graph.buffer_voiceprint(
                     voice_id=identity.get('voice_id', ''),
@@ -709,6 +810,44 @@ class IdentityFusion:
                     source_audio_hash=identity.get('source_audio_hash', ''),
                     confidence=identity.get('voice_score', 0.85),
                 )
+
+            # 6. Link IOC identity to FACE via HAS_FACE relationship
+            if hasattr(self._graph, 'link_identity_face'):
+                await self._graph.link_identity_face(
+                    ioc_id=identity_id,
+                    face_id=identity.get('face_id', ''),
+                    confidence=identity.get('face_score', 0.9),
+                    source_type='multimedia',
+                )
+
+            # 7. Link IOC identity to VOICEPRINT via HAS_VOICEPRINT relationship
+            if hasattr(self._graph, 'link_identity_voice'):
+                await self._graph.link_identity_voice(
+                    ioc_id=identity_id,
+                    voice_id=identity.get('voice_id', ''),
+                    confidence=identity.get('voice_score', 0.85),
+                    source_type='multimedia',
+                )
+
+            # 8. Link FACE to VOICEPRINT via CROSS_MODAL relationship
+            if hasattr(self._graph, 'link_face_to_voice'):
+                face_id = identity.get('face_id', '')
+                voice_id = identity.get('voice_id', '')
+                if face_id and voice_id:
+                    # Compute combined confidence based on face/voice weights
+                    face_score = identity.get('face_score', 0.9)
+                    voice_score = identity.get('voice_score', 0.85)
+                    combined_conf = 0.5 * face_score + 0.5 * voice_score
+                    face_weight = self._face_weight / (self._face_weight + self._voice_weight) if (self._face_weight + self._voice_weight) > 0 else 0.5
+                    voice_weight = 1.0 - face_weight
+                    
+                    await self._graph.link_face_to_voice(
+                        face_id=face_id,
+                        voice_id=voice_id,
+                        confidence=combined_conf,
+                        face_weight=face_weight,
+                        voice_weight=voice_weight,
+                    )
         except Exception as e:
             logger.warning(f'IdentityFusion: persist failed: {e}')
 

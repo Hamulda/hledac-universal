@@ -1310,9 +1310,9 @@ def get_curl_cffi_runtime_status() -> dict[str, Any]:
     # NEXTGEN-02: Anti-analysis telemetry
     anti_analysis_telemetry = {}
     try:
-        import rust
-        if hasattr(rust, 'anti_analysis'):
-            anti_analysis_telemetry = rust.anti_analysis.get_evasion_telemetry()
+        from hledac.rust import rust as _hledac_rust
+        if hasattr(_hledac_rust, 'anti_analysis') and _hledac_rust.anti_analysis is not None:
+            anti_analysis_telemetry = _hledac_rust.anti_analysis.get_evasion_telemetry()
     except ImportError:
         pass
 
@@ -2006,9 +2006,9 @@ async def fetch_via_curl_cffi(
 
     # NEXTGEN-02: Rust anti_analysis quick probe (if available)
     try:
-        import rust
-        if hasattr(rust, 'anti_analysis'):
-            _probe_result = await rust.anti_analysis.quick_probe_async(url)
+        from hledac.rust import rust as _hledac_rust
+        if hasattr(_hledac_rust, 'anti_analysis') and _hledac_rust.anti_analysis is not None:
+            _probe_result = await _hledac_rust.anti_analysis.quick_probe_async(url)
             if _probe_result.abandoned:
                 # Domain abandoned by Rust anti_analysis
                 _evasion_reason = _probe_result.reason or 'unknown_challenge'

@@ -156,6 +156,8 @@ _SUBMODULE_NAMES: tuple[str, ...] = (
     "link_predictor",
     # SILICON-02: whisper.cpp transcription via CoreML/ANE
     "whisper",
+    # NEXTGEN-02: Anti-analysis evasion engine (pre-fetch TLS/HTTP2 challenge detection)
+    "anti_analysis",
     # misc is used for _TlsDomain backward-compat and html property routing
     "misc",
 )
@@ -498,6 +500,21 @@ class AccelBackend:
     @property
     def lsh(self) -> "_RustLshDomain | _PythonLshDomain":
         return self._get_domain("lsh", _get_submodule("lsh").get_lsh_domain)
+
+    # NEXTGEN-03: ANE submodule for face/voice embeddings and cross-modal LSH
+    @property
+    def ane(self) -> Any:
+        """NEXTGEN-03: Apple Neural Engine submodule for FaceNet, voiceprint, and cross-modal LSH.
+
+        Provides:
+        - facenet_* functions for face embedding
+        - voiceprint_* functions for speaker embedding
+        - crossmodal_* functions for face/voice LSH indexing
+        """
+        probe = self._ensure_probe()
+        if probe.ext is None:
+            return None
+        return getattr(probe.ext, "ane", None)
 
     @property
     def sprint_policies(self) -> "_RustSprintPoliciesDomain | _PythonSprintPoliciesDomain":
@@ -1019,6 +1036,18 @@ class _RustCompatShim:
     @property
     def lsh(self) -> Any:
         return self._accel.lsh
+
+    # NEXTGEN-03: ANE submodule for face/voice embeddings and cross-modal LSH
+    @property
+    def ane(self) -> Any:
+        """NEXTGEN-03: Apple Neural Engine submodule for FaceNet, voiceprint, and cross-modal LSH.
+
+        Provides:
+        - facenet_* functions for face embedding
+        - voiceprint_* functions for speaker embedding
+        - crossmodal_* functions for face/voice LSH indexing
+        """
+        return self._accel.ane
 
     def __repr__(self) -> str:
         return repr(self._accel)

@@ -1239,8 +1239,10 @@ fn hledac_rust_extensions(m: &Bound<'_, PyModule>) -> PyResult<()> {
 
     // NEXTGEN-01: Native P2P harvesters (IPFS/TOR/I2P) in Tokio runtime.
     // rust.p2p_harvest.harvest(): unified multi-protocol search
+    // rust.p2p_harvest.harvest_ipc(): Arrow IPC streaming variant
     // rust.p2p_harvest.dht_crawl_async(): BitTorrent DHT (native Tokio)
-    // rust.p2p_harvest.ipfs_bitswap_crawl_async(): IPFS Kademlia + BitSwap
+    // rust.p2p_harvest.ipfs_kademlia_crawl_async(): IPFS Kademlia via libp2p
+    // rust.p2p_harvest.ipfs_kademlia_crawl_ipc(): IPFS Arrow IPC variant
     // rust.p2p_harvest.tor_consensus_scrape_async(): Tor consensus scraper
     // rust.p2p_harvest.i2p_leaseset_resolve_async(): I2P LeaseSet resolver
     #[cfg(feature = "p2p_harvest")]

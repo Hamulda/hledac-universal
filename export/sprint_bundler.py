@@ -16,6 +16,9 @@ ISSUE [META]-001: Extended with mmap byte-range offsets for zero-copy
 entity loading without full decompression. Bundle extraction now builds
 an index mapping entity→byte-range for O(1) access.
 
+[FIX #5]: entity_index is now properly embedded in bundles via
+bundle_and_index_sprint() → _rebuild_bundle_with_entity_index().
+
 Bundle format:
   ~/.hledac/bundles/{sprint_id}.hledac-sprint
   └── tar.zst archive containing:
@@ -25,6 +28,7 @@ Bundle format:
       ├── seeds.json (next sprint seeds)
       ├── evidence.jsonl.zst (evidence log, zstd compressed)
       └── entity_index.json.zst (IOC → byte-range mapping for [META]-001)
+          [FIX #5]: Filename constant: ENTITY_INDEX_FILENAME
 """
 
 from __future__ import annotations
@@ -47,71 +51,26 @@ logger = logging.getLogger(__name__)
 # Bundle format version
 BUNDLE_FORMAT_VERSION = "1.0"
 
+# [FIX #5]: Entity index filename - MUST match sprint_delta_index.py _extract_entity_index_from_bundle()
+ENTITY_INDEX_FILENAME = "entity_index.json.zst"
 
-# ── M1 8GB Optimized Context ───────────────────────────────────────────────────
+# [OPTIMIZATION]: Cached compression.zstd module reference (lazy init)
+_compression_zstd: Any = None
 
-class BundleContext:
-    """
-    Immutable bundle creation context with __slots__ for M1 8GB memory optimization.
 
-    Reduces memory overhead per bundle operation by ~40% vs regular dataclasses.
-    Frozen=True ensures immutability; gc=False prevents garbage collection overhead.
-    """
-    __slots__ = (
-        "sprint_id",
-        "report_path",
-        "seeds_path",
-        "evidence_path",
-        "output_path",
-        "dashboard_html",
-        "metadata",
-        "detected_report",
-        "detected_seeds",
-        "detected_evidence",
-        "detected_output",
-        "artifacts",
-        "manifest_entries",
-        "timestamp",
-    )
+def _get_zstd():
+    """Get compression.zstd module, cached for performance."""
+    global _compression_zstd
+    if _compression_zstd is None:
+        try:
+            import compression.zstd as _zstd
+            _compression_zstd = _zstd
+        except ImportError:
+            _compression_zstd = False  # Mark as unavailable
+    return _compression_zstd if _compression_zstd else None
 
-    def __init__(
-        self,
-        sprint_id: str,
-        report_path: Path | None = None,
-        seeds_path: Path | None = None,
-        evidence_path: Path | None = None,
-        output_path: Path | None = None,
-        metadata: dict[str, Any] | None = None,
-        dashboard_html: Path | None = None,
-    ) -> None:
-        from hledac.universal.paths import (
-            get_sprint_bundle_path,
-            get_sprint_json_report_path,
-            get_sprint_next_seeds_path,
-        )
 
-        self.sprint_id = sprint_id
-        self.report_path = report_path
-        self.seeds_path = seeds_path
-        self.evidence_path = evidence_path
-        self.output_path = output_path
-        self.dashboard_html = dashboard_html
-        self.metadata = metadata
-
-        # Auto-detect paths
-        self.detected_report = report_path or get_sprint_json_report_path(sprint_id)
-        self.detected_seeds = seeds_path or get_sprint_next_seeds_path(sprint_id)
-        self.detected_evidence = evidence_path or _auto_detect_evidence_path(sprint_id)
-        self.detected_output = output_path or get_sprint_bundle_path(sprint_id)
-
-        # Will be populated during collection
-        self.artifacts: dict[str, bytes] = {}
-        self.manifest_entries: list[dict[str, str]] = []
-        self.timestamp: str = ""
-
-    def __repr__(self) -> str:
-        return f"BundleContext(sprint_id={self.sprint_id!r}, output={self.detected_output!r})"
-
+# ── Utility Functions ───────────────────────────────────────────────────────────
 
 def _compute_sha256(data: bytes) -> str:
     """Compute SHA-256 hash of bytes."""
@@ -154,10 +113,10 @@ def _collect_sprint_artifacts(
     if evidence_path and evidence_path.exists():
         try:
             evidence_bytes = evidence_path.read_bytes()
-            try:
-                import compression.zstd
-                artifacts["evidence.jsonl.zst"] = compression.zstd.compress(evidence_bytes, level=9)
-            except ImportError:
+            zstd = _get_zstd()
+            if zstd is not None:
+                artifacts["evidence.jsonl.zst"] = zstd.compress(evidence_bytes, level=9)
+            else:
                 artifacts["evidence.jsonl"] = evidence_bytes
         except Exception as e:
             logger.warning(f"[BUNDLER] Failed to read evidence: {e}")
@@ -197,11 +156,10 @@ def _write_tarball(
             manifest_info.size = len(manifest_bytes)
             tar.addfile(manifest_info, io.BytesIO(manifest_bytes))
         tar_bytes = tar_buffer.getvalue()
-        try:
-            import compression.zstd
-            return compression.zstd.compress(tar_bytes, level=9)
-        except ImportError:
-            return tar_bytes
+        zstd = _get_zstd()
+        if zstd is not None:
+            return zstd.compress(tar_bytes, level=9)
+        return tar_bytes
     except Exception as e:
         logger.error(f"[BUNDLER] Failed to create tarball: {e}")
         return None
@@ -247,9 +205,9 @@ def _add_compressed_evidence(
     """Add evidence file with optional zstd compression."""
     try:
         evidence_bytes = evidence_path.read_bytes()
-        try:
-            import compression.zstd
-            evidence_compressed = compression.zstd.compress(evidence_bytes, level=9)
+        zstd = _get_zstd()
+        if zstd is not None:
+            evidence_compressed = zstd.compress(evidence_bytes, level=9)
             artifacts["evidence.jsonl.zst"] = evidence_compressed
             manifest_entries.append({
                 "file": "evidence.jsonl.zst",
@@ -262,7 +220,7 @@ def _add_compressed_evidence(
                 f"({len(evidence_bytes)} → {len(evidence_compressed)} bytes, "
                 f"ratio={ratio:.2%})"
             )
-        except ImportError:
+        else:
             artifacts["evidence.jsonl"] = evidence_bytes
             manifest_entries.append({
                 "file": "evidence.jsonl",
@@ -303,7 +261,15 @@ def _create_bundle_archive(
     sprint_id: str,
     timestamp: str,
 ) -> Path | None:
-    """Create tar archive, compress with zstd, and write to disk."""
+    """
+    Create tar archive, compress with zstd, and write to disk.
+    
+    [FIX #5]: Returns the actual Path where the bundle was written,
+    even when compression fallback changes the suffix.
+    """
+    # Determine actual output path before any modifications
+    actual_output_path = output_path
+    
     # Create tar in memory
     try:
         tar_buffer = io.BytesIO()
@@ -315,21 +281,22 @@ def _create_bundle_archive(
                 tar.addfile(info, io.BytesIO(data))
         tar_bytes = tar_buffer.getvalue()
 
-        # Compress with zstd
-        try:
-            import compression.zstd
-            bundle_bytes = compression.zstd.compress(tar_bytes, level=9)
+        # Compress with zstd (using cached import)
+        zstd = _get_zstd()
+        if zstd is not None:
+            bundle_bytes = zstd.compress(tar_bytes, level=9)
             ratio = len(bundle_bytes) / len(tar_bytes)
             logger.debug(f"[BUNDLER] tar.zst: {len(tar_bytes)} → {len(bundle_bytes)} bytes ({ratio:.2%})")
-        except ImportError:
+        else:
             bundle_bytes = tar_bytes
-            output_path = output_path.with_suffix(".tar")
+            # [FIX #5]: Track the actual suffix change separately
+            actual_output_path = output_path.with_suffix(".tar")
             logger.warning("[BUNDLER] compression.zstd not available, storing as .tar")
 
-        output_path.parent.mkdir(parents=True, exist_ok=True)
-        output_path.write_bytes(bundle_bytes)
-        logger.info(f"[BUNDLER] Bundle created: {output_path} ({len(bundle_bytes)} bytes)")
-        return output_path
+        actual_output_path.parent.mkdir(parents=True, exist_ok=True)
+        actual_output_path.write_bytes(bundle_bytes)
+        logger.info(f"[BUNDLER] Bundle created: {actual_output_path} ({len(bundle_bytes)} bytes)")
+        return actual_output_path
     except Exception as e:
         logger.error(f"[BUNDLER] Failed to create bundle: {e}", exc_info=True)
         return None
@@ -466,15 +433,6 @@ def bundle_sprint(
     return _create_bundle_archive(artifacts, detected_output, sprint_id, timestamp)
 
 
-def _decompress_bundle(bundle_bytes: bytes) -> bytes:
-    """Decompress bundle bytes, trying zstd first, then returning raw bytes."""
-    try:
-        import compression.zstd
-        return compression.zstd.decompress(bundle_bytes)
-    except ImportError:
-        return bundle_bytes
-
-
 def _parse_manifest_entries(manifest_text: str) -> dict[str, str]:
     """Parse a manifest.sha256 file text into a {filename: sha256} dict."""
     entries: dict[str, str] = {}
@@ -552,9 +510,7 @@ def verify_bundle(bundle_path: Path) -> dict[str, Any]:
 # Constants for tar archive processing
 _TAR_BLOCK_SIZE = 512  # tar records are 512-byte blocks
 
-# [NEXTGEN-04]: Standard library json for entity_index serialization
-# Using stdlib json instead of orjson for compatibility
-import json as _stdlib_json
+# [NEXTGEN-04]: Note: json is already imported as _stdlib_json at line 39
 
 
 def _data_offset(header_offset: int, member_size: int) -> int:
@@ -566,21 +522,24 @@ def _data_offset(header_offset: int, member_size: int) -> int:
 
 def _decompress_bundle(bundle_bytes: bytes) -> bytes:
     """Decompress bundle bytes, trying zstd first, then returning raw bytes."""
-    try:
-        import compression.zstd
-        return compression.zstd.decompress(bundle_bytes)
-    except ImportError:
-        return bundle_bytes
+    zstd = _get_zstd()
+    if zstd is not None:
+        try:
+            return zstd.decompress(bundle_bytes)
+        except Exception:
+            pass  # Fall through to raw bytes
+    return bundle_bytes
 
 
 def _decompress_evidence(content: bytes, name: str) -> bytes:
     """Decompress evidence content if zstd compressed."""
     if name.endswith(".zst"):
-        try:
-            import compression.zstd
-            return compression.zstd.decompress(content)
-        except ImportError:
-            pass  # noqa: BLE001
+        zstd = _get_zstd()
+        if zstd is not None:
+            try:
+                return zstd.decompress(content)
+            except Exception:
+                pass  # Fall through to raw content
     return content
 
 
@@ -709,7 +668,7 @@ def _extract_tar_member(
     return data
 
 
-async def extract_bundle_streaming(
+def extract_bundle_streaming(
     bundle_path: Path,
     sprint_id: str,
 ) -> tuple[Path, dict[str, dict[str, Any]]]:
@@ -719,6 +678,9 @@ async def extract_bundle_streaming(
     Streams the tar archive while building an index mapping IOC values
     to their byte offsets within the uncompressed tar. This enables
     mmap-based random access without full decompression.
+
+    Also extracts any existing entity_index from the bundle (for consistency
+    and to support bundles that were previously rebuilt with entity_index).
 
     Args:
         bundle_path: Path to the .hledac-sprint bundle
@@ -742,11 +704,42 @@ async def extract_bundle_streaming(
         # Stream through tar members
         tar_buffer = io.BytesIO(tar_bytes)
         with tarfile.open(fileobj=tar_buffer, mode="r") as tar:
-            for member in tar:
-                _extract_tar_member(
-                    tar, member, extracted_dir, tar_buffer,
-                    sprint_id, bundle_path, entity_index, now
-                )
+            # [FIX #5]: First, try to extract existing entity_index from bundle
+            # This handles bundles that were rebuilt with entity_index previously
+            if ENTITY_INDEX_FILENAME in tar.getnames():
+                try:
+                    entity_member = tar.getmember(ENTITY_INDEX_FILENAME)
+                    if entity_member and entity_member.isfile():
+                        entity_file = tar.extractfile(entity_member)
+                        if entity_file:
+                            entity_bytes = entity_file.read()
+                            # Decompress if zstd compressed
+                            zstd = _get_zstd()
+                            if zstd is not None:
+                                try:
+                                    entity_text = zstd.decompress(entity_bytes).decode("utf-8")
+                                except Exception:
+                                    entity_text = entity_bytes.decode("utf-8")
+                            else:
+                                entity_text = entity_bytes.decode("utf-8")
+                            # Merge with any newly indexed entities
+                            existing_index = _stdlib_json.loads(entity_text)
+                            entity_index.update(existing_index)
+                            logger.debug(
+                                "[BUNDLER] Loaded %d entries from existing %s",
+                                len(existing_index), ENTITY_INDEX_FILENAME
+                            )
+                except Exception as e:
+                    logger.debug("[BUNDLER] Failed to load existing entity_index: %s", e)
+
+            # Reset tar position for member extraction
+            tar_buffer.seek(0)
+            with tarfile.open(fileobj=tar_buffer, mode="r") as tar2:
+                for member in tar2:
+                    _extract_tar_member(
+                        tar2, member, extracted_dir, tar_buffer,
+                        sprint_id, bundle_path, entity_index, now
+                    )
 
     except Exception as e:
         logger.warning("[BUNDLER] Streaming extraction failed: %s", e)
@@ -836,17 +829,16 @@ def _build_entity_index_for_bundle(
     entity_index: dict[str, dict[str, Any]],
 ) -> bytes:
     """
-    Build entity_index.json.zst bytes from entity_index dict.
+    Build entity_index bytes from entity_index dict.
     
-    [NEXTGEN-04]: Stores mmap-ready entity index with byte-range offsets
-    for zero-copy delta patching without DuckDB I/O.
+    [NEXTGEN-04] [FIX #5]: Uses ENTITY_INDEX_FILENAME constant to ensure
+    consistency with MmapDeltaIndex._extract_entity_index_from_bundle().
     """
-    try:
-        import compression.zstd
-        index_bytes = _stdlib_json.dumps(entity_index).encode("utf-8")
-        return compression.zstd.compress(index_bytes, level=3)
-    except ImportError:
-        return _stdlib_json.dumps(entity_index).encode("utf-8")
+    index_bytes = _stdlib_json.dumps(entity_index).encode("utf-8")
+    zstd = _get_zstd()
+    if zstd is not None:
+        return zstd.compress(index_bytes, level=3)
+    return index_bytes
 
 
 def _add_entity_index_to_bundle(
@@ -855,24 +847,26 @@ def _add_entity_index_to_bundle(
     entity_index: dict[str, dict[str, Any]],
 ) -> None:
     """
-    Add entity_index.json.zst to bundle artifacts with SHA-256 manifest entry.
+    Add entity_index to bundle artifacts with SHA-256 manifest entry.
     
-    [NEXTGEN-04]: Enables MmapDeltaIndex to load entity freshness data
-    from bundle without DuckDB queries.
+    [NEXTGEN-04] [FIX #5]: Uses ENTITY_INDEX_FILENAME constant to ensure
+    consistency with MmapDeltaIndex._extract_entity_index_from_bundle().
     """
     if not entity_index:
         return
     
     try:
         index_bytes = _build_entity_index_for_bundle(entity_index)
-        artifacts["entity_index.json.zst"] = index_bytes
+        # [FIX #5]: Use constant for filename to match reader
+        artifacts[ENTITY_INDEX_FILENAME] = index_bytes
         manifest_entries.append({
-            "file": "entity_index.json.zst",
+            "file": ENTITY_INDEX_FILENAME,
             "sha256": _compute_sha256(index_bytes),
             "size": str(len(index_bytes)),
         })
         logger.info(
-            "[BUNDLER] Added entity_index.json.zst (%d entries, %d bytes)",
+            "[BUNDLER] Added %s (%d entries, %d bytes)",
+            ENTITY_INDEX_FILENAME,
             len(entity_index),
             len(index_bytes),
         )
@@ -927,7 +921,7 @@ async def bundle_and_index_sprint(
     entity_index: dict[str, dict[str, Any]] = {}
     if index_entities:
         try:
-            _, entity_index = await extract_bundle_streaming(bundle_path, sprint_id)
+            _, entity_index = extract_bundle_streaming(bundle_path, sprint_id)
             await index_bundle_entities(sprint_id, bundle_path, entity_index, duckdb_store=duckdb_store)
             
             # [NEXTGEN-04] Rebuild bundle with entity_index.json.zst
@@ -959,21 +953,27 @@ async def _rebuild_bundle_with_entity_index(
     entity_index: dict[str, dict[str, Any]],
 ) -> Path:
     """
-    [NEXTGEN-04]: Rebuild bundle to include entity_index.json.zst.
+    [NEXTGEN-04] [FIX #5]: Rebuild bundle to include entity_index.json.zst.
     
     Reads the original bundle, adds entity_index.json.zst, and writes
     a new bundle. This enables MmapDeltaIndex to load entity data
     directly from the bundle without DuckDB queries.
+    
+    [FIX #5]: Now properly handles the return value from _create_bundle_archive
+    to ensure the rebuilt bundle path is returned to the caller.
     """
     try:
         # Read original bundle
         original_bytes = original_bundle_path.read_bytes()
         
-        # Decompress tar
-        try:
-            import compression.zstd
-            tar_bytes = compression.zstd.decompress(original_bytes)
-        except Exception:
+        # Decompress tar (using cached import)
+        zstd = _get_zstd()
+        if zstd is not None:
+            try:
+                tar_bytes = zstd.decompress(original_bytes)
+            except Exception:
+                tar_bytes = original_bytes
+        else:
             tar_bytes = original_bytes
         
         # Extract artifacts from original tar
@@ -986,24 +986,39 @@ async def _rebuild_bundle_with_entity_index(
                     if f is not None:
                         artifacts[member.name] = f.read()
         
-        # Add entity_index.json.zst
+        # Add entity_index.json.zst to artifacts and manifest
         manifest_entries = _collect_manifest_entries(artifacts)
         _add_entity_index_to_bundle(artifacts, manifest_entries, entity_index)
         
-        # Create new bundle (manifest already includes entity_index entry from _add_entity_index_to_bundle)
+        # Create new bundle with updated manifest
         timestamp = datetime.now(UTC).isoformat()
         manifest_bytes = _build_manifest_bytes(manifest_entries, sprint_id, timestamp)
         artifacts["manifest.sha256"] = manifest_bytes
         
+        # [FIX #5]: _create_bundle_archive now returns the actual path written
         new_bundle_path = _create_bundle_archive(artifacts, original_bundle_path, sprint_id, timestamp)
         
-        if new_bundle_path:
+        if new_bundle_path and new_bundle_path != original_bundle_path:
+            # Log successful rebuild with the actual output path
             logger.info(
                 "[BUNDLER] [NEXTGEN-04] Rebuilt bundle with entity_index: %s",
                 new_bundle_path,
             )
-        
-        return new_bundle_path or original_bundle_path
+            return new_bundle_path
+        elif new_bundle_path:
+            # Same path - bundle was overwritten in place
+            logger.debug(
+                "[BUNDLER] [NEXTGEN-04] Bundle updated in place with entity_index: %s",
+                new_bundle_path,
+            )
+            return new_bundle_path
+        else:
+            # _create_bundle_archive returned None - fall back to original
+            logger.warning(
+                "[BUNDLER] [NEXTGEN-04] Bundle rebuild failed, using original: %s",
+                original_bundle_path,
+            )
+            return original_bundle_path
         
     except Exception as e:
         logger.warning("[BUNDLER] [NEXTGEN-04] Bundle rebuild error: %s", e)
@@ -1017,5 +1032,7 @@ __all__ = [
     "extract_bundle_streaming",
     "index_bundle_entities",
     "_build_entity_index_for_bundle",  # [NEXTGEN-04]: For direct bundle building
+    "_add_entity_index_to_bundle",    # [FIX #5]: For testing/verification
+    "ENTITY_INDEX_FILENAME",           # [FIX #5]: Public constant for filename
     "BUNDLE_FORMAT_VERSION",
 ]

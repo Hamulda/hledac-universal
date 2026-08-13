@@ -1,6 +1,6 @@
 {
   "version": "1.0.0",
-  "generated_at": "2026-08-13T13:32:12.471747+00:00",
+  "generated_at": "2026-08-13T16:30:09.102655+00:00",
   "capability": "NEXTGEN-05",
   "description": "Build-time FFI type-safety manifest",
   "classes": {
@@ -2758,6 +2758,14 @@
       "is_async": false,
       "doc_comment": null
     },
+    "p2p_harvest.harvest_ipc": {
+      "module": "p2p_harvest",
+      "name": "harvest_ipc",
+      "signature": "(keyword: str, protocols: list[str], duration_s: int | None, max_results: int | None)",
+      "return_type": "Any",
+      "is_async": false,
+      "doc_comment": null
+    },
     "p2p_harvest.dht_crawl_async": {
       "module": "p2p_harvest",
       "name": "dht_crawl_async",
@@ -2766,9 +2774,17 @@
       "is_async": false,
       "doc_comment": null
     },
-    "p2p_harvest.ipfs_bitswap_crawl_async": {
+    "p2p_harvest.ipfs_gateway_crawl_async": {
       "module": "p2p_harvest",
-      "name": "ipfs_bitswap_crawl_async",
+      "name": "ipfs_gateway_crawl_async",
+      "signature": "(keyword: str, duration_s: int | None, max_results: int | None)",
+      "return_type": "Any",
+      "is_async": false,
+      "doc_comment": null
+    },
+    "p2p_harvest.ipfs_gateway_crawl_ipc": {
+      "module": "p2p_harvest",
+      "name": "ipfs_gateway_crawl_ipc",
       "signature": "(keyword: str, duration_s: int | None, max_results: int | None)",
       "return_type": "Any",
       "is_async": false,

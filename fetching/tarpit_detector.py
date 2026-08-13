@@ -755,12 +755,12 @@ def sync_rust_abandoned() -> None:
     explicit synchronization for bulk operations.
     """
     try:
-        import rust
-        if hasattr(rust, 'anti_analysis'):
+        from hledac.rust import rust as _hledac_rust
+        if hasattr(_hledac_rust, 'anti_analysis') and _hledac_rust.anti_analysis is not None:
             # Get Python abandoned domains
             python_abandoned = get_abandoned_domains()
             # Sync to Rust
-            rust.anti_analysis.sync_abandoned_from_python(python_abandoned)
+            _hledac_rust.anti_analysis.sync_abandoned_from_python(python_abandoned)
             logger.debug(
                 '[NEXTGEN-02] Synced %d abandoned domains to Rust tracker',
                 len(python_abandoned),
