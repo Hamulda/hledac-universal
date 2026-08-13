@@ -4,7 +4,7 @@ Fast explainer – delta‑evidence na základě odebírání hran.
 import logging
 
 from hledac.universal.core.resource_governor import ResourceGovernor
-from hledac.universal.utils.async_helpers import parallel_ok
+from hledac.universal.utils.asyncx import parallel_ok
 logger = logging.getLogger(__name__)
 
 class FastExplainer:

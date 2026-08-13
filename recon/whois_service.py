@@ -674,7 +674,7 @@ class WhoisService:
         """
         domains = domains[:MAX_TARGETS]
         results: list[WhoisResult] = []
-        from hledac.universal.utils.async_helpers import parallel_ok
+        from hledac.universal.utils.asyncx import parallel_ok
         tasks = [self.lookup(d) for d in domains]
         gathered = await parallel_ok(*tasks, label='whois_service:lookup_batch')
         for r in gathered:

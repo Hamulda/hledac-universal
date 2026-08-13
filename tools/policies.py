@@ -3,8 +3,6 @@ URL scoring policies. No action generation, just scoring.
 Each policy has a stable `.name` and a `.score` that can be updated.
 """
 
-
-import abc
 import logging
 from typing import Any
 from urllib.parse import urlparse
@@ -16,18 +14,21 @@ ARCHIVE_MARKERS = ("web.archive.org", "archive.today", "archive.org")
 DISCOURSE_MARKERS = ("reddit.com", "news.ycombinator.com", "github.com", "stackoverflow.com", "x.com", "twitter.com")
 
 
-class BasePolicy(abc.ABC):
-    def __init__(self, name: str):
+# F360M: BasePolicy simplified — removed ABC ceremony, same effect with plain base class
+class BasePolicy:
+    """Base URL scoring policy with name and score attributes."""
+
+    def __init__(self, name: str) -> None:
         self.name = name
         self.score = 0.0
 
-    @abc.abstractmethod
     def score_url(self, url: str, state: Any) -> float:
-        pass
+        """Override in subclass to implement scoring logic."""
+        raise NotImplementedError
 
 
 class AuthorityPolicy(BasePolicy):
-    def __init__(self):
+    def __init__(self) -> None:
         super().__init__(name="authority")
 
     def score_url(self, url: str, state: Any) -> float:
@@ -38,11 +39,10 @@ class AuthorityPolicy(BasePolicy):
 
 
 class TemporalPolicy(BasePolicy):
-    def __init__(self):
+    def __init__(self) -> None:
         super().__init__(name="temporal")
 
     def score_url(self, url: str, state: Any) -> float:
-        # Avoid importing private internals – use domain heuristics.
         domain = urlparse(url).netloc.lower()
         if any(m in domain for m in ARCHIVE_MARKERS):
             return 0.9
@@ -50,7 +50,7 @@ class TemporalPolicy(BasePolicy):
 
 
 class DiscoursePolicy(BasePolicy):
-    def __init__(self):
+    def __init__(self) -> None:
         super().__init__(name="discourse")
 
     def score_url(self, url: str, state: Any) -> float:

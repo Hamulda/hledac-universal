@@ -33,8 +33,38 @@ from typing import Any, Callable, Optional
 
 logger = logging.getLogger(__name__)
 
-import mlx.core as mx
-import mlx_lm
+# MLX LAZY IMPORT — prevents M1 crash on memory-constrained systems
+# Pattern: Use _get_mx() and _get_mlx_lm() for lazy access
+try:
+    from hledac.universal.utils.mlx_memory._core import get_mx, get_mlx_lm
+except ImportError:
+    # Fallback for systems without mlx_memory module
+    def get_mx():
+        """Lazy fallback for mlx.core."""
+        import mlx.core as _mx
+        return _mx
+    def get_mlx_lm():
+        """Lazy fallback for mlx_lm."""
+        import mlx_lm as _mlx_lm
+        return _mlx_lm
+
+# Module-level cached references (P3-03 pattern: O(1) access)
+_mx: Any = None
+_mlx_lm: Any = None
+
+def _get_mx() -> Any:
+    """Lazy accessor for mlx.core — cached after first import."""
+    global _mx
+    if _mx is None:
+        _mx = get_mx()
+    return _mx
+
+def _get_mlx_lm() -> Any:
+    """Lazy accessor for mlx_lm — cached after first import."""
+    global _mlx_lm
+    if _mlx_lm is None:
+        _mlx_lm = get_mlx_lm()
+    return _mlx_lm
 
 # Re-export from extracted modules for backward compatibility
 # MODERN-35 Fix: Import CPU affinity utilities
@@ -270,7 +300,7 @@ class MicroModelSwarmRouter:
             set_mlx_affinity()
         
         model, tokenizer = main
-        result = mlx_lm.generate(
+        result = _get_mlx_lm().generate(
             model,
             tokenizer,
             prompt=text,

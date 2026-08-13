@@ -23,7 +23,7 @@ import logging
 import os
 import time
 import msgspec.json as _json
-from hledac.universal.utils.async_helpers import parallel_ok
+from hledac.universal.utils.asyncx import parallel_ok
 logger = logging.getLogger(__name__)
 I2P_PROXY_HOST: str = '127.0.0.1'
 # Port 7656 is the I2P SAM v3 bridge (native protocol, preferred).

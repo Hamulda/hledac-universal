@@ -24,7 +24,7 @@ from abc import abstractmethod
 from collections.abc import Callable, Coroutine, Set
 from dataclasses import dataclass, field
 from typing import Any, Protocol, runtime_checkable, TYPE_CHECKING
-from hledac.universal.utils.async_helpers import safe_create_task
+from hledac.universal.utils.asyncx import safe_create_task
 if TYPE_CHECKING:
     pass
 logger = logging.getLogger(__name__)
@@ -183,7 +183,7 @@ class LayerStack:
         Each layer.mount(ctx) is called sequentially.
         On error, layers already mounted are unmounted in reverse.
         """
-        from hledac.universal.utils.async_helpers import safe_wait_for
+        from hledac.universal.utils.asyncx import safe_wait_for
         if self._mounted:
             logger.warning('LayerStack already mounted')
             return
@@ -215,7 +215,7 @@ class LayerStack:
 
         Runs even if some layers fail — best-effort cleanup.
         """
-        from hledac.universal.utils.async_helpers import safe_wait_for
+        from hledac.universal.utils.asyncx import safe_wait_for
         if not self._mounted:
             return
         for layer in reversed(self._layers):
@@ -238,7 +238,7 @@ class LayerStack:
 
         Returns the (possibly modified) event.
         """
-        from hledac.universal.utils.async_helpers import safe_wait_for
+        from hledac.universal.utils.asyncx import safe_wait_for
         for layer in self._layers:
             if event.halted:
                 break

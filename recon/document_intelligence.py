@@ -2335,7 +2335,7 @@ class DocumentIntelligenceEngine:
         Uses parallel() with policy='collect' — all documents processed,
         individual failures return None for that document without aborting others.
         """
-        from hledac.universal.utils.async_helpers import parallel
+        from hledac.universal.utils.asyncx import parallel
 
         async def analyze_one(path: str) -> tuple[str, DocumentAnalysis | None]:
             try:
@@ -2820,7 +2820,7 @@ class MLXLongContextAnalyzer:
 
         Uses parallel() with concurrency=4 for M1-safe parallel processing.
         """
-        from hledac.universal.utils.async_helpers import parallel
+        from hledac.universal.utils.asyncx import parallel
 
         async def analyze_one(source_text: tuple[str, str]) -> tuple[str, LongContextAnalysis]:
             source, text = source_text
@@ -2891,7 +2891,7 @@ class MLXLongContextAnalyzer:
 
         Uses parallel() with concurrency=4 for M1-safe parallel processing.
         """
-        from hledac.universal.utils.async_helpers import parallel
+        from hledac.universal.utils.asyncx import parallel
 
         async def search_one(source_text: tuple[str, str]) -> tuple[str, list[dict]]:
             source, text = source_text

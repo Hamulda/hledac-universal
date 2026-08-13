@@ -76,7 +76,7 @@ def _get_mlx():
             _MLX_CORE = None
     return _MLX_CORE
 from hledac.universal.project_types import MemoryConfig, MemoryPressureError, OrchestratorState, SystemMetrics, SystemState
-from hledac.universal.utils.async_helpers import safe_create_task
+from hledac.universal.utils.asyncx import safe_create_task
 logger = logging.getLogger(__name__)
 
 class ThermalSnapshot(msgspec.Struct, frozen=True, gc=False):

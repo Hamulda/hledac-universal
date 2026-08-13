@@ -17,7 +17,7 @@ from dataclasses import dataclass, field
 import msgspec
 from enum import StrEnum
 from typing import TYPE_CHECKING
-from hledac.universal.utils.async_helpers import parallel_ok
+from hledac.universal.utils.asyncx import parallel_ok
 if TYPE_CHECKING:
     import httpx
 else:

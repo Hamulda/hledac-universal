@@ -22,7 +22,7 @@ from dataclasses import dataclass, field
 from typing import AsyncIterator
 import msgspec
 
-from hledac.universal.utils.async_helpers import _check_gathered
+from hledac.universal.utils.asyncx import _check_gathered
 try:
     import orjson
 except ImportError:
@@ -119,7 +119,7 @@ class CommonCrawlResult(msgspec.Struct, frozen=True, gc=False):
                 findings.append(f)
         return findings
 
-@dataclass
+@dataclass(slots=True)
 class WARCReplayResult:
     """Result of replaying a single URL from CommonCrawl WARC."""
     url: str
@@ -435,7 +435,6 @@ class WARCContentAdapter:
         byte_limit = self._get_warc_bytes_limit()
         decompressed = await self._decompress_gzip_chunked(warc_bytes, byte_limit)
         if not decompressed:
-            return
             return
 
         # Step 2: try fastwarc first, then naive fallback

@@ -29,7 +29,7 @@ from typing import Any, Sequence
 import msgspec
 
 from hledac.universal.core.env_config import ENV
-from hledac.universal.utils.async_helpers import (
+from hledac.universal.utils.asyncx import (
     safe_create_task,
     parallel,
 )
@@ -381,7 +381,9 @@ class AcquisitionOrchestrator:
                     )
 
                 # ── Re-prioritize sources in ACTIVE phase ──────────────────────
-                if _runner.current_phase == "ACTIVE":
+                # FIX: current_phase returns SprintPhase enum, not string
+                from hledac.universal.runtime.sprint_lifecycle import SprintPhase
+                if _runner.current_phase == SprintPhase.ACTIVE:
                     ordered_sources = self._prioritize_sources(ctx, ordered_sources)
 
                 # ── Adaptive max_cycles ─────────────────────────────────────────
@@ -468,7 +470,9 @@ class AcquisitionOrchestrator:
         ctx.result.consecutive_empty_cycles = 0
         ctx.result.cycles_started += 1
 
-        lifecycle = getattr(ctx, "_lifecycle", None)
+        # FIX: Use ctx.runner instead of getattr(ctx, "_lifecycle", None)
+        # The lifecycle manager is stored as 'runner' on the context
+        lifecycle = ctx.runner
         query = ctx.query
 
         if ctx.config.aggressive_mode:
@@ -1347,7 +1351,7 @@ class AcquisitionOrchestrator:
 
         # ISSUE #011 FIX: parallel dispatch via parallel(taskgroup=True, policy="collect")
         try:
-            from hledac.universal.utils.async_helpers import parallel
+            from hledac.universal.utils.asyncx import parallel
 
             _inner_coros = [coro for _, coro in _coros]
             _build = await parallel(_inner_coros, concurrency=_concurrency, policy="collect", taskgroup=True, ctx="probe_lanes")

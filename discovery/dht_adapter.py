@@ -194,7 +194,7 @@ async def async_search_dht(
 
         async with asyncio.timeout(timeout_s):
             # P1-02: Parallelizace přes parallel() — DHT get_peers je ~100-500ms, paralelně ~500ms místo 5-10s
-            from hledac.universal.utils.async_helpers import parallel
+            from hledac.universal.utils.asyncx import parallel
 
             async def _get_peers_for_candidate(ih_candidate: str) -> list[tuple[str, int, str]]:
                 """Fetch peers for one infohash candidate, return list of (ip, port, info_hash)."""

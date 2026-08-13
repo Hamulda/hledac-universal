@@ -54,7 +54,7 @@ import logging
 from pathlib import Path
 
 from operator import attrgetter, itemgetter
-from hledac.universal.utils.async_helpers import parallel
+from hledac.universal.utils.asyncx import parallel
 
 from hledac.universal.utils.executor_decorator import offload_to
 import os

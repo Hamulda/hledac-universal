@@ -48,7 +48,7 @@ from hledac.universal.compat.msgspec_gc_compat import Struct
 import yaml
 
 from hledac.universal.core.psutil_shim import psutil
-from hledac.universal.utils.async_helpers import safe_create_task, _check_gathered
+from hledac.universal.utils.asyncx import safe_create_task, _check_gathered
 from hledac.universal.utils.msgspec_json import dumps_str as _msgspec_dumps_str
 
 SKLEARN_AVAILABLE = True
@@ -562,7 +562,7 @@ class ResourceAwareScheduler:
         # ISSUE-15: asyncio.wait(ALL_COMPLETED) → asyncio.TaskGroup
         try:
             async with asyncio.timeout(timeout):
-                await asyncio.gather(*self._tasks.values(), return_exceptions=True)
+                _check_gathered(await asyncio.gather(*self._tasks.values(), return_exceptions=True))
         except TimeoutError:
             pending = [t for t in self._tasks.values() if not t.done()]
         else:

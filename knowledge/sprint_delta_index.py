@@ -69,7 +69,7 @@ _AGGREGATION_BATCH_SIZE: int = 500
 
 # ── EntityRef (for SprintDeltaIndex compatibility) ───────────────────────────
 
-@dataclass
+@dataclass(frozen=True, slots=True)
 class EntityRef:
     """Reference to a confirmed entity in SprintDeltaIndex."""
     entity_value: str

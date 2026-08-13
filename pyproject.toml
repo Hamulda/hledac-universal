@@ -173,9 +173,10 @@ dependencies = [
     "pyobjc-framework-AVFoundation>=12.2; sys_platform == 'darwin'",
     "pyobjc-framework-Speech>=12.2; sys_platform == 'darwin'",
     # Python 3.14: coremltools 8.x and 9.x lack PyPI wheels for Python 3.14.
-    # Workaround: Install from GitHub releases with pre-built M1 wheels:
+    # FIX: Use Apple Anaconda channel with pre-built M1 wheels:
     #   pip install --extra-index-url https://pypi.anaconda.org/apple/repo/simple coremltools
-    # OR: pip install coremltools --no-deps && manually install deps from conda-forge.
+    # OR for uv: Add source in pyproject.toml [tool.uv.sources] or use:
+    #   uv pip install --extra-index-url https://pypi.anaconda.org/apple/repo/simple coremltools
     # NOTE: coremltools 10.x+ may ship 3.14 wheels — check PyPI after 2026-Q4.
     # Upper bound caps at 10.0 for ANE ops (macOS SDK 15+ compatibility).
     "coremltools>=8.0,<10.0",
@@ -445,7 +446,7 @@ dev = [
     "iniconfig>=2.0.0",
     "pygments>=2.15.0",
     "ruff>=0.1.0",
-    "ruff-ext @ file:///Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/ruff_ext",  # RUFF022: banned-imports custom rule (local dev plugin)
+    "ruff-ext",  # RUFF022: banned-imports custom rule (local dev plugin) - installed as workspace member
     "maturin>=1.0.0",
     "numpy>=2.5.0,<3.0.0",  # M1 8GB: cap at <3.0.0 for ABI stability
     "pyright>=1.1.410",
@@ -499,9 +500,12 @@ package = true
 # on M1 8GB when only core IOC extraction is needed.
 ["tool.uv.sources"]
 "hledac-rust-extensions" = { path = "rust_extensions" }
+# Python 3.14: coremltools has no PyPI wheels for Python 3.14.
+# Use Apple Anaconda channel for pre-built M1 (aarch64) wheels.
+"coremltools" = { index = "apple", extra-index-url = "https://pypi.anaconda.org/apple/repo/simple" }
 
 [tool.uv.workspace]
-members = ["rust_extensions"]
+members = ["rust_extensions", "ruff_ext"]
 
 # NOTE: Python 3.14 JIT (PYTHON_JIT=1) is configured in .env, not in pyproject.toml.
 # uv does not support [tool.uv.env] in all versions. See .env.example.

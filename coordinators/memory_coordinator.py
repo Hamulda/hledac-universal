@@ -32,7 +32,7 @@ from pathlib import Path
 from typing import Any
 
 from hledac.universal.core.psutil_shim import psutil
-from hledac.universal.utils.async_helpers import safe_create_task, safe_wait_for
+from hledac.universal.utils.asyncx import safe_create_task, safe_wait_for
 from hledac.universal.utils.lru_cache import LRUCache
 
 try:
@@ -843,7 +843,7 @@ class UniversalMemoryCoordinator:
 
     async def get_all_zone_usage(self) -> dict[str, ZoneStatistics]:
         """Get usage for all zones (parallel fetch, fail-safe)."""
-        from hledac.universal.utils.async_helpers import parallel
+        from hledac.universal.utils.asyncx import parallel
         result = await parallel(
             [self.get_zone_usage(z) for z in MemoryZone],
             policy="collect",
@@ -859,7 +859,7 @@ class UniversalMemoryCoordinator:
 
     async def get_stats(self) -> dict[str, Any]:
         """Get comprehensive memory statistics (parallel zone fetch, fail-safe)."""
-        from hledac.universal.utils.async_helpers import parallel
+        from hledac.universal.utils.asyncx import parallel
         stats = await self.get_memory_usage()
         zone_result = await parallel(
             [self.get_zone_usage(z) for z in MemoryZone],

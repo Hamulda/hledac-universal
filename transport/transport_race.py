@@ -328,7 +328,7 @@ def _pre_race_gate_stats() -> dict[str, int]:
 # ---------------------------------------------------------------------------
 
 
-@dataclass
+@dataclass(slots=True)
 class RaceResult:
     """Result from a single transport in the race.
 

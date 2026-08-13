@@ -42,14 +42,7 @@ class RankedResult(msgspec.Struct, frozen=True, gc=False):
     score: float = 0.0
     rank: int = 0
     metadata: dict[str, Any] = field(default_factory=dict)
-
-    def __hash__(self):
-        return hash(self.id)
-
-    def __eq__(self, other):
-        if isinstance(other, RankedResult):
-            return self.id == other.id
-        return False
+    # frozen=True auto-generates __hash__ and __eq__
 
 class ReciprocalRankFusion:
     """

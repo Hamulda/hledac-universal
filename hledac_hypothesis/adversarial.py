@@ -29,7 +29,7 @@ import re
 from collections import OrderedDict
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Any
-from hledac.universal.utils.async_helpers import parallel_ok
+from hledac.universal.utils.asyncx import parallel_ok
 from ._types import AdversarialReport, Contradiction, CrossReferenceResult, Event, Evidence, HypothesisType, SourceCredibility
 from operator import attrgetter, itemgetter
 if TYPE_CHECKING:

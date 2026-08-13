@@ -31,7 +31,7 @@ from hledac.universal.transport.circuit_breaker import (
     domain_breaker_record_failure,
     domain_breaker_record_success,
 )
-from hledac.universal.utils.async_helpers import bounded_parallel_map
+from hledac.universal.utils.asyncx import bounded_parallel_map
 from hledac.universal.utils.rate_limiters import get_limiter
 
 from hledac.universal.security.secrets_scrubber import redact_greynoise_key, safe_error_log

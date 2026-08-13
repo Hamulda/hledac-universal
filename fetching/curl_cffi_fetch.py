@@ -124,6 +124,10 @@ async def fetch_via_curl_cffi_with_caps_check(
             profile=profile,
             **kwargs,
         )
+    except RuntimeError:
+        # FIX: RuntimeError should propagate, not be swallowed
+        # This catches critical errors that should not be silently ignored
+        raise
     except Exception as e:  # noqa: BLE001
         logger.warning(f"[ISSUE-0.2] curl_cffi fetch failed: {e}")
         return None

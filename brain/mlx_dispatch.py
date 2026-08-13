@@ -34,7 +34,7 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-from hledac.universal.utils.async_helpers import safe_wait_for
+from hledac.universal.utils.asyncx import safe_wait_for
 
 logger = logging.getLogger(__name__)
 

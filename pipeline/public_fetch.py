@@ -38,7 +38,7 @@ from hledac.universal.embedding_pipeline import generate_embeddings_async
 from hledac.universal.layers import get_temporal_signal_layer
 from hledac.universal.layers.temporal_signal_layer import event_from_finding_like
 from hledac.universal.runtime.graph_accumulator import SprintGraphAccumulator
-from hledac.universal.utils.async_helpers import parallel
+from hledac.universal.utils.asyncx import parallel
 from hledac.universal.utils.rayon_pool import run_in_cpu_pool_async
 from hledac.universal.utils.patterns.pattern_matcher import PatternHit
 

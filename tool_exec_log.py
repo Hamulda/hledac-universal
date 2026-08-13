@@ -28,7 +28,7 @@ CRITICAL INVARIANTS (Issue 8.3):
 from __future__ import annotations
 import asyncio
 import hashlib
-from hledac.universal.utils.async_helpers import safe_create_task, safe_wait_for
+from hledac.universal.utils.asyncx import safe_create_task, safe_wait_for
 import logging
 import os
 from collections import deque

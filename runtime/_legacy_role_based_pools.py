@@ -87,7 +87,7 @@ from hledac.universal.core.isolated_executors import (
     is_pep734_available,
 )
 from hledac.universal.runtime.lmdb_pool import get_lmdb_pool
-from hledac.universal.utils.async_helpers import safe_wait_for
+from hledac.universal.utils.asyncx import safe_wait_for
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Coroutine
@@ -813,7 +813,7 @@ class RoleBasedPools:
                 return await self.run_regex(fn, item, timeout=timeout)
             return None
 
-        from hledac.universal.utils.async_helpers import parallel
+        from hledac.universal.utils.asyncx import parallel
 
         result = await parallel(
             [wrap(item) for item in items],  # type: ignore[arg-type]

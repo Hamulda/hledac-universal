@@ -155,7 +155,7 @@ class MachRemapError(Exception):
 # ─── Core Bridge ─────────────────────────────────────────────────────────────
 
 
-@dataclass
+@dataclass(slots=True)
 class _MachRemapBridge:
     """
     Mach vm_remap zero-copy bridge between Hledac and sandboxed subprocesses.

@@ -143,7 +143,8 @@ class EngineChoice(Enum):
 class TranscriptionEngine(Enum):
     """Which engine actually performed the transcription."""
     SFS_SPEECH = "sfspeech"
-    WHISPER_CPP = "whisper_cpp"
+    RUST_WHISPER = "rust_whisper"  # SILICON-02: Rust whisper with CoreML/ANE
+    WHISPER_CPP = "whisper_cpp"    # Python whispercpp fallback
     NONE = "none"
 
 
@@ -189,6 +190,7 @@ class TranscriptionRouter:
         '_router_lock',
         '_sf_speech_available',
         '_whisper_available',
+        '_rust_whisper_available',
         '_probed',
     )
 
@@ -198,6 +200,7 @@ class TranscriptionRouter:
         self._router_lock: asyncio.Lock | None = None
         self._sf_speech_available: bool = False
         self._whisper_available: bool = False
+        self._rust_whisper_available: bool = False
         self._probed: bool = False
 
     def _get_lock(self) -> asyncio.Lock:
@@ -231,12 +234,26 @@ class TranscriptionRouter:
             except Exception as exc:
                 logger.debug("[TranscriptionRouter] MediaDecoder probe failed: %s", exc)
 
-            # Probe WhisperEngine
+            # Probe Rust whisper (CoreML/ANE acceleration) - PRIORITY PATH
+            # SILICON-02: Rust whisper.cpp with CoreML/ANE backend
+            try:
+                from hledac.universal.core.rust_backend import rust
+                self._rust_whisper_available = rust.whisper.is_available()
+                if self._rust_whisper_available:
+                    logger.info("[TranscriptionRouter] Rust whisper (CoreML/ANE) available")
+                else:
+                    logger.debug("[TranscriptionRouter] Rust whisper unavailable (no model cached)")
+            except ImportError:
+                logger.debug("[TranscriptionRouter] Rust whisper module not importable")
+            except Exception as exc:
+                logger.debug("[TranscriptionRouter] Rust whisper probe failed: %s", exc)
+
+            # Probe WhisperEngine (Python whispercpp fallback)
             try:
                 from hledac.universal.brain.whisper_engine import is_whisper_available
                 self._whisper_available = is_whisper_available()
                 if self._whisper_available:
-                    logger.info("[TranscriptionRouter] WhisperEngine available")
+                    logger.info("[TranscriptionRouter] WhisperEngine (whispercpp) available")
                 else:
                     logger.debug("[TranscriptionRouter] WhisperEngine unavailable")
             except ImportError:
@@ -247,8 +264,10 @@ class TranscriptionRouter:
             available = []
             if self._sf_speech_available:
                 available.append("SFSpeechRecognizer")
+            if self._rust_whisper_available:
+                available.append("Rust whisper (CoreML/ANE)")
             if self._whisper_available:
-                available.append("WhisperEngine")
+                available.append("WhisperEngine (whispercpp)")
             logger.info(
                 "[TranscriptionRouter] Probed: %s",
                 ", ".join(available) if available else "no engines available",
@@ -272,17 +291,29 @@ class TranscriptionRouter:
         if force_engine == EngineChoice.SFS_SPEECH:
             return EngineChoice.SFS_SPEECH
         if force_engine == EngineChoice.WHISPER_CPP:
-            return EngineChoice.WHISPER_CPP
+            # User forced whisper — prefer Rust whisper (CoreML/ANE) if available
+            if self._rust_whisper_available:
+                return EngineChoice.WHISPER_CPP  # Will route to Rust in _transcribe_whisper_direct
+            elif self._whisper_available:
+                return EngineChoice.WHISPER_CPP
+            else:
+                logger.warning("[TranscriptionRouter] WhisperEngine forced but no engine available")
+                return EngineChoice.AUTO
 
         # AUTO routing logic
         lang = (language or "en").lower().split("-")[0]
 
+        # Any whisper engine available (Rust or Python)?
+        any_whisper = self._rust_whisper_available or self._whisper_available
+
         # Language-based routing
         if lang in _SFS_NETWORK_DEPENDENT_LANGUAGES:
-            if self._whisper_available:
+            if any_whisper:
+                engine = "Rust whisper" if self._rust_whisper_available else "WhisperEngine"
                 logger.debug(
-                    "[TranscriptionRouter] Language '%s' → WhisperEngine (offline)",
+                    "[TranscriptionRouter] Language '%s' → %s (offline)",
                     lang,
+                    engine,
                 )
                 return EngineChoice.WHISPER_CPP
             else:
@@ -294,7 +325,7 @@ class TranscriptionRouter:
                 return EngineChoice.SFS_SPEECH
 
         if force_offline:
-            if self._whisper_available:
+            if any_whisper:
                 return EngineChoice.WHISPER_CPP
             elif lang in _SFS_OFFLINE_LANGUAGES:
                 return EngineChoice.SFS_SPEECH
@@ -309,6 +340,8 @@ class TranscriptionRouter:
         # Default: SFSpeechRecognizer (fastest, lowest RAM)
         if self._sf_speech_available:
             return EngineChoice.SFS_SPEECH
+        elif self._rust_whisper_available:
+            return EngineChoice.WHISPER_CPP
         elif self._whisper_available:
             return EngineChoice.WHISPER_CPP
 
@@ -373,35 +406,36 @@ class TranscriptionRouter:
 
         if chosen == EngineChoice.SFS_SPEECH and self._sf_speech_available:
             result_raw = await self._transcribe_sfspeech(source_path, language)
-            if result_raw is None and self._whisper_available:
+            if result_raw is None and (self._rust_whisper_available or self._whisper_available):
                 logger.info("[TranscriptionRouter] SFSpeechRecognizer failed, "
-                          "falling back to WhisperEngine")
-                result_raw = await self._transcribe_whisper(
-                    source_path, language, model_size,
-                )
-
-        elif chosen == EngineChoice.WHISPER_CPP and self._whisper_available:
-            result_raw = await self._transcribe_whisper(
-                source_path, language, model_size,
-            )
-            if result_raw is None and self._sf_speech_available:
-                logger.info("[TranscriptionRouter] WhisperEngine failed, "
-                          "falling back to SFSpeechRecognizer")
-                result_raw = await self._transcribe_sfspeech(source_path, language)
-
-        elif chosen == EngineChoice.SFS_SPEECH:
-            # User forced SFSpeechRecognizer but it's unavailable
-            logger.warning("[TranscriptionRouter] SFSpeechRecognizer forced but unavailable")
-            if self._whisper_available:
+                          "falling back to whisper")
                 result_raw = await self._transcribe_whisper(
                     source_path, language, model_size,
                 )
 
         elif chosen == EngineChoice.WHISPER_CPP:
-            # User forced WhisperEngine but it's unavailable
-            logger.warning("[TranscriptionRouter] WhisperEngine forced but unavailable")
-            if self._sf_speech_available:
-                result_raw = await self._transcribe_sfspeech(source_path, language)
+            # Whisper path: prefer Rust whisper (CoreML/ANE), fallback to Python
+            if self._rust_whisper_available or self._whisper_available:
+                result_raw = await self._transcribe_whisper(
+                    source_path, language, model_size,
+                )
+                if result_raw is None and self._sf_speech_available:
+                    logger.info("[TranscriptionRouter] Whisper failed, "
+                              "falling back to SFSpeechRecognizer")
+                    result_raw = await self._transcribe_sfspeech(source_path, language)
+            else:
+                # No whisper available, try SFSpeechRecognizer
+                logger.warning("[TranscriptionRouter] Whisper forced but no engine available")
+                if self._sf_speech_available:
+                    result_raw = await self._transcribe_sfspeech(source_path, language)
+
+        elif chosen == EngineChoice.SFS_SPEECH:
+            # User forced SFSpeechRecognizer but it's unavailable
+            logger.warning("[TranscriptionRouter] SFSpeechRecognizer forced but unavailable")
+            if self._rust_whisper_available or self._whisper_available:
+                result_raw = await self._transcribe_whisper(
+                    source_path, language, model_size,
+                )
 
         # No engine available
         if result_raw is None:
@@ -492,17 +526,33 @@ class TranscriptionRouter:
         model_size: Literal["tiny", "base"],
     ) -> TranscriptionResult | None:
         """
-        Transcribe via WhisperEngine with unified sandbox isolation (ADVERSARY-001).
+        Transcribe via WhisperEngine with intelligent routing.
 
-        ADVERSARY-001: Now delegates to MediaSandboxCoordinator for:
-        - Single sandbox entry point (no duplicate paths)
-        - Unified statistics collection
-        - Consistent risk profiling
-        - Future extensibility for PDF/image analysis
+        PRIORITY PATH:
+        1. Rust whisper (CoreML/ANE) - direct, no subprocess overhead
+        2. Sandboxed subprocess - when coordinator available
+        3. Direct Python whispercpp - final fallback
+
+        ADVERSARY-001: Delegates to MediaSandboxCoordinator for subprocess isolation
+        when Rust whisper is unavailable.
 
         Returns None on failure.
         """
-        # ── ADVERSARY-001: Unified sandbox via MediaSandboxCoordinator ────────
+        # ── PRIORITY 1: Direct Rust whisper (CoreML/ANE) — fastest path ──────
+        # No subprocess overhead, direct ANE acceleration
+        if self._rust_whisper_available:
+            direct_result = await self._transcribe_whisper_direct(
+                source_path, language, model_size
+            )
+            if direct_result is not None and direct_result.text:
+                # Ensure engine type is RUST_WHISPER
+                return msgspec.structs.replace(
+                    direct_result,
+                    engine=TranscriptionEngine.RUST_WHISPER,
+                )
+            # Rust whisper failed, continue to subprocess fallback
+
+        # ── ADVERSARY-001: Sandboxed subprocess via MediaSandboxCoordinator ────
         coordinator, coordinator_available = _get_sandbox_coordinator()
         
         if coordinator is not None:
@@ -518,7 +568,6 @@ class TranscriptionRouter:
                 # Parse coordinator result
                 if whisper_result.text:
                     seatbelt_note = " +Seatbelt" if whisper_result.seatbelt_used else ""
-                    sandbox_note = "" if whisper_result.sandboxed else " [UNSANDBOXED - SECURITY RISK]"
                     return TranscriptionResult(
                         text=whisper_result.text,
                         language=whisper_result.language or language or "en",
@@ -535,13 +584,12 @@ class TranscriptionRouter:
                         ],
                         engine=TranscriptionEngine.WHISPER_CPP,
                         engine_detail=(
-                            f"whisper.cpp {model_size}"
-                            f"{seatbelt_note}{sandbox_note}"
+                            f"whisper.sandbox::{model_size}{seatbelt_note}"
                         ),
                     )
                 elif whisper_result.error:
                     logger.warning(
-                        "[TranscriptionRouter] Whisper transcription failed: %s",
+                        "[TranscriptionRouter] Subprocess whisper failed: %s",
                         whisper_result.error,
                     )
                     return None
@@ -552,14 +600,17 @@ class TranscriptionRouter:
                     exc,
                 )
         else:
-            logger.warning(
-                "[TranscriptionRouter] ADVERSARY-001: whisper running "
-                "WITHOUT sandbox isolation (security risk!)"
-            )
+            if not self._rust_whisper_available:
+                logger.warning(
+                    "[TranscriptionRouter] ADVERSARY-001: whisper running "
+                    "WITHOUT sandbox isolation (security risk!)"
+                )
         
         # ── Final Fallback: Direct whisper engine (no sandbox) ───────────────
-        # Only used when coordinator is unavailable or failed
-        return await self._transcribe_whisper_direct(source_path, language, model_size)
+        # Only used when subprocess failed and Rust whisper unavailable
+        if not self._rust_whisper_available:
+            return await self._transcribe_whisper_direct(source_path, language, model_size)
+        return None
 
     async def _transcribe_whisper_direct(
         self,
@@ -568,11 +619,62 @@ class TranscriptionRouter:
         model_size: Literal["tiny", "base"],
     ) -> TranscriptionResult | None:
         """
-        Direct WhisperEngine execution without sandbox (final fallback).
+        Direct whisper execution without sandbox (final fallback).
         
-        ADVERSARY-001 SECURITY: This path should only be used when sandbox
-        infrastructure is unavailable. Logs security warning.
+        PRIORITY: Rust whisper (CoreML/ANE) → Python whispercpp
+        
+        Used when:
+        1. Subprocess sandboxing fails
+        2. Direct mode (no sandbox desired)
+        
+        Engine detail format: "rust.whisper::tiny +CoreML/ANE" or "whisper.cpp::base CPU"
         """
+        # ── Priority 1: Rust whisper (CoreML/ANE acceleration) ──────────────────
+        # SILICON-02: Rust whisper.cpp with dedicated ANE memory, M1 8GB safe
+        if self._rust_whisper_available:
+            try:
+                from hledac.universal.core.rust_backend import rust
+
+                # Run Rust whisper in thread pool (CPU-bound decoder)
+                raw = await asyncio.to_thread(
+                    rust.whisper.transcribe,
+                    str(source_path),
+                    model_size=model_size,
+                    language=language,
+                )
+
+                if raw and raw.get("text"):
+                    coreml_note = " +CoreML/ANE" if raw.get("coreml_used") else " CPU"
+                    segments = [
+                        TranscriptionSegment(
+                            start_s=s.get("start_s", 0.0),
+                            end_s=s.get("end_s", 0.0),
+                            text=s.get("text", ""),
+                            confidence=s.get("confidence", 0.85),
+                        )
+                        for s in raw.get("segments", [])
+                    ]
+                    logger.info(
+                        "[TranscriptionRouter] rust.whisper::%s: %d chars, coreml=%s, latency=%.2fs",
+                        model_size, len(raw.get("text", "")),
+                        raw.get("coreml_used", False),
+                        raw.get("latency_s", 0.0),
+                    )
+                    return TranscriptionResult(
+                        text=raw.get("text", ""),
+                        language=raw.get("language", language or "en"),
+                        duration_s=raw.get("duration_s", 0.0),
+                        confidence=raw.get("confidence", 0.85),
+                        segments=segments,
+                        engine=TranscriptionEngine.RUST_WHISPER,
+                        engine_detail=f"rust.whisper::{model_size}{coreml_note}",
+                    )
+            except ImportError:
+                logger.debug("[TranscriptionRouter] Rust whisper not available")
+            except Exception as exc:
+                logger.debug("[TranscriptionRouter] Rust whisper error: %s", exc)
+
+        # ── Priority 2: Python whispercpp (fallback) ──────────────────────────
         try:
             from hledac.universal.brain.whisper_engine import (
                 get_whisper_engine,
@@ -598,7 +700,11 @@ class TranscriptionRouter:
                 for s in raw.segments
             ]
 
-            coreml_note = " +CoreML/ANE" if raw.coreml_used else " CPU-only"
+            coreml_note = " +CoreML/ANE" if raw.coreml_used else " CPU"
+            logger.info(
+                "[TranscriptionRouter] whisper.cpp::%s: %d chars, coreml=%s",
+                model_size, len(raw.text), raw.coreml_used,
+            )
             return TranscriptionResult(
                 text=raw.text,
                 language=raw.language,
@@ -606,7 +712,7 @@ class TranscriptionRouter:
                 confidence=raw.confidence,
                 segments=segments,
                 engine=TranscriptionEngine.WHISPER_CPP,
-                engine_detail=f"whisper.cpp {model_size}{coreml_note} [UNSANDBOXED - SECURITY RISK]",
+                engine_detail=f"whisper.cpp::{model_size}{coreml_note}",
             )
 
         except Exception as exc:

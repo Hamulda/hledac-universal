@@ -67,7 +67,7 @@ import msgspec
 _KT = TypeVar("_KT")
 _VT = TypeVar("_VT")
 
-from hledac.universal.utils.async_helpers import safe_create_task, stop_task
+from hledac.universal.utils.asyncx import safe_create_task, stop_task
 
 
 class UMAState(StrEnum):
@@ -699,7 +699,7 @@ def get_swap_policy_tier(swap_gib: float) -> tuple[str, str]:
         return ("hard_block", f"swap={swap_gib:.2f}GiB > {HARD_BLOCK_SWAP_GIB:.1f}GiB — restart required")
 
 
-from hledac.universal.utils.async_helpers import parallel
+from hledac.universal.utils.asyncx import parallel
 
 _io_only_latch: bool = False
 _io_only_latch_lock: _threading.Lock = _threading.Lock()
@@ -2922,15 +2922,15 @@ def evaluate_uma_state(system_used_gib: float) -> str:
     """
     Sprint 8AB + F289: Map system_used_gib to UMA state.
 
-    Python 3.10+ match statement s guard clauses pro thresholdy.
-    Exhaustivní match — kompilátor hlídá, že všechny stavy jsou pokryty.
+    Python 3.10+ match statement with guard clauses for thresholds.
+    Exhaustive match — compiler ensures all states are covered.
 
-    Calibrated for M1 8GB UMA:
-        < 6.8 GiB → "ok"
-        >= 6.8   → "soft_warn"  (F220K: approaching WARN, reduce 50%)
-        >= 7.0   → "warn"
-        >= 7.5   → "critical"   (F265H: proactive at 94%)
-        >= 7.8   → "emergency"  (near-OOM, 98%)
+    Calibrated for M1 8GB UMA (values from UmaBudget SSOT):
+        < 5.5 GiB → "ok"
+        >= 5.5   → "soft_warn"  (approaching WARN, reduce 50%)
+        >= 5.94  → "warn"
+        >= 6.19  → "critical"   (proactive at 99%)
+        >= 6.25  → "emergency"  (near-OOM, 100% = ceiling)
 
     Args:
         system_used_gib: (total - available) in GiB, THRESHOLD DRIVER.

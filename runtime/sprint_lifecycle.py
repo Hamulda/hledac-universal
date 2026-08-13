@@ -543,6 +543,9 @@ class SprintLifecycleManager(msgspec.Struct, gc=False):
             "last_checkpoint_at": self._last_checkpoint_at,
             "degraded": self._degraded,              # [FINAL]-019-08
             "degraded_reason": self._degraded_reason,  # [FINAL]-019-08
+            # F288/F290: Pre-loop cost and first-cycle guarantee for windup gating
+            "pre_loop_cost_s": self.pre_loop_cost_s,
+            "first_cycle_ran": self.first_cycle_ran,
         }
 
     # ── recommended_tool_mode ────────────────────────────────────────────────

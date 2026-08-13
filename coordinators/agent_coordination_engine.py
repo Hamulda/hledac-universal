@@ -33,7 +33,7 @@ import msgspec
 from hledac.universal.compat.msgspec_gc_compat import Struct
 from hledac.universal.compat.msgspec_gc_compat import Struct
 
-from hledac.universal.utils.async_helpers import parallel
+from hledac.universal.utils.asyncx import parallel
 
 logger = logging.getLogger(__name__)
 

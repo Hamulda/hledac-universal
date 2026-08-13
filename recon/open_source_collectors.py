@@ -56,7 +56,7 @@ if TYPE_CHECKING:
     pass
 from hledac.universal.fetching.public_fetcher import FetchResult, async_fetch_public_text
 from hledac.universal.runtime.resource_governor import M1ResourceGovernor
-from hledac.universal.utils.async_helpers import parallel_ok, parallel
+from hledac.universal.utils.asyncx import parallel_ok, parallel
 from hledac.universal.utils.msgspec_json import loads as _msgspec_loads
 logger = logging.getLogger(__name__)
 MAX_PASTE_RESULTS: int = 50

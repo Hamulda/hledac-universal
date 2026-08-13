@@ -41,7 +41,7 @@ logger = logging.getLogger(__name__)
 WARMUP_CACHE_DIR = Path.home() / '.hledac' / 'cache' / 'warmup'
 
 
-@dataclass
+@dataclass(frozen=True, slots=True)
 class WarmupConfig:
     """Configuration for model warmup."""
     system_prompt: str = "You are a helpful research assistant."
@@ -54,7 +54,7 @@ class WarmupConfig:
     timeout_seconds: float = 60.0
 
 
-@dataclass
+@dataclass(frozen=True, slots=True)
 class WarmupResult:
     """Result of warmup operation."""
     success: bool
@@ -157,7 +157,7 @@ class WarmupManager:
 
     async def _parallel_warmup(self) -> bool:
         """Parallel system cache + warmup cache prefilling."""
-        from hledac.universal.utils.async_helpers import parallel, safe_wait_for
+        from hledac.universal.utils.asyncx import parallel, safe_wait_for
 
         async def prefetch_system_cache() -> bool:
             return await self._prefill_system_cache()

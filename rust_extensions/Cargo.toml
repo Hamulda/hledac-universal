@@ -34,8 +34,7 @@ rayon = "1.10"
 # GRAPH-01: petgraph for graph algorithms (PageRank, Louvain community detection)
 # Provides: GraphMap, UnGraph, DiGraph, NodeIndex, algo::kosaraju_scc
 petgraph = { version = "0.6", features = ["serde-1"] }
-regex = "1.11"
-regex-automata = { version = "0.4.16", default-features = false, features = ["meta"] }
+regex-automata = { version = "0.4", default-features = false, features = ["meta"] }
 url = "2"
 lol_html = "2.9"
 xml = "1.3"
@@ -123,11 +122,9 @@ tantivy = { version = "0.22", optional = true }
 # Feature-gated: ~5MB additional compile, M1 8GB safe
 # Enables: rust.dns.resolve_async(), resolve_happy_eyeballs(), prefetch()
 #
-# IMPORTANT: Using hickory-resolver directly (not hickory-dns meta-crate).
+# FIX [SWARM]-009: Using hickory-resolver directly (not hickory-dns meta-crate).
 # hickory-resolver does NOT depend on SQLite — only hickory-server has optional sqlite.
-# This avoids any conflict with arti-client's rusqlite dependency.
-# Rustls is used for TLS (rustls-platform-verifier on macOS).
-# hickory-proto: Required for RecordType and DNS protocol types.
+# rustls 0.23 handles TLS via rustls-platform-verifier on macOS.
 hickory-proto = { version = "0.26", optional = true }
 # TLS feature enables ResolverConfig::tls() and ResolverConfig::https() methods
 # Note: __tls is the internal feature gate, enabled by tls-ring or tls-aws-lc-rs
@@ -140,14 +137,10 @@ hickory-resolver = { version = "0.26", optional = true, features = ["tokio", "tl
 # Provides: 3-5x higher throughput vs subprocess, per-circuit control, connection pooling.
 # Python fallback: transport/arti_transport.py uses external `tor` binary.
 #
-# IMPORTANT: arti-client depends on rusqlite for persistent state.
-# rusqlite MUST NOT be compiled when tor is built (SQLite version conflict).
-# The hickory-resolver crate does NOT use SQLite, so no conflict there.
-# But if you enable BOTH embedded_tor AND hickory-dns-server, you'll get
-# SQLite version conflicts. Use hickory-resolver (stateless) instead.
+# FIX [SWARM]-009: No SQLite conflict with hickory-resolver.
 # arti-client 0.11: In-process Tor client (HEIST-02).
 # Features: tokio runtime, native TLS, onion proxy for .onion access.
-# rusqlite dep is used for persistent state cache - no conflict with other deps.
+# NOTE: arti-client no longer depends on rusqlite in v0.11 — state stored in memory.
 arti-client = { version = "0.11", optional = true, default-features = false, features = ["tokio", "native-tls"] }
 # tor-rtcompat 0.9: Runtime compatibility for Arti — tokio + native TLS.
 tor-rtcompat = { version = "0.9", optional = true, default-features = false, features = ["tokio", "native-tls"] }
@@ -214,6 +207,11 @@ objc2-metal = { version = "0.2", optional = true }
 # ~45s compile (whisper.cpp C++). Python fallback: mlx-whisper (MLX-native).
 whisper-rs = { version = "0.13", optional = true }
 
+# WAV audio reading for whisper transcription (hound reads WAV headers + samples).
+# hound: ~50KB compile, zero runtime alloc.
+# Used by whisper.rs for reading 16kHz mono WAV audio samples.
+hound = { version = "3.5", optional = true }
+
 
 # ---------------------------------------------------------------------------
 # Feature flags — TRUE conditional compilation (D3 fix)
@@ -244,7 +242,15 @@ whisper-rs = { version = "0.13", optional = true }
 # MODERN-13: Added swarm_dag to default — work-stealing task DAG with ROI-based
 # adaptive pool sizing. Uses shared tokio runtime (M1 8GB safe, ~10MB additional RAM).
 # MODERN-19 fix: Added iosurface to default — zero-copy CVPixelBuffer→IOSurface→MTLTexture pipeline
-default = ["core", "data", "metal_shared", "iosurface", "swarm_dag"]
+# SILICON-06: Added ane to default — enables ANE model registry for CoreML inference.
+# ANE (Apple Neural Engine) uses dedicated memory — does not compete with main RAM budget.
+# Python path: coremltools does actual CoreML inference via ANE hardware.
+# Rust ane module: model registry + batch validation + telemetry.
+default = ["core", "data", "ane", "metal", "metal_shared", "iosurface", "swarm_dag", "whisper", "shared_tokio", "simd_similarity"]
+
+# SILICON-02: Added whisper to default — ANE-based speech-to-text via whisper.cpp.
+# Only tiny (39 MB) and base (74 MB) models for M1 8GB safety.
+# Provides: rust.whisper.transcribe() for CoreML/ANE-accelerated transcription.
 
 # core: IOC extraction, URL ops, hashing, compression, HTML parsing
 # Always compiled. No heavy deps. Available even with --no-default-features.
@@ -360,7 +366,7 @@ native_db = []
 #
 # FIX [SWARM]-009: Using hickory-resolver instead of hickory-dns.
 # hickory-resolver does NOT depend on SQLite — only hickory-server has optional sqlite.
-# This avoids conflict with arti-client's rusqlite dependency.
+# embedded_tor uses separate runtime — no conflict with dns feature.
 #
 # [MODERN-07]: Uses shared_tokio feature for consolidated runtime.
 dns = [
@@ -377,8 +383,7 @@ dns = [
 # M1 8GB: tokio runtime (2 workers), 3 concurrent circuits, LRU eviction.
 # Python fallback: transport/arti_transport.py uses external `tor` binary.
 #
-# CRITICAL: arti-client depends on rusqlite for persistent state cache.
-# Compile time: ~15MB. Memory: ~25-30MB resident (consensus cache + circuits).
+# NOTE: arti-client 0.11 no longer uses rusqlite — state is in-memory only.
 # Enable explicitly: --features "embedded_tor" or HLEDAC_ENABLE_EMBEDDED_TOR=1
 #
 # [MODERN-07]: Uses shared_tokio feature for consolidated runtime.
@@ -416,7 +421,10 @@ federated_qtable = [] # Referenced by advanced
 signal_batch = []     # Referenced by advanced
 dedup_bloom = []      # Referenced by advanced
 graph_cache = []      # Referenced by advanced
-ane = []              # Apple Neural Engine bindings (model registry, batch validation)
+# SILICON-06: ane — Apple Neural Engine bindings (model registry, batch validation)
+# Includes coreml_ane for CoreML/ANE integration (model loading, ANE offload).
+# ANE uses dedicated memory — does not compete with main RAM budget.
+ane = ["coreml_ane"]
 # SILICON-06: coreml_ane — CoreML model loading + ANE offload from Rust.
 # Replaces the empty `ane` stub with real CoreML bindings.
 # coreml crate: ~3 MB compile, models loaded from disk on-demand.
@@ -462,7 +470,8 @@ otel = [
 # inference to ANE (dedicated memory, not main RAM).
 # M1 8GB: ONLY tiny (25 MB) and base (75 MB) models safe. Bounded 1 concurrent inf.
 # ~45s compile (whisper.cpp C++). Python fallback: mlx-whisper (MLX-native).
-whisper = ["dep:whisper-rs"]
+# BREAKTHROUGH #5: Added whisper to default for ANE-based speech-to-text.
+whisper = ["dep:whisper-rs", "dep:hound"]
 
 # py-version: Python version compiled-for (via pyo3-build-config intercept_version)
 # Adds: __py_version__() — enables Python version mismatch detection at runtime

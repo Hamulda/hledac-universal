@@ -73,7 +73,7 @@ LANCE_FLUSH_INTERVAL_S: float = 5.0  # Flush every 5s max
 # Typedefs
 # ---------------------------------------------------------------------------
 
-@dataclass
+@dataclass(frozen=True, slots=True)
 class TrinityPhaseResult:
     """Result of a single phase in the Trinity pipeline."""
     phase: str  # "duckdb" | "lmdb" | "lance"
@@ -83,7 +83,7 @@ class TrinityPhaseResult:
     duration_ms: float = 0.0
 
 
-@dataclass
+@dataclass(frozen=True, slots=True)
 class TrinityWriteResult:
     """Aggregate result of a full Trinity write."""
     duckdb: TrinityPhaseResult

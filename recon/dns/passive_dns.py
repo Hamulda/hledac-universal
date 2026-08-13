@@ -30,13 +30,13 @@ GHOST_INVARIANTS:
   - Fail-soft: resolver error returns empty list, never raises
 """
 import asyncio
-from hledac.universal.utils.async_helpers import parallel_ok, parallel
-from hledac.universal.utils.async_helpers import retry_backoff_async
+from hledac.universal.utils.asyncx import parallel_ok, parallel
+from hledac.universal.utils.asyncx import retry_backoff_async
 import logging
 import time
 import httpx
 from hledac.universal.network.session_runtime import async_get_httpx_session
-from hledac.universal.utils.async_helpers import _check_gathered
+from hledac.universal.utils.asyncx import _check_gathered
 logger = logging.getLogger(__name__)
 MAX_DOH_CACHE_SIZE: int = 2000
 MAX_CENSORMAP_SIZE: int = 500

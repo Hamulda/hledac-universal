@@ -34,7 +34,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 import numpy as np
-from hledac.universal.utils.async_helpers import parallel
+from hledac.universal.utils.asyncx import parallel
 from hledac.universal.utils.mlx_cache import MLX_AVAILABLE, get_mx
 logger = logging.getLogger(__name__)
 

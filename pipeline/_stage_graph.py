@@ -37,7 +37,7 @@ from typing import TYPE_CHECKING, Any
 import msgspec
 from hledac.universal.compat.msgspec_gc_compat import Struct
 
-from hledac.universal.utils.async_helpers import safe_create_task
+from hledac.universal.utils.asyncx import safe_create_task
 
 # Compiled once at module level for O(1) reuse in topological_sort
 _DEP_PATTERN = re.compile(r"^_?(\w+)_to_(\w+)$")

@@ -36,7 +36,7 @@ import msgspec
 import orjson
 from hledac.universal.core.env_config import ENV
 from hledac.universal.runtime.protocols.cleanup_protocol import shutdown_aclose
-from hledac.universal.utils.async_helpers import safe_create_task, safe_wait_for
+from hledac.universal.utils.asyncx import safe_create_task, safe_wait_for
 
 # ISSUE-14: Structured logging via structlog
 # Lazy import to avoid early import overhead — structlog is optional

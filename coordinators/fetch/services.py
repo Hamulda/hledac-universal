@@ -48,7 +48,7 @@ from hledac.universal.compat.msgspec_gc_compat import Struct, field as msgspec_f
 from cachetools import TTLCache
 
 from hledac.universal.core.feature_flags import FeatureFlag, FeatureFlags
-from hledac.universal.utils.async_helpers import async_getaddrinfo, parallel
+from hledac.universal.utils.asyncx import async_getaddrinfo, parallel
 
 logger = logging.getLogger(__name__)
 
@@ -118,7 +118,7 @@ class DNSCacheService:
     def __post_init__(self) -> None:
         # Import here to avoid circular deps
         try:
-            from hledac.universal.utils.async_helpers import BoundedPerHostGate
+            from hledac.universal.utils.asyncx import BoundedPerHostGate
             self._per_host_gate = BoundedPerHostGate(max_hosts=512, per_host_limit=4)
         except ImportError:
             self._per_host_gate = None
@@ -251,7 +251,7 @@ class RateLimiterService:
 
     def __post_init__(self) -> None:
         try:
-            from hledac.universal.utils.async_helpers import DomainRateLimiter
+            from hledac.universal.utils.asyncx import DomainRateLimiter
             self._domain_limiter = DomainRateLimiter(
                 rate=self._rate_limit_rps,
                 max_hosts=self._max_hosts

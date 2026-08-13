@@ -338,7 +338,7 @@ class DeepSourceRegistry:
         tasks = [_one(sid) for sid in self._sources]
         if not tasks:
             return results
-        from hledac.universal.utils.async_helpers import parallel_ok
+        from hledac.universal.utils.asyncx import parallel_ok
         outcomes = await parallel_ok(*tasks, return_exceptions=True)
         for outcome in outcomes:
             if isinstance(outcome, BaseException):

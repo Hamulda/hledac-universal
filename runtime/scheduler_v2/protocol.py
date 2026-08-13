@@ -454,11 +454,3 @@ def _unwrap_init_result(value: Any) -> Any:
     if isinstance(value, InitResult):
         return value.value if value else None
     return value
-    """Unwrap InitResult to raw value, or return value as-is.
-    
-    Pattern: InitResult[T] | None → T | None
-    Used throughout v2 to extract raw services from InitResult fields.
-    """
-    if isinstance(value, InitResult):
-        return value.value if value else None
-    return value

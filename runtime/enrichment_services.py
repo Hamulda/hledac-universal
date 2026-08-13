@@ -17,7 +17,7 @@ from hledac.universal.core.concurrency import ConcurrencyCategory, get_semaphore
 import logging
 from pathlib import Path
 from typing import Any
-from hledac.universal.utils.async_helpers import bounded_parallel_map
+from hledac.universal.utils.asyncx import bounded_parallel_map
 from hledac.universal.utils.lmdb_bulk import putmulti_bounded
 log = logging.getLogger(__name__)
 _FORENSICS_LMDB_NAME = 'forensics_enrichment.lmdb'

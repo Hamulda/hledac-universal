@@ -13,7 +13,7 @@ import logging
 import os
 import secrets
 from typing import Any
-from hledac.universal.utils.async_helpers import parallel
+from hledac.universal.utils.asyncx import parallel
 from hledac.universal.transport.circuit_breaker import domain_breaker_check, domain_breaker_record_failure, domain_breaker_record_success
 from hledac.universal.transport.session_pool import session_pool
 

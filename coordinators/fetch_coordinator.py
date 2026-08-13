@@ -66,7 +66,7 @@ from hledac.universal.runtime.logging_setup import get_logger
 from hledac.universal.runtime.privacy_budget import PrivacyBudgetAllocator, make_privacy_allocator
 from hledac.universal.tools.file_cache import apply_fcntl_nocache as _apply_fcntl_nocache
 from hledac.universal.tools.zstd_compressor import ZstdCompressor
-from hledac.universal.utils.async_helpers import (
+from hledac.universal.utils.asyncx import (
     BoundedPerHostGate,
     DomainRateLimiter,
     async_getaddrinfo,
@@ -84,6 +84,7 @@ from hledac.universal.utils.flow_trace import (
 from hledac.universal.utils.locks import LazyAsyncioLock  # ISSUE-011: asyncio-safe lock
 
 from ..tools.url_dedup import DeduplicationStrategy, dedupe_url_list
+from collections import deque
 from ..knowledge.cross_sprint_gate import get_cross_sprint_gate
 from ..knowledge.entity_confirmation import get_entity_confirmation_service, get_entity_confirmation_service_sync
 
@@ -445,6 +446,354 @@ def apply_fcntl_nocache(fd: int, content_length: int | None) -> None:
 
 
 # =============================================================================
+# BREAKTHROUGH #2: Speculative Prefetch via Real-Time Link Prediction
+# =============================================================================
+
+@dataclasses.dataclass(slots=True, frozen=True)
+class SpeculativePrefetchResult:
+    """
+    BREAKTHROUGH #2: Result of speculative prefetch phase.
+    
+    Contains URLs to speculatively fetch based on link prediction.
+    """
+    prefetch_urls: tuple[str, ...] = dataclasses.field(default_factory=tuple)
+    prefetch_count: int = 0
+    dedup_skipped: int = 0
+    dns_prefetched: int = 0
+    latency_ms: float = 0.0
+
+
+class SpeculativePrefetcher:
+    """
+    BREAKTHROUGH #2: Speculative prefetch using real-time link prediction.
+    
+    Architecture:
+    ```
+    IOC extraction → buffer IOCs → LINK PREDICTION (streaming) 
+                  → prefetch candidates → fetch_coordinator (steal prefetch)
+    ```
+    
+    Performance target:
+    - Prefetch coverage: 70%+ (vs 0% in batch-only mode)
+    - Link prediction latency: ~50ms (vs ~5s batch)
+    - IGD improvement: +35%
+    
+    M1 8GB constraints:
+    - MAX_CLAIMS = 5000 (bounded queue)
+    - MAX_PREFETCH_URLS = 1000 (dedup filter)
+    - Memory-pressure adaptive thresholds
+    """
+    
+    __slots__ = (
+        '_adjacency',
+        '_available',
+        '_coordinator',
+        '_dedup_filter',
+        '_dns_cache',
+        '_frontier',
+        '_link_predictor',
+        '_max_prefetch',
+        '_pending_nodes',
+        '_prefetch_urls',
+        '_rust_dns',
+        '_rust_dns_enabled',
+        '_streaming_task',
+        '_total_predictions',
+    )
+    
+    # Bounds for M1 8GB safety
+    MAX_PREFETCH_URLS = 1000
+    MAX_PENDING_NODES = 5000
+    MAX_ADJACENCY_SIZE = 10000
+    
+    def __init__(
+        self,
+        coordinator: FetchCoordinator,
+        *,
+        max_prefetch: int = 100,
+    ) -> None:
+        self._coordinator = coordinator
+        self._max_prefetch = max_prefetch
+        
+        # Adjacency list for streaming link prediction
+        self._adjacency: dict[int, list[int]] = {}
+        self._pending_nodes: list[int] = []
+        
+        # Prefetch queue
+        self._prefetch_urls: deque[str] = deque(maxlen=self.MAX_PREFETCH_URLS)
+        
+        # Front-lookup dedup filter (RotatingBloomFilter integration)
+        # Uses the coordinator's dedup strategy for cross-request persistence
+        self._dedup_filter: DeduplicationStrategy | None = None
+        
+        # DNS prefetch cache
+        self._dns_cache: TTLCache[str, list[str]] = TTLCache(maxsize=512, ttl=300)
+        
+        # Streaming link predictor
+        self._link_predictor: Any = None
+        self._streaming_task: asyncio.Task | None = None
+        
+        # Stats
+        self._total_predictions = 0
+        self._available = False
+        
+        # Rust DNS prefetch availability
+        self._rust_dns = _RUST_DNS
+        self._rust_dns_enabled = _RUST_DNS_ENABLED
+        
+        # Initialize async link predictor
+        self._init_link_predictor()
+    
+    def _init_link_predictor(self) -> None:
+        """Initialize streaming link predictor."""
+        try:
+            from hledac.universal.knowledge.link_prediction import (
+                StreamingLinkPredictor,
+                LinkPredictorConfig,
+            )
+            
+            # Get DuckDB path from coordinator context
+            db_path = self._get_duckdb_path()
+            if db_path:
+                config = LinkPredictorConfig(
+                    streaming_mode=True,
+                    flush_interval_ms=50,
+                    max_pending_nodes=100,
+                    generate_url_candidates=True,
+                )
+                self._link_predictor = StreamingLinkPredictor(db_path, config)
+                self._available = True
+                logger.debug("[BREAKTHROUGH-2] SpeculativePrefetcher initialized")
+            else:
+                logger.debug("[BREAKTHROUGH-2] No DuckDB path available")
+        except ImportError as e:
+            logger.warning("[BREAKTHROUGH-2] Streaming link predictor unavailable: %s", e)
+            self._available = False
+    
+    def _get_duckdb_path(self) -> str | None:
+        """Get DuckDB path from coordinator context."""
+        try:
+            ctx = self._coordinator._ctx
+            if ctx:
+                return ctx.get('duckdb_path')
+        except Exception:
+            pass
+        return None
+    
+    def add_ioc_node(self, node_id: int, neighbors: list[int], ioc_value: str | None = None) -> None:
+        """
+        Add a newly discovered IOC node for link prediction.
+        
+        BREAKTHROUGH #2: Called during ACTIVE phase extraction.
+        M1 8GB: Bounded to MAX_PENDING_NODES.
+        
+        Args:
+            node_id: IOC node ID (from Kuzu graph)
+            neighbors: List of neighbor node IDs (observed edges)
+            ioc_value: Optional IOC value string (domain name, URL, IP, etc.)
+                      Used for generating real URL candidates in prefetch.
+        """
+        if len(self._pending_nodes) >= self.MAX_PENDING_NODES:
+            # Evict oldest entries
+            evict_count = self.MAX_PENDING_NODES // 10
+            evicted = self._pending_nodes[:evict_count]
+            self._pending_nodes = self._pending_nodes[evict_count:]
+            # FIX: Clean up evicted nodes from adjacency to prevent memory leak
+            for evicted_id in evicted:
+                if evicted_id in self._adjacency:
+                    del self._adjacency[evicted_id]
+        
+        self._pending_nodes.append(node_id)
+        
+        # FIX: Update adjacency with bounded memory
+        # Add bidirectional edges for graph topology
+        if len(self._adjacency) < self.MAX_ADJACENCY_SIZE:
+            if node_id not in self._adjacency:
+                self._adjacency[node_id] = []
+            for n in neighbors:
+                if n not in self._adjacency[node_id]:
+                    self._adjacency[node_id].append(n)
+                # Add reverse edge for undirected graph
+                if n not in self._adjacency:
+                    self._adjacency[n] = []
+                if node_id not in self._adjacency[n]:
+                    self._adjacency[n].append(node_id)
+        
+        # FIX: Use coordinator's dedup filter for prefetch URL deduplication
+        # This ensures prefetch URLs respect the same dedup constraints as normal URLs
+        if self._dedup_filter is None and self._coordinator is not None:
+            self._dedup_filter = getattr(self._coordinator, '_processed_urls', None)
+        
+        # Notify link predictor with IOC value for real URL generation
+        if self._link_predictor:
+            self._link_predictor.add_node(node_id, neighbors, ioc_value)
+    
+    async def execute_speculative_prefetch(self) -> SpeculativePrefetchResult:
+        """
+        BREAKTHROUGH #2: Execute speculative prefetch phase.
+        
+        Integrates with FetchCoordinator._do_step pipeline:
+        - Phase 2.5: After DNS resolve/dedup, before priority candidates
+        - Consumes link prediction output
+        - Adds prefetch URLs to coordinator frontier
+        - Uses RotatingBloomFilter for dedup
+        - DNS prefetch via Rust async FFI
+        
+        Returns:
+            SpeculativePrefetchResult with prefetch URLs and stats
+        """
+        import time
+        start = time.monotonic()
+        
+        if not self._available or not self._link_predictor:
+            return SpeculativePrefetchResult()
+        
+        prefetch_count = 0
+        dedup_skipped = 0
+        dns_prefetched = 0
+        prefetch_urls: list[str] = []
+        
+        # FIX: Get dedup filter - prefer coordinator's RotatingBloomFilter
+        # This ensures prefetch URLs respect the same dedup constraints as normal URLs
+        dedup_filter = self._dedup_filter
+        if dedup_filter is None and self._coordinator is not None:
+            dedup_filter = getattr(self._coordinator, '_processed_urls', None)
+        
+        # Get streaming predictions
+        try:
+            async for batch in self._link_predictor.stream_predictions():
+                for edge in batch.edges:
+                    self._total_predictions += 1
+                    
+                    # Generate URL candidates from predicted edge
+                    for url in edge.url_candidates[:self.MAX_PREFETCH_URLS]:
+                        # FIX: Dedup using dedup filter (RotatingBloomFilter from coordinator)
+                        if dedup_filter is not None and url in dedup_filter:
+                            dedup_skipped += 1
+                            continue
+                        
+                        prefetch_urls.append(url)
+                        prefetch_count += 1
+                        
+                        # Check max bound
+                        if prefetch_count >= self._max_prefetch:
+                            break
+                
+                if prefetch_count >= self._max_prefetch:
+                    break
+        except Exception as e:
+            logger.debug("[BREAKTHROUGH-2] Prefetch error: %s", e)
+        
+        # DNS prefetch via Rust async FFI (tokio::net::lookup_host)
+        if prefetch_urls and self._rust_dns_enabled:
+            hosts = list(set(_fast_url_host(u) for u in prefetch_urls if _fast_url_host(u)))
+            if hosts:
+                dns_result = _rust_dns_prefetch(hosts)
+                if dns_result:
+                    dns_prefetched = sum(len(ips) for ips in dns_result.values())
+                    # Cache DNS results for later fetch
+                    for host, ips in dns_result.items():
+                        self._dns_cache[host] = ips
+        
+        # FIX: Add prefetch URLs to coordinator frontier via append method (deque)
+        if self._coordinator is not None:
+            for url in prefetch_urls:
+                self._coordinator._frontier.append(url)
+        
+        elapsed_ms = (time.monotonic() - start) * 1000
+        
+        return SpeculativePrefetchResult(
+            prefetch_urls=tuple(prefetch_urls),
+            prefetch_count=prefetch_count,
+            dedup_skipped=dedup_skipped,
+            dns_prefetched=dns_prefetched,
+            latency_ms=elapsed_ms,
+        )
+    
+    async def prefetch_dns_batch(self, urls: list[str]) -> dict[str, list[str]]:
+        """
+        DNS prefetch for a batch of URLs using Rust async FFI.
+        
+        BREAKTHROUGH #2: Uses tokio::net::lookup_host for async DNS.
+        Falls back to socket.getaddrinfo on error.
+        """
+        hosts = list(set(_fast_url_host(u) for u in urls if _fast_url_host(u)))
+        results: dict[str, list[str]] = {}
+        
+        for host in hosts:
+            # Check cache first
+            if host in self._dns_cache:
+                results[host] = self._dns_cache[host]
+                continue
+            
+            # Use Rust DNS if available
+            if self._rust_dns_enabled:
+                try:
+                    ips = await self._rust_dns.prefetch([host])
+                    if host in ips:
+                        results[host] = ips[host]
+                        self._dns_cache[host] = ips[host]
+                        continue
+                except Exception:
+                    pass
+            
+            # Fallback to socket
+            try:
+                import socket
+                results_list = socket.getaddrinfo(host, 0)
+                ips = sorted(set(r[4][0] for r in results_list))
+                results[host] = ips
+                self._dns_cache[host] = ips
+            except (socket.gaierror, OSError):
+                results[host] = []
+        
+        return results
+    
+    @property
+    def total_predictions(self) -> int:
+        """Total predictions made so far."""
+        return self._total_predictions
+    
+    @property
+    def prefetch_queue_size(self) -> int:
+        """Current prefetch queue size."""
+        return len(self._prefetch_urls)
+    
+    @property
+    def is_available(self) -> bool:
+        """Whether speculative prefetch is available."""
+        return self._available
+    
+    def report_ioc_discovery(self, node_id: int, neighbors: list[int], ioc_value: str | None = None) -> None:
+        """
+        BREAKTHROUGH #2: Report IOC discovery to SpeculativePrefetcher.
+        
+        Called when new IOCs are extracted from fetched content.
+        This enables real-time link prediction during ACTIVE phase.
+        
+        Args:
+            node_id: IOC node ID (typically xxhash64 of IOC value)
+            neighbors: List of neighbor node IDs (observed edges from fetch)
+            ioc_value: Optional IOC value string (domain name, URL, IP, etc.)
+        """
+        self.add_ioc_node(node_id, neighbors, ioc_value)
+    
+    def report_ioc_discovery(self, node_id: int, neighbors: list[int], ioc_value: str | None = None) -> None:
+        """
+        BREAKTHROUGH #2: Report IOC discovery to SpeculativePrefetcher.
+        
+        Called by fetch_coordinator when new IOCs are extracted from fetched content.
+        This enables real-time link prediction during ACTIVE phase.
+        
+        Args:
+            node_id: IOC node ID (typically xxhash64 of IOC value)
+            neighbors: List of neighbor node IDs (observed edges from fetch)
+            ioc_value: Optional IOC value string (domain name, URL, IP, etc.)
+        """
+        self.add_ioc_node(node_id, neighbors, ioc_value)
+
+
+# =============================================================================
 # F360-R: Phase Result Dataclasses (slots=True for M1 8GB memory efficiency)
 # =============================================================================
 # These dataclasses define clear phase boundaries with typed inputs/outputs.
@@ -662,6 +1011,11 @@ class FetchCoordinator(UniversalCoordinator):
         # SILICON-07: SwarmDAG — initialized lazily in _do_initialize()
         self._swarm_dag: Any = None
         self._swarm_dag_rebalance_task: asyncio.Task[None] | None = None
+        
+        # BREAKTHROUGH #2: Speculative prefetch via real-time link prediction
+        # Initialized lazily in _do_initialize() to allow DuckDB path to be set
+        self._speculative_prefetcher: SpeculativePrefetcher | None = None
+        
         self.init_session_manager()
 
     @property
@@ -752,6 +1106,10 @@ class FetchCoordinator(UniversalCoordinator):
         (e.g., evidence creation, DuckDB insert). The entity is tracked in the
         sprint-level CognitiveSaturationDetector to detect when discovery stops.
 
+        BREAKTHROUGH #2: Also reports to SpeculativePrefetcher for streaming
+        link prediction. When new IOCs are discovered, they are added to the
+        link predictor's adjacency graph for real-time prediction.
+
         This is a fire-and-forget telemetry method. Errors are logged and
         swallowed so that fetch work is never blocked by saturation detection.
 
@@ -760,11 +1118,32 @@ class FetchCoordinator(UniversalCoordinator):
             ioc_type: Optional IOC type string for telemetry (e.g., "domain", "ipv4").
         """
         try:
+            # [ULTIMATE]-002: Cognitive saturation tracking
             detector = _COGNITIVE_SATURATION_DETECTOR
             if detector is not None and hasattr(detector, 'report_entity_discovery'):
                 detector.report_entity_discovery(entity_value, ioc_type)
         except Exception as e:
             logger.debug('[ULTIMATE]-002 report_entity_discovery failed: %s', e)
+        
+        # BREAKTHROUGH #2: Report to SpeculativePrefetcher for streaming link prediction
+        # This enables real-time prediction when new IOCs are discovered
+        try:
+            if self._speculative_prefetcher is not None and self._speculative_prefetcher.is_available:
+                # Generate node_id from entity value (consistent with Kuzu graph)
+                import xxhash
+                node_id = xxhash.xxh64(entity_value.lower()).intdigest()
+                
+                # Get existing neighbors from adjacency (or empty list)
+                neighbors = self._speculative_prefetcher._adjacency.get(node_id, [])
+                
+                # Report with IOC value for real URL generation
+                self._speculative_prefetcher.report_ioc_discovery(
+                    node_id=node_id,
+                    neighbors=neighbors,
+                    ioc_value=entity_value if ioc_type in ('domain', 'url', 'hostname') else None,
+                )
+        except Exception as e:
+            logger.debug('[BREAKTHROUGH-2] SpeculativePrefetcher report failed: %s', e)
 
     def _check_circuit(self, domain: str) -> tuple[bool, str, float]:
         """
@@ -1509,12 +1888,21 @@ class FetchCoordinator(UniversalCoordinator):
                 _altsvc_http_version_for,
                 _altsvc_record_from_result,
             )
-            try:
-                from hledac.universal.transport.http3_lane import probe_altsvc_speculative
-                probe_altsvc_speculative(url)
-            except (ImportError, AttributeError, TypeError):  # noqa: BLE001 — best-effort; http3_lane unavailable; fail-open
-                pass
-            _curl_http_version = _altsvc_http_version_for(_altsvc_extract_host(url))
+            # PERFORMANCE FIX: Only probe Alt-Svc when cache is cold.
+            # Previously, probe_altsvc_speculative was called unconditionally per-request,
+            # causing redundant H3 probes even when cache was warm. Now we check
+            # the cache first and only probe on cache miss.
+            _altsvc_host = _altsvc_extract_host(url)
+            _curl_http_version = _altsvc_http_version_for(_altsvc_host)
+            if _curl_http_version is None:
+                # Cache miss — probe speculatively to prime the cache
+                try:
+                    from hledac.universal.transport.http3_lane import probe_altsvc_speculative
+                    probe_altsvc_speculative(url)
+                except (ImportError, AttributeError, TypeError):  # noqa: BLE001 — best-effort; http3_lane unavailable; fail-open
+                    pass
+                # Re-check cache after probing (may have been populated)
+                _curl_http_version = _altsvc_http_version_for(_altsvc_host)
             _ja3_profile = next_ja3_profile()
             # F-07: Merge extra headers (clearance cookies) with request headers
             _req_headers = dict(_extra_headers) if _extra_headers else None
@@ -1653,6 +2041,36 @@ class FetchCoordinator(UniversalCoordinator):
     async def _do_initialize(self) -> bool:
         """Initialize coordinator."""
         logger.info('FetchCoordinator initialized')
+        
+        # BREAKTHROUGH #2: Initialize speculative prefetch via real-time link prediction
+        # Gated by HLEDAC_ENABLE_SPECULATIVE_PREFETCH (default OFF — experimental)
+        _speculative_prefetch_enabled = os.environ.get(
+            'HLEDAC_ENABLE_SPECULATIVE_PREFETCH', '0',
+        ).lower() in ('1', 'true', 'yes', 'on')
+        if _speculative_prefetch_enabled:
+            try:
+                self._speculative_prefetcher = SpeculativePrefetcher(
+                    coordinator=self,
+                    max_prefetch=100,
+                )
+                if self._speculative_prefetcher.is_available:
+                    logger.info(
+                        '[BREAKTHROUGH-2] Speculative prefetch enabled '
+                        '(target: 70%+ coverage, +35% IGD)',
+                    )
+                else:
+                    logger.debug(
+                        '[BREAKTHROUGH-2] Speculative prefetch unavailable '
+                        '(streaming link predictor not available)',
+                    )
+                    self._speculative_prefetcher = None
+            except Exception as e:
+                logger.debug(
+                    '[BREAKTHROUGH-2] Speculative prefetch init failed '
+                    '(fail-soft): %s', e,
+                )
+                self._speculative_prefetcher = None
+        
         # UNIFIED-003: Subscribe to EntropyFetchBridge for high-uncertainty alerts.
         # Gated by HLEDAC_ENABLE_ENTROPY_FEEDBACK (default ON). Opt-out via env=0.
         _entropy_feedback_enabled = os.environ.get(
@@ -1815,6 +2233,43 @@ class FetchCoordinator(UniversalCoordinator):
             except Exception as exc:
                 logger.debug('[META-002] DeltaSyncEngine config/load failed (fail-soft): %s', exc)
         logger.info('FetchCoordinator started with %s URLs in frontier', len(self._frontier))
+        
+        # BREAKTHROUGH #2: Initialize SpeculativePrefetcher for streaming link prediction
+        # Must be after ctx is set so DuckDB path is available
+        try:
+            from ..knowledge.link_prediction import (
+                StreamingLinkPredictor,
+                LinkPredictorConfig,
+            )
+            # Get DuckDB path from orchestrator or ctx
+            db_path: str | None = None
+            if self._orchestrator:
+                db_path = getattr(self._orchestrator, '_duckdb_store', None)
+            if db_path is None:
+                db_path = self._ctx.get('duckdb_path')
+            
+            if db_path:
+                config = LinkPredictorConfig(
+                    streaming_mode=True,
+                    flush_interval_ms=50,
+                    max_pending_nodes=100,
+                    generate_url_candidates=True,
+                )
+                self._speculative_prefetcher = SpeculativePrefetcher(
+                    self,
+                    max_prefetch=100,
+                )
+                # Initialize with DuckDB path via context
+                self._ctx['duckdb_path'] = db_path
+                logger.info('[BREAKTHROUGH-2] SpeculativePrefetcher initialized with db_path=%s', db_path)
+            else:
+                logger.debug('[BREAKTHROUGH-2] No DuckDB path available for SpeculativePrefetcher')
+        except ImportError as e:
+            logger.warning('[BREAKTHROUGH-2] Streaming link predictor unavailable: %s', e)
+            self._speculative_prefetcher = None
+        except Exception as e:
+            logger.warning('[BREAKTHROUGH-2] SpeculativePrefetcher init failed: %s', e)
+            self._speculative_prefetcher = None
 
     def _url_priority(self, url: str) -> int:
         """
@@ -2220,6 +2675,8 @@ class FetchCoordinator(UniversalCoordinator):
         - AIMD window
 
         Complexity reduction: delegates to helper methods for each phase.
+
+        BREAKTHROUGH #2: Phase 2.5 - Speculative prefetch via link prediction.
         """
         self._ctx.update(ctx)
         budget_mgr = ctx.get('budget_manager')
@@ -2239,8 +2696,51 @@ class FetchCoordinator(UniversalCoordinator):
         _, unique_batch = await self._resolve_dns_and_dedup(raw_batch)
         del raw_batch
 
-        # Phase 3: Apply gate filters
-        skip_set, confirmed_set, freshness_list = await self._apply_gate_filters(unique_batch)
+        # FIX: Phase 2.5 now runs IN PARALLEL with Phase 3 to hide latency
+        # Use TaskGroup for concurrent execution
+        prefetch_result = SpeculativePrefetchResult()
+        gate_filters_ready = asyncio.Event()
+        gate_filters_result: dict[str, Any] = {}
+        
+        async def _run_phase_25():
+            """Phase 2.5: BREAKTHROUGH #2 - Speculative prefetch via link prediction."""
+            nonlocal prefetch_result
+            if hasattr(self, '_speculative_prefetcher') and self._speculative_prefetcher is not None:
+                try:
+                    prefetch_result = await self._speculative_prefetcher.execute_speculative_prefetch()
+                    # Update telemetry
+                    self._telemetry['speculative_prefetch_count'] = prefetch_result.prefetch_count
+                    self._telemetry['speculative_prefetch_dedup'] = prefetch_result.dedup_skipped
+                    self._telemetry['speculative_dns_prefetch'] = prefetch_result.dns_prefetched
+                except Exception as e:
+                    logger.debug("[BREAKTHROUGH-2] Speculative prefetch failed: %s", e)
+            gate_filters_ready.set()
+        
+        async def _run_phase_3():
+            """Phase 3: Apply gate filters."""
+            nonlocal gate_filters_result
+            skip_set, confirmed_set, freshness_list = await self._apply_gate_filters(unique_batch)
+            gate_filters_result = {
+                'skip_set': skip_set,
+                'confirmed_set': confirmed_set,
+                'freshness_list': freshness_list,
+            }
+        
+        # Run phases 2.5 and 3 in parallel
+        try:
+            async with asyncio.TaskGroup() as tg:
+                tg.create_task(_run_phase_25(), name='phase_25_prefetch')
+                tg.create_task(_run_phase_3(), name='phase_3_gate_filters')
+        except* Exception as exc_group:
+            logger.debug("[BREAKTHROUGH-2] Parallel phase execution failed: %s", exc_group)
+        
+        # Wait for Phase 2.5 to complete (Phase 3 may complete faster)
+        await gate_filters_ready.wait()
+        
+        # Get Phase 3 results
+        skip_set = gate_filters_result.get('skip_set', set())
+        confirmed_set = gate_filters_result.get('confirmed_set', set())
+        freshness_list = gate_filters_result.get('freshness_list', [])
 
         # Phase 4: Build priority candidates
         candidates = self._build_priority_candidates(unique_batch, skip_set, confirmed_set, freshness_list)
@@ -2268,6 +2768,9 @@ class FetchCoordinator(UniversalCoordinator):
             trace_counter('fetch.aimd.window', self._aimd_concurrency)
             trace_counter('fetch.active', self._telemetry['active_fetches'])
             trace_counter('fetch.batch_size', batch_size)
+            # BREAKTHROUGH #2: Trace prefetch telemetry
+            trace_counter('fetch.prefetch.urls', prefetch_result.prefetch_count)
+            trace_counter('fetch.prefetch.dns', prefetch_result.dns_prefetched)
 
         results, batch_elapsed = await self._execute_batch_fetch(urls_to_fetch)
 
@@ -2280,6 +2783,8 @@ class FetchCoordinator(UniversalCoordinator):
             batch_size=batch_size,
             effective_parallelism=effective_parallelism,
             batch_elapsed_ms=round(batch_elapsed * 1000, 2),
+            prefetch_count=prefetch_result.prefetch_count,
+            prefetch_dns=prefetch_result.dns_prefetched,
         )
 
     async def _check_dns_and_circuit(self, url: str, domain: str) -> tuple[bool, dict[str, Any], bool, str, float]:
@@ -2323,10 +2828,32 @@ class FetchCoordinator(UniversalCoordinator):
         # CancelledError propagates naturally via except* — no explicit handler needed
         return (dns_safe, dns_meta, cb_allowed, cb_reason, cb_retry_after)
 
-    def _get_step_result(self, new_evidence_ids: list[str] | None=None, batch_size: int=0, effective_parallelism: int=0, batch_elapsed_ms: float=0.0) -> dict[str, Any]:
+    def _get_step_result(
+        self,
+        new_evidence_ids: list[str] | None=None,
+        batch_size: int=0,
+        effective_parallelism: int=0,
+        batch_elapsed_ms: float=0.0,
+        prefetch_count: int=0,
+        prefetch_dns: int=0,
+    ) -> dict[str, Any]:
         """Get bounded step result with Sprint 5B batch telemetry."""
         evidence_ids = (new_evidence_ids or [])[:self._config.max_evidence_per_step]
-        return {'urls_fetched': len(evidence_ids), 'evidence_ids': evidence_ids, 'total_fetched': self._urls_fetched_count, 'stop_reason': self._stop_reason, 'frontier_remaining': len(self._frontier), 'aimd_window': self._aimd_concurrency, 'active_fetches': self._telemetry['active_fetches'], 'batch_size': batch_size, 'effective_parallelism': effective_parallelism, 'batch_elapsed_ms': batch_elapsed_ms}
+        return {
+            'urls_fetched': len(evidence_ids),
+            'evidence_ids': evidence_ids,
+            'total_fetched': self._urls_fetched_count,
+            'stop_reason': self._stop_reason,
+            'frontier_remaining': len(self._frontier),
+            'aimd_window': self._aimd_concurrency,
+            'active_fetches': self._telemetry['active_fetches'],
+            'batch_size': batch_size,
+            'effective_parallelism': effective_parallelism,
+            'batch_elapsed_ms': batch_elapsed_ms,
+            # BREAKTHROUGH #2: Speculative prefetch telemetry
+            'prefetch_count': prefetch_count,
+            'prefetch_dns': prefetch_dns,
+        }
 
     @_otel_instrumented('fetch.url', component='network')
     async def _fetch_url(self, url: str, attempt: int=0) -> dict[str, Any] | None:

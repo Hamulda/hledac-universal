@@ -50,7 +50,7 @@ from typing import TYPE_CHECKING, Any
 
 import msgspec
 
-from hledac.universal.utils.async_helpers import safe_create_task
+from hledac.universal.utils.asyncx import safe_create_task
 from hledac.universal.utils.locks import LazyAsyncioLock
 from ._tcp_keepalive import (
     SO_KEEPALIVE,

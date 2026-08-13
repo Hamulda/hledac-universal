@@ -28,7 +28,7 @@ from dataclasses import dataclass
 import msgspec
 from typing import TYPE_CHECKING, Any
 from urllib.parse import urlparse
-from hledac.universal.utils.async_helpers import parallel_ok
+from hledac.universal.utils.asyncx import parallel_ok
 from hledac.universal.utils.uma_budget import get_uma_snapshot
 from .confidence_policy import compute_confidence as _compute_confidence
 _AC_MATCHER: Any = None

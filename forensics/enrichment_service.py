@@ -40,7 +40,7 @@ import ssl
 import msgspec
 from pathlib import Path
 from typing import Any
-from hledac.universal.utils.async_helpers import parallel
+from hledac.universal.utils.asyncx import parallel
 log = logging.getLogger(__name__)
 _EXTERNAL_LOOKUP_TIMEOUT: float = 5.0
 _MetadataExtractor: type | None = None

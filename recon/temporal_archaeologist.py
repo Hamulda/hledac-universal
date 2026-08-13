@@ -50,7 +50,7 @@ from typing import Any
 import httpx
 from urllib.parse import quote, urlparse
 import numpy as np
-from hledac.universal.utils.async_helpers import parallel_ok
+from hledac.universal.utils.asyncx import parallel_ok
 from hledac.universal.transport.session_pool import session_pool
 from hledac.universal.utils.rate_limiter import RateLimitConfig, RateLimiter
 from operator import attrgetter, itemgetter

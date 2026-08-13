@@ -2,7 +2,7 @@
 runtime/protocols/__init__.py — F270: SprintScheduler Interface Segregation
 =========================================================================
 
-14 Protocol classes extracting SprintScheduler's 80+ instance attributes
+12 Protocol classes extracting SprintScheduler's 80+ instance attributes
 into cohesive, testable interfaces.
 
 Protocols are defined using typing.Protocol (structural subtyping).
@@ -31,8 +31,6 @@ Author: F270 Interface Segregation
 Date: 2026-06-25
 """
 
-
-
 import asyncio
 from collections.abc import Callable, Iterator
 from typing import (
@@ -51,7 +49,6 @@ from .fetch_protocol import FetchProtocol
 from .graph_protocol import GraphProtocol
 from .intel_protocol import IntelProtocol
 from .lane_protocol import LaneProtocol
-from .layers_protocol import LayersProtocol
 from .lifecycle_protocol import LifecycleProtocol
 from .metrics_protocol import MetricsProtocol
 from .pivot_protocol import PivotProtocol
@@ -83,8 +80,6 @@ __all__ = [
     "StixProtocol",
     # Brain
     "BrainProtocol",
-    # Layers
-    "LayersProtocol",
     # Transport
     "TransportProtocol",
     # Pivot

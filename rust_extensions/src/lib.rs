@@ -264,6 +264,13 @@ pub mod metal_shared_buf; // SILICON-04: Shared Metal buffer (guarded by metal_s
 pub mod mlx_bridge; // ISSUE-015: MLX async token streaming
 pub mod simd; // ISSUE-023: Modular SIMD (NEON fallback)
 
+// SILICON-02: whisper.cpp speech-to-text via whisper-rs with CoreML/ANE backend.
+// Enables: rust.whisper.transcribe() — ANE-accelerated transcription.
+// M1 8GB: Only tiny (39 MB) and base (74 MB) models. Bounded to 1 concurrent inf.
+// Python fallback: brain/whisper_engine.py uses whispercpp Python package.
+#[cfg(feature = "whisper")]
+pub mod whisper;
+
 // ============================================================================
 // Network Protocols
 // ============================================================================
@@ -1162,8 +1169,9 @@ fn hledac_rust_extensions(m: &Bound<'_, PyModule>) -> PyResult<()> {
     // Exposes async versions of DNS, QUIC, and Arti that return awaitables directly.
     // Usage: `await rust.dns.resolve_async("example.com")` instead of
     // `asyncio.to_thread(rust.dns.resolve, "example.com")`
-    // Note: shared_tokio feature is included by dns, quic, embedded_tor, and nw_framework.
-    #[cfg(any(feature = "dns", feature = "quic", feature = "embedded_tor", feature = "nw_framework"))]
+    // Note: shared_tokio feature is included by dns, quic, embedded_tor, nw_framework.
+    // BREAKTHROUGH #2: Also enabled for streaming link prediction (shared_tokio in default).
+    #[cfg(any(feature = "dns", feature = "quic", feature = "embedded_tor", feature = "nw_framework", feature = "shared_tokio"))]
     async_bridge::register(m)?;
 
     // MODERN-16: Stealth bridge — Python curl_cffi JA3 ↔ Rust raw I/O
@@ -1459,6 +1467,12 @@ fn hledac_rust_extensions(m: &Bound<'_, PyModule>) -> PyResult<()> {
     // ANE: Apple Neural Engine bindings — model registry, batch validation, telemetry
     #[cfg(feature = "ane")]
     ane::register_functions(m)?;
+
+    // SILICON-02: whisper.cpp transcription via whisper-rs with CoreML/ANE backend.
+    // Provides: rust.whisper.transcribe(), is_available(), get_cache_dir()
+    // M1 8GB: Only tiny/base models, bounded 1 concurrent inference.
+    #[cfg(feature = "whisper")]
+    whisper::register(m)?;
 
     // R22: Accelerate/vDSP FFI — batch cosine similarity for NER engine
     // Gated because vDSP symbols are unavailable on macOS 26.5+ (Darwin 25.5+)

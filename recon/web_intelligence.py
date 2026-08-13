@@ -23,7 +23,7 @@ from enum import Enum, StrEnum
 from typing import Any
 from hledac.universal.utils.msgspec_json import dumps_str, loads as _msgspec_loads
 from hledac.universal.utils.uuid7 import new_runtime_id
-from hledac.universal.utils.async_helpers import safe_create_task, safe_gather_fire_and_forget
+from hledac.universal.utils.asyncx import safe_create_task, safe_gather_fire_and_forget
 
 class WebIntelligenceError(StrEnum):
     """String-based error codes for web intelligence operations."""
@@ -172,7 +172,7 @@ class UnifiedWebIntelligence:
         when multiple operations target the same host (e.g. example.com scraping).
         BoundedPerHostGate uses LRU eviction at 512 hosts × 4 concurrent = ~128 KB RAM."""
         if not hasattr(self, '_per_host_gate') or self._per_host_gate is None:
-            from hledac.universal.utils.async_helpers import BoundedPerHostGate
+            from hledac.universal.utils.asyncx import BoundedPerHostGate
             self._per_host_gate = BoundedPerHostGate(max_hosts=512, per_host_limit=4)
 
     def _init_metrics_and_config(self) -> None:

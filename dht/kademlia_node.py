@@ -100,7 +100,7 @@ from collections import OrderedDict
 from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 from hledac.universal.core.resource_governor import ResourceGovernor
 from hledac.universal.dht.local_graph import LocalGraphStore
-from hledac.universal.utils.async_helpers import parallel_ok, safe_create_task, safe_gather_fire_and_forget, safe_wait_for
+from hledac.universal.utils.asyncx import parallel_ok, safe_create_task, safe_gather_fire_and_forget, safe_wait_for
 
 if TYPE_CHECKING:
     pass

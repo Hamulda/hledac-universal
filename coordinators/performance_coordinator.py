@@ -32,7 +32,7 @@ from weakref import ref
 import msgspec
 from hledac.universal.compat.msgspec_gc_compat import Struct
 
-from hledac.universal.utils.async_helpers import safe_create_task
+from hledac.universal.utils.asyncx import safe_create_task
 from hledac.universal.utils.executor_decorator import offload_to
 
 try:
@@ -47,7 +47,7 @@ except ImportError:
 CircuitBreakerOpen = CircuitBreakerOpenError
 logger = logging.getLogger(__name__)
 from hledac.universal.core.sys_metrics import get_memory_usage_mb
-from hledac.universal.utils.async_helpers import safe_wait_for
+from hledac.universal.utils.asyncx import safe_wait_for
 
 
 class AgentMetrics(Struct):

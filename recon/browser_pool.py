@@ -25,7 +25,7 @@ from dataclasses import dataclass, field
 import msgspec
 from typing import Any
 
-from hledac.universal.utils.async_helpers import BoundedPerHostGate
+from hledac.universal.utils.asyncx import BoundedPerHostGate
 
 logger = logging.getLogger(__name__)
 

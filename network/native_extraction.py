@@ -476,7 +476,7 @@ async def extract_batch(
         List of successful ``NativeExtractionResult`` objects.
         Failures are silently omitted (fail-soft).
     """
-    from hledac.universal.utils.async_helpers import parallel
+    from hledac.universal.utils.asyncx import parallel
 
     coros = [
         extract_from_exposed(host, port, service)

@@ -69,7 +69,7 @@ back to DeepHermes3Engine (in-process mlx-lm Python bindings fallback).
 """
 from __future__ import annotations
 import asyncio
-from hledac.universal.utils.async_helpers import safe_wait_for
+from hledac.universal.utils.asyncx import safe_wait_for
 import orjson as json
 import logging
 import os

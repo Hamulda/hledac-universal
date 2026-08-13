@@ -201,14 +201,17 @@ def putmulti_bounded_str(
         return [False] * len(items) if items else []
 
     # Pre-encode all keys and values so the hot path stays zero-copy
+    # FIX: Track which original items were successfully encoded
     encoded: list[tuple[bytes, bytes]] = []
-    for key_str, value_dict in items:
+    encoded_indices: list[int] = []  # Track original item indices
+    for idx, (key_str, value_dict) in enumerate(items):
         try:
             prefixed = f"{key_prefix}:{key_str}".encode("utf-8") if key_prefix else key_str.encode("utf-8")
             val_bytes = _msgspec_encode(value_dict)  # encode() returns bytes for LMDB
             encoded.append((prefixed, val_bytes))
+            encoded_indices.append(idx)
         except Exception:  # noqa: BLE001
-            # Skip unencodable items; track them in results
+            # Skip unencodable items; they will be False in results
             pass
 
     if not encoded:
@@ -218,20 +221,11 @@ def putmulti_bounded_str(
     written = putmulti_bounded(env, encoded, max_batch=max_batch)
 
     # Reconstruct per-item bools: items before first failure are True
-    results: list[bool] = []
-    ok_so_far = 0
-    for key_str, _ in items:
-        try:
-            prefixed = f"{key_prefix}:{key_str}".encode("utf-8") if key_prefix else key_str.encode("utf-8")
-            # Check if this specific key was in the encoded list up to `written`
-            # Since putmulti_bounded processes in order, items[0:written] succeeded
-            if ok_so_far < written:
-                results.append(True)
-                ok_so_far += 1
-            else:
-                results.append(False)
-        except Exception:
-            results.append(False)
+    # FIX: Use encoded_indices to correctly map back to original items
+    results: list[bool] = [False] * len(items)
+    for i, orig_idx in enumerate(encoded_indices):
+        if i < written:
+            results[orig_idx] = True
 
     return results
 

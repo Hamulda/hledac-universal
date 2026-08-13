@@ -11,7 +11,7 @@ Graceful degradation: web_intelligence.py already handles None gracefully.
 import asyncio
 import logging
 from typing import Any
-from hledac.universal.utils.async_helpers import parallel
+from hledac.universal.utils.asyncx import parallel
 logger = logging.getLogger(__name__)
 
 class AutomationOrchestrator:

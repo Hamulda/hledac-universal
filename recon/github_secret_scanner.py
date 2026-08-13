@@ -20,7 +20,7 @@ from dataclasses import dataclass
 import msgspec
 import httpx
 from hledac.universal.transport.circuit_breaker import checked_httpx_get as checked_aiohttp_get
-from hledac.universal.utils.async_helpers import parallel
+from hledac.universal.utils.asyncx import parallel
 logger = logging.getLogger(__name__)
 from hledac.universal.brain.output_dlp_filter import mask_secret as _mask_secret_impl
 

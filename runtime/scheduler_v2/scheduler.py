@@ -30,9 +30,9 @@ from hledac.universal.runtime.scheduler_v2._task_registry import (
     TaskScope,
     safe_create_task_tracked,
 )
-from hledac.universal.utils.async_helpers import parallel
+from hledac.universal.utils.asyncx import parallel
 from hledac.universal.runtime.scheduler_v2.protocol import InitResult, SprintContext
-from hledac.universal.utils.async_helpers import safe_wait_for
+from hledac.universal.utils.asyncx import safe_wait_for
 
 
 class SprintSchedulerV2(msgspec.Struct, frozen=False, gc=True):

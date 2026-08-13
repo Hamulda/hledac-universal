@@ -33,7 +33,7 @@ from typing import Any
 logger = logging.getLogger(__name__)
 from hledac.universal.discovery.base import DiscoveryBatchResult
 from hledac.universal.discovery.provider_stats import PROVIDER_CAPABILITIES, PROVIDER_COST_ESTIMATE, PROVIDER_NAMES, ProviderStatsRegistry, get_provider_stats_registry
-from hledac.universal.utils.async_helpers import parallel_ok
+from hledac.universal.utils.asyncx import parallel_ok
 _MIN_RELIABILITY = 0.05
 _EXPLORATION_PROB = 0.1
 _COST_MULTIPLIER = 1.5

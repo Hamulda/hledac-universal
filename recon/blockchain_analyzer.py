@@ -64,7 +64,7 @@ from enum import Enum
 from typing import Any
 from urllib.parse import urlparse
 import httpx
-from hledac.universal.utils.async_helpers import parallel
+from hledac.universal.utils.asyncx import parallel
 
 from operator import attrgetter, itemgetter
 # --- Lazy UTXO graph import (ISSUE-009) ---

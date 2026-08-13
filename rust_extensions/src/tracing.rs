@@ -544,6 +544,215 @@ pub fn flush_tracing() {
     // stdout is synchronous, no flush needed
 }
 
+// ============== MODERN-CROSS-2: Async Span Support ==============
+
+/// MODERN-CROSS-2: Async-aware span wrapper for Python asyncio ↔ Rust tokio bridging.
+///
+/// This provides a scoped span that properly handles async context switches.
+/// When an async function awaits, the span remains active across the await point.
+///
+/// Usage:
+/// ```python
+/// from hledac.universal.rust_extensions.tracing import async_span_enter, async_span_exit
+///
+/// async def my_async_fn():
+///     trace_id, span_id = async_span_enter("my_operation")
+///     try:
+///         result = await some_async_operation()
+///         return result
+///     finally:
+///         async_span_exit(trace_id, span_id)
+/// ```
+///
+/// Or with the context manager:
+/// ```python
+/// from hledac.universal.rust_extensions.tracing import AsyncSpan
+///
+/// async def my_async_fn():
+///     with AsyncSpan("my_operation") as span:
+///         result = await some_async_operation()
+///         return result
+/// ```
+
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::collections::HashMap;
+use std::sync::Mutex;
+use std::time::Instant;
+
+/// Registry of active async spans for monitoring and cleanup.
+/// MODERN-CROSS-2 FIX: Simplified to Mutex<HashMap> — no Option wrapping needed.
+static ASYNC_SPAN_REGISTRY: Mutex<HashMap<String, (String, Instant, String)>> = 
+    Mutex::new(HashMap::new());
+
+fn get_async_span_registry() -> std::sync::MutexGuard<'static, HashMap<String, (String, Instant, String)>> {
+    ASYNC_SPAN_REGISTRY.lock().unwrap()
+}
+
+/// Enter an async span with automatic context propagation.
+///
+/// This creates a span that will remain active across await points in async functions.
+/// Unlike span_enter() which is synchronous-only, this stores the span in a registry
+/// so it can be properly exited even after multiple await points.
+///
+/// Returns:
+///   (trace_id, span_id, async_span_key) - tuple for tracking the async span
+#[cfg(feature = "otel")]
+#[pyfunction]
+pub fn async_span_enter(name: String) -> (String, String, String) {
+    use tracing::Span;
+
+    if !is_tracing_enabled() {
+        return (String::new(), String::new(), String::new());
+    }
+
+    // Generate a new span ID for this async operation
+    let async_span_id = generate_span_id_hex();
+    
+    // Get current trace context if available
+    let (trace_id, _) = get_current_trace_id();
+    let trace_id = if trace_id.is_empty() {
+        generate_trace_id_hex()
+    } else {
+        trace_id
+    };
+
+    // Create and enter the span
+    let span = tracing::info_span!(
+        "async:{}",
+        name,
+        operation = %name,
+        trace_id = %trace_id,
+        span_id = %async_span_id,
+        is_async = true
+    );
+    let _entered = span.enter();
+
+    // Store in thread-local for TLS access
+    STARTED_SPAN.with(|cell| {
+        *cell.borrow_mut() = Some(span.clone());
+    });
+    
+    // Store in global registry for async monitoring (MODERN-CROSS-2 FIX: simplified registry access)
+    let key = format!("{}:{}", trace_id, async_span_id);
+    let mut registry = get_async_span_registry();
+    registry.insert(key.clone(), (async_span_id.clone(), Instant::now(), name.clone()));
+
+    (trace_id, async_span_id, key)
+}
+
+/// Enter an async span (stub for non-otel builds).
+#[cfg(not(feature = "otel"))]
+#[pyfunction]
+pub fn async_span_enter(name: String) -> (String, String, String) {
+    let _ = name;
+    (String::new(), String::new(), String::new())
+}
+
+/// Exit an async span by key.
+///
+/// This properly ends the span and removes it from the registry.
+/// The async_span_key is the third element returned by async_span_enter().
+#[cfg(feature = "otel")]
+#[pyfunction]
+pub fn async_span_exit(async_span_key: String, trace_id: String, span_id: String) {
+    if !is_tracing_enabled() {
+        return;
+    }
+
+    // Exit the span guard
+    SPAN_GUARD.with(|cell| {
+        cell.borrow_mut().take();
+    });
+
+    // Clear TLS context
+    CURRENT_TRACE.with(|cell| {
+        *cell.borrow_mut() = None;
+    });
+
+    // Remove from registry and compute duration (MODERN-CROSS-2 FIX: simplified registry access)
+    let mut registry = get_async_span_registry();
+    if let Some((_, start_time, name)) = registry.remove(&async_span_key) {
+        let duration_ms = start_time.elapsed().as_millis() as u64;
+        tracing::info!(
+            operation = %name,
+            duration_ms = %duration_ms,
+            "async_span_completed"
+        );
+    }
+}
+
+/// Exit an async span (stub for non-otel builds).
+#[cfg(not(feature = "otel"))]
+#[pyfunction]
+pub fn async_span_exit(async_span_key: String, trace_id: String, span_id: String) {
+    let _ = async_span_key;
+    let _ = trace_id;
+    let _ = span_id;
+}
+
+/// Get the count of currently active async spans.
+///
+/// Useful for monitoring and debugging async operations.
+#[cfg(feature = "otel")]
+#[pyfunction]
+pub fn get_active_async_span_count() -> usize {
+    let registry = get_async_span_registry();
+    registry.as_ref().map(|m| m.len()).unwrap_or(0)
+}
+
+/// Get active async span count (stub for non-otel builds).
+#[cfg(not(feature = "otel"))]
+#[pyfunction]
+pub fn get_active_async_span_count() -> usize {
+    0
+}
+
+/// Get details of all active async spans (for debugging/monitoring).
+///
+/// Returns:
+///   List of tuples: [(async_span_key, operation_name, elapsed_ms)]
+#[cfg(feature = "otel")]
+#[pyfunction]
+pub fn get_active_async_spans() -> Vec<(String, String, u64)> {
+    // MODERN-CROSS-2 FIX: Removed unused `to_remove` variable and simplified registry access
+    let registry = get_async_span_registry();
+    let now = Instant::now();
+    let mut result = Vec::with_capacity(registry.len());
+    
+    // Collect stale spans (> 5 minutes old) for removal
+    let mut stale_keys = Vec::new();
+    
+    for (key, (_, start_time, name)) in registry.iter() {
+        let elapsed_ms = now.duration_since(*start_time).as_millis() as u64;
+        result.push((key.clone(), name.clone(), elapsed_ms));
+        
+        // Mark spans older than 5 minutes as stale
+        if elapsed_ms > 300_000 {
+            stale_keys.push(key.clone());
+        }
+    }
+    
+    // Drop read guard before acquiring write lock
+    drop(registry);
+    
+    // Remove stale entries (new guard acquired)
+    if !stale_keys.is_empty() {
+        let mut registry = get_async_span_registry();
+        for key in stale_keys {
+            registry.remove(&key);
+        }
+    }
+    
+    result
+}
+
+/// Get active async spans (stub for non-otel builds).
+#[cfg(not(feature = "otel"))]
+#[pyfunction]
+pub fn get_active_async_spans() -> Vec<(String, String, u64)> {
+    Vec::new()
+}
+
 // ============== Module Registration ==============
 
 #[cfg(feature = "otel")]
@@ -561,6 +770,12 @@ pub fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(generate_trace_id, m)?)?;
     m.add_function(wrap_pyfunction!(generate_span_id, m)?)?;
     m.add_function(wrap_pyfunction!(flush_tracing, m)?)?;
+    
+    // MODERN-CROSS-2: Async span support
+    m.add_function(wrap_pyfunction!(async_span_enter, m)?)?;
+    m.add_function(wrap_pyfunction!(async_span_exit, m)?)?;
+    m.add_function(wrap_pyfunction!(get_active_async_span_count, m)?)?;
+    m.add_function(wrap_pyfunction!(get_active_async_spans, m)?)?;
 
     Ok(())
 }

@@ -17,7 +17,7 @@ Env gates:
 M1 8GB: All adapters async, max 3 concurrent per adapter, fail-soft.
 """
 import os
-from hledac.universal.utils.async_helpers import parallel_ok, safe_wait_for
+from hledac.universal.utils.asyncx import parallel_ok, safe_wait_for
 ACADEMIC_ENABLED = os.environ.get('HLEDAC_ENABLE_ACADEMIC', '1').strip().lower() in ('1', 'true', 'yes', 'on')
 __all__ = ['ArxivAdapter', 'ArxivPaper', 'ArxivResult', 'search_arxiv', 'S2ORCAdapter', 'S2Paper', 'S2Result', 'CitationEdge', 'search_s2orc', 'OpenAlexAdapter', 'OpenAlexWork', 'OpenAlexInstitution', 'OpenAlexAuthor', 'OpenAlexResult', 'InstitutionNetwork', 'search_openalex', 'get_institution_network', 'FIELD_CONCEPTS', 'COREAdapter', 'COREWork', 'COREPageResult', 'COREResult', 'search_core_fulltext', 'lookup_core_doi', 'UnpaywallAdapter', 'OAPaper', 'UnpaywallResult', 'resolve_doi', 'resolve_multiple_dois', 'find_free_pdf', 'ACADEMIC_ENABLED', 'get_all_adapters', 'search_all_academic']
 

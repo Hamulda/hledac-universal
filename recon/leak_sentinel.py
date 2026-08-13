@@ -38,7 +38,7 @@ from dataclasses import dataclass, field
 import msgspec
 from enum import StrEnum
 from typing import TYPE_CHECKING, Any
-from hledac.universal.utils.async_helpers import safe_create_task, safe_gather_fire_and_forget
+from hledac.universal.utils.asyncx import safe_create_task, safe_gather_fire_and_forget
 
 class LeakSentinelError(StrEnum):
     """String-based error codes for fail-soft error reporting."""

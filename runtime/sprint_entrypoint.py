@@ -92,7 +92,7 @@ from hledac.universal.core import memory_cycle as _memory_cycle  # F266-U2/U3
 # PHASE REFACTORING: State Container & Decorators (F350M-R Phase 5)
 # =============================================================================
 
-@dataclass
+@dataclass(slots=True)
 class SprintRunContext:
     """
     PHASE REFACTORING F350M-R: Centralized state container for run_sprint phases.
@@ -269,7 +269,7 @@ from hledac.universal.runtime.sprint_lifecycle import _PHASE_ORDER, SprintLifecy
 # inside _run_sprint_loop at call time.
 _build_runtime = None
 _run_runtime = None
-from hledac.universal.utils.async_helpers import (
+from hledac.universal.utils.asyncx import (
     first_completed,
     parallel,
     parallel_ok,
@@ -2438,7 +2438,7 @@ def _find_table_match(
     return default
 
 
-@dataclass
+@dataclass(frozen=True, slots=True)
 class VerdictHintInput:
     """
     Sprint F350M-R: Input bundle for _compute_verdict_and_hint.
@@ -2473,7 +2473,7 @@ class VerdictHintInput:
         }
 
 
-@dataclass
+@dataclass(frozen=True, slots=True)
 class CheckpointInput:
     """
     Sprint F350M-R: Input bundle for _compute_checkpoint_priority and _compute_checkpoint_category.
@@ -2495,7 +2495,7 @@ class CheckpointInput:
     phase_times: dict
 
 
-@dataclass
+@dataclass(frozen=True, slots=True)
 class RuntimeTruthInput:
     """
     Sprint F350M-R: Input bundle for _runtime_truth.
@@ -2519,7 +2519,7 @@ class RuntimeTruthInput:
     ct_branch_timed_out: bool = False
 
 
-@dataclass
+@dataclass(frozen=True, slots=True)
 class ReportBuildInput:
     """
     Sprint F350M-R: Input bundle for _build_report_dict.
@@ -3926,7 +3926,7 @@ async def _teardown_power_and_tasks(ctx: SprintRunContext) -> None:
         logger.info("[TEARDOWN] Power assertion released")
 
     # Task cancellation (F4.4)
-    from hledac.universal.utils.async_helpers import cancel_scope_drain
+    from hledac.universal.utils.asyncx import cancel_scope_drain
     count = await cancel_scope_drain(timeout=5.0, label="orphan_drain")
     if count > 0:
         logger.debug("[SPRINT] Cancelled and drained %d orphan tasks", count)
@@ -3968,7 +3968,7 @@ async def _teardown_evidence_log(ctx: SprintRunContext) -> None:
 
     if _core_close_targets:
         with _fail_safe_async("debug", "parallel_close.core"):
-            from hledac.universal.utils.async_helpers import parallel_close
+            from hledac.universal.utils.asyncx import parallel_close
             _core_close_errors = await parallel_close(
                 _core_close_targets,
                 concurrency=2,
@@ -3982,7 +3982,7 @@ async def _teardown_evidence_log(ctx: SprintRunContext) -> None:
 async def _teardown_transports(ctx: SprintRunContext) -> None:
     """Close all HTTP clients in parallel."""
     with _fail_safe_async("debug", "parallel_close_async.transports"):
-        from hledac.universal.utils.async_helpers import parallel_close_async
+        from hledac.universal.utils.asyncx import parallel_close_async
         from hledac.universal.transport.httpx_client import close_httpx_client_async
         from hledac.universal.transport.curl_cffi_runtime import close_curl_cffi_sessions_async
         from hledac.universal.fetching.public_fetcher import close_public_fetcher_sessions_async

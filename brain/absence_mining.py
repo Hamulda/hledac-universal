@@ -57,7 +57,7 @@ from datetime import UTC, datetime
 from enum import Enum
 from typing import TYPE_CHECKING, Any
 
-from hledac.universal.utils.async_helpers import safe_gather
+from hledac.universal.utils.asyncx import safe_gather
 
 if TYPE_CHECKING:
     from hledac.universal.brain.synthesis_runner import IOCEntity, OSINTReport
@@ -89,7 +89,7 @@ class AbsenceType(Enum):
     GRAPH_FRAGMENT = "graph_fragment"         # Entity with no graph edges
 
 
-@dataclass
+@dataclass(slots=True)
 class AbsenceFinding:
     """A structural absence detected for an entity."""
     entity_value: str
@@ -101,7 +101,7 @@ class AbsenceFinding:
     timestamp: datetime = field(default_factory=lambda: datetime.now(UTC))
 
 
-@dataclass
+@dataclass(slots=True)
 class AbsenceReport:
     """Aggregated absence report for a sprint."""
     query: str

@@ -32,7 +32,7 @@ import msgspec
 from typing import TYPE_CHECKING, Any, Iterator
 
 from operator import attrgetter, itemgetter
-from hledac.universal.utils.async_helpers import _check_gathered
+from hledac.universal.utils.asyncx import _check_gathered
 
 # [FINAL]-019-07: Capability cost registration for QoS ladder triage.
 # DuckPGQGraph: rss_mb=200, peak_mb=400 (DuckDB + PGQ graph analytics)

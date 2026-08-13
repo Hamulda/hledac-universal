@@ -93,7 +93,7 @@ import logging
 import platform
 from concurrent.futures import ThreadPoolExecutor
 from typing import TYPE_CHECKING
-from hledac.universal.utils.async_helpers import safe_create_task
+from hledac.universal.utils.asyncx import safe_create_task
 __all__ = [
     # ═══════════════════════════════════════════════════════════════════════════
     # SSOT EXPORTS (MODERN-36/41/45 Fix) — THE ONLY AUTHORITATIVE CONSTANTS
@@ -117,6 +117,8 @@ __all__ = [
     'get_uma_pressure_level', 'is_uma_critical', 'is_uma_warn',
     'is_uma_emergency', 'format_uma_budget_report',
     'UmaWatchdog', 'UmaWatchdogCallbacks', 'shutdown_uma_callback_executor',
+    # MODERN-CROSS-1: Real-time component tracker
+    'get_power_monitor', 'PowerStatusMonitor',
 ]
 
 # =============================================================================
@@ -291,10 +293,7 @@ class UmaBudget:
     """Process RSS hard cap: 5.5 GiB (MISSION_PEAK_RSS_RATIO * UMA_HARD_CEILING_GIB)."""
 
     # Legacy constant for backward compatibility (same value, different derivation)
-    @property
-    def MISSION_PEAK_RSS_GIB_OLD(self) -> float:
-        """DEPRECATED: Was hardcoded 5.5. Now derived from SSOT."""
-        return 5.5
+    # FIX: Removed dead MISSION_PEAK_RSS_GIB_OLD property - never used anywhere
 
     # ═══════════════════════════════════════════════════════════════════════════
     # Threshold ladder (AXIS: system-used percentage, derived from SSOT)
@@ -303,16 +302,16 @@ class UmaBudget:
     # These are percentages of UMA_HARD_CEILING_GIB (6.25 GiB)
     SOFT_WARN_RATIO: float = 0.88      # 88% = 5.5 GiB — first signal
     WARN_RATIO: float = 0.95          # 95% = 5.938 GiB — reduce concurrency
-    CRITICAL_RATIO: float = 0.99      # 99% = 6.191 GiB — active pressure
+    CRITICAL_RATIO: float = 0.99      # 99% = 6.19 GiB — active pressure
     EMERGENCY_RATIO: float = 1.00     # 100% = 6.25 GiB — crisis (== ceiling)
 
-    THRESHOLD_SOFT_WARN_GIB: float = 5.5     # Derived: round(6.25 * 0.88, 2)
+    THRESHOLD_SOFT_WARN_GIB: float = round(UMA_HARD_CEILING_GIB * MISSION_PEAK_RSS_RATIO, 2)  # ~5.5
     """~88% — first signal of mild pressure."""
-    THRESHOLD_WARN_GIB: float = 5.94   # Derived: round(6.25 * 0.95, 2)
+    THRESHOLD_WARN_GIB: float = round(UMA_HARD_CEILING_GIB * WARN_RATIO, 2)  # ~5.94
     """~95% — reduce concurrency."""
-    THRESHOLD_CRITICAL_GIB: float = 6.19  # Derived: round(6.25 * 0.99, 2)
+    THRESHOLD_CRITICAL_GIB: float = round(UMA_HARD_CEILING_GIB * CRITICAL_RATIO, 2)  # ~6.19
     """~99% — active pressure, significant restriction."""
-    THRESHOLD_EMERGENCY_GIB: float = 6.25  # Same as UMA_HARD_CEILING_GIB
+    THRESHOLD_EMERGENCY_GIB: float = UMA_HARD_CEILING_GIB  # Same as ceiling
     """~100% — real crisis, flush + GC (== ceiling)."""
 
     # ═══════════════════════════════════════════════════════════════════════════
@@ -335,6 +334,149 @@ class UmaBudget:
     # Pre-warm buffer size (AXIS: MLX Metal inference optimization)
     # ═══════════════════════════════════════════════════════════════════════════
     MLX_PREWARM_BUFFER_MIB: int = 48  # 48 MiB pre-warm buffer for MLX Metal
+
+    # ═══════════════════════════════════════════════════════════════════════════
+    # MODERN-CROSS-1: Real-time Component Budget Tracker
+    # ═══════════════════════════════════════════════════════════════════════════
+    @classmethod
+    def get_current_usage(cls) -> dict:
+        """
+        MODERN-CROSS-1: Real-time per-component memory breakdown.
+        
+        Returns current memory usage for each tracked component with:
+        - Current usage in MiB
+        - Budget ceiling in MiB  
+        - Utilization percentage
+        - Axis declaration
+        
+        Usage:
+            from hledac.universal.utils.uma_budget import UmaBudget
+            breakdown = UmaBudget.get_current_usage()
+            for component, data in breakdown.items():
+                print(f"{component}: {data['current_mib']:.0f} / {data['budget_mib']:.0f} MiB ({data['utilization_pct']:.1f}%)")
+        
+        Returns:
+            dict: Per-component breakdown with keys: orchestrator, llm_weights, 
+                  kv_cache, mlx_metal, system_used, total_tracked, process_rss
+        """
+        # Get current MLX Metal memory
+        from hledac.universal.core.memory import get_metal_active_memory_bytes
+        try:
+            mlx_active_bytes = get_metal_active_memory_bytes()
+            mlx_active_mib = mlx_active_bytes / (1024 * 1024)
+        except Exception:
+            mlx_active_mib = 0.0
+        
+        # Get current system memory
+        sys_total, sys_used, sys_avail = get_system_memory_mb()
+        
+        # MODERN-CROSS-1 FIX: Corrected process RSS calculation
+        # MLX Metal allocations ARE part of system_used, so we don't add them separately.
+        # Process RSS ≈ system_used - macOS baseline (other processes)
+        # This gives an upper bound; actual process RSS may be lower if other processes
+        # are using memory alongside Hledac.
+        macos_baseline_mib = cls.MACOS_SYSTEM_GIB * 1024
+        process_rss_mib = max(0, sys_used - macos_baseline_mib)
+        
+        # Per-component breakdown
+        breakdown = {
+            'orchestrator': {
+                'current_mib': 0.0,  # Would need instrumentation to track accurately
+                'budget_mib': cls.ORCHESTRATOR_GIB * 1024,
+                'utilization_pct': 0.0,
+                'axis': MemoryAxis.TRACKED_ALLOCATION,
+                'note': 'Instrumentation required for accurate tracking'
+            },
+            'llm_weights': {
+                'current_mib': 0.0,  # Would need instrumentation to track accurately  
+                'budget_mib': cls.LLM_WEIGHTS_GIB * 1024,
+                'utilization_pct': 0.0,
+                'axis': MemoryAxis.TRACKED_ALLOCATION,
+                'note': 'Instrumentation required for accurate tracking'
+            },
+            'kv_cache': {
+                'current_mib': 0.0,  # Would need instrumentation to track accurately
+                'budget_mib': cls.KV_CACHE_GIB * 1024,
+                'utilization_pct': 0.0,
+                'axis': MemoryAxis.TRACKED_ALLOCATION,
+                'note': 'Instrumentation required for accurate tracking'
+            },
+            'mlx_metal': {
+                'current_mib': mlx_active_mib,
+                'budget_mib': cls.METAL_CACHE_CEILING_MIB,
+                'utilization_pct': (mlx_active_mib / cls.METAL_CACHE_CEILING_MIB * 100) if cls.METAL_CACHE_CEILING_MIB > 0 else 0,
+                'axis': MemoryAxis.TRACKED_ALLOCATION,
+                'note': 'Direct from MLX Metal active memory'
+            },
+            'system_used': {
+                'current_mib': float(sys_used),
+                'budget_mib': cls.UMA_HARD_CEILING_GIB * 1024,
+                'utilization_pct': (sys_used / (cls.UMA_HARD_CEILING_GIB * 1024) * 100) if sys_used else 0,
+                'axis': MemoryAxis.SYSTEM_USED,
+                'note': 'System total - available (all processes)'
+            },
+            'total_tracked': {
+                'current_mib': float(sys_used),
+                'budget_mib': (cls.ORCHESTRATOR_GIB + cls.LLM_WEIGHTS_GIB + cls.KV_CACHE_GIB) * 1024,
+                'utilization_pct': 0.0,  # Would need per-component instrumentation
+                'axis': MemoryAxis.TRACKED_ALLOCATION,
+                'note': 'Sum of tracked components'
+            },
+            'process_rss': {
+                'current_mib': process_rss_mib,
+                'budget_mib': cls.MISSION_PEAK_RSS_GIB * 1024,
+                'utilization_pct': (process_rss_mib / (cls.MISSION_PEAK_RSS_GIB * 1024) * 100) if process_rss_mib else 0,
+                'axis': MemoryAxis.PROCESS_RSS,
+                'note': 'Estimated process RSS (subset of system_used)'
+            }
+        }
+        
+        # Calculate total tracked utilization (MLX is the only accurately tracked component)
+        mlx_tracked_portion = min(mlx_active_mib, cls.KV_CACHE_GIB * 1024)  # MLX may include KV cache
+        breakdown['total_tracked']['current_mib'] = mlx_active_mib
+        breakdown['total_tracked']['utilization_pct'] = (
+            breakdown['total_tracked']['current_mib'] / breakdown['total_tracked']['budget_mib'] * 100
+            if breakdown['total_tracked']['budget_mib'] > 0 else 0
+        )
+        
+        return breakdown
+
+    @classmethod
+    def format_usage_report(cls) -> str:
+        """
+        Format a human-readable real-time component usage report.
+        
+        Returns:
+            str: Formatted report with per-component utilization
+        """
+        # MODERN-CROSS-1 FIX: Move datetime import to top of function for efficiency
+        from datetime import datetime
+        breakdown = cls.get_current_usage()
+        lines = [
+            '=== Real-Time Memory Budget Report ===',
+            f"Timestamp: {datetime.now().isoformat()}",
+            '',
+            'Component Breakdown:',
+            '-' * 60,
+        ]
+        
+        for name, data in breakdown.items():
+            util = data['utilization_pct']
+            bar_len = int(util / 5)  # 20 chars for 100%
+            bar = '█' * bar_len + '░' * (20 - bar_len)
+            lines.append(
+                f"  {name:15} │ {data['current_mib']:8.1f} / {data['budget_mib']:8.1f} MiB "
+                f"│ {util:5.1f}% │ [{bar}]"
+            )
+        
+        lines.extend([
+            '-' * 60,
+            f"Pressure Level: {get_uma_pressure_level()[1].upper()}",
+            f"Snapshots: system_used={breakdown['system_used']['utilization_pct']:.1f}%, "
+            f"process_rss={breakdown['process_rss']['utilization_pct']:.1f}%"
+        ])
+        
+        return '\n'.join(lines)
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -480,11 +622,8 @@ _WARN_THRESHOLD_MB: int = int(UmaBudget.THRESHOLD_WARN_GIB * 1024)  # 5.938 GiB 
 _CRITICAL_THRESHOLD_MB: int = int(UmaBudget.THRESHOLD_CRITICAL_GIB * 1024)  # 6.191 GiB → 6340 MB
 _EMERGENCY_THRESHOLD_MB: int = int(UmaBudget.THRESHOLD_EMERGENCY_GIB * 1024)  # 6.25 GiB → 6400 MB
 
-# Legacy exports for backward compatibility (values match UmaBudget SSOT)
-UMA_WARN_GIB: float = UmaBudget.THRESHOLD_WARN_GIB  # 5.938 GiB (95% of ceiling)
-UMA_CRITICAL_GIB: float = UmaBudget.THRESHOLD_CRITICAL_GIB  # 6.191 GiB (99% of ceiling)
-UMA_EMERGENCY_GIB: float = UmaBudget.THRESHOLD_EMERGENCY_GIB  # 6.25 GiB (100% = ceiling)
-M1_FETCH_SOFT_CEILING_GB: float = UmaBudget.MISSION_PEAK_RSS_GIB  # 5.5 GiB (88% = MISSION_PEAK_RSS)
+# FIX: Removed duplicate legacy exports (already defined at lines 356-358)
+# These were: UMA_WARN_GIB, UMA_CRITICAL_GIB, UMA_EMERGENCY_GIB, M1_FETCH_SOFT_CEILING_GB
 
 # MODERN-M4+ NEW-ISSUE Fix: Flag registry RAM thresholds as SSOT
 # These are used by flag_registry.py and feature_flags.py to validate
@@ -675,7 +814,8 @@ def get_uma_pressure_level() -> tuple[int, str]:
     total_mb = get_uma_usage_mb()
     if total_mb is None:
         return (0, 'normal')
-    usage_pct = int(total_mb / _UMA_TOTAL_MB * 100)
+    # FIX: usage_pct calculated for return value but used only in MB-based checks
+    # Remove redundant usage_pct > 93 check which duplicates _CRITICAL_THRESHOLD_MB logic
     swap_crit_pct = 100
     swap_warn_pct = 100
     if ps is not None:
@@ -688,13 +828,13 @@ def get_uma_pressure_level() -> tuple[int, str]:
         except (AttributeError, OSError):  # noqa: BLE001
             pass
     if total_mb >= _EMERGENCY_THRESHOLD_MB:
-        return (usage_pct, 'emergency')
-    elif total_mb >= _CRITICAL_THRESHOLD_MB or usage_pct > 93 or (ps is not None and _swap_pct(ps) > swap_crit_pct):
-        return (usage_pct, 'critical')
+        return (int(total_mb / _UMA_TOTAL_MB * 100), 'emergency')
+    elif total_mb >= _CRITICAL_THRESHOLD_MB or (ps is not None and _swap_pct(ps) > swap_crit_pct):
+        return (int(total_mb / _UMA_TOTAL_MB * 100), 'critical')
     elif total_mb >= _WARN_THRESHOLD_MB or (ps is not None and _swap_pct(ps) > swap_warn_pct):
-        return (usage_pct, 'warn')
+        return (int(total_mb / _UMA_TOTAL_MB * 100), 'warn')
     else:
-        return (usage_pct, 'normal')
+        return (int(total_mb / _UMA_TOTAL_MB * 100), 'normal')
 
 def is_uma_warn() -> bool:
     """

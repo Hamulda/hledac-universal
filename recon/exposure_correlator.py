@@ -29,7 +29,7 @@ Findings persist via async_ingest_findings_batch (canonical write path).
 """
 import asyncio
 import hashlib
-from hledac.universal.utils.async_helpers import safe_create_task
+from hledac.universal.utils.asyncx import safe_create_task
 import logging
 import time
 from collections.abc import Generator
@@ -37,7 +37,7 @@ from dataclasses import dataclass, field
 import msgspec
 from typing import TYPE_CHECKING
 from hledac.universal.utils.msgspec_json import loads as _msgspec_loads, dumps_str as _msgspec_dumps_str
-from hledac.universal.utils.async_helpers import parallel_ok
+from hledac.universal.utils.asyncx import parallel_ok
 if TYPE_CHECKING:
     import httpx
     from hledac.universal.knowledge.duckdb_store import CanonicalFinding

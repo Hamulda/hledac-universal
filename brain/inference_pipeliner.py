@@ -16,7 +16,7 @@ M1 8GB safe: hardcoded batch_size=1, no KV cache growth.
 Sprint P2-1b: Continuous batching pipeline improvement.
 """
 import asyncio
-from hledac.universal.utils.async_helpers import safe_create_task
+from hledac.universal.utils.asyncx import safe_create_task
 import logging
 import time
 from collections import deque

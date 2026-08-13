@@ -393,7 +393,7 @@ def get_recommended_concurrency() -> dict[str, int]:
     return concurrency
 
 
-from hledac.universal.utils.async_helpers import safe_wait_for
+from hledac.universal.utils.asyncx import safe_wait_for
 import platform
 _CONCURRENCY_FLOOR = 1
 _CONCURRENCY_CEILING = 3

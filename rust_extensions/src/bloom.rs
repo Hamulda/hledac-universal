@@ -10,12 +10,15 @@
 //!     fault in on first touch. M1 8GB UMA safe: working set is bounded
 //!     by access pattern, not allocation size.
 //!
-//! ## M1 SIMD Acceleration
+//! ## Hashing Performance
 //!
-//! Hashing uses `xxhash-rust` with xxHash3-64, which is NEON-SIMD
-//! accelerated on Apple Silicon (3-5× faster than the prior FNV-1a
-//! byte-by-byte loop). The bitmap layer remains scalar (u64 word-wise
-//! AND/OR/XOR), which is already optimal for cache-line-granular access.
+//! Hashing uses `xxhash-rust` with xxHash3-64. This is significantly
+//! faster than the prior FNV-1a implementation (~3-10× depending on data size).
+//! xxhash-rust uses SIMD-accelerated code paths when available, including
+//! NEON-SIMD on Apple Silicon M1/M2 for larger inputs.
+//!
+//! The bitmap layer (set_bit, check_bit) is scalar u64 word-wise operations,
+//! which is optimal for cache-line-granular access patterns.
 //!
 //! Trade-off vs in-memory: `MAP_SHARED` msync adds ~1-2 ms per add batch
 //! on macOS APFS (vs ~0 µs for `Vec<u64>`). For dedup, use the in-memory
@@ -44,7 +47,7 @@ use tracing::instrument;
 const MADV_NOCACHE: i32 = 11;
 
 /// BloomFilter using xxHash3-64 with double-hashing technique.
-/// xxHash3 is NEON-SIMD accelerated on Apple Silicon M1.
+/// xxHash3 provides fast hashing with SIMD-accelerated code paths.
 #[pyclass]
 pub struct BloomFilter {
     /// Bitmap storage (one bit per position)
@@ -75,7 +78,7 @@ impl BloomFilter {
     /// the string in wide chunks.
     fn double_hash(&self, item: &str) -> (u64, u64) {
         let h1 = xxh3_64(item.as_bytes());
-        // Secondary hash via different seed — no allocation, fully SIMD
+        // Secondary hash via different seed — no allocation
         const SEED2: u64 = 0x9e3779b97f4a7c15_u64;
         let h2 = xxh3_64_with_seed(item.as_bytes(), SEED2);
 

@@ -52,7 +52,7 @@ from hledac.universal.utils.msgspec_json import decode as _msgspec_decode
 from hledac.universal.utils.msgspec_json import encode as _msgspec_encode
 from hledac.universal.transport.session_pool import session_pool
 from hledac.universal.network.favicon_hasher import _FaviconHasher
-from hledac.universal.utils.async_helpers import _check_gathered
+from hledac.universal.utils.asyncx import _check_gathered
 if TYPE_CHECKING:
     from hledac.universal.knowledge.duckdb_store import CanonicalFinding
 logger = logging.getLogger(__name__)
@@ -1367,7 +1367,7 @@ def _trigger_cve_lookup_tasks(findings: list[CanonicalFinding], store: Any) -> N
                         payload_text=_msgspec_encode(payload).decode()
                     ))
                 if cve_findings:
-                    from hledac.universal.utils.async_helpers import safe_create_task
+                    from hledac.universal.utils.asyncx import safe_create_task
                     safe_create_task(_store_cve_findings(cve_findings, store), name=f'cve_store:{tech}')
                     logger.info(f'[TechStack] {len(cve_findings)} local CVEs for {tech}')
                 continue  # Skip external lookup for cached tech
@@ -1375,7 +1375,7 @@ def _trigger_cve_lookup_tasks(findings: list[CanonicalFinding], store: Any) -> N
             pass  # Fall through to external lookup
 
         # Fallback: external API lookup (2-15s network latency)
-        from hledac.universal.utils.async_helpers import safe_create_task
+        from hledac.universal.utils.asyncx import safe_create_task
         cve_id = f'CVE-{tech.upper()}-LATEST'
         safe_create_task(_cve_lookup_background(tech, cve_id, store), name=f'cve_lookup:{tech}')
         logger.debug(f'[TechStack] CVE lookup triggered for {tech}')

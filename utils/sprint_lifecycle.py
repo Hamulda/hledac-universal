@@ -74,6 +74,7 @@ class SprintLifecycleManager:
     - All methods are async-safe and fail-open
     """
     _instance: SprintLifecycleManager | None = None
+    _instance_lock: asyncio.Lock | None = None  # FIX: Thread-safe singleton lock
     __slots__ = tuple(('_bg_tasks', '_checkpoint_seam_ready', '_on_export', '_on_teardown', '_on_windup', '_shutdown_event', '_shutdown_requested', '_signals_registered', '_sprint_duration', '_sprint_start', '_state', '_uma_watchdog', '_uma_watchdog_task', '_windown_task', '_windup_fired', '_windup_lead'))
 
     def __init__(self) -> None:
@@ -96,8 +97,16 @@ class SprintLifecycleManager:
 
     @classmethod
     def get_instance(cls) -> SprintLifecycleManager:
+        # FIX: Thread-safe singleton with double-checked locking
         if cls._instance is None:
-            cls._instance = cls()
+            if cls._instance_lock is None:
+                import threading
+                # Create lock outside of async context for thread safety
+                cls._instance_lock = threading.Lock()
+            with cls._instance_lock:
+                # Double-check after acquiring lock
+                if cls._instance is None:
+                    cls._instance = cls()
         return cls._instance
 
     @property

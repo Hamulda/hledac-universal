@@ -797,7 +797,7 @@ async def parse_feeds_async(
             for sanitized, task in zip(sanitized_texts, tasks)
         ]
 
-    from hledac.universal.utils.async_helpers import parallel_ok
+    from hledac.universal.utils.asyncx import parallel_ok
     from typing import cast
     # parallel_ok: returns list[T] (successes only), exceptions silently dropped.
     result = await parallel_ok(

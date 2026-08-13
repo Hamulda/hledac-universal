@@ -13,7 +13,7 @@ Funkce:
 - Quality validation
 - Memory profiling
 """
-from hledac.universal.utils.async_helpers import safe_create_task, stop_task
+from hledac.universal.utils.asyncx import safe_create_task, stop_task
 import asyncio
 import logging
 import time

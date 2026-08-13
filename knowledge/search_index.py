@@ -22,16 +22,14 @@ from typing import Any
 _dd_int_int_factory: defaultdict[int, int] = defaultdict(int)
 logger = logging.getLogger(__name__)
 
-class SearchDocument(Struct):
+class SearchDocument(Struct, frozen=True):
     """OSINT document for BM25 indexing."""
     url: str
     title: str
     content: str
     metadata: dict[str, Any] = field(default_factory=dict)
     score: float = 0.0
-
-    def __hash__(self):
-        return hash(self.url)
+    # frozen=True auto-generates __hash__ and __eq__
 
 class SearchResult(Struct, frozen=True):
     """Search results with timing metadata."""

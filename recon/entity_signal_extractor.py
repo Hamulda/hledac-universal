@@ -32,7 +32,7 @@ from dataclasses import dataclass, field
 import msgspec
 from datetime import datetime
 from typing import Any
-from hledac.universal.utils.async_helpers import parallel
+from hledac.universal.utils.asyncx import parallel
 from hledac.universal.runtime.worker_pool import RustWorkerPool
 logger = logging.getLogger(__name__)
 _NUM_EXTRACTION_WORKERS: int = 2

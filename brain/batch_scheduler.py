@@ -19,7 +19,7 @@ import logging
 import time
 from collections.abc import Callable, Coroutine
 from typing import Any
-from hledac.universal.utils.async_helpers import safe_create_task, parallel
+from hledac.universal.utils.asyncx import safe_create_task, parallel
 from hledac.universal.core.constants import MLX
 logger = logging.getLogger(__name__)
 

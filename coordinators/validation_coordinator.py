@@ -26,7 +26,7 @@ from typing import Any
 import msgspec
 from hledac.universal.compat.msgspec_gc_compat import Struct
 
-from hledac.universal.utils.async_helpers import parallel
+from hledac.universal.utils.asyncx import parallel
 
 from .base import UniversalCoordinator
 

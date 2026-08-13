@@ -50,7 +50,7 @@ from msgspec import field
 from pathlib import Path
 from typing import Any
 import numpy as np
-from hledac.universal.utils.async_helpers import parallel_ok, safe_wait_for
+from hledac.universal.utils.asyncx import parallel_ok, safe_wait_for
 logger = logging.getLogger(__name__)
 PRIORITY_HIGH: int = 1
 PRIORITY_LOW: int = 10

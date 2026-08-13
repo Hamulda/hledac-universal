@@ -6,7 +6,7 @@ import time
 from typing import Any, TYPE_CHECKING
 from hledac.universal.core.resource_governor import Priority, ResourceGovernor
 from hledac.universal.dht.kademlia_node import DHTStoreProtocol, LocalGraphReaderProtocol
-from hledac.universal.utils.async_helpers import parallel, safe_create_task
+from hledac.universal.utils.asyncx import parallel, safe_create_task
 
 if TYPE_CHECKING:
     from hledac.universal.dht.kademlia_node import KademliaNode

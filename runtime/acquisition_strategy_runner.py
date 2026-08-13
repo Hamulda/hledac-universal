@@ -25,7 +25,7 @@ import asyncio
 import logging
 import time
 from typing import Any
-from hledac.universal.utils.async_helpers import parallel_ok
+from hledac.universal.utils.asyncx import parallel_ok
 from hledac.universal.runtime.acquisition.profile import AcquisitionProfile
 logger = logging.getLogger(__name__)
 from hledac.universal.runtime.acquisition_strategy_planner import AcquisitionLane, AcquisitionLanePlan, AcquisitionLaneOutcome, AcquisitionStrategySnapshot, NonfeedSeedContext

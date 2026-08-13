@@ -27,7 +27,7 @@ import time
 from typing import Any
 
 import msgspec
-from hledac.universal.utils.async_helpers import parallel_ok
+from hledac.universal.utils.asyncx import parallel_ok
 from hledac.universal.utils.encoding import decode_response_bytes
 try:
     from hledac.universal.utils.source_types import SourceType
@@ -151,7 +151,7 @@ async def _fetch_from_ipfs(query: str, semaphore: asyncio.Semaphore) -> tuple[li
                     return ([], AltProtocolResult(source_type=SourceType.IPFS_CONTENT, findings_count=0, success=False, error='uri_resolution_failed'))
 
                 cids = await ipfs.find_via_ipfs_search(query)
-            from hledac.universal.utils.async_helpers import parallel
+            from hledac.universal.utils.asyncx import parallel
 
             async def _fetch_one_cid(cid: str) -> CanonicalFinding | None:
                 try:
@@ -338,7 +338,7 @@ async def _fetch_from_matrix(query: str, semaphore: asyncio.Semaphore) -> tuple[
     Returns:
         (list[CanonicalFinding], AltProtocolResult)
     """
-    from hledac.universal.utils.async_helpers import parallel
+    from hledac.universal.utils.asyncx import parallel
     matrix = _get_matrix_adapter()
     async with semaphore:
         try:

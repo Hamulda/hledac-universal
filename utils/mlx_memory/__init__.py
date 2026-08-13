@@ -176,6 +176,11 @@ reset_metal_peak = _core_mlx_utils.reset_metal_peak
 _MLX_CACHE_LIMIT = _core_module._METAL_CACHE_LIMIT_BYTES
 _MLX_WIRED_LIMIT = _core_module._METAL_WIRED_LIMIT_BYTES
 
+# FIX: MAX_MEMORY_MB renamed to MAX_MEMORY_MIB for clarity (1 GiB = 1024 MiB)
+# 6400 MiB = 6.25 GiB (the MLX memory ceiling)
+MAX_MEMORY_MIB = _core_module.MAX_MEMORY_MIB
+MAX_MEMORY_MB = MAX_MEMORY_MIB  # Alias for backward compatibility
+
 __all__ = [
     # Availability
     "MLX_AVAILABLE",
@@ -233,4 +238,7 @@ __all__ = [
     # Test aliases
     "_MLX_CACHE_LIMIT",
     "_MLX_WIRED_LIMIT",
+    # Memory ceiling (FIX: renamed MAX_MEMORY_MB → MAX_MEMORY_MIB for clarity)
+    "MAX_MEMORY_MIB",
+    "MAX_MEMORY_MB",  # Backward compatibility alias
 ]

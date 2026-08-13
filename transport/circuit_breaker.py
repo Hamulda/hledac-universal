@@ -312,7 +312,6 @@ class CircuitBreaker:
 
     def check_circuit(self) -> CircuitDecision:
         """Check circuit state and return decision."""
-        _alert_args: tuple[str, float] | None = None
         with self._state_lock:
             if self._state == CBState.OPEN:
                 if time.monotonic() - self._last_failure_time > self.recovery_timeout:
@@ -337,10 +336,22 @@ class CircuitBreaker:
                 remaining = self.recovery_timeout - (time.monotonic() - self._last_failure_time)
                 jittered_after = self._jittered_retry_after() if remaining > 0 else 0.0
 
-                # Capture alert args inside lock; scheduling happens after lock release
+                # FIX: Emit alert before returning. All other paths above return immediately.
+                # Alert is fire-and-forget via create_task (runs after lock release).
                 try:
-                    _alert_args = (self.domain, self.recovery_timeout)
-                except Exception:  # noqa: BLE001
+                    from hledac.universal.monitoring.alert_manager import (
+                        check_circuit_breaker_alert,
+                    )
+                    from hledac.universal.utils.asyncx import safe_create_task
+                    safe_create_task(
+                        check_circuit_breaker_alert(
+                            domain=self.domain,
+                            is_open=True,
+                            recovery_timeout=self.recovery_timeout,
+                        ),
+                        otel_trace=False,
+                    )
+                except Exception:  # noqa: BLE001 — fail-soft, alert is best-effort
                     pass
 
                 return CircuitDecision(
@@ -386,27 +397,6 @@ class CircuitBreaker:
                 retry_after_s=0.0,
                 reason="circuit_closed",
             )
-        # Emit alert OUTSIDE lock — create_task schedules, task runs after lock release
-        if _alert_args is not None:
-            _domain, _timeout = _alert_args
-            try:
-                from hledac.universal.monitoring.alert_manager import (
-                    check_circuit_breaker_alert,
-                )
-
-                # A5-06 FIX: safe_create_task ensures unhandled exceptions are logged.
-                # Using otel_trace=False since this is fire-and-forget alert.
-                from hledac.universal.utils.async_helpers import safe_create_task
-                safe_create_task(
-                    check_circuit_breaker_alert(
-                        domain=_domain,
-                        is_open=True,
-                        recovery_timeout=_timeout,
-                    ),
-                    otel_trace=False,
-                )
-            except Exception:  # noqa: BLE001 — A5-06: fail-soft, alert is best-effort
-                pass
 
     def record_success(self):
         # FIX Issue B: capture event OUTSIDE lock to prevent deadlock if callback calls get_breaker()

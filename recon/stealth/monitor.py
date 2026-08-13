@@ -36,7 +36,7 @@ from ._models import (
     _crawler_domain_allowed,
 )
 
-from hledac.universal.utils.async_helpers import parallel, safe_create_task
+from hledac.universal.utils.asyncx import parallel, safe_create_task
 
 logger = logging.getLogger(__name__)
 

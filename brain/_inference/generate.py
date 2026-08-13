@@ -34,7 +34,7 @@ from hledac.universal.utils.cpu_affinity import (
 logger = logging.getLogger(__name__)
 
 
-@dataclass
+@dataclass(frozen=True, slots=True)
 class GenerateConfig:
     """Configuration for inference generation."""
     max_tokens: int = 512
@@ -46,7 +46,7 @@ class GenerateConfig:
     kv_bits: int = 4
 
 
-@dataclass
+@dataclass(frozen=True, slots=True)
 class GenerateResult:
     """Result of generate operation."""
     text: str

@@ -30,7 +30,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from hledac.universal.compat.msgspec_gc_compat import Struct
-from hledac.universal.utils.async_helpers import parallel_ok
+from hledac.universal.utils.asyncx import parallel_ok
 import compression.zstd as _zstd
 ZSTD_AVAILABLE = True
 try:
@@ -636,7 +636,7 @@ class MultiLevelContextCache:
         gaining ~10-15× speedup via full parallelization of each phase.
         """
         print(f'Warming cache with {len(inputs)} entries...')
-        from hledac.universal.utils.async_helpers import parallel
+        from hledac.universal.utils.asyncx import parallel
 
         # Phase 1: parallel get for all inputs (identifies misses)
         cached_list = await parallel(

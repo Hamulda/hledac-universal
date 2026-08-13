@@ -32,7 +32,7 @@ import msgspec
 from msgspec import field
 from typing import Any
 import httpx
-from hledac.universal.utils.async_helpers import parallel_ok
+from hledac.universal.utils.asyncx import parallel_ok
 logger = logging.getLogger(__name__)
 _TIMEOUT_10 = httpx.Timeout(10.0)
 _TIMEOUT_15 = httpx.Timeout(15.0)

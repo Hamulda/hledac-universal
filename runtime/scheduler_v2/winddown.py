@@ -24,7 +24,7 @@ from hledac.universal.runtime.scheduler_v2._task_registry import (
     get_task_registry,
     safe_create_task_tracked,
 )
-from hledac.universal.utils.async_helpers import parallel, safe_wait_for
+from hledac.universal.utils.asyncx import parallel, safe_wait_for
 
 try:
     import orjson

@@ -28,7 +28,7 @@ import re
 from typing import Any
 
 from operator import attrgetter, itemgetter
-from hledac.universal.utils.async_helpers import safe_wait_for
+from hledac.universal.utils.asyncx import safe_wait_for
 
 logger = logging.getLogger(__name__)
 

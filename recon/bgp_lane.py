@@ -41,7 +41,7 @@ try:
     _CanonicalFinding = _CF
 except ImportError:  # noqa: BLE001
     pass
-from hledac.universal.utils.async_helpers import parallel, ParallelResult
+from hledac.universal.utils.asyncx import parallel, ParallelResult
 logger = logging.getLogger(__name__)
 MAX_ASN_RESULTS: int = 500
 RATE_LIMIT_S: float = 2.0

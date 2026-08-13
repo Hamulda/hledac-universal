@@ -11,7 +11,7 @@ from typing import Any
 
 from hledac.universal.dht.kademlia_node import DHT_REAL_UDP, crawl_dht_for_keyword
 from hledac.universal.discovery.discovery_planner import get_discovery_planner
-from hledac.universal.utils.async_helpers import parallel_ok, safe_wait_for
+from hledac.universal.utils.asyncx import parallel_ok, safe_wait_for
 
 DHT = 'dht'
 DDG = 'ddg'

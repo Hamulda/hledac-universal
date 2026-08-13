@@ -39,7 +39,7 @@ import msgspec
 from hledac.universal.compat.msgspec_gc_compat import Struct
 
 from hledac.universal.core.system_metrics import get_system_snapshot
-from hledac.universal.utils.async_helpers import safe_create_task
+from hledac.universal.utils.asyncx import safe_create_task
 
 from .base import DecisionResponse, ExecutionResult, MemoryPressureLevel, OperationResult, OperationType, UniversalCoordinator
 
@@ -813,7 +813,7 @@ class UniversalMonitoringCoordinator(UniversalCoordinator):
                 issues.extend(component_issues)
             else:
                 components = ['memory', 'system', 'network', 'storage']
-                from hledac.universal.utils.async_helpers import chunked_taskgroup
+                from hledac.universal.utils.asyncx import chunked_taskgroup
                 results = await chunked_taskgroup(components, engine.run_manual_diagnostic, batch_size=20, concurrency=20, ctx='monitoring.diagnostics')
                 for comp_issues in results:
                     issues.extend(comp_issues)

@@ -42,7 +42,7 @@ import msgspec
 from hledac.universal.compat.msgspec_gc_compat import Struct
 from hledac.universal.compat.msgspec_gc_compat import Struct
 
-from hledac.universal.utils.async_helpers import ParallelResult, parallel, safe_wait_for
+from hledac.universal.utils.asyncx import ParallelResult, parallel, safe_wait_for
 from hledac.universal.utils.msgspec_json import encode as _msgspec_encode
 
 from .base import DecisionResponse, ExecutionResult, OperationResult, OperationType, UniversalCoordinator
@@ -95,7 +95,7 @@ class ExcavationConfig(Struct, frozen=True):
     auto_summarize: bool = True
     progress_callback: collections.abc.Callable | None = None
 
-class ResearchPaper(Struct):
+class ResearchPaper(Struct, frozen=True):
     """Research paper node with citation tracking."""
     id: str
     title: str
@@ -110,14 +110,7 @@ class ResearchPaper(Struct):
     relevance_score: float = 0.0
     source: str = 'unknown'
     metadata: dict[str, Any] = field(default_factory=dict)
-
-    def __hash__(self):
-        return hash(self.id)
-
-    def __eq__(self, other):
-        if isinstance(other, ResearchPaper):
-            return self.id == other.id
-        return False
+    # frozen=True auto-generates __hash__ and __eq__
 
 class ResearchThread(Struct, frozen=True):
     """Research thread tracking context."""

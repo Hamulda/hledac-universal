@@ -53,9 +53,7 @@ class RAGDocument(Struct):
     content: str
     metadata: dict[str, Any] = field(default_factory=dict)
     embedding: list[float] | None = None
-
-    def __hash__(self):
-        return hash(self.id)
+    # frozen=True auto-generates __hash__ and __eq__
 
 class RetrievedChunk(Struct, frozen=True):
     """Retrieved document chunk with scores."""

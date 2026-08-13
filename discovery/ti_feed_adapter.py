@@ -724,7 +724,7 @@ async def enrich_findings_greynoise_community(session: httpx.AsyncClient, findin
                 if result['riot']:
                     finding['confidence'] = min(finding.get('confidence', 0.5) * 0.5, 0.3)
             await asyncio.sleep(0.3)
-    from hledac.universal.utils.async_helpers import parallel
+    from hledac.universal.utils.asyncx import parallel
     await parallel([_enrich_with_rate_limit(f) for f in ip_findings], policy='log', ctx='ti_feed:greynoise_enrich')
     enriched = sum((1 for f in ip_findings if 'greynoise' in f))
     logger.info(f'[GreyNoise/community] enriched {enriched}/{len(ip_findings)} IPs')
@@ -1421,7 +1421,7 @@ async def _handle_gopher_fetch(task, scheduler):
     if items:
         await parallel_ok(*[_buffer_one(item) for item in items], label='ti_feed_adapter:gopher_fetch')
 import re as _ip_re_mod
-from hledac.universal.utils.async_helpers import parallel_ok
+from hledac.universal.utils.asyncx import parallel_ok
 _IP_PATTERN = _ip_re_mod.compile('^\\d{1,3}\\.\\d{1,3}\\.\\d{1,3}\\.\\d{1,3}$')
 
 def _is_valid_ip(s: str) -> bool:

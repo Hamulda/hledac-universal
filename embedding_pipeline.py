@@ -1545,6 +1545,227 @@ def embed_texts_canonical(texts: list[str], batch_size: int=_BATCH_SIZE) -> np.n
     """
     return generate_embeddings(texts, batch_size=batch_size, keep_loaded=False)
 
+# =============================================================================
+# Binary Quantization for Sub-1ms ANN (Breakthrough #1)
+# =============================================================================
+# 1-bit binary embeddings: 256d float32 → 32B packed binary
+# Memory: 50K × 32B = 1.6 MB (vs 51.2 MB float32 = 32× compression)
+# Speed: NEON popcount for Hamming distance ~0.1ms vs 5-15ms float32 cosine
+# =============================================================================
+
+def binary_quantize(embeddings: np.ndarray) -> bytes:
+    """
+    Quantize float32 embeddings to packed binary (1-bit) representation.
+
+    BREAKTHROUGH #1: 1-Bit Binary Embeddings for Sub-1ms ANN
+    - 256d float32 → 32B packed binary (8 dimensions per byte)
+    - Sign function: (x >= 0) → 1, (x < 0) → 0
+    - Compatible with Rust batch_hamming_scores() NEON popcount
+    - NOTE: For USEARCH, use binary_quantize_for_usearch() instead
+
+    Args:
+        embeddings: np.ndarray of shape (N, 256) float32
+
+    Returns:
+        bytes: Flattened packed binary vectors (N * num_bytes)
+               where num_bytes = (256 + 7) // 8 = 32
+    """
+    if embeddings is None or len(embeddings) == 0:
+        return b''
+
+    # Ensure float32
+    if embeddings.dtype != np.float32:
+        embeddings = embeddings.astype(np.float32)
+
+    batch_size, dim = embeddings.shape
+    num_bytes = (dim + 7) // 8  # 32 bytes for 256 dimensions
+
+    # Sign quantization: 1 if >= 0, 0 if < 0 (unified convention per MRL-2)
+    signs = (embeddings >= 0).astype(np.uint8)
+
+    # Pad to multiple of 8 dimensions
+    padded = np.zeros((batch_size, num_bytes * 8), dtype=np.uint8)
+    padded[:, :dim] = signs
+
+    # Pack 8 bits per byte (big-endian: bit 0 = MSB)
+    # packed[i] = bits[i*8]<<7 | bits[i*8+1]<<6 | ... | bits[i*8+7]<<0
+    packed = np.zeros((batch_size, num_bytes), dtype=np.uint8)
+    for i in range(8):
+        packed |= padded[:, i::8] << (7 - i)
+
+    return packed.tobytes()
+
+
+def binary_quantize_single(embedding: np.ndarray) -> bytes:
+    """
+    Quantize a single float32 embedding to packed binary bytes.
+
+    NOTE: For USEARCH, use binary_quantize_for_usearch() instead.
+    This function returns raw packed bytes for storage in LanceDB.
+
+    Args:
+        embedding: np.ndarray of shape (256,) float32
+
+    Returns:
+        bytes: Packed binary vector (32 bytes)
+    """
+    if embedding is None or len(embedding) == 0:
+        return b'\x00' * 32
+
+    # Ensure 1D
+    if embedding.ndim == 2:
+        embedding = embedding.squeeze(0)
+
+    # Ensure 256d
+    if len(embedding) != _EMBEDDING_DIM:
+        if len(embedding) > _EMBEDDING_DIM:
+            embedding = embedding[:_EMBEDDING_DIM]
+        else:
+            embedding = np.pad(embedding, (0, _EMBEDDING_DIM - len(embedding)))
+
+    emb_2d = embedding.reshape(1, -1).astype(np.float32)
+    return binary_quantize(emb_2d)
+
+
+def binary_quantize_batch(embeddings: np.ndarray) -> tuple[bytes, int]:
+    """
+    Quantize batch of embeddings with metadata.
+
+    BREAKTHROUGH #1: Returns packed bytes ready for:
+    - USEARCH binary index (metric='ham', dtype='b1')
+    - Rust batch_hamming_scores() for SIMD Hamming
+
+    Args:
+        embeddings: np.ndarray of shape (N, 256) float32
+
+    Returns:
+        tuple: (packed_bytes, num_bytes_per_vector)
+    """
+    packed = binary_quantize(embeddings)
+    num_bytes = (embeddings.shape[1] + 7) // 8 if embeddings.ndim > 1 else 32
+    return packed, num_bytes
+
+
+def unpack_binary(packed_bytes: bytes, num_bytes: int) -> np.ndarray:
+    """
+    Unpack binary bytes back to float32 binary indicators.
+
+    Inverse of binary_quantize_single().
+
+    Args:
+        packed_bytes: bytes of length num_bytes
+        num_bytes: Number of bytes per vector (32 for 256d)
+
+    Returns:
+        np.ndarray of shape (num_bytes * 8,) uint8 with 0/1 values
+    """
+    import numpy as np
+    arr = np.frombuffer(packed_bytes, dtype=np.uint8)
+    dim = num_bytes * 8
+
+    # Unpack 8 bits per byte (big-endian)
+    bits = np.zeros(dim, dtype=np.uint8)
+    for i in range(8):
+        bits[i::8] = (arr >> (7 - i)) & 1
+
+    return bits
+
+
+def hamming_to_similarity(hamming_dist: int, dim: int) -> float:
+    """
+    Convert Hamming distance to similarity score.
+
+    Args:
+        hamming_dist: Number of differing bits
+        dim: Original dimension (256)
+
+    Returns:
+        float: Similarity in [0.0, 1.0], 1.0 = identical
+    """
+    max_bits = dim
+    return 1.0 - (hamming_dist / max_bits)
+
+
+# =============================================================================
+# BREAKTHROUGH #1: Rust SIMD Batch Hamming Wrapper
+# =============================================================================
+# NEON-accelerated popcount for sub-1ms Hamming distance on M1
+
+_RUST_SIMD_AVAILABLE = False
+try:
+    from hledac.universal.rust_extensions.simd_similarity import batch_hamming_scores
+    _RUST_SIMD_AVAILABLE = True
+except ImportError:
+    batch_hamming_scores = None  # type: ignore[assignment]
+
+
+def batch_hamming_similarity(
+    query_embedding: np.ndarray,
+    candidate_embeddings: np.ndarray,
+) -> np.ndarray:
+    """
+    Compute Hamming similarity between query and candidates using Rust SIMD.
+
+    BREAKTHROUGH #1: NEON popcount for sub-1ms Hamming distance.
+    - Uses ARM NEON vcntq_u8 + vpaddlq_u8 for 16-byte chunk popcount
+    - Falls back to numpy popcount if Rust SIMD unavailable
+    - Returns similarity scores in [0.0, 1.0] range
+
+    Args:
+        query_embedding: (256,) float32 query vector
+        candidate_embeddings: (N, 256) float32 candidate vectors
+
+    Returns:
+        np.ndarray of shape (N,) with similarity scores [0.0, 1.0]
+    """
+    if candidate_embeddings is None or len(candidate_embeddings) == 0:
+        return np.array([], dtype=np.float32)
+
+    # Quantize to binary
+    query_packed = binary_quantize_single(query_embedding)
+    candidates_packed, num_bytes = binary_quantize_batch(candidate_embeddings)
+
+    # Use Rust SIMD if available
+    if _RUST_SIMD_AVAILABLE and batch_hamming_scores is not None:
+        try:
+            # Flatten candidates for Rust: [cand1_bytes..., cand2_bytes..., ...]
+            candidates_list = list(candidates_packed)
+            query_list = list(query_packed)
+
+            # Call Rust SIMD batch hamming
+            scores = batch_hamming_scores(
+                query_list,
+                candidates_list,
+                len(candidate_embeddings),
+                num_bytes
+            )
+            return np.array(scores, dtype=np.float32)
+        except Exception:
+            pass  # Fall through to numpy
+
+    # Numpy fallback: pure Python popcount
+    # This is slower but correct
+    scores = []
+    for i in range(len(candidate_embeddings)):
+        cand_start = i * num_bytes
+        cand_bytes = candidates_packed[cand_start:cand_start + num_bytes]
+        diff_bits = 0
+        for qb, cb in zip(query_packed, cand_bytes):
+            xor_val = qb ^ cb
+            # Count set bits (popcount)
+            while xor_val:
+                diff_bits += 1
+                xor_val &= xor_val - 1
+        similarity = 1.0 - (diff_bits / (num_bytes * 8))
+        scores.append(similarity)
+
+    return np.array(scores, dtype=np.float32)
+
+
+# =============================================================================
+# Legacy alias for compatibility
+# =============================================================================
+
 def get_embedding_backend() -> str:
     """
     F218A: Return which embedding backend is currently active.

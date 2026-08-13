@@ -9,7 +9,7 @@ import time
 from pathlib import Path
 from typing import Any
 import orjson
-from hledac.universal.utils.async_helpers import safe_create_task, safe_gather_fire_and_forget
+from hledac.universal.utils.asyncx import safe_create_task, safe_gather_fire_and_forget
 logger = logging.getLogger(__name__)
 
 # C3-03: Bounded write queue with backpressure.

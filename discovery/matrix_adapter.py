@@ -199,7 +199,7 @@ class MatrixPublicAdapter(msgspec.Struct, frozen=True, gc=False):
             return []
 
         # P1-02: Parallelizace — room message fetching paralelně místo sekvenčně
-        from hledac.universal.utils.async_helpers import parallel
+        from hledac.universal.utils.asyncx import parallel
 
         async def _get_messages(room: Any) -> list:
             msgs = await self.get_room_messages(room.room_id, max_messages)

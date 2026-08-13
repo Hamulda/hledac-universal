@@ -67,7 +67,7 @@ from typing import TYPE_CHECKING
 import numpy as np
 
 from hledac.universal.runtime.worker_pool import run_in_pool
-from hledac.universal.utils.async_helpers import first_completed  # ISSUE-15
+from hledac.universal.utils.asyncx import first_completed  # ISSUE-15
 
 if TYPE_CHECKING:
     from hledac.universal.knowledge.duckdb_store import CanonicalFinding

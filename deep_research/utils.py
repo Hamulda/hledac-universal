@@ -10,7 +10,7 @@ import re
 from dataclasses import dataclass
 import msgspec
 from typing import Any
-from hledac.universal.utils.async_helpers import parallel_ok
+from hledac.universal.utils.asyncx import parallel_ok
 logger = logging.getLogger(__name__)
 
 class LinkCheckResult(msgspec.Struct, gc=False):

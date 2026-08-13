@@ -14,7 +14,7 @@
 //!         ▼                  ▼                  ▼
 //! ┌───────────────┐  ┌───────────────┐  ┌─────────────────┐
 //! │  ioc::fast   │  │  ioc::simd   │  │  ioc::standard  │
-//! │ (Aho-Corasick)│  │   (NEON M1) │  │   (RegexSet)    │
+//! │ (Aho-Corasick)│  │   (NEON M1) │  │   (regex_automata) │
 //! └───────────────┘  └───────────────┘  └─────────────────┘
 //!                            │
 //! ┌───────────────────────────────────────────────────────────────┐
@@ -43,7 +43,7 @@
 //! ## Design Decisions
 //!
 //! 1. **Single Entry Point**: All IOC extraction goes through `ioc::extract`
-//! 2. **Dispatch Strategy**: Fast (Aho-Corasick) → SIMD (NEON) → Standard (RegexSet)
+//! 2. **Dispatch Strategy**: Fast (Aho-Corasick) → SIMD (NEON) → Standard (regex_automata)
 //! 3. **Pattern Centralization**: All patterns in `patterns.rs` (codegen source)
 //! 4. **M1 8GB Safe**: Bounded batch sizes, adaptive threading
 

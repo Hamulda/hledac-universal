@@ -120,7 +120,7 @@ from hledac.universal.core.locks import LockCategory, register_lock
 
 # Issue 10.2: canonical UA — injects JA3-consistent User-Agent header
 from hledac.universal.layers.ua_rotator import get_ua_for_profile
-from hledac.universal.utils.async_helpers import safe_create_task
+from hledac.universal.utils.asyncx import safe_create_task
 from hledac.universal.utils.encoding import decode_response_bytes, parse_charset_from_content_type
 
 from .body_limiter import read_body_with_cap
@@ -426,7 +426,7 @@ def _log_webkit_window_update(
 # [NEXUS]-018-01: WebKit transport telemetry counters (in transport layer).
 # Thread-safe via threading.Lock to prevent race conditions on counter updates.
 # These counters are read by public_fetcher.get_webkit_transport_stats().
-@dataclass
+@dataclass(slots=True)
 class WebkitTransportTelemetry:
     """Thread-safe telemetry counters for Safari WebKit HTTP/2 profile usage."""
     
@@ -599,7 +599,7 @@ class _AsyncClosable(Protocol):
 # ── Eviction metrics ─────────────────────────────────────────────────────────
 
 
-@dataclass
+@dataclass(slots=True)
 class _EvictionMetrics:
     """Per-pass eviction statistics, accumulated across a single _evict_stale_sessions call."""
 
@@ -1041,7 +1041,7 @@ async def async_get_curl_cffi_session(profile: str = "chrome110") -> tuple[bool,
     # F350M-R: Race-first success — parallel profile creation.
     # Creates a session for each profile concurrently; first working profile wins.
     # Losers are cancelled immediately, saving CPU/RAM vs sequential O(n) delay.
-    from hledac.universal.utils.async_helpers import race_first_success
+    from hledac.universal.utils.asyncx import race_first_success
 
     coros: list[tuple[Awaitable[tuple[bool, Any]], str]] = []
     for p in profiles_to_try:

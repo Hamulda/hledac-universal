@@ -13,7 +13,7 @@ Funkce:
 """
 import asyncio
 from collections import deque
-from hledac.universal.utils.async_helpers import safe_create_task
+from hledac.universal.utils.asyncx import safe_create_task
 import logging
 import time
 from dataclasses import dataclass, field

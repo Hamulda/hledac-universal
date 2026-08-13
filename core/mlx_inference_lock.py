@@ -142,7 +142,7 @@ class MLXWorker:
                     t.cancel()
                 if pending:
                     try:
-                        from hledac.universal.utils.async_helpers import safe_gather_fire_and_forget
+                        from hledac.universal.utils.asyncx import safe_gather_fire_and_forget
                         loop.run_until_complete(
                             safe_gather_fire_and_forget(*pending, label="mlx_worker:shutdown")
                         )

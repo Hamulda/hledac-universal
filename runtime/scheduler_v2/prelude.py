@@ -27,7 +27,7 @@ from dataclasses import dataclass
 import msgspec
 from typing import Any
 
-from hledac.universal.utils.async_helpers import first_completed  # ISSUE-15
+from hledac.universal.utils.asyncx import first_completed  # ISSUE-15
 
 # ─── Module-level lazy import cache ───────────────────────────────────────────
 # Pattern: import at first use, cache in module globals for subsequent calls.
@@ -420,7 +420,7 @@ async def run_doh_prelude_lane(query: str, result: Any, duckdb_store: Any, time_
     with fail-fast → ingests results.
     """
     from hledac.universal.runtime.acquisition_strategy import AcquisitionLane
-    from hledac.universal.utils.async_helpers import safe_create_task
+    from hledac.universal.utils.asyncx import safe_create_task
 
     result.doh_planned = True
     result.doh_scheduled = True
@@ -493,7 +493,7 @@ async def run_doh_prelude_lane(query: str, result: Any, duckdb_store: Any, time_
 
 async def gather_taskgroup(coros: list, concurrency: int, ctx: str) -> tuple[list, list]:
     """Wrapper around utils.async_helpers.gather_taskgroup for prelude lanes."""
-    from hledac.universal.utils.async_helpers import parallel
+    from hledac.universal.utils.asyncx import parallel
     result = await parallel(coros, concurrency=concurrency, policy="collect", taskgroup=True, ctx=ctx)
     return result.ok, list(result.errors)
 

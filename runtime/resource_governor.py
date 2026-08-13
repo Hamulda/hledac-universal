@@ -50,7 +50,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import threading
-from hledac.universal.utils.async_helpers import safe_create_task
+from hledac.universal.utils.asyncx import safe_create_task
 import msgspec
 from hledac.universal.core.resource_governor import UMA_STATE_CRITICAL, UMA_STATE_EMERGENCY, UMA_STATE_WARN, sample_uma_status
 from hledac.universal.core.resource_governor import PressureState, uma_state_to_pressure_state

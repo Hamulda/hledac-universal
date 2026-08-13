@@ -54,7 +54,7 @@
 use pyo3::prelude::*;
 use pyo3::types::PyList;
 use rayon::prelude::*;
-use regex::Regex as RegexSimple;
+use regex_automata::Regex as RegexSimple;
 use regex_automata::meta::Regex;
 use std::collections::HashSet;
 

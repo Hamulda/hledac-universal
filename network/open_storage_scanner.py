@@ -91,7 +91,7 @@ class _OpenStorageScanner:
         session = await async_get_httpx_session()
 
         # P1-02: Parallelizace — 15 URL guesses paralelně místo sekvenčně
-        from hledac.universal.utils.async_helpers import parallel
+        from hledac.universal.utils.asyncx import parallel
 
         async def _check_url(url: str) -> dict[str, Any] | None:
             """Check single URL for open bucket. Returns result dict or None."""

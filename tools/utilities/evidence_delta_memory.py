@@ -157,6 +157,89 @@ def _extract_capability_fields(report: dict) -> dict:
         fields['next_seeds_quality'] = next_seeds.get('quality_score', 0)
     return fields
 
+def _compare_dimension(prev: float, curr: float, dim_name: str, higher_is_better: bool = True) -> tuple[list[str], list[str], list[str]]:
+    """Compare a single dimension between previous and current values.
+    
+    Args:
+        prev: Previous run value
+        curr: Current run value
+        dim_name: Name of the dimension for categorization
+        higher_is_better: If True, higher curr is improvement; if False, lower curr is improvement
+        
+    Returns:
+        Tuple of (improved_dims, regressed_dims, neutral_dims)
+    """
+    improved: list[str] = []
+    regressed: list[str] = []
+    neutral: list[str] = []
+    
+    if higher_is_better:
+        if curr > prev:
+            improved.append(dim_name)
+        elif curr < prev:
+            regressed.append(dim_name)
+        else:
+            neutral.append(dim_name)
+    else:
+        if curr < prev:
+            improved.append(dim_name)
+        elif curr > prev:
+            regressed.append(dim_name)
+        else:
+            neutral.append(dim_name)
+    
+    return improved, regressed, neutral
+
+
+def _compare_all_dimensions(prev_fields: dict, curr_fields: dict) -> tuple[list[str], list[str], list[str], int, int]:
+    """Compare all capability dimensions using table-driven approach.
+    
+    Returns:
+        Tuple of (improved_dims, regressed_dims, neutral_dims, prev_verdict_rank, curr_verdict_rank)
+    """
+    improved_dims: list[str] = []
+    regressed_dims: list[str] = []
+    neutral_dims: list[str] = []
+    
+    # Verdict comparison (uses rank-based comparison)
+    verdict_order = {'invalid_capability': 0, 'incomparable_capability': 1, 'smoke_capability': 2, 'useful_capability': 3}
+    prev_verdict_rank = verdict_order.get(prev_fields['capability_verdict'], 0)
+    curr_verdict_rank = verdict_order.get(curr_fields['capability_verdict'], 0)
+    
+    if curr_verdict_rank > prev_verdict_rank and curr_fields['capability_verdict'] != 'unknown':
+        improved_dims.append('verdict')
+    elif curr_verdict_rank < prev_verdict_rank:
+        regressed_dims.append('verdict')
+    else:
+        neutral_dims.append('verdict')
+    
+    # Table-driven dimension comparisons: (dimension_name, prev_key, curr_key, higher_is_better)
+    dimension_specs: list[tuple[str, str, str, bool]] = [
+        ('nonfeed_count', 'nonfeed_findings', 'nonfeed_findings', True),
+        ('public_count', 'public_findings', 'public_findings', True),
+        ('ct_count', 'ct_findings', 'ct_findings', True),
+        ('source_diversity', 'source_diversity_score', 'source_diversity_score', True),
+        ('corroboration', 'corroboration_score', 'corroboration_score', True),
+        ('feed_dominance', 'feed_dominance_score', 'feed_dominance_score', False),  # Lower is better
+        ('capability_confidence', 'capability_confidence', 'capability_confidence', True),
+        ('next_seeds_quality', 'next_seeds_quality', 'next_seeds_quality', True),
+        ('next_seeds_count', 'next_seeds_count', 'next_seeds_count', True),
+    ]
+    
+    for dim_name, prev_key, curr_key, higher_is_better in dimension_specs:
+        imp, reg, neut = _compare_dimension(
+            prev_fields.get(prev_key, 0),
+            curr_fields.get(curr_key, 0),
+            dim_name,
+            higher_is_better
+        )
+        improved_dims.extend(imp)
+        regressed_dims.extend(reg)
+        neutral_dims.extend(neut)
+    
+    return improved_dims, regressed_dims, neutral_dims, prev_verdict_rank, curr_verdict_rank
+
+
 def compare_capability_artifacts(previous_json: Path | None, current_json: Path) -> CapabilityDelta:
     """Compare two live measurement JSON artifacts and determine if OSINT capability improved.
 
@@ -177,96 +260,17 @@ def compare_capability_artifacts(previous_json: Path | None, current_json: Path)
     curr_data = _load_full_report(current_json)
     prev_fields = _extract_capability_fields(prev_data)
     curr_fields = _extract_capability_fields(curr_data)
-    improved_dims: list[str] = []
-    regressed_dims: list[str] = []
-    neutral_dims: list[str] = []
-    verdict_order = {'invalid_capability': 0, 'incomparable_capability': 1, 'smoke_capability': 2, 'useful_capability': 3}
-    prev_verdict_rank = verdict_order.get(prev_fields['capability_verdict'], 0)
-    curr_verdict_rank = verdict_order.get(curr_fields['capability_verdict'], 0)
-    if curr_verdict_rank > prev_verdict_rank and curr_fields['capability_verdict'] != 'unknown':
-        improved_dims.append('verdict')
-    elif curr_verdict_rank < prev_verdict_rank:
-        regressed_dims.append('verdict')
-    else:
-        neutral_dims.append('verdict')
-    prev_nonfeed = prev_fields['nonfeed_findings']
-    curr_nonfeed = curr_fields['nonfeed_findings']
-    if curr_nonfeed > prev_nonfeed:
-        improved_dims.append('nonfeed_count')
-    elif curr_nonfeed < prev_nonfeed:
-        regressed_dims.append('nonfeed_count')
-    else:
-        neutral_dims.append('nonfeed_count')
-    prev_pub = prev_fields['public_findings']
-    curr_pub = curr_fields['public_findings']
-    if curr_pub > prev_pub:
-        improved_dims.append('public_count')
-    elif curr_pub < prev_pub:
-        regressed_dims.append('public_count')
-    else:
-        neutral_dims.append('public_count')
-    prev_ct = prev_fields['ct_findings']
-    curr_ct = curr_fields['ct_findings']
-    if curr_ct > prev_ct:
-        improved_dims.append('ct_count')
-    elif curr_ct < prev_ct:
-        regressed_dims.append('ct_count')
-    else:
-        neutral_dims.append('ct_count')
-    prev_sd = prev_fields['source_diversity_score']
-    curr_sd = curr_fields['source_diversity_score']
-    if curr_sd > prev_sd:
-        improved_dims.append('source_diversity')
-    elif curr_sd < prev_sd:
-        regressed_dims.append('source_diversity')
-    else:
-        neutral_dims.append('source_diversity')
-    prev_corr = prev_fields['corroboration_score']
-    curr_corr = curr_fields['corroboration_score']
-    if curr_corr > prev_corr:
-        improved_dims.append('corroboration')
-    elif curr_corr < prev_corr:
-        regressed_dims.append('corroboration')
-    else:
-        neutral_dims.append('corroboration')
-    prev_fd = prev_fields['feed_dominance_score']
-    curr_fd = curr_fields['feed_dominance_score']
-    if curr_fd < prev_fd:
-        improved_dims.append('feed_dominance')
-    elif curr_fd > prev_fd:
-        regressed_dims.append('feed_dominance')
-    else:
-        neutral_dims.append('feed_dominance')
-    prev_cc = prev_fields['capability_confidence']
-    curr_cc = curr_fields['capability_confidence']
-    if curr_cc > prev_cc:
-        improved_dims.append('capability_confidence')
-    elif curr_cc < prev_cc:
-        regressed_dims.append('capability_confidence')
-    else:
-        neutral_dims.append('capability_confidence')
-    prev_ns = prev_fields['next_seeds_quality']
-    curr_ns = curr_fields['next_seeds_quality']
-    if curr_ns > prev_ns:
-        improved_dims.append('next_seeds_quality')
-    elif curr_ns < prev_ns:
-        regressed_dims.append('next_seeds_quality')
-    else:
-        neutral_dims.append('next_seeds_quality')
-    prev_nsc = prev_fields['next_seeds_count']
-    curr_nsc = curr_fields['next_seeds_count']
-    if curr_nsc > prev_nsc:
-        improved_dims.append('next_seeds_count')
-    elif curr_nsc < prev_nsc:
-        regressed_dims.append('next_seeds_count')
-    else:
-        neutral_dims.append('next_seeds_count')
+    
+    improved_dims, regressed_dims, neutral_dims, prev_verdict_rank, curr_verdict_rank = _compare_all_dimensions(
+        prev_fields, curr_fields
+    )
+    
     hw_tainted_curr = curr_fields['hardware_constrained']
     hw_tainted_prev = prev_fields['hardware_constrained']
     verdict_improved_flag = curr_verdict_rank > prev_verdict_rank and curr_fields['capability_verdict'] != 'unknown'
-    nonfeed_up_flag = curr_nonfeed > prev_nonfeed
-    pub_up_flag = curr_pub > prev_pub
-    ct_up_flag = curr_ct > prev_ct
+    nonfeed_up_flag = curr_fields['nonfeed_findings'] > prev_fields['nonfeed_findings']
+    pub_up_flag = curr_fields['public_findings'] > prev_fields['public_findings']
+    ct_up_flag = curr_fields['ct_findings'] > prev_fields['ct_findings']
     if previous_json is None:
         verdict = CapabilityDeltaVerdict.NO_PRIOR
         operator_summary = 'No prior run available for comparison.'
@@ -285,7 +289,25 @@ def compare_capability_artifacts(previous_json: Path | None, current_json: Path)
     else:
         verdict = CapabilityDeltaVerdict.MIXED
         operator_summary = f'Tied: {len(improved_dims)} improved, {len(regressed_dims)} regressed. Manual review recommended.'
-    return CapabilityDelta(capability_delta_verdict=verdict, improved_dimensions=improved_dims, regressed_dimensions=regressed_dims, neutral_dimensions=neutral_dims, operator_summary=operator_summary, verdict_improvement=verdict_improved_flag, nonfeed_count_up=nonfeed_up_flag, public_count_up=pub_up_flag, ct_count_up=ct_up_flag, source_diversity_up=curr_sd > prev_sd, corroboration_up=curr_corr > prev_corr, feed_dominance_down=curr_fd < prev_fd, capability_confidence_up=curr_cc > prev_cc, next_seeds_quality_up=curr_ns > prev_ns, next_seeds_count_up=curr_nsc > prev_nsc, hardware_tainted_current=hw_tainted_curr, hardware_tainted_previous=hw_tainted_prev)
+    return CapabilityDelta(
+        capability_delta_verdict=verdict,
+        improved_dimensions=improved_dims,
+        regressed_dimensions=regressed_dims,
+        neutral_dimensions=neutral_dims,
+        operator_summary=operator_summary,
+        verdict_improvement=verdict_improved_flag,
+        nonfeed_count_up=nonfeed_up_flag,
+        public_count_up=pub_up_flag,
+        ct_count_up=ct_up_flag,
+        source_diversity_up='source_diversity' in improved_dims,
+        corroboration_up='corroboration' in improved_dims,
+        feed_dominance_down='feed_dominance' in improved_dims,
+        capability_confidence_up='capability_confidence' in improved_dims,
+        next_seeds_quality_up='next_seeds_quality' in improved_dims,
+        next_seeds_count_up='next_seeds_count' in improved_dims,
+        hardware_tainted_current=hw_tainted_curr,
+        hardware_tainted_previous=hw_tainted_prev
+    )
 
 def capability_delta_to_dict(delta: CapabilityDelta) -> dict:
     """Serialize CapabilityDelta to a JSON-serializable dict."""

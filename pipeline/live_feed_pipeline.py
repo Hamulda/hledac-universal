@@ -1155,7 +1155,7 @@ def _make_feed_finding_id(
 # ---------------------------------------------------------------------------
 
 # Import here so that absence of pattern_matcher is a hard fail at import time
-from hledac.universal.utils.async_helpers import parallel  # noqa: E402
+from hledac.universal.utils.asyncx import parallel  # noqa: E402
 from hledac.universal.utils.patterns.pattern_matcher import match_text  # noqa: E402
 from hledac.universal.utils.patterns.feed_pipeline_wrapper import (  # noqa: E402
     feed_entry_pipeline_fast,

@@ -29,7 +29,7 @@ from operator import attrgetter, itemgetter
 import msgspec
 
 from hledac.universal.runtime.scheduler_v2.protocol import InitResult
-from hledac.universal.utils.async_helpers import parallel, safe_create_task
+from hledac.universal.utils.asyncx import parallel, safe_create_task
 
 if TYPE_CHECKING:
     pass

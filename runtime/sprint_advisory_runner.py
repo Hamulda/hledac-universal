@@ -208,7 +208,7 @@ class SprintAdvisoryRunner:
             AdvisoryRunOutcome with counts/flags for each step.
         """
         try:
-            from hledac.universal.utils.async_helpers import parallel_ok
+            from hledac.universal.utils.asyncx import parallel_ok
         except ImportError:
             parallel_ok = None
         outcome = AdvisoryRunOutcome()

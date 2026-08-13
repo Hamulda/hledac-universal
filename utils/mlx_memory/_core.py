@@ -138,13 +138,15 @@ try:
     # MLX-specific thresholds derived from SSOT
     MLX_WARNING_GIB: float = round(_MLX_BUDGET_GIB * UmaBudget.MISSION_PEAK_RSS_RATIO, 2)  # 5.5 GiB
     MLX_CRITICAL_GIB: float = round(_MLX_BUDGET_GIB * UmaBudget.CRITICAL_RATIO, 2)  # 6.191 GiB
-    MAX_MEMORY_MB: int = int(_MLX_BUDGET_GIB * 1024)  # 6_400 MB
+    # FIX: MAX_MEMORY_MB was misnamed - it's actually in MiB (mebibytes, 2^20)
+    # 6.25 GiB = 6400 MiB (since 1 GiB = 1024 MiB)
+    MAX_MEMORY_MIB: int = int(_MLX_BUDGET_GIB * 1024)  # 6400 MiB
 except ImportError:
     # Fallback for environments without uma_budget (should not happen)
     _MLX_BUDGET_GIB = 6.25
     MLX_WARNING_GIB = 5.5
     MLX_CRITICAL_GIB = 6.19
-    MAX_MEMORY_MB = 6_400
+    MAX_MEMORY_MIB = 6400  # 6.25 GiB in MiB
 
 # ── Metal Memory Constants ─────────────────────────────────────────────────────
 
@@ -240,7 +242,7 @@ def get_mlx_memory_pressure() -> tuple[int, str]:
         return 0, "UNKNOWN"
     try:
         active = get_mlx_active_memory_mb() or 0
-        usage_pct = int((active / MAX_MEMORY_MB) * 100)
+        usage_pct = int((active / MAX_MEMORY_MIB) * 100)
         if usage_pct >= 90:
             return usage_pct, "CRITICAL"
         elif usage_pct >= 80:

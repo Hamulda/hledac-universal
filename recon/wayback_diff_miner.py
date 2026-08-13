@@ -40,7 +40,7 @@ from datetime import datetime
 from typing import TYPE_CHECKING, Any
 import httpx
 from hledac.universal.transport.circuit_breaker import domain_breaker_check, domain_breaker_record_failure, domain_breaker_record_success
-from hledac.universal.utils.async_helpers import safe_create_task, parallel
+from hledac.universal.utils.asyncx import safe_create_task, parallel
 if TYPE_CHECKING:
     from hledac.universal.knowledge.duckdb_store import CanonicalFinding
 else:

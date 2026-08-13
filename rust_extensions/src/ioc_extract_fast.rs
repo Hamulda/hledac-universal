@@ -1,15 +1,15 @@
 //! Fast IOC extraction using unified regex engine.
 //!
 //! Architecture:
-//!   1. All IOC patterns compiled into ONE RegexSet (single-pass scan)
-//!   2. Single pass: which patterns matched → which IOC types
-//!   3. Individual regex captures for exact match spans + start/end positions
+//!   1. All IOC patterns compiled into ONE regex (alternation, single-pass scan)
+//!   2. Single pass: which capture group matched → which IOC type
+//!   3. Capture group extraction for exact match spans + start/end positions
 //!   4. Rayon batch parallelization for multiple texts
 //!
 //! M1 8GB: 2 rayon workers, 1000 text batch limit
 //!
-//! Issue #8: SHA1/SHA256/MD5 patterns use NO \b boundaries due to RegexSet
-//! limitation (no word boundary support). Hash validation via is_valid_hex_hash()
+//! Issue #8: SHA1/SHA256/MD5 patterns use NO \b boundaries due to
+//! alternation-based regex. Hash validation via is_valid_hex_hash()
 //! compensates to prevent false positives.
 //!
 //! Issue #15: Extended to cover ALL structured IOC patterns from Python post-pass
@@ -20,7 +20,7 @@
 use pyo3::prelude::*;
 use pyo3::types::{PyList, PyTuple};
 use rayon::iter::{IntoParallelRefIterator, ParallelIterator};
-use regex::{Regex, RegexSet};
+use regex_automata::{Regex, PatternID};
 use std::collections::HashSet;
 
 use crate::gil::release_gil;
@@ -123,7 +123,7 @@ impl IocType {
 
 /// Validate that a captured string is a valid hex hash for the given IOC type.
 ///
-/// This compensates for RegexSet's lack of \b word boundaries.
+/// This compensates for alternation regex's lack of \b word boundaries.
 fn is_valid_hex_hash(value: &str, ioc_type: IocType) -> bool {
     let Some(expected_len) = ioc_type.hash_len() else {
         return true;
@@ -140,16 +140,17 @@ fn has_sufficient_entropy(value: &str) -> bool {
     unique_chars.len() >= 8
 }
 
-/// Build unified RegexSet for ALL IOC patterns (Issue #15).
+/// Build unified regex for ALL IOC patterns using regex_automata (Issue #15).
 ///
-/// Returns Result<(RegexSet, individual Regexes, ioc_types), String>
+/// Returns Result<(regex_automata::Regex, pattern_count), String>
+/// Uses alternation pattern to combine all IOC patterns.
 /// Covers: IPv4/6, domain, MD5/SHA1/SHA256, email, CVE, + all Python post-pass
 /// patterns (BTC, GHSA, Telegram, XMR, I2P, PGP, IPFS, USDT, LTC, DOGE,
 /// AWS, Google, Stripe, Slack, MISP UUID, Onion v3).
 ///
 /// CRITICAL: Pattern order MUST match IocType enum order exactly.
 /// F1.2 fix: Returns Result instead of panicking on invalid patterns.
-fn build_ioc_regex_set() -> Result<(RegexSet, Vec<Regex>, Vec<IocType>), String> {
+fn build_ioc_regex_set() -> Result<(Regex, usize), String> {
     // IMPORTANT: Order must match IocType enum order (ipv4=0, ipv6=1, domain=2, ...)
     let patterns: Vec<&str> = vec![
         // 0: Ipv4
@@ -235,38 +236,35 @@ fn build_ioc_regex_set() -> Result<(RegexSet, Vec<Regex>, Vec<IocType>), String>
         IocType::EthAddr,
     ];
 
-    // F1.2 fix: Build RegexSet and validate each pattern individually
-    let regex_set = RegexSet::new(&patterns).map_err(|e| {
-        eprintln!("[ioc_extract_fast] RegexSet::new failed: {}", e);
-        format!("RegexSet build error: {}", e)
+    // Build combined regex using alternation - each pattern wrapped in capturing group
+    // This allows us to identify which pattern matched
+    let combined_pattern = patterns
+        .iter()
+        .enumerate()
+        .map(|(i, p)| format!("(?:{})", p))
+        .collect::<Vec<_>>()
+        .join("|");
+
+    let regex = Regex::new(&combined_pattern, Syntax::default()).map_err(|e| {
+        eprintln!("[ioc_extract_fast] Regex::new failed: {}", e);
+        format!("Regex build error: {}", e)
     })?;
 
-    let mut individual_regexes: Vec<Regex> = Vec::with_capacity(patterns.len());
-    for (i, p) in patterns.iter().enumerate() {
-        match Regex::new(p) {
-            Ok(re) => individual_regexes.push(re),
-            Err(e) => {
-                eprintln!("[ioc_extract_fast] Pattern {} failed to compile: {}", i, e);
-                return Err(format!("Pattern {} error: {}", i, e));
-            }
-        }
-    }
-
-    Ok((regex_set, individual_regexes, ioc_types))
+    Ok((regex, patterns.len()))
 }
 
 // ISSUE-014: LazyLock replaces lazy_static! macro
 // F1.2 fix: Result type to prevent module load panic on regex build failure
-static IOC_REGEX: std::sync::LazyLock<Result<(RegexSet, Vec<Regex>, Vec<IocType>), String>> =
+static IOC_REGEX: std::sync::LazyLock<Result<(Regex, usize), String>> =
     std::sync::LazyLock::new(|| build_ioc_regex_set());
 
-/// Extract IOCs from a single text using unified RegexSet.
+/// Extract IOCs from a single text using unified regex.
 ///
 /// Returns list of (ioc_value, ioc_type) tuples.
 /// Deduplication: same value appears only once per text.
 /// F1.2 fix: Returns empty vec if regex build failed (fail-soft).
 pub fn extract_iocs_from_text(text: &str) -> Vec<(String, String)> {
-    let (regex_set, individual_regexes, ioc_types) = match IOC_REGEX.as_ref() {
+    let (regex, pattern_count) = match IOC_REGEX.as_ref() {
         Ok(re) => re,
         Err(e) => {
             eprintln!("[ioc_extract_fast] IOC_REGEX unavailable: {}", e);
@@ -274,36 +272,71 @@ pub fn extract_iocs_from_text(text: &str) -> Vec<(String, String)> {
         }
     };
 
-    // Quick check: which patterns matched at all?
-    let matches = regex_set.matches(text);
-
     let mut seen: HashSet<String> = HashSet::new();
     let mut results: Vec<(String, String)> = Vec::new();
 
-    // For each matched pattern, find all captures
-    for pattern_idx in matches.into_iter() {
-        if pattern_idx >= ioc_types.len() {
-            continue;
-        }
-        let ioc_type = ioc_types[pattern_idx];
-        let re = &individual_regexes[pattern_idx];
+    // Map pattern indices to IocType
+    let ioc_types: Vec<IocType> = vec![
+        IocType::Ipv4,
+        IocType::Ipv6,
+        IocType::Domain,
+        IocType::Md5,
+        IocType::Sha1,
+        IocType::Sha256,
+        IocType::Email,
+        IocType::Cve,
+        IocType::BtcLegacy,
+        IocType::BtcBech32,
+        IocType::Ghsa,
+        IocType::Telegram,
+        IocType::MispUuid,
+        IocType::OnionV3,
+        IocType::XmrAddr,
+        IocType::I2PAddr,
+        IocType::PgpFingerprint,
+        IocType::IpfsCid,
+        IocType::UsdtTrc20,
+        IocType::LtcAddr,
+        IocType::DogeAddr,
+        IocType::AwsKeyId,
+        IocType::GoogleApiKey,
+        IocType::StripeSk,
+        IocType::SlackToken,
+        IocType::EthAddr,
+    ];
 
-        for m in re.find_iter(text) {
-            let value = m.as_str();
-            // FIX Issue #8: Validate hash matches to prevent false positives.
-            if ioc_type.is_hash() && !is_valid_hex_hash(value, ioc_type) {
-                continue;
-            }
-            // Issue #15: entropy filter for hex hashes
-            if ioc_type.needs_entropy_filter() && !has_sufficient_entropy(value) {
-                continue;
-            }
-            if seen.insert(value.to_string()) {
-                let normalized = match ioc_type {
-                    IocType::Domain | IocType::Email => value.to_lowercase(),
-                    _ => value.to_string(),
-                };
-                results.push((normalized, ioc_type.as_str().to_string()));
+    // Iterate all matches and check which capture group matched
+    for m in regex.find_iter(text) {
+        // regex_automata uses PatternID in matches, but with alternation we need to check groups
+        // The alternation pattern creates capture groups 1, 2, 3, etc. for each alternative
+        // We check which group has a match
+        for group_idx in 1..=pattern_count {
+            if let Some(caps) = m.get_group(group_idx) {
+                let value = caps.as_str();
+                if value.is_empty() {
+                    continue;
+                }
+                let pattern_idx = group_idx - 1;
+                if pattern_idx >= ioc_types.len() {
+                    continue;
+                }
+                let ioc_type = &ioc_types[pattern_idx];
+
+                // FIX Issue #8: Validate hash matches to prevent false positives.
+                if ioc_type.is_hash() && !is_valid_hex_hash(value, *ioc_type) {
+                    continue;
+                }
+                // Issue #15: entropy filter for hex hashes
+                if ioc_type.needs_entropy_filter() && !has_sufficient_entropy(value) {
+                    continue;
+                }
+                if seen.insert(value.to_string()) {
+                    let normalized = match ioc_type {
+                        IocType::Domain | IocType::Email => value.to_lowercase(),
+                        _ => value.to_string(),
+                    };
+                    results.push((normalized, ioc_type.as_str().to_string()));
+                }
             }
         }
     }
@@ -319,7 +352,7 @@ pub fn extract_iocs_from_text(text: &str) -> Vec<(String, String)> {
 /// Deduplication by (label, value) pair.
 /// F1.2 fix: Returns empty vec if regex build failed (fail-soft).
 pub fn extract_structured_entities(text: &str) -> Vec<(usize, usize, String, String)> {
-    let (regex_set, individual_regexes, ioc_types) = match IOC_REGEX.as_ref() {
+    let (regex, pattern_count) = match IOC_REGEX.as_ref() {
         Ok(re) => re,
         Err(e) => {
             eprintln!("[ioc_extract_fast] IOC_REGEX unavailable: {}", e);
@@ -327,40 +360,73 @@ pub fn extract_structured_entities(text: &str) -> Vec<(usize, usize, String, Str
         }
     };
 
-    let matches = regex_set.matches(text);
-
     let mut seen: HashSet<(String, String)> = HashSet::new();
     let mut results: Vec<(usize, usize, String, String)> = Vec::new();
 
-    for pattern_idx in matches.into_iter() {
-        if pattern_idx >= ioc_types.len() {
-            continue;
-        }
-        let ioc_type = ioc_types[pattern_idx];
-        let re = &individual_regexes[pattern_idx];
+    // Map pattern indices to IocType
+    let ioc_types: Vec<IocType> = vec![
+        IocType::Ipv4,
+        IocType::Ipv6,
+        IocType::Domain,
+        IocType::Md5,
+        IocType::Sha1,
+        IocType::Sha256,
+        IocType::Email,
+        IocType::Cve,
+        IocType::BtcLegacy,
+        IocType::BtcBech32,
+        IocType::Ghsa,
+        IocType::Telegram,
+        IocType::MispUuid,
+        IocType::OnionV3,
+        IocType::XmrAddr,
+        IocType::I2PAddr,
+        IocType::PgpFingerprint,
+        IocType::IpfsCid,
+        IocType::UsdtTrc20,
+        IocType::LtcAddr,
+        IocType::DogeAddr,
+        IocType::AwsKeyId,
+        IocType::GoogleApiKey,
+        IocType::StripeSk,
+        IocType::SlackToken,
+        IocType::EthAddr,
+    ];
 
-        for m in re.find_iter(text) {
-            let value = m.as_str();
-            let start = m.start();
-            let end = m.end();
+    // Iterate all matches and check which capture group matched
+    for m in regex.find_iter(text) {
+        for group_idx in 1..=pattern_count {
+            if let Some(caps) = m.get_group(group_idx) {
+                let value = caps.as_str();
+                if value.is_empty() {
+                    continue;
+                }
+                let start = caps.start();
+                let end = caps.end();
+                let pattern_idx = group_idx - 1;
+                if pattern_idx >= ioc_types.len() {
+                    continue;
+                }
+                let ioc_type = &ioc_types[pattern_idx];
 
-            // Validate hashes
-            if ioc_type.is_hash() && !is_valid_hex_hash(value, ioc_type) {
-                continue;
-            }
-            if ioc_type.needs_entropy_filter() && !has_sufficient_entropy(value) {
-                continue;
-            }
+                // Validate hashes
+                if ioc_type.is_hash() && !is_valid_hex_hash(value, *ioc_type) {
+                    continue;
+                }
+                if ioc_type.needs_entropy_filter() && !has_sufficient_entropy(value) {
+                    continue;
+                }
 
-            let label = ioc_type.as_str();
-            let key = (label.to_string(), value.to_string());
-            if seen.insert(key) {
-                results.push((start, end, value.to_string(), label.to_string()));
+                let label = ioc_type.as_str();
+                let key = (label.to_string(), value.to_string());
+                if seen.insert(key) {
+                    results.push((start, end, value.to_string(), label.to_string()));
+                }
             }
         }
     }
 
-    // Sort by start offset (already in order from individual regex scans, but ensure sorted)
+    // Sort by start offset
     results.sort_by_key(|r| r.0);
     results
 }
@@ -424,7 +490,7 @@ pub fn batch_extract_structured_entities_py(
 /// Extract IOCs using unified regex engine (Python-facing).
 ///
 /// Single pass across all IOC patterns.
-/// Thread-safe, reuses compiled RegexSet.
+/// Thread-safe, reuses compiled regex.
 #[cfg_attr(feature = "otel", instrument(skip_all, fields(text_len = text.len())))]
 #[pyfunction]
 pub fn ioc_extract_unified(text: &str) -> Vec<(String, String)> {

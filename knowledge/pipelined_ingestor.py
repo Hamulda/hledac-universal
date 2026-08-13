@@ -30,7 +30,7 @@ fail-safe (legacy fallback na jakoukoli chybu).
 """
 import asyncio
 import threading
-from hledac.universal.utils.async_helpers import parallel
+from hledac.universal.utils.asyncx import parallel
 import logging
 from typing import TYPE_CHECKING, Any
 if TYPE_CHECKING:
@@ -131,7 +131,7 @@ class PipelinedIngestor:
                     q_ref.task_done()
             await q.put(None)
             # F350M-R ISSUE #31: safe_create_task with eager_start=True (WAL Arrow storage is hot path)
-            from hledac.universal.utils.async_helpers import safe_create_task
+            from hledac.universal.utils.asyncx import safe_create_task
             task = safe_create_task(_storage_task(chunk_findings, list(range(chunk_start, chunk_end)), q), eager_start=True)
             pending_tasks.append((list(range(chunk_start, chunk_end)), task))
         for _indices, task in pending_tasks:

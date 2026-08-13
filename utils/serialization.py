@@ -10,12 +10,15 @@ Use _safe_dataclass_to_dict() instead of asdict() when the dataclass has:
 - Any fields that may contain nested dataclass instances or circular refs
 
 Use safe_to_json() as a drop-in for json.dumps(asdict(obj), default=str).
+
+Uses orjson for fast JSON serialization.
 """
 
 import dataclasses
-import json
 from enum import Enum
 from pathlib import Path
+
+import orjson
 
 __all__ = [
     "_make_serializable",
@@ -133,7 +136,7 @@ def _safe_dataclass_to_dict(obj, _seen: set[int] | None = None):
 
 def safe_to_json(obj, indent: int = 2) -> str:
     """
-    Serialize a dataclass to JSON string safely.
+    Serialize a dataclass to JSON string safely using orjson.
 
     Replaces the common pattern: json.dumps(asdict(obj), default=str)
     which fails with RecursionError for dataclasses with dict|None fields
@@ -147,8 +150,7 @@ def safe_to_json(obj, indent: int = 2) -> str:
         JSON string representation.
     """
     d = _safe_dataclass_to_dict(obj)
-    # Pre-process to replace dict/list cycles before json.dumps sees them.
-    # json.dumps without a custom encoder raises ValueError on dict cycles
-    # BEFORE calling default=, so we must sanitize the graph first.
+    # Pre-process to replace dict/list cycles before orjson sees them.
+    # orjson raises on circular references, so we must sanitize first.
     d = _make_serializable(d)
-    return json.dumps(d, indent=indent)
+    return orjson.dumps(d, option=orjson.OPT_INDENT_2).decode()

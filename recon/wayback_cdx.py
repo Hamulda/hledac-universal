@@ -35,7 +35,7 @@ import msgspec
 from typing import Any
 import httpx
 from hledac.universal.transport.session_pool import session_pool
-from hledac.universal.utils.async_helpers import parallel_ok
+from hledac.universal.utils.asyncx import parallel_ok
 try:
     from hledac.universal.knowledge.duckdb_store import CanonicalFinding
 except ImportError:

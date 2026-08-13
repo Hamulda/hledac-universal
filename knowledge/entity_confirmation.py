@@ -37,6 +37,8 @@ import time as _time
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
+from hledac.universal.utils.asyncx import _check_gathered  # F320
+
 if TYPE_CHECKING:
     from hledac.universal.knowledge.duckdb_store import DuckDBShadowStore
 
@@ -430,11 +432,10 @@ class EntityConfirmationService:
 
         # Execute all queries in parallel using asyncio.gather
         gathered = await asyncio.gather(*[_query_single(ev, et) for ev, et in entity_tuples], return_exceptions=True)
-
-        for item in gathered:
-            if isinstance(item, Exception):
-                logger.debug("[EntityConfirmation] gather item exception: %s", item)
-                continue
+        ok_results, errors = _check_gathered(gathered)
+        for err in errors:
+            logger.debug("[EntityConfirmation] gather item exception: %s", err)
+        for item in ok_results:
             key, confirmation = item
             results[key] = confirmation
 

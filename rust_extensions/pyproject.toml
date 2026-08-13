@@ -62,7 +62,11 @@ target-dir = "target/maturin"
 #   RUSTFLAGS = "-C target-feature=+neon,+crypto"
 # Toto maturin PŘEDÁ dál, protože jde přímo do cargo env (ne CARGO_ prefix).
 #
+# CANONICAL SOURCE: rust_extensions/.cargo/config.toml has the full rustflags config
+# This pyproject.toml duplicates the flags for maturin builds only.
+# Flags: +neon (SIMD), +crypto (+aes,+sha2) — M1 hardware acceleration
+#
 # VŠECHNY buildy přes maturin (develop i build) nyní dostanou +neon,+crypto.
-# Redundantní s [profile.release.build-override] v Cargo.toml jako záloha.
+# DuckDB path: maturin needs explicit -L for duckdb homebrew lib on M1.
 [tool.maturin.env]
 RUSTFLAGS = "-C target-feature=+neon,+crypto -L /opt/homebrew/opt/duckdb/lib"

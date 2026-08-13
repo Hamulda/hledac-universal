@@ -47,7 +47,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from operator import attrgetter, itemgetter
-from hledac.universal.utils.async_helpers import parallel, _check_gathered
+from hledac.universal.utils.asyncx import parallel, _check_gathered
 
 if TYPE_CHECKING:
     pass
@@ -63,7 +63,7 @@ _DEFAULT_DB_PATH: Path = Path.home() / ".hledac" / "duckdb_rag.duckdb"
 
 # ── Dataclasses matching LanceDB API shapes ────────────────────────────────────
 
-@dataclass
+@dataclass(slots=True)
 class RetrievedChunk:
     """RAG retrieved chunk — matches LanceDBRAGEngine.RetrievedChunk."""
     chunk_id: str
@@ -74,7 +74,7 @@ class RetrievedChunk:
     final_score: float = 0.0
 
 
-@dataclass
+@dataclass(slots=True)
 class EntityCandidate:
     """Entity resolution candidate — matches LanceDBIdentityStore.EntityCandidate."""
     entity_id: str

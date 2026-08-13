@@ -29,7 +29,7 @@ M1 8GB invariants:
 - Rust SPSC lock-free queue (spsc_queue.rs) used for MLX worker coordination, not for this pipeline
 """
 import asyncio
-from hledac.universal.utils.async_helpers import safe_create_task, safe_wait_for, parallel
+from hledac.universal.utils.asyncx import safe_create_task, safe_wait_for, parallel
 import logging
 import time
 from dataclasses import dataclass, field

@@ -41,7 +41,7 @@ from dataclasses import dataclass
 import msgspec
 from pathlib import Path
 from typing import Any, TypeVar
-from hledac.universal.utils.async_helpers import parallel_ok, safe_wait_for
+from hledac.universal.utils.asyncx import parallel_ok, safe_wait_for
 from hledac.universal.core.sync_bridge import stream_via_queue
 
 # MODERN-35 Fix: Import CPU affinity utilities for MLX Metal operations
@@ -215,7 +215,7 @@ _mx_resolver = lazy('mlx.core')
 MLX_AVAILABLE = _mx_resolver() is not None
 mx = _mx_resolver() if MLX_AVAILABLE else None
 _FALLBACK_CACHE_BYTES: int = 32 * 1024 * 1024
-from hledac.universal.utils.async_helpers import parallel_ok, safe_wait_for, parallel
+from hledac.universal.utils.asyncx import parallel_ok, safe_wait_for, parallel
 _INJECTION_PATTERNS: list = [_re_pi.compile('ignore\\s+(?:all\\s+)?previous\\s+(?:instructions?|commands?)', _re_pi.I), _re_pi.compile('(?:system|prompt)\\s*:\\s*you\\s+are\\s+(?:now\\s+)?a', _re_pi.I), _re_pi.compile('#{3,}\\s*system\\s*[:\\s]', _re_pi.I), _re_pi.compile('<\\|system\\|>', _re_pi.I), _re_pi.compile('\\bROLE\\s*:\\s*(?:admin|root|superuser)', _re_pi.I), _re_pi.compile('(?:jailbreak|DAN|do\\s+anything\\s+now)', _re_pi.I), _re_pi.compile('```\\s*system', _re_pi.I)]
 
 def _detect_prompt_injection(prompt: str) -> tuple[bool, list[str]]:

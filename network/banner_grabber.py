@@ -47,7 +47,7 @@ import time
 from dataclasses import dataclass
 import msgspec
 from typing import TYPE_CHECKING
-from hledac.universal.utils.async_helpers import parallel_ok, safe_wait_for
+from hledac.universal.utils.asyncx import parallel_ok, safe_wait_for
 if TYPE_CHECKING:
     from hledac.universal.knowledge.duckdb_store import CanonicalFinding
 logger = logging.getLogger(__name__)

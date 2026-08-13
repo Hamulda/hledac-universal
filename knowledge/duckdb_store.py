@@ -28,7 +28,7 @@ from operator import attrgetter, itemgetter
 from hledac.universal.core.env_config import ENV
 from hledac.universal.runtime.protocols.cleanup_protocol import shutdown_aclose
 from hledac.universal.runtime.lifecycle_registry import ResourceLifecycleRegistry
-from hledac.universal.utils.async_helpers import safe_create_task, safe_wait_for, _check_gathered
+from hledac.universal.utils.asyncx import safe_create_task, safe_wait_for, _check_gathered
 from hledac.universal.knowledge.duckdb_migrator import SchemaMigrator
 from hledac.universal.knowledge.duckdb_protocol import DedupManagerProtocol, QualityGateProtocol
 
@@ -434,7 +434,7 @@ __all__ = [
 ]
 from hledac.universal.tools.file_cache import apply_nocache_to_path
 from hledac.universal.tools.file_cache import madv_nocache_on_path  # R-03: was madv_free_reusable_on_path (broken: madvise NULL+0)
-from hledac.universal.utils.async_helpers import parallel
+from hledac.universal.utils.asyncx import parallel
 
 from .dedup import DedupManager
 from .sprint_boundary import SprintBoundaryCoordinator

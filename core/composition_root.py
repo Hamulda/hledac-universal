@@ -30,7 +30,7 @@ from collections.abc import Callable
 from typing import Any
 
 from hledac.universal.runtime.sprint_entrypoint import _cancel_all_tasks
-from hledac.universal.utils.async_helpers import safe_create_task, first_completed  # ISSUE-15
+from hledac.universal.utils.asyncx import safe_create_task, first_completed  # ISSUE-15
 
 # uvloop: 2× I/O speedup on M1 kqueue. Try uvloop.new_event_loop() first,
 # fall back to asyncio.new_event_loop() if uvloop is unavailable (CI, non-M1).

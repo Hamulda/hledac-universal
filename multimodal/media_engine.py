@@ -1143,6 +1143,10 @@ class MediaDecoder:
             log.debug("[IO-4] ocr_pixelbuffer_frame failed: %s", exc)
             return "", 0.0
 
+    # ── [IO-4] Zero-Copy CVPixelBuffer → MLX Array ─────────────────────────
+    # NOTE: pixelbuffer_to_mlx_array and extract_keyframes_zero_copy_mlx are
+    # defined at the end of the class (lines 1579+) to keep all IO-4 methods together.
+
     async def transcribe_video_zero_copy(
         self,
         file_path: str,
@@ -1423,6 +1427,153 @@ class MediaDecoder:
             log.debug("[SILICON-02] _ocr_frame failed: %s", exc)
             return ""
 
+    # ── [IO-4] Zero-Copy MLX Integration ─────────────────────────────────────
+
+    async def pixelbuffer_to_mlx_array(
+        self,
+        pixel_buffer: Any,
+        target_size: tuple[int, int] | None = None,
+    ) -> Any | None:
+        """
+        [IO-4] Zero-copy CVPixelBuffer → MLX array via Rust IOSurface bridge.
+
+        Pipeline:
+          1. Extract IOSurface from CVPixelBuffer (via CVPixelBufferGetIOSurfaceDescription)
+          2. Create SharedMetalBuffer via IOSurfaceCreateMetalBuffer (TRUE zero-copy)
+          3. Create MLX array with copy=False (zero-copy from MTLBuffer)
+
+        Args:
+            pixel_buffer: CVPixelBuffer from extract_keyframes_zero_copy()
+            target_size: Optional (width, height) to resize to. None = native.
+
+        Returns:
+            MLX array (zero-copy from IOSurface) or None on failure.
+        """
+        try:
+            from hledac.universal.core.rust_backend import rust
+
+            # Get dimensions
+            pb_width = int(pixel_buffer.pixelWidth()) if hasattr(pixel_buffer, 'pixelWidth') else 0
+            pb_height = int(pixel_buffer.pixelHeight()) if hasattr(pixel_buffer, 'pixelHeight') else 0
+            pb_bytes_per_row = int(pixel_buffer.bytesPerRow()) if hasattr(pixel_buffer, 'bytesPerRow') else 0
+
+            if pb_width == 0 or pb_height == 0:
+                log.debug("[IO-4] pixelbuffer_to_mlx_array: invalid dimensions")
+                return None
+
+            # Get IOSurface pointer from CVPixelBuffer
+            iosurface_info = extract_iosurface_from_pixelbuffer(pixel_buffer)
+            if iosurface_info is None:
+                log.debug("[IO-4] pixelbuffer_to_mlx_array: failed to get IOSurface")
+                return None
+
+            # Create SharedMetalBuffer from IOSurface (true zero-copy)
+            SharedMetalBuffer = rust.raw.SharedMetalBuffer
+            buf = SharedMetalBuffer.from_iosurface(
+                iosurface_info['iosurface_ptr'],
+                iosurface_info['width'],
+                iosurface_info['height'],
+                iosurface_info['bytes_per_row'],
+                iosurface_info['pixel_format'],
+            )
+
+            if buf is None:
+                log.debug("[IO-4] pixelbuffer_to_mlx_array: SharedMetalBuffer.from_iosurface failed")
+                return None
+
+            # Create MLX array from the Metal buffer
+            # On M1 UMA, this is zero-copy
+            mx = await self._get_mlx()
+            if mx is None:
+                log.debug("[IO-4] pixelbuffer_to_mlx_array: MLX unavailable")
+                return None
+
+            # Determine shape
+            if target_size is not None:
+                width, height = target_size
+            else:
+                width, height = pb_width, pb_height
+
+            # BGRA format (4 channels)
+            shape = (height, width, 4)  # HWC format
+
+            try:
+                # Create MLX array with zero-copy path
+                mx_arr = buf.to_mlx_array(list(shape), mx.float32)
+                return mx_arr
+            except Exception as exc:
+                log.debug("[IO-4] pixelbuffer_to_mlx_array: to_mlx_array failed: %s", exc)
+                return None
+
+        except ImportError as exc:
+            log.debug("[IO-4] pixelbuffer_to_mlx_array: rust backend unavailable: %s", exc)
+            return None
+        except Exception as exc:
+            log.debug("[IO-4] pixelbuffer_to_mlx_array failed: %s", exc)
+            return None
+
+    async def _get_mlx(self) -> Any | None:
+        """Lazy MLX import."""
+        try:
+            import mlx.core as mx
+            return mx
+        except ImportError:
+            return None
+
+    async def extract_keyframes_zero_copy_mlx(
+        self,
+        file_path: str,
+        interval_s: float = _KEYFRAME_INTERVAL_S,
+        max_frames: int = _MAX_KEYFRAMES,
+        target_size: tuple[int, int] | None = (640, 360),
+    ) -> list[dict[str, Any]]:
+        """
+        [IO-4] Zero-copy keyframe extraction with MLX array output.
+
+        Combines extract_keyframes_zero_copy() with pixelbuffer_to_mlx_array()
+        to produce a list of dicts with MLX arrays ready for vision models.
+
+        Args:
+            file_path: Path to video file
+            interval_s: Interval between frames in seconds
+            max_frames: Maximum number of frames to extract
+            target_size: Target (width, height) for output arrays
+
+        Returns:
+            List of dicts with keys:
+              - mlx_array: MLX array (zero-copy from IOSurface)
+              - timestamp_s: float (frame timestamp in seconds)
+              - shape: tuple (H, W, C)
+            Empty list on error.
+        """
+        # First get CVPixelBuffer frames
+        frames = await self.extract_keyframes_zero_copy(
+            file_path, interval_s, max_frames, target_size
+        )
+
+        if not frames:
+            return []
+
+        # Convert each frame to MLX array
+        result = []
+        for frame_data in frames:
+            pixel_buffer = frame_data['pixel_buffer']
+            timestamp_s = frame_data['timestamp_s']
+
+            mx_arr = await self.pixelbuffer_to_mlx_array(pixel_buffer, target_size)
+            if mx_arr is not None:
+                result.append({
+                    'mlx_array': mx_arr,
+                    'timestamp_s': timestamp_s,
+                    'shape': tuple(mx_arr.shape) if hasattr(mx_arr, 'shape') else None,
+                })
+
+        log.debug(
+            "[IO-4] Extracted %d MLX arrays from %s",
+            len(result), file_path
+        )
+        return result
+
 
 # ── Module-level helpers ──────────────────────────────────────────────────────
 
@@ -1459,3 +1610,114 @@ async def get_media_decoder(governor: Any | None = None) -> MediaDecoder:
                 _media_decoder_singleton = MediaDecoder(governor=governor)
                 await _media_decoder_singleton.initialize()
     return _media_decoder_singleton
+
+
+# ── [IO-4] Module-level IOSurface helpers ─────────────────────────────────────
+
+_iosurface_bridge_available: bool | None = None
+
+
+def is_iosurface_bridge_available() -> bool:
+    """
+    [IO-4] Check if Rust IOSurface bridge is available.
+
+    Returns True if:
+      - Running on macOS
+      - Rust extension compiled with iosurface feature (default)
+      - Metal device available
+
+    This function is cached after first call.
+    """
+    global _iosurface_bridge_available
+    if _iosurface_bridge_available is not None:
+        return _iosurface_bridge_available
+
+    try:
+        from hledac.universal.core.rust_backend import rust
+        available, device_name = rust.iosurface_bridge.is_iosurface_bridge_available()
+        _iosurface_bridge_available = available
+        if available:
+            log.debug("[IO-4] IOSurface bridge available (device: %s)", device_name)
+        else:
+            log.debug("[IO-4] IOSurface bridge not available")
+        return available
+    except ImportError:
+        log.debug("[IO-4] Rust backend not available")
+        _iosurface_bridge_available = False
+        return False
+
+
+def extract_iosurface_from_pixelbuffer(pixel_buffer: Any) -> dict[str, Any] | None:
+    """
+    [IO-4] Extract IOSurface properties from a CVPixelBuffer.
+
+    This function bridges CVPixelBuffer → Rust IOSurface bridge → IOSurface descriptor.
+
+    Args:
+        pixel_buffer: CVPixelBuffer PyObjC object
+
+    Returns:
+        Dict with keys:
+          - iosurface_ptr: int (IOSurfaceRef pointer)
+          - width: int
+          - height: int
+          - bytes_per_row: int
+          - pixel_format: str
+        Or None on failure.
+    """
+    if not is_iosurface_bridge_available():
+        return None
+
+    try:
+        from hledac.universal.core.rust_backend import rust
+        desc = rust.iosurface_bridge.get_iosurface_from_pixelbuffer(int(pixel_buffer))
+        if desc is not None:
+            return {
+                'iosurface_ptr': desc.iosurface_ptr,
+                'width': desc.width,
+                'height': desc.height,
+                'bytes_per_row': desc.bytes_per_row,
+                'pixel_format': desc.pixel_format,
+            }
+        return None
+    except Exception as exc:
+        log.debug("[IO-4] extract_iosurface_from_pixelbuffer failed: %s", exc)
+        return None
+
+
+def create_shared_buffer_from_pixelbuffer(pixel_buffer: Any) -> Any | None:
+    """
+    [IO-4] Create SharedMetalBuffer from CVPixelBuffer (TRUE zero-copy).
+
+    Pipeline:
+      1. Extract IOSurface from CVPixelBuffer
+      2. Create SharedMetalBuffer via IOSurfaceCreateMetalBuffer (zero-copy)
+      3. Return SharedMetalBuffer for MLX integration
+
+    Args:
+        pixel_buffer: CVPixelBuffer PyObjC object
+
+    Returns:
+        SharedMetalBuffer instance or None on failure.
+    """
+    if not is_iosurface_bridge_available():
+        return None
+
+    iosurface_info = extract_iosurface_from_pixelbuffer(pixel_buffer)
+    if iosurface_info is None:
+        return None
+
+    try:
+        from hledac.universal.core.rust_backend import rust
+        SharedMetalBuffer = rust.raw.SharedMetalBuffer
+        buf = SharedMetalBuffer.from_iosurface(
+            iosurface_info['iosurface_ptr'],
+            iosurface_info['width'],
+            iosurface_info['height'],
+            iosurface_info['bytes_per_row'],
+            iosurface_info['pixel_format'],
+        )
+        return buf
+    except Exception as exc:
+        log.debug("[IO-4] create_shared_buffer_from_pixelbuffer failed: %s", exc)
+        return None

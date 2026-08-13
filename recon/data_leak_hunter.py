@@ -18,7 +18,7 @@ M1 8GB Optimized: Streaming processing, minimal memory footprint
 """
 import asyncio
 import hashlib
-from hledac.universal.utils.async_helpers import safe_create_task
+from hledac.universal.utils.asyncx import safe_create_task
 import logging
 import time
 import uuid

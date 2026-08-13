@@ -43,7 +43,7 @@ import threading
 from collections.abc import Callable
 from typing import Any, Literal, TypeVar
 
-from hledac.universal.utils.async_helpers import safe_wait_for
+from hledac.universal.utils.asyncx import safe_wait_for
 
 logger = logging.getLogger(__name__)
 

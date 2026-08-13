@@ -555,7 +555,7 @@ class OpsECCoordinator(UniversalCoordinator):
         """Execute multiple stealth requests with controlled concurrency."""
         from asyncio import Semaphore
 
-        from hledac.universal.utils.async_helpers import parallel
+        from hledac.universal.utils.asyncx import parallel
 
         semaphore = Semaphore(concurrency)
 

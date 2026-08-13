@@ -31,7 +31,7 @@ JSON Serialization: orjson (2-3× faster) > msgspec fallback > stdlib json
 """
 import asyncio
 import logging
-from hledac.universal.utils.async_helpers import safe_create_task
+from hledac.universal.utils.asyncx import safe_create_task
 import os
 import shutil
 import time

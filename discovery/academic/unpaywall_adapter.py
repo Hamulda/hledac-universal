@@ -23,7 +23,7 @@ import msgspec
 from typing import NamedTuple
 import orjson
 from hledac.universal.knowledge.duckdb_store import CanonicalFinding
-from hledac.universal.utils.async_helpers import parallel_ok
+from hledac.universal.utils.asyncx import parallel_ok
 logger = logging.getLogger(__name__)
 UNPAYWALL_BASE = 'https://api.unpaywall.org/v2'
 RATE_LIMIT = 10

@@ -6,7 +6,7 @@ This module provides lazy capability probing without persistent boolean flags.
 
 """
 import asyncio
-from hledac.universal.utils.async_helpers import parallel_ok
+from hledac.universal.utils.asyncx import parallel_ok
 import importlib
 import importlib.util
 import logging

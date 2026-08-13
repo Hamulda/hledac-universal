@@ -39,7 +39,7 @@ import logging
 import time
 from typing import TYPE_CHECKING, Any, AsyncIterator, Awaitable, cast
 from hledac.universal.utils.executor_decorator import offload_to
-from hledac.universal.utils.async_helpers import parallel, parallel_ok
+from hledac.universal.utils.asyncx import parallel, parallel_ok
 from operator import attrgetter, itemgetter
 if TYPE_CHECKING:
     from hledac.universal.brain.deephermes3_engine import DeepHermes3Engine
@@ -84,7 +84,7 @@ class ContinuousBatchEngine:
         if self._running:
             return
         self._running = True
-        from hledac.universal.utils.async_helpers import safe_create_task
+        from hledac.universal.utils.asyncx import safe_create_task
         self._worker_task = safe_create_task(self._run_worker(), name='continuous_batch.worker', eager_start=True)
 
     async def stop(self) -> None:

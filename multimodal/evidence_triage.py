@@ -20,14 +20,14 @@ from PIL import Image
 """
 import asyncio
 import logging
-from hledac.universal.utils.async_helpers import safe_create_task
+from hledac.universal.utils.asyncx import safe_create_task
 import re
 from dataclasses import dataclass, field
 import msgspec
 from pathlib import Path
 from typing import Any
 from hledac.universal.tools.ocr_engine import VisionOCR, recognize_async
-from hledac.universal.utils.async_helpers import parallel_ok
+from hledac.universal.utils.asyncx import parallel_ok
 logger = logging.getLogger(__name__)
 MAX_URL_HITS: int = 20
 'Max embedded URLs/domains extracted from OCR text.'

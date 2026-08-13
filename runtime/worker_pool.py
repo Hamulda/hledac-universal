@@ -41,12 +41,12 @@ import warnings
 from concurrent.futures import ThreadPoolExecutor
 from typing import TYPE_CHECKING, Any, Literal, TypeVar
 
-from hledac.universal.utils.async_helpers import safe_wait_for
+from hledac.universal.utils.asyncx import safe_wait_for
 
 # TEL-02: Lazy import — OTel context capture for trace propagation across Rust boundary.
 # Falls back to a no-op when OTel is not installed (safe for all code paths).
 try:
-    from hledac.universal.utils.async_helpers import current_otel_context
+    from hledac.universal.utils.asyncx import current_otel_context
 except ImportError:
     # Fallback no-op when OTel instrumentation is absent.
     def current_otel_context() -> dict | None:

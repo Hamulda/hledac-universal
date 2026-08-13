@@ -22,7 +22,7 @@ import os
 import time
 from typing import Any
 from hledac.universal.discovery.base import DiscoveryBatchResult
-from hledac.universal.utils.async_helpers import parallel_ok
+from hledac.universal.utils.asyncx import parallel_ok
 
 def _is_providerless_enabled() -> bool:
     """Check if providerless discovery is enabled via env var (call-time check).

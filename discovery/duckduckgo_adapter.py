@@ -38,7 +38,7 @@ from hledac.universal.tools.discovery_replay import (
 from hledac.universal.transport.circuit_breaker import (
     checked_httpx_get as checked_aiohttp_get,
 )
-from hledac.universal.utils.async_helpers import parallel
+from hledac.universal.utils.asyncx import parallel
 from hledac.universal.tools.url_dedup import get_default_bloom_filter
 
 _PUBLIC_REPLAY_ADAPTER = "public_duckduckgo"

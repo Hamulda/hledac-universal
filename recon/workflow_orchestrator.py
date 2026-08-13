@@ -21,7 +21,7 @@ from dataclasses import dataclass, field
 import msgspec
 from datetime import UTC, datetime
 from typing import Any
-from hledac.universal.utils.async_helpers import parallel_ok
+from hledac.universal.utils.asyncx import parallel_ok
 from utils.async_task import safe_create_task
 from operator import attrgetter, itemgetter
 logger = logging.getLogger(__name__)

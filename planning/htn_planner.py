@@ -14,7 +14,7 @@ from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 import msgspec
 from hledac.universal.core.resource_governor import Priority, ResourceGovernor
-from hledac.universal.utils.async_helpers import parallel_ok
+from hledac.universal.utils.asyncx import parallel_ok
 if TYPE_CHECKING:
     from hledac.universal.utils.sprint_lifecycle import SprintLifecycleManager
 from hledac.universal.planning.cost_model import AdaptiveCostModel

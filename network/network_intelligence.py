@@ -24,7 +24,7 @@ GHOST_INVARIANTS:
 """
 import asyncio
 import logging
-from hledac.universal.utils.async_helpers import safe_create_task  # ISSUE-15: asyncio.gather used directly for ALL_COMPLETED
+from hledac.universal.utils.asyncx import safe_create_task  # ISSUE-15: asyncio.gather used directly for ALL_COMPLETED
 import time
 from collections import deque
 from dataclasses import dataclass

@@ -11,7 +11,7 @@
 //! | Batch < 10 items | Fast | Rayon parallel fast |
 //! | Bulk text ≥ 4KB | SIMD | NEON Teddy (M1) |
 //! | Streaming mmap | Stream | Zero-copy scan |
-//! | Complex patterns | Standard | RegexSet |
+//! | Complex patterns | Standard | regex_automata |
 //!
 //! ## M1 8GB Optimizations
 //!

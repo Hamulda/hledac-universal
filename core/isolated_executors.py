@@ -50,7 +50,7 @@ import warnings
 from typing import TYPE_CHECKING, Any, Callable, Literal, TypeVar
 
 from hledac.universal.runtime.worker_pool import RustWorkerPool, get_rust_pool
-from hledac.universal.utils.async_helpers import safe_wait_for
+from hledac.universal.utils.asyncx import safe_wait_for
 
 if TYPE_CHECKING:
     pass

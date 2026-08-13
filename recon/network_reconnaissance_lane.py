@@ -16,7 +16,7 @@ import logging
 import time
 from typing import TYPE_CHECKING, Any
 
-from hledac.universal.utils.async_helpers import parallel
+from hledac.universal.utils.asyncx import parallel
 
 from hledac.universal.recon.lane import (
     BaseIntelligenceLane,

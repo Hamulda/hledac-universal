@@ -36,7 +36,7 @@ from dataclasses import dataclass, field
 import msgspec
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
-from hledac.universal.utils.async_helpers import parallel
+from hledac.universal.utils.asyncx import parallel
 from hledac.universal.core.concurrency import ConcurrencyCategory, get_semaphore
 if TYPE_CHECKING:
     from hledac.universal.knowledge.duckdb_store import CanonicalFinding

@@ -31,7 +31,7 @@ import logging
 from typing import Any
 from collections.abc import Callable, Coroutine
 
-from hledac.universal.utils.async_helpers import safe_create_task
+from hledac.universal.utils.asyncx import safe_create_task
 
 logger = logging.getLogger(__name__)
 

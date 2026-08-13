@@ -30,7 +30,7 @@ from dataclasses import dataclass, field
 import msgspec
 from typing import Any, Protocol, runtime_checkable
 
-from hledac.universal.utils.async_helpers import safe_create_task
+from hledac.universal.utils.asyncx import safe_create_task
 
 logger = logging.getLogger(__name__)
 

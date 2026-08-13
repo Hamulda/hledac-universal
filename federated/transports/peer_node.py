@@ -107,7 +107,7 @@ import secrets
 import time
 from collections import deque
 from typing import Any
-from hledac.universal.utils.async_helpers import safe_wait_for
+from hledac.universal.utils.asyncx import safe_wait_for
 from .protocol import NodeTransportFactory
 logger = logging.getLogger(__name__)
 PEER_NODE_MAX_PEERS: int = 4

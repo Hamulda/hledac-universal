@@ -46,7 +46,7 @@ import logging
 import time as _time
 from typing import TYPE_CHECKING, Any
 
-from hledac.universal.utils.async_helpers import safe_create_task
+from hledac.universal.utils.asyncx import safe_create_task
 
 if TYPE_CHECKING:
     from hledac.universal.knowledge.duckdb_store import CanonicalFinding

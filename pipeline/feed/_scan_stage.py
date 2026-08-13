@@ -15,7 +15,7 @@ import logging
 from typing import TYPE_CHECKING, Any
 
 from hledac.universal.pipeline._soa_types import FeedAssembledBatch, FeedMatchedBatch
-from hledac.universal.utils.async_helpers import parallel_ok
+from hledac.universal.utils.asyncx import parallel_ok
 
 logger = logging.getLogger(__name__)
 

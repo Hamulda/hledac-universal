@@ -42,9 +42,8 @@ class Alert(msgspec.Struct, frozen=True, gc=False):
     threshold: float
     timestamp: float = field(default_factory=time.time)
     tags: tuple[str, ...] = ()
+    # frozen=True auto-generates __hash__ and __eq__
 
-    def __hash__(self) -> int:
-        return hash(self.alert_id)
 _ALERT_REGISTRY: dict[str, float] = {}
 _ALERT_REGISTRY_MAX_AGE_S = 300.0
 

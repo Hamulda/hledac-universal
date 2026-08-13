@@ -154,6 +154,8 @@ _SUBMODULE_NAMES: tuple[str, ...] = (
     "unicode_fingerprint",
     # SWARM-003: Link prediction (Adamic-Adar, Jaccard, Preferential Attachment)
     "link_predictor",
+    # SILICON-02: whisper.cpp transcription via CoreML/ANE
+    "whisper",
     # misc is used for _TlsDomain backward-compat and html property routing
     "misc",
 )

@@ -20,7 +20,7 @@ from typing import TYPE_CHECKING, Any
 import msgspec
 
 from hledac.universal.pipeline._soa_types import FetchedBatch, PageBatch
-from hledac.universal.utils.async_helpers import parallel_ok
+from hledac.universal.utils.asyncx import parallel_ok
 
 logger = logging.getLogger(__name__)
 

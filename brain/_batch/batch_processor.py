@@ -28,7 +28,7 @@ import time
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import TYPE_CHECKING, Any, Callable
-from hledac.universal.utils.async_helpers import safe_wait_for
+from hledac.universal.utils.asyncx import safe_wait_for
 from hledac.universal.utils._patterns import collect_results_async  # F320: DRY batch processing
 
 from operator import attrgetter, itemgetter
@@ -45,7 +45,7 @@ class BatchPriority(Enum):
     LOW = 0.25
 
 
-@dataclass
+@dataclass(slots=True)
 class BatchItem:
     """
     Single item in a batch queue.
@@ -66,7 +66,7 @@ class BatchItem:
         return self.priority > other.priority  # Higher priority first
 
 
-@dataclass
+@dataclass(frozen=True, slots=True)
 class BatchConfig:
     """Configuration for batch processing."""
     max_size: int = 10
@@ -79,7 +79,7 @@ class BatchConfig:
     max_item_retries: int = 2  # Per-item retry limit on batch failure
 
 
-@dataclass
+@dataclass(frozen=True, slots=True)
 class BatchStats:
     """Batch processing statistics."""
     processed_count: int = 0

@@ -133,7 +133,7 @@ class FileRiskLevel(Enum):
     UNKNOWN = auto()       # Unknown format, maximum risk
 
 
-@dataclass
+@dataclass(frozen=True, slots=True)
 class MediaRiskProfile:
     """Risk assessment for a media file based on magic bytes + entropy."""
     risk_level: FileRiskLevel
@@ -391,7 +391,7 @@ def _write_sandbox_profile(profile_name: str, content: str) -> Path:
 # ─── Tier-B: Subprocess Isolation ─────────────────────────────────────────────
 
 
-@dataclass
+@dataclass(frozen=True, slots=True)
 class IsolationConfig:
     """Configuration for subprocess isolation."""
     max_memory_mb: int = 512
@@ -497,7 +497,7 @@ async def _run_in_subprocess_isolation(
 
 # ─── Tier-C: Wasmtime Sandbox ─────────────────────────────────────────────────
 
-@dataclass
+@dataclass(frozen=True, slots=True)
 class WasmSandboxConfig:
     """Configuration for WASM sandbox."""
     fuel_limit: int = 1_000_000
@@ -508,8 +508,10 @@ class WasmSandboxConfig:
 
 # ─── Whisper Subprocess Isolation (Tier-B for whisper.cpp) ─────────────────────
 
-_WHISPER_SUBPROCESS_SCRIPT = """
-\"\"\"Whisper subprocess isolation script — ADVERSARY-001 Tier-B.\"\"\"
+_WHISPER_SUBPROCESS_SCRIPT = '''
+"""Whisper subprocess isolation script — ADVERSARY-001 Tier-B.
+PRIORITY: Rust whisper (CoreML/ANE) → Python whispercpp fallback.
+"""
 import sys
 import json
 import os
@@ -521,6 +523,67 @@ from pathlib import Path
 _PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent if '__file__' in dir() else Path.cwd()
 if str(_PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(_PROJECT_ROOT))
+
+# ── PRIORITY 1: Rust whisper with CoreML/ANE ──────────────────────────────
+def try_rust_whisper(audio_path: str, model_size: str, language: str | None) -> dict | None:
+    """Try Rust whisper (CoreML/ANE acceleration) first."""
+    try:
+        from hledac.universal.core.rust_backend import rust
+        
+        if not rust.whisper.is_available():
+            return None
+        
+        # Run Rust whisper synchronously
+        raw = rust.whisper.transcribe(
+            audio_path,
+            model_size=model_size,
+            language=language,
+        )
+        
+        if raw and raw.get('text'):
+            return {
+                'text': raw.get('text', ''),
+                'language': raw.get('language', language or 'en'),
+                'duration_s': raw.get('duration_s', 0.0),
+                'confidence': raw.get('confidence', 0.85),
+                'coreml_used': raw.get('coreml_used', False),
+                'engine': 'rust_whisper',
+                'segments': raw.get('segments', []),
+            }
+    except Exception:
+        pass
+    return None
+
+# ── PRIORITY 2: Python whispercpp fallback ────────────────────────────────
+async def try_python_whisper(audio_path: str, model_size: str, language: str | None) -> dict | None:
+    """Try Python whispercpp as fallback."""
+    try:
+        from hledac.universal.brain.whisper_engine import WhisperEngine
+        
+        engine = WhisperEngine()
+        initialized = await engine.initialize(model_size=model_size)
+        if not initialized:
+            return None
+        
+        raw = await engine.transcribe(audio_path, model_size=model_size, language=language)
+        await engine.close()
+        
+        if raw and raw.text:
+            return {
+                'text': raw.text,
+                'language': raw.language,
+                'duration_s': raw.duration_s,
+                'confidence': raw.confidence,
+                'coreml_used': raw.coreml_used,
+                'engine': 'python_whispercpp',
+                'segments': [
+                    {'start_s': s.start_s, 'end_s': s.end_s, 'text': s.text, 'confidence': s.confidence}
+                    for s in raw.segments
+                ] if raw.segments else [],
+            }
+    except Exception:
+        pass
+    return None
 
 async def main():
     parser = argparse.ArgumentParser(description='Sandboxed whisper transcription')
@@ -534,49 +597,44 @@ async def main():
     if args.working_dir and Path(args.working_dir).is_dir():
         os.chdir(args.working_dir)
 
-    # Strip sensitive env vars
-    for key in list(os.environ):
-        if any(k in key for k in ('API', 'KEY', 'TOKEN', 'SECRET', 'HLEDAC')):
-            del os.environ[key]
+    # Preserve essential ML env vars (strip only secrets)
+    _SAFE_PREFIXES = ('API', 'KEY', 'TOKEN', 'SECRET', 'SHODAN', 'CENSYS', 'GREYNOISE')
+    _SAFE_WHISPER_VARS = ('WHISPER_COREML', 'WHISPER_MODEL_PATH', 'WHISPER_THREADS')
+    
+    safe_env = {}
+    for key, value in os.environ.items():
+        if not any(prefix in key for prefix in _SAFE_PREFIXES):
+            safe_env[key] = value
+        elif any(safe in key for safe in _SAFE_WHISPER_VARS):
+            safe_env[key] = value
+    
+    # Set WHISPER_COREML for CoreML/ANE acceleration if not already set
+    if 'WHISPER_COREML' not in safe_env:
+        safe_env['WHISPER_COREML'] = '1'
+    
+    os.environ.clear()
+    os.environ.update(safe_env)
 
-    result = {'text': '', 'language': None, 'duration_s': 0.0, 'confidence': 0.0, 'error': None, 'segments': []}
+    result = {'text': '', 'language': None, 'duration_s': 0.0, 'confidence': 0.0, 'error': None, 'segments': [], 'engine': 'none'}
 
-    try:
-        from hledac.universal.brain.whisper_engine import WhisperEngine
-        engine = WhisperEngine()
-        initialized = await engine.initialize(model_size=args.model_size)
-        if not initialized:
-            result['error'] = 'whisper engine init failed'
-            json.dump(result, sys.stdout)
-            sys.exit(1)
-
-        raw = await engine.transcribe(args.audio_path, model_size=args.model_size, language=args.language)
-        if raw:
-            result['text'] = raw.text
-            result['language'] = raw.language
-            result['duration_s'] = raw.duration_s
-            result['confidence'] = raw.confidence
-            # Include segments for full fidelity
-            if hasattr(raw, 'segments') and raw.segments:
-                result['segments'] = [
-                    {
-                        'start_s': s.start_s,
-                        'end_s': s.end_s,
-                        'text': s.text,
-                        'confidence': s.confidence,
-                    }
-                    for s in raw.segments
-                ]
-        await engine.close()
-    except Exception as e:
-        result['error'] = str(e)
+    # PRIORITY 1: Rust whisper (CoreML/ANE)
+    rust_result = try_rust_whisper(args.audio_path, args.model_size, args.language)
+    if rust_result:
+        result = rust_result
+    else:
+        # PRIORITY 2: Python whispercpp
+        python_result = await try_python_whisper(args.audio_path, args.model_size, args.language)
+        if python_result:
+            result = python_result
+        else:
+            result['error'] = 'No whisper engine available (tried Rust + Python whispercpp)'
 
     json.dump(result, sys.stdout)
 
 
 if __name__ == '__main__':
     asyncio.run(main())
-"""
+'''
 
 
 async def run_whisper_in_subprocess(
@@ -711,7 +769,7 @@ class SandboxTier(Enum):
     WASM = auto()       # Tier-C: WASM sandbox for format parsers
 
 
-@dataclass
+@dataclass(frozen=True, slots=True)
 class SandboxResult:
     """Result from sandboxed execution."""
     success: bool
@@ -742,7 +800,7 @@ class SandboxStats(msgspec.Struct, frozen=True, gc=False, kw_only=True):
     whisper_fallback: int = 0
 
 
-@dataclass
+@dataclass(slots=True)
 class WhisperTranscriptionResult:
     """
     ADVERSARY-001: Unified result from sandboxed whisper transcription.
@@ -951,7 +1009,9 @@ class MediaSandboxCoordinator:
         timeout_s: float,
     ) -> WhisperTranscriptionResult:
         """
-        ADVERSARY-001 Fallback: Direct WhisperEngine execution without sandbox.
+        ADVERSARY-001 Fallback: Direct whisper execution without sandbox.
+
+        PRIORITY: Rust whisper (CoreML/ANE) → Python whispercpp
 
         Only used when subprocess sandboxing fails. Logs security warning.
         """
@@ -964,6 +1024,57 @@ class MediaSandboxCoordinator:
             Path(audio_path).name,
         )
 
+        # ── Priority 1: Rust whisper (CoreML/ANE acceleration) ──────────────────
+        # SILICON-02: Rust whisper.cpp with dedicated ANE memory, M1 8GB safe
+        try:
+            from hledac.universal.core.rust_backend import rust
+
+            if rust.whisper.is_available():
+                raw = await asyncio.wait_for(
+                    asyncio.to_thread(
+                        rust.whisper.transcribe,
+                        audio_path,
+                        model_size=model_size,
+                        language=language,
+                    ),
+                    timeout=timeout_s,
+                )
+
+                if raw and raw.get("text"):
+                    elapsed_ms = (time.monotonic() - start) * 1000
+                    logger.info(
+                        "[ADVERSARY-001] Rust whisper direct: path=%s "
+                        "elapsed=%.1fms coreml=%s",
+                        Path(audio_path).name, elapsed_ms, raw.get("coreml_used", False),
+                    )
+                    return WhisperTranscriptionResult(
+                        text=raw.get("text", ""),
+                        language=raw.get("language", language or "en"),
+                        duration_s=raw.get("duration_s", 0.0),
+                        confidence=raw.get("confidence", 0.85),
+                        sandboxed=False,
+                        seatbelt_used=False,
+                        segments=[
+                            {
+                                "start_s": s.get("start_s", 0.0),
+                                "end_s": s.get("end_s", 0.0),
+                                "text": s.get("text", ""),
+                                "confidence": s.get("confidence", 0.85),
+                            }
+                            for s in raw.get("segments", [])
+                        ],
+                    )
+        except ImportError:
+            logger.debug("[ADVERSARY-001] Rust whisper not available")
+        except asyncio.TimeoutError:
+            return WhisperTranscriptionResult(
+                text="",
+                error=f"timeout after {timeout_s}s",
+            )
+        except Exception as exc:
+            logger.debug("[ADVERSARY-001] Rust whisper error: %s", exc)
+
+        # ── Priority 2: Python whispercpp (fallback) ───────────────────────────
         try:
             from hledac.universal.brain.whisper_engine import get_whisper_engine
 

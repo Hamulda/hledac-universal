@@ -1135,8 +1135,7 @@ async def _fetch_feed_content_async(feed_url: str, timeout_s: float, max_bytes: 
     try:
         result = await async_fetch_public_text(feed_url, timeout_s=timeout_s, max_bytes=max_bytes, bypass_circuit_breaker=True)
     except CancelledError:
-        raise
-        return (None, 'fetch_cancelled', None)
+        raise  # Re-raise CancelledError to properly cancel the task
     if result.error or result.text is None:
         fetch_err = result.error or 'fetch_returned_none'
         src_accessibility = _map_fetch_result_to_source_accessibility(result)
@@ -1520,7 +1519,7 @@ async def async_fetch_all_runtime_feeds(
     Returns:
         Tuple of FeedBatchResult for each feed that was fetched.
     """
-    from hledac.universal.utils.async_helpers import parallel
+    from hledac.universal.utils.asyncx import parallel
 
     runtime_seeds = get_runtime_feed_seeds()
 

@@ -40,7 +40,7 @@ from dataclasses import dataclass
 
 from typing import cast
 
-from hledac.universal.utils.async_helpers import parallel
+from hledac.universal.utils.asyncx import parallel
 import msgspec
 from hledac.universal.compat.msgspec_gc_compat import Struct
 from typing import TYPE_CHECKING, Any, Final

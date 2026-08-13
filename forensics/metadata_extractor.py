@@ -64,7 +64,7 @@ from typing import TYPE_CHECKING, Any
 
 import msgspec.json as _json
 
-from hledac.universal.utils.async_helpers import parallel
+from hledac.universal.utils.asyncx import parallel
 from hledac.universal.core.capabilities import CAPS, OLEVBA
 
 logger = logging.getLogger(__name__)

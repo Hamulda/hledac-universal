@@ -209,7 +209,7 @@ async def consumer_fn_to_thread(fn: Callable[[_T], _R], items: list[_T], *, batc
     Issue 8 fix: replaced bare asyncio.to_thread() with bounded gateway dispatch.
     """
     from hledac.universal.runtime.execution_gateway import gateway, WorkloadHint
-    from hledac.universal.utils.async_helpers import parallel_ok
+    from hledac.universal.utils.asyncx import parallel_ok
 
     if not items:
         return []

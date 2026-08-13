@@ -96,7 +96,7 @@ logger = logging.getLogger(__name__)
 # F270: Canonical constants — single source of truth for M1 8GB bounds
 from hledac.universal.core.constants import M1_BOUNDS  # noqa: E402
 from hledac.universal.core.env_config import ENV  # noqa: E402
-from hledac.universal.utils.async_helpers import safe_wait_for
+from hledac.universal.utils.asyncx import safe_wait_for
 
 # Backward-compatible local aliases (these names are used throughout the module)
 _H3_CACHE_MAX: int = M1_BOUNDS().http3_lru_max
@@ -580,7 +580,7 @@ def probe_altsvc_speculative(url: str) -> None:
         logger.debug("http3_lane: speculative probe skipped (no event loop) for %s", host)
         return
     try:
-        from hledac.universal.utils.async_helpers import safe_create_task
+        from hledac.universal.utils.asyncx import safe_create_task
 
         task = safe_create_task(
             _guarded_probe(url),

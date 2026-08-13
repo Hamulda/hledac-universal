@@ -18,7 +18,7 @@ What we CAN cache: Pre-tokenized token arrays (mx.array) for fixed prompt templa
 Invariant: system_msg template is fixed at model load time.
 """
 import asyncio
-from hledac.universal.utils.async_helpers import safe_create_task
+from hledac.universal.utils.asyncx import safe_create_task
 import hashlib
 import logging
 import time as time_module

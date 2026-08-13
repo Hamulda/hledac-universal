@@ -46,7 +46,7 @@ from hledac.universal.utils.deduplication import DeduplicationConfig, Deduplicat
 from hledac.universal.utils.deduplication import QueryItem as DedupItem
 from hledac.universal.utils.msgspec_json import decode, encode
 from hledac.universal.utils.query_expansion import DomainSpecificExpansionStrategy, ExpansionStrategy, MultiStrategyExpander, QueryVariation, SemanticExpansionStrategy, SyntacticExpansionStrategy
-from hledac.universal.utils.async_helpers import parallel_ok
+from hledac.universal.utils.asyncx import parallel_ok
 from hledac.universal.utils.two_pass_pipeline import TwoPassPipeline, TwoPassPipelineConfig, consumer_fn_to_thread
 from operator import attrgetter, itemgetter
 logger = logging.getLogger(__name__)

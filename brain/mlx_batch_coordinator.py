@@ -25,7 +25,7 @@ import time
 from dataclasses import dataclass, field
 from typing import Any
 
-from hledac.universal.utils.async_helpers import safe_create_task
+from hledac.universal.utils.asyncx import safe_create_task
 
 
 # ---------------------------------------------------------------------------
@@ -35,7 +35,7 @@ from hledac.universal.utils.async_helpers import safe_create_task
 MAX_PENDING_FUTURES = 256  # Max pending inference futures
 
 
-@dataclass
+@dataclass(frozen=True, slots=True)
 class BatchConfig:
     """Configuration for batch coordinator."""
     max_size: int = 8  # max items per batch
@@ -45,7 +45,7 @@ class BatchConfig:
     age_bump_interval: int = 3  # flushes between age bumps
 
 
-@dataclass
+@dataclass(frozen=True, slots=True)
 class BatchStats:
     """Telemetry counters for batch processing."""
     schema_mismatch_flushes: int = 0

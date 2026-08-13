@@ -40,7 +40,7 @@ import time
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from hledac.universal.utils.async_helpers import safe_create_task, parallel, first_completed  # ISSUE-15
+from hledac.universal.utils.asyncx import safe_create_task, parallel, first_completed, _check_gathered  # ISSUE-15 + F320
 from hledac.universal.utils.cache import PyCacheDict
 from hledac.universal.utils.msgspec_json import decode as _msgspec_decode
 from hledac.universal.utils.msgspec_json import encode as _msgspec_encode
@@ -939,7 +939,7 @@ OSINT_JSON_SCHEMA: str = _msgspec_encode({
 from dataclasses import dataclass, field
 
 
-@dataclass
+@dataclass(slots=True)
 class SynthesisContext:
     """
     Input context for SynthesisSession.
@@ -2197,19 +2197,17 @@ class SynthesisRunner:
                     pass
             if not _domains_to_check:
                 return report
-            try:
-                _reps = await asyncio.gather(
-                    *[_rep_svc.get(d) for d in _domains_to_check],
-                    return_exceptions=True,
-                )
-                _tarpit_domains: set[str] = set()
-                for _d, _rep in zip(_domains_to_check, _reps):
-                    if isinstance(_rep, Exception) or _rep is None:
-                        continue
-                    if _rep.cognitive_tarpit_score >= 1.0:
-                        _tarpit_domains.add(_d)
-            except Exception:  # noqa: BLE001
-                _tarpit_domains = set()
+            _reps = await asyncio.gather(
+                *[_rep_svc.get(d) for d in _domains_to_check],
+                return_exceptions=True,
+            )
+            _ok_reps, _err_reps = _check_gathered(_reps)
+            _tarpit_domains: set[str] = set()
+            for _d, _rep in zip(_domains_to_check, _ok_reps):
+                if _rep is None:
+                    continue
+                if _rep.cognitive_tarpit_score >= 1.0:
+                    _tarpit_domains.add(_d)
             if not _tarpit_domains:
                 return report
             _before_count = len(report.ioc_entities)

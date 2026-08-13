@@ -1528,7 +1528,7 @@ async def scan_parallel(
         return []
 
     from hledac.universal.core.concurrency import ConcurrencyCategory, get_semaphore
-    from hledac.universal.utils.async_helpers import parallel_ok
+    from hledac.universal.utils.asyncx import parallel_ok
 
     if semaphore is None:
         semaphore = get_semaphore(ConcurrencyCategory.SCRAPE_GENERAL)

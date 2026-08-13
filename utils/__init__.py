@@ -349,7 +349,7 @@ __all__ = [
     "run_cmd",
     # Lazy-loaded submodules (accessible via __getattr__)
     # For IDE autocomplete of lazy submodules, use:
-    #   from hledac.universal.utils.async_helpers import safe_create_task
+    #   from hledac.universal.utils.asyncx import safe_create_task
     # which triggers __getattr__('async_helpers') lazily
     "_SUBMODULE_REGISTRY",
     "_LOADED_SUBMODULES",

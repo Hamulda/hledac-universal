@@ -74,7 +74,7 @@ class CircuitBreakerOpen(Exception):
         super().__init__(f"CircuitBreakerOpen({domain}): {message}")
 
 
-@dataclass
+@dataclass(frozen=True, slots=True)
 class CircuitBreakerConfig:
     """
     Configuration for a circuit breaker.
@@ -88,7 +88,7 @@ class CircuitBreakerConfig:
     name: str = ""                    # Domain name for logging
 
 
-@dataclass
+@dataclass(frozen=True, slots=True)
 class CircuitBreakerStats:
     """Immutable stats snapshot for diagnostics."""
     domain: str

@@ -264,7 +264,7 @@ class TestF911AsyncioWaitForBan:
 
     def test_safe_wait_for_exists_and_importable(self):
         """safe_wait_for exists in utils.async_helpers."""
-        from hledac.universal.utils.async_helpers import safe_wait_for
+        from hledac.universal.utils.asyncx import safe_wait_for
         assert callable(safe_wait_for)
 
     def test_asyncio_wait_for_without_shield_is_violation(self, tmp_path: Path):

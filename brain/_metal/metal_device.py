@@ -47,7 +47,7 @@ class MetalMemoryStats:
     pressure_level: str = "normal"
 
 
-@dataclass
+@dataclass(frozen=True, slots=True)
 class MetalDevice:
     """
     Metal GPU device with M1 8GB UMA awareness.

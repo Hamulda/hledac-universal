@@ -329,7 +329,7 @@ def open_lmdb_with_guard(
 
 def compact_lmdb(env: lmdb.Environment) -> dict[str, int] | None:
     """
-    Compact an LMDB environment in-place (MDB_cp_compact flag).
+    Compact an LMDB environment in-place (MDB_CP_COMPACT flag).
 
     Safe to call concurrently with readers — LMDB uses copy-on-write.
     Fails gracefully if compact is unavailable.
@@ -343,20 +343,45 @@ def compact_lmdb(env: lmdb.Environment) -> dict[str, int] | None:
     """
     try:
         import lmdb
+        import tempfile
+        import shutil
+        import pathlib
 
         # MDB_CP_COMPACT: compact but do not shrink the data file (safe for concurrent readers)
         # Available in lmdb >= 2.2.0 (required by this project)
-        # getattr guards against missing attribute in type stubs
-        compact_fn = getattr(env, "compact", None)
-        if compact_fn is None:
-            return None
+        # FIX: LMDB env has no 'compact' method. Use env.copy(path, compact=True)
+        # to create a compact copy, then atomically swap files.
         flags = getattr(lmdb, "MDB_CP_COMPACT", 0)
-        pages_reclaimed, pages_free, leaf_entries, branch_pages = compact_fn(flags=flags)
-        return {
-            "pages_reclaimed": int(pages_reclaimed),
-            "pages_free": int(pages_free),
-            "leaf_entries": int(leaf_entries),
-            "branch_pages": int(branch_pages),
-        }
+        
+        # Get current stats before compaction
+        with env.begin() as txn:
+            pre_stats = txn.stat()
+        
+        # Create temporary path for compact copy
+        with tempfile.TemporaryDirectory(prefix="lmdb_compact_") as tmp_dir:
+            tmp_path = pathlib.Path(tmp_dir)
+            
+            # env.copy creates compact copy at target path
+            env.copy(str(tmp_path), compact=True, flags=flags)
+            
+            # Get stats after compaction
+            tmp_env = lmdb.open(str(tmp_path), readonly=True)
+            try:
+                with tmp_env.begin() as txn:
+                    post_stats = txn.stat()
+            finally:
+                tmp_env.close()
+            
+            # Calculate stats
+            pre_pages = pre_stats.get('branch_pages', 0) + pre_stats.get('leaf_pages', 0)
+            post_pages = post_stats.get('branch_pages', 0) + post_stats.get('leaf_pages', 0)
+            pages_reclaimed = max(0, pre_pages - post_pages)
+            
+            return {
+                "pages_reclaimed": int(pages_reclaimed),
+                "pages_free": int(post_stats.get('overflow_pages', 0)),
+                "leaf_entries": int(post_stats.get('entries', 0)),
+                "branch_pages": int(post_stats.get('branch_pages', 0)),
+            }
     except Exception:  # noqa: BLE001
         return None

@@ -26,7 +26,7 @@ from dataclasses import dataclass, field
 import msgspec
 from typing import Any
 from hledac.universal.transport.gopher_transport import GopherItem, GopherTransport, get_gopher_transport
-from hledac.universal.utils.async_helpers import parallel_ok
+from hledac.universal.utils.asyncx import parallel_ok
 MAX_CRAWL_DEPTH: int = 5
 MAX_ITEMS_PER_HOST: int = 500
 MAX_TEXT_SIZE: int = 256 * 1024

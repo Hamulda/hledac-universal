@@ -183,7 +183,7 @@ async def _run_in_pool(
         functools.partial(fn, *args, **kwargs),
     )
     if timeout is not None:
-        from hledac.universal.utils.async_helpers import safe_wait_for
+        from hledac.universal.utils.asyncx import safe_wait_for
         return await safe_wait_for(coro, timeout=timeout, label=f"offload:{pool.name}")
     return await coro
 

@@ -20,7 +20,7 @@ from urllib.parse import urlparse
 import httpx
 from hledac.universal.knowledge.duckdb_store import CanonicalFinding
 from hledac.universal.transport.circuit_breaker import domain_breaker_check, get_breaker
-from hledac.universal.utils.async_helpers import parallel_ok
+from hledac.universal.utils.asyncx import parallel_ok
 logger = logging.getLogger(__name__)
 CID_PATTERN = re.compile('\\b(Qm[1-9A-HJ-NP-Za-km-z]{44}|bafy[a-z2-7]{52,})\\b')
 MAX_POOL_SIZE: Final[int] = 8
@@ -781,7 +781,7 @@ async def ipfs_search_as_findings(query: str, timeout_per_result: int=30) -> lis
         return []
     if not cids:
         return []
-    from hledac.universal.utils.async_helpers import parallel
+    from hledac.universal.utils.asyncx import parallel
 
     async def _fetch_one_cid(cid: str) -> CanonicalFinding | None:
         try:

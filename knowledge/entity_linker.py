@@ -43,7 +43,7 @@ import msgspec
 from hledac.universal.compat.msgspec_gc_compat import Struct
 from datetime import UTC, datetime, timedelta
 from typing import Any
-from hledac.universal.utils.async_helpers import parallel_ok
+from hledac.universal.utils.asyncx import parallel_ok
 from operator import attrgetter, itemgetter
 logger = logging.getLogger(__name__)
 

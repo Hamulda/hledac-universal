@@ -52,7 +52,7 @@ from hledac.universal.discovery.duckduckgo_adapter import (
 from hledac.universal.fetching.public_fetcher import (  # noqa: E402
     classify_fetch_error,
 )
-from hledac.universal.utils.async_helpers import parallel, safe_create_task  # noqa: E402, safe_wait_for
+from hledac.universal.utils.asyncx import parallel, safe_create_task  # noqa: E402, safe_wait_for
 from hledac.universal.utils.config_introspection import safe_attr_get  # noqa: E402
 from hledac.universal.pipeline.public_patterns import _make_finding_id  # noqa: E402, F401
 

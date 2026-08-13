@@ -33,7 +33,7 @@ import queue
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
-from hledac.universal.utils.async_helpers import safe_create_task
+from hledac.universal.utils.asyncx import safe_create_task
 from hledac.universal.core.feature_flags import FeatureFlag, FeatureFlags
 
 _structlog: Any | None = None

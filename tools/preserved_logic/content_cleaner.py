@@ -23,7 +23,7 @@ class OutputFormat(Enum):
     TEXT = "text"
 
 
-@dataclass
+@dataclass(frozen=True, slots=True)
 class CleanResult:
     """Result of HTML cleaning operation."""
 

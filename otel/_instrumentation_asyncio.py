@@ -11,11 +11,11 @@ M1 8GB bounds:
   - No background threads — zero extra RAM
 
 Usage (canonical path):
-    from hledac.universal.utils.async_helpers import safe_create_task
+    from hledac.universal.utils.asyncx import safe_create_task
     task = safe_create_task(coro(), name="fetch")
 
     # Inside the coroutine, read parent trace context:
-    from hledac.universal.utils.async_helpers import current_otel_context
+    from hledac.universal.utils.asyncx import current_otel_context
     ctx = current_otel_context()  # {trace_id, span_id} or None
 """
 from __future__ import annotations

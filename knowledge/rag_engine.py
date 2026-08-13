@@ -35,7 +35,7 @@ from hledac.universal.compat.msgspec_gc_compat import Struct
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 from hledac.universal.utils.msgspec_json import dumps_str as _msgspec_dumps_str, loads as _msgspec_loads
-from hledac.universal.utils.async_helpers import parallel
+from hledac.universal.utils.asyncx import parallel
 from hledac.universal.core.lazy_imports import lazy
 from operator import attrgetter, itemgetter
 # SWARM-010: Feature flag imports for registry compliance
@@ -83,15 +83,13 @@ class RAGConfig(Struct):
     hnsw_index_path: str | None = FeatureFlags.get_str(FeatureFlag.RAG_HNSW_INDEX_PATH, None)
     hnsw_space: str = FeatureFlags.get_str(FeatureFlag.RAG_HNSW_SPACE, 'cosine')
 
-class Document(Struct):
+class Document(Struct, frozen=True):
     """Document for retrieval"""
     id: str
     content: str
     metadata: dict[str, Any] = field(default_factory=dict)
     embedding: list[float] | None = None
-
-    def __hash__(self):
-        return hash(self.id)
+    # frozen=True auto-generates __hash__ and __eq__
 
 class RetrievedChunk(Struct, frozen=True):
     """Retrieved document chunk with scores"""
@@ -1029,7 +1027,7 @@ class RAGEngine:
         """
         if not self._spr_compressor:
             return chunks
-        from hledac.universal.utils.async_helpers import parallel, safe_wait_for
+        from hledac.universal.utils.asyncx import parallel, safe_wait_for
         _CHUNK_TIMEOUT_S = 5.0
 
         async def _compress_one(chunk: str) -> str:

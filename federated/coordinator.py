@@ -59,7 +59,7 @@ import time
 from dataclasses import dataclass, field, replace as _dc_replace
 import msgspec
 from typing import Any
-from hledac.universal.utils.async_helpers import parallel_ok
+from hledac.universal.utils.asyncx import parallel_ok
 from .qtable import FederatedQTable
 logger = logging.getLogger(__name__)
 _AUTO_BRIDGE_SINGLETON: Any | None = None

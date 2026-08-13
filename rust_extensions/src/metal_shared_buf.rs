@@ -134,9 +134,43 @@ unsafe fn iosurface_create_metal_buffer(
 }
 
 /// Check if IOSurfaceCreateMetalBuffer is available on this system.
+///
+/// Returns true only if the FFI symbol is actually available at runtime.
+/// Falls back to false on older macOS versions (< 10.13) where the function
+/// doesn't exist, or if Metal framework is not available.
 #[cfg(target_os = "macos")]
 fn iosurface_buffer_supported() -> bool {
-    unsafe { iosurface_create_metal_buffer(std::ptr::null_mut(), std::ptr::null_mut()) != std::ptr::null_mut() || true } // Always try
+    // Try to get the function pointer - if it's null, the FFI is unavailable
+    // Note: passing null pointers is safe for dlsym (it just checks symbol existence)
+    static FUNCPTR: LazyLock<Option<unsafe extern "C" fn(
+        *mut std::ffi::c_void,
+        *mut std::ffi::c_void,
+    ) -> *mut std::ffi::c_void>> = LazyLock::new(|| {
+        use std::ffi::CStr;
+        unsafe {
+            let lib = libc::dlopen(
+                CStr::from_bytes_with_nul(b"/System/Library/Frameworks/Metal.framework/Metal\0")
+                    .unwrap()
+                    .as_ptr(),
+                libc::RTLD_NOW,
+            );
+            if lib.is_null() {
+                return None;
+            }
+            let sym = libc::dlsym(
+                lib,
+                CStr::from_bytes_with_nul(b"IOSurfaceCreateMetalBuffer\0")
+                    .unwrap()
+                    .as_ptr(),
+            );
+            if sym.is_null() {
+                libc::dlclose(lib);
+                return None;
+            }
+            Some(std::mem::transmute(sym))
+        }
+    });
+    FUNCPTR.is_some()
 }
 
 /// Stub for non-macOS
@@ -552,7 +586,7 @@ impl SharedMetalBuffer {
                         "[IO-4] Created IOSurface-backed MTLBuffer ({}x{}, {} bytes/row) - ZERO-COPY",
                         width, height, bytes_per_row
                     );
-                    // MODERN-28 FIX: Create Buffer from raw pointer
+                    // Create Buffer from raw pointer (standard pattern)
                     // SAFETY: The pointer is valid from the FFI call
                     metal::Buffer::from_ptr(mtl_buffer_ptr as *mut _)
                 } else {

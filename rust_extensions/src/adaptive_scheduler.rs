@@ -53,6 +53,65 @@ use std::sync::LazyLock;
 use std::time::{Duration, Instant};
 
 // ---------------------------------------------------------------------------
+// MODERN-CROSS-4: Threshold Switch Monitoring
+// ---------------------------------------------------------------------------
+
+/// Atomic counter for threshold switches (idle→normal→pressure).
+static THRESHOLD_SWITCH_COUNT: AtomicUsize = AtomicUsize::new(0);
+
+/// Last observed threshold level (for detecting switches).
+static LAST_THRESHOLD_LEVEL: Cell<u8> = Cell::new(PRESSURE_UNSET);
+
+/// Timestamp of last threshold switch.
+static LAST_THRESHOLD_SWITCH_TIME: Cell<Instant> = Cell::new(Instant::now());
+
+/// Get the count of threshold switches since process start.
+#[inline]
+pub fn get_threshold_switch_count() -> usize {
+    THRESHOLD_SWITCH_COUNT.load(Ordering::Relaxed)
+}
+
+/// Reset the threshold switch counter.
+#[inline]
+pub fn reset_threshold_switch_count() {
+    THRESHOLD_SWITCH_COUNT.store(0, Ordering::Relaxed);
+    LAST_THRESHOLD_LEVEL.set(PRESSURE_UNSET);
+    LAST_THRESHOLD_SWITCH_TIME.set(Instant::now());
+}
+
+/// Record a threshold switch (called internally by mixed_threshold).
+#[inline]
+fn record_threshold_switch(new_level: u8) {
+    let last = LAST_THRESHOLD_LEVEL.get();
+    if last != new_level {
+        THRESHOLD_SWITCH_COUNT.fetch_add(1, Ordering::Relaxed);
+        LAST_THRESHOLD_LEVEL.set(new_level);
+        LAST_THRESHOLD_SWITCH_TIME.set(Instant::now());
+    }
+}
+
+/// Get the current threshold level (0=idle, 1=normal, 2=pressure).
+#[inline]
+pub fn get_current_threshold_level() -> u8 {
+    LAST_THRESHOLD_LEVEL.get()
+}
+
+/// Get time since last threshold switch.
+#[inline]
+pub fn get_time_since_last_switch() -> Duration {
+    LAST_THRESHOLD_SWITCH_TIME.get().elapsed()
+}
+
+/// Get threshold switch statistics as a tuple.
+pub fn get_threshold_stats() -> (usize, u8, f64) {
+    (
+        THRESHOLD_SWITCH_COUNT.load(Ordering::Relaxed),
+        LAST_THRESHOLD_LEVEL.get(),
+        LAST_THRESHOLD_SWITCH_TIME.get().elapsed().as_secs_f64(),
+    )
+}
+
+// ---------------------------------------------------------------------------
 // MODERN-32: Global Thread Budget — unified thread accounting
 // ---------------------------------------------------------------------------
 
@@ -296,11 +355,18 @@ fn get_metal_level_cached() -> u8 {
 /// | > 0.85                        | 64        | Pressure: sequential      |
 ///
 /// Falls back to NORMAL_THRESHOLD (32) if MLX or Python probe is unavailable.
+///
+/// MODERN-CROSS-4: Records threshold switches for monitoring.
 #[inline]
 pub fn mixed_threshold() -> usize {
     // Fast path: thread-local cache hit (no GIL).
     // Slow path: acquire GIL, probe Python, update cache.
-    match get_metal_level_cached() {
+    let level = get_metal_level_cached();
+    
+    // MODERN-CROSS-4: Track threshold switches
+    record_threshold_switch(level);
+    
+    match level {
         0 => IDLE_THRESHOLD,     // 16: GPU idle, eager
         1 => NORMAL_THRESHOLD,   // 32: normal
         _ => PRESSURE_THRESHOLD, // 64: GPU saturated
@@ -500,6 +566,41 @@ pub fn get_available_thread_budget() -> usize {
     MAX_TOTAL_THREADS.saturating_sub(get_total_threads())
 }
 
+// ---------------------------------------------------------------------------
+// MODERN-CROSS-4: Threshold Switch Monitoring Bindings
+// ---------------------------------------------------------------------------
+
+/// MODERN-CROSS-4: Get the count of threshold switches since process start.
+#[pyfunction]
+pub fn get_threshold_switch_counter() -> usize {
+    get_threshold_switch_count()
+}
+
+/// MODERN-CROSS-4: Reset the threshold switch counter.
+#[pyfunction]
+pub fn reset_threshold_switch_counter() {
+    reset_threshold_switch_count();
+}
+
+/// MODERN-CROSS-4: Get current threshold level (0=idle, 1=normal, 2=pressure).
+#[pyfunction]
+pub fn get_current_metal_level() -> u8 {
+    LAST_THRESHOLD_LEVEL.get()
+}
+
+/// MODERN-CROSS-4: Get time since last threshold switch in seconds.
+#[pyfunction]
+pub fn get_seconds_since_last_switch() -> f64 {
+    LAST_THRESHOLD_SWITCH_TIME.get().elapsed().as_secs_f64()
+}
+
+/// MODERN-CROSS-4: Get complete threshold statistics.
+/// Returns: (switch_count, current_level, seconds_since_last_switch)
+#[pyfunction]
+pub fn get_threshold_monitoring_stats() -> (usize, u8, f64) {
+    get_threshold_stats()
+}
+
 /// MODERN-32: Get per-pool thread counts as a tuple.
 /// Returns: (cpu, io, mixed, dispatchers, total)
 #[pyfunction]
@@ -527,6 +628,14 @@ pub fn register_functions(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(get_available_thread_budget, m)?)?;
     m.add_function(wrap_pyfunction!(get_thread_budget_breakdown, m)?)?;
     // sync_adaptive_state removed: deprecated no-op, not used from Python
+    
+    // MODERN-CROSS-4: Threshold switch monitoring
+    m.add_function(wrap_pyfunction!(get_threshold_switch_counter, m)?)?;
+    m.add_function(wrap_pyfunction!(reset_threshold_switch_counter, m)?)?;
+    m.add_function(wrap_pyfunction!(get_current_metal_level, m)?)?;
+    m.add_function(wrap_pyfunction!(get_seconds_since_last_switch, m)?)?;
+    m.add_function(wrap_pyfunction!(get_threshold_monitoring_stats, m)?)?;
+    
     Ok(())
 }
 

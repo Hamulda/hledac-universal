@@ -647,6 +647,10 @@ class MemoryPressureBroadcaster:
         try:
             import ctypes
             libc = ctypes.CDLL(None)
+            # Set argtypes for type safety (prevents silent truncation on M1 64-bit)
+            # Pattern: resource_governor.py:2274, composition_root.py:199
+            libc.madvise.argtypes = [ctypes.c_void_p, ctypes.c_size_t, ctypes.c_int]
+            libc.madvise.restype = ctypes.c_int
             # MADV_DONTNEED = 4 on both Darwin and Linux
             libc.madvise(
                 ctypes.c_void_p(0),  # addr=0: whole address space

@@ -1,6 +1,6 @@
 """Offline DSPy prompt optimizer – MIPROv2, idle-only, memory/thermal guards, circuit breaker."""
 import asyncio
-from hledac.universal.utils.async_helpers import safe_create_task
+from hledac.universal.utils.asyncx import safe_create_task
 import logging
 
 from operator import attrgetter, itemgetter

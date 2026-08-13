@@ -32,7 +32,7 @@ import msgspec
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
-from hledac.universal.utils.async_helpers import parallel
+from hledac.universal.utils.asyncx import parallel
 from hledac.universal.utils.serialization import _safe_dataclass_to_dict
 from hledac.universal.utils.mem_stats import get_rss_mb
 sys.path.insert(0, str(Path(__file__).parent.parent))

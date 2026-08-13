@@ -32,7 +32,7 @@ from collections import OrderedDict
 from cachetools import TTLCache
 
 from hledac.universal.knowledge.duckdb_store import CanonicalFinding
-from hledac.universal.utils.async_helpers import parallel_ok
+from hledac.universal.utils.asyncx import parallel_ok
 from hledac.universal.utils.source_types import SourceType
 
 if TYPE_CHECKING:

@@ -40,7 +40,7 @@ warnings.warn(
 )
 
 import asyncio
-from hledac.universal.utils.async_helpers import safe_wait_for, bounded_parallel_map
+from hledac.universal.utils.asyncx import safe_wait_for, bounded_parallel_map
 from hledac.universal.utils.locks import LazyAsyncioLock
 import contextlib
 import hashlib

@@ -36,7 +36,7 @@ import typing
 from typing import Any
 
 from hledac.universal.runtime.watchdog import StuckTaskDetector
-from hledac.universal.utils.async_helpers import parallel, _check_gathered
+from hledac.universal.utils.asyncx import parallel, _check_gathered
 
 _CancelledError: type = asyncio.CancelledError  # type: ignore[misc,assignment] — Python 3.14+: builtin
 
@@ -672,7 +672,7 @@ def safe_create_task_tracked(
     Returns:
         asyncio.Task, registered in the global TaskRegistry.
     """
-    from hledac.universal.utils.async_helpers import parallel, safe_create_task as _safe_create_task
+    from hledac.universal.utils.asyncx import parallel, safe_create_task as _safe_create_task
 
     task = _safe_create_task(coro, name=name, **kwargs)
     _registry = get_task_registry()

@@ -21,7 +21,7 @@ import time
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 from hledac.universal.brain.mlx_worker_thread import MLXWorkerThread
-from hledac.universal.utils.async_helpers import safe_wait_for
+from hledac.universal.utils.asyncx import safe_wait_for
 try:
     import orjson
 except ImportError:
@@ -481,7 +481,7 @@ async def score_findings(findings: list, min_score: float=4.0) -> list | None:
 
     try:
         # Run all batches concurrently, bounded by semaphore
-        from hledac.universal.utils.async_helpers import parallel
+        from hledac.universal.utils.asyncx import parallel
         result = await parallel(
             [_score_batch_sem(b) for b in batches],
             policy="log",

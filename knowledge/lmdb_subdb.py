@@ -537,12 +537,14 @@ class UnifiedLMDBStore:
                 shutil.move(str(temp_lock), str(old_lock))
 
             # Reopen the store (metasync=False for M1 8GB optimization)
+            # FIX: Reopen with mode=0o600 to maintain SEC-02 security guarantee
             self._env = lmdb.open(
                 str(self._path),
                 map_size=self._map_size,
                 max_dbs=1,
                 writemap=False,
                 metasync=False,
+                mode=0o600,
             )
             self._initialized = True
 
@@ -565,6 +567,7 @@ class UnifiedLMDBStore:
                         max_dbs=1,
                         writemap=False,
                         metasync=False,
+                        mode=0o600,  # FIX: maintain SEC-02 security on restore
                     )
                     self._initialized = True
                 except Exception:

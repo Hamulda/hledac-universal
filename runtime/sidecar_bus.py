@@ -46,7 +46,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 from hledac.universal.core.protocols import safe_get_finding_field, safe_get_payload_text
 from hledac.universal.runtime.sidecar_runner_decorator import _store_ingest_and_count
-from hledac.universal.utils.async_helpers import safe_create_task, safe_gather_fire_and_forget, parallel
+from hledac.universal.utils.asyncx import safe_create_task, safe_gather_fire_and_forget, parallel
 if TYPE_CHECKING:
     from hledac.universal.knowledge.duckdb_store import DuckDBShadowStore
 

@@ -17,7 +17,7 @@ from dataclasses import dataclass, field
 import msgspec
 import httpx
 from hledac.universal.core.concurrency import ConcurrencyCategory, get_semaphore
-from hledac.universal.utils.async_helpers import parallel_ok
+from hledac.universal.utils.asyncx import parallel_ok
 from hledac.universal.utils._patterns import lazy_resource_property  # F320: Clone elimination
 logger = logging.getLogger(__name__)
 FEDIVERSE_TIMEOUT = 10.0

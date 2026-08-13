@@ -34,7 +34,7 @@ Extended from evidence_network_analyzer.py comments:
 """
 import asyncio
 import threading
-from hledac.universal.utils.async_helpers import parallel_ok
+from hledac.universal.utils.asyncx import parallel_ok
 from hledac.universal.utils.sync_bridge import run_sync_async
 import logging
 import re

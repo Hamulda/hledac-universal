@@ -27,7 +27,7 @@ import threading
 import time as _time
 import typing
 
-from hledac.universal.utils.async_helpers import parallel_ok
+from hledac.universal.utils.asyncx import parallel_ok
 
 logger = typing.cast(typing.Any, __import__("logging").getLogger(__name__))
 

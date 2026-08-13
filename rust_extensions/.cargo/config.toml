@@ -4,6 +4,10 @@
 # DuckDB source is compiled directly into the extension — no external libduckdb.dylib
 # dependency, no version mismatch with Homebrew, and no -L/opt/homebrew/lib needed.
 #
+# CANONICAL SOURCE: This file is the source of truth for direct cargo builds.
+# For maturin builds: pyproject.toml [tool.maturin.env] sets equivalent RUSTFLAGS.
+# Both locations must be kept in sync for consistent builds.
+#
 # These rustflags supplement maturin's own link args (-undefined dynamic_lookup).
 # build.rs also emits the same flags as a fallback for non-maturin builds.
 

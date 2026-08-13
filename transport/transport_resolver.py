@@ -34,7 +34,7 @@ No config toggles - all decisions based on runtime signals.
 """
 import asyncio
 import warnings
-from hledac.universal.utils.async_helpers import safe_wait_for
+from hledac.universal.utils.asyncx import safe_wait_for
 import logging
 from dataclasses import dataclass
 import msgspec

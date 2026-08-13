@@ -40,7 +40,7 @@ import os
 import time
 
 from hledac.universal.core.env_config import ENV  # noqa: E402
-from hledac.universal.utils.async_helpers import safe_create_task, parallel
+from hledac.universal.utils.asyncx import safe_create_task, parallel
 from typing import Any
 
 logger = logging.getLogger("hledac.universal.transport.prewarm_pool")

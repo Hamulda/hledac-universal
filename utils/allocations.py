@@ -83,15 +83,20 @@ class Subsystem(IntEnum):
 
 # Module-level reference to Rust memory module (lazy import)
 _rust_mem_module = None
+_uma_synced = False  # FIX: Track if sync_from_uma_budget has been called
 
 
 def _get_rust_mem():
     """Lazy import of Rust memory module."""
-    global _rust_mem_module
+    global _rust_mem_module, _uma_synced
     if _rust_mem_module is None:
         try:
             from hledac.universal.rust_extensions import memory as _mem
             _rust_mem_module = _mem
+            # FIX: Sync from UmaBudget on first Rust module load
+            if not _uma_synced:
+                sync_from_uma_budget()
+                _uma_synced = True
         except ImportError:
             logger.warning(
                 "[ALLOC-LEDGER] Rust memory module unavailable — using Python fallback"
@@ -140,9 +145,10 @@ def acquire(gib: float, subsystem: str | Subsystem) -> bool:
     if rust is not None:
         ok, total, ceiling = rust.allocate_bytes(gib, subsys_enum.value)
         if not ok:
+            # FIX: total/ceiling are in bytes, convert to GiB for log readability
             logger.warning(
                 f"[ALLOC-LEDGER] Allocation rejected: {gib:.2f} GiB for {subsystem} "
-                f"would exceed ceiling ({total:.2f} / {ceiling:.2f} bytes)"
+                f"would exceed ceiling ({total / (1024**3):.2f} / {ceiling / (1024**3):.2f} GiB)"
             )
         return ok
 

@@ -26,7 +26,7 @@ Architecture:
             │
             ├─► Top pairs by confidence (support × confidence)
             │
-            └─► SpeculativeEdge[] → SpeculativePrefetcher
+            └─► SpeculativeEdge[] (returned to caller for downstream prefetch)
 
 M1 8GB constraints:
 - In-memory co-occurrence matrix bounded: _MAX_PAIRS=10_000
@@ -43,10 +43,12 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 from typing import Final
 
+import msgspec
+
 from hledac.universal.compat.msgspec_gc_compat import Struct
 if TYPE_CHECKING:
     from hledac.universal.knowledge.duckdb_store import CanonicalFinding
-from hledac.universal.utils.async_helpers import safe_create_task, safe_wait_for, parallel
+from hledac.universal.utils.asyncx import safe_create_task, safe_wait_for, parallel
 logger = logging.getLogger(__name__)
 _MAX_PAIRS: Final[int] = 10000
 _MAX_FINDINGS_PER_CALL: Final[int] = 10000
@@ -337,123 +339,3 @@ def _extract_iocs_python(payload: str) -> list[tuple[str, str]]:
         iocs.append((m.group(), "cve"))
     return iocs
 
-class PrefetcherStats(msgspec.Struct, gc=False):
-    """Statistics for the speculative prefetcher."""
-
-    edges_received: int = 0
-    prefetch_dispatched: int = 0
-    prefetch_completed: int = 0
-    prefetch_failed: int = 0
-
-class SpeculativePrefetcher:
-    """Takes SpeculativeEdges from IOCooccurrenceMiner and fires prefetch tasks.
-
-    Architecture:
-        IOCooccurrenceMiner.analyze() → SpeculativeEdge[]
-                │
-                ▼
-        SpeculativePrefetcher.dispatch_batch(edges)
-                │
-                ├─► validate edge (not stale, not already fetched)
-                ├─► build fetch task (URL/IP/DNS based on IOC type)
-                └─► submit to FetchCoordinator or NonfeedCandidateLedger
-
-    M1 8GB: Batched dispatch (max 10 concurrent prefetches),
-            bounded queue for pending prefetches.
-    """
-
-    __slots__ = tuple(("_candidate_ledger", "_fetch_coordinator", "_prefetch_queue", "_running", "_seen_edges", "_seen_lock", "_stats", "_workers"))
-
-    def __init__(self, fetch_coordinator: Any=None, candidate_ledger: Any=None) -> None:
-        """Initialize SpeculativePrefetcher with coordinator and ledger."""
-        self._fetch_coordinator = fetch_coordinator
-        self._candidate_ledger = candidate_ledger
-        self._seen_edges: set[tuple[str, str]] = set()
-        self._seen_lock = asyncio.Lock()
-        self._stats = PrefetcherStats()
-        self._prefetch_queue: asyncio.Queue[Any] = asyncio.Queue(maxsize=100)
-        self._workers: list[asyncio.Task[None]] = []
-        self._running = False
-
-    async def start(self, num_workers: int=3) -> None:
-        """Start prefetcher workers."""
-        if self._running:
-            return
-        self._running = True
-        for i in range(num_workers):
-            task = safe_create_task(self._prefetch_worker(worker_id=i), name=f"ioc_miner:prefetch_{i}")
-            self._workers.append(task)
-        logger.info(f"SpeculativePrefetcher: started {num_workers} workers")
-
-    async def stop(self, timeout: float=10.0) -> None:
-        """Stop prefetcher workers gracefully."""
-        if not self._running:
-            return
-        self._running = False
-        for _ in self._workers:
-            try:
-                self._prefetch_queue.put_nowait((None, None))
-            except asyncio.QueueFull:  # noqa: BLE001
-                pass
-        try:
-            await safe_wait_for(parallel(list(self._workers), policy="log", ctx="ioc_cooccurrence_miner:prefetcher"), timeout=timeout, label="prefetcher_shutdown")
-        except TimeoutError:
-            logger.warning("SpeculativePrefetcher: shutdown timeout")
-        self._workers.clear()
-
-    async def dispatch_batch(self, edges: list[SpeculativeEdge]) -> int:
-        """Dispatch a batch of speculative edges for prefetching."""
-        dispatched = 0
-        async with self._seen_lock:
-            for edge in edges:
-                key = (edge.source_ioc, edge.target_ioc)
-                if key in self._seen_edges:
-                    continue
-                self._seen_edges.add(key)
-                try:
-                    self._prefetch_queue.put_nowait((edge, None))
-                    dispatched += 1
-                    self._stats.edges_received += 1
-                except asyncio.QueueFull:
-                    break
-        self._stats.prefetch_dispatched += dispatched
-        return dispatched
-
-    async def _prefetch_worker(self, worker_id: int) -> None:
-        """Worker that processes prefetch tasks from queue."""
-        logger.debug(f"SpeculativePrefetcher: worker-{worker_id} started")
-        while True:
-            try:
-                edge, _ = await self._prefetch_queue.get()
-                if edge is None:
-                    self._prefetch_queue.task_done()
-                    logger.debug(f"SpeculativePrefetcher: worker-{worker_id} received poison")
-                    return
-                await self._execute_prefetch(edge)
-                self._prefetch_queue.task_done()
-            except asyncio.CancelledError:
-                break
-            except Exception as e:
-                logger.warning(f"SpeculativePrefetcher: worker-{worker_id} error: {e}")
-        logger.debug(f"SpeculativePrefetcher: worker-{worker_id} stopped")
-
-    async def _execute_prefetch(self, edge: SpeculativeEdge) -> None:
-        """Execute a single speculative prefetch."""
-        try:
-            if edge.target_type == "domain":
-                if self._candidate_ledger is not None:
-                    self._candidate_ledger.add_candidate(candidate=edge.target_ioc, source="speculative_cooccurrence", family="PIVOT", reason=f"co-occurred with {edge.source_ioc} ({edge.confidence:.0%} confidence)")
-            elif edge.target_type == "url":
-                if self._fetch_coordinator is not None:
-                    safe_create_task(self._fetch_coordinator.prefetch_url(edge.target_ioc), name="ioc_miner:prefetch_url")
-            elif edge.target_type in ("ip", "ipv4"):
-                if self._candidate_ledger is not None:
-                    self._candidate_ledger.add_candidate(candidate=edge.target_ioc, source="speculative_cooccurrence", family="PIVOT", reason=f"IP co-occurred with {edge.source_ioc}")
-            self._stats.prefetch_completed += 1
-        except Exception as e:
-            self._stats.prefetch_failed += 1
-            logger.warning(f"SpeculativePrefetcher: prefetch failed for {edge.target_ioc}: {e}")
-
-    def get_stats(self) -> PrefetcherStats:
-        """Return prefetcher statistics."""
-        return self._stats

@@ -305,7 +305,7 @@ pub fn async_fetch_onion_py(
 // ============================================================================
 
 #[cfg(feature = "shared_tokio")]
-pub fn register(_m: &Bound<'_, PyModule>) -> PyResult<()> {
+pub fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
     // DNS async functions
     #[cfg(feature = "dns")]
     {

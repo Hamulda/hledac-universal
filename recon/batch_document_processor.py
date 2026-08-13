@@ -69,7 +69,7 @@ try:
 except ImportError:
     _GOVERNOR_AVAILABLE = False
 
-from hledac.universal.utils.async_helpers import _check_gathered
+from hledac.universal.utils.asyncx import _check_gathered
 class PDFProcessingResult:
     """Result of processing a single PDF."""
     doc_id: str  # SHA256 hash of file path
@@ -95,7 +95,7 @@ class PDFProcessingResult:
         }
 
 
-@dataclass
+@dataclass(slots=True)
 class BatchProcessingStats:
     """Statistics for batch processing run."""
     total_files: int = 0
@@ -119,7 +119,7 @@ class BatchProcessingStats:
         }
 
 
-@dataclass
+@dataclass(slots=True)
 class BatchProcessingResult:
     """Result of batch processing run."""
     stats: BatchProcessingStats = field(default_factory=BatchProcessingStats)

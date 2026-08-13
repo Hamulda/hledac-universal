@@ -28,7 +28,7 @@ from typing import Any
 import msgspec
 from hledac.universal.compat.msgspec_gc_compat import Struct
 
-from hledac.universal.utils.async_helpers import first_completed, parallel, safe_create_task  # ISSUE-15
+from hledac.universal.utils.asyncx import first_completed, parallel, safe_create_task  # ISSUE-15
 
 from .base import DecisionResponse, ExecutionResult, OperationResult, OperationType, UniversalCoordinator
 

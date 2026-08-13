@@ -8,7 +8,7 @@ Pravidla:
 - Ponechat: asyncio.wait_for(asyncio.shield(...)) — správný vzor
 - Ponechat: test soubory
 - Nahradit: všechny ostatní await asyncio.wait_for(coro, timeout=X)
-- Import: from hledac.universal.utils.async_helpers import safe_wait_for
+- Import: from hledac.universal.utils.asyncx import safe_wait_for
   (pokud soubor už importuje z async_helpers, přidat jen safe_wait_for)
 """
 
@@ -41,7 +41,7 @@ SHIELD_PATTERNS = [
     "asyncio.wait_for(asyncio.shield(",
 ]
 
-IMPORT_LINE = "from hledac.universal.utils.async_helpers import safe_wait_for"
+IMPORT_LINE = "from hledac.universal.utils.asyncx import safe_wait_for"
 IMPORT_RE = re.compile(r"^from hledac\.universal\.utils\.async_helpers\s+import\s+")
 
 # safe_wait_for import already in these files

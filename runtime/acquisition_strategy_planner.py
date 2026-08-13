@@ -38,7 +38,7 @@ except ImportError:
 from hledac.universal.runtime.acquisition_telemetry_reconcile import complete_source_family_outcomes_from_lane_details, reconcile_lane_detail_fields
 from hledac.universal.runtime.nonfeed_candidate_ledger import extract_domain_candidates_from_text
 from hledac.universal.runtime.source_finding_bridge import MAX_SAMPLE_REJECTIONS, ct_results_to_findings, passive_dns_results_to_findings, wayback_results_to_findings
-from hledac.universal.utils.async_helpers import parallel_ok
+from hledac.universal.utils.asyncx import parallel_ok
 from hledac.universal.runtime.acquisition.profile import AcquisitionProfile, normalize_acquisition_profile, is_academic_profile, is_deep_osint_m1_profile
 # Canonical domain expansion symbols — imported from domain_expansion module
 # (avoids Type-1 clone: identical DOMAIN_EXPANSIONS + _expand_keyword_query + _get_keyword_domain_expansion)

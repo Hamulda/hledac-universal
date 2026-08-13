@@ -28,7 +28,7 @@ import time
 from typing import Any
 
 from hledac.universal.utils.lru_cache import LRUCache
-from hledac.universal.utils.async_helpers import async_getaddrinfo, safe_create_task
+from hledac.universal.utils.asyncx import async_getaddrinfo, safe_create_task
 
 # [PHYSICS]-03: Lazy check for rust.dns availability — True when dns feature
 # is enabled in the Rust build (default since [PHYSICS]-03/04 fix).

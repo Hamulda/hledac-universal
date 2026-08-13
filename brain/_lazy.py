@@ -32,7 +32,7 @@ don't go through ModelManager. Do NOT route Hermes/GLINER/ModernBERT through
 this module — use ModelManager instead.
 """
 
-from hledac.universal.utils.async_helpers import safe_create_task
+from hledac.universal.utils.asyncx import safe_create_task
 from hledac.universal.utils.cache import PyCacheDict
 
 import asyncio

@@ -5,7 +5,7 @@ import os
 import time
 import uuid
 from typing import TYPE_CHECKING, Any
-from hledac.universal.utils.async_helpers import parallel_ok
+from hledac.universal.utils.asyncx import parallel_ok
 if TYPE_CHECKING:
     from hledac.universal.knowledge.duckdb_store import CanonicalFinding
 from hledac.universal.dht.local_graph import LocalGraphStore

@@ -147,23 +147,15 @@ class _PythonMmapBloomFilter:
         self._fpr = fpr
         self._inner = _PythonBloomFilter(capacity, fpr)
 
-    def add(self, item: str) -> bool:
-        return self._inner.add(item)
-
-    def add_batch(self, items: list[str]) -> list[bool]:
-        return self._inner.add_batch(items)
-
-    def contains(self, item: str) -> bool:
-        return self._inner.contains(item)
+    def __getattr__(self, name: str) -> Any:
+        # Delegate all other methods/attributes to the inner BloomFilter
+        return getattr(self._inner, name)
 
     def __contains__(self, item: str) -> bool:
         return item in self._inner
 
     def __len__(self) -> int:
         return len(self._inner)
-
-    def clear(self) -> None:
-        self._inner.clear()
 
     def msync(self, _flags: int = 0) -> None:
         pass  # no-op for Python fallback

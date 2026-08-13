@@ -378,7 +378,7 @@ async def stream_with_prefetch(
     prefetch_task = None
     if prefetch_prompt:
         # F350M-R ISSUE #31: safe_create_task with eager_start=True (KV cache prefetch is hot path)
-        from hledac.universal.utils.async_helpers import safe_create_task
+        from hledac.universal.utils.asyncx import safe_create_task
         prefetch_task = safe_create_task(
             _prefetch_kv_cache(engine, prefetch_prompt), eager_start=True
         )

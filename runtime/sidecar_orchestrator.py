@@ -52,7 +52,7 @@ the SchedulerAdvisory Protocol in sidecar_protocol.py.
 
 import asyncio as _asyncio
 
-from hledac.universal.utils.async_helpers import parallel, safe_create_task, _check_gathered
+from hledac.universal.utils.asyncx import parallel, safe_create_task, _check_gathered
 from hledac.universal.runtime.scheduler_v2._task_registry import TaskScope, safe_create_task_tracked
 import logging
 import os as _os

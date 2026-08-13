@@ -44,7 +44,7 @@ from urllib.parse import urlparse
 
 from hledac.universal.core.constants import M1_BOUNDS
 from hledac.universal.core.env_config import ENV
-from hledac.universal.utils.async_helpers import safe_create_task, parallel
+from hledac.universal.utils.asyncx import safe_create_task, parallel
 
 if __name__ == '__main__':
     import sys

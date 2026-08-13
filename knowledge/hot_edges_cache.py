@@ -241,6 +241,21 @@ _UINT64_MAX: int = 0xFFFFFFFFFFFFFFFF
 
 _ENV = None  # type: ignore[var-annotated]
 _ENV_OPEN_FAILED = False
+_META_DB = None  # Cached _meta sub-db handle — opened once, reused for all counter ops
+
+
+def _get_meta_db(env) -> Any:
+    """
+    Return the cached _meta sub-db handle.
+
+    Cached at module level to avoid LMDB open_db() call overhead on every
+    counter operation (_get_node_count, _inc_node_count, _dec_node_count).
+    LMDB open_db() is cheap but not free — caching saves ~1-2µs per call.
+    """
+    global _META_DB
+    if _META_DB is None:
+        _META_DB = env.open_db(b"_meta")
+    return _META_DB
 
 
 def _open_env():
@@ -284,7 +299,8 @@ _COUNTER_KEY: bytes = b"nodes:count"
 def _get_node_count(env) -> int:
     """Return current unique src_id count. Returns 0 on error/miss."""
     try:
-        with env.begin(db=env.open_db(b"_meta")) as txn:
+        meta_db = _get_meta_db(env)
+        with env.begin(db=meta_db) as txn:
             blob = txn.get(_COUNTER_KEY)
             if blob:
                 return int.from_bytes(blob, "little")
@@ -295,7 +311,8 @@ def _get_node_count(env) -> int:
 def _inc_node_count(env) -> int:
     """Atomically increment node count. Returns new count. Fails silently."""
     try:
-        with env.begin(write=True, db=env.open_db(b"_meta")) as txn:
+        meta_db = _get_meta_db(env)
+        with env.begin(write=True, db=meta_db) as txn:
             old_blob = txn.get(_COUNTER_KEY)
             old_count = int.from_bytes(old_blob, "little") if old_blob else 0
             new_count = old_count + 1
@@ -307,7 +324,8 @@ def _inc_node_count(env) -> int:
 def _dec_node_count(env) -> int:
     """Atomically decrement node count. Returns new count. Fails silently."""
     try:
-        with env.begin(write=True, db=env.open_db(b"_meta")) as txn:
+        meta_db = _get_meta_db(env)
+        with env.begin(write=True, db=meta_db) as txn:
             old_blob = txn.get(_COUNTER_KEY)
             old_count = int.from_bytes(old_blob, "little") if old_blob else 0
             new_count = max(0, old_count - 1)

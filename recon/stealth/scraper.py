@@ -36,7 +36,7 @@ from ._models import (
     _get_crawl_bloom,
 )
 
-from hledac.universal.utils.async_helpers import safe_create_task, parallel
+from hledac.universal.utils.asyncx import safe_create_task, parallel
 
 logger = logging.getLogger(__name__)
 

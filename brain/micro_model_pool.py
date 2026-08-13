@@ -51,10 +51,52 @@ from dataclasses import dataclass, field
 from enum import Enum, auto
 from typing import Any, Protocol, runtime_checkable
 
-import mlx.core as mx
-import mlx_lm
+# MLX LAZY IMPORT — prevents M1 crash on memory-constrained systems
+# Pattern: Use get_mx() and get_mlx_lm() for lazy access
+try:
+    from hledac.universal.utils.mlx_memory._core import get_mx, get_mlx_lm
+except ImportError:
+    # Fallback for systems without mlx_memory module
+    def get_mx():
+        """Lazy fallback for mlx.core."""
+        import mlx.core as _mx
+        return _mx
+    def get_mlx_lm():
+        """Lazy fallback for mlx_lm."""
+        import mlx_lm as _mlx_lm
+        return _mlx_lm
 
 logger = logging.getLogger(__name__)
+
+# Module-level cached references (P3-03 pattern: O(1) access)
+_mx: Any = None
+_mlx_lm: Any = None
+
+def _get_mx() -> Any:
+    """Lazy accessor for mlx.core — cached after first import.
+    
+    MLX LAZY IMPORT FIX: Prevents M1 crash on memory-constrained systems.
+    This replaces the old top-level `import mlx.core as mx` pattern.
+    """
+    global _mx
+    if _mx is None:
+        _mx = get_mx()
+    return _mx
+
+def _get_mlx_lm() -> Any:
+    """Lazy accessor for mlx_lm — cached after first import.
+    
+    MLX LAZY IMPORT FIX: Prevents M1 crash on memory-constrained systems.
+    This replaces the old top-level `import mlx_lm` pattern.
+    """
+    global _mlx_lm
+    if _mlx_lm is None:
+        _mlx_lm = get_mlx_lm()
+    return _mlx_lm
+
+# Backward compatibility alias - existing code uses `mx.` prefix
+# This will trigger lazy import on first use
+
 
 # MODERN-35 Fix: Import CPU affinity utilities
 from hledac.universal.utils.cpu_affinity import (
@@ -98,8 +140,9 @@ class UmaFragmentationMonitor:
         if not self._enabled:
             return 0
         try:
-            if hasattr(mx, 'metal') and hasattr(mx.metal, 'get_active_memory'):
-                return mx.metal.get_active_memory()
+            mx = _get_mx()
+            if hasattr(mx, 'metal') and hasattr(_get_mx().metal, 'get_active_memory'):
+                return _get_mx().metal.get_active_memory()
         except Exception:  # noqa: BLE001
             pass
         return 0
@@ -114,8 +157,9 @@ class UmaFragmentationMonitor:
         if not self._enabled:
             return 0
         try:
-            if hasattr(mx, 'metal') and hasattr(mx.metal, 'get_wired_memory'):
-                return mx.metal.get_wired_memory()
+            mx = _get_mx()
+            if hasattr(mx, 'metal') and hasattr(_get_mx().metal, 'get_wired_memory'):
+                return _get_mx().metal.get_wired_memory()
         except Exception:  # noqa: BLE001
             pass
         return 0
@@ -156,20 +200,23 @@ class UmaFragmentationMonitor:
         
         # Step 2: Barrier - flush GPU queue BEFORE clear_cache
         try:
-            mx.eval([])
+            mx = _get_mx()
+            _get_mx().eval([])
         except Exception:  # noqa: BLE001
             pass
         
         # Step 3: Clear Metal cache (releases GPU memory)
         try:
-            if hasattr(mx, 'metal') and hasattr(mx.metal, 'clear_cache'):
-                mx.metal.clear_cache()
+            mx = _get_mx()
+            if hasattr(mx, 'metal') and hasattr(_get_mx().metal, 'clear_cache'):
+                _get_mx().metal.clear_cache()
         except Exception:  # noqa: BLE001
             pass
         
         # Step 4: Clear MLX caches
         try:
-            mx.clear_cache()
+            mx = _get_mx()
+            _get_mx().clear_cache()
         except Exception:  # noqa: BLE001
             pass
         
@@ -238,7 +285,7 @@ class UmaFragmentationMonitor:
         recs = []
         if score >= 0.20:
             recs.append("CRITICAL: Consider restarting app for contiguous UMA")
-            recs.append("Run mx.metal.clear_cache() before next preload")
+            recs.append("Run _get_mx().metal.clear_cache() before next preload")
         if score >= 0.10:
             recs.append("Reduce concurrent model count")
             recs.append("Use batch preload with pre-allocation")
@@ -297,7 +344,7 @@ class MicroModelSpec:
         """
         # P3-5 FIX: Normalize model path by removing any existing quantization suffix
         normalized = self.model_path
-        for suffix in ("-4bit", "-8bit", "-16bit", "-4bit-sm"]:
+        for suffix in ("-4bit", "-8bit", "-16bit", "-4bit-sm"):
             if normalized.endswith(suffix):
                 normalized = normalized[:-len(suffix)]
                 break
@@ -310,7 +357,7 @@ class MicroModelSpec:
         return self.model_path  # Return original if no quant specified
 
 
-@dataclass
+@dataclass(slots=True)
 class LoadedMicroModel:
     """
     Runtime state for a loaded micro-model.
@@ -336,7 +383,7 @@ class LoadedMicroModel:
         """
         try:
             if self.kernel_dirty:
-                mx.eval([])
+                _get_mx().eval([])
                 self.kernel_dirty = False
         except Exception:  # noqa: BLE001
             pass
@@ -509,10 +556,10 @@ class MicroModelPool:
     
     TRUE ZERO-COPY ARCHITECTURE:
     1. ALL micro-models preloaded at startup (not lazy)
-    2. Weights kept in UMA via mx.metal wired_memory API
+    2. Weights kept in UMA via _get_mx().metal wired_memory API
     3. Pointer swap only - no mlx_lm.load() after initial startup
     4. Lazy eviction only when memory pressure > 90%
-    5. Batch preload: single mx.metal.clear_cache() before all loads
+    5. Batch preload: single _get_mx().metal.clear_cache() before all loads
     
     This achieves <10ms model switching for ALL micro-models,
     not just cache-hit paths.
@@ -600,7 +647,7 @@ class MicroModelPool:
         to prevent UMA fragmentation on M1 MacBook Air.
         
         Batch preload sequence:
-        1. mx.metal.clear_cache() + mx.eval([]) barrier
+        1. _get_mx().metal.clear_cache() + _get_mx().eval([]) barrier
         2. Load all models sequentially
         3. Finalize UMA wiring with single set_wired_memory()
         4. Record fragmentation metrics
@@ -745,7 +792,7 @@ class MicroModelPool:
         # Load model (no warmup, no wiring during weight load phase)
         start = time.time()
         try:
-            model, tokenizer = mlx_lm.load(
+            model, tokenizer = _get_mlx_lm().load(
                 spec.full_path,
                 tokenizer_mode="slow" if spec.task_type == TaskType.EMBEDDINGS else "auto",
             )
@@ -824,7 +871,7 @@ class MicroModelPool:
         # Load model
         start = time.time()
         try:
-            model, tokenizer = mlx_lm.load(
+            model, tokenizer = _get_mlx_lm().load(
                 spec.full_path,
                 tokenizer_mode="slow" if spec.task_type == TaskType.EMBEDDINGS else "auto",
             )
@@ -877,7 +924,7 @@ class MicroModelPool:
                     # MLX nested dict parameters
                     for key, arr in params.items():
                         if hasattr(arr, '__iter__'):
-                            _ = mx.eval(arr)
+                            _ = _get_mx().eval(arr)
             return True
         except Exception as e:
             logger.warning(f"[MicroModelPool] P3-4: Wire weights warning: {e}")
@@ -897,13 +944,13 @@ class MicroModelPool:
             
             # P3-4 FIX: Use correct API - set_wired_limit, not set_wired_memory
             if hasattr(mx, 'set_wired_limit'):
-                mx.set_wired_limit(wired_bytes)
-                logger.info(f"[MicroModelPool] P3-4 FIX: UMA wiring finalized via mx.set_wired_limit: "
+                _get_mx().set_wired_limit(wired_bytes)
+                logger.info(f"[MicroModelPool] P3-4 FIX: UMA wiring finalized via _get_mx().set_wired_limit: "
                       f"{wired_bytes / (1024*1024):.1f} MB")
                 return True
-            elif hasattr(mx.metal, 'set_wired_limit'):
-                mx.metal.set_wired_limit(wired_bytes)
-                logger.info(f"[MicroModelPool] P3-4 FIX: UMA wiring finalized via mx.metal.set_wired_limit: "
+            elif hasattr(_get_mx().metal, 'set_wired_limit'):
+                _get_mx().metal.set_wired_limit(wired_bytes)
+                logger.info(f"[MicroModelPool] P3-4 FIX: UMA wiring finalized via _get_mx().metal.set_wired_limit: "
                       f"{wired_bytes / (1024*1024):.1f} MB")
                 return True
             else:
@@ -920,19 +967,19 @@ class MicroModelPool:
                 warmup_text = "Hello world"
                 tokens = loaded.tokenizer.encode(warmup_text, return_tensors="np")
                 if hasattr(tokens, 'input_ids'):
-                    input_ids = mx.array(tokens.input_ids)
+                    input_ids = _get_mx().array(tokens.input_ids)
                 else:
-                    input_ids = mx.array([tokens])
+                    input_ids = _get_mx().array([tokens])
                 
                 def forward_step(ids):
                     return loaded.model(ids)
                 
-                compiled = mx.compile(forward_step)
+                compiled = _get_mx().compile(forward_step)
                 compiled(input_ids[:, :min(10, input_ids.shape[1])])
             else:
                 warmup_text = "Hi" if loaded.spec.task_type == TaskType.TRIAGE else "def hello(): return 1"
                 
-                mlx_lm.generate(
+                _get_mlx_lm().generate(
                     loaded.model,
                     loaded.tokenizer,
                     prompt=warmup_text,
@@ -1134,7 +1181,7 @@ class MicroModelPool:
         if is_apple_silicon():
             set_mlx_affinity()
         
-        response = mlx_lm.generate(
+        response = _get_mlx_lm().generate(
             loaded.model,
             loaded.tokenizer,
             prompt=prompt,
@@ -1154,6 +1201,7 @@ class MicroModelPool:
     ) -> str:
         """Generate embeddings for text using embedding model."""
         try:
+            mx = _get_mx()
             if hasattr(loaded.tokenizer, 'encode'):
                 tokens = loaded.tokenizer.encode(text, return_tensors="np")
                 if hasattr(tokens, 'input_ids'):

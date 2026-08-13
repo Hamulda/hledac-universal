@@ -31,7 +31,7 @@ from hledac.universal.project_types import CommunicationConfig, MessagePriority
 from operator import attrgetter, itemgetter
 logger = logging.getLogger(__name__)
 import itertools
-from hledac.universal.utils.async_helpers import parallel_ok
+from hledac.universal.utils.asyncx import parallel_ok
 _counter = itertools.count()
 
 class _Subscriber(msgspec.Struct, gc=False):

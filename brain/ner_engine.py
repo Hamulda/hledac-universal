@@ -1033,7 +1033,7 @@ def get_extraction_status() -> dict:
     return {'ner_backend': get_ner_backend(), 'ner_loaded': _default_engine._model is not None if _default_engine else False, 'pii_backend': 'regex', 'coreml_ner_inactive': True, 'nltagger_inactive': not (_default_engine._nl_available if _default_engine else False), 'relex_model': 'knowledgator/gliner-relex-large-v0.5', 'config_model': 'knowledgator/gliner-x-base'}
 import math as _math
 import re as _re
-from hledac.universal.utils.async_helpers import safe_wait_for
+from hledac.universal.utils.asyncx import safe_wait_for
 
 # OSINT-01 FIX: Use `regex` module (linear-time guarantees) instead of `re` for
 # domain pattern. The `re` module's Python engine suffers catastrophic backtracking

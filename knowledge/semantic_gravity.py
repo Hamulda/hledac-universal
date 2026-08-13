@@ -59,7 +59,7 @@ _HNSW_EXPANSION_SEARCH: int = 64
 
 # ── Data types ───────────────────────────────────────────────────────────────
 
-@dataclass
+@dataclass(slots=True)
 class VoidRegion:
     """A semantic void — an under-explored region in embedding space.
 
@@ -82,7 +82,7 @@ class VoidRegion:
         }
 
 
-@dataclass
+@dataclass(slots=True)
 class FetchDirective:
     """A suggested fetch target to fill a semantic void.
 

@@ -25,7 +25,7 @@ GHOST_INVARIANTS:
 - Fail-soft: one pivot failure does not block others or sprint
 """
 import asyncio
-from hledac.universal.utils.async_helpers import parallel_ok
+from hledac.universal.utils.asyncx import parallel_ok
 import logging
 import os
 import time

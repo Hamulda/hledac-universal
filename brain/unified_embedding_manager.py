@@ -271,7 +271,7 @@ class UnifiedEmbeddingManager:
             return [[0.0] * self._dim for _ in texts]
         try:
             chunks, ctx = self._split_into_chunks(texts)
-            from hledac.universal.utils.async_helpers import parallel
+            from hledac.universal.utils.asyncx import parallel
             if len(chunks) == 1:
                 return await asyncio.to_thread(self._encode_chunk_sync, texts)
             p_result = await parallel(

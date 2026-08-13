@@ -230,12 +230,10 @@ class WALManager:
         Uses LMDB cursor with prefix iteration — O(n) where n = number of pending markers.
         """
         if self._use_unified and self._unified_store is not None:
-            results: list[dict[str, Any]] = []
-            all_entries = self._unified_store.scan_prefix('wal')
-            for key, value in all_entries:
-                if key.startswith('pending_duckdb_sync:'):
-                    results.append(value)
-            return results
+            # FIX: Use sub-prefix scan instead of full-namespace scan
+            # scan_prefix('wal:pending_duckdb_sync') only returns matching entries
+            all_entries = self._unified_store.scan_prefix('wal:pending_duckdb_sync')
+            return [value for _, value in all_entries]
         if self._wal_lmdb is None:
             return []
         try:
@@ -378,13 +376,20 @@ class WALManager:
         Returns list of prewrite marker dicts (each with 'id' and 'ts').
         """
         if self._use_unified and self._unified_store is not None:
+            # FIX: Use sub-prefix scan instead of full-namespace scan
+            # scan_prefix('wal:prewrite') only returns matching entries
+            all_entries = self._unified_store.scan_prefix('wal:prewrite')
             results: list[dict[str, Any]] = []
-            all_entries = self._unified_store.scan_prefix('wal')
             for key, value in all_entries:
+                # key is 'prewrite:{fid}' from the scan
+                # FIX: Extract finding_id from key (remove 'prewrite:' prefix)
+                # before calling _key_checkpoint to get correct 'checkpoint:{fid}' key
                 if key.startswith(self.PREWRITE_PREFIX):
-                    fid = key[len(self.PREWRITE_PREFIX):]
-                    if not self._unified_store.get_str('wal', self._key_checkpoint(fid)):
-                        results.append(value)
+                    finding_id = key[len(self.PREWRITE_PREFIX):]
+                else:
+                    finding_id = key
+                if not self._unified_store.get_str('wal', self._key_checkpoint(finding_id)):
+                    results.append(value)
             return results
         if self._wal_lmdb is None:
             return []
@@ -495,13 +500,15 @@ class WALManager:
         Returns number of markers evicted.
         """
         try:
-            all_entries = unified_store.scan_prefix('wal')
-            pending = [(k, v) for k, v in all_entries if k.startswith('pending_duckdb_sync:')]
+            # FIX: Use sub-prefix scan instead of full-namespace scan
+            all_entries = unified_store.scan_prefix('wal:pending_duckdb_sync')
+            pending = list(all_entries)  # scan_prefix returns list already
             if len(pending) <= keep_count:
                 return 0
             pending.sort(key=lambda x: x[1].get('ts', 0))
             to_evict = pending[:len(pending) - keep_count]
             for key, _ in to_evict:
+                # key format: 'pending_duckdb_sync:{fid}'
                 unified_store.delete('wal', key)
             return len(to_evict)
         except Exception:

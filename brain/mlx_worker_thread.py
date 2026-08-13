@@ -54,7 +54,7 @@ import threading
 import time
 import weakref
 from typing import TYPE_CHECKING, Any
-from hledac.universal.utils.async_helpers import parallel_ok, safe_gather_fire_and_forget
+from hledac.universal.utils.asyncx import parallel_ok, safe_gather_fire_and_forget
 if TYPE_CHECKING:
     from collections.abc import Coroutine
 logger = logging.getLogger(__name__)

@@ -26,7 +26,7 @@ from typing import Any
 from operator import attrgetter, itemgetter
 import msgspec
 
-from hledac.universal.utils.async_helpers import parallel_ok
+from hledac.universal.utils.asyncx import parallel_ok
 
 logger = logging.getLogger(__name__)
 

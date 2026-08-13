@@ -126,7 +126,7 @@ async def _bounded_gather_pairs(
     Replaces asyncio.gather + _check_gathered with bounded_parallel_map
     for cleaner API and proper GHOST I6/I7 exception routing.
     """
-    from hledac.universal.utils.async_helpers import parallel
+    from hledac.universal.utils.asyncx import parallel
     from hledac.universal.core.concurrency_registry import concurrency_budget, ConcurrencyCategory
 
     # F1 FIX: resolve dynamic concurrency before bounded_parallel_map call.

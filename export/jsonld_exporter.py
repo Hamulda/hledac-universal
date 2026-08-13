@@ -18,7 +18,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, cast
 
-from hledac.universal.utils.async_helpers import parallel
+from hledac.universal.utils.asyncx import parallel
 from ._shared import _iso_timestamp, _safe_str, normalize_export_input  # noqa: E402  # F4.3 deduplication
 
 try:

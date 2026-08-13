@@ -3,44 +3,28 @@ runtime/sidecar_protocol_adapters.py — F350M-R: Protocol-Based Sidecar Adapter
 ==============================================================================
 
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-Protocol-based plugin adapters for orphaned sidecar modules.
+Plugin adapters for orphaned sidecar modules.
 Each adapter wraps an existing module and exposes SidecarAdapterProtocol.
 
 Registered via @SidecarRegistry.register decorator.
 Env gates and RAM budgets configured per sidecar.
+
+F360M Refactoring:
+- FediverseSearchEngine Protocol deleted (YAGNI - only 1 implementer)
+- GenericSidecarAdapter deleted (merged into BaseSidecarAdapter)
+- CorrelateBasedSidecarAdapter deleted (merged into BaseSidecarAdapter)
+- FederatedResearchSidecarAdapter now inherits from BaseSidecarAdapter
 """
-
-
 
 import collections.abc
 import logging
 import os
 import re
-from typing import Any, Protocol, runtime_checkable
+from typing import Any
 from urllib.parse import urlparse
 
 from hledac.universal.runtime.sidecar_protocol import (
     BaseSidecarAdapter,
-    CorrelateBasedSidecarAdapter,
-    GenericSidecarAdapter,
     SidecarContext,
     SidecarRegistry,
 )
@@ -56,15 +40,6 @@ _URL_RE = re.compile(
 
 # ── Fediverse Sidecar ──────────────────────────────────────────────────────────
 
-# Protocol-based interface for FediverseAdapter (decouples sidecar from concrete implementation)
-@runtime_checkable
-class FediverseSearchEngine(Protocol):
-    """Protocol for Fediverse search engines — enables testing and alternative implementations."""
-
-    async def search_multiple_instances(
-        self, terms: list[str], max_results: int = 50, instances: list[str] | None = None
-    ) -> list[Any]: ...
-
 
 def _default_fediverse_adapter_factory() -> Any:  # noqa: ANN401
     """Lazy factory: imports and instantiates FediverseAdapter only when called."""
@@ -73,7 +48,7 @@ def _default_fediverse_adapter_factory() -> Any:  # noqa: ANN401
 
 
 @SidecarRegistry.register("fediverse")
-class FediverseSidecarAdapter(GenericSidecarAdapter):
+class FediverseSidecarAdapter(BaseSidecarAdapter):
     """
     Fediverse/Mastodon Intelligence Sidecar.
 
@@ -84,16 +59,17 @@ class FediverseSidecarAdapter(GenericSidecarAdapter):
     RAM: 50MB budget
     Priority: 6 (higher than core sidecars)
 
-    F360M: Migrated to GenericSidecarAdapter.
-    Uses extract_terms + search + result_to_finding pattern.
-    result_to_finding returns list[dict] because one search result
-    may contain multiple posts.
+    F360M: Now extends BaseSidecarAdapter directly (GenericSidecarAdapter deleted).
     """
 
     sidecar_id: str = "fediverse"
     lane_id: str = "fediverse"
     ram_budget_mb: int = 50
     priority: int = 6
+    _max_results: int = 50
+
+    # Injectable factory for FediverseAdapter
+    _adapter_factory: collections.abc.Callable[[], Any] = _default_fediverse_adapter_factory
 
     def extract_terms(self, ctx: SidecarContext) -> list[str]:
         """Extract domain/IOC terms from findings for Fediverse search."""
@@ -105,10 +81,7 @@ class FediverseSidecarAdapter(GenericSidecarAdapter):
         return terms[:10]
 
     async def search(self, terms: list[str], ctx: SidecarContext) -> list[Any]:
-        """Search Fediverse instances for each term.
-
-        Note: ctx is accepted for interface compatibility but not used.
-        """
+        """Search Fediverse instances for each term."""
         del ctx  # explicitly unused
         if not terms:
             return []
@@ -125,10 +98,7 @@ class FediverseSidecarAdapter(GenericSidecarAdapter):
             return []
 
     def result_to_finding(self, result: Any, ctx: SidecarContext) -> dict | list[dict] | None:  # noqa: ANN401
-        """Transform Fediverse search results to finding dicts.
-
-        One search result may contain multiple posts — returns a list of dicts.
-        """
+        """Transform Fediverse search results to finding dicts."""
         try:
             posts = getattr(result, "posts", [result])
             if not posts:
@@ -157,9 +127,6 @@ class FediverseSidecarAdapter(GenericSidecarAdapter):
             return findings if findings else None
         except Exception:
             return None
-
-    # Injectable factory for FediverseAdapter — defaults to lazy import
-    _adapter_factory: collections.abc.Callable[[], Any] = _default_fediverse_adapter_factory
 
 
 # ── DHT Sidecar ────────────────────────────────────────────────────────────────
@@ -246,7 +213,6 @@ class DHTLeakHarvestSidecarAdapter(BaseSidecarAdapter):
             return []
 
         # Both gates must be enabled
-        import os
         if os.getenv("HLEDAC_ENABLE_DHT", "0").lower() not in ("1", "true", "yes", "on"):
             return []
         if os.getenv("HLEDAC_ENABLE_DHT_METADATA_HARVEST", "0").lower() not in ("1", "true", "yes", "on"):
@@ -580,25 +546,15 @@ class TVNewsSidecarAdapter(BaseSidecarAdapter):
 # ── Federated Research Sidecar (F350M-FED) ───────────────────────────────────
 
 @SidecarRegistry.register("federated_research")
-class FederatedResearchSidecarAdapter:  # duck-typed SidecarAdapterProtocol
+class FederatedResearchSidecarAdapter(BaseSidecarAdapter):
     """
     Federated Multi-Node Research Sidecar.
 
     Wraps FederatedResearchCoordinator to expose the federated pattern
     (multi-virtual-node, parallel, dedup) through the canonical
-    SidecarAdapterProtocol pipeline. Output is converted to
-    CanonicalFinding (or dict fallback) with source_type="federated_research".
+    SidecarAdapterProtocol pipeline.
 
-    This adapter does NOT inherit from BaseSidecarAdapter to keep the
-    federated/ package zero-coupled to runtime.sidecar_protocol. The
-    duck-typed subset of SidecarAdapterProtocol is sufficient:
-        - sidecar_id, env_gate, ram_budget_mb, priority  (class attrs)
-        - is_available()                                     (method)
-        - async run(ctx) -> list                            (method, fail-soft)
-
-    Env: HLEDAC_ENABLE_FEDERATED=1
-    RAM: 30MB budget
-    Priority: 5 (medium, runs alongside other research sidecars)
+    F360M: Now properly inherits from BaseSidecarAdapter (duck-typing workaround removed).
     """
 
     sidecar_id: str = "federated_research"
@@ -614,7 +570,7 @@ class FederatedResearchSidecarAdapter:  # duck-typed SidecarAdapterProtocol
         except Exception:
             return False
 
-    async def run(self, ctx: SidecarContext) -> list[Any]:
+    async def run_async(self, ctx: SidecarContext) -> list[Any]:
         """Fail-soft wrapper that delegates to the federated sidecar adapter."""
         try:
             from hledac.universal.federated.sidecar_adapter import (
@@ -633,11 +589,11 @@ class FederatedResearchSidecarAdapter:  # duck-typed SidecarAdapterProtocol
 # ── Passive Fingerprint Sidecar (F350M-R) ───────────────────────────────────────
 
 @SidecarRegistry.register("passive_fingerprint")
-class PassiveFingerprintSidecarAdapter(CorrelateBasedSidecarAdapter):
+class PassiveFingerprintSidecarAdapter(BaseSidecarAdapter):
     """
     F204G: Passive service fingerprinting — deterministic, no active scan.
 
-    Migrated to CorrelateBasedSidecarAdapter (F360M).
+    F360M: Now extends BaseSidecarAdapter directly with _correlate_factory hook.
     Wraps `intelligence.passive_fingerprint.create_passive_fingerprint_adapter`
     factory; invokes `adapter.correlate(findings, query)` and returns the
     derived CanonicalFindings.
@@ -652,7 +608,11 @@ class PassiveFingerprintSidecarAdapter(CorrelateBasedSidecarAdapter):
     ram_budget_mb: int = 50
     priority: int = 4
 
-    def create_adapter(self) -> Any:  # noqa: ANN401
+    def __init__(self) -> None:
+        super().__init__()
+        self._correlate_factory = self._create_adapter
+
+    def _create_adapter(self) -> Any:
         from hledac.universal.recon.passive_fingerprint import (
             create_passive_fingerprint_adapter,
         )
@@ -662,15 +622,13 @@ class PassiveFingerprintSidecarAdapter(CorrelateBasedSidecarAdapter):
 # ── Passive Tech-Stack Sidecar (F350M-R / R11) ────────────────────────────────
 
 @SidecarRegistry.register("passive_tech_stack")
-class PassiveTechStackSidecarAdapter(CorrelateBasedSidecarAdapter):
+class PassiveTechStackSidecarAdapter(BaseSidecarAdapter):
     """
     R11: Passive tech-stack extraction — deterministic, no active scan.
 
-    Migrated to CorrelateBasedSidecarAdapter (F360M).
+    F360M: Now extends BaseSidecarAdapter directly with _correlate_factory hook.
     Wraps `intelligence.passive_fingerprint.create_passive_tech_stack_adapter`
-    factory; calls `adapter.correlate(findings, query)`. Derived signal is
-    identical to `passive_fingerprint` for tech-stack component, but exposed
-    under its own registry ID for env-gated opt-in.
+    factory; calls `adapter.correlate(findings, query)`.
 
     Env: HLEDAC_ENABLE_PASSIVE_TECH_STACK=1
     RAM: 30MB budget
@@ -682,7 +640,11 @@ class PassiveTechStackSidecarAdapter(CorrelateBasedSidecarAdapter):
     ram_budget_mb: int = 30
     priority: int = 4
 
-    def create_adapter(self) -> Any:  # noqa: ANN401
+    def __init__(self) -> None:
+        super().__init__()
+        self._correlate_factory = self._create_adapter
+
+    def _create_adapter(self) -> Any:
         from hledac.universal.recon.passive_fingerprint import (
             create_passive_tech_stack_adapter,
         )
@@ -701,7 +663,7 @@ class SocialIdentityMinerSidecarAdapter(BaseSidecarAdapter):
     SidecarContext, so the adapter is **wiring-only**: registers the sidecar
     for availability + env-gate, but returns `[]` from `run_async` so the
     canonical execution path (SprintScheduler with store handle) remains
-    authoritative. This avoids double-execution of the social identity scan.
+    authoritative.
 
     Env: HLEDAC_ENABLE_SOCIAL_IDENTITY_SURFACE=1
     RAM: 60MB budget
@@ -734,13 +696,9 @@ class IdentityStitchingSidecarAdapter(BaseSidecarAdapter):
     F202B: Identity stitching engine — heavy, RAM-guarded by bus.
 
     Wraps `intelligence.identity_stitching.create_identity_stitching_engine`
-    factory. The engine exposes a builder API (`add_profile`, `find_matches`,
-    `find_all_matches`) that does not match the unified `correlate(findings,
-    query)` contract used by other F350M-R adapters, so the adapter is
-    **wiring-only**: registers the sidecar for availability + env-gate, with
-    actual execution routed through the canonical
-    `intelligence.identity_stitching_canonical.create_identity_stitching_adapter`
-    path which the SprintScheduler invokes directly.
+    factory. The engine exposes a builder API that does not match the
+    unified `correlate(findings, query)` contract, so the adapter is
+    **wiring-only**: registers the sidecar for availability + env-gate.
 
     Env: HLEDAC_ENABLE_IDENTITY_STITCHING=1
     RAM: 100MB budget
@@ -767,12 +725,9 @@ class TemporalArchaeologySidecarAdapter(BaseSidecarAdapter):
 
     Wraps `intelligence.temporal_archaeologist.create_temporal_archaeologist`
     factory. The archaeologist exposes a context-managed async API
-    (`__aenter__`/`recover_deleted_content`/`reconstruct_version_history`)
     that does not match the unified `correlate(findings, query)` contract,
     so the adapter is **wiring-only**: registers the sidecar for
-    availability + env-gate. Actual execution is routed through
-    `intelligence.temporal_archaeologist_adapter.create_temporal_archaeologist_adapter`
-    invoked by SprintScheduler with a CT-findings slice.
+    availability + env-gate.
 
     Env: HLEDAC_ENABLE_TEMPORAL_ARCHAEOLOGY=1
     RAM: 80MB budget
@@ -786,19 +741,11 @@ class TemporalArchaeologySidecarAdapter(BaseSidecarAdapter):
 
     async def run_async(self, ctx: SidecarContext) -> list[Any]:
         del ctx  # explicitly unused — wiring-only pattern
-        # Smoke-import the factory to validate module availability.
-        try:
-            pass
-        except Exception:
-            return []
         # context-managed API mismatch — wiring-only, return empty
         return []
 
 
 # ── LanceDB RAG Sidecar — Sprint P2-3 Layer A ──────────────────────────────────
-# Registry imports must be at bottom (after class definition).
-# We import here to avoid circular deps.
-
 
 @SidecarRegistry.register("lancedb_rag")
 class LanceDBRAGSidecarAdapter(BaseSidecarAdapter):
@@ -887,7 +834,7 @@ class LanceDBRAGSidecarAdapter(BaseSidecarAdapter):
 
 
 @SidecarRegistry.register("github_gist")
-class GitHubGistSidecarAdapter(GenericSidecarAdapter):
+class GitHubGistSidecarAdapter(BaseSidecarAdapter):
     """
     GitHub Gist Archive Discovery Sidecar.
 
@@ -899,7 +846,7 @@ class GitHubGistSidecarAdapter(GenericSidecarAdapter):
     RAM: 30MB budget
     Priority: 5 (medium)
 
-    F360M: Migrated to GenericSidecarAdapter — reduces ~65 LOC to ~40 LOC.
+    F360M: Now extends BaseSidecarAdapter directly (GenericSidecarAdapter deleted).
     """
 
     sidecar_id: str = "github_gist"
@@ -918,10 +865,7 @@ class GitHubGistSidecarAdapter(GenericSidecarAdapter):
         return terms[:10]
 
     async def search(self, terms: list[str], ctx: SidecarContext) -> list[dict]:
-        """Search GitHub Gists for each term.
-
-        Note: ctx is accepted for interface compatibility but not used.
-        """
+        """Search GitHub Gists for each term."""
         del ctx  # explicitly unused
         from hledac.universal.discovery.ti_feed_adapter import search_github_gists
 
@@ -965,10 +909,6 @@ class JA4CollectorSidecarAdapter(BaseSidecarAdapter):
     Env: HLEDAC_ENABLE_JA4_COLLECTOR=1
     RAM: 30MB budget
     Priority: 5 (active reconnaissance tier)
-
-    Integration:
-        - recon/network_reconnaissance.py: SSLAnalyzer.ja4_fingerprint()
-        - Rust tls13 module: rust.tls.connect_and_ja4() + ja4_from_client_hello()
     """
 
     sidecar_id: str = "ja4_collector"
@@ -1044,7 +984,7 @@ class JA4CollectorSidecarAdapter(BaseSidecarAdapter):
             if ioc_type in ('domain', 'hostname', 'url', 'fqdn'):
                 if ioc_value and len(ioc_value) < 253:
                     domains.append(ioc_value)
-            # Accept URL-like values ( URLs with :// )
+            # Accept URL-like values (URLs with ://)
             elif ioc_value and '://' in ioc_value:
                 # Extract domain from URL
                 try:
@@ -1063,22 +1003,12 @@ class WhoisSidecarAdapter(BaseSidecarAdapter):
     Historical WHOIS/RDAP Intelligence Sidecar.
 
     Consolidated async WHOIS/RDAP client providing domain registration
-    intelligence with historical data support. Replaces fragmented
-    network_reconnaissance.WHOISLookup, rir_correlator._whois_lookup_domain,
-    and ipv6_recon WHOIS fallback.
-
-    Features:
-      - RDAP (RFC 9224) primary — structured JSON, RIR bootstrap
-      - WHOIS port 43 fallback for legacy TLDs
-      - ipwhois RDAP fallback (blocking, last resort)
-      - Historical WHOIS API opt-in (whoisxmlapi, domainiq, whoisology)
-      - Bounded TTL cache (500 entries, 1h)
-      - Circuit breakers on all external calls
+    intelligence with historical data support.
 
     Env: HLEDAC_ENABLE_WHOIS=1
     Env (historical): HLEDAC_WHOIS_API + HLEDAC_WHOIS_API_KEY
     RAM: 30MB budget
-    Priority: 5 (medium, runs alongside passive DNS and CT lanes)
+    Priority: 5 (medium)
     """
 
     sidecar_id: str = "whois"
@@ -1086,7 +1016,7 @@ class WhoisSidecarAdapter(BaseSidecarAdapter):
     ram_budget_mb: int = 30
     priority: int = 5
 
-    async def run_async(self, ctx: SidecarContext) -> list[Any]:  # noqa: C901
+    async def run_async(self, ctx: SidecarContext) -> list[Any]:
         """Perform WHOIS lookups for domain findings."""
         if not ctx.findings and not ctx.query:
             return []
@@ -1118,16 +1048,15 @@ class WhoisSidecarAdapter(BaseSidecarAdapter):
             domains = self._extract_domains(ctx)
             if not domains:
                 domains = [ctx.query] if ctx.query else []
-            domains = domains[:50]  # Cap at MAX_TARGETS
+            domains = domains[:50]
 
             results = await service.lookup_batch(domains)
 
             findings = []
             for res in results:
                 if not res.registrar and not res.creation_date:
-                    continue  # Skip failed lookups
+                    continue
 
-                # Build payload text
                 lines = [
                     f"Registrar: {res.registrar or 'N/A'}",
                     f"Created: {res.creation_date or 'N/A'}",
@@ -1180,7 +1109,6 @@ class WhoisSidecarAdapter(BaseSidecarAdapter):
             if ioc_type == "domain" and ioc_value:
                 domains.append(ioc_value)
             elif ioc_type == "url":
-                # Extract domain from URL — urlparse is module-level import
                 try:
                     parsed = urlparse(ioc_value)
                     if parsed.netloc:
@@ -1201,12 +1129,7 @@ class ThreatIntelSidecarAdapter(BaseSidecarAdapter):
     Wires up orphaned TI feed functions from ti_feed_adapter.py:
       - fetch_threatfox()    — ThreatFox IOC feed (API, no key)
       - fetch_feodo_c2()     — Feodo Tracker C2 feed (API, no key)
-      - fetch_urlhaus()      — URLhaus malware URL feed (RSS already wired,
-                                but sidecar adds query-filtered variant)
-
-    These functions were defined but NEVER called from anywhere in the codebase.
-    This sidecar activates for threat_intel profile and provides IoCs matching
-    the sprint query (ransomware, malware names, C2 IPs, etc.).
+      - fetch_urlhaus()      — URLhaus malware URL feed
 
     Env: HLEDAC_ENABLE_THREAT_INTEL=1
     RAM: 40MB budget
@@ -1218,7 +1141,7 @@ class ThreatIntelSidecarAdapter(BaseSidecarAdapter):
     ram_budget_mb: int = 40
     priority: int = 7
 
-    async def run_async(self, ctx: SidecarContext) -> list[Any]:  # noqa: C901
+    async def run_async(self, ctx: SidecarContext) -> list[Any]:
         """Fetch threat intel IoCs matching the query."""
         if not ctx.query:
             return []
@@ -1235,17 +1158,15 @@ class ThreatIntelSidecarAdapter(BaseSidecarAdapter):
 
         findings: list[Any] = []
 
-        # 1. ThreatFox — most relevant for ransomware/malware named queries
+        # 1. ThreatFox
         try:
             threatfox_results = await fetch_threatfox(days=7)
             query_lower = ctx.query.lower()
             for entry in threatfox_results[:100]:
-                # entry keys: ioc, ioc_type, malware, threat_type, confidence_level
                 malware = entry.get("malware", "") or ""
                 ioc = entry.get("ioc", "")
                 threat_type = entry.get("threat_type", "") or ""
                 confidence = (entry.get("confidence_level", 50) or 50) / 100
-                # Filter entries matching the query (malware name, actor, etc.)
                 if not query_lower or query_lower in malware.lower() or query_lower in ioc.lower():
                     findings.append({
                         "source_type": "threatfox",
@@ -1266,11 +1187,10 @@ class ThreatIntelSidecarAdapter(BaseSidecarAdapter):
         except Exception:
             logger.debug("ThreatIntelSidecarAdapter: ThreatFox fetch failed", exc_info=True)
 
-        # 2. Feodo C2 — botnet C2 IPs
+        # 2. Feodo C2
         try:
             feodo_results = await fetch_feodo_c2()
             for entry in feodo_results[:100]:
-                # entry keys: ioc (ip_address), ioc_type (ip), port, status
                 ip_address = entry.get("ioc", "") or entry.get("ip_address", "")
                 if ip_address:
                     findings.append({
@@ -1291,12 +1211,11 @@ class ThreatIntelSidecarAdapter(BaseSidecarAdapter):
         except Exception:
             logger.debug("ThreatIntelSidecarAdapter: Feodo fetch failed", exc_info=True)
 
-        # 3. URLhaus — malware URLs (query-filtered)
+        # 3. URLhaus
         try:
             urlhaus_results = await fetch_urlhaus(max_items=200)
             query_lower = ctx.query.lower()
             for entry in urlhaus_results[:100]:
-                # entry keys: ioc (url), threat, url_status
                 url = entry.get("ioc", "") or entry.get("url", "")
                 if url and query_lower and query_lower in url.lower():
                     findings.append({
@@ -1317,7 +1236,7 @@ class ThreatIntelSidecarAdapter(BaseSidecarAdapter):
         except Exception:
             logger.debug("ThreatIntelSidecarAdapter: URLhaus fetch failed", exc_info=True)
 
-        return findings[:200]  # Cap at 200 total
+        return findings[:200]
 
 
 # ── ShadowWalker Sidecar ───────────────────────────────────────────────────────
@@ -1328,10 +1247,9 @@ class ShadowWalkerSidecarAdapter(BaseSidecarAdapter):
     ShadowWalker URL path prediction sidecar.
 
     Uses ShadowWalkerAlgorithm to predict hidden/unlisted URL paths on a target
-    domain, based on observed path patterns. One-shot per sprint — no persistent
-    state. Results returned as CanonicalFinding with source_type="shadow_walker".
+    domain, based on observed path patterns.
 
-    Env gate: HLEDAC_ENABLE_SHADOW_WALKER=1 (default: 0, dormant)
+    Env gate: HLEDAC_ENABLE_SHADOW_WALKER=1
     RAM budget: ~20MB
     Priority: 4 (runs early in advisory phase)
     """
@@ -1343,7 +1261,6 @@ class ShadowWalkerSidecarAdapter(BaseSidecarAdapter):
 
     def is_available(self) -> bool:
         """Available only when feature flag is enabled."""
-        import os
         return os.getenv("HLEDAC_ENABLE_SHADOW_WALKER", "0").lower() in ("1", "true", "yes", "on")
 
     def _extract_base_url(self, query: str) -> str | None:
@@ -1354,13 +1271,7 @@ class ShadowWalkerSidecarAdapter(BaseSidecarAdapter):
         return None
 
     async def run_async(self, ctx: SidecarContext) -> list[Any]:
-        """
-        Run ShadowWalker path prediction for the sprint query.
-
-        1. Extract base URL from query
-        2. Run ShadowWalkerAlgorithm to predict hidden paths
-        3. Convert predictions to findings
-        """
+        """Run ShadowWalker path prediction for the sprint query."""
         import hashlib
         import time
 

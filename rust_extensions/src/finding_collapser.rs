@@ -18,7 +18,7 @@
 
 use parking_lot::RwLock;
 use pyo3::prelude::*;
-use regex::Regex;
+use regex_automata::Regex;
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use std::sync::LazyLock;

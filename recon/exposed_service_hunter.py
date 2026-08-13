@@ -43,7 +43,7 @@ from urllib.parse import urlparse
 import httpx
 from hledac.universal.core.concurrency import ConcurrencyCategory, get_semaphore
 from hledac.universal.transport.session_pool import session_pool
-from hledac.universal.utils.async_helpers import parallel_ok
+from hledac.universal.utils.asyncx import parallel_ok
 from hledac.universal.utils._patterns import scan_parallel
 logger = logging.getLogger(__name__)
 

@@ -15,7 +15,7 @@ use crate::url_engine;
 use pyo3::prelude::*;
 use pyo3::types::PyList;
 use rayon::prelude::*;
-use regex::Regex;
+use regex_automata::Regex;
 use std::collections::HashSet;
 
 // ISSUE-014: Pre-compiled regex from centralized patterns (single source of truth)
