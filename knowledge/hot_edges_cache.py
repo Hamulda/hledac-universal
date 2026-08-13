@@ -63,6 +63,7 @@ HLEDAC_HOT_EDGES_MAP_SIZE_MB   override 8 MB default
 import functools
 import logging
 import os
+import threading
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -147,32 +148,139 @@ MAX_HOT_NODES: int = 10_000
 from hledac.universal.core.feature_flags import FeatureFlags, FeatureFlag
 HOT_EDGES_ENABLED: bool = FeatureFlags.get(FeatureFlag.HOT_EDGES)
 
-# P6-3: Denormalized edge buffer for batched writes.
+# P6-3 + MODERN-35: Denormalized edge buffer for batched writes.
+# CONTEXT-MANAGED: Per-sprint buffer that flushes and clears on sprint end.
+#
+# MODERN-35 FIX: Cross-sprint contamination prevention.
+# - Buffer is now managed by SprintDenormBuffer class with context manager protocol
+# - flush_and_clear() is called at sprint end to prevent data leakage
+# - _DENORM_BUFFER is now instance state, not module-level global
+#
 # When denorm data (dst_value, dst_ioc_type) is provided, edges are buffered
 # here instead of being written directly to LMDB. This avoids the per-edge
 # commit overhead (1 txn/edge → batched flush every N edges).
-# Uses a thread-safe list with periodic flush threshold.
-_DENORM_BUFFER: list[tuple[int, int, str, str]] = []
 _DENORM_BUFFER_SIZE = int(os.environ.get("HLEDAC_DENORM_BUFFER_SIZE", "50"))
 
 
-def _flush_denorm_buffer_to_lmdb() -> bool:
+class SprintDenormBuffer:
     """
-    P6-3: Flush all buffered denormalized edges to LMDB in a single transaction.
+    Context-managed denormalized edge buffer for per-sprint isolation.
 
-    MODERN-25: Improved error handling with proper logging and buffer recovery.
-    Groups by src_id, merges with existing neighbor lists, sorts, truncates,
-    and writes in one txn. This reduces per-edge commit overhead.
+    MODERN-35: Replaces module-level _DENORM_BUFFER to prevent cross-sprint
+    data contamination. Each sprint gets a fresh buffer that is flushed
+    and cleared when the sprint context exits.
 
-    Returns True on success, False on any exception (fail-soft).
-    On failure, buffer contents are recovered for retry.
+    Usage:
+        async with SprintDenormBuffer() as buf:
+            buf.append((src_id, dst_id, dst_value, dst_ioc_type))
+            # ... more edges
+        # Buffer automatically flushed and cleared on exit
+
+    Thread-safety: Uses threading.Lock for safe concurrent access.
     """
-    global _DENORM_BUFFER
-    if not _DENORM_BUFFER:
+
+    __slots__ = ("_buffer", "_lock", "_flushed_size")
+
+    def __init__(self) -> None:
+        self._buffer: list[tuple[int, int, str, str]] = []
+        self._lock = threading.Lock()
+        self._flushed_size: int = 0
+
+    def append(self, entry: tuple[int, int, str, str]) -> None:
+        """Append a denorm edge entry to the buffer."""
+        with self._lock:
+            self._buffer.append(entry)
+
+    def __len__(self) -> int:
+        """Return current buffer size."""
+        with self._lock:
+            return len(self._buffer)
+
+    @property
+    def should_flush(self) -> bool:
+        """Check if buffer has reached flush threshold."""
+        with self._lock:
+            return len(self._buffer) >= _DENORM_BUFFER_SIZE
+
+    def flush(self) -> bool:
+        """
+        Flush buffer to LMDB, preserving contents on failure.
+
+        Returns True on success, False on failure.
+        """
+        with self._lock:
+            if not self._buffer:
+                return True
+            buffer = self._buffer
+            self._buffer = []
+            self._flushed_size = len(buffer)
+
+        # Call the module-level flush function with the captured buffer
+        result = _flush_denorm_buffer_internal(buffer)
+        if not result:
+            # Recovery: re-add buffer contents on failure
+            with self._lock:
+                self._buffer = buffer + self._buffer
+        return result
+
+    async def __aenter__(self) -> "SprintDenormBuffer":
+        """Enter sprint context — buffer is already fresh on construction."""
+        return self
+
+    async def __aexit__(self, exc_type, exc_val, exc_tb) -> None:
+        """Exit sprint context — flush and clear buffer."""
+        self.flush()
+        with self._lock:
+            self._buffer.clear()
+            self._flushed_size = 0
+
+
+# Module-level singleton buffer manager
+_DENORM_BUFFER_MANAGER: SprintDenormBuffer | None = None
+_DENORM_BUFFER_LOCK = threading.Lock()
+
+
+def _get_denorm_buffer() -> SprintDenormBuffer:
+    """Get or create the module-level denorm buffer singleton."""
+    global _DENORM_BUFFER_MANAGER
+    with _DENORM_BUFFER_LOCK:
+        if _DENORM_BUFFER_MANAGER is None:
+            _DENORM_BUFFER_MANAGER = SprintDenormBuffer()
+        return _DENORM_BUFFER_MANAGER
+
+
+def flush_denorm_buffer() -> bool:
+    """
+    MODERN-35: Flush the module-level denorm buffer.
+
+    Called at sprint end to ensure all buffered edges are persisted.
+    """
+    return _get_denorm_buffer().flush()
+
+
+def clear_denorm_buffer() -> None:
+    """
+    MODERN-35: Clear the module-level denorm buffer without flushing.
+
+    Use when sprint is cancelled and buffered edges should be discarded.
+    """
+    buf = _get_denorm_buffer()
+    with buf._lock:
+        buf._buffer.clear()
+        buf._flushed_size = 0
+
+
+def _flush_denorm_buffer_internal(
+    buffer: list[tuple[int, int, str, str]]
+) -> bool:
+    """
+    Internal flush function that operates on a provided buffer.
+
+    MODERN-35: Extracted from _flush_denorm_buffer_to_lmdb() to support
+    both module-level buffer and per-sprint buffer management.
+    """
+    if not buffer:
         return True
-
-    # Atomically swap buffer
-    buffer, _DENORM_BUFFER = _DENORM_BUFFER, []
 
     try:
         from collections import defaultdict
@@ -184,11 +292,9 @@ def _flush_denorm_buffer_to_lmdb() -> bool:
 
         env = _open_env()
         if env is None:
-            # MODERN-25: Recover buffer on LMDB open failure
             logger.warning(
-                f"[HOT-EDGES] LMDB env unavailable, recovering {len(buffer)} edges for retry"
+                f"[HOT-EDGES] LMDB env unavailable, preserving {len(buffer)} edges for retry"
             )
-            _DENORM_BUFFER = buffer + _DENORM_BUFFER
             return False
 
         with env.begin(write=True) as txn:
@@ -200,7 +306,6 @@ def _flush_denorm_buffer_to_lmdb() -> bool:
                 )
 
                 if existing is None:
-                    # New node
                     neighbors_denorm: list[tuple[int, int, str, str]] = deltas_in.copy()
                     neighbors_denorm.sort(key=lambda p: (-p[1], p[0]))
                     neighbors_denorm = neighbors_denorm[:MAX_HOT_NEIGHBORS_PER_NODE]
@@ -210,11 +315,9 @@ def _flush_denorm_buffer_to_lmdb() -> bool:
                 if existing_denorm:
                     neighbors_denorm = _decode_neighbors_denorm(existing) or []
                 else:
-                    # Upgrade v1 → v2
                     neighbors = _decode_neighbors(existing) or []
                     neighbors_denorm = [(nid, cnt, "", "") for nid, cnt in neighbors]
 
-                # Build nmap for O(1) dst lookup
                 nmap: dict[int, tuple[int, str, str]] = {
                     nid: (cnt, val, typ) for nid, cnt, val, typ in neighbors_denorm
                 }
@@ -226,7 +329,6 @@ def _flush_denorm_buffer_to_lmdb() -> bool:
                     else:
                         nmap[dst_id] = (delta, dst_value, dst_ioc_type)
 
-                # Sort by count desc, dst_id asc, truncate
                 sorted_neighbors = sorted(nmap.items(), key=lambda p: (-p[1][0], p[0]))
                 sorted_neighbors = sorted_neighbors[:MAX_HOT_NEIGHBORS_PER_NODE]
                 final: list[tuple[int, int, str, str]] = [
@@ -237,10 +339,21 @@ def _flush_denorm_buffer_to_lmdb() -> bool:
 
         return True
     except Exception as e:
-        logger.debug(f"[HOT-EDGES] _flush_denorm_buffer_to_lmdb failed: {e}")
-        # Re-add buffer contents on failure
-        _DENORM_BUFFER = buffer + _DENORM_BUFFER
+        logger.debug(f"[HOT-EDGES] _flush_denorm_buffer_internal failed: {e}")
         return False
+
+
+def _flush_denorm_buffer_to_lmdb() -> bool:
+    """
+    P6-3 + MODERN-35: Flush all buffered denormalized edges to LMDB in a single transaction.
+
+    MODERN-35: Now delegates to the buffer manager for proper per-sprint isolation.
+    Groups by src_id, merges with existing neighbor lists, sorts, truncates,
+    and writes in one txn. This reduces per-edge commit overhead.
+
+    Returns True on success, False on any exception (fail-soft).
+    """
+    return _get_denorm_buffer().flush()
 
 # Counter encoding — 8 bytes unsigned int, little-endian.
 # Picked for: zero allocations, native int.from_bytes on M1 ARM64.
@@ -284,6 +397,8 @@ def _open_env():
         return _ENV
     if _ENV_OPEN_FAILED:
         return None
+    # MODERN-35: Initialize Rust compression on first env open
+    _init_rust_compression()
     try:
         from hledac.universal.knowledge.lmdb_boot_guard import open_lmdb_with_guard
         _LMDB_PATH.parent.mkdir(parents=True, exist_ok=True)
@@ -361,19 +476,37 @@ from hledac.universal.core.feature_flags import FeatureFlags, FeatureFlag
 _HOT_EDGES_COMPRESS = FeatureFlags.get(FeatureFlag.HOT_EDGES_COMPRESS)
 _compress_available = False
 _decompress_available = False
+_batch_compress_available = False
+_batch_decompress_available = False
 
-# R6: Centralized Rust access via core.rust_backend
-from hledac.universal.core.rust_backend import rust
+# MODERN-35 FIX: Lazy Rust backend imports with proper fallback
+# Previously this was at module level which could fail if Rust is unavailable
+_rust_batch_compress: Any | None = None
+_rust_batch_decompress: Any | None = None
+_rust_compress: Any | None = None
+_rust_decompress: Any | None = None
+_rust_init_done = False
 
-_rust_batch_compress = rust.raw.batch_compress_pages
-_rust_batch_decompress = rust.raw.batch_decompress_pages
-_rust_compress = rust.raw.compress_page
-_rust_decompress = rust.raw.decompress_page
 
-_compress_available = _rust_compress is not None
-_decompress_available = _rust_decompress is not None
-_batch_compress_available = _rust_batch_compress is not None
-_batch_decompress_available = _rust_batch_decompress is not None
+def _init_rust_compression() -> None:
+    """Lazy initialization of Rust compression functions."""
+    global _rust_batch_compress, _rust_batch_decompress, _rust_compress, _rust_decompress
+    global _compress_available, _decompress_available, _batch_compress_available, _batch_decompress_available, _rust_init_done
+    if _rust_init_done:  # Already initialized
+        return
+    _rust_init_done = True
+    try:
+        from hledac.universal.core.rust_backend import rust
+        _rust_batch_compress = getattr(rust.raw, 'batch_compress_pages', None)
+        _rust_batch_decompress = getattr(rust.raw, 'batch_decompress_pages', None)
+        _rust_compress = getattr(rust.raw, 'compress_page', None)
+        _rust_decompress = getattr(rust.raw, 'decompress_page', None)
+        _compress_available = _rust_compress is not None
+        _decompress_available = _rust_decompress is not None
+        _batch_compress_available = _rust_batch_compress is not None
+        _batch_decompress_available = _rust_batch_decompress is not None
+    except (ImportError, AttributeError):
+        pass
 
 
 def _make_key(src_id: int) -> bytes:
@@ -730,14 +863,15 @@ def record_edge(
     # to LMDB so the v2 wire format with value+ioc_type is preserved.
     # L1 (Rust counter buffer) only stores raw (src, dst, delta) — no room
     # for denorm metadata, so using it would lose the benefit.
+    # MODERN-35: Use buffer manager for per-sprint isolation.
     use_denorm = bool(dst_value and dst_ioc_type)
     if use_denorm:
-        # P6-3: Batch denormalized edges instead of committing per-edge.
-        # Buffer in Python list and flush when threshold reached.
+        # P6-3 + MODERN-35: Batch denormalized edges instead of committing per-edge.
+        # Buffer in SprintDenormBuffer and flush when threshold reached.
         # This reduces per-edge commit overhead (1 txn/edge → batched).
-        global _DENORM_BUFFER
-        _DENORM_BUFFER.append((src_id, dst_id, dst_value, dst_ioc_type))
-        if len(_DENORM_BUFFER) >= _DENORM_BUFFER_SIZE:
+        buf = _get_denorm_buffer()
+        buf.append((src_id, dst_id, dst_value, dst_ioc_type))
+        if buf.should_flush:
             _flush_denorm_buffer_to_lmdb()
         return True
     if _L1_AVAILABLE and _EDGE_COUNTER_L1 is not None:
@@ -1080,6 +1214,29 @@ def stats() -> dict:
     return out
 
 
+def reset_hot_edges_sprint() -> None:
+    """
+    MODERN-35: Reset hot edges cache state at sprint end.
+
+    Flushes any pending denormalized edge buffer to LMDB and clears the buffer.
+    This prevents cross-sprint data contamination.
+
+    Call this at the end of each sprint before starting a new one.
+    """
+    # Flush and clear denorm buffer
+    flush_denorm_buffer()
+    clear_denorm_buffer()
+
+    # Flush L1 Rust buffer if available
+    if _L1_AVAILABLE and _EDGE_COUNTER_L1 is not None:
+        try:
+            dirty = _EDGE_COUNTER_L1.drain_dirty()
+            if dirty:
+                _flush_l1_to_lmdb_from_drain(dirty)
+        except Exception as e:
+            logger.debug(f"[HOT-EDGES] L1 drain_dirty failed during sprint reset: {e}")
+
+
 __all__ = [
     "MAX_HOT_NEIGHBORS_PER_NODE",
     "MAX_HOT_NODES",
@@ -1099,6 +1256,11 @@ __all__ = [
     "_flush_l1_to_lmdb",
     # P6-3: Denorm buffer flush
     "_flush_denorm_buffer_to_lmdb",
+    # MODERN-35: Sprint reset and buffer management
+    "flush_denorm_buffer",
+    "clear_denorm_buffer",
+    "reset_hot_edges_sprint",
+    "SprintDenormBuffer",
 ]
 
 

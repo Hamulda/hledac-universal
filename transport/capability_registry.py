@@ -260,53 +260,117 @@ async def _detect_arti_capability() -> tuple[TransportCapability, str]:
 
     Returns READY if:
       - Rust arti_bridge module available AND
-      - ArtiNode class has required methods (start, bootstrap)
-
-    Returns UNAVAILABLE if:
-      - Rust module not available
-      - embedded_tor feature not enabled
+      - ArtiNode can be instantiated AND
+      - bootstrap succeeds (circuit established)
 
     Returns STUB if:
-      - Rust module available but bootstrap not attempted
+      - Rust module available but bootstrap fails
+      - Arti binary not installed (for subprocess fallback)
 
-    M1 8GB OPTIMIZATION: Does NOT instantiate ArtiNode — checks
-    module-level attributes via introspection to avoid ~25-30MB
-    memory allocation per detection call.
+    Returns UNAVAILABLE if:
+      - Rust module not available (embedded_tor feature disabled)
+      - No fallback path available
+
+    FIX-5: Previously returned READY based solely on class existence.
+    Now performs actual bootstrap verification to prevent false positives.
+
+    M1 8GB: Uses short timeout (5s) for bootstrap check to avoid
+    blocking detection for too long. Memory is still bounded by
+    limiting bootstrap attempt to one async check per sprint.
     """
+    import asyncio
+    import shutil
+
     try:
         import rust
 
         if not hasattr(rust, "arti_bridge"):
+            # Check if we have subprocess arti as fallback
+            if shutil.which("arti") is not None:
+                return (
+                    TransportCapability.STUB,
+                    "Rust arti_bridge unavailable, subprocess arti not connected",
+                )
             return TransportCapability.UNAVAILABLE, _CAPABILITY_REASONS["arti"][TransportCapability.UNAVAILABLE]
 
-        # M1 8GB OPTIMIZATION: Check module-level attributes without instantiation.
-        # ArtiNode creation allocates ~25-30MB of Rust memory - too expensive
-        # for a lightweight capability check.
         arti_bridge = rust.arti_bridge
 
-        # Check if ArtiNode class has the required methods
-        if hasattr(arti_bridge, "ArtiNode"):
-            node_class = getattr(arti_bridge, "ArtiNode")
-            # Check for required methods without instantiation
-            if callable(node_class):
-                # Class exists and is callable - this is sufficient for READY
-                # Note: actual bootstrap status would need start() call, but
-                # that requires actual network I/O which is expensive
-                return TransportCapability.READY, _CAPABILITY_REASONS["arti"][TransportCapability.READY]
+        # Check if ArtiNode class exists
+        if not hasattr(arti_bridge, "ArtiNode"):
+            return (
+                TransportCapability.STUB,
+                "ArtiNode class not found in arti_bridge module",
+            )
 
-        # ArtiNode class not available or not callable
-        return TransportCapability.STUB, "ArtiNode available but not properly initialized"
+        node_class = getattr(arti_bridge, "ArtiNode")
+        if not callable(node_class):
+            return TransportCapability.STUB, "ArtiNode is not callable"
 
-    except PermissionError:
-        # ArtiNode creation requires filesystem permissions
-        return TransportCapability.STUB, "ArtiNode creation blocked by permissions"
-    except OSError as e:
-        # Filesystem or runtime error
-        return TransportCapability.STUB, f"ArtiNode creation failed: {e}"
+        # FIX-5: Perform actual bootstrap verification
+        # Use short timeout to avoid blocking detection
+        try:
+            import os
+            data_dir = os.environ.get("HLEDAC_ARTI_DATA_DIR", "~/.hledac/arti")
+
+            async def _try_bootstrap() -> tuple[bool, str]:
+                """Attempt ArtiNode bootstrap and return (success, reason)."""
+                try:
+                    # Create ArtiNode instance (lightweight until start())
+                    node = node_class(data_dir=data_dir)
+
+                    # Attempt bootstrap with 5s timeout
+                    loop = asyncio.get_running_loop()
+
+                    def _do_start() -> bool:
+                        try:
+                            return node.start()
+                        except Exception as e:
+                            return False
+
+                    bootstrapped = await asyncio.wait_for(
+                        loop.run_in_executor(None, _do_start),
+                        timeout=5.0,
+                    )
+
+                    if bootstrapped:
+                        # Verify with session_status
+                        try:
+                            status = node.session_status()
+                            if status and status.get("bootstrap_status"):
+                                return True, f"ArtiNode bootstrapped: {status.get('bootstrap_status')}"
+                        except Exception:
+                            pass
+                        return True, "ArtiNode bootstrapped successfully"
+                    return False, "ArtiNode.start() returned False"
+
+                except asyncio.TimeoutError:
+                    return False, "ArtiNode bootstrap timed out (5s)"
+                except PermissionError:
+                    return False, "ArtiNode creation blocked by permissions"
+                except OSError as e:
+                    return False, f"ArtiNode creation failed: {e}"
+                except Exception as e:
+                    return False, f"ArtiNode bootstrap error: {e}"
+
+            success, reason = await _try_bootstrap()
+            if success:
+                return TransportCapability.READY, reason
+            return TransportCapability.STUB, reason
+
+        except Exception as e:
+            # Bootstrap attempt failed
+            return TransportCapability.STUB, f"ArtiNode bootstrap verification failed: {e}"
+
     except ImportError:
+        # No rust module at all
+        if shutil.which("arti") is not None:
+            return (
+                TransportCapability.STUB,
+                "Rust module unavailable, subprocess arti binary present but not connected",
+            )
         return TransportCapability.UNAVAILABLE, _CAPABILITY_REASONS["arti"][TransportCapability.UNAVAILABLE]
     except Exception as e:
-        # Catch-all for unexpected errors (AttributeError, TypeError, etc.)
+        # Catch-all for unexpected errors
         return TransportCapability.UNAVAILABLE, f"Arti detection error: {e}"
 
 

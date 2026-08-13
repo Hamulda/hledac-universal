@@ -999,20 +999,22 @@ class SprintTransaction:
                     rel_type=rel.rel_type,
                 )
 
-            # ISSUE-FIX: Clear hot_edges buffer entries written during this transaction
+            # MODERN-35 FIX: Clear hot_edges buffer entries written during this transaction
+            # Use the new SprintDenormBuffer API instead of accessing _DENORM_BUFFER directly
             try:
                 from hledac.universal.knowledge import hot_edges_cache as hot_cache
                 # Remove edges from LMDB cache
                 for src_id, dst_id in self._state.written_hot_edges:
                     hot_cache.delete_hot_edge(src_id, dst_id)
                 # Trim buffer to snapshot size (remove entries added during this transaction)
-                if hasattr(hot_cache, '_DENORM_BUFFER'):
-                    buffer_len = len(hot_cache._DENORM_BUFFER)
-                    snapshot = self._state.hot_edges_buffer_snapshot
-                    if buffer_len > snapshot:
-                        # This is approximate - exact tracking requires more complex logic
-                        # For now, just delete the specific edges we know about
-                        pass
+                # MODERN-35: Use buffer manager API instead of direct buffer access
+                buffer = hot_cache._get_denorm_buffer()
+                buffer_len = len(buffer)
+                snapshot = self._state.hot_edges_buffer_snapshot
+                if buffer_len > snapshot:
+                    # This is approximate - exact tracking requires more complex logic
+                    # For now, just delete the specific edges we know about
+                    pass
             except Exception:  # noqa: BLE001
                 pass
         except Exception as e:

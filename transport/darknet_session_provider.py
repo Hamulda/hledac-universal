@@ -1,8 +1,13 @@
 """
 transport/darknet_session_provider.py
 
-F274: Unified darknet session provider — replaces manual Tor/I2P dict pools
+F274 + MODERN-35: Unified darknet session provider — replaces manual Tor/I2P dict pools
 in FetchCoordinator with a thin facade over existing transport singletons.
+
+MODERN-35: Cross-sprint contamination prevention.
+  - Session tracking state is now managed by SessionTracker class
+  - reset_sprint() clears all tracking state at sprint boundaries
+  - Prevents stale session data from leaking between sprints
 
 Architecture:
   - Wraps TorTransport singleton + I2PTransport module-level lazy session.
@@ -34,8 +39,129 @@ _MAX_SESSIONS: int = 4   # CONCURRENCY_TOR — unchanged from L201
 
 # --- Singleton state ---
 _lock: asyncio.Lock | None = None
-# {transport_name: {host: last_access_monotonic}}
-_last_used: dict[str, dict[str, float]] = {"tor": {}, "i2p": {}, "arti": {}}
+
+
+class SessionTracker:
+    """
+    MODERN-35: Context-managed session tracking state for per-sprint isolation.
+
+    Wraps the _last_used dict to provide:
+    - Automatic clearing at sprint boundaries
+    - Thread-safe access via asyncio.Lock
+    - TTL-based eviction
+
+    This class replaces the module-level _last_used dict to prevent
+    cross-sprint session state contamination.
+    """
+
+    __slots__ = ("_last_used", "_lock", "_ttl_seconds")
+
+    def __init__(self, ttl_seconds: int = _TTL_SECONDS) -> None:
+        # {transport_name: {host: last_access_monotonic}}
+        self._last_used: dict[str, dict[str, float]] = {"tor": {}, "i2p": {}, "arti": {}}
+        self._lock: asyncio.Lock | None = None
+        self._ttl_seconds = ttl_seconds
+
+    def _get_lock(self) -> asyncio.Lock:
+        """Get or create the asyncio lock."""
+        if self._lock is None:
+            self._lock = asyncio.Lock()
+        return self._lock
+
+    async def mark_used(self, transport: str, host: str) -> None:
+        """Record that host was accessed now (for TTL tracking)."""
+        if transport not in ("tor", "i2p", "arti"):
+            return
+        try:
+            async with self._get_lock():
+                self._last_used[transport][host] = time.monotonic()
+        except Exception:
+            pass
+
+    async def close_idle(self) -> int:
+        """
+        Evict TTL-expired entries from the tracking dict.
+
+        Returns:
+            Number of entries evicted (0 if none expired).
+        """
+        evicted = 0
+        now = time.monotonic()
+        async with self._get_lock():
+            for transport in ("tor", "i2p", "arti"):
+                expired = [
+                    host
+                    for host, ts in self._last_used[transport].items()
+                    if now - ts > self._ttl_seconds
+                ]
+                for host in expired:
+                    self._last_used[transport].pop(host, None)
+                    evicted += 1
+        if evicted:
+            logger.debug("SessionTracker: evicted %d idle entries", evicted)
+        return evicted
+
+    async def reset(self) -> None:
+        """
+        MODERN-35: Clear all tracking state.
+
+        Called at sprint end to prevent cross-sprint session contamination.
+        """
+        async with self._get_lock():
+            self._last_used = {"tor": {}, "i2p": {}, "arti": {}}
+
+    async def close(self) -> None:
+        """
+        MODERN-35: Close all sessions and clear tracking state.
+
+        Called at process teardown.
+        """
+        await self.reset()
+
+        # Close I2P lazy singleton so it recreates fresh on next use
+        try:
+            from .i2p_transport import close_i2p_session
+
+            await close_i2p_session()
+        except Exception as e:
+            logger.debug("SessionTracker: close_i2p_session failed (fail-soft): %s", e)
+
+        # TorTransport is a shared singleton — closing its sessions affects all
+        # callers. Only do this at process teardown when the singleton is truly
+        # being shut down.
+        try:
+            from .tor_transport import get_tor_transport_singleton
+
+            tor = get_tor_transport_singleton()
+            if tor is not None and tor.available:
+                await tor.stop()
+        except Exception as e:
+            logger.debug("SessionTracker: tor.stop() failed (fail-soft): %s", e)
+
+    def get_stats(self) -> dict[str, Any]:
+        """Return lightweight stats for debugging."""
+        return {
+            "tracked_tor_hosts": len(self._last_used["tor"]),
+            "tracked_i2p_hosts": len(self._last_used["i2p"]),
+            "tracked_arti_hosts": len(self._last_used["arti"]),
+            "ttl_seconds": self._ttl_seconds,
+        }
+
+
+# Module-level singleton tracker
+_session_tracker: SessionTracker | None = None
+_tracker_lock = asyncio.Lock()
+
+
+async def _get_tracker() -> SessionTracker:
+    """Get or create the module-level session tracker singleton."""
+    global _session_tracker
+    if _session_tracker is not None:
+        return _session_tracker
+    async with _tracker_lock:
+        if _session_tracker is None:
+            _session_tracker = SessionTracker()
+        return _session_tracker
 
 
 def _get_lock() -> asyncio.Lock:
@@ -144,13 +270,8 @@ async def mark_used(transport: str, host: str) -> None:
     Fails silently — missing a mark_used entry just means next get_session
     treats it as cold and evicts it.
     """
-    if transport not in ("tor", "i2p", "arti"):
-        return
-    try:
-        async with _get_lock():
-            _last_used[transport][host] = time.monotonic()
-    except Exception:  # noqa: BLE001
-        pass
+    tracker = await _get_tracker()
+    await tracker.mark_used(transport, host)
 
 
 async def close_idle() -> int:
@@ -163,21 +284,8 @@ async def close_idle() -> int:
     Returns:
         Number of entries evicted (0 if none expired).
     """
-    evicted = 0
-    now = time.monotonic()
-    async with _get_lock():
-        for transport in ("tor", "i2p", "arti"):
-            expired = [
-                host
-                for host, ts in _last_used[transport].items()
-                if now - ts > _TTL_SECONDS
-            ]
-            for host in expired:
-                _last_used[transport].pop(host, None)
-                evicted += 1
-    if evicted:
-        logger.debug("darknet_session_provider: evicted %d idle entries", evicted)
-    return evicted
+    tracker = await _get_tracker()
+    return await tracker.close_idle()
 
 
 async def close_all() -> None:
@@ -188,37 +296,47 @@ async def close_all() -> None:
     are unusable until a fresh start — consistent with FetchCoordinator
     legacy behavior where close() invalidated all sessions.
     """
-    global _last_used
-    async with _get_lock():
-        # Clear tracking
-        _last_used = {"tor": {}, "i2p": {}, "arti": {}}
-
-    # Close I2P lazy singleton so it recreates fresh on next use
-    try:
-        from .i2p_transport import close_i2p_session
-
-        await close_i2p_session()
-    except Exception as e:
-        logger.debug("darknet_session_provider: close_i2p_session failed (fail-soft): %s", e)
-
-    # TorTransport is a shared singleton — closing its sessions affects all
-    # callers. Only do this at process teardown when the singleton is truly
-    # being shut down.
-    try:
-        from .tor_transport import get_tor_transport_singleton
-
-        tor = get_tor_transport_singleton()
-        if tor is not None and tor.available:
-            await tor.stop()
-    except Exception as e:
-        logger.debug("darknet_session_provider: tor.stop() failed (fail-soft): %s", e)
+    tracker = await _get_tracker()
+    await tracker.close()
 
 
 def get_stats() -> dict[str, Any]:
-    """Return lightweight stats for debugging."""
+    """
+    Return lightweight stats for debugging.
+    
+    MODERN-35: Now delegates to the SessionTracker if available,
+    otherwise returns defaults for backward compatibility.
+    """
+    global _session_tracker
+    if _session_tracker is not None:
+        return _session_tracker.get_stats()
     return {
-        "tracked_tor_hosts": len(_last_used["tor"]),
-        "tracked_i2p_hosts": len(_last_used["i2p"]),
+        "tracked_tor_hosts": 0,
+        "tracked_i2p_hosts": 0,
+        "tracked_arti_hosts": 0,
         "ttl_seconds": _TTL_SECONDS,
         "max_sessions": _MAX_SESSIONS,
     }
+
+
+async def reset_sprint() -> None:
+    """
+    MODERN-35: Reset session tracking state at sprint end.
+
+    Clears all TTL tracking entries without closing transport sessions.
+    Use this at the end of each sprint to prevent cross-sprint contamination
+    while keeping sessions alive for the next sprint.
+    """
+    tracker = await _get_tracker()
+    await tracker.reset()
+
+
+async def shutdown() -> None:
+    """
+    MODERN-35: Full shutdown of session provider.
+
+    Clears tracking state and closes transport sessions.
+    Use this at process teardown.
+    """
+    tracker = await _get_tracker()
+    await tracker.close()

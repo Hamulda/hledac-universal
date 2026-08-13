@@ -250,6 +250,9 @@ class AcquisitionPhaseResult(msgspec.Struct, gc=False):
     windup_entered: bool = False
     exit_path: str | None = None
     error: str | None = None
+    # P4-1: UNIMPLEMENTED telemetry — tracks which windup paths are stubs
+    unimplemented_telemetry: tuple = ()  # e.g. ("pre_windup_barrier", "ioc_cooccurrence")
+    windup_unimplemented_lanes: tuple = ()  # probe lanes not implemented (WAYBACK, PDNS, etc.)
 
 class WinddownPhaseResult(msgspec.Struct, gc=False):
     """Result from the winddown phase."""

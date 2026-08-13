@@ -58,18 +58,22 @@ class PoolKind(Enum):
     COREML = auto()
     CPU_IO = auto()
     CPU_BLOCKING = auto()
-    # R3: Hermes engine dedicated pools — fixed-size, M1 8GB optimized
-    HERMES_PREP = auto()       # ChatML format + tokenization (CPU, 3 workers)
-    HERMES_POST = auto()       # JSON parse + model_validate (CPU, 2 workers)
-    HERMES_INFERENCE = auto()  # MLX inference fallback (CPU, 1 worker)
-    HERMES_COMPILE = auto()    # Prompt compilation (CPU, 1 worker, lazy)
-_DUCKDB_POOL_SIZE = 4
-_DUCKDB_POOL_MAX = 8
+    # ── MODERN-36: Hermes pools deprecated — merged into CPU_IO ────────────────
+    # Hermes operations now use cpu_io_pool via asyncio.to_thread().
+    # Keeping enum values for backward compatibility (they map to CPU_IO).
+    HERMES_PREP = auto()       # DEPRECATED: Maps to CPU_IO
+    HERMES_POST = auto()       # DEPRECATED: Maps to CPU_IO
+    HERMES_INFERENCE = auto()  # DEPRECATED: Maps to CPU_IO
+    HERMES_COMPILE = auto()    # DEPRECATED: Maps to CPU_IO
+_DUCKDB_POOL_SIZE = 2  # MODERN-36: Reduced from 4 (memory savings ~100MB)
+_DUCKDB_POOL_MAX = 4  # MODERN-36: Max burst still 4 for spikes
 _MLX_POOL_SIZE = 1
 _ANE_POOL_SIZE = 1
 _COREML_POOL_SIZE = 1
-_CPU_IO_WORKERS_DEFAULT = 8
-_CPU_BLOCKING_WORKERS_DEFAULT = 4
+# ── MODERN-36: Unified 6-thread budget ─────────────────────────────────────
+# Budget: DuckDB RW(1) + DuckDB RO(2) + CPU I/O(3) = 6 threads total
+_CPU_IO_WORKERS_DEFAULT = 3  # Reduced from 8
+_CPU_BLOCKING_WORKERS_DEFAULT = 0  # Merged into CPU_IO pool
 _thread_local = threading.local()
 _current_duckdb_conn: ContextVar[Any | None] = ContextVar('current_duckdb_conn', default=None)
 
@@ -303,47 +307,64 @@ class _CPUPool:
 _cpu_io_pool = _CPUPool(name='cpu_io', max_workers=_CPU_IO_WORKERS_DEFAULT, kind=PoolKind.CPU_IO)
 _cpu_blocking_pool = _CPUPool(name='cpu_blocking', max_workers=_CPU_BLOCKING_WORKERS_DEFAULT, kind=PoolKind.CPU_BLOCKING)
 
-# R3: Hermes engine dedicated pools — fixed worker counts optimized for M1 8GB
-# These are NOT adaptive (unlike cpu_io/cpu_blocking) — the worker counts are
-# hard-tuned for the 3-stage CPU/GPU pipeline (prep → GPU → post).
-_HERMES_PREP_WORKERS = 3
-_HERMES_POST_WORKERS = 2
-_HERMES_INFERENCE_WORKERS = 1
-_HERMES_COMPILE_WORKERS = 1
-
-_hermes_prep_pool = _CPUPool(name='hermes_prep', max_workers=_HERMES_PREP_WORKERS, kind=PoolKind.HERMES_PREP)
-_hermes_post_pool = _CPUPool(name='hermes_post', max_workers=_HERMES_POST_WORKERS, kind=PoolKind.HERMES_POST)
-_hermes_inference_pool = _CPUPool(name='hermes_inference', max_workers=_HERMES_INFERENCE_WORKERS, kind=PoolKind.HERMES_INFERENCE)
-_hermes_compile_pool = _CPUPool(name='hermes_compile', max_workers=_HERMES_COMPILE_WORKERS, kind=PoolKind.HERMES_COMPILE)
+# ── MODERN-36: Hermes pools unified into cpu_io_pool ────────────────────────
+# Hermes operations (prep, post, inference, compile) now share the unified
+# cpu_io_pool instead of having dedicated pools. This reduces thread count
+# from 7 (hermes pools) to 0 (using shared pool).
+#
+# For MLX/ANE/CoreML inference, the GPU/ANE execution happens on the
+# accelerator's own threads, not CPU threads. CPU work (tokenization,
+# formatting) is offloaded to cpu_io_pool via asyncio.to_thread().
+#
+# This is the key insight: MLX/ANE/CoreML are NOT CPU-bound operations.
+# The thread budget only needs to cover CPU work. GPU/ANE work has its
+# own execution context outside the CPU thread budget.
+#
+# If you need hermes prep/post pools, create them dynamically inside the
+# hermes engine itself with explicit limits, or use asyncio.Semaphore
+# for scheduling instead of separate ThreadPoolExecutors.
 
 
 def get_hermes_prep_executor() -> ThreadPoolExecutor:
-    """R3: Get or create the Hermes prep executor (ChatML formatting + tokenization)."""
-    return _hermes_prep_pool.get_executor()
+    """
+    R3: Get or create the Hermes prep executor (ChatML formatting + tokenization).
+    MODERN-36: Now uses cpu_io_pool for unified thread budget management.
+    """
+    return _cpu_io_pool.get_executor()
 
 
 def get_hermes_post_executor() -> ThreadPoolExecutor:
-    """R3: Get or create the Hermes post executor (JSON parse + model_validate)."""
-    return _hermes_post_pool.get_executor()
+    """
+    R3: Get or create the Hermes post executor (JSON parse + model_validate).
+    MODERN-36: Now uses cpu_io_pool for unified thread budget management.
+    """
+    return _cpu_io_pool.get_executor()
 
 
 def get_hermes_inference_executor() -> ThreadPoolExecutor:
-    """R3: Get or create the Hermes inference executor (MLX fallback)."""
-    return _hermes_inference_pool.get_executor()
+    """
+    R3: Get or create the Hermes inference executor (MLX fallback).
+    MODERN-36: Now uses cpu_io_pool for unified thread budget management.
+    """
+    return _cpu_io_pool.get_executor()
 
 
 def get_hermes_compile_executor() -> ThreadPoolExecutor:
-    """R3: Get or create the Hermes compile executor (prompt compilation, lazy)."""
-    return _hermes_compile_pool.get_executor()
+    """
+    R3: Get or create the Hermes compile executor (prompt compilation, lazy).
+    MODERN-36: Now uses cpu_io_pool for unified thread budget management.
+    """
+    return _cpu_io_pool.get_executor()
 
 
 def close_hermes_pools() -> None:
-    """R3: Shutdown all Hermes executor pools. Idempotent, fail-safe."""
-    for pool in (_hermes_prep_pool, _hermes_post_pool, _hermes_inference_pool, _hermes_compile_pool):
-        try:
-            pool.shutdown(wait=False)
-        except Exception:  # noqa: BLE001
-            pass
+    """
+    R3: Shutdown all Hermes executor pools. Idempotent, fail-safe.
+    MODERN-36: Hermes pools now share cpu_io_pool, so this just logs a warning.
+    """
+    # Hermes pools are now unified with cpu_io_pool - no separate shutdown needed
+    logger.warning("close_hermes_pools() called but Hermes pools share cpu_io_pool")
+
 
 class _MLXPool:
     """

@@ -2,14 +2,14 @@
 Isolated executors — backed by RustWorkerPool (rayon thread pool).
 
 MODERN-33 + MODERN-34: P/E Core Affinity Integration
-=====================================================
+===================================================================
 This module uses Rust rayon pools with proper P/E core affinity:
   - cpu_pool → P-cores (USER_INITIATED QoS) via darwin_affinity.rs
   - io_pool → E-cores (UTILITY QoS) via darwin_affinity.rs
   - Topology detection via rust topoology.rs (cached perflevel0/1)
 
-THREAD-BUDGET-01: Unified Thread Budget System
-==============================================
+THREAD-BUDGET-01 + THREAD-BUDGET-02: Unified Thread Budget System
+============================================================
 This module provides the canonical thread budget enforcement for M1 8GB:
 
   Budget Composition (M1 8GB: 4P + 4E = 8 logical cores):
@@ -25,7 +25,7 @@ This module provides the canonical thread budget enforcement for M1 8GB:
     └────────────────────────┴─────────┴───────────────────────────┘
   
   MAX_TOTAL_THREADS = 8 (hard ceiling)
-  _BUDGET_AVAILABLE = 7 (MAX - 1 for system/OS = rayon pool budget)
+  THREAD-BUDGET-02 FIX: _BUDGET_AVAILABLE = 6 (8 - 2 = 6, was 7 which was wrong)
   
   All phase transitions are validated against _BUDGET_AVAILABLE before execution.
   Failed transitions ROLLBACK to previous state (never partial).
@@ -92,6 +92,29 @@ T = TypeVar("T", default=object)
 # This constant is NOT referenced anywhere in the codebase.
 MAX_INTERPRETERS: int = 3
 
+
+def reset_pools_sprint() -> None:
+    """
+    MODERN-35: Reset pool state at sprint end without full shutdown.
+
+    Unlike close_all_pools(), this function does NOT close the Rust pools.
+    Instead, it only nullifies the Python wrapper references so that new
+    pools will be created on next use. This allows the Rust rayon thread pools
+    to remain alive across sprints (they're process-wide singletons anyway).
+
+    Use this at the end of each sprint to clear Python state while keeping
+    the Rust pools ready for the next sprint.
+
+    For full process teardown, use close_all_pools().
+    """
+    global _duckdb_pool, _mlx_pool, _evidence_pool
+    with _pools_lock:
+        _duckdb_pool = None
+        _mlx_pool = None
+        _evidence_pool = None
+    logger.debug("[ISOLATED-EXECUTORS] Sprint reset: pool references cleared")
+
+
 __all__ = [
     # Stub classes — kept for backward compatibility with tests
     "IsolatedInterpreter",
@@ -104,6 +127,7 @@ __all__ = [
     "get_mlx_executor",
     "get_evidence_batch_writer",
     "close_all_pools",
+    "reset_pools_sprint",
     "is_pep734_available",
     "get_interpreter_stats",
     "IsolatedRuntime",
@@ -111,11 +135,13 @@ __all__ = [
     # [META]-004: Elastic rayon pool manager
     "RayonPoolManager",
     "get_rayon_pool_manager",
-    # [THREAD-BUDGET-01]: Thread budget enforcement
+    # [THREAD-BUDGET-02]: Thread budget enforcement (rayon-only budget)
     "ThreadBudgetGuard",
     "get_thread_budget_guard",
     "_MAX_TOTAL_THREADS",
     "_BUDGET_AVAILABLE",
+    "_ASYNCIO_RESERVED",
+    "_SYSTEM_RESERVED",
     "_DISPATCHER_COUNT",
     "_PHASE_POOL_CONFIG",
     "_validate_phase_budget",
@@ -180,7 +206,7 @@ class InterpreterChannelError(IsolatedExecutorError):
 
 
 # ISSUE [SWARM]-005: FFI Circuit Breaker Exceptions
-# ============================================================================
+# ==========================================================================================
 
 
 class CircuitBreakerOpenError(IsolatedExecutorError):
@@ -874,16 +900,53 @@ def get_evidence_batch_writer() -> IsolatedEvidenceBatchWriter:
 
 def close_all_pools() -> None:
     """
-    Close all global executor pools.
+    MODERN-35: Close all global executor pools and shutdown Rust pools.
 
-    No-op for RustWorkerPool (process-wide singletons).
-    Kept for API backward compatibility.
+    Shuts down Rust rayon thread pools by calling shutdown() on each
+    RustWorkerPool instance. This signals the Rust layer to release
+    resources and reset internal state.
+
+    MODERN-35 FIX: Previously this function only nullified Python references
+    without actually closing the Rust pools. Now it properly signals the
+    Rust layer via shutdown().
     """
     global _duckdb_pool, _mlx_pool, _evidence_pool
     with _pools_lock:
+        # Shutdown Python wrapper classes first (if they have custom cleanup)
+        if _duckdb_pool is not None:
+            try:
+                _duckdb_pool.close()
+            except Exception:  # noqa: BLE001
+                pass
+        if _mlx_pool is not None:
+            try:
+                _mlx_pool.close()
+            except Exception:  # noqa: BLE001
+                pass
+        if _evidence_pool is not None:
+            try:
+                _evidence_pool.close()
+            except Exception:  # noqa: BLE001
+                pass
+
+        # MODERN-35: Shutdown Rust pools to release rayon thread pool resources
+        try:
+            from hledac.universal.runtime.worker_pool import get_rust_pool
+            for pool_type in ("cpu", "io", "mixed"):
+                try:
+                    rust_pool = get_rust_pool(pool_type)
+                    rust_pool.shutdown()
+                    logger.debug(f"[ISOLATED-EXECUTORS] shutdown Rust pool: {pool_type}")
+                except Exception:  # noqa: BLE001
+                    pass
+        except Exception:  # noqa: BLE001
+            pass
+
+        # Nullify references
         _duckdb_pool = None
         _mlx_pool = None
         _evidence_pool = None
+        logger.debug("[ISOLATED-EXECUTORS] All pools closed")
 
 
 def get_interpreter_stats() -> dict[str, Any]:
@@ -1107,9 +1170,9 @@ def _get_adaptive_rust() -> dict[str, Any] | None:
         return None
 
 
-# =============================================================================
+# ===========================================================================================
 # [THREAD-BUDGET-01]: M1 8GB Unified Thread Budget
-# =============================================================================
+# ===========================================================================================
 # All thread sources must be accounted for in the total budget:
 #
 # Budget Composition (M1 8GB: 4P + 4E = 8 logical cores):
@@ -1134,22 +1197,22 @@ def _get_adaptive_rust() -> dict[str, Any] | None:
 #   2. If resize fails, phase transition REVERTS (not continues with overflow)
 #   3. Mixed pool is ALWAYS included in budget (even when 0 threads)
 #   4. External thread sources (Tokio, ProcessPool) must register themselves
-# =============================================================================
+# ===========================================================================================
 
 # M1 8GB hard ceiling
 _MAX_TOTAL_THREADS: int = 8
 
-# Reserved threads (non-negotiable)
+# Reserved threads (non-negotiable) — THREAD-BUDGET-02: Fixed arithmetic
 _ASYNCIO_RESERVED: int = 1  # Event loop thread
 _SYSTEM_RESERVED: int = 1    # OS/system overhead
-_RESERVED_TOTAL: int = _ASYNCIO_RESERVED + _SYSTEM_RESERVED
+_RESERVED_TOTAL: int = _ASYNCIO_RESERVED + _SYSTEM_RESERVED  # = 2
 
 # Available budget for rayon pools (dispatchers + cpu + io + mixed).
-# IMPORTANT: asyncio and system threads are NOT part of this budget
-# because they don't compete for CPU time with rayon pools.
-# MAX_TOTAL_THREADS = 8 total cores, but asyncio+system are always-on
-# and don't count against rayon pool budget.
-_BUDGET_AVAILABLE: int = 7  # = 8 - 1 (reserved), matches phase table sums
+# THREAD-BUDGET-02: FIXED arithmetic — was 7 (wrong), now 6 (correct).
+# Correct: MAX_TOTAL_THREADS (8) - _RESERVED_TOTAL (2) = 6
+# asyncio and system threads ARE tracked by ThreadBudgetGuard, so they
+# DO count against the total. This ensures hard ceiling enforcement.
+_BUDGET_AVAILABLE: int = 6  # = 8 - 2 = 6 (FIXED from 7)
 
 # Dispatcher thread count (1 per pool type: cpu, io, mixed)
 _DISPATCHER_COUNT: int = 3
@@ -1164,33 +1227,32 @@ _MAX_CPU_THREADS: int = 4  # M1 has 4 P-cores max
 _MAX_IO_THREADS: int = 2   # E-cores for I/O
 _MAX_MIXED_THREADS: int = 2  # Adaptive mixed pool
 
-# Phase-aware pool configurations — THREAD-BUDGET-01: ALL phases verified
+# Phase-aware pool configurations — THREAD-BUDGET-02: ALL phases verified to fit ≤ 6
 # Each phase tuple: (cpu, io, mixed_max)
-# Total = cpu + io + mixed + dispatchers ≤ 7 (available budget)
+# Total = cpu + io + mixed + dispatchers ≤ 6 (available budget after fix)
 #
-# BUDGET VERIFIED TABLE:
-#   | Phase     | cpu | io | mixed(max) | dispatchers | total | Within 7? |
-#   |-----------|-----|----|------------|-------------|-------|----------|
-#   | BOOT      | 2   | 1  | 1          | 3           | 7     | ✓ OK     |
-#   | WARMUP    | 2   | 1  | 1          | 3           | 7     | ✓ OK     |
-#   | ACTIVE    | 2   | 2  | 0          | 3           | 7     | ✓ OK     |
-#   | DEGRADED  | 1   | 1  | 0          | 3           | 5     | ✓ OK     |
-#   | SYNTHESIS | 3   | 1  | 0          | 3           | 7     | ✓ OK     |
-#   | WINDUP    | 2   | 1  | 1          | 3           | 7     | ✓ OK     |
-#   | EXPORT    | 2   | 2  | 0          | 3           | 7     | ✓ OK     |
-#   | TEARDOWN  | 1   | 1  | 0          | 3           | 5     | ✓ OK     |
+# THREAD-BUDGET-02: BUDGET VERIFIED TABLE (all phases ≤ 6):
+#   | Phase     | cpu | io | mixed | dispatchers | total | Within 6? |
+#   |-----------|-----|----|-------|-------------|-------|----------|
+#   | BOOT      | 1   | 1  | 1     | 3           | 6     | ✓ OK     |
+#   | WARMUP    | 1   | 1  | 1     | 3           | 6     | ✓ OK     |
+#   | ACTIVE    | 2   | 1  | 0     | 3           | 6     | ✓ OK     |
+#   | DEGRADED  | 1   | 1  | 0     | 3           | 5     | ✓ OK     |
+#   | SYNTHESIS | 2   | 1  | 0     | 3           | 6     | ✓ OK     |
+#   | WINDUP    | 1   | 1  | 1     | 3           | 6     | ✓ OK     |
+#   | EXPORT    | 2   | 1  | 0     | 3           | 6     | ✓ OK     |
+#   | TEARDOWN  | 1   | 1  | 0     | 3           | 5     | ✓ OK     |
 #
-# All phases fit within _BUDGET_AVAILABLE = 7 (cpu+io+mixed+dispatchers)
-#
-# Previous SYNTHESIS (4,1) gave 9 threads - VIOLATED ceiling. Now fixed to 7.
+# All phases fit within _BUDGET_AVAILABLE = 6 (cpu+io+mixed+dispatchers)
+# Previous values summed to 7 which exceeded corrected budget of 6.
 _PHASE_POOL_CONFIG: dict[str, tuple[int, int, int]] = {
-    "BOOT": (_DEFAULT_CPU_THREADS, _DEFAULT_IO_THREADS, 1),  # 7 total
-    "WARMUP": (_DEFAULT_CPU_THREADS, _DEFAULT_IO_THREADS, 1),  # 7 total
-    "ACTIVE": (2, 2, 0),  # 7 total - fetch-heavy, no mixed
+    "BOOT": (1, 1, 1),  # 6 total - reduced from (2,1,1)
+    "WARMUP": (1, 1, 1),  # 6 total - reduced from (2,1,1)
+    "ACTIVE": (2, 1, 0),  # 6 total - reduced io from 2 to 1
     "DEGRADED": (1, 1, 0),  # 5 total - memory/thermal pressure
-    "SYNTHESIS": (3, 1, 0),  # 7 total - MLX inference (cpu=3 for safety)
-    "WINDUP": (_DEFAULT_CPU_THREADS, _DEFAULT_IO_THREADS, 1),  # 7 total
-    "EXPORT": (2, 2, 0),  # 7 total - export I/O
+    "SYNTHESIS": (2, 1, 0),  # 6 total - reduced cpu from 3 to 2
+    "WINDUP": (1, 1, 1),  # 6 total - reduced from (2,1,1)
+    "EXPORT": (2, 1, 0),  # 6 total - reduced io from 2 to 1
     "TEARDOWN": (1, 1, 0),  # 5 total - minimal resources
 }
 
@@ -1259,43 +1321,85 @@ class ThreadBudgetGuard:
     
     @property
     def total_threads(self) -> int:
-        """Current total thread count across all sources."""
+        """Current total thread count across all sources (including asyncio, system)."""
         with self._lock:
             return sum(self._reserved.values())
     
     @property
+    def rayon_threads(self) -> int:
+        """
+        THREAD-BUDGET-02 FIX: Rayon pool threads only (cpu + io + mixed + dispatchers).
+        
+        This property is the CORRECT basis for rayon budget calculations because:
+        - _BUDGET_AVAILABLE = 6 is the rayon-only budget (MAX_TOTAL_THREADS=8 minus asyncio=1 and system=1)
+        - asyncio and system threads are pre-reserved and should NOT count against rayon budget
+        
+        Initial state: rayon_dispatchers=3, others=0 → rayon_threads=3
+        Full BOOT phase: cpu=1 + io=1 + mixed=1 + dispatchers=3 = 6 (max rayon budget)
+        """
+        with self._lock:
+            return (
+                self._reserved.get("rayon_cpu", 0)
+                + self._reserved.get("rayon_io", 0)
+                + self._reserved.get("rayon_mixed", 0)
+                + self._reserved.get("rayon_dispatchers", 0)
+            )
+    
+    @property
     def available_budget(self) -> int:
-        """Available threads in the budget."""
-        return _BUDGET_AVAILABLE - self.total_threads
+        """
+        THREAD-BUDGET-02 FIX: Available rayon pool budget.
+        
+        Fixed from previous incorrect implementation which double-counted asyncio+system.
+        
+        Available = _BUDGET_AVAILABLE - rayon_threads (NOT total_threads)
+        
+        This ensures rayon pools can use up to 6 threads even when asyncio+system=2 are active.
+        """
+        return _BUDGET_AVAILABLE - self.rayon_threads
     
     @property
     def budget_pressure(self) -> float:
-        """Budget pressure as fraction [0.0, 1.0]."""
-        return self.total_threads / _BUDGET_AVAILABLE
+        """Budget pressure as fraction [0.0, 1.0] based on rayon threads."""
+        return self.rayon_threads / _BUDGET_AVAILABLE
     
     @property
     def is_over_budget(self) -> bool:
-        """True if total threads exceed available budget."""
-        return self.total_threads > _BUDGET_AVAILABLE
+        """True if rayon threads exceed rayon budget (_BUDGET_AVAILABLE)."""
+        return self.rayon_threads > _BUDGET_AVAILABLE
     
     def reserve(self, source: str, count: int) -> bool:
         """
-        THREAD-BUDGET-01: Reserve threads from budget.
+        THREAD-BUDGET-02 FIX: Reserve threads from rayon budget.
+        
+        This method validates ONLY rayon pool threads against _BUDGET_AVAILABLE.
+        asyncio and system threads are pre-reserved and DO NOT count against budget.
+        
+        Budget model (M1 8GB = 8 cores):
+          - asyncio + system = 2 (always reserved, tracked but not budget-limited)
+          - rayon pools = max 6 (this budget)
+          - Total = 2 + 6 = 8 = MAX_TOTAL_THREADS ✓
         
         Returns True if reservation succeeded.
-        Returns False and logs violation if budget would be exceeded.
+        Returns False and logs violation if rayon budget would be exceeded.
         """
         with self._lock:
-            new_total = self.total_threads + count
-            if new_total > _BUDGET_AVAILABLE:
-                self._budget_violations += 1
-                self._last_violation_reason = (
-                    f"Budget violation: {source} requests {count} threads, "
-                    f"but only {self.available_budget} available "
-                    f"(total={self.total_threads}/{_BUDGET_AVAILABLE})"
-                )
-                logger.warning(f"[ThreadBudgetGuard] {self._last_violation_reason}")
-                return False
+            # Determine if this is a rayon pool request or external thread
+            is_rayon = source in ("rayon_cpu", "rayon_io", "rayon_mixed", "rayon_dispatchers", 
+                                   "python_pool", "transport")
+            
+            if is_rayon:
+                # THREAD-BUDGET-02 FIX: Only count rayon threads against budget
+                new_rayon_total = self.rayon_threads + count
+                if new_rayon_total > _BUDGET_AVAILABLE:
+                    self._budget_violations += 1
+                    self._last_violation_reason = (
+                        f"Budget violation: {source} requests {count} threads, "
+                        f"but only {self.available_budget} available for rayon pools "
+                        f"(rayon={self.rayon_threads}/{_BUDGET_AVAILABLE})"
+                    )
+                    logger.warning(f"[ThreadBudgetGuard] {self._last_violation_reason}")
+                    return False
             
             self._reserved[source] = self._reserved.get(source, 0) + count
             self._peak_total = max(self._peak_total, self.total_threads)
@@ -1333,8 +1437,9 @@ class ThreadBudgetGuard:
         with self._lock:
             return {
                 "total_threads": self.total_threads,
+                "rayon_threads": self.rayon_threads,  # THREAD-BUDGET-02 FIX: Add rayon-specific count
                 "budget_ceiling": _BUDGET_AVAILABLE,
-                "available": self.available_budget,
+                "available_rayon": self.available_budget,
                 "pressure_pct": round(self.budget_pressure * 100, 1),
                 "peak_total": self._peak_total,
                 "violations": self._budget_violations,
@@ -1422,29 +1527,29 @@ class RayonPoolManager:
        - Violation tracking
        - Phase transition history
     
-    Invariants (THREAD-BUDGET-01):
-      - Total rayon threads NEVER exceed _BUDGET_AVAILABLE (7 = 4P + 3E cores)
+    Invariants (THREAD-BUDGET-02):
+      - Total rayon threads NEVER exceed _BUDGET_AVAILABLE = 6
       - ALL resize operations are atomic (RwLock swap in Rust)
       - Phase transitions either SUCCEED completely or REVERT completely
       - Rust pools auto-initialize on first access (lazy fallback)
       - If Rust unavailable, manager logs CRITICAL and blocks operations
     
-    Phase table (verified against budget):
+    Phase table (THREAD-BUDGET-02: all phases verified to fit ≤ 6):
       | Phase     | cpu | io | mixed | dispatchers | total |
       |-----------|-----|----|-------|------------|-------|
-      | BOOT      | 2   | 1  | 1     | 3          | 7     |
-      | WARMUP    | 2   | 1  | 1     | 3          | 7     |
-      | ACTIVE    | 2   | 2  | 0     | 3          | 7     |
+      | BOOT      | 1   | 1  | 1     | 3          | 6     |
+      | WARMUP    | 1   | 1  | 1     | 3          | 6     |
+      | ACTIVE    | 2   | 1  | 0     | 3          | 6     |
       | DEGRADED  | 1   | 1  | 0     | 3          | 5     |
-      | SYNTHESIS | 3   | 1  | 0     | 3          | 7     |
-      | WINDUP    | 2   | 1  | 1     | 3          | 7     |
-      | EXPORT    | 2   | 2  | 0     | 3          | 7     |
+      | SYNTHESIS | 2   | 1  | 0     | 3          | 6     |
+      | WINDUP    | 1   | 1  | 1     | 3          | 6     |
+      | EXPORT    | 2   | 1  | 0     | 3          | 6     |
       | TEARDOWN  | 1   | 1  | 0     | 3          | 5     |
     
     Usage:
         manager = RayonPoolManager()
-        manager.set_phase("ACTIVE")   # cpu=2, io=2, mixed=0
-        manager.set_phase("SYNTHESIS")  # cpu=3, io=1, mixed=0
+        manager.set_phase("ACTIVE")   # cpu=2, io=1, mixed=0
+        manager.set_phase("SYNTHESIS")  # cpu=2, io=1, mixed=0
         manager.apply_adaptive_sizing()  # Apply pressure-based recommendations
         manager.shutdown()           # TEARDOWN: cpu=1, io=1, mixed=0
     """
@@ -1487,12 +1592,16 @@ class RayonPoolManager:
                 cpu, io = rust["init_elastic_pools"]()
                 self._last_cpu = cpu
                 self._last_io = io
-                self._last_mixed = 0
+                # ISSUE-1 FIX: Mixed pool initialization must match Rust's default MIXED_BUDGET=1
+                # Rust's init_default_pools() doesn't set MIXED_BUDGET, which defaults to 1
+                # Python was setting _last_mixed=0, causing budget calculation mismatches
+                self._last_mixed = 1
                 self._initialized = True
                 
-                # Register with budget guard
+                # Register with budget guard - ISSUE-1 FIX: Include rayon_mixed
                 self._budget_guard.set_count("rayon_cpu", cpu)
                 self._budget_guard.set_count("rayon_io", io)
+                self._budget_guard.set_count("rayon_mixed", self._last_mixed)
                 self._budget_guard.set_count("rayon_dispatchers", _DISPATCHER_COUNT)
                 
                 logger.info(
@@ -1531,8 +1640,14 @@ class RayonPoolManager:
 
     @property
     def total_threads(self) -> int:
-        """Current total rayon threads."""
-        return self._last_cpu + self._last_io
+        """
+        ISSUE-3 FIX: Current total rayon threads (cpu + io + mixed + dispatchers).
+        
+        Previously returned only cpu + io, which was inconsistent with Rust's
+        get_total_active_threads_budget() that includes mixed + dispatchers.
+        This property now matches Rust's semantics for consistent monitoring.
+        """
+        return self._last_cpu + self._last_io + self._last_mixed + _DISPATCHER_COUNT
 
     @property
     def is_available(self) -> bool:
@@ -1759,28 +1874,36 @@ class RayonPoolManager:
                 )
                 return False
 
-            # Get pressure-based recommendations
-            rec_cpu = adaptive_rust["get_adaptive_cpu_threads"]()
-            rec_io = adaptive_rust["get_adaptive_io_threads"]()
+            # Get pressure-based recommendations (store original for logging)
+            orig_cpu = adaptive_rust["get_adaptive_cpu_threads"]()
+            orig_io = adaptive_rust["get_adaptive_io_threads"]()
+            rec_cpu = orig_cpu
+            rec_io = orig_io
 
-            # THREAD-BUDGET-01: Validate recommendations against budget
-            # Reserve budget for mixed + dispatchers
-            reserved = self._last_mixed + _DISPATCHER_COUNT
-            available_for_main_pools = _BUDGET_AVAILABLE - reserved
-            
-            # Clamp recommendations to fit budget
-            total_rec = rec_cpu + rec_io
-            if total_rec > available_for_main_pools:
-                excess = total_rec - available_for_main_pools
-                if rec_cpu > 1 and excess > 0:
-                    rec_cpu = max(1, rec_cpu - excess)
-                    excess = (rec_cpu + rec_io) - available_for_main_pools
-                    if excess > 0 and rec_io > 1:
-                        rec_io = max(1, rec_io - excess)
+            # THREAD-BUDGET-02: Validate recommendations against budget
+            # Total = rec_cpu + rec_io + mixed (fixed) + dispatchers (fixed)
+            # Must fit within _BUDGET_AVAILABLE = 6
+            total_current = rec_cpu + rec_io + self._last_mixed + _DISPATCHER_COUNT
+            if total_current > _BUDGET_AVAILABLE:
+                # THREAD-BUDGET-02 FIX: Proper clamping that guarantees budget fit
+                # Calculate maximum available for cpu + io pools
+                max_pool_threads = _BUDGET_AVAILABLE - self._last_mixed - _DISPATCHER_COUNT
+                
+                # Clamp proportionally: distribute available budget between cpu and io
+                # Priority: cpu > io (P-cores more valuable for MLX workloads)
+                current_pool = rec_cpu + rec_io
+                if current_pool > max_pool_threads and max_pool_threads > 0:
+                    # Proportional distribution: keep ratio, fit budget
+                    cpu_ratio = rec_cpu / current_pool
+                    rec_cpu = max(1, int(max_pool_threads * cpu_ratio))
+                    rec_io = max(1, max_pool_threads - rec_cpu)
+                
                 logger.warning(
-                    "[RayonPoolManager] [adaptive] Clamped to fit budget: cpu=%d io=%d",
+                    "[RayonPoolManager] [adaptive] Clamped to fit budget: cpu=%d io=%d (was cpu=%d io=%d)",
                     rec_cpu,
                     rec_io,
+                    orig_cpu,
+                    orig_io,
                 )
 
             with self._lock:

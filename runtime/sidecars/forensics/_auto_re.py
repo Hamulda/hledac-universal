@@ -34,7 +34,8 @@ from hledac.universal.runtime.sidecar_protocol import SidecarRegistry
 
 if TYPE_CHECKING:
     from hledac.universal.brain.auto_re.parser_forge import AutoREResult
-    from hledac.universal.runtime.scheduler_v2.protocol import SidecarContext
+    # FIX-5: SidecarContext is in runtime/sidecar_protocol.py, not scheduler_v2/protocol.py
+    from hledac.universal.runtime.sidecar_protocol import SidecarContext
 
 logger = logging.getLogger(__name__)
 

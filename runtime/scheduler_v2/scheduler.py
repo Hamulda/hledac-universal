@@ -479,6 +479,35 @@ class SprintSchedulerV2(msgspec.Struct, frozen=False, gc=True):
             except Exception:  # noqa: BLE001
                 pass
 
+            # MODERN-35: Sprint reset calls to prevent cross-sprint contamination
+            # Reset per-sprint state without full teardown, allowing reuse in next sprint
+            
+            # Reset hot edges cache denorm buffer and L1 Rust counters
+            try:
+                from hledac.universal.knowledge import hot_edges_cache
+                hot_edges_cache.reset_hot_edges_sprint()
+            except Exception:  # noqa: BLE001
+                pass
+            
+            # Reset darknet session tracking state
+            try:
+                from hledac.universal.transport import darknet_session_provider
+                _t_sessions = safe_create_task_tracked(
+                    darknet_session_provider.reset_sprint(),
+                    name="teardown:darknet_reset_sprint",
+                    scope=TaskScope.TEARDOWN
+                )
+                _bg_tasks.append(_t_sessions)
+            except Exception:  # noqa: BLE001
+                pass
+            
+            # Reset isolated executor pools (Python refs only, not Rust pools)
+            try:
+                from hledac.universal.core import isolated_executors
+                isolated_executors.reset_pools_sprint()
+            except Exception:  # noqa: BLE001
+                pass
+
             # F350M-R ISSUE-W5-A: close MemoryManager singleton — was never called.
             # await within the timeout so we get graceful completion, not just cancellation.
             try:

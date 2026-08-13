@@ -30,10 +30,12 @@ Invariants:
 from __future__ import annotations
 
 import asyncio
+import collections
 import contextvars
 import gc
 import sys
 import typing
+import threading
 from typing import Any
 
 from hledac.universal.runtime.watchdog import StuckTaskDetector
@@ -234,11 +236,14 @@ class TaskRegistry:
       - await_all(timeout) — await all registered tasks after cancel
       - get_counts() — debugging: count by scope
 
-    Thread-safe: uses asyncio.Lock for async-safe synchronization.
-    All asyncio operations are done in the event-loop thread.
-
-    M1 8GB FIX: Replaced threading.Lock with asyncio.Lock to eliminate
-    thread blocking that causes event loop stalls on single-core async.
+    Thread-safety:
+      - asyncio.Lock (_lock) for async operations (unregister, cancel_scope, cancel_all)
+      - threading.Lock (_sync_lock) for register/evict/reset (called from sync context)
+    
+    M1 8GB OPTIMIZATIONS:
+      - Uses collections.deque for _task_order (O(1) popleft vs O(n) list.pop(0))
+      - Uses _task_reverse mapping for O(1) task->task_id lookup in unregister()
+      - asyncio.Lock instead of threading.Lock to avoid event loop stalls
     """
 
     MAX_TASKS: typing.ClassVar[int] = 512
@@ -249,13 +254,15 @@ class TaskRegistry:
             "_tasks",
             "_scope_index",
             "_lock",
+            "_sync_lock",     # threading.Lock for register/evict (sync context)
             "_cancel_event",
             "_registered_count",
             "_cancelled_count",
             "_eviction_count",
             "_stuck_detector",
             "_task_counter",  # Monotonic task ID counter
-            "_task_order",    # Ordered list of task IDs for FIFO eviction
+            "_task_order",    # Ordered deque of task IDs for FIFO eviction (O(1) popleft)
+            "_task_reverse",  # task -> task_id mapping for O(1) unregister lookup
         )
     )
 
@@ -265,6 +272,7 @@ class TaskRegistry:
         # scope -> set of task_ids
         self._scope_index: dict[str, set[int]] = {}
         self._lock = asyncio.Lock()  # M1 FIX: asyncio-native lock
+        self._sync_lock = threading.Lock()  # Sync lock for register/evict (called from sync context)
         self._cancel_event: asyncio.Event | None = None
         self._registered_count = 0
         self._cancelled_count = 0
@@ -272,7 +280,10 @@ class TaskRegistry:
         self._stuck_detector: StuckTaskDetector | None = None
         # M1 FIX: Monotonic counter instead of id() for reliable FIFO ordering
         self._task_counter: int = 0
-        self._task_order: list[int] = []  # Ordered list for FIFO eviction
+        # Optimized: deque for O(1) popleft instead of list.pop(0) which is O(n)
+        self._task_order: collections.deque[int] = collections.deque()
+        # Reverse mapping for O(1) task -> task_id lookup in unregister()
+        self._task_reverse: dict[int, int] = {}  # id(task) -> task_id
 
     # ── Event loop wiring ──────────────────────────────────────────────────
 
@@ -313,26 +324,30 @@ class TaskRegistry:
               (cancelled and removed). If no task in scope, oldest overall is evicted.
             - Fail-safe: never raises, returns task even on internal error
             - M1 FIX: Uses monotonic counter instead of id() for reliable FIFO ordering
-            - Async-native: uses asyncio.Lock consistently for all synchronization
+            - Thread-safe: uses _sync_lock for register/evict to prevent race conditions
+            - O(1) unregister: uses _task_reverse mapping for fast task lookup
 
-        NOTE: This method is always called from async context (safe_create_task_tracked
-        is used throughout scheduler_v2). The dict operations are atomic due to CPython GIL.
-        We use a simplified approach without complex locking since all callers are async.
+        NOTE: This method is called from safe_create_task_tracked which is synchronous.
+        Uses threading.Lock for the registration/eviction critical section since
+        multiple coroutines can call this concurrently.
         """
-        # M1 FIX: Use monotonic counter for reliable task ordering
-        task_id = self._task_counter
-        self._task_counter += 1
+        with self._sync_lock:
+            # M1 FIX: Use monotonic counter for reliable task ordering
+            task_id = self._task_counter
+            self._task_counter += 1
 
-        # Evict oldest if at capacity
-        if len(self._tasks) >= self.MAX_TASKS and self._EVICT_OLDEST:
-            self._evict_oldest()
+            # Evict oldest if at capacity
+            if len(self._tasks) >= self.MAX_TASKS and self._EVICT_OLDEST:
+                self._evict_oldest()
 
-        self._tasks[task_id] = (name, scope, task)
-        self._scope_index.setdefault(scope, set()).add(task_id)
-        self._task_order.append(task_id)
-        self._registered_count += 1
+            self._tasks[task_id] = (name, scope, task)
+            self._scope_index.setdefault(scope, set()).add(task_id)
+            self._task_order.append(task_id)
+            # O(1) reverse mapping for unregister lookup
+            self._task_reverse[id(task)] = task_id
+            self._registered_count += 1
 
-        # P7-006: track wall-clock time for hang detection
+        # P7-006: track wall-clock time for hang detection (outside lock - may block)
         if self._stuck_detector is not None:
             try:
                 self._stuck_detector.track(task)
@@ -344,13 +359,13 @@ class TaskRegistry:
     def _evict_oldest(self) -> None:
         """Evict the oldest task (FIFO based on registration order).
 
-        M1 FIX: Uses _task_order list for reliable FIFO ordering instead of
-        min(id()) which can be unreliable due to memory address reuse.
+        M1 FIX: Uses _task_order deque for O(1) popleft instead of O(n) list.pop(0).
+        Uses _task_reverse for O(1) reverse mapping cleanup.
         """
         if not self._task_order:
             return
 
-        oldest_id = self._task_order.pop(0)
+        oldest_id = self._task_order.popleft()  # O(1) with deque
         if oldest_id not in self._tasks:
             return  # Already unregistered
 
@@ -360,6 +375,9 @@ class TaskRegistry:
         if scope_set and oldest_id in scope_set:
             scope_set.discard(oldest_id)
         del self._tasks[oldest_id]
+        # Remove reverse mapping - O(1)
+        task_key = id(oldest_task)
+        self._task_reverse.pop(task_key, None)
         self._eviction_count += 1
         # Cancel the evicted task
         try:
@@ -367,17 +385,27 @@ class TaskRegistry:
         except Exception:  # noqa: BLE001
             pass
 
-    def unregister(self, task: asyncio.Task[Any]) -> None:
-        """Unregister a task (e.g. after await)."""
-        # Find by task identity, not ID
-        task_id_to_remove = None
-        for tid, (name, scope, t) in list(self._tasks.items()):
-            if t is task:
-                task_id_to_remove = tid
-                break
+    async def unregister(self, task: asyncio.Task[Any]) -> None:
+        """Unregister a task (e.g. after await).
+
+        NOTE: This method is async to properly use asyncio.Lock.
+        Called from _make_unregister_callback via call_soon_threadsafe.
+
+        OPTIMIZATION: Uses _task_reverse mapping for O(1) task lookup
+        instead of O(n) linear search through all tasks.
+        """
+        # O(1) lookup using reverse mapping
+        task_id_to_remove = self._task_reverse.get(id(task))
+        
+        # Fallback to linear search if not found in reverse map
+        if task_id_to_remove is None:
+            for tid, (name, scope, t) in list(self._tasks.items()):
+                if t is task:
+                    task_id_to_remove = tid
+                    break
 
         if task_id_to_remove is not None:
-            with self._lock:
+            async with self._lock:
                 if task_id_to_remove in self._tasks:
                     _name, scope, _task = self._tasks.pop(task_id_to_remove)
                     scope_set = self._scope_index.get(scope)
@@ -385,9 +413,12 @@ class TaskRegistry:
                         scope_set.discard(task_id_to_remove)
                     if not scope_set:
                         self._scope_index.pop(scope, None)
-                    # Remove from order list
-                    if task_id_to_remove in self._task_order:
-                        self._task_order.remove(task_id_to_remove)
+                    # Remove from order deque - O(1) with collections.deque
+                    # Note: we don't need to remove from _task_order since we use task_id
+                    # and it will naturally be skipped if already evicted
+
+        # Remove reverse mapping
+        self._task_reverse.pop(id(task), None)
 
         # P7-006: remove from stuck detector
         if self._stuck_detector is not None:
@@ -413,7 +444,7 @@ class TaskRegistry:
         task_ids: list[int] = []
         child_scopes: list[str] = []
 
-        with self._lock:
+        async with self._lock:
             # Collect all task IDs in this scope
             if scope in self._scope_index:
                 task_ids.extend(self._scope_index[scope])
@@ -643,6 +674,7 @@ class TaskRegistry:
             self._tasks.clear()
             self._scope_index.clear()
             self._task_order.clear()
+            self._task_reverse.clear()
 
         # 2. gc.collect() — reclaim cancelled task frames
         try:
@@ -692,8 +724,8 @@ class TaskRegistry:
     def get_counts(self) -> dict[str, Any]:
         """Return task counts by scope for debugging / telemetry.
 
-        M1 FIX: Removed threading.Lock - dict reads are atomic due to CPython GIL.
-        For future thread-safe access, callers should use async get_counts_async().
+        NOTE: This sync version reads without lock. For async contexts,
+        use get_counts_async() for consistent reads.
         """
         scope_counts = {s: len(tids) for s, tids in self._scope_index.items()}
         return {
@@ -704,18 +736,36 @@ class TaskRegistry:
             "by_scope": scope_counts,
         }
 
+    async def get_counts_async(self) -> dict[str, Any]:
+        """Return task counts by scope for debugging / telemetry (async-safe).
+
+        Uses asyncio.Lock for consistent reads during concurrent modifications.
+        Preferred in async contexts over sync get_counts().
+        """
+        async with self._lock:
+            scope_counts = {s: len(tids) for s, tids in self._scope_index.items()}
+            return {
+                "total_registered": self._registered_count,
+                "total_cancelled": self._cancelled_count,
+                "eviction_count": self._eviction_count,
+                "active_tasks": len(self._tasks),
+                "by_scope": scope_counts,
+            }
+
     def reset(self) -> None:
         """Reset all counters and clear tasks (for testing).
 
-        M1 FIX: Removed threading.Lock - dict operations are atomic due to CPython GIL.
+        Uses _sync_lock for thread-safe reset.
         For async-safe reset, use async_reset() instead.
         """
-        self._tasks.clear()
-        self._scope_index.clear()
-        self._task_order.clear()
-        self._registered_count = 0
-        self._cancelled_count = 0
-        self._eviction_count = 0
+        with self._sync_lock:
+            self._tasks.clear()
+            self._scope_index.clear()
+            self._task_order.clear()
+            self._task_reverse.clear()
+            self._registered_count = 0
+            self._cancelled_count = 0
+            self._eviction_count = 0
 
 
 # ── Tracked safe_create_task ─────────────────────────────────────────────────
@@ -807,16 +857,21 @@ def safe_create_managed_task(
 def _make_unregister_callback(task: asyncio.Task[Any]) -> Any:
     """Create a done-callback that unregisters a task by identity.
 
-    BUG FIX (Issue #2 review): Pass the task object itself, not id(task).
-    unregister() does identity-based lookup (if t is task), not key-based lookup.
-    Using id(task) caused orphaned entries in _tasks dict since the registry
-    key (_task_id from monotonic counter) never matched id(task).
+    Uses call_soon_threadsafe to schedule the async unregister() since
+    add_done_callback runs synchronously but we need async with asyncio.Lock.
+    This pattern is safe: callback returns immediately, unregister runs on
+    the next event loop iteration.
     """
     def _cb(done_task: asyncio.Task[Any]) -> None:
         # done_task is the same object as task (passed via closure)
         try:
             registry = get_task_registry()
-            registry.unregister(done_task)
+            loop = asyncio.get_running_loop()
+            # Schedule async unregister - fire-and-forget is safe here since
+            # unregister is idempotent and we don't need to await completion
+            loop.call_soon_threadsafe(
+                lambda: asyncio.create_task(registry.unregister(done_task))
+            )
         except Exception:  # noqa: BLE001
             pass
     return _cb

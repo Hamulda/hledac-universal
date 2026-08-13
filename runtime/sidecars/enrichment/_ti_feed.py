@@ -1,18 +1,35 @@
 """
 runtime/sidecars/enrichment/_ti_feed.py — F-ISSUE-005: TIFeedSidecarAdapter
+================================================================================
+
+ARCHITECTURE NOTE (FIX-5):
+  This adapter is NOT registered in SidecarRegistry to avoid dual-path execution.
+  It is executed exclusively via SidecarOrchestrator._run_ti_feed_sidecar()
+  (Branch D in run_advisory_runner()).
+
+  FIX-5: Removed @SidecarRegistry.register() decorator that caused dual execution.
+
+CAPABILITY CHECK:
+  - Protocol: "" (empty = clearnet/TI, no transport capability check)
+  - MISSING_IMPLEMENTATION — NVD + CISA KEV integration not yet implemented
+
+NOTE:
+  TI feed advisory fetches structured threat intelligence from:
+  - NVD (National Vulnerability Database) API
+  - CISA KEV (Known Exploited Vulnerabilities) catalog
+  Uses httpx for REST API calls - no P2P transport needed.
 """
-from hledac.universal.runtime.sidecar_protocol import SidecarRegistry
-
-from hledac.universal.runtime.sidecars._base import SchedulerBackedSidecarAdapter
+from hledac.universal.runtime.sidecars._darknet_base import DarknetSidecarAdapter
 
 
-@SidecarRegistry.register("ti_feed")
-class TIFeedSidecarAdapter(SchedulerBackedSidecarAdapter):
+# FIX-5: Inherit from DarknetSidecarAdapter for proper capability handling
+# but set protocol="" to indicate clearnet (no transport dependency)
+class TIFeedSidecarAdapter(DarknetSidecarAdapter):
     """F252: Threat intelligence feed advisory (NVD + CISA KEV).
 
-    Fetches structured TI feeds (NVD API + CISA KEV catalog) in parallel
-    via SprintScheduler._run_ti_feed_sidecar(). Registered adapters are
-    dispatched with parallel_ok for bounded concurrent execution.
+    FIX-5: Now uses DarknetSidecarAdapter with explicit protocol="" for
+    clearnet classification. Not registered in SidecarRegistry - executed
+    via orchestrator Branch D only.
     """
 
     sidecar_id: str = "ti_feed"
@@ -20,3 +37,5 @@ class TIFeedSidecarAdapter(SchedulerBackedSidecarAdapter):
     ram_budget_mb: int = 50
     priority: int = 4
     scheduler_method_name: str = "_run_ti_feed_sidecar"
+    protocol: str = ""  # FIX-5: Empty = clearnet, no transport capability check
+    capability_check_enabled: bool = False  # FIX-5: No transport dependency

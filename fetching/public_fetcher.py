@@ -11,12 +11,18 @@ ISSUE-014 REFACTOR: Modularized into focused submodules:
 - _tls_extractor.py: TLS certificate metadata extraction
 - _js_renderers.py: JS rendering via Camoufox, nodriver, Playwright
 - _html_processor.py: HTML parsing, pattern matching, metadata extraction
+
+MODERN-35: LAZY IMPORTS
+All submodules are lazily imported via module-level __getattr__.
+This reduces initial load time and memory footprint for modules that don't use
+all features (e.g., JS rendering when only simple HTML fetching is needed).
 """
 from __future__ import annotations
 
 import asyncio
 import contextvars
 import functools
+import importlib
 import importlib.util
 import os
 import re
@@ -34,109 +40,204 @@ from hledac.universal.utils.logging_config import get_logger
 
 logger = get_logger(__name__)
 
-# --- ISSUE-014: Import from extracted modules ---
-from hledac.universal.fetching._url_ops import (
-    classify_url_cached as _classify_url_cached,
-    batch_classify_url_cached as _batch_classify_url_cached,
-    _python_classify_url,
-    extract_domain as _extract_domain_from_url,
-    is_onion_url as _is_onion_url,
-    is_i2p_url as _is_i2p_url,
-    is_freenet_url as _is_freenet_url,
-    validate_url as _validate_url,
-    extract_host as _altsvc_extract_host,
-    looks_like_feed_url as _looks_like_feed_url,
+# ---------------------------------------------------------------------------
+# MODERN-35: Lazy Import Infrastructure
+# ---------------------------------------------------------------------------
+# Uses Python 3.7+ module-level __getattr__ for lazy loading.
+# Import cache is stored in _LAZY_CACHE to avoid repeated lookups.
+# ---------------------------------------------------------------------------
+
+_LAZY_CACHE: dict[str, Any] = {}
+_LAZY_SUBMODULES = {
+    "_url_ops",
+    "_retry_strategy",
+    "_error_classifier",
+    "_tls_extractor",
+    "_js_renderers",
+    "_html_processor",
+}
+
+
+def _lazy_import(submodule: str, name: str) -> Any:
+    """
+    Lazy import a symbol from a submodule.
+
+    Caches the result after first import to avoid repeated lookups.
+    Thread-safe via GIL (module-level dict assignment is atomic in CPython).
+
+    Args:
+        submodule: Submodule name (e.g., "_url_ops")
+        name: Symbol to import from submodule
+
+    Returns:
+        The imported symbol
+    """
+    cache_key = f"{submodule}.{name}"
+    if cache_key in _LAZY_CACHE:
+        return _LAZY_CACHE[cache_key]
+
+    module = importlib.import_module(f"hledac.universal.fetching.{submodule}")
+    obj = getattr(module, name)
+    _LAZY_CACHE[cache_key] = obj
+    return obj
+
+
+def __getattr__(name: str) -> Any:
+    """
+    MODERN-35: Module-level __getattr__ for lazy imports.
+
+    Handles lazy loading of all submodules and their exports.
+    Falls back to module-level attributes for backward compatibility.
+    """
+    # Check lazy cache first
+    if name in _LAZY_CACHE:
+        return _LAZY_CACHE[name]
+
+    # _url_ops exports
+    if name in (
+        "classify_url_cached",
+        "batch_classify_url_cached",
+        "_python_classify_url",
+        "extract_domain",
+        "is_onion_url",
+        "is_i2p_url",
+        "is_freenet_url",
+        "validate_url",
+        "extract_host",
+        "looks_like_feed_url",
+    ):
+        return _lazy_import("_url_ops", name)
+
+    # _retry_strategy exports
+    if name in (
+        "_RetryableStatus",
+        "_tenacity_prev_sleep",
+        "_resolve_backoff_cap_s",
+        "_tenacity_wait_jitter",
+        "_is_retryable_status_exception",
+        "_tenacity_before_sleep",
+        "_tenacity_after",
+        "_JITTER_RNG",
+        "reset_jitter_state",
+        "_compute_backoff_seconds",
+        "is_retryable_status",
+        "extract_retry_after",
+        "is_retryable_error",
+        "mark_blitz_host_dead",
+        "is_blitz_host_dead",
+        "reset_blitz_dead_hosts",
+        "_blitz_aware_stop",
+        "retry_decorator",
+        "CircuitBreaker",
+        "MAX_RETRIES",
+    ):
+        return _lazy_import("_retry_strategy", name)
+
+    # _error_classifier exports
+    if name in (
+        "classify_fetch_error",
+        "derive_failure_stage_and_network_kind",
+        "derive_redirect_fields",
+    ):
+        return _lazy_import("_error_classifier", name)
+
+    # _tls_extractor exports
+    if name in ("extract_tls_metadata_from_response",):
+        return _lazy_import("_tls_extractor", name)
+
+    # _js_renderers exports
+    if name in (
+        "_check_chrome_binary_exists",
+        "get_js_renderer_capability",
+        "all_js_renderers_unavailable",
+        "reset_js_renderer_capability_cache",
+        "refresh_js_renderer_capability",
+        "fetch_with_camoufox",
+        "fetch_with_nodriver",
+        "fetch_with_playwright",
+        "TOR_SOCKS_PROXY",
+        "_get_camoufox_lock",
+        "compute_effective_max_bytes",
+        "teardown_browser_pool",
+        "_get_js_renderer_semaphore",
+        "_camoufox_locked",
+        "_playwright_locked",
+    ):
+        return _lazy_import("_js_renderers", name)
+
+    # _html_processor exports
+    if name in (
+        "looks_xmlish",
+        "try_decode",
+        "needs_js_fetch",
+        "sync_process_html",
+        "batch_sync_extract_html_metadata",
+        "batch_sync_extract_links",
+        "process_html_payload",
+        "batch_sync_process_html",
+        "process_html_payload_batch",
+        "drain_registry",
+        "schedule_html_extraction",
+        "drain_pending_extractions",
+        "get_drain_stats",
+        "DrainRegistry",
+        "_FEED_URL_RE",
+        "_JS_SKIP_HOST_RE",
+        "_SERP_HOST_RE",
+        "get_html_executor",
+        "check_gathered",
+    ):
+        return _lazy_import("_html_processor", name)
+
+    # Fallback to module-level attributes
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+
+
+# ---------------------------------------------------------------------------
+# MODERN-35: Critical Eager Imports
+# These are required at module load time for type hints and core functionality.
+# ---------------------------------------------------------------------------
+
+if TYPE_CHECKING:
+    import httpx
+
+# Core transport imports (required for fetch operations)
+from hledac.universal.fetching.curl_cffi_fetch import (
+    fetch_via_i2p_curl_cffi,
+    _CurlCffiResponseAdapter,
+    _CurlCffiGetContextManager,
 )
-from hledac.universal.fetching._retry_strategy import (
-    _RetryableStatus,
-    _tenacity_prev_sleep,
-    _resolve_backoff_cap_s,
-    _tenacity_wait_jitter,
-    _is_retryable_status_exception,
-    _tenacity_before_sleep,
-    _tenacity_after,
-    _JITTER_RNG,
-    reset_jitter_state,
-    _compute_backoff_seconds,
-    is_retryable_status,
-    extract_retry_after,
-    is_retryable_error,
-    mark_blitz_host_dead,
-    is_blitz_host_dead,
-    reset_blitz_dead_hosts,
-    _blitz_aware_stop,
-    retry_decorator,
-    CircuitBreaker,
+from hledac.universal.transport.base import (
+    fetch_via_tor_curl_cffi,
 )
-from hledac.universal.fetching._error_classifier import (
-    classify_fetch_error,
-    derive_failure_stage_and_network_kind,
-    derive_redirect_fields,
-)
-from hledac.universal.fetching._tls_extractor import (
-    extract_tls_metadata_from_response as _extract_tls_metadata_from_response,
-)
-from hledac.universal.fetching._js_renderers import (
-    _check_chrome_binary_exists,
-    get_js_renderer_capability as _get_js_renderer_capability,
-    all_js_renderers_unavailable as _all_js_renderers_unavailable,
-    reset_js_renderer_capability_cache,
-    refresh_js_renderer_capability,
-    fetch_with_camoufox as _fetch_with_camoufox,
-    fetch_with_nodriver as _fetch_with_nodriver,
-    fetch_with_playwright as _fetch_with_playwright,
-    TOR_SOCKS_PROXY,
-    _get_camoufox_lock,
-    compute_effective_max_bytes,
-    teardown_browser_pool as _teardown_browser_pool,
-)
-from hledac.universal.fetching._html_processor import (
-    looks_xmlish as _looks_xmlish,
-    try_decode as _try_decode,
-    needs_js_fetch as _needs_js_fetch,
-    sync_process_html as _sync_process_html,
-    batch_sync_extract_html_metadata as _batch_sync_extract_html_metadata,
-    batch_sync_extract_links as _batch_sync_extract_links,
-    process_html_payload,
-    batch_sync_process_html as _batch_sync_process_html,
-    process_html_payload_batch,
-    drain_registry as _drain_registry,
-    schedule_html_extraction,
-    drain_pending_extractions,
-    get_drain_stats,
-    DrainRegistry,
-    _FEED_URL_RE,
-    _JS_SKIP_HOST_RE,
-    _SERP_HOST_RE,
-    get_html_executor as _get_html_executor,
-    check_gathered as _check_gathered,
-)
-from hledac.universal.fetching._js_renderers import (
-    _get_js_renderer_semaphore,
-    _camoufox_locked,
-    _playwright_locked,
-)
-from hledac.universal.utils.asyncx._parallel import (
-    parallel,
-)
-from hledac.universal.utils.html_text_fast import (
-    strip_html_tags,
-)
+from hledac.universal.transport.curl_cffi_runtime import is_curl_cffi_available as _runtime_is_curl_cffi_available
+from hledac.universal.transport.decompression import build_accept_encoding_header
+from hledac.universal.transport.session_pool import httpx_socks_client
+
+# Utility imports (lightweight, safe to eager import)
+from hledac.universal.utils.encoding import decode_response_bytes
+from hledac.universal.utils.patterns.pattern_matcher import PatternHit, match_text
+from hledac.universal.utils.asyncx._parallel import parallel
+from hledac.universal.utils.html_text_fast import strip_html_tags
 from tenacity import (
     retry,
     retry_if_exception_type,
     RetryCallState as _TenacityRetryCallState,
 )
-from hledac.universal.fetching.curl_cffi_fetch import (
-    _CurlCffiResponseAdapter,
-    _CurlCffiGetContextManager,
+
+# Layer imports (lightweight utilities)
+from hledac.universal.layers.ua_rotator import (
+    build_randomized_headers as _canonical_build_randomized_headers,
+    get_random_accept_language as _canonical_get_random_accept_language,
+    get_random_ua as _canonical_get_random_ua,
 )
-from hledac.universal.fetching._retry_strategy import (
-    MAX_RETRIES,
-)
+
+# Body hash store (lightweight singleton)
+from hledac.universal.fetching._body_hash import body_hash_store as _body_hash_store
 
 # Tarpit detection — import function lazily to avoid circular import at module level
 _tarpit_detect = None  # type: ignore[assignment]
+
 
 def _get_tarpit_detect():
     """Lazy import detect_tarpit to avoid circular imports at module load time."""
@@ -147,35 +248,11 @@ def _get_tarpit_detect():
         _tarpit_detect = _dt
     return _tarpit_detect
 
-if TYPE_CHECKING:
-    import httpx
-# NOTE: Duplicated code removed — imports from _retry_strategy, _url_ops modules
-# See: fetching/_retry_strategy.py, fetching/_url_ops.py
-# This ensures CAPS-based availability checking for curl_cffi
-from hledac.universal.fetching.curl_cffi_fetch import (
-    fetch_via_i2p_curl_cffi,
-)
-from hledac.universal.layers.ua_rotator import build_randomized_headers as _canonical_build_randomized_headers
-from hledac.universal.layers.ua_rotator import get_random_accept_language as _canonical_get_random_accept_language
-from hledac.universal.layers.ua_rotator import get_random_ua as _canonical_get_random_ua
-from hledac.universal.transport.base import (
-    fetch_via_tor_curl_cffi,
-)
-
-# Backward compat: still import is_curl_cffi_available from curl_cffi_runtime
-from hledac.universal.transport.curl_cffi_runtime import is_curl_cffi_available as _runtime_is_curl_cffi_available
-from hledac.universal.transport.decompression import build_accept_encoding_header
-from hledac.universal.transport.session_pool import httpx_socks_client
-from hledac.universal.utils.encoding import decode_response_bytes
-from hledac.universal.utils.patterns.pattern_matcher import PatternHit, match_text
 
 logger = get_logger(__name__)
 _ContentHasher: object | None = None
 _RUST_CONTENT_HASHER: bool = False
 MAX_BODY_HASHES: Final[int] = 10000
-
-# ISSUE-018: Deduplicated — canonical BodyHashStore lives in fetching/_body_hash.py
-from hledac.universal.fetching._body_hash import body_hash_store as _body_hash_store
 
 # Backward-compat alias — tests and any external code access the internal dict
 # directly via _body_hashes. Use .hashes property for read-only access.

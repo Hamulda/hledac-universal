@@ -56,6 +56,8 @@ class SprintSchedulerResult:
     hits_per_source: dict[str, int] = field(default_factory=dict)
     final_phase: str = 'BOOT'
     export_paths: list[str] = field(default_factory=list)
+    # P4-1: Partial export path (early windup export)
+    partial_export_path: str = ''
     aborted: bool = False
     abort_reason: str = ''
     stop_requested: bool = False
@@ -63,8 +65,12 @@ class SprintSchedulerResult:
     synthesis_engine: str = 'unknown'
     synthesis_findings_count: int = 0
     ioc_cooccurrence_edges: int = 0
+    # P4-1: IOC co-occurrence telemetry
+    ioc_cooccurrence_stats: dict = field(default_factory=dict)
     synthesis_text: str = ''
     synthesis_uncertainty_flags: dict = field(default_factory=dict)  # APEX-1009
+    # P4-1: Epistemic gap advisory telemetry
+    epistemic_gap_advisory: dict = field(default_factory=dict)
     hypotheses_generated: int = 0
     pii_findings_anonymized: int = 0
     public_discovered: int = 0
@@ -347,6 +353,8 @@ class SprintSchedulerResult:
     prewindup_guard_async_error: str = ''
     prewindup_guard_fail_closed: bool = False
     windup_guard_call_count: int = 0
+    # P4-1: Pre-windup barrier telemetry
+    prewindup_unimplemented_lanes: tuple = ()
     windup_guard_callback_supplied_count: int = 0
     windup_guard_callback_executed_count: int = 0
     windup_guard_last_reason: str = ''

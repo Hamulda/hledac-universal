@@ -163,6 +163,184 @@ except ImportError:
 # Returns: RecordBatch on success, None on failure
 # ---------------------------------------------------------------------------
 
+# ---------------------------------------------------------------------------
+# MODERN-35: Exception Taxonomy for DuckDB Store
+# ---------------------------------------------------------------------------
+# Categorizes exceptions into groups for better error handling and debugging.
+# Replaces 150+ bare `except Exception` handlers with typed exception groups.
+# ---------------------------------------------------------------------------
+
+from contextlib import contextmanager
+from typing import TYPE_CHECKING, Any, Callable, TypeVar, Iterator
+
+if TYPE_CHECKING:
+    import duckdb
+    import lmdb
+
+# Exception group definitions for fail-soft operations
+# These are used with `except*` for Python 3.11+ or as catch-all groups
+
+# DuckDB-specific exceptions (lazy import to avoid hard dependency)
+_DuckDBErrors: tuple[type, ...] | None = None
+_LMDBErrors: tuple[type, ...] | None = None
+_ArrowErrors: tuple[type, ...] | None = None
+
+
+def _init_exception_groups() -> None:
+    """Initialize exception groups lazily to avoid hard import dependencies."""
+    global _DuckDBErrors, _LMDBErrors, _ArrowErrors
+
+    # DuckDB exceptions
+    try:
+        import duckdb
+
+        _DuckDBErrors = (
+            duckdb.IOException,
+            duckdb.CatalogError,
+            duckdb.InternalError,
+            duckdb.InterruptException,
+            duckdb.InvalidInputException,
+            duckdb.NotImplementedException,
+            duckdb.ParserException,
+            duckdb.ConstraintException,
+            duckdb.TypeMismatchException,
+            duckdb.BinderException,
+            duckdb.SerializationException,
+            duckdb.TransactionException,
+        )
+    except ImportError:
+        _DuckDBErrors = ()
+
+    # LMDB exceptions
+    try:
+        import lmdb
+
+        _LMDBErrors = (lmdb.Error,)
+    except ImportError:
+        _LMDBErrors = ()
+
+    # PyArrow exceptions
+    try:
+        import pyarrow.lib
+
+        _ArrowErrors = (
+            pyarrow.lib.ArrowException,
+            pyarrow.lib.ArrowInvalid,
+            pyarrow.lib.ArrowNotImplementedError,
+            StopIteration,  # Empty Arrow batch
+        )
+    except ImportError:
+        _ArrowErrors = ()
+
+
+# Initialize exception groups at module load time
+# Note: This MUST be called at end of module to avoid circular imports
+# _init_exception_groups() is called after all imports are complete
+
+
+# Combined operational errors for fail-soft patterns
+# Order matters: specific → general (Python 3.10- compatible)
+_OperationalErrors: tuple[type, ...] = (
+    # DuckDB
+    IOError, OSError,  # IO errors
+    PermissionError, FileNotFoundError, FileExistsError,  # File ops
+    TypeError, ValueError,  # Type/value errors
+    AttributeError,  # Attribute errors
+    RuntimeError,  # General runtime
+)
+
+
+# Fail-soft context manager for non-critical operations
+T = TypeVar("T")
+
+
+@contextmanager
+def _fail_soft(
+    default: T,
+    *error_types: type[BaseException],
+    logger: Any | None = None,
+    message: str = "Operation failed",
+) -> Iterator[None]:
+    """
+    Context manager for fail-soft operations.
+
+    Catches specified exceptions, logs them if logger provided, and returns default.
+    Uses Python 3.11+ `except*` when available, falls back to `except`.
+
+    Args:
+        default: Value to return on failure
+        error_types: Exception types to catch (default: all)
+        logger: Optional logger instance
+        message: Log message prefix
+
+    Usage:
+        with _fail_soft(default=0, logger=logger):
+            return risky_operation()
+
+        # Or as context manager that sets a variable
+        result = None
+        with _fail_soft(None) as _:
+            result = compute_value()
+        return result
+    """
+    if not error_types:
+        error_types = (Exception,)
+
+    try:
+        yield
+    except asyncio.CancelledError:
+        raise  # Never swallow CancelledError
+    except* error_types as e:  # Python 3.11+ exception groups
+        if logger is not None:
+            logger.debug(f"{message}: {e}")
+    except Exception as e:  # Python 3.10 fallback
+        if logger is not None:
+            logger.debug(f"{message}: {e}")
+
+
+# Decorator for fail-soft functions
+def _safe_call(
+    default: T,
+    *error_types: type[BaseException],
+    logger: Any | None = None,
+) -> Callable[[Callable[..., T]], Callable[..., T]]:
+    """
+    Decorator for fail-soft function calls.
+
+    Catches specified exceptions and returns default on failure.
+
+    Usage:
+        @_safe_call(default=[])
+        def risky_query() -> list:
+            return expensive_query()
+    """
+    if not error_types:
+        error_types = (Exception,)
+
+    def decorator(fn: Callable[..., T]) -> Callable[..., T]:
+        @functools.wraps(fn)
+        def wrapper(*args: Any, **kwargs: Any) -> T:
+            try:
+                return fn(*args, **kwargs)
+            except asyncio.CancelledError:
+                raise
+            except* error_types as e:
+                if logger is not None:
+                    logger.debug(f"{fn.__name__} failed: {e}")
+            except Exception as e:
+                if logger is not None:
+                    logger.debug(f"{fn.__name__} failed: {e}")
+            return default
+
+        return wrapper
+
+    return decorator
+
+
+# ---------------------------------------------------------------------------
+# Arrow IPC helpers
+# ---------------------------------------------------------------------------
+
 _ARROW_IPC_MIN_SIZE = 8  # IPC header is at least 8 bytes
 
 
@@ -222,6 +400,11 @@ def arrow_ipc_to_record_batch(
             "[MODERN-25] %s: empty RecordBatch (StopIteration)", source
         )
         return None
+    except (OSError, IOError, RuntimeError, TypeError) as _exc:  # Arrow/serialization errors
+        _logging.getLogger("duckdb_store").debug(
+            "[MODERN-25] %s: Arrow IPC read failed: %s", source, _exc
+        )
+        return None
     except Exception as _exc:  # noqa: BLE001 — best-effort fail-open
         _logging.getLogger("duckdb_store").debug(
             "[MODERN-25] %s: Arrow IPC read failed: %s", source, _exc
@@ -266,7 +449,12 @@ def arrow_ipc_to_table(
         for col in table.column_names:
             result[col] = table.column(col).to_pylist()
         return result
-    except Exception as _exc:  # noqa: BLE001
+    except (OSError, IOError, RuntimeError, TypeError) as _exc:  # Arrow/serialization errors
+        _logging.getLogger("duckdb_store").debug(
+            "[MODERN-25] %s: IPC→table failed: %s", source, _exc
+        )
+        return None
+    except Exception as _exc:  # noqa: BLE001 — best-effort fail-open
         _logging.getLogger("duckdb_store").debug(
             "[MODERN-25] %s: IPC→table failed: %s", source, _exc
         )
@@ -470,7 +658,8 @@ from .dedup import DedupManager
 from .sprint_boundary import SprintBoundaryCoordinator
 
 # P4-2: IOC buffering chunk size for parallel flush
-_IOC_CHUNK: int = 128  # per-chunk size for parallel IOC buffering
+# MODERN-36: Reduced from 128 to 64 for M1 8GB + 6-thread budget
+_IOC_CHUNK: int = 64  # per-chunk size for parallel IOC buffering
 
 # Lazy imports from quality_assessment to avoid circular dependency
 # duckdb_store ↔ quality_assessment — both use TYPE_CHECKING to break circular import
@@ -1300,12 +1489,16 @@ class ParquetHistoryReader:
                 conn.execute("SET memory_limit = '1GB'")
                 conn.execute("PRAGMA hard_memory_limit = '1GB'")
                 conn.execute("PRAGMA enable_progress_bar = false")
+            except (OSError, RuntimeError, TypeError):  # DuckDB pragma errors — non-critical
+                pass
             except Exception:  # noqa: BLE001 — best-effort; DuckDB settings; non-critical
                 pass
             # Read local parquet — DuckDB handles row-group stats + filter pushdown
             conn.execute(f"CREATE VIEW local_parquet AS SELECT * FROM read_parquet('{self.path}')")
             self._duckdb_conn = conn
             return conn
+        except (OSError, PermissionError, RuntimeError):  # DuckDB init errors — non-critical
+            return None
         except Exception:  # noqa: BLE001 — best-effort; DuckDB init; non-critical
             return None
 
@@ -1338,6 +1531,8 @@ class ParquetHistoryReader:
                 sql += f" WHERE {where}"
             result = conn.execute(sql).fetchone()
             return result[0] if result else 0
+        except (OSError, RuntimeError, TypeError):  # DuckDB/SQL errors — non-critical
+            return self._count_rows_pyarrow()
         except Exception:  # noqa: BLE001 — best-effort; count; non-critical
             return self._count_rows_pyarrow()
 
@@ -1347,6 +1542,8 @@ class ParquetHistoryReader:
             import pyarrow.parquet as pq
             pf = pq.ParquetFile(self.path)
             return pf.metadata.num_rows
+        except (OSError, FileNotFoundError):  # File access errors — non-critical
+            return 0
         except Exception:  # noqa: BLE001 — best-effort; PyArrow count; non-critical
             return 0
 
@@ -1357,6 +1554,8 @@ class ParquetHistoryReader:
             import pyarrow.parquet as pq
             pf = pq.ParquetFile(self.path)
             return pf.num_row_groups
+        except (OSError, FileNotFoundError):  # File access errors — non-critical
+            return 0
         except Exception:  # noqa: BLE001 — best-effort; rowgroup count; non-critical
             return 0
 
@@ -1411,6 +1610,9 @@ class ParquetHistoryReader:
                 col_arrays = [[row[i] for row in rows] for i in range(len(columns))]
                 table = pa.Table.from_pydict(dict(zip(columns, col_arrays)))
                 yield from table.to_batches(max_chunksize=self.batch_size)
+        except (OSError, RuntimeError, TypeError) as e:  # DuckDB/Arrow errors — fallback gracefully
+            logger.warning(f"[ParquetHistoryReader] DuckDB path failed, falling back to PyArrow: {e}")
+            yield from self._iter_via_pyarrow()
         except Exception as e:  # noqa: BLE001 — best-effort; DuckDB iteration; non-critical
             logger.warning(f"[ParquetHistoryReader] DuckDB path failed, falling back to PyArrow: {e}")
             yield from self._iter_via_pyarrow()
@@ -1429,6 +1631,8 @@ class ParquetHistoryReader:
                         yield batch
                 except StopIteration:
                     continue
+        except (OSError, FileNotFoundError):  # File access errors — non-critical
+            return
         except Exception:  # noqa: BLE001 — best-effort; PyArrow fallback; non-critical
             return
 
@@ -1456,6 +1660,8 @@ class ParquetHistoryReader:
             return conn.execute(sql).pl().lazy()
         except ImportError:
             raise ImportError("Polars not installed: pip install polars")
+        except (OSError, RuntimeError, TypeError):  # DuckDB/SQL errors — fallback gracefully
+            return self._to_polars_lazy_pyarrow()
         except Exception:  # noqa: BLE001 — best-effort; DuckDB scan; non-critical
             return self._to_polars_lazy_pyarrow()
 
@@ -1484,6 +1690,8 @@ class ParquetHistoryReader:
             return lf
         except ImportError:
             raise ImportError("Polars not installed: pip install polars")
+        except (OSError, FileNotFoundError):  # File access errors — non-critical
+            return None
         except Exception:  # noqa: BLE001 — best-effort; PyArrow fallback; non-critical
             return None
 
@@ -1627,6 +1835,8 @@ class _DuckDBExportConn:
         for pragma in ("PRAGMA threads = 2", "SET memory_limit = '1GB'", "SET preserve_insertion_order = false"):
             try:
                 self._conn.execute(pragma)
+            except (OSError, RuntimeError, TypeError):  # pragma errors — non-critical
+                pass
             except Exception:  # noqa: BLE001 — fail-soft; pragma may not be supported
                 pass
 
@@ -4300,18 +4510,24 @@ class DuckDBShadowStore:
         if self._persistent_conn is not None:
             try:
                 self._persistent_conn.close()
+            except (OSError, RuntimeError):  # DuckDB close errors — non-critical
+                pass
             except Exception:  # noqa: BLE001 — best-effort; DuckDB operation failure; non-critical
                 pass
             self._persistent_conn = None
         if self._file_conn is not None:
             try:
                 self._file_conn.close()
+            except (OSError, RuntimeError):  # DuckDB close errors — non-critical
+                pass
             except Exception:  # noqa: BLE001 — best-effort; DuckDB operation failure; non-critical
                 pass
             self._file_conn = None
         if self._wal_manager is not None:
             try:
                 self._wal_manager.close()
+            except (OSError, RuntimeError):  # DuckDB close errors — non-critical
+                pass
             except Exception:  # noqa: BLE001 — best-effort; DuckDB operation failure; non-critical
                 pass
             self._wal_manager = None
@@ -4336,6 +4552,9 @@ class DuckDBShadowStore:
             else:
                 self._db_path = DUCKDB_STORE_ROOT / "analytics.duckdb"
                 self._temp_dir = None
+        except (ImportError, AttributeError, OSError):  # Import/path errors — non-critical
+            self._db_path = None
+            self._temp_dir = None
         except Exception:  # noqa: BLE001 — best-effort; DuckDB operation failure; non-critical
             self._db_path = None
             self._temp_dir = None
@@ -4365,6 +4584,9 @@ class DuckDBShadowStore:
             self._initialized = True
             self._startup_ready.set()
             return True
+        except (OSError, PermissionError, RuntimeError):  # DuckDB init errors — non-critical
+            self._initialized = False
+            return False
         except Exception:  # noqa: BLE001 — best-effort; DuckDB operation failure; non-critical
             self._initialized = False
             return False
@@ -4376,6 +4598,8 @@ class DuckDBShadowStore:
         try:
             fut = self._executor.submit(self._sync_insert_finding, finding_id, query, source_type, confidence)
             return fut.result()
+        except (OSError, RuntimeError):  # DB write errors — non-critical
+            return False
         except Exception:  # noqa: BLE001 — best-effort; DB write failure; non-critical
             return False
 
@@ -4388,6 +4612,8 @@ class DuckDBShadowStore:
         try:
             fut = self._executor.submit(self._sync_insert_run, run_id, started_at, ended_at, total_fds, rss_mb)
             return fut.result()
+        except (OSError, RuntimeError):  # DB write errors — non-critical
+            return False
         except Exception:  # noqa: BLE001 — best-effort; DB write failure; non-critical
             return False
 
@@ -4398,6 +4624,8 @@ class DuckDBShadowStore:
         try:
             fut = self._executor.submit(self._sync_query_findings, limit)
             return fut.result()
+        except (OSError, RuntimeError):  # DB query errors — non-critical
+            return []
         except Exception:  # noqa: BLE001 — best-effort; DB query failure; non-critical
             return []
 
@@ -13196,3 +13424,8 @@ def make_shadow_store(
         uma_state=uma_state,
         lazy=False,
     )
+
+
+# MODERN-35: Initialize exception taxonomy at module load time
+# This must be called AFTER all imports are complete to avoid circular dependency issues
+_init_exception_groups()

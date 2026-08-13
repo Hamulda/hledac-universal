@@ -1,6 +1,6 @@
 {
   "version": "1.0.0",
-  "generated_at": "2026-08-13T18:28:43.494646+00:00",
+  "generated_at": "2026-08-13T21:48:24.992422+00:00",
   "capability": "NEXTGEN-05",
   "description": "Build-time FFI type-safety manifest",
   "classes": {

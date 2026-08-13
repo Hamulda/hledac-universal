@@ -21,12 +21,12 @@
 //!   - mixed_pool threads (POOL_SINGLE=1, POOL_PAIR=2)
 //!   - dispatcher threads (UTILITY → E-cores)
 //!
-//! Budget allocation per phase (THREAD-BUDGET-01: verified against BUDGET_AVAILABLE=7):
-//!   | Phase     | cpu | io | mixed (max) | dispatchers | total | Within 7? |
+//! Budget allocation per phase (THREAD-BUDGET-02: verified against BUDGET_AVAILABLE=6):
+//!   | Phase     | cpu | io | mixed (max) | dispatchers | total | Within 6? |
 //!   |-----------|-----|----|-------------|-------------|-------|----------|
-//!   | BOOT/WIND | 2   | 1  | 1           | 3           | 7     | ✓ OK     |
-//!   | ACTIVE    | 2   | 2  | 0           | 3           | 7     | ✓ OK     |
-//!   | SYNTHESIS | 3   | 1  | 0           | 3           | 7     | ✓ OK     |
+//!   | BOOT/WIND | 1   | 1  | 1           | 3           | 6     | ✓ OK     |
+//!   | ACTIVE    | 2   | 1  | 0           | 3           | 6     | ✓ OK     |
+//!   | SYNTHESIS | 2   | 1  | 0           | 3           | 6     | ✓ OK     |
 //!   | DEGRADED  | 1   | 1  | 0           | 3           | 5     | ✓ OK     |
 //!
 //! ## MLX Metal-Aware Design (F330 / ISSUE-2.4)
@@ -124,16 +124,17 @@ pub const MAX_TOTAL_THREADS: usize = 8;
 pub const ASYNCIO_RESERVED: usize = 1;
 pub const SYSTEM_RESERVED: usize = 1;
 
-/// THREAD-BUDGET-01: Available budget for rayon pools (dispatchers + cpu + io + mixed).
-/// asyncio and system threads are NOT part of this budget (they don't compete for CPU).
-pub const BUDGET_AVAILABLE: usize = 7; // MAX_TOTAL_THREADS(8) - reserved(1) = 7
+/// THREAD-BUDGET-02: Available budget for rayon pools (dispatchers + cpu + io + mixed).
+/// FIXED arithmetic: MAX_TOTAL_THREADS(8) - ASYNCIO_RESERVED(1) - SYSTEM_RESERVED(1) = 6
+/// asyncio and system threads ARE tracked by ThreadBudgetGuard, so they count against total.
+pub const BUDGET_AVAILABLE: usize = 6; // MAX_TOTAL_THREADS(8) - 2 = 6 (FIXED from 7)
 
 /// Fixed dispatcher thread count (1 per pool type: cpu, io, mixed).
 pub const DISPATCHER_COUNT: usize = 3;
 
-/// THREAD-BUDGET-01: Phase configurations with mixed pool
+/// THREAD-BUDGET-02: Phase configurations with mixed pool
 /// Tuple: (cpu, io, mixed_max)
-/// All phases verified to fit within BUDGET_AVAILABLE = 7
+/// All phases verified to fit within BUDGET_AVAILABLE = 6
 #[derive(Debug, Clone, Copy)]
 pub struct PhaseConfig {
     pub cpu: usize,
@@ -155,33 +156,32 @@ impl PhaseConfig {
     }
 }
 
-/// Budget-verified phase configurations
-/// Note: SYNTHESIS uses cpu=3 (not 4) to stay within budget ceiling
+/// Budget-verified phase configurations — THREAD-BUDGET-02: all fit within 6
 pub const PHASE_CONFIGS: &[(&str, PhaseConfig)] = &[
     (
         "BOOT",
         PhaseConfig {
-            cpu: 2,
+            cpu: 1,
             io: 1,
             mixed_max: 1,
         },
-    ), // 2+1+1+3 = 7
+    ), // 1+1+1+3 = 6
     (
         "WARMUP",
         PhaseConfig {
-            cpu: 2,
+            cpu: 1,
             io: 1,
             mixed_max: 1,
         },
-    ), // 2+1+1+3 = 7
+    ), // 1+1+1+3 = 6
     (
         "ACTIVE",
         PhaseConfig {
             cpu: 2,
-            io: 2,
+            io: 1,
             mixed_max: 0,
         },
-    ), // 2+2+0+3 = 7
+    ), // 2+1+0+3 = 6
     (
         "DEGRADED",
         PhaseConfig {
@@ -193,27 +193,27 @@ pub const PHASE_CONFIGS: &[(&str, PhaseConfig)] = &[
     (
         "SYNTHESIS",
         PhaseConfig {
-            cpu: 3,
+            cpu: 2,
             io: 1,
             mixed_max: 0,
         },
-    ), // 3+1+0+3 = 7
+    ), // 2+1+0+3 = 6
     (
         "WINDUP",
         PhaseConfig {
-            cpu: 2,
+            cpu: 1,
             io: 1,
             mixed_max: 1,
         },
-    ), // 2+1+1+3 = 7
+    ), // 1+1+1+3 = 6
     (
         "EXPORT",
         PhaseConfig {
             cpu: 2,
-            io: 2,
+            io: 1,
             mixed_max: 0,
         },
-    ), // 2+2+0+3 = 7
+    ), // 2+1+0+3 = 6
     (
         "TEARDOWN",
         PhaseConfig {
@@ -255,11 +255,18 @@ pub fn get_available_budget() -> usize {
     BUDGET_AVAILABLE.saturating_sub(get_total_threads())
 }
 
-/// THREAD-BUDGET-01 + MODERN-32: Check if budget allows `extra` threads.
-/// Uses MAX_TOTAL_THREADS as the ceiling (8 for M1 8GB).
+/// ISSUE-2 FIX: Check if budget allows `extra` threads.
+/// 
+/// Validates: rayon_threads + extra <= BUDGET_AVAILABLE (6)
+/// 
+/// This ensures rayon pools never exceed the rayon budget, leaving room for
+/// asyncio(1) + system(1) = 2 reserved threads within MAX_TOTAL_THREADS(8).
+/// 
+/// Previous implementation incorrectly used MAX_TOTAL_THREADS (8) as the ceiling,
+/// which didn't account for asyncio+system overhead.
 #[inline]
 pub fn budget_allows(extra: usize) -> bool {
-    get_total_threads() + extra <= MAX_TOTAL_THREADS
+    get_total_threads() + extra <= BUDGET_AVAILABLE
 }
 
 /// MODERN-31: Set current sprint phase (for telemetry only).
@@ -509,8 +516,8 @@ pub fn mixed_threshold_via_metal(py: Python<'_>) -> usize {
 /// MODERN-31 FIX: This is now the SINGLE recommender for CPU pool sizing.
 /// Phase configs are initial seeds only — this takes precedence.
 ///
-/// THREAD-BUDGET-01: Enforces global budget (BUDGET_AVAILABLE=7) by reserving
-/// budget for dispatchers (3) and mixed_pool (dynamic 0-2) and io_pool (1 minimum).
+/// THREAD-BUDGET-02: Enforces global budget (BUDGET_AVAILABLE=6) by computing
+/// available slots after accounting for dispatchers, mixed, and io pools.
 #[inline]
 pub fn recommended_cpu_threads() -> usize {
     // Check explicit pressure first (tests, no-MLX path).
@@ -518,22 +525,23 @@ pub fn recommended_cpu_threads() -> usize {
     let base = if pressure != PRESSURE_UNSET {
         match pressure {
             2 => 1, // pressure: sequential
-            1 => 2, // normal: 2 P-cores
-            _ => 4, // idle: all P-cores
+            1 => 2, // normal: 2 P-cores (clamped by budget)
+            _ => 2, // idle: clamped to 2 to fit budget (was 4)
         }
     } else {
         // Production: use thread-local metal cache.
         match get_metal_level_cached() {
             2 => 1, // pressure: sequential
-            1 => 2, // normal: 2 P-cores
-            _ => 4, // idle: all P-cores
+            1 => 2, // normal: 2 P-cores (clamped by budget)
+            _ => 2, // idle: clamped to 2 to fit budget (was 4)
         }
     };
 
-    // THREAD-BUDGET-01: Reserve for dispatchers (3) + mixed (dynamic) + io (1 min)
-    // Use dynamic mixed budget like recommended_io_threads() does
+    // THREAD-BUDGET-02: Compute available slots after dispatchers, mixed, and minimum io
+    // BUDGET_AVAILABLE = 6, DISPATCHER_COUNT = 3, so available for cpu+io+mixed = 3
+    // Minimum io = 1, so max_cpu = 3 - 1 = 2
     let mixed_budget = get_mixed_budget();
-    let io_reserve = 1; // minimum io threads reserved
+    let io_reserve = 1; // minimum io threads
     let max_cpu = BUDGET_AVAILABLE.saturating_sub(DISPATCHER_COUNT + mixed_budget + io_reserve);
     base.min(max_cpu).max(1) // At least 1 CPU thread
 }
@@ -543,8 +551,8 @@ pub fn recommended_cpu_threads() -> usize {
 /// MODERN-31 FIX: This is now the SINGLE recommender for I/O pool sizing.
 /// Phase configs are initial seeds only — this takes precedence.
 ///
-/// THREAD-BUDGET-01: Enforces global budget by computing available slots after
-/// reserving for cpu_pool, dispatchers, and mixed_pool.
+/// THREAD-BUDGET-02: Enforces global budget (BUDGET_AVAILABLE=6) by computing
+/// available slots after reserving for cpu_pool, dispatchers, and mixed_pool.
 #[inline]
 pub fn recommended_io_threads() -> usize {
     // Check explicit pressure first (tests, no-MLX path).
@@ -552,21 +560,20 @@ pub fn recommended_io_threads() -> usize {
     let base = if pressure != PRESSURE_UNSET {
         match pressure {
             2 => 1, // pressure: minimal
-            _ => 2, // idle/normal: 2 threads
+            _ => 1, // idle/normal: clamped to 1 to fit budget (was 2)
         }
     } else {
         // Production: use thread-local metal cache.
         match get_metal_level_cached() {
             2 => 1, // pressure: minimal
-            _ => 2, // idle/normal: 2 threads
+            _ => 1, // idle/normal: clamped to 1 to fit budget (was 2)
         }
     };
 
-    // THREAD-BUDGET-01: Compute available slots after cpu_budget, dispatchers, mixed
+    // THREAD-BUDGET-02: Compute available slots after cpu_budget, dispatchers, mixed
     // Available = BUDGET_AVAILABLE - cpu_budget - dispatchers - mixed
     let cpu_budget = get_cpu_budget();
     let mixed_budget = get_mixed_budget();
-    // Reserve for dispatchers (3) + mixed (dynamic) + system overhead
     let overhead = DISPATCHER_COUNT + mixed_budget;
     let available = BUDGET_AVAILABLE.saturating_sub(cpu_budget + overhead);
     base.min(available.max(1)).max(1) // At least 1 I/O thread
@@ -842,10 +849,11 @@ mod tests {
 
     #[test]
     fn test_recommended_cpu_threads_explicit_pressure() {
-        // Idle → 4 P-cores available.
+        // THREAD-BUDGET-02: With BUDGET_AVAILABLE=6, cpu is clamped
+        // Idle → 2 P-cores (clamped from 4 to fit budget)
         update_memory_pressure(0);
-        assert_eq!(recommended_cpu_threads(), 4);
-        // Normal → 2 P-cores.
+        assert_eq!(recommended_cpu_threads(), 2);
+        // Normal → 2 P-cores (fits budget)
         update_memory_pressure(1);
         assert_eq!(recommended_cpu_threads(), 2);
         // Pressure → 1 (sequential).
@@ -857,11 +865,12 @@ mod tests {
 
     #[test]
     fn test_recommended_io_threads_explicit_pressure() {
-        // Idle/normal → 2 I/O threads.
+        // THREAD-BUDGET-02: With BUDGET_AVAILABLE=6, io is clamped
+        // Idle/normal → 1 I/O thread (clamped from 2 to fit budget)
         update_memory_pressure(0);
-        assert_eq!(recommended_io_threads(), 2);
+        assert_eq!(recommended_io_threads(), 1);
         update_memory_pressure(1);
-        assert_eq!(recommended_io_threads(), 2);
+        assert_eq!(recommended_io_threads(), 1);
         // Pressure → 1 (minimal).
         update_memory_pressure(2);
         assert_eq!(recommended_io_threads(), 1);

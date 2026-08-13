@@ -25,10 +25,9 @@ MODERN-25: Sprint Data Unit Integration
 All IOC writes route through AtomicSprintPipeline for atomic semantics:
 - Provenance is required on all upsert_ioc calls (no more silent loss)
 - Unknown IOC types are preserved with classification_status="pending_review"
-- LanceDB path removed — replaced by DuckDB-backed DuckDBRAGStore
+- Vector storage: DuckDB-backed DuckDBRAGStore (no LanceDB dependency)
 
 DEPRECATED (F350M-R):
-- LanceDB reranking: Migrate to knowledge.duckdb_rag_store
 - "pending" IOC type: Preserve original type with classification_status field
 
 ORPHANED TASK FIX (Issue #2):
@@ -222,7 +221,7 @@ class GraphService:
             return False
 
     # ── DuckDB-backed Entity Store (MODERN-25) ────────────────────────────────
-    # LanceDB path REMOVED — use DuckDB-backed DuckDBRAGStore for vector reranking
+    # Vector storage: DuckDB-backed DuckDBRAGStore
     # See: knowledge.duckdb_rag_store.get_identity_store()
 
     def upsert_ioc_batch(
@@ -546,8 +545,7 @@ class GraphService:
         """
         MODERN-25: Hybrid graph traversal + DuckDB vector similarity reranking.
 
-        DEPRECATED: LanceDB-based reranking REMOVED.
-        Use DuckDB-backed DuckDBRAGStore from knowledge.duckdb_rag_store instead.
+        Uses DuckDB-backed DuckDBRAGStore from knowledge.duckdb_rag_store.
 
         Flow:
         1. Graph traversal via DuckPGQGraph.find_connected() — always runs.
@@ -699,14 +697,24 @@ class GraphService:
 
     def reset_session(self) -> None:
         """
-        Clear session-level idempotency trackers and graph singleton.
+        MODERN-35: Clear session-level idempotency trackers and graph singleton.
 
         Call at sprint start to prevent cross-sprint state leakage.
         Resets only this instance's state — does NOT affect other instances.
+
+        MODERN-35 FIX: Now calls close() on the old DuckPGQGraph before
+        setting _DUCKPGQ_GRAPH = None to properly release DuckDB connection
+        and lock.
         """
         global _DUCKPGQ_GRAPH
         self._seen_iocs.clear()
         self._seen_rels.clear()
+        # MODERN-35: Close the old graph before setting to None
+        if _DUCKPGQ_GRAPH is not None:
+            try:
+                _DUCKPGQ_GRAPH.close()
+            except Exception:  # noqa: BLE001
+                pass
         _DUCKPGQ_GRAPH = None
 
     # ── Analytics ─────────────────────────────────────────────────────────────
@@ -929,15 +937,17 @@ def checkpoint() -> None:
 
 
 def reset_session() -> None:
-    global _DUCKPGQ_GRAPH
+    """
+    MODERN-35: Reset session-level idempotency trackers and graph singleton.
+    
+    Delegates to _DEFAULT_GRAPH_SERVICE.reset_session() which:
+    1. Clears instance-level _seen_iocs and _seen_rels sets
+    2. Closes and nullifies the module-level _DUCKPGQ_GRAPH singleton
+    
+    MODERN-35 FIX: Removed duplicate close() call. GraphService.reset_session()
+    already calls close() on _DUCKPGQ_GRAPH before setting it to None.
+    """
     _DEFAULT_GRAPH_SERVICE.reset_session()
-    # ISSUE-5.1: close() before None to release DuckDB connection and lock
-    if _DUCKPGQ_GRAPH is not None:
-        try:
-            _DUCKPGQ_GRAPH.close()
-        except Exception:  # noqa: BLE001
-            pass
-    _DUCKPGQ_GRAPH = None
 
 
 def shutdown_graph() -> None:

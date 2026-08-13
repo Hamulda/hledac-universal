@@ -82,12 +82,25 @@ class ArrowIngestResult:
 
 @dataclass(slots=True)
 class WriteCoordinatorConfig:
-    """M1 8GB bounded configuration — všechny limity explicitní."""
-    max_concurrent_writes: int = 4
+    """
+    M1 8GB bounded configuration — všechny limity explicitní.
+    
+    MODERN-36: Batching optimizations for unified 6-thread budget model.
+    Thread budget breakdown: DuckDB RW(1) + DuckDB RO(2) + CPU I/O(3) = 6 total.
+    
+    Batching strategy:
+    - WAL batching: 500 items per LMDB putmany (reduces fsync overhead)
+    - Arrow batching: >= 5 items for Arrow → DuckDB path
+    - IOC buffering: 64 items per chunk (reduced from 128 for M1 8GB)
+    - Memory-aware sizing: batch sizes scale with available memory pressure
+    """
+    max_concurrent_writes: int = 3  # Reduced from 4 for 6-thread budget
     circuit_breaker_threshold: int = 5
     circuit_breaker_cooldown: float = 30.0
     wal_putmany_batch_size: int = 500
     arrow_min_batch: int = 5
+    # MODERN-36: Reduced IOC chunk for M1 8GB memory constraints
+    ioc_chunk_size: int = 64  # Reduced from 128
     vacuum_interval_ops: int = 10000
     checkpoint_interval_ops: int = 5000
     vacuum_interval_seconds: float = 3600.0
@@ -178,6 +191,7 @@ class DuckDBWriteCoordinator:
         self._checkpoint_interval_seconds = self._config.checkpoint_interval_seconds
 
         # Arrow metrics (same as DuckDBShadowStore)
+        # MODERN-36: Added batching efficiency metrics
         self._arrow_metrics: dict[str, int] = {
             "arrow_selected": 0,
             "arrow_fallback_env": 0,
@@ -185,6 +199,14 @@ class DuckDBWriteCoordinator:
             "arrow_fallback_pyarrow": 0,
             "arrow_fallback_init": 0,
             "arrow_fallback_executor": 0,
+            # MODERN-36: Batching efficiency metrics
+            "batches_total": 0,
+            "batches_arrow_path": 0,
+            "batches_fallback_path": 0,
+            "items_total": 0,
+            "avg_batch_size": 0,  # Cumulative average
+            "wal_operations": 0,
+            "wal_items_total": 0,
             "arrow_fallback_empty": 0,
             "arrow_fallback_all_fail": 0,
             "arrow_success_count": 0,
@@ -680,6 +702,34 @@ class DuckDBWriteCoordinator:
     def get_arrow_metrics(self) -> dict[str, int]:
         """Vrací arrow metrics pro diagnostiku."""
         return dict(self._arrow_metrics)
+
+    def get_batching_efficiency(self) -> dict:
+        """
+        MODERN-36: Return batching efficiency metrics for monitoring.
+        
+        Returns:
+            Dict with batching efficiency stats:
+            - arrow_path_pct: Percentage of batches using arrow path
+            - avg_batch_size: Average batch size
+            - batch_throughput: Batches per second (if time tracked)
+            - wal_efficiency: WAL putmany efficiency
+        """
+        metrics = self._arrow_metrics
+        batches_total = metrics.get("batches_total", 0)
+        if batches_total == 0:
+            return {"status": "no_data", "message": "No batches processed yet"}
+        
+        arrow_path = metrics.get("batches_arrow_path", 0)
+        items_total = metrics.get("items_total", 0)
+        
+        return {
+            "batches_total": batches_total,
+            "arrow_path_pct": round(arrow_path / batches_total * 100, 1) if batches_total > 0 else 0,
+            "avg_batch_size": round(items_total / batches_total, 1) if batches_total > 0 else 0,
+            "items_total": items_total,
+            "wal_operations": metrics.get("wal_operations", 0),
+            "wal_items_total": metrics.get("wal_items_total", 0),
+        }
 
     def get_breaker_state(self) -> str:
         """Vrací aktuální stav circuit breakeru."""

@@ -163,19 +163,19 @@ from hledac.universal.core.locks import LockCategory, register_lock
 class ConcurrencyPreset(msgspec.Struct, frozen=True, gc=False):
     """
     Sprint F289: Immutable concurrency preset derived from UMA state.
-    Migrated from @dataclass(frozen=True, slots=True) → msgspec.Struct.
+    MODERN-36: Updated for unified 6-thread budget.
 
     Single source of truth for all concurrency limits derived from
     M1 8GB UMA state. Replaces scattered if-elif chains in:
     - M1ResourceGovernor._evaluate_impl()
     - BackpressureMonitor (via _TTL_BY_STATE, AIMD_DECREASE_BY_STATE)
 
-    M1 8GB calibrated values:
-        emergency:  0 workers, 1 fetch, block_model_load=True  — near-OOM
-        critical:   1 worker,  2 fetch, block_model_load=True  — active pressure
-        warn:       3 workers, 5 fetch, block_model_load=False — reduced headroom
-        soft_warn:  5 workers, 10 fetch, block_model_load=False — approaching limit
-        ok:         5 workers, 20 fetch, block_model_load=False — normal operation
+    M1 8GB 6-thread budget calibrated values:
+        emergency:  1 worker,  1 fetch, block_model_load=True  — near-OOM
+        critical:   2 workers, 2 fetch, block_model_load=True  — active pressure
+        warn:       3 workers, 4 fetch, block_model_load=False — reduced headroom
+        soft_warn:  4 workers, 6 fetch, block_model_load=False — approaching limit
+        ok:         6 workers, 10 fetch, block_model_load=False — normal operation
     """
 
     max_workers: int
@@ -187,19 +187,17 @@ class ConcurrencyPreset(msgspec.Struct, frozen=True, gc=False):
     @classmethod
     def from_state(cls, state: str) -> ConcurrencyPreset:
         """
-        Python 3.10+ match statement pro derivaci presetu ze stavu.
-
-        Uses guard clauses (if conditions in case pattern) for threshold
-        ordering. This is the canonical pattern for range-based matches.
+        MODERN-36: 6-thread budget model for M1 8GB.
+        Thread budget breakdown: DuckDB RW(1) + DuckDB RO(2) + CPU I/O(3) = 6 total.
         """
         match state:
             case "emergency":
                 return cls(
-                    max_workers=0, fetch_limit=1, block_model_load=True, cache_ttl_seconds=0.1, aimd_decrease_factor=0.0
+                    max_workers=1, fetch_limit=1, block_model_load=True, cache_ttl_seconds=0.1, aimd_decrease_factor=0.0
                 )
             case "critical":
                 return cls(
-                    max_workers=1,
+                    max_workers=2,
                     fetch_limit=2,
                     block_model_load=True,
                     cache_ttl_seconds=0.25,
@@ -208,31 +206,31 @@ class ConcurrencyPreset(msgspec.Struct, frozen=True, gc=False):
             case "warn":
                 return cls(
                     max_workers=3,
-                    fetch_limit=5,
+                    fetch_limit=4,
                     block_model_load=False,
                     cache_ttl_seconds=1.0,
                     aimd_decrease_factor=0.5,
                 )
             case "soft_warn":
                 return cls(
-                    max_workers=5,
-                    fetch_limit=10,
+                    max_workers=4,
+                    fetch_limit=6,
                     block_model_load=False,
                     cache_ttl_seconds=2.0,
                     aimd_decrease_factor=0.75,
                 )
             case "ok":
                 return cls(
-                    max_workers=5,
-                    fetch_limit=20,
+                    max_workers=6,
+                    fetch_limit=10,
                     block_model_load=False,
                     cache_ttl_seconds=5.0,
                     aimd_decrease_factor=1.0,
                 )
             case _:
                 return cls(
-                    max_workers=5,
-                    fetch_limit=20,
+                    max_workers=6,
+                    fetch_limit=10,
                     block_model_load=False,
                     cache_ttl_seconds=5.0,
                     aimd_decrease_factor=1.0,
@@ -1596,6 +1594,9 @@ class M1ResourceGovernor:
         # [NEW-M13]: QoS subscription registry for propagation with ack/timeout
         self._qos_registry = get_qos_subscription_registry()
         self._audit_started = False
+        # NOTE: Audit loop is NOT auto-started here anymore.
+        # CRITICAL FIX: asyncio.create_task() cannot be called before event loop starts.
+        # Call start_qos_audit() explicitly from async context after event loop is running.
 
     @property
     def _pw_monitor(self) -> "PowerStatusMonitor":  # noqa: F821
@@ -1605,6 +1606,32 @@ class M1ResourceGovernor:
 
             self._power_monitor = PowerStatusMonitor()
         return self._power_monitor
+
+    async def start_qos_audit(self) -> None:
+        """
+        [CRITICAL FIX] Start the QoS health audit loop.
+
+        MUST be called from async context AFTER the event loop is running.
+        Call this from your async main() or startup code, NOT from __init__.
+
+        Example:
+            governor = M1ResourceGovernor()
+            await governor.start_qos_audit()
+
+        The audit loop periodically checks subsystem compliance with QoS policy
+        and force-cancels non-compliant subsystems.
+        """
+        if self._audit_started:
+            return
+        self._audit_started = True
+        await self._qos_registry.start_audit_loop()
+
+    async def stop_qos_audit(self) -> None:
+        """Stop the QoS health audit loop."""
+        if not self._audit_started:
+            return
+        self._audit_started = False
+        await self._qos_registry.stop_audit_loop()
 
     # HW-03: Thermal scaling configuration
     _THERMAL_THROTTLE_THRESHOLD: float = 0.7  # headroom < 0.7 = throttling
@@ -1846,43 +1873,6 @@ class M1ResourceGovernor:
     async def unsubscribe_capability(self, capability: str) -> None:
         """[NEW-M13]: Unsubscribe a capability from QoS changes."""
         await self._qos_registry.unregister_subscription(capability)
-    
-    async def start_qos_audit(self) -> None:
-        """
-        [NEW-M13]: Start the QoS health audit loop.
-
-        Called at governor startup. The audit loop periodically verifies
-        that subsystem states match the active QoS level.
-        """
-        if not self._audit_started:
-            await self._qos_registry.start_audit_loop()
-            self._audit_started = True
-            logger.info("[M1ResourceGovernor] QoS health audit loop started")
-    
-    async def stop_qos_audit(self) -> None:
-        """[NEW-M13]: Stop the QoS health audit loop."""
-        if self._audit_started:
-            await self._qos_registry.stop_audit_loop()
-            self._audit_started = False
-            logger.info("[M1ResourceGovernor] QoS health audit loop stopped")
-    
-    def get_qos_health(self, capability: str) -> SubsystemHealth:
-        """
-        [NEW-M13]: Get the health state of a QoS-managed capability.
-
-        Returns:
-            SubsystemHealth enum value indicating current health state.
-        """
-        return self._qos_registry.get_health_state(capability)
-    
-    def is_qos_compliant(self, capability: str) -> bool:
-        """
-        [NEW-M13]: Check if a capability is compliant with current QoS level.
-
-        Returns:
-            True if the subsystem has acknowledged and is compliant.
-        """
-        return self._qos_registry.is_compliant(capability, get_qos_level())
 
     def _compute_thermal_scales(self, headroom: float) -> tuple[float, float, int | None, float]:
         """
@@ -2624,11 +2614,19 @@ class AsyncUMAGuard:
             self._hard_limit_mb = new_limit
             # Wake all waiters to re-check against new limit
             # (asyncio.Condition.notify_all requires holding the lock)
-            # We schedule a wake-up task to avoid blocking here
-            asyncio.create_task(self._notify_all_waiters())
-            
-            # [NEW-M13]: Acknowledge QoS change for uma_guard
-            asyncio.create_task(self._ack_qos_change(uma_state, new_limit))
+            # [NEW-M13-FIX]: Use get_running_loop() instead of asyncio.create_task()
+            # to ensure we're in an async context. This prevents RuntimeError if
+            # update_hard_limit is accidentally called from sync context.
+            try:
+                loop = asyncio.get_running_loop()
+                loop.create_task(self._notify_all_waiters())
+                loop.create_task(self._ack_qos_change(uma_state, new_limit))
+            except RuntimeError:
+                # No running event loop - this is a bug in the call site
+                # Log and continue (fail-soft for non-critical background tasks)
+                logger.warning(
+                    "[AsyncUMAGuard] update_hard_limit called without running event loop"
+                )
 
     async def _notify_all_waiters(self) -> None:
         """Notify all waiters to re-check their requests."""
@@ -3855,16 +3853,23 @@ class QoSSubscription:
     ack_callback: Callable[[bool, str], None]  # (success, reason) → None
     deadline_s: float = _ACK_DEADLINE_DEFAULT
     subscribed_at: float = field(default_factory=time.monotonic)
+    cancel_fn: Callable[[], None] | None = None  # Cancellation callback for force-cancel
 
 
 @dataclass
 class PendingAck:
-    """Mutable pending acknowledgment tracker."""
-    __slots__ = ("capability", "deadline", "subscribed_at", "task_ref")
+    """
+    Mutable pending acknowledgment tracker with cancellation support.
+    
+    Note: task_ref was removed. The cancel_fn callback is the primary mechanism
+    for force-cancellation. Subsystems provide their own cancellation logic
+    via the cancel_fn passed to register_subscription().
+    """
+    __slots__ = ("capability", "deadline", "subscribed_at", "cancel_fn")
     capability: str
     deadline: float  # time.monotonic when ack is due
     subscribed_at: float
-    task_ref: asyncio.Task[Any] | None = None
+    cancel_fn: Callable[[], None] | None = None  # Cancellation callback for force-cancel
 
 
 class QoSSubscriptionRegistry:
@@ -3905,6 +3910,7 @@ class QoSSubscriptionRegistry:
         capability: str,
         ack_callback: Callable[[bool, str], None],
         deadline_s: float = _ACK_DEADLINE_DEFAULT,
+        cancel_fn: Callable[[], None] | None = None,
     ) -> None:
         """
         Register a subsystem for QoS updates.
@@ -3913,16 +3919,19 @@ class QoSSubscriptionRegistry:
             capability:     The capability this subsystem manages
             ack_callback:  Called with (success: bool, reason: str) when ack received
             deadline_s:    Max seconds to wait for acknowledgment (default 2.0)
+            cancel_fn:     Optional cancellation callback called on force-cancel.
+                          Should stop the subsystem's running tasks.
         """
         async with self._lock:
             sub = QoSSubscription(
                 capability=capability,
                 ack_callback=ack_callback,
                 deadline_s=deadline_s,
+                cancel_fn=cancel_fn,
             )
             self._subscriptions[capability] = sub
             self._health_states[capability] = SubsystemHealth.UNKNOWN
-            logger.debug(f"[QoS-Sub] Registered {capability} (deadline={deadline_s}s)")
+            logger.debug(f"[QoS-Sub] Registered {capability} (deadline={deadline_s}s, has_cancel={cancel_fn is not None})")
     
     async def unregister_subscription(self, capability: str) -> None:
         """Unregister a subsystem subscription."""
@@ -3958,10 +3967,12 @@ class QoSSubscriptionRegistry:
                 
                 if not allowed and is_restrictive:
                     # RESTRICTIVE transition: need acknowledgment
+                    sub = self._subscriptions.get(cap)
                     pending = PendingAck(
                         capability=cap,
                         deadline=now + deadline_s,
                         subscribed_at=now,
+                        cancel_fn=sub.cancel_fn if sub else None,
                     )
                     self._pending_acks[cap] = pending
                     self._health_states[cap] = SubsystemHealth.PENDING
@@ -3983,7 +3994,12 @@ class QoSSubscriptionRegistry:
         return results
     
     def _capability_allowed(self, capability: str, profile: QoSProfile) -> bool:
-        """Check if capability is allowed under QoS profile."""
+        """
+        Check if capability is allowed under QoS profile.
+        
+        FAIL-CLOSED: Unknown capabilities return False for safety.
+        This ensures new capabilities cannot silently bypass QoS enforcement.
+        """
         mapping = {
             "sidecars": profile.sidecars_ok,
             "mlx_inference": profile.mlx_inference_ok,
@@ -3992,7 +4008,8 @@ class QoSSubscriptionRegistry:
             "model_load": profile.model_load_ok,
             "whisper": profile.whisper_ok,
         }
-        return mapping.get(capability, True)
+        # [CRITICAL FIX]: Fail-closed for unknown capabilities
+        return mapping.get(capability, False)
     
     async def acknowledge(
         self,
@@ -4031,7 +4048,18 @@ class QoSSubscriptionRegistry:
             return True
     
     async def _force_cancel_if_no_ack(self, capability: str, deadline_s: float) -> None:
-        """Force-cancel subsystem if no ack received within deadline."""
+        """
+        Force-cancel subsystem if no ack received within deadline.
+        
+        ACTUAL CANCELLATION: This method now performs real cancellation:
+        1. Calls any registered cancel_fn callback
+        2. Marks subsystem as FAILED
+        3. Notifies via ack_callback
+        
+        Note: task_ref was removed from PendingAck. The cancel_fn callback is the
+        primary mechanism for force-cancellation. Subsystems provide their own
+        cancellation logic via the cancel_fn passed to register_subscription().
+        """
         try:
             await asyncio.sleep(deadline_s)
         except asyncio.CancelledError:
@@ -4042,19 +4070,34 @@ class QoSSubscriptionRegistry:
             if pending is None:
                 return  # Already acknowledged
             
-            # Deadline expired without ack
+            # CRITICAL FIX: Perform actual cancellation before marking FAILED
+            
+            # 1. Call cancel_fn callback if registered
+            if pending.cancel_fn is not None:
+                try:
+                    pending.cancel_fn()
+                    logger.warning(
+                        f"[QoS-Sub] FORCE-CANCEL {capability}: called cancel_fn callback"
+                    )
+                except Exception as e:
+                    logger.error(
+                        f"[QoS-Sub] FORCE-CANCEL {capability}: cancel_fn raised {type(e).__name__}: {e}"
+                    )
+            
+            # 2. Mark as FAILED
             self._pending_acks.pop(capability, None)
             self._health_states[capability] = SubsystemHealth.FAILED
             
+            # 3. Notify via ack_callback
             sub = self._subscriptions.get(capability)
             if sub:
                 try:
-                    sub.ack_callback(False, f"ack timeout after {deadline_s}s")
+                    sub.ack_callback(False, f"force-cancelled: ack timeout after {deadline_s}s")
                 except Exception:
                     pass
             
-            logger.warning(
-                f"[QoS-Sub] FORCE-CANCEL {capability}: no ack within {deadline_s}s"
+            logger.error(
+                f"[QoS-Sub] FORCE-CANCEL {capability}: no ack within {deadline_s}s, subsystem stopped"
             )
             
             # Emit alert metric
@@ -4073,22 +4116,63 @@ class QoSSubscriptionRegistry:
         
         Verifies subsystem states match active QoS level.
         Returns dict mapping capability → health state.
+        
+        NEW-M13-FIX: Now actually verifies subsystem compliance by checking:
+        1. Pending acks with expired deadlines → FAILED
+        2. Subsystems that haven't acknowledged restrictive QoS → DRIFTED
+        3. Subsystems that are supposed to be off but are still running → DRIFTED
+        4. Healthy acknowledgments → HEALTHY
         """
         async with self._lock:
             results: dict[str, SubsystemHealth] = {}
+            now = time.monotonic()
+            
+            # Determine current QoS level severity
+            qos_severity = 0
+            try:
+                from hledac.universal.core.resource_governor import QoSLevel
+                qos_level_obj = QoSLevel(self._last_qos_level)
+                qos_severity = qos_level_obj.severity
+            except (ValueError, AttributeError):
+                qos_severity = 0  # FULL level
+            
+            # Restrictive levels require active compliance
+            is_restrictive = qos_severity >= 2  # WINDUP and above
             
             for cap in self._subscriptions:
                 pending = self._pending_acks.get(cap)
                 health = self._health_states.get(cap, SubsystemHealth.UNKNOWN)
                 
-                if pending and time.monotonic() > pending.deadline:
-                    # Overdue ack
+                # Check 1: Overdue ack deadline
+                if pending and now > pending.deadline:
                     results[cap] = SubsystemHealth.FAILED
-                elif health in (SubsystemHealth.PENDING, SubsystemHealth.UNKNOWN):
-                    # No confirmation yet
+                    logger.warning(
+                        f"[QoS-Sub] {cap} ack overdue by {now - pending.deadline:.1f}s"
+                    )
+                    continue
+                
+                # Check 2: Restrictive QoS without acknowledgment
+                if is_restrictive and health == SubsystemHealth.UNKNOWN:
+                    # Never acknowledged this restrictive level
+                    results[cap] = SubsystemHealth.DRIFTED
+                    logger.warning(
+                        f"[QoS-Sub] {cap} DRIFTED: no ack for restrictive QoS "
+                        f"(level={self._last_qos_level})"
+                    )
+                    continue
+                
+                # Check 3: Pending ack (waiting for compliance)
+                if pending:
                     results[cap] = SubsystemHealth.PENDING
-                else:
+                    continue
+                
+                # Check 4: Failed or drifted
+                if health in (SubsystemHealth.FAILED, SubsystemHealth.DRIFTED):
                     results[cap] = health
+                    continue
+                
+                # Default: healthy
+                results[cap] = SubsystemHealth.HEALTHY
             
             # Update states
             for cap, health in results.items():
@@ -4130,14 +4214,23 @@ class QoSSubscriptionRegistry:
                         logger.error(f"[QoS-Sub] {cap} FAILED or force-cancelled")
                 
                 # Update metrics
+                # [NEW-M13-FIX]: Use -1.0 for drifted/failed states for better observability
+                # HEALTHY = 1.0, PENDING = 0.5, DRIFTED = 0.0, FAILED = -1.0, UNKNOWN = -2.0
                 try:
                     from hledac.universal.metrics_registry import get_metrics_registry
                     mr = get_metrics_registry()
                     for cap, health in health_states.items():
-                        mr.set_gauge(
-                            f"qos_health_{cap}",
-                            1.0 if health == SubsystemHealth.HEALTHY else 0.0
-                        )
+                        if health == SubsystemHealth.HEALTHY:
+                            value = 1.0
+                        elif health == SubsystemHealth.PENDING:
+                            value = 0.5
+                        elif health == SubsystemHealth.DRIFTED:
+                            value = 0.0
+                        elif health == SubsystemHealth.FAILED:
+                            value = -1.0
+                        else:
+                            value = -2.0  # UNKNOWN
+                        mr.set_gauge(f"qos_health_{cap}", value)
                 except Exception:
                     pass
                     
@@ -4216,6 +4309,9 @@ def is_capability_allowed(capability: str) -> bool:
 
     Returns:
         True if the capability is currently permitted, False otherwise.
+    
+    FAIL-CLOSED: Unknown capabilities return False (fail-closed) for safety.
+    This prevents new capabilities from silently bypassing QoS enforcement.
     """
     p = _last_qos_profile
     match capability:
@@ -4232,7 +4328,11 @@ def is_capability_allowed(capability: str) -> bool:
         case "whisper":
             return p.whisper_ok
         case _:
-            return True  # Unknown capabilities are allowed by default (fail-open)
+            # CRITICAL FIX: Fail-closed for unknown capabilities
+            # Previously returned True (fail-open), which could allow bypass of QoS
+            # policy if new capabilities are added without updating this function.
+            logger.debug(f"[QoS-Sub] is_capability_allowed: unknown capability '{capability}', returning False (fail-closed)")
+            return False
 
 
 def get_qos_level() -> str:

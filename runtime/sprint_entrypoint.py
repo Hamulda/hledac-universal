@@ -100,6 +100,11 @@ class SprintRunContext:
     Replaces ~40+ local variables with a structured dataclass for better
     code organization, testability, and reduced cognitive load.
     
+    MODERN-35: Per-sprint state for previously global resources:
+    - denorm_buffer: SprintDenormBuffer from hot_edges_cache
+    - session_tracker: SessionTracker from darknet_session_provider
+    - duckpgq_graph: DuckPGQGraph from graph_service
+    
     Usage:
         ctx = SprintRunContext(sprint_id="...", phase_times={...})
         await _run_sprint_boot(ctx, query, ...)
@@ -121,6 +126,11 @@ class SprintRunContext:
     store: "DuckDBShadowStore | None" = None
     scheduler: "SprintScheduler | None" = None
     power_assertion: Any = field(default=None)
+    
+    # MODERN-35: Per-sprint state (previously module-level globals)
+    denorm_buffer: Any = field(default=None)  # SprintDenormBuffer
+    session_tracker: Any = field(default=None)  # SessionTracker
+    duckpgq_graph: Any = field(default=None)  # DuckPGQGraph
     
     # Pre-flight state
     uma_baseline_gib: float = 0.0
@@ -241,6 +251,160 @@ def get_sprint_seed_state() -> "SprintSeedState | None":
     """
     global _current_sprint_seed_state
     return _current_sprint_seed_state
+
+
+# ---------------------------------------------------------------------------
+# MODERN-35: Per-Sprint Context Manager
+# ---------------------------------------------------------------------------
+# Manages the lifecycle of previously global resources:
+# - SprintDenormBuffer from hot_edges_cache
+# - SessionTracker from darknet_session_provider
+# - DuckPGQGraph from graph_service
+#
+# This ensures proper isolation between sprints and prevents cross-sprint
+# data contamination.
+# ---------------------------------------------------------------------------
+
+_current_sprint_context: "SprintContextManager | None" = None
+
+
+class SprintContextManager:
+    """
+    MODERN-35: Per-sprint context manager for previously global resources.
+
+    Manages the lifecycle of:
+    - SprintDenormBuffer (hot edges cache)
+    - SessionTracker (darknet session tracking)
+    - DuckPGQGraph (DuckDB graph analytics)
+
+    Usage:
+        ctx_manager = SprintContextManager()
+        await ctx_manager.start()
+        # Use ctx_manager.denorm_buffer, ctx_manager.session_tracker, etc.
+        await ctx_manager.stop()
+    """
+
+    __slots__ = (
+        "_denorm_buffer",
+        "_session_tracker",
+        "_duckpgq_graph",
+        "_started",
+    )
+
+    def __init__(self) -> None:
+        self._denorm_buffer: Any = None
+        self._session_tracker: Any = None
+        self._duckpgq_graph: Any = None
+        self._started: bool = False
+
+    @property
+    def denorm_buffer(self) -> Any:
+        """Get the per-sprint denorm buffer."""
+        return self._denorm_buffer
+
+    @property
+    def session_tracker(self) -> Any:
+        """Get the per-sprint session tracker."""
+        return self._session_tracker
+
+    @property
+    def duckpgq_graph(self) -> Any:
+        """Get the per-sprint DuckPGQ graph."""
+        return self._duckpgq_graph
+
+    async def start(self) -> None:
+        """
+        Initialize per-sprint resources.
+
+        Called at sprint start (boot phase).
+        """
+        if self._started:
+            return
+        self._started = True
+
+        # Initialize SprintDenormBuffer from hot_edges_cache
+        try:
+            from hledac.universal.knowledge.hot_edges_cache import SprintDenormBuffer
+            self._denorm_buffer = SprintDenormBuffer()
+        except Exception:
+            self._denorm_buffer = None
+
+        # Initialize SessionTracker from darknet_session_provider
+        # Use existing singleton via _get_tracker() - it creates one if None exists
+        try:
+            from hledac.universal.transport.darknet_session_provider import _get_tracker
+            self._session_tracker = await _get_tracker()
+        except Exception:
+            self._session_tracker = None
+
+        # Initialize DuckPGQGraph from graph_service
+        try:
+            from hledac.universal.knowledge.graph_service import _get_graph
+            self._duckpgq_graph = _get_graph()
+        except Exception:
+            self._duckpgq_graph = None
+
+    async def stop(self) -> None:
+        """
+        Cleanup per-sprint resources.
+
+        Called at sprint end (teardown phase).
+        """
+        if not self._started:
+            return
+        self._started = False
+
+        # Flush and clear denorm buffer
+        if self._denorm_buffer is not None:
+            try:
+                self._denorm_buffer.flush()
+            except Exception:
+                pass
+            self._denorm_buffer = None
+
+        # Reset session tracker
+        if self._session_tracker is not None:
+            try:
+                if hasattr(self._session_tracker, "reset"):
+                    await self._session_tracker.reset()
+                elif hasattr(self._session_tracker, "close"):
+                    await self._session_tracker.close()
+            except Exception:
+                pass
+            self._session_tracker = None
+
+        # Close DuckPGQ graph
+        if self._duckpgq_graph is not None:
+            try:
+                if hasattr(self._duckpgq_graph, "close"):
+                    self._duckpgq_graph.close()
+            except Exception:
+                pass
+            self._duckpgq_graph = None
+
+    async def __aenter__(self) -> "SprintContextManager":
+        """Async context manager entry."""
+        await self.start()
+        return self
+
+    async def __aexit__(self, exc_type, exc_val, exc_tb) -> None:
+        """Async context manager exit."""
+        await self.stop()
+
+
+def get_current_sprint_context() -> "SprintContextManager | None":
+    """
+    Get the current sprint context manager.
+
+    Returns None if called outside of a sprint context.
+    """
+    return _current_sprint_context
+
+
+def set_current_sprint_context(ctx: "SprintContextManager | None") -> None:
+    """Set the current sprint context manager (internal use)."""
+    global _current_sprint_context
+    _current_sprint_context = ctx
 
 
 from hledac.universal.core.resource_governor import (
@@ -4080,6 +4244,14 @@ async def run_sprint(
     # Create run context for all phases
     ctx = SprintRunContext()
     
+    # MODERN-35: Create and start per-sprint context manager
+    # This manages lifecycle of previously global resources:
+    # - SprintDenormBuffer (hot edges cache)
+    # - SessionTracker (darknet session tracking)
+    # - DuckPGQGraph (DuckDB graph analytics)
+    sprint_ctx_manager = SprintContextManager()
+    set_current_sprint_context(sprint_ctx_manager)
+    
     # Validate WARC directory in replay mode
     if replay_seed is not None and warc_dir is None:
         logger.warning(
@@ -4088,6 +4260,14 @@ async def run_sprint(
         )
     
     try:
+        # MODERN-35: Initialize per-sprint resources BEFORE boot phase
+        await sprint_ctx_manager.start()
+        
+        # Wire per-sprint resources into SprintRunContext for easy access
+        ctx.denorm_buffer = sprint_ctx_manager.denorm_buffer
+        ctx.session_tracker = sprint_ctx_manager.session_tracker
+        ctx.duckpgq_graph = sprint_ctx_manager.duckpgq_graph
+        
         # PHASE 1: BOOT - Pre-flight, initialization, lock acquisition
         await _run_sprint_boot(
             ctx=ctx,
@@ -4133,6 +4313,11 @@ async def run_sprint(
     finally:
         # PHASE 4: TEARDOWN - Resource cleanup (always runs)
         await _run_sprint_teardown(ctx)
+        
+        # MODERN-35: Stop per-sprint context manager AFTER teardown
+        # This ensures proper cleanup of per-sprint resources
+        await sprint_ctx_manager.stop()
+        set_current_sprint_context(None)
 
 
 
