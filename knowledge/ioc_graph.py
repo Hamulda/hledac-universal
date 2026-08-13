@@ -165,7 +165,9 @@ class IOCGraph:
     __slots__ = tuple(('_BUFFER_FLUSH_SIZE', '_buffer_lock', '_closed', '_conn', '_db', '_db_path',
                        '_executor', '_flush_lock', '_ioc_buffer', '_is_memory_mode',
                        '_obs_buffer', '_jtms', '_decay_lambda', '_schema_has_temporal',
-                       '_schema_has_embeddings', '_schema_has_gnn_scores', '_OBS_BUFFER_FLUSH_SIZE'))
+                       '_schema_has_embeddings', '_schema_has_gnn_scores', '_OBS_BUFFER_FLUSH_SIZE',
+                       '_schema_has_multimedia', '_face_buffer', '_voice_buffer',
+                       '_FACE_BUFFER_FLUSH_SIZE', '_VOICE_BUFFER_FLUSH_SIZE'))
 
     def __init__(self, db_path: Path | None=None, decay_lambda: float = 0.01,
                  *, memory_mode: bool = False) -> None:
@@ -210,6 +212,12 @@ class IOCGraph:
         # SAFE-4: Schema flags for GNN embedding support
         self._schema_has_embeddings: bool = False
         self._schema_has_gnn_scores: bool = False
+        # NEXTGEN-03: Multimedia schema flags and buffers
+        self._schema_has_multimedia: bool = False
+        self._face_buffer: list[tuple[str, list[float], str, float]] = []  # (id, embedding, source_hash, confidence)
+        self._voice_buffer: list[tuple[str, list[float], str, float]] = []  # (id, embedding, source_hash, confidence)
+        self._FACE_BUFFER_FLUSH_SIZE: int = 100
+        self._VOICE_BUFFER_FLUSH_SIZE: int = 100
 
     async def buffer_ioc(
         self,
@@ -259,6 +267,149 @@ class IOCGraph:
             # 3.2 FIX: Auto-flush to prevent unbounded buffer growth
             if len(self._obs_buffer) >= self._OBS_BUFFER_FLUSH_SIZE:
                 await self.flush_buffers()
+
+    async def buffer_face(
+        self,
+        face_id: str,
+        embedding: list[float],
+        source_image_hash: str,
+        confidence: float = 0.9,
+    ) -> None:
+        """
+        NEXTGEN-03: Buffer face embedding for cross-modal identity fusion.
+
+        Face embeddings are stored in FACE nodes and linked to IOC identities
+        via HAS_FACE relationships. Uses LSH indexing for fast similarity search.
+
+        Args:
+            face_id: Unique identifier for this face (e.g., "face_{sha256}")
+            embedding: 512-dim face embedding vector
+            source_image_hash: SHA256 hash of source image for provenance
+            confidence: Face detection confidence (0-1)
+        """
+        if self._closed:
+            return
+        async with self._buffer_lock:
+            self._face_buffer.append((face_id, embedding, source_image_hash, confidence))
+            if len(self._face_buffer) >= self._FACE_BUFFER_FLUSH_SIZE:
+                await self.flush_buffers()
+
+    async def buffer_voiceprint(
+        self,
+        voice_id: str,
+        embedding: list[float],
+        source_audio_hash: str,
+        confidence: float = 0.85,
+        duration_s: float = 0.0,
+    ) -> None:
+        """
+        NEXTGEN-03: Buffer voiceprint embedding for cross-modal identity fusion.
+
+        Voiceprint embeddings are stored in VOICEPRINT nodes and linked to IOC
+        identities via HAS_VOICEPRINT relationships.
+
+        Args:
+            voice_id: Unique identifier for this voiceprint (e.g., "voice_{sha256}")
+            embedding: 256-dim speaker embedding vector
+            source_audio_hash: SHA256 hash of source audio for provenance
+            confidence: Voice quality confidence (0-1)
+            duration_s: Duration of voice sample in seconds
+        """
+        if self._closed:
+            return
+        async with self._buffer_lock:
+            self._voice_buffer.append((voice_id, embedding, source_audio_hash, confidence, duration_s))
+            if len(self._voice_buffer) >= self._VOICE_BUFFER_FLUSH_SIZE:
+                await self.flush_buffers()
+
+    async def link_identity_face(
+        self,
+        ioc_id: str,
+        face_id: str,
+        confidence: float = 0.9,
+        source_type: str = "multimedia",
+    ) -> None:
+        """
+        NEXTGEN-03: Link an IOC identity to a FACE node via HAS_FACE relationship.
+
+        Args:
+            ioc_id: IOC node ID (identity)
+            face_id: FACE node ID
+            confidence: Attribution confidence (0-1)
+            source_type: Source of the linkage (e.g., "media", "social")
+        """
+        if self._closed or self._conn is None:
+            return
+        ts = time.time()
+        try:
+            conn = self._conn
+            conn.execute(
+                'MATCH (i:IOC), (f:FACE) WHERE i.id = $ioc AND f.id = $face '
+                'CREATE (i)-[r:HAS_FACE {confidence: $conf, source_type: $src, first_seen: $ts, last_seen: $ts}]->(f)',
+                {'ioc': ioc_id, 'face': face_id, 'conf': confidence, 'src': source_type, 'ts': ts}
+            )
+        except Exception as e:
+            logger.debug('[IOCGraph] link_identity_face failed: %s', e)
+
+    async def link_identity_voice(
+        self,
+        ioc_id: str,
+        voice_id: str,
+        confidence: float = 0.85,
+        source_type: str = "multimedia",
+    ) -> None:
+        """
+        NEXTGEN-03: Link an IOC identity to a VOICEPRINT node via HAS_VOICEPRINT relationship.
+
+        Args:
+            ioc_id: IOC node ID (identity)
+            voice_id: VOICEPRINT node ID
+            confidence: Attribution confidence (0-1)
+            source_type: Source of the linkage
+        """
+        if self._closed or self._conn is None:
+            return
+        ts = time.time()
+        try:
+            conn = self._conn
+            conn.execute(
+                'MATCH (i:IOC), (v:VOICEPRINT) WHERE i.id = $ioc AND v.id = $voice '
+                'CREATE (i)-[r:HAS_VOICEPRINT {confidence: $conf, source_type: $src, first_seen: $ts, last_seen: $ts}]->(v)',
+                {'ioc': ioc_id, 'voice': voice_id, 'conf': confidence, 'src': source_type, 'ts': ts}
+            )
+        except Exception as e:
+            logger.debug('[IOCGraph] link_identity_voice failed: %s', e)
+
+    async def link_face_to_voice(
+        self,
+        face_id: str,
+        voice_id: str,
+        confidence: float = 0.75,
+        face_weight: float = 0.5,
+        voice_weight: float = 0.5,
+    ) -> None:
+        """
+        NEXTGEN-03: Link a FACE to a VOICEPRINT as the same person via CROSS_MODAL.
+
+        Args:
+            face_id: FACE node ID
+            voice_id: VOICEPRINT node ID
+            confidence: Combined match confidence
+            face_weight: Weight of face signal (0-1)
+            voice_weight: Weight of voice signal (0-1)
+        """
+        if self._closed or self._conn is None:
+            return
+        ts = time.time()
+        try:
+            conn = self._conn
+            conn.execute(
+                'MATCH (f:FACE), (v:VOICEPRINT) WHERE f.id = $face AND v.id = $voice '
+                'CREATE (f)-[r:CROSS_MODAL {confidence: $conf, face_weight: $fw, voice_weight: $vw, first_seen: $ts, last_seen: $ts}]->(v)',
+                {'face': face_id, 'voice': voice_id, 'conf': confidence, 'fw': face_weight, 'vw': voice_weight, 'ts': ts}
+            )
+        except Exception as e:
+            logger.debug('[IOCGraph] link_face_to_voice failed: %s', e)
 
     async def buffer_ioc_with_justification(
         self,
@@ -527,13 +678,26 @@ class IOCGraph:
 
         ioc_created: list[str] = []
         obs_recorded: int = 0
+        face_created: int = 0
+        voice_created: int = 0
         failed: bool = False
+
+        # NEXTGEN-03: Copy multimedia buffers (always initialized in __init__)
+        face_copy = self._face_buffer[:]
+        voice_copy = self._voice_buffer[:]
+
         try:
             if ioc_copy:
                 ioc_created = await self.upsert_ioc_batch(ioc_copy)
             if obs_copy:
                 await self._record_observation_batch_sync_async(obs_copy)
                 obs_recorded = len(obs_copy)
+            # NEXTGEN-03: Flush face embeddings
+            if face_copy and self._schema_has_multimedia:
+                face_created = await self._flush_face_buffer(face_copy)
+            # NEXTGEN-03: Flush voiceprint embeddings
+            if voice_copy and self._schema_has_multimedia:
+                voice_created = await self._flush_voice_buffer(voice_copy)
         except Exception as e:
             import logging
             logging.warning(f'[IOCGraph] flush_buffers failed: {e}')
@@ -541,15 +705,93 @@ class IOCGraph:
             # Restore buffers on failure so data is not lost
             self._ioc_buffer.extend(ioc_copy)
             self._obs_buffer.extend(obs_copy)
+            # NEXTGEN-03: Restore multimedia buffers on failure
+            self._face_buffer.extend(face_copy)
+            self._voice_buffer.extend(voice_copy)
         
         # Only clear buffers on success
         if not failed:
             self._ioc_buffer.clear()
             self._obs_buffer.clear()
+            # NEXTGEN-03: Clear multimedia buffers on success
+            self._face_buffer.clear()
+            self._voice_buffer.clear()
             import logging
-            logging.info(f'[IOCGraph] Buffer flushed: {len(ioc_created)} IOCs newly created, {obs_recorded} observations')
+            logging.info(
+                f'[IOCGraph] Buffer flushed: {len(ioc_created)} IOCs, '
+                f'{obs_recorded} obs, {face_created} faces, {voice_created} voices'
+            )
         
-        return {'ioc_created': len(ioc_created), 'obs_flushed': obs_recorded}
+        return {
+            'ioc_created': len(ioc_created),
+            'obs_flushed': obs_recorded,
+            'faces_created': face_created,
+            'voices_created': voice_created,
+        }
+
+    async def _flush_face_buffer(self, face_copy: list[tuple[str, list[float], str, float]]) -> int:
+        """Flush face embeddings to Kuzu FACE nodes. Returns count of created nodes."""
+        if not self._conn or not face_copy:
+            return 0
+
+        def _flush_sync():
+            count = 0
+            ts = time.time()
+            for face_id, embedding, source_hash, confidence in face_copy:
+                try:
+                    # Store embedding in cross-modal index (Rust)
+                    self._store_crossmodal_face(face_id, embedding)
+                    # Create FACE node in Kuzu
+                    self._conn.execute(
+                        'CREATE (:FACE {id: $id, embedding_dim: $dim, source_image_hash: $hash, confidence: $conf, first_seen: $ts, last_seen: $ts})',
+                        {'id': face_id, 'dim': len(embedding), 'hash': source_hash, 'conf': confidence, 'ts': ts}
+                    )
+                    count += 1
+                except Exception as e:
+                    logger.debug('[IOCGraph] _flush_face_buffer: %s', e)
+            return count
+
+        return await asyncio.to_thread(_flush_sync)
+
+    async def _flush_voice_buffer(self, voice_copy: list[tuple[str, list[float], str, float, float]]) -> int:
+        """Flush voiceprint embeddings to Kuzu VOICEPRINT nodes. Returns count of created nodes."""
+        if not self._conn or not voice_copy:
+            return 0
+
+        def _flush_sync():
+            count = 0
+            ts = time.time()
+            for voice_id, embedding, source_hash, confidence, duration in voice_copy:
+                try:
+                    # Store embedding in cross-modal index (Rust)
+                    self._store_crossmodal_voice(voice_id, embedding)
+                    # Create VOICEPRINT node in Kuzu
+                    self._conn.execute(
+                        'CREATE (:VOICEPRINT {id: $id, embedding_dim: $dim, source_audio_hash: $hash, confidence: $conf, duration_s: $dur, first_seen: $ts, last_seen: $ts})',
+                        {'id': voice_id, 'dim': len(embedding), 'hash': source_hash, 'conf': confidence, 'dur': duration, 'ts': ts}
+                    )
+                    count += 1
+                except Exception as e:
+                    logger.debug('[IOCGraph] _flush_voice_buffer: %s', e)
+            return count
+
+        return await asyncio.to_thread(_flush_sync)
+
+    def _store_crossmodal_face(self, face_id: str, embedding: list[float]) -> None:
+        """Store face embedding in Rust cross-modal index."""
+        try:
+            from hledac.universal.core.rust_backend import rust
+            rust.ane.crossmodal_store_face(face_id, embedding)
+        except Exception:
+            pass  # Non-critical: Rust index is optional
+
+    def _store_crossmodal_voice(self, voice_id: str, embedding: list[float]) -> None:
+        """Store voiceprint embedding in Rust cross-modal index."""
+        try:
+            from hledac.universal.core.rust_backend import rust
+            rust.ane.crossmodal_store_voice(voice_id, embedding)
+        except Exception:
+            pass  # Non-critical: Rust index is optional
 
     async def _record_observation_batch_sync_async(self, obs: list[tuple[str, str, str, float, str]]) -> None:
         """Async wrapper — runs sync impl on background thread via asyncio.to_thread."""
@@ -728,6 +970,122 @@ class IOCGraph:
         except Exception: pass
         try: conn.execute('CREATE REL TABLE PREDICTED(FROM IOC TO IOC, confidence DOUBLE, adamic_adar DOUBLE, jaccard DOUBLE, pref_attach DOUBLE, common_neighbors INTEGER, method STRING, created_at DOUBLE, verified BOOLEAN DEFAULT false)')
         except Exception: pass
+        # NEXTGEN-03: Multimedia schema - FACE and VOICEPRINT nodes with relationships
+        self._create_multimedia_schema(conn)
+
+    def _create_multimedia_schema(self, conn):
+        """
+        Create multimedia schema for cross-modal identity fusion (NEXTGEN-03).
+        
+        Uses CREATE TABLE IF NOT EXISTS to be idempotent - safe for concurrent
+        initialization or when schema already exists.
+        """
+        import logging
+        logger = logging.getLogger(__name__)
+        
+        # FACE node: stores face embedding for identity matching
+        try:
+            conn.execute(
+                'CREATE NODE TABLE IF NOT EXISTS FACE('
+                'id STRING PRIMARY KEY, '
+                'embedding_dim INTEGER, '  # 512 for FaceNet
+                'source_image_hash STRING, '  # SHA256 of source image
+                'confidence DOUBLE, '  # Face detection confidence (0-1)
+                'first_seen DOUBLE, '
+                'last_seen DOUBLE)'
+            )
+            logger.debug('[IOCGraph] FACE node table created or already exists')
+        except Exception as e:
+            logger.warning(f'[IOCGraph] Failed to create FACE table (may already exist): {e}')
+        
+        # VOICEPRINT node: stores speaker embedding for voice identity
+        try:
+            conn.execute(
+                'CREATE NODE TABLE IF NOT EXISTS VOICEPRINT('
+                'id STRING PRIMARY KEY, '
+                'embedding_dim INTEGER, '  # 256 for speaker embedding
+                'source_audio_hash STRING, '  # SHA256 of source audio
+                'confidence DOUBLE, '  # Voice quality confidence (0-1)
+                'duration_s DOUBLE, '  # Duration of voice sample
+                'first_seen DOUBLE, '
+                'last_seen DOUBLE)'
+            )
+            logger.debug('[IOCGraph] VOICEPRINT node table created or already exists')
+        except Exception as e:
+            logger.warning(f'[IOCGraph] Failed to create VOICEPRINT table (may already exist): {e}')
+        
+        # HAS_FACE: links IOC (identity) to FACE node
+        try:
+            conn.execute(
+                'CREATE REL TABLE IF NOT EXISTS HAS_FACE('
+                'FROM IOC TO FACE, '
+                'confidence DOUBLE, '  # Attribution confidence
+                'source_type STRING, '  # media, social, etc.
+                'first_seen DOUBLE, '
+                'last_seen DOUBLE)'
+            )
+            logger.debug('[IOCGraph] HAS_FACE relationship table created or already exists')
+        except Exception as e:
+            logger.warning(f'[IOCGraph] Failed to create HAS_FACE table (may already exist): {e}')
+        
+        # HAS_VOICEPRINT: links IOC (identity) to VOICEPRINT node
+        try:
+            conn.execute(
+                'CREATE REL TABLE IF NOT EXISTS HAS_VOICEPRINT('
+                'FROM IOC TO VOICEPRINT, '
+                'confidence DOUBLE, '
+                'source_type STRING, '
+                'first_seen DOUBLE, '
+                'last_seen DOUBLE)'
+            )
+            logger.debug('[IOCGraph] HAS_VOICEPRINT relationship table created or already exists')
+        except Exception as e:
+            logger.warning(f'[IOCGraph] Failed to create HAS_VOICEPRINT table (may already exist): {e}')
+        
+        # SAME_IDENTITY: links two FACE nodes as same person
+        try:
+            conn.execute(
+                'CREATE REL TABLE IF NOT EXISTS SAME_IDENTITY('
+                'FROM FACE TO FACE, '
+                'confidence DOUBLE, '  # Face match confidence
+                'method STRING, '  # facenet, arcface, etc.
+                'first_seen DOUBLE, '
+                'last_seen DOUBLE)'
+            )
+            logger.debug('[IOCGraph] SAME_IDENTITY relationship table created or already exists')
+        except Exception as e:
+            logger.warning(f'[IOCGraph] Failed to create SAME_IDENTITY table (may already exist): {e}')
+        
+        # SAME_VOICE: links two VOICEPRINT nodes as same speaker
+        try:
+            conn.execute(
+                'CREATE REL TABLE IF NOT EXISTS SAME_VOICE('
+                'FROM VOICEPRINT TO VOICEPRINT, '
+                'confidence DOUBLE, '  # Voice match confidence
+                'method STRING, '  # xvectornet, etc.
+                'first_seen DOUBLE, '
+                'last_seen DOUBLE)'
+            )
+            logger.debug('[IOCGraph] SAME_VOICE relationship table created or already exists')
+        except Exception as e:
+            logger.warning(f'[IOCGraph] Failed to create SAME_VOICE table (may already exist): {e}')
+        
+        # CROSS_MODAL: links FACE to VOICEPRINT as same identity
+        try:
+            conn.execute(
+                'CREATE REL TABLE IF NOT EXISTS CROSS_MODAL('
+                'FROM FACE TO VOICEPRINT, '
+                'confidence DOUBLE, '  # Combined face+voice confidence
+                'face_weight DOUBLE, '  # Weight of face signal
+                'voice_weight DOUBLE, '  # Weight of voice signal
+                'first_seen DOUBLE, '
+                'last_seen DOUBLE)'
+            )
+            logger.debug('[IOCGraph] CROSS_MODAL relationship table created or already exists')
+        except Exception as e:
+            logger.warning(f'[IOCGraph] Failed to create CROSS_MODAL table (may already exist): {e}')
+        
+        self._schema_has_multimedia = True
 
     def _copy_nodes(self, target_conn):
         """Copy IOC nodes to target DB."""

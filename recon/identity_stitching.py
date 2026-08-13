@@ -303,6 +303,11 @@ class IdentityProfile:
         attributes: Additional metadata
         created_at: Profile creation timestamp
         updated_at: Last update timestamp
+        # NEXTGEN-03: Cross-modal identity fields
+        face_embeddings: List of face embedding vectors (512d each)
+        voice_embeddings: List of voiceprint embedding vectors (256d each)
+        face_ids: List of face node IDs
+        voice_ids: List of voiceprint node IDs
     """
     id: str
     primary_name: str
@@ -314,6 +319,11 @@ class IdentityProfile:
     attributes: dict[str, Any] = field(default_factory=dict)
     created_at: datetime = field(default_factory=datetime.now)
     updated_at: datetime | None = None
+    # NEXTGEN-03: Cross-modal identity fields
+    face_embeddings: list[list[float]] = field(default_factory=list)
+    voice_embeddings: list[list[float]] = field(default_factory=list)
+    face_ids: list[str] = field(default_factory=list)
+    voice_ids: list[str] = field(default_factory=list)
 
     def __post_init__(self) -> None:
         if self.updated_at is None:
@@ -325,6 +335,28 @@ class IdentityProfile:
         self.usernames.append(entry)
         object.__setattr__(self, 'updated_at', datetime.now(UTC))
         return entry
+
+    def add_face(self, embedding: list[float], face_id: str | None = None) -> str:
+        """NEXTGEN-03: Add a face embedding to this profile."""
+        if face_id is None:
+            import xxhash
+            import time
+            face_id = f"face_{xxhash.xxh64(str(time.time()).encode()).hexdigest()[:16]}"
+        self.face_embeddings.append(embedding)
+        self.face_ids.append(face_id)
+        object.__setattr__(self, 'updated_at', datetime.now(UTC))
+        return face_id
+
+    def add_voice(self, embedding: list[float], voice_id: str | None = None) -> str:
+        """NEXTGEN-03: Add a voiceprint embedding to this profile."""
+        if voice_id is None:
+            import xxhash
+            import time
+            voice_id = f"voice_{xxhash.xxh64(str(time.time()).encode()).hexdigest()[:16]}"
+        self.voice_embeddings.append(embedding)
+        self.voice_ids.append(voice_id)
+        object.__setattr__(self, 'updated_at', datetime.now(UTC))
+        return voice_id
 
     def get_username(self, platform: str) -> str | None:
         """Get username for a specific platform."""
@@ -343,7 +375,23 @@ class IdentityProfile:
 
     def to_dict(self) -> dict[str, Any]:
         """Convert profile to dictionary."""
-        return {'id': self.id, 'primary_name': self.primary_name, 'aliases': self.aliases, 'emails': self.emails, 'usernames': [u.to_dict() for u in self.usernames], 'confidence': self.confidence, 'evidence': self.evidence, 'attributes': self.attributes, 'created_at': self.created_at.isoformat() if self.created_at else None, 'updated_at': self.updated_at.isoformat() if self.updated_at else None}
+        return {
+            'id': self.id,
+            'primary_name': self.primary_name,
+            'aliases': self.aliases,
+            'emails': self.emails,
+            'usernames': [u.to_dict() for u in self.usernames],
+            'confidence': self.confidence,
+            'evidence': self.evidence,
+            'attributes': self.attributes,
+            'created_at': self.created_at.isoformat() if self.created_at else None,
+            'updated_at': self.updated_at.isoformat() if self.updated_at else None,
+            # NEXTGEN-03: Cross-modal fields
+            'face_ids': self.face_ids,
+            'voice_ids': self.voice_ids,
+            'has_faces': len(self.face_embeddings) > 0,
+            'has_voices': len(self.voice_embeddings) > 0,
+        }
 
 @dataclass(frozen=True, slots=True)
 class IdentityMatch:
@@ -444,8 +492,30 @@ class IdentityStitchingEngine:
         # Stitch identities
         stitched = engine.stitch_identities(match_threshold=0.8)
     """
-    DEFAULT_SIGNAL_WEIGHTS = {'username_exact': 1.0, 'username_similarity': 0.7, 'email_exact': 1.0, 'email_domain': 0.3, 'alias_match': 0.8, 'style_similarity': 0.5, 'stylometry': 0.6, 'temporal_overlap': 0.4, 'network_overlap': 0.6, 'unicode_fingerprint': 0.8}
-    __slots__ = tuple(('_alias_index', '_email_index', '_identity_graph', '_lsh_index', '_lsh_fingerprint_cache', '_match_cache', '_platform_index', '_profiles', '_similarity_cache', '_stats', '_username_index', '_stylometry_analyzer', '_stylometry_cache', '_transliteration_enabled', '_unicode_fingerprint_cache', 'enable_fuzzy', 'enable_lsh', 'enable_unicode_attribution', 'max_memory_mb', 'signal_weights', 'similarity_threshold'))
+    DEFAULT_SIGNAL_WEIGHTS = {
+        'username_exact': 1.0,
+        'username_similarity': 0.7,
+        'email_exact': 1.0,
+        'email_domain': 0.3,
+        'alias_match': 0.8,
+        'style_similarity': 0.5,
+        'stylometry': 0.6,
+        'temporal_overlap': 0.4,
+        'network_overlap': 0.6,
+        'unicode_fingerprint': 0.8,
+        # NEXTGEN-03: Cross-modal signal weights
+        'face_match': 0.9,
+        'voice_match': 0.85,
+        'crossmodal': 0.8,
+    }
+    __slots__ = tuple(('_alias_index', '_email_index', '_identity_graph', '_lsh_index',
+                       '_lsh_fingerprint_cache', '_match_cache', '_platform_index', '_profiles',
+                       '_similarity_cache', '_stats', '_username_index', '_stylometry_analyzer',
+                       '_stylometry_cache', '_transliteration_enabled', '_unicode_fingerprint_cache',
+                       # NEXTGEN-03: Cross-modal slots
+                       '_face_lsh_index', '_voice_lsh_index', '_crossmodal_available',
+                       'enable_fuzzy', 'enable_lsh', 'enable_unicode_attribution',
+                       'max_memory_mb', 'signal_weights', 'similarity_threshold'))
 
     def __init__(self, similarity_threshold: float=0.7, signal_weights: dict[str, float] | None=None, max_memory_mb: int=512, enable_fuzzy: bool=True, enable_transliteration: bool=True, enable_stylometry: bool=True, enable_unicode_attribution: bool=True):
         """
@@ -492,7 +562,24 @@ class IdentityStitchingEngine:
         self._stylometry_cache: _IdentityCache[float] = _IdentityCache[float](
             max_size=2048, ttl_s=7200, max_memory_mb=max_memory_mb, memory_pressure_threshold=0.8,
         ) if enable_stylometry else _IdentityCache[float](max_size=0, ttl_s=0, max_memory_mb=max_memory_mb, memory_pressure_threshold=0.8)
-        logger.info(f'IdentityStitchingEngine initialized (threshold={similarity_threshold}, fuzzy={self.enable_fuzzy}, lsh={self.enable_lsh}, translit={self._transliteration_enabled}, stylometry={enable_stylometry}, unicode_attr={self.enable_unicode_attribution})')
+        # NEXTGEN-03: Cross-modal LSH indexes for face and voiceprint matching
+        self._crossmodal_available: bool = False
+        self._face_lsh_index: Any | None = None
+        self._voice_lsh_index: Any | None = None
+        self._init_crossmodal_indexes()
+        logger.info(f'IdentityStitchingEngine initialized (threshold={similarity_threshold}, fuzzy={self.enable_fuzzy}, lsh={self.enable_lsh}, translit={self._transliteration_enabled}, stylometry={enable_stylometry}, unicode_attr={self.enable_unicode_attribution}, crossmodal={self._crossmodal_available})')
+
+    def _init_crossmodal_indexes(self) -> None:
+        """NEXTGEN-03: Initialize cross-modal LSH indexes for face and voice matching."""
+        try:
+            from hledac.universal.core.rust_backend import rust
+            if hasattr(rust.ane, 'crossmodal_store_face'):
+                self._crossmodal_available = True
+                logger.info('Cross-modal LSH indexes available (Rust backend)')
+            else:
+                logger.warning('Cross-modal LSH indexes not available (Rust backend missing)')
+        except ImportError:
+            logger.warning('Cross-modal LSH indexes not available (Rust import failed)')
 
     def add_profile(self, profile: IdentityProfile) -> bool:
         """
@@ -543,6 +630,12 @@ class IdentityStitchingEngine:
             self._alias_index[normalized].add(profile.id)
         normalized_name = self._normalize_text_translingual(profile.primary_name)
         self._alias_index[normalized_name].add(profile.id)
+        
+        # NEXTGEN-03: Register face embeddings in cross-modal LSH index
+        self._register_face_embeddings(profile)
+        
+        # NEXTGEN-03: Register voiceprint embeddings in cross-modal LSH index
+        self._register_voice_embeddings(profile)
 
     def _register_profile_lsh(self, profile: IdentityProfile):
         """Register profile fingerprint in LSH index. Call ONLY on first add.
@@ -551,6 +644,54 @@ class IdentityStitchingEngine:
             fp = self._build_lsh_fingerprint(profile)
             self._lsh_fingerprint_cache[profile.id] = fp
             self._lsh_index.insert(profile.id, fp)
+
+    def _register_face_embeddings(self, profile: IdentityProfile) -> None:
+        """
+        NEXTGEN-03: Register face embeddings in cross-modal LSH index.
+        
+        Creates a reverse mapping from face_id to profile_id for identity comparison.
+        Also stores the embedding in the Rust cross-modal index.
+        """
+        if not self._crossmodal_available:
+            return
+        
+        try:
+            from hledac.universal.core.rust_backend import rust
+            ane = rust.ane
+            
+            # Register each face embedding
+            for face_id, embedding in zip(profile.face_ids, profile.face_embeddings):
+                # Store in Rust cross-modal index
+                try:
+                    ane.crossmodal_store_face(face_id, embedding)
+                except Exception as e:
+                    logger.debug(f'Failed to store face embedding {face_id}: {e}')
+        except ImportError:
+            logger.debug('Rust backend not available for face embedding registration')
+
+    def _register_voice_embeddings(self, profile: IdentityProfile) -> None:
+        """
+        NEXTGEN-03: Register voiceprint embeddings in cross-modal LSH index.
+        
+        Creates a reverse mapping from voice_id to profile_id for identity comparison.
+        Also stores the embedding in the Rust cross-modal index.
+        """
+        if not self._crossmodal_available:
+            return
+        
+        try:
+            from hledac.universal.core.rust_backend import rust
+            ane = rust.ane
+            
+            # Register each voiceprint embedding
+            for voice_id, embedding in zip(profile.voice_ids, profile.voice_embeddings):
+                # Store in Rust cross-modal index
+                try:
+                    ane.crossmodal_store_voice(voice_id, embedding)
+                except Exception as e:
+                    logger.debug(f'Failed to store voiceprint embedding {voice_id}: {e}')
+        except ImportError:
+            logger.debug('Rust backend not available for voiceprint embedding registration')
 
     def _build_lsh_fingerprint(self, profile: IdentityProfile) -> int:
         """Build 64-bit SimHash fingerprint pro LSH candidate pre-filtering."""
@@ -1088,6 +1229,170 @@ class IdentityStitchingEngine:
                     evidence.append(f'Different usernames on {platform}: {u1} vs {u2}')
         return signals, evidence
 
+    def _compute_face_signal(
+        self,
+        profile_a: IdentityProfile,
+        profile_b: IdentityProfile,
+    ) -> tuple[dict[str, float], list[str]]:
+        """
+        NEXTGEN-03: Compute face embedding similarity signal.
+
+        Compares face embeddings between two profiles using direct embedding
+        comparison when profiles share face IDs, or via cross-modal LSH index
+        for candidate retrieval.
+        
+        FIX: Direct comparison when profiles share face_ids (same source),
+        LSH lookup when comparing independent profiles.
+        """
+        signals: dict[str, float] = {}
+        evidence: list[str] = []
+
+        # No face embeddings to compare
+        if not profile_a.face_embeddings or not profile_b.face_embeddings:
+            return signals, evidence
+
+        # Method 1: Direct comparison for shared face_ids
+        # If both profiles have embeddings with the same face_id, compare directly
+        shared_face_ids = set(profile_a.face_ids) & set(profile_b.face_ids)
+        if shared_face_ids:
+            # Direct cosine similarity for shared embeddings
+            for face_id in shared_face_ids:
+                try:
+                    idx_a = profile_a.face_ids.index(face_id)
+                    idx_b = profile_b.face_ids.index(face_id)
+                    emb_a = profile_a.face_embeddings[idx_a]
+                    emb_b = profile_b.face_embeddings[idx_b]
+                    
+                    similarity = self._cosine_similarity(emb_a, emb_b)
+                    if similarity >= 0.7:
+                        signals['face_match'] = float(similarity)
+                        evidence.append(f'Face match (shared ID {face_id[:8]}...): similarity={similarity:.2f}')
+                        return signals, evidence
+                except (ValueError, IndexError):
+                    continue
+
+        # Method 2: LSH-based lookup for independent profiles
+        if not self._crossmodal_available:
+            return signals, evidence
+
+        try:
+            from hledac.universal.core.rust_backend import rust
+            ane = rust.ane
+
+            # Find best face match between profiles via LSH
+            best_similarity = 0.0
+            best_match = None
+
+            for i, emb_a in enumerate(profile_a.face_embeddings):
+                # Query LSH index with broader search
+                matches = ane.crossmodal_query_face(
+                    emb_a,
+                    max_results=10,
+                    min_similarity=0.5,
+                )
+                # Find matches belonging to profile_b
+                for node_id, similarity in matches:
+                    if node_id in profile_b.face_ids:
+                        if similarity > best_similarity:
+                            best_similarity = similarity
+                            best_match = node_id
+
+            if best_similarity >= 0.7:
+                signals['face_match'] = float(best_similarity)
+                evidence.append(f'Face match (via LSH): similarity={best_similarity:.2f}')
+        except Exception as e:
+            logger.debug(f'Face signal computation failed: {e}')
+
+        return signals, evidence
+
+    @staticmethod
+    def _cosine_similarity(a: list[float], b: list[float]) -> float:
+        """Compute cosine similarity between two vectors."""
+        if len(a) != len(b) or not a:
+            return 0.0
+        dot = sum(x * y for x, y in zip(a, b))
+        norm_a = sum(x * x for x in a) ** 0.5
+        norm_b = sum(x * x for x in b) ** 0.5
+        if norm_a == 0 or norm_b == 0:
+            return 0.0
+        return dot / (norm_a * norm_b)
+
+    def _compute_voice_signal(
+        self,
+        profile_a: IdentityProfile,
+        profile_b: IdentityProfile,
+    ) -> tuple[dict[str, float], list[str]]:
+        """
+        NEXTGEN-03: Compute voiceprint embedding similarity signal.
+
+        Compares voiceprint embeddings between two profiles using direct embedding
+        comparison when profiles share voice IDs, or via cross-modal LSH index
+        for candidate retrieval.
+        
+        FIX: Direct comparison when profiles share voice_ids (same source),
+        LSH lookup when comparing independent profiles.
+        """
+        signals: dict[str, float] = {}
+        evidence: list[str] = []
+
+        # No voiceprint embeddings to compare
+        if not profile_a.voice_embeddings or not profile_b.voice_embeddings:
+            return signals, evidence
+
+        # Method 1: Direct comparison for shared voice_ids
+        # If both profiles have embeddings with the same voice_id, compare directly
+        shared_voice_ids = set(profile_a.voice_ids) & set(profile_b.voice_ids)
+        if shared_voice_ids:
+            # Direct cosine similarity for shared embeddings
+            for voice_id in shared_voice_ids:
+                try:
+                    idx_a = profile_a.voice_ids.index(voice_id)
+                    idx_b = profile_b.voice_ids.index(voice_id)
+                    emb_a = profile_a.voice_embeddings[idx_a]
+                    emb_b = profile_b.voice_embeddings[idx_b]
+                    
+                    similarity = self._cosine_similarity(emb_a, emb_b)
+                    if similarity >= 0.7:
+                        signals['voice_match'] = float(similarity)
+                        evidence.append(f'Voice match (shared ID {voice_id[:8]}...): similarity={similarity:.2f}')
+                        return signals, evidence
+                except (ValueError, IndexError):
+                    continue
+
+        # Method 2: LSH-based lookup for independent profiles
+        if not self._crossmodal_available:
+            return signals, evidence
+
+        try:
+            from hledac.universal.core.rust_backend import rust
+            ane = rust.ane
+
+            # Find best voice match between profiles via LSH
+            best_similarity = 0.0
+            best_match = None
+
+            for i, emb_a in enumerate(profile_a.voice_embeddings):
+                # Query LSH index with broader search
+                matches = ane.crossmodal_query_voice(
+                    emb_a,
+                    max_results=10,
+                    min_similarity=0.5,
+                )
+                # Find matches belonging to profile_b
+                for node_id, similarity in matches:
+                    if node_id in profile_b.voice_ids:
+                        if similarity > best_similarity:
+                            best_similarity = similarity
+                            best_match = node_id
+
+            if best_similarity >= 0.7:
+                signals['voice_match'] = float(best_similarity)
+                evidence.append(f'Voice match (via LSH): similarity={best_similarity:.2f}')
+        except Exception as e:
+            logger.debug(f'Voice signal computation failed: {e}')
+
+        return signals, evidence
+
     @staticmethod
     def _aggregate_signals(signals: dict[str, float], weights: dict[str, float]) -> float:
         """Aggregate weighted signals into final score."""
@@ -1142,6 +1447,16 @@ class IdentityStitchingEngine:
 
         # Platform overlap
         s, e = self._compute_platform_signal(profile_a, profile_b)
+        signals.update(s)
+        evidence.extend(e)
+
+        # NEXTGEN-03: Cross-modal face matching
+        s, e = self._compute_face_signal(profile_a, profile_b)
+        signals.update(s)
+        evidence.extend(e)
+
+        # NEXTGEN-03: Cross-modal voice matching
+        s, e = self._compute_voice_signal(profile_a, profile_b)
         signals.update(s)
         evidence.extend(e)
 

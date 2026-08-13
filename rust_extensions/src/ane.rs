@@ -136,6 +136,287 @@ pub struct ANEModelMeta {
     pub loaded_at: std::time::SystemTime,
 }
 
+// ─── NEXTGEN-03: FaceNet ANE Model ───────────────────────────────────────────
+
+/// NEXTGEN-03: FaceNet model metadata for face embedding extraction.
+#[derive(Debug, Clone)]
+pub struct FaceNetModelMeta {
+    pub model_id: String,
+    pub model_path: String,
+    pub embedding_dim: usize,
+    pub loaded_at: std::time::SystemTime,
+}
+
+/// FaceNet model registry — enforces max 1 face model (ANE memory constraint).
+pub struct FaceNetRegistry {
+    /// Currently loaded FaceNet model (max 1 due to ANE memory)
+    model: Option<FaceNetModelMeta>,
+}
+
+impl FaceNetRegistry {
+    pub fn new() -> Self {
+        Self { model: None }
+    }
+
+    pub fn is_loaded(&self) -> bool {
+        self.model.is_some()
+    }
+
+    pub fn can_load(&self) -> bool {
+        self.model.is_none()
+    }
+
+    pub fn register(
+        &mut self,
+        model_id: String,
+        model_path: String,
+        embedding_dim: usize,
+    ) -> Result<FaceNetModelMeta, ANEError> {
+        if self.model.is_some() {
+            return Err(ANEError::ModelAlreadyLoaded(model_id));
+        }
+
+        if embedding_dim == 0 {
+            return Err(ANEError::InferenceFailed(
+                "embedding_dim must be > 0".to_string(),
+            ));
+        }
+
+        let meta = FaceNetModelMeta {
+            model_id: model_id.clone(),
+            model_path,
+            embedding_dim,
+            loaded_at: std::time::SystemTime::now(),
+        };
+        self.model = Some(meta.clone());
+        Ok(meta)
+    }
+
+    pub fn unregister(&mut self) -> Result<(), ANEError> {
+        if self.model.is_none() {
+            return Err(ANEError::ModelNotFound("facenet".to_string()));
+        }
+        self.model = None;
+        Ok(())
+    }
+
+    pub fn get_model(&self) -> Option<&FaceNetModelMeta> {
+        self.model.as_ref()
+    }
+}
+
+impl Default for FaceNetRegistry {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+// Global FaceNet registry
+static FACENET_REGISTRY: LazyLock<RwLock<FaceNetRegistry>> =
+    LazyLock::new(|| RwLock::new(FaceNetRegistry::new()));
+
+/// NEXTGEN-03: Register FaceNet model for face embedding extraction.
+///
+/// Args:
+///     model_id: Unique identifier for the model (e.g., "facenet_v1")
+///     model_path: Path to FaceNet CoreML .mlmodel file
+///     embedding_dim: Embedding dimension (default: 512 for FaceNet)
+///
+/// Returns: Ok(model_id) or Error
+#[pyfunction]
+pub fn facenet_register_model(
+    model_id: String,
+    model_path: String,
+    embedding_dim: Option<usize>,
+) -> Result<String, PyErr> {
+    let embedding_dim = embedding_dim.unwrap_or(512);
+
+    let mut registry = FACENET_REGISTRY.write();
+    let meta = registry
+        .register(model_id.clone(), model_path, embedding_dim)
+        .map_err(|e| pyo3::exceptions::PyValueError::new_err(e.to_string()))?;
+
+    eprintln!("[FaceNet] Registered model: {} (dim={})", meta.model_id, meta.embedding_dim);
+    Ok(model_id)
+}
+
+/// NEXTGEN-03: Check if FaceNet model is registered.
+///
+/// Returns: True if FaceNet model is loaded
+#[pyfunction]
+pub fn facenet_is_registered() -> bool {
+    let registry = FACENET_REGISTRY.read();
+    registry.is_loaded()
+}
+
+/// NEXTGEN-03: Unregister FaceNet model.
+///
+/// Returns: Ok(()) or Error
+#[pyfunction]
+pub fn facenet_unregister() -> Result<(), PyErr> {
+    let mut registry = FACENET_REGISTRY.write();
+    registry.unregister().map_err(|e| {
+        pyo3::exceptions::PyValueError::new_err(e.to_string())
+    })
+}
+
+/// NEXTGEN-03: Get FaceNet model metadata.
+///
+/// Returns: Dict with model_id, embedding_dim, or None
+#[pyfunction]
+pub fn facenet_get_model_info() -> Option<Vec<(String, String)>> {
+    let registry = FACENET_REGISTRY.read();
+    registry.get_model().map(|m| {
+        vec![
+            ("model_id".to_string(), m.model_id.clone()),
+            ("embedding_dim".to_string(), m.embedding_dim.to_string()),
+            ("model_path".to_string(), m.model_path.clone()),
+        ]
+    })
+}
+
+// ─── NEXTGEN-03: Voiceprint ANE Model ───────────────────────────────────────
+
+/// NEXTGEN-03: Voiceprint model metadata for speaker embedding extraction.
+#[derive(Debug, Clone)]
+pub struct VoiceprintModelMeta {
+    pub model_id: String,
+    pub model_path: String,
+    pub embedding_dim: usize,
+    pub loaded_at: std::time::SystemTime,
+}
+
+/// Voiceprint model registry — enforces max 1 voice model.
+pub struct VoiceprintRegistry {
+    /// Currently loaded voiceprint model
+    model: Option<VoiceprintModelMeta>,
+}
+
+impl VoiceprintRegistry {
+    pub fn new() -> Self {
+        Self { model: None }
+    }
+
+    pub fn is_loaded(&self) -> bool {
+        self.model.is_some()
+    }
+
+    pub fn can_load(&self) -> bool {
+        self.model.is_none()
+    }
+
+    pub fn register(
+        &mut self,
+        model_id: String,
+        model_path: String,
+        embedding_dim: usize,
+    ) -> Result<VoiceprintModelMeta, ANEError> {
+        if self.model.is_some() {
+            return Err(ANEError::ModelAlreadyLoaded(model_id));
+        }
+
+        if embedding_dim == 0 {
+            return Err(ANEError::InferenceFailed(
+                "embedding_dim must be > 0".to_string(),
+            ));
+        }
+
+        let meta = VoiceprintModelMeta {
+            model_id: model_id.clone(),
+            model_path,
+            embedding_dim,
+            loaded_at: std::time::SystemTime::now(),
+        };
+        self.model = Some(meta.clone());
+        Ok(meta)
+    }
+
+    pub fn unregister(&mut self) -> Result<(), ANEError> {
+        if self.model.is_none() {
+            return Err(ANEError::ModelNotFound("voiceprint".to_string()));
+        }
+        self.model = None;
+        Ok(())
+    }
+
+    pub fn get_model(&self) -> Option<&VoiceprintModelMeta> {
+        self.model.as_ref()
+    }
+}
+
+impl Default for VoiceprintRegistry {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+// Global Voiceprint registry
+static VOICEPRINT_REGISTRY: LazyLock<RwLock<VoiceprintRegistry>> =
+    LazyLock::new(|| RwLock::new(VoiceprintRegistry::new()));
+
+/// NEXTGEN-03: Register voiceprint model for speaker embedding extraction.
+///
+/// Args:
+///     model_id: Unique identifier for the model (e.g., "speakernet")
+///     model_path: Path to speaker embedding CoreML .mlmodel file
+///     embedding_dim: Embedding dimension (default: 256)
+///
+/// Returns: Ok(model_id) or Error
+#[pyfunction]
+pub fn voiceprint_register_model(
+    model_id: String,
+    model_path: String,
+    embedding_dim: Option<usize>,
+) -> Result<String, PyErr> {
+    let embedding_dim = embedding_dim.unwrap_or(256);
+
+    let mut registry = VOICEPRINT_REGISTRY.write();
+    let meta = registry
+        .register(model_id.clone(), model_path, embedding_dim)
+        .map_err(|e| pyo3::exceptions::PyValueError::new_err(e.to_string()))?;
+
+    eprintln!(
+        "[Voiceprint] Registered model: {} (dim={})",
+        meta.model_id, meta.embedding_dim
+    );
+    Ok(model_id)
+}
+
+/// NEXTGEN-03: Check if voiceprint model is registered.
+///
+/// Returns: True if voiceprint model is loaded
+#[pyfunction]
+pub fn voiceprint_is_registered() -> bool {
+    let registry = VOICEPRINT_REGISTRY.read();
+    registry.is_loaded()
+}
+
+/// NEXTGEN-03: Unregister voiceprint model.
+///
+/// Returns: Ok(()) or Error
+#[pyfunction]
+pub fn voiceprint_unregister() -> Result<(), PyErr> {
+    let mut registry = VOICEPRINT_REGISTRY.write();
+    registry.unregister().map_err(|e| {
+        pyo3::exceptions::PyValueError::new_err(e.to_string())
+    })
+}
+
+/// NEXTGEN-03: Get voiceprint model metadata.
+///
+/// Returns: Dict with model_id, embedding_dim, or None
+#[pyfunction]
+pub fn voiceprint_get_model_info() -> Option<Vec<(String, String)>> {
+    let registry = VOICEPRINT_REGISTRY.read();
+    registry.get_model().map(|m| {
+        vec![
+            ("model_id".to_string(), m.model_id.clone()),
+            ("embedding_dim".to_string(), m.embedding_dim.to_string()),
+            ("model_path".to_string(), m.model_path.clone()),
+        ]
+    })
+}
+
 /// ANE model registry — enforces max 2 models constraint
 pub struct ANERegistry {
     /// Currently loaded models (max 2 per ANE hardware constraint)
@@ -1101,6 +1382,332 @@ pub fn gnn_predict_links(
     results
 }
 
+// ─── NEXTGEN-03: Cross-Modal Embedding Storage ────────────────────────────────
+
+/// NEXTGEN-03: Cross-modal embedding store for face and voiceprint embeddings.
+/// Used for O(1) similarity search via LSH pre-filtering.
+pub struct CrossModalEmbeddingStore {
+    /// Face embeddings: node_id -> embedding vector (512d)
+    face_embeddings: std::collections::HashMap<String, Vec<f32>>,
+    /// Voiceprint embeddings: node_id -> embedding vector (256d)
+    voice_embeddings: std::collections::HashMap<String, Vec<f32>>,
+    /// Face LSH index: simhash fingerprint -> set of node_ids
+    face_lsh: std::collections::HashMap<u64, std::collections::HashSet<String>>,
+    /// Voiceprint LSH index: simhash fingerprint -> set of node_ids
+    voice_lsh: std::collections::HashMap<u64, std::collections::HashSet<String>>,
+}
+
+impl CrossModalEmbeddingStore {
+    pub fn new() -> Self {
+        Self {
+            face_embeddings: std::collections::HashMap::new(),
+            voice_embeddings: std::collections::HashMap::new(),
+            face_lsh: std::collections::HashMap::new(),
+            voice_lsh: std::collections::HashMap::new(),
+        }
+    }
+
+    /// Store a face embedding with LSH fingerprint.
+    pub fn store_face(&mut self, node_id: String, embedding: Vec<f32>) {
+        let fp = Self::compute_lsh_fingerprint(&embedding);
+        self.face_embeddings.insert(node_id.clone(), embedding);
+        self.face_lsh.entry(fp).or_default().insert(node_id);
+    }
+
+    /// Store a voiceprint embedding with LSH fingerprint.
+    pub fn store_voice(&mut self, node_id: String, embedding: Vec<f32>) {
+        let fp = Self::compute_lsh_fingerprint(&embedding);
+        self.voice_embeddings.insert(node_id.clone(), embedding);
+        self.voice_lsh.entry(fp).or_default().insert(node_id);
+    }
+
+    /// Get face embedding by node_id.
+    pub fn get_face(&self, node_id: &str) -> Option<&Vec<f32>> {
+        self.face_embeddings.get(node_id)
+    }
+
+    /// Get voiceprint embedding by node_id.
+    pub fn get_voice(&self, node_id: &str) -> Option<&Vec<f32>> {
+        self.voice_embeddings.get(node_id)
+    }
+
+    /// Query face candidates by LSH fingerprint.
+    pub fn query_face_lsh(&self, embedding: &[f32], max_results: usize) -> Vec<(String, f32)> {
+        let fp = Self::compute_lsh_fingerprint(embedding);
+        let candidates: Vec<String> = self.face_lsh
+            .get(&fp)
+            .map(|s| s.iter().cloned().collect())
+            .unwrap_or_default();
+
+        // Compute actual cosine similarity for candidates
+        let mut results: Vec<(String, f32)> = candidates
+            .into_iter()
+            .filter_map(|id| {
+                self.face_embeddings.get(&id).map(|emb| {
+                    let sim = Self::cosine_similarity_slice(embedding, emb);
+                    (id, sim)
+                })
+            })
+            .collect();
+
+        results.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+        results.truncate(max_results);
+        results
+    }
+
+    /// Query voiceprint candidates by LSH fingerprint.
+    pub fn query_voice_lsh(&self, embedding: &[f32], max_results: usize) -> Vec<(String, f32)> {
+        let fp = Self::compute_lsh_fingerprint(embedding);
+        let candidates: Vec<String> = self.voice_lsh
+            .get(&fp)
+            .map(|s| s.iter().cloned().collect())
+            .unwrap_or_default();
+
+        // Compute actual cosine similarity for candidates
+        let mut results: Vec<(String, f32)> = candidates
+            .into_iter()
+            .filter_map(|id| {
+                self.voice_embeddings.get(&id).map(|emb| {
+                    let sim = Self::cosine_similarity_slice(embedding, emb);
+                    (id, sim)
+                })
+            })
+            .collect();
+
+        results.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+        results.truncate(max_results);
+        results
+    }
+
+    /// Compute LSH fingerprint (16-bit SimHash of the embedding).
+    fn compute_lsh_fingerprint(embedding: &[f32]) -> u64 {
+        let n_bits = 16usize;
+        let n_hashes = n_bits * 2; // 32 hash functions for 16-bit fingerprint
+        let step = (embedding.len() / n_hashes).max(1);
+
+        let mut fingerprint: u64 = 0;
+        for i in 0..n_bits {
+            let mut sum: f32 = 0.0;
+            let start = i * step;
+            let end = (start + step).min(embedding.len());
+
+            for j in start..end {
+                if embedding[j] > 0.0 {
+                    sum += 1.0;
+                } else {
+                    sum -= 1.0;
+                }
+            }
+
+            if sum > 0.0 {
+                fingerprint |= 1 << i;
+            }
+        }
+
+        fingerprint
+    }
+
+    /// Cosine similarity between two slices.
+    fn cosine_similarity_slice(a: &[f32], b: &[f32]) -> f32 {
+        if a.len() != b.len() || a.is_empty() {
+            return 0.0;
+        }
+
+        let dot: f32 = a.iter().zip(b.iter()).map(|(x, y)| x * y).sum();
+        let norm_a: f32 = a.iter().map(|x| x * x).sum::<f32>().sqrt();
+        let norm_b: f32 = b.iter().map(|x| x * x).sum::<f32>().sqrt();
+
+        if norm_a == 0.0 || norm_b == 0.0 {
+            0.0
+        } else {
+            (dot / (norm_a * norm_b)).clamp(-1.0, 1.0)
+        }
+    }
+
+    /// Clear all embeddings.
+    pub fn clear(&mut self) {
+        self.face_embeddings.clear();
+        self.voice_embeddings.clear();
+        self.face_lsh.clear();
+        self.voice_lsh.clear();
+    }
+
+    /// Get count of stored embeddings.
+    pub fn len(&self) -> (usize, usize) {
+        (self.face_embeddings.len(), self.voice_embeddings.len())
+    }
+}
+
+impl Default for CrossModalEmbeddingStore {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+// Global cross-modal embedding store
+static CROSS_MODAL_STORE: LazyLock<RwLock<CrossModalEmbeddingStore>> =
+    LazyLock::new(|| RwLock::new(CrossModalEmbeddingStore::new()));
+
+/// NEXTGEN-03: Store a face embedding in the cross-modal index.
+///
+/// Args:
+///     node_id: Unique identifier for this face (e.g., "face_{hash}")
+///     embedding: 512-dim face embedding vector
+///
+/// Returns: Count of stored embeddings
+#[pyfunction]
+pub fn crossmodal_store_face(node_id: String, embedding: Vec<f32>) -> usize {
+    let mut store = CROSS_MODAL_STORE.write();
+    store.store_face(node_id, embedding);
+    let (face_count, _) = store.len();
+    eprintln!("[CrossModal] Stored face embedding. Total faces: {}", face_count);
+    face_count
+}
+
+/// NEXTGEN-03: Store a voiceprint embedding in the cross-modal index.
+///
+/// Args:
+///     node_id: Unique identifier for this voiceprint
+///     embedding: 256-dim voiceprint embedding vector
+///
+/// Returns: Count of stored embeddings
+#[pyfunction]
+pub fn crossmodal_store_voice(node_id: String, embedding: Vec<f32>) -> usize {
+    let mut store = CROSS_MODAL_STORE.write();
+    store.store_voice(node_id, embedding);
+    let (_, voice_count) = store.len();
+    eprintln!(
+        "[CrossModal] Stored voiceprint embedding. Total voiceprints: {}",
+        voice_count
+    );
+    voice_count
+}
+
+/// NEXTGEN-03: Query face embeddings by cosine similarity (LSH pre-filter).
+///
+/// Args:
+///     embedding: Query 512-dim face embedding
+///     max_results: Maximum number of results (default: 10)
+///     min_similarity: Minimum similarity threshold (default: 0.7)
+///
+/// Returns: Vec of (node_id, similarity) tuples
+#[pyfunction]
+pub fn crossmodal_query_face(
+    embedding: Vec<f32>,
+    max_results: Option<usize>,
+    min_similarity: Option<f32>,
+) -> Vec<(String, f32)> {
+    let max_results = max_results.unwrap_or(10);
+    let min_similarity = min_similarity.unwrap_or(0.7);
+
+    let store = CROSS_MODAL_STORE.read();
+    let results = store.query_face_lsh(&embedding, max_results * 2); // Get extra for filtering
+
+    // Filter by minimum similarity
+    results
+        .into_iter()
+        .filter(|(_, sim)| *sim >= min_similarity)
+        .take(max_results)
+        .collect()
+}
+
+/// NEXTGEN-03: Query voiceprint embeddings by cosine similarity (LSH pre-filter).
+///
+/// Args:
+///     embedding: Query 256-dim voiceprint embedding
+///     max_results: Maximum number of results (default: 10)
+///     min_similarity: Minimum similarity threshold (default: 0.7)
+///
+/// Returns: Vec of (node_id, similarity) tuples
+#[pyfunction]
+pub fn crossmodal_query_voice(
+    embedding: Vec<f32>,
+    max_results: Option<usize>,
+    min_similarity: Option<f32>,
+) -> Vec<(String, f32)> {
+    let max_results = max_results.unwrap_or(10);
+    let min_similarity = min_similarity.unwrap_or(0.7);
+
+    let store = CROSS_MODAL_STORE.read();
+    let results = store.query_voice_lsh(&embedding, max_results * 2);
+
+    // Filter by minimum similarity
+    results
+        .into_iter()
+        .filter(|(_, sim)| *sim >= min_similarity)
+        .take(max_results)
+        .collect()
+}
+
+/// NEXTGEN-03: Get face embedding by node_id.
+///
+/// Args:
+///     node_id: Unique identifier for the face
+///
+/// Returns: Embedding vector or None
+#[pyfunction]
+pub fn crossmodal_get_face(node_id: String) -> Option<Vec<f32>> {
+    let store = CROSS_MODAL_STORE.read();
+    store.get_face(&node_id).cloned()
+}
+
+/// NEXTGEN-03: Get voiceprint embedding by node_id.
+///
+/// Args:
+///     node_id: Unique identifier for the voiceprint
+///
+/// Returns: Embedding vector or None
+#[pyfunction]
+pub fn crossmodal_get_voice(node_id: String) -> Option<Vec<f32>> {
+    let store = CROSS_MODAL_STORE.read();
+    store.get_voice(&node_id).cloned()
+}
+
+/// NEXTGEN-03: Compute similarity between two face embeddings.
+///
+/// Args:
+///     embedding_a: First 512-dim face embedding
+///     embedding_b: Second 512-dim face embedding
+///
+/// Returns: Cosine similarity (-1 to 1)
+#[pyfunction]
+pub fn crossmodal_face_similarity(embedding_a: Vec<f32>, embedding_b: Vec<f32>) -> f32 {
+    CrossModalEmbeddingStore::cosine_similarity_slice(&embedding_a, &embedding_b)
+}
+
+/// NEXTGEN-03: Compute similarity between two voiceprint embeddings.
+///
+/// Args:
+///     embedding_a: First 256-dim voiceprint embedding
+///     embedding_b: Second 256-dim voiceprint embedding
+///
+/// Returns: Cosine similarity (-1 to 1)
+#[pyfunction]
+pub fn crossmodal_voice_similarity(embedding_a: Vec<f32>, embedding_b: Vec<f32>) -> f32 {
+    CrossModalEmbeddingStore::cosine_similarity_slice(&embedding_a, &embedding_b)
+}
+
+/// NEXTGEN-03: Clear all cross-modal embeddings.
+#[pyfunction]
+pub fn crossmodal_clear() {
+    let mut store = CROSS_MODAL_STORE.write();
+    store.clear();
+    eprintln!("[CrossModal] Cleared all embeddings");
+}
+
+/// NEXTGEN-03: Get cross-modal store statistics.
+///
+/// Returns: Dict with face_count and voice_count
+#[pyfunction]
+pub fn crossmodal_stats() -> std::collections::HashMap<String, usize> {
+    let store = CROSS_MODAL_STORE.read();
+    let (face_count, voice_count) = store.len();
+    let mut stats = std::collections::HashMap::new();
+    stats.insert("face_count".to_string(), face_count);
+    stats.insert("voice_count".to_string(), voice_count);
+    stats
+}
+
 /// Helper: cosine similarity between two vectors
 fn cosine_similarity(a: &[f32], b: &[f32]) -> f32 {
     if a.len() != b.len() || a.is_empty() {
@@ -1143,6 +1750,30 @@ pub fn register_functions(m: &Bound<'_, PyModule>) -> Result<(), PyErr> {
     m.add_function(wrap_pyfunction!(gnn_predict_links, m)?)?;
     m.add_function(wrap_pyfunction!(gnn_validate_batch, m)?)?;
 
+    // NEXTGEN-03: FaceNet ANE functions
+    m.add_function(wrap_pyfunction!(facenet_register_model, m)?)?;
+    m.add_function(wrap_pyfunction!(facenet_is_registered, m)?)?;
+    m.add_function(wrap_pyfunction!(facenet_unregister, m)?)?;
+    m.add_function(wrap_pyfunction!(facenet_get_model_info, m)?)?;
+
+    // NEXTGEN-03: Voiceprint ANE functions
+    m.add_function(wrap_pyfunction!(voiceprint_register_model, m)?)?;
+    m.add_function(wrap_pyfunction!(voiceprint_is_registered, m)?)?;
+    m.add_function(wrap_pyfunction!(voiceprint_unregister, m)?)?;
+    m.add_function(wrap_pyfunction!(voiceprint_get_model_info, m)?)?;
+
+    // NEXTGEN-03: Cross-modal embedding functions
+    m.add_function(wrap_pyfunction!(crossmodal_store_face, m)?)?;
+    m.add_function(wrap_pyfunction!(crossmodal_store_voice, m)?)?;
+    m.add_function(wrap_pyfunction!(crossmodal_query_face, m)?)?;
+    m.add_function(wrap_pyfunction!(crossmodal_query_voice, m)?)?;
+    m.add_function(wrap_pyfunction!(crossmodal_get_face, m)?)?;
+    m.add_function(wrap_pyfunction!(crossmodal_get_voice, m)?)?;
+    m.add_function(wrap_pyfunction!(crossmodal_face_similarity, m)?)?;
+    m.add_function(wrap_pyfunction!(crossmodal_voice_similarity, m)?)?;
+    m.add_function(wrap_pyfunction!(crossmodal_clear, m)?)?;
+    m.add_function(wrap_pyfunction!(crossmodal_stats, m)?)?;
+
     // Constants
     m.add("ANE_MAX_MODELS", ANE_MAX_MODELS)?;
     m.add("ANE_MAX_BATCH_SIZE", ANE_MAX_BATCH_SIZE)?;
@@ -1150,6 +1781,11 @@ pub fn register_functions(m: &Bound<'_, PyModule>) -> Result<(), PyErr> {
     m.add("GNN_DEFAULT_IN_DIM", GNN_DEFAULT_IN_DIM)?;
     m.add("GNN_DEFAULT_HIDDEN_DIM", GNN_DEFAULT_HIDDEN_DIM)?;
     m.add("GNN_DEFAULT_OUT_DIM", GNN_DEFAULT_OUT_DIM)?;
+
+    // NEXTGEN-03: Cross-modal constants
+    m.add("FACENET_EMBEDDING_DIM", 512)?;
+    m.add("VOICEPRINT_EMBEDDING_DIM", 256)?;
+    m.add("CROSSMODAL_MIN_SIMILARITY", 0.7)?;
 
     Ok(())
 }

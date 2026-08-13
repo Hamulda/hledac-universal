@@ -811,3 +811,107 @@ async def transcribe_and_extract_iocs(
     if result is None:
         return []
     return result.iocs
+
+
+# ============================================================================
+# NEXTGEN-03: Voiceprint Extraction
+# ============================================================================
+
+async def extract_voiceprint(
+    source: str | Path,
+    model_size: Literal["tiny", "base"] = "tiny",
+) -> dict[str, Any]:
+    """
+    NEXTGEN-03: Extract speaker voiceprint embedding from audio file.
+
+    Uses Rust whisper backend with speaker embedding extraction to generate
+    a 256-dimensional voiceprint vector for identity matching.
+
+    Args:
+        source: Audio file path (WAV 16kHz mono recommended)
+        model_size: Whisper model size ("tiny" or "base")
+
+    Returns:
+        Dict with:
+            - embedding: 256-dim speaker embedding vector
+            - duration_s: Audio duration in seconds
+            - quality_score: Voice quality confidence (0-1)
+            - cached: Whether result was cached
+            - error: Error message if failed (str)
+
+    Example:
+        vp = await extract_voiceprint("speaker_audio.wav")
+        if vp and "embedding" in vp:
+            print(f"Voiceprint quality: {vp['quality_score']:.2f}")
+    """
+    source_path = Path(str(source))
+    if not source_path.exists():
+        return {"error": f"File not found: {source}"}
+
+    try:
+        from hledac.universal.core.rust_backend import rust
+        if not hasattr(rust, "whisper"):
+            return {"error": "Rust whisper module not available"}
+
+        whisper_mod = rust.whisper
+        if not hasattr(whisper_mod, "extract_voiceprint"):
+            return {"error": "extract_voiceprint not available in Rust whisper"}
+
+        # Run voiceprint extraction on thread pool (may take time)
+        def _extract_sync():
+            return whisper_mod.extract_voiceprint(
+                str(source_path),
+                model_size=model_size,
+                n_segments=3,
+            )
+
+        result = await asyncio.to_thread(_extract_sync)
+
+        if result is None:
+            return {"error": "Voiceprint extraction returned None"}
+
+        return {
+            "embedding": list(result.get("embedding", [])),
+            "duration_s": result.get("duration_s", 0.0),
+            "quality_score": result.get("quality_score", 0.0),
+            "cached": result.get("cached", False),
+        }
+
+    except ImportError:
+        return {"error": "Rust backend not available"}
+    except Exception as exc:
+        logger.warning("[NEXTGEN-03] Voiceprint extraction failed: %s", exc)
+        return {"error": str(exc)}
+
+
+async def extract_voiceprint_and_transcribe(
+    source: str | Path,
+    model_size: Literal["tiny", "base"] = "tiny",
+) -> tuple[dict[str, Any], TranscriptionResult]:
+    """
+    NEXTGEN-03: Extract voiceprint and transcribe audio in parallel.
+
+    Optimized for identity fusion: runs both operations concurrently
+    to minimize latency.
+
+    Args:
+        source: Audio file path
+        model_size: Whisper model size
+
+    Returns:
+        Tuple of (voiceprint_result, transcription_result)
+    """
+    vp_task = extract_voiceprint(source, model_size)
+    transcribe_task = transcribe_audio(source, model_size=model_size)
+
+    voiceprint_result, transcription_result = await asyncio.gather(
+        vp_task, transcribe_task, return_exceptions=True
+    )
+
+    # Handle exceptions
+    if isinstance(voiceprint_result, Exception):
+        voiceprint_result = {"error": str(voiceprint_result)}
+    if isinstance(transcription_result, Exception):
+        transcription_result = TranscriptionResult()
+
+    return voiceprint_result, transcription_result

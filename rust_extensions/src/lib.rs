@@ -134,6 +134,12 @@ pub mod async_bridge;
 #[cfg(feature = "stealth_bridge")]
 pub mod stealth_bridge;
 
+// NEXTGEN-02: Pre-fetch anti-analysis evasion engine.
+// Detects Cloudflare Turnstile, DataDome, Akamai at TLS handshake level.
+// Abandoned domains skip entire fetch (0 bandwidth, 0 LLM tokens).
+#[cfg(feature = "anti_analysis")]
+pub mod anti_analysis;
+
 pub mod circuit_breaker;
 pub mod ffi_safe; // [SWARM]-005: Panic-safe FFI wrapper for pyfunction calls
 #[cfg(feature = "core")]
@@ -170,6 +176,31 @@ pub mod topology;
 
 #[cfg(feature = "embedded_tor")]
 pub mod arti_bridge; // HEIST-02: In-process Tor via Arti (PyO3 bindings)
+
+// NEXTGEN-01: Native P2P harvesters (IPFS/TOR/I2P) in Tokio runtime
+// Feature-gated: ~8MB additional compile, M1 8GB safe
+//
+// Modules:
+//   - harvest(): Unified P2P harvest API (multi-protocol concurrent)
+//   - dht_crawl_async(): BitTorrent DHT crawler in native Tokio
+//   - ipfs_bitswap_crawl_async(): IPFS Kademlia + BitSwap via libp2p
+//   - tor_consensus_scrape_async(): Tor consensus directory scraper
+//   - i2p_leaseset_resolve_async(): I2P LeaseSet resolver via SAMv3
+//
+// Benefits:
+//   - No GIL contention on network I/O (vs Python asyncio)
+//   - Native async/await in Tokio runtime
+//   - SIMD IOC extraction in hot path (via existing ioc_extract_simd)
+//   - Arrow IPC streaming to Python (zero-copy)
+//
+// Memory budget (M1 8GB safe):
+//   - libp2p swarm: ~3MB resident
+//   - Tokio workers: ~10MB total
+//   - Bounded concurrency: max 20 concurrent peers
+//
+// Python fallback: dht/kademlia_node.py (simulated mode)
+#[cfg(feature = "p2p_harvest")]
+pub mod p2p_harvest;
 
 // ============================================================================
 // Text Processing
@@ -1180,6 +1211,12 @@ fn hledac_rust_extensions(m: &Bound<'_, PyModule>) -> PyResult<()> {
     #[cfg(feature = "stealth_bridge")]
     stealth_bridge::register(m)?;
 
+    // NEXTGEN-02: Pre-fetch anti-analysis evasion engine.
+    // Detects Cloudflare Turnstile, DataDome, Akamai at TLS handshake level.
+    // Abandoned domains skip entire fetch (0 bandwidth, 0 LLM tokens).
+    #[cfg(feature = "anti_analysis")]
+    anti_analysis::register(m)?;
+
     // SILICON-03: Apple Network.framework user-space TCP + hardware TLS
     // MODERN-12: Async bridge returns native Python awaitables (no to_thread needed).
     // Requires block2 feature (Objective-C blocks support).
@@ -1199,6 +1236,15 @@ fn hledac_rust_extensions(m: &Bound<'_, PyModule>) -> PyResult<()> {
     // circuit pre-building. 3-5× throughput vs subprocess, ~40-50% lower latency.
     #[cfg(feature = "embedded_tor")]
     arti_bridge::register(m)?;
+
+    // NEXTGEN-01: Native P2P harvesters (IPFS/TOR/I2P) in Tokio runtime.
+    // rust.p2p_harvest.harvest(): unified multi-protocol search
+    // rust.p2p_harvest.dht_crawl_async(): BitTorrent DHT (native Tokio)
+    // rust.p2p_harvest.ipfs_bitswap_crawl_async(): IPFS Kademlia + BitSwap
+    // rust.p2p_harvest.tor_consensus_scrape_async(): Tor consensus scraper
+    // rust.p2p_harvest.i2p_leaseset_resolve_async(): I2P LeaseSet resolver
+    #[cfg(feature = "p2p_harvest")]
+    p2p_harvest::register(m)?;
 
     // F275: CommonCrypto SHA-256 hardware acceleration on Apple Silicon (~3× vs sha2 crate).
     crypto_accelerate::register_functions(m)?;

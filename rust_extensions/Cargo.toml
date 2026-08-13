@@ -98,6 +98,7 @@ zip = { version = "2", default-features = false, features = ["deflate"], optiona
 rustls = { version = "0.23", default-features = false, features = ["std", "tls12", "ring"], optional = true }
 webpki-roots = { version = "0.26", optional = true }  # System root CAs
 hex = "0.4"
+lazy_static = "1.4"
 
 # DEEP modules dependencies
 # flate2: Streaming zlib decompression for git_forensics packfiles
@@ -158,7 +159,6 @@ quinn = { version = "0.11", default-features = false, features = ["runtime-tokio
 h3 = { version = "0.0.8", default-features = false, optional = true }
 h3-quinn = { version = "0.0.10", optional = true }
 # ISSUE-014: Missing crates that were used but not declared
-bincode = { version = "2.0", features = ["derive", "serde"] }
 zstd = "0.13"
 # HEIST-05: simd-json for zero-alloc JSON Pointer extraction (ARM NEON native)
 # Used by simdjson_extract.rs for CT log scanning, NDJSON parsing — 2-4x faster
@@ -212,6 +212,40 @@ whisper-rs = { version = "0.13", optional = true }
 # Used by whisper.rs for reading 16kHz mono WAV audio samples.
 hound = { version = "3.5", optional = true }
 
+# NEXTGEN-01: Native P2P harvesters (IPFS/TOR/I2P) in Tokio runtime
+# NOTE: These dependencies are intentionally minimal to keep M1 8GB compile time low.
+# Full libp2p with all transports adds ~10MB compile; we use only what's needed.
+#
+# libp2p: IPFS Kademlia + BitSwap peer routing
+# Features: kademlia, noise, yamux, tcp — minimal for DHT crawling
+# M1 8GB: ~5MB compile, ~2MB resident
+libp2p = { version = "0.55", optional = true, default-features = false, features = [
+    "kademlia",
+    "noise",
+    "tcp",
+    "udp",
+    "async-trait",
+    "yamux",
+    "serde",
+    "bytes",
+] }
+# multiaddr: libp2p addressing format (e.g., /ip4/1.2.3.4/tcp/8080/p2p/Qm...)
+multiaddr = { version = "0.18", optional = true }
+# cid: IPFS Content Identifiers (multihash format)
+cid = { version = "0.10", optional = true, features = ["serde", "scale"] }
+# unsigned-varint: required by libp2p for protocol negotiation
+unsigned-varint = { version = "0.8", optional = true }
+# bincode: Fast binary serialization for BT DHT
+bincode = { version = "2.0", optional = true, features = ["derive", "serde"] }
+# sha1: SHA1 hash for BitTorrent DHT info_hash computation
+sha1 = { version = "0.10", optional = true }
+# reqwest: HTTP client for Tor consensus scraping (directory authorities)
+# M1 8GB: ~2MB compile, ~500KB resident
+reqwest = { version = "0.12", optional = true, default-features = false, features = [
+    "json",
+    "rustls-tls",
+] }
+
 
 # ---------------------------------------------------------------------------
 # Feature flags — TRUE conditional compilation (D3 fix)
@@ -228,6 +262,11 @@ hound = { version = "3.5", optional = true }
 #   graph_traverse → sequential Python traversal
 #
 # ISSUE-021: Feature flags for selective compilation (M1 8GB compile time optimization)
+
+# NEXTGEN-02: Anti-analysis evasion engine — pre-fetch TLS/HTTP2 challenge detection
+# M1 8GB: ~2MB additional compile, pure Rust
+# Dependencies: rustls (TLS), webpki-roots (CA certs), lazy_static (global state)
+anti_analysis = ["dep:rustls", "dep:webpki-roots", "dep:lazy_static"]
 
 [features]
 # Default = core + data (DuckDB wired) — standard Hledac build
@@ -246,7 +285,17 @@ hound = { version = "3.5", optional = true }
 # ANE (Apple Neural Engine) uses dedicated memory — does not compete with main RAM budget.
 # Python path: coremltools does actual CoreML inference via ANE hardware.
 # Rust ane module: model registry + batch validation + telemetry.
-default = ["core", "data", "ane", "metal", "metal_shared", "iosurface", "swarm_dag", "whisper", "shared_tokio", "simd_similarity"]
+#
+# NEXTGEN-06: Added embedded_tor to default — in-process Arti Tor client (~25-30MB resident).
+# Closes architectural gap with I2P SAM v3 native asyncio transport (~2MB).
+# Benefits:
+#   - 3-5x throughput vs subprocess (no IPC overhead)
+#   - True circuit isolation (vs SOCKS5 username hack)
+#   - Phase-boundary rotate_all_circuits() (vs destroy+create session)
+#   - SAM-v3 parity API: isolate_circuit(), open_stream(), session_status()
+# M1 8GB: Shared tokio runtime (~10MB), Arti ~25-30MB, total ~35-40MB (safe).
+# Python fallback: transport/arti_transport.py uses external Arti subprocess.
+default = ["core", "data", "ane", "metal", "metal_shared", "iosurface", "swarm_dag", "whisper", "shared_tokio", "simd_similarity", "embedded_tor", "anti_analysis"]
 
 # SILICON-02: Added whisper to default — ANE-based speech-to-text via whisper.cpp.
 # Only tiny (39 MB) and base (74 MB) models for M1 8GB safety.
@@ -313,7 +362,7 @@ advanced = [
 #   HLEDAC_ENABLE_MACH_REMAP=1 AND file_size >= 100MB.
 mach = []
 
-full = ["core", "data", "graph", "advanced", "tls13", "pdf", "office", "quic", "ane", "coreml_ane", "stix", "metal", "metal_shared", "iosurface", "otel", "fulltext", "native_db", "simdjson", "nw_framework", "whisper", "dns", "embedded_tor", "deep_git", "deep_warc", "deep_unindexed", "deep_ac"]
+full = ["core", "data", "graph", "advanced", "tls13", "pdf", "office", "quic", "ane", "coreml_ane", "stix", "metal", "metal_shared", "iosurface", "otel", "fulltext", "native_db", "simdjson", "nw_framework", "whisper", "dns", "embedded_tor", "deep_git", "deep_warc", "deep_unindexed", "deep_ac", "p2p_harvest"]
 
 # DEEP features: Forensics and Storage modules
 # deep_git: Git packfile forensics — mmap, streaming zlib, delta chains
@@ -333,6 +382,36 @@ deep_unindexed = []
 # ARM NEON acceleration for Apple Silicon (M1/M2/M3)
 # M1 8GB: ~1MB compile, batch parallel via rayon
 deep_ac = []
+
+# NEXTGEN-01: Native P2P harvesters (IPFS/TOR/I2P) in Tokio runtime
+# Feature-gated: ~8MB additional compile, M1 8GB safe
+# Modules:
+#   - dht_crawl_async: BitTorrent DHT crawler in native Tokio (vs Python asyncio)
+#   - ipfs_bitswap_crawl_async: IPFS BitSwap + Kademlia via libp2p
+#   - tor_consensus_scrape_async: Tor consensus directory scraper
+#   - i2p_leaseset_resolve_async: I2P LeaseSet resolver via SAMv3
+#
+# Memory budget (M1 8GB safe):
+#   - libp2p swarm: ~3MB resident
+#   - Bounded concurrency: max 20 concurrent peers
+#   - Arrow IPC streaming: pre-allocated 64KB buffers
+#
+# Benefits over Python asyncio:
+#   - No GIL contention on network I/O
+#   - Native async/await in Tokio (not Python green threads)
+#   - SIMD IOC extraction in hot path (via existing ioc_extract_simd)
+#   - Arrow IPC streaming to Python (zero-copy)
+#
+# Python fallback: dht/kademlia_node.py (simulated, no real network)
+p2p_harvest = [
+    "dep:libp2p",
+    "dep:multiaddr",
+    "dep:cid",
+    "dep:bincode",
+    "dep:sha1",
+    "dep:reqwest",
+    "shared_tokio",
+]
 
 # [MODERN-07]: Shared Tokio runtime for all async modules.
 # Consolidates 3 separate runtimes (dns, quic, arti) into 1 shared runtime.

@@ -1,0 +1,6284 @@
+{
+  "version": "1.0.0",
+  "generated_at": "2026-08-13T13:32:12.471747+00:00",
+  "capability": "NEXTGEN-05",
+  "description": "Build-time FFI type-safety manifest",
+  "classes": {
+    "warc_parser.WarcCertificate": {
+      "module": "warc_parser",
+      "name": "WarcCertificate",
+      "fields": [
+        {
+          "name": "sha256_fingerprint",
+          "rust_type": "String",
+          "python_type": "str",
+          "has_get": true,
+          "has_set": false
+        },
+        {
+          "name": "subject_cn",
+          "rust_type": "String",
+          "python_type": "str",
+          "has_get": true,
+          "has_set": false
+        },
+        {
+          "name": "issuer_cn",
+          "rust_type": "String",
+          "python_type": "str",
+          "has_get": true,
+          "has_set": false
+        },
+        {
+          "name": "serial_number",
+          "rust_type": "String",
+          "python_type": "str",
+          "has_get": true,
+          "has_set": false
+        },
+        {
+          "name": "not_before",
+          "rust_type": "String",
+          "python_type": "str",
+          "has_get": true,
+          "has_set": false
+        },
+        {
+          "name": "not_after",
+          "rust_type": "String",
+          "python_type": "str",
+          "has_get": true,
+          "has_set": false
+        },
+        {
+          "name": "san_names",
+          "rust_type": "Vec<String>",
+          "python_type": "list[str]",
+          "has_get": true,
+          "has_set": false
+        },
+        {
+          "name": "pem_preview",
+          "rust_type": "String",
+          "python_type": "str",
+          "has_get": true,
+          "has_set": false
+        },
+        {
+          "name": "record_offset",
+          "rust_type": "u64",
+          "python_type": "int",
+          "has_get": true,
+          "has_set": false
+        }
+      ],
+      "methods": [],
+      "slots": [
+        "sha256_fingerprint",
+        "subject_cn",
+        "issuer_cn",
+        "serial_number",
+        "not_before",
+        "not_after",
+        "san_names",
+        "pem_preview",
+        "record_offset"
+      ],
+      "doc_comment": null
+    },
+    "warc_parser.WarcExtractedData": {
+      "module": "warc_parser",
+      "name": "WarcExtractedData",
+      "fields": [
+        {
+          "name": "record_id",
+          "rust_type": "String",
+          "python_type": "str",
+          "has_get": true,
+          "has_set": false
+        },
+        {
+          "name": "record_type",
+          "rust_type": "String",
+          "python_type": "str",
+          "has_get": true,
+          "has_set": false
+        },
+        {
+          "name": "warc_date",
+          "rust_type": "String",
+          "python_type": "str",
+          "has_get": true,
+          "has_set": false
+        },
+        {
+          "name": "target_url",
+          "rust_type": "Option<String>",
+          "python_type": "str | None",
+          "has_get": true,
+          "has_set": false
+        },
+        {
+          "name": "content_type",
+          "rust_type": "Option<String>",
+          "python_type": "str | None",
+          "has_get": true,
+          "has_set": false
+        },
+        {
+          "name": "certificates",
+          "rust_type": "Vec<WarcCertificate>",
+          "python_type": "list[WarcCertificate]",
+          "has_get": true,
+          "has_set": false
+        },
+        {
+          "name": "ip_address",
+          "rust_type": "Option<String>",
+          "python_type": "str | None",
+          "has_get": true,
+          "has_set": false
+        },
+        {
+          "name": "record_offset",
+          "rust_type": "u64",
+          "python_type": "int",
+          "has_get": true,
+          "has_set": false
+        },
+        {
+          "name": "record_size",
+          "rust_type": "usize",
+          "python_type": "int",
+          "has_get": true,
+          "has_set": false
+        }
+      ],
+      "methods": [],
+      "slots": [
+        "record_id",
+        "record_type",
+        "warc_date",
+        "target_url",
+        "content_type",
+        "certificates",
+        "ip_address",
+        "record_offset",
+        "record_size"
+      ],
+      "doc_comment": null
+    },
+    "warc_parser.WarcExtractionStats": {
+      "module": "warc_parser",
+      "name": "WarcExtractionStats",
+      "fields": [
+        {
+          "name": "total_records",
+          "rust_type": "usize",
+          "python_type": "int",
+          "has_get": true,
+          "has_set": false
+        },
+        {
+          "name": "response_records",
+          "rust_type": "usize",
+          "python_type": "int",
+          "has_get": true,
+          "has_set": false
+        },
+        {
+          "name": "records_with_certs",
+          "rust_type": "usize",
+          "python_type": "int",
+          "has_get": true,
+          "has_set": false
+        },
+        {
+          "name": "total_certificates",
+          "rust_type": "usize",
+          "python_type": "int",
+          "has_get": true,
+          "has_set": false
+        },
+        {
+          "name": "unique_domains",
+          "rust_type": "usize",
+          "python_type": "int",
+          "has_get": true,
+          "has_set": false
+        },
+        {
+          "name": "file_size_bytes",
+          "rust_type": "u64",
+          "python_type": "int",
+          "has_get": true,
+          "has_set": false
+        },
+        {
+          "name": "extraction_time_ms",
+          "rust_type": "u64",
+          "python_type": "int",
+          "has_get": true,
+          "has_set": false
+        }
+      ],
+      "methods": [],
+      "slots": [
+        "total_records",
+        "response_records",
+        "records_with_certs",
+        "total_certificates",
+        "unique_domains",
+        "file_size_bytes",
+        "extraction_time_ms"
+      ],
+      "doc_comment": null
+    },
+    "warc_parser.WarcExtractor": {
+      "module": "warc_parser",
+      "name": "WarcExtractor",
+      "fields": [
+        {
+          "name": "stats",
+          "rust_type": "Option<WarcExtractionStats>",
+          "python_type": "WarcExtractionStats | None",
+          "has_get": true,
+          "has_set": false
+        }
+      ],
+      "methods": [
+        {
+          "name": "new",
+          "signature": "()",
+          "return_type": "Self",
+          "is_async": false
+        },
+        {
+          "name": "extract",
+          "signature": "(warc_path: str, record_types: list[str] | None, max_records: int | None)",
+          "return_type": "list[WarcExtractedData]",
+          "is_async": false
+        },
+        {
+          "name": "scan_certs",
+          "signature": "(warc_path: str, min_certs: int | None)",
+          "return_type": "list[WarcCertificate]",
+          "is_async": false
+        },
+        {
+          "name": "quick_scan",
+          "signature": "(warc_path: str)",
+          "return_type": "WarcExtractionStats",
+          "is_async": false
+        }
+      ],
+      "slots": [
+        "stats"
+      ],
+      "doc_comment": null
+    },
+    "aho_corasick_simd.SIMDMatch": {
+      "module": "aho_corasick_simd",
+      "name": "SIMDMatch",
+      "fields": [
+        {
+          "name": "start",
+          "rust_type": "usize",
+          "python_type": "int",
+          "has_get": true,
+          "has_set": false
+        },
+        {
+          "name": "end",
+          "rust_type": "usize",
+          "python_type": "int",
+          "has_get": true,
+          "has_set": false
+        },
+        {
+          "name": "pattern",
+          "rust_type": "String",
+          "python_type": "str",
+          "has_get": true,
+          "has_set": false
+        },
+        {
+          "name": "label",
+          "rust_type": "Option<String>",
+          "python_type": "str | None",
+          "has_get": true,
+          "has_set": false
+        },
+        {
+          "name": "value",
+          "rust_type": "String",
+          "python_type": "str",
+          "has_get": true,
+          "has_set": false
+        },
+        {
+          "name": "confidence",
+          "rust_type": "f32",
+          "python_type": "float",
+          "has_get": true,
+          "has_set": false
+        }
+      ],
+      "methods": [],
+      "slots": [
+        "start",
+        "end",
+        "pattern",
+        "label",
+        "value",
+        "confidence"
+      ],
+      "doc_comment": null
+    },
+    "aho_corasick_simd.ScanStats": {
+      "module": "aho_corasick_simd",
+      "name": "ScanStats",
+      "fields": [
+        {
+          "name": "total_matches",
+          "rust_type": "usize",
+          "python_type": "int",
+          "has_get": true,
+          "has_set": false
+        },
+        {
+          "name": "unique_patterns",
+          "rust_type": "usize",
+          "python_type": "int",
+          "has_get": true,
+          "has_set": false
+        },
+        {
+          "name": "text_length",
+          "rust_type": "usize",
+          "python_type": "int",
+          "has_get": true,
+          "has_set": false
+        },
+        {
+          "name": "duration_us",
+          "rust_type": "u64",
+          "python_type": "int",
+          "has_get": true,
+          "has_set": false
+        },
+        {
+          "name": "throughput_mbps",
+          "rust_type": "f64",
+          "python_type": "float",
+          "has_get": true,
+          "has_set": false
+        }
+      ],
+      "methods": [],
+      "slots": [
+        "total_matches",
+        "unique_patterns",
+        "text_length",
+        "duration_us",
+        "throughput_mbps"
+      ],
+      "doc_comment": null
+    },
+    "aho_corasick_simd.SIMDAhoCorasick": {
+      "module": "aho_corasick_simd",
+      "name": "SIMDAhoCorasick",
+      "fields": [
+        {
+          "name": "stats",
+          "rust_type": "Option<ScanStats>",
+          "python_type": "ScanStats | None",
+          "has_get": true,
+          "has_set": false
+        }
+      ],
+      "methods": [
+        {
+          "name": "new",
+          "signature": "(patterns: list[str], labels: list[str], case_insensitive: bool | None)",
+          "return_type": "Self",
+          "is_async": false
+        },
+        {
+          "name": "scan",
+          "signature": "(text: str, boundary_policy: str | None, max_matches: int)",
+          "return_type": "list[SIMDMatch]",
+          "is_async": false
+        },
+        {
+          "name": "scan_batch",
+          "signature": "(texts: list[str], boundary_policy: str | None)",
+          "return_type": "list[list[SIMDMatch]]",
+          "is_async": false
+        },
+        {
+          "name": "stream_scan",
+          "signature": "(text: str, chunk_size: int | None, overlap: int | None)",
+          "return_type": "list[SIMDMatch]",
+          "is_async": false
+        },
+        {
+          "name": "any_match",
+          "signature": "(text: str)",
+          "return_type": "bool",
+          "is_async": false
+        },
+        {
+          "name": "len",
+          "signature": "()",
+          "return_type": "int",
+          "is_async": false
+        },
+        {
+          "name": "is_empty",
+          "signature": "()",
+          "return_type": "bool",
+          "is_async": false
+        }
+      ],
+      "slots": [
+        "stats"
+      ],
+      "doc_comment": null
+    },
+    "unindexed_scanner.StorageEntry": {
+      "module": "unindexed_scanner",
+      "name": "StorageEntry",
+      "fields": [
+        {
+          "name": "path",
+          "rust_type": "String",
+          "python_type": "str",
+          "has_get": true,
+          "has_set": false
+        },
+        {
+          "name": "entry_type",
+          "rust_type": "String",
+          "python_type": "str",
+          "has_get": true,
+          "has_set": false
+        },
+        {
+          "name": "size_bytes",
+          "rust_type": "u64",
+          "python_type": "int",
+          "has_get": true,
+          "has_set": false
+        },
+        {
+          "name": "modified_ts",
+          "rust_type": "f64",
+          "python_type": "float",
+          "has_get": true,
+          "has_set": false
+        },
+        {
+          "name": "checksum",
+          "rust_type": "Option<String>",
+          "python_type": "str | None",
+          "has_get": true,
+          "has_set": false
+        },
+        {
+          "name": "permissions",
+          "rust_type": "Option<String>",
+          "python_type": "str | None",
+          "has_get": true,
+          "has_set": false
+        },
+        {
+          "name": "owner",
+          "rust_type": "Option<String>",
+          "python_type": "str | None",
+          "has_get": true,
+          "has_set": false
+        }
+      ],
+      "methods": [],
+      "slots": [
+        "path",
+        "entry_type",
+        "size_bytes",
+        "modified_ts",
+        "checksum",
+        "permissions",
+        "owner"
+      ],
+      "doc_comment": null
+    },
+    "unindexed_scanner.ScanResult": {
+      "module": "unindexed_scanner",
+      "name": "ScanResult",
+      "fields": [
+        {
+          "name": "source_type",
+          "rust_type": "String",
+          "python_type": "str",
+          "has_get": true,
+          "has_set": false
+        },
+        {
+          "name": "total_entries",
+          "rust_type": "usize",
+          "python_type": "int",
+          "has_get": true,
+          "has_set": false
+        },
+        {
+          "name": "total_size_bytes",
+          "rust_type": "u64",
+          "python_type": "int",
+          "has_get": true,
+          "has_set": false
+        },
+        {
+          "name": "directories",
+          "rust_type": "usize",
+          "python_type": "int",
+          "has_get": true,
+          "has_set": false
+        },
+        {
+          "name": "files",
+          "rust_type": "usize",
+          "python_type": "int",
+          "has_get": true,
+          "has_set": false
+        },
+        {
+          "name": "duration_ms",
+          "rust_type": "u64",
+          "python_type": "int",
+          "has_get": true,
+          "has_set": false
+        },
+        {
+          "name": "errors",
+          "rust_type": "Vec<String>",
+          "python_type": "list[str]",
+          "has_get": true,
+          "has_set": false
+        },
+        {
+          "name": "truncated",
+          "rust_type": "bool",
+          "python_type": "bool",
+          "has_get": true,
+          "has_set": false
+        }
+      ],
+      "methods": [],
+      "slots": [
+        "source_type",
+        "total_entries",
+        "total_size_bytes",
+        "directories",
+        "files",
+        "duration_ms",
+        "errors",
+        "truncated"
+      ],
+      "doc_comment": null
+    },
+    "unindexed_scanner.StorageConfig": {
+      "module": "unindexed_scanner",
+      "name": "StorageConfig",
+      "fields": [
+        {
+          "name": "source_type",
+          "rust_type": "String",
+          "python_type": "str",
+          "has_get": true,
+          "has_set": false
+        },
+        {
+          "name": "endpoint",
+          "rust_type": "Option<String>",
+          "python_type": "str | None",
+          "has_get": true,
+          "has_set": false
+        },
+        {
+          "name": "bucket",
+          "rust_type": "Option<String>",
+          "python_type": "str | None",
+          "has_get": true,
+          "has_set": false
+        },
+        {
+          "name": "access_key",
+          "rust_type": "Option<String>",
+          "python_type": "str | None",
+          "has_get": true,
+          "has_set": false
+        },
+        {
+          "name": "secret_key",
+          "rust_type": "Option<String>",
+          "python_type": "str | None",
+          "has_get": true,
+          "has_set": false
+        },
+        {
+          "name": "region",
+          "rust_type": "Option<String>",
+          "python_type": "str | None",
+          "has_get": true,
+          "has_set": false
+        },
+        {
+          "name": "local_path",
+          "rust_type": "Option<String>",
+          "python_type": "str | None",
+          "has_get": true,
+          "has_set": false
+        },
+        {
+          "name": "prefix",
+          "rust_type": "Option<String>",
+          "python_type": "str | None",
+          "has_get": true,
+          "has_set": false
+        },
+        {
+          "name": "max_entries",
+          "rust_type": "Option<usize>",
+          "python_type": "int | None",
+          "has_get": true,
+          "has_set": false
+        }
+      ],
+      "methods": [],
+      "slots": [
+        "source_type",
+        "endpoint",
+        "bucket",
+        "access_key",
+        "secret_key",
+        "region",
+        "local_path",
+        "prefix",
+        "max_entries"
+      ],
+      "doc_comment": null
+    },
+    "unindexed_scanner.UnindexedScanner": {
+      "module": "unindexed_scanner",
+      "name": "UnindexedScanner",
+      "fields": [
+        {
+          "name": "last_result",
+          "rust_type": "Option<ScanResult>",
+          "python_type": "ScanResult | None",
+          "has_get": true,
+          "has_set": false
+        }
+      ],
+      "methods": [
+        {
+          "name": "new",
+          "signature": "()",
+          "return_type": "Self",
+          "is_async": false
+        },
+        {
+          "name": "scan",
+          "signature": "(config: StorageConfig)",
+          "return_type": "ScanResult",
+          "is_async": false
+        },
+        {
+          "name": "list",
+          "signature": "(config: StorageConfig)",
+          "return_type": "list[StorageEntry]",
+          "is_async": false
+        },
+        {
+          "name": "scan_parallel",
+          "signature": "(path: str, max_depth: int | None)",
+          "return_type": "list[StorageEntry]",
+          "is_async": false
+        },
+        {
+          "name": "parse_rsync",
+          "signature": "(manifest_path: str)",
+          "return_type": "list[StorageEntry]",
+          "is_async": false
+        },
+        {
+          "name": "total_size",
+          "signature": "(path: str)",
+          "return_type": "int",
+          "is_async": false
+        }
+      ],
+      "slots": [
+        "last_result"
+      ],
+      "doc_comment": null
+    },
+    "regex_lz4.PyRegexLz4Store": {
+      "module": "regex_lz4",
+      "name": "PyRegexLz4Store",
+      "fields": [],
+      "methods": [
+        {
+          "name": "new",
+          "signature": "(patterns: list[str])",
+          "return_type": "Self",
+          "is_async": false
+        },
+        {
+          "name": "compressed_size",
+          "signature": "()",
+          "return_type": "int",
+          "is_async": false
+        },
+        {
+          "name": "compression_ratio",
+          "signature": "()",
+          "return_type": "float",
+          "is_async": false
+        },
+        {
+          "name": "get_patterns",
+          "signature": "()",
+          "return_type": "list[str]",
+          "is_async": false
+        },
+        {
+          "name": "save",
+          "signature": "(path: str)",
+          "return_type": "tuple[]",
+          "is_async": false
+        },
+        {
+          "name": "load",
+          "signature": "(path: str)",
+          "return_type": "Self",
+          "is_async": false
+        }
+      ],
+      "slots": [],
+      "doc_comment": null
+    },
+    "ioc_stream_scan.StreamingIocScanner": {
+      "module": "ioc_stream_scan",
+      "name": "StreamingIocScanner",
+      "fields": [],
+      "methods": [
+        {
+          "name": "new",
+          "signature": "(patterns: list[str], labels: list[str])",
+          "return_type": "Self",
+          "is_async": false
+        },
+        {
+          "name": "scan_bytes",
+          "signature": "(buffer: bytes)",
+          "return_type": "list[StreamPatternHit]",
+          "is_async": false
+        },
+        {
+          "name": "scan_bytearray",
+          "signature": "(buffer: bytes)",
+          "return_type": "list[StreamPatternHit]",
+          "is_async": false
+        },
+        {
+          "name": "scan_memoryview",
+          "signature": "(buffer: bytes)",
+          "return_type": "list[StreamPatternHit]",
+          "is_async": false
+        },
+        {
+          "name": "scan_mmap",
+          "signature": "(path: str)",
+          "return_type": "list[StreamPatternHit]",
+          "is_async": false
+        },
+        {
+          "name": "scan_iter_mmap",
+          "signature": "(path: str, chunk_size: int | None)",
+          "return_type": "list[StreamPatternHit]",
+          "is_async": false
+        },
+        {
+          "name": "scan_mmap_range",
+          "signature": "(path: str, offset: int, length: int)",
+          "return_type": "list[StreamPatternHit]",
+          "is_async": false
+        },
+        {
+          "name": "len",
+          "signature": "()",
+          "return_type": "int",
+          "is_async": false
+        },
+        {
+          "name": "is_empty",
+          "signature": "()",
+          "return_type": "bool",
+          "is_async": false
+        },
+        {
+          "name": "contains_any",
+          "signature": "(buffer: bytes)",
+          "return_type": "bool",
+          "is_async": false
+        },
+        {
+          "name": "contains_any_mmap",
+          "signature": "(path: str)",
+          "return_type": "bool",
+          "is_async": false
+        },
+        {
+          "name": "count_matches",
+          "signature": "(buffer: bytes)",
+          "return_type": "int",
+          "is_async": false
+        },
+        {
+          "name": "count_matches_mmap",
+          "signature": "(path: str)",
+          "return_type": "int",
+          "is_async": false
+        },
+        {
+          "name": "close",
+          "signature": "()",
+          "return_type": "None",
+          "is_async": false
+        }
+      ],
+      "slots": [],
+      "doc_comment": null
+    },
+    "rolling_hash.RollingHashEngine": {
+      "module": "rolling_hash",
+      "name": "RollingHashEngine",
+      "fields": [],
+      "methods": [
+        {
+          "name": "new",
+          "signature": "(base: int, modulus: int, window_size: int)",
+          "return_type": "Self",
+          "is_async": false
+        },
+        {
+          "name": "update",
+          "signature": "(byte: int)",
+          "return_type": "None",
+          "is_async": false
+        },
+        {
+          "name": "roll",
+          "signature": "(old_hash: int, old_char: int, new_char: int, window_size: int)",
+          "return_type": "int",
+          "is_async": false
+        },
+        {
+          "name": "digest",
+          "signature": "()",
+          "return_type": "int",
+          "is_async": false
+        },
+        {
+          "name": "hash",
+          "signature": "(data: bytes)",
+          "return_type": "int",
+          "is_async": false
+        },
+        {
+          "name": "hashes",
+          "signature": "(data: bytes)",
+          "return_type": "list[int]",
+          "is_async": false
+        }
+      ],
+      "slots": [],
+      "doc_comment": null
+    },
+    "git_forensics.GitForensicRecord": {
+      "module": "git_forensics",
+      "name": "GitForensicRecord",
+      "fields": [
+        {
+          "name": "sha1",
+          "rust_type": "String",
+          "python_type": "str",
+          "has_get": true,
+          "has_set": false
+        },
+        {
+          "name": "object_type",
+          "rust_type": "String",
+          "python_type": "str",
+          "has_get": true,
+          "has_set": false
+        },
+        {
+          "name": "author_email",
+          "rust_type": "Option<String>",
+          "python_type": "str | None",
+          "has_get": true,
+          "has_set": false
+        },
+        {
+          "name": "author_name",
+          "rust_type": "Option<String>",
+          "python_type": "str | None",
+          "has_get": true,
+          "has_set": false
+        },
+        {
+          "name": "committer_email",
+          "rust_type": "Option<String>",
+          "python_type": "str | None",
+          "has_get": true,
+          "has_set": false
+        },
+        {
+          "name": "committer_name",
+          "rust_type": "Option<String>",
+          "python_type": "str | None",
+          "has_get": true,
+          "has_set": false
+        },
+        {
+          "name": "timestamp",
+          "rust_type": "Option<i64>",
+          "python_type": "int | None",
+          "has_get": true,
+          "has_set": false
+        },
+        {
+          "name": "timezone",
+          "rust_type": "Option<String>",
+          "python_type": "str | None",
+          "has_get": true,
+          "has_set": false
+        },
+        {
+          "name": "pgp_key_id",
+          "rust_type": "Option<String>",
+          "python_type": "str | None",
+          "has_get": true,
+          "has_set": false
+        },
+        {
+          "name": "ssh_fingerprint",
+          "rust_type": "Option<String>",
+          "python_type": "str | None",
+          "has_get": true,
+          "has_set": false
+        },
+        {
+          "name": "message_preview",
+          "rust_type": "Option<String>",
+          "python_type": "str | None",
+          "has_get": true,
+          "has_set": false
+        }
+      ],
+      "methods": [
+        {
+          "name": "new_placeholder",
+          "signature": "(sha1: str)",
+          "return_type": "Self",
+          "is_async": false
+        }
+      ],
+      "slots": [
+        "sha1",
+        "object_type",
+        "author_email",
+        "author_name",
+        "committer_email",
+        "committer_name",
+        "timestamp",
+        "timezone",
+        "pgp_key_id",
+        "ssh_fingerprint",
+        "message_preview"
+      ],
+      "doc_comment": null
+    },
+    "git_forensics.GitForensicStats": {
+      "module": "git_forensics",
+      "name": "GitForensicStats",
+      "fields": [
+        {
+          "name": "total_objects",
+          "rust_type": "usize",
+          "python_type": "int",
+          "has_get": true,
+          "has_set": false
+        },
+        {
+          "name": "commit_objects",
+          "rust_type": "usize",
+          "python_type": "int",
+          "has_get": true,
+          "has_set": false
+        },
+        {
+          "name": "tree_objects",
+          "rust_type": "usize",
+          "python_type": "int",
+          "has_get": true,
+          "has_set": false
+        },
+        {
+          "name": "blob_objects",
+          "rust_type": "usize",
+          "python_type": "int",
+          "has_get": true,
+          "has_set": false
+        },
+        {
+          "name": "tag_objects",
+          "rust_type": "usize",
+          "python_type": "int",
+          "has_get": true,
+          "has_set": false
+        },
+        {
+          "name": "delta_objects",
+          "rust_type": "usize",
+          "python_type": "int",
+          "has_get": true,
+          "has_set": false
+        },
+        {
+          "name": "emails_extracted",
+          "rust_type": "usize",
+          "python_type": "int",
+          "has_get": true,
+          "has_set": false
+        },
+        {
+          "name": "pgp_keys_found",
+          "rust_type": "usize",
+          "python_type": "int",
+          "has_get": true,
+          "has_set": false
+        },
+        {
+          "name": "ssh_keys_found",
+          "rust_type": "usize",
+          "python_type": "int",
+          "has_get": true,
+          "has_set": false
+        },
+        {
+          "name": "packfile_size_bytes",
+          "rust_type": "u64",
+          "python_type": "int",
+          "has_get": true,
+          "has_set": false
+        },
+        {
+          "name": "extraction_time_ms",
+          "rust_type": "u64",
+          "python_type": "int",
+          "has_get": true,
+          "has_set": false
+        }
+      ],
+      "methods": [],
+      "slots": [
+        "total_objects",
+        "commit_objects",
+        "tree_objects",
+        "blob_objects",
+        "tag_objects",
+        "delta_objects",
+        "emails_extracted",
+        "pgp_keys_found",
+        "ssh_keys_found",
+        "packfile_size_bytes",
+        "extraction_time_ms"
+      ],
+      "doc_comment": null
+    },
+    "git_forensics.GitForensicsExtractor": {
+      "module": "git_forensics",
+      "name": "GitForensicsExtractor",
+      "fields": [
+        {
+          "name": "stats",
+          "rust_type": "Option<GitForensicStats>",
+          "python_type": "GitForensicStats | None",
+          "has_get": true,
+          "has_set": false
+        }
+      ],
+      "methods": [
+        {
+          "name": "new",
+          "signature": "()",
+          "return_type": "Self",
+          "is_async": false
+        },
+        {
+          "name": "extract",
+          "signature": "(packfile_path: str, max_objects: int | None)",
+          "return_type": "list[GitForensicRecord]",
+          "is_async": false
+        },
+        {
+          "name": "extract_commits_fast",
+          "signature": "(packfile_path: str)",
+          "return_type": "list[GitForensicRecord]",
+          "is_async": false
+        },
+        {
+          "name": "scan_stats",
+          "signature": "(packfile_path: str)",
+          "return_type": "GitForensicStats",
+          "is_async": false
+        }
+      ],
+      "slots": [
+        "stats"
+      ],
+      "doc_comment": null
+    },
+    "simhash_ext.SimHashStore": {
+      "module": "simhash_ext",
+      "name": "SimHashStore",
+      "fields": [],
+      "methods": [
+        {
+          "name": "new",
+          "signature": "(threshold: int, ngram_size: int)",
+          "return_type": "Self",
+          "is_async": false
+        },
+        {
+          "name": "get_threshold",
+          "signature": "()",
+          "return_type": "int",
+          "is_async": false
+        },
+        {
+          "name": "get_ngram_size",
+          "signature": "()",
+          "return_type": "int",
+          "is_async": false
+        },
+        {
+          "name": "add_document",
+          "signature": "(text: str, doc_id: str)",
+          "return_type": "tuple[bool, str | None]",
+          "is_async": false
+        },
+        {
+          "name": "fingerprint_for",
+          "signature": "(text: str)",
+          "return_type": "int",
+          "is_async": false
+        },
+        {
+          "name": "len",
+          "signature": "()",
+          "return_type": "int",
+          "is_async": false
+        }
+      ],
+      "slots": [],
+      "doc_comment": null
+    },
+    "url_ops.UrlClassifyCachePy": {
+      "module": "url_ops",
+      "name": "UrlClassifyCachePy",
+      "fields": [],
+      "methods": [
+        {
+          "name": "new",
+          "signature": "(capacity: int, ttl_s: float)",
+          "return_type": "Self",
+          "is_async": false
+        },
+        {
+          "name": "classify_batch_cached",
+          "signature": "(urls: list[str])",
+          "return_type": "list[tuple[str, str]]",
+          "is_async": false
+        },
+        {
+          "name": "clear",
+          "signature": "()",
+          "return_type": "bool",
+          "is_async": false
+        },
+        {
+          "name": "stats",
+          "signature": "()",
+          "return_type": "tuple[int, int, int, int, int] | None",
+          "is_async": false
+        }
+      ],
+      "slots": [],
+      "doc_comment": null
+    },
+    "bloom.BloomFilter": {
+      "module": "bloom",
+      "name": "BloomFilter",
+      "fields": [],
+      "methods": [
+        {
+          "name": "new",
+          "signature": "(capacity: int, fp_rate: float)",
+          "return_type": "Self",
+          "is_async": false
+        },
+        {
+          "name": "add",
+          "signature": "(item: str)",
+          "return_type": "bool",
+          "is_async": false
+        },
+        {
+          "name": "add_batch_impl",
+          "signature": "(items: list[str])",
+          "return_type": "list[bool]",
+          "is_async": false
+        },
+        {
+          "name": "add_batch",
+          "signature": "(items: list[str])",
+          "return_type": "list[bool]",
+          "is_async": false
+        },
+        {
+          "name": "contains",
+          "signature": "(item: str)",
+          "return_type": "bool",
+          "is_async": false
+        },
+        {
+          "name": "check",
+          "signature": "(item: str)",
+          "return_type": "bool",
+          "is_async": false
+        },
+        {
+          "name": "reset",
+          "signature": "()",
+          "return_type": "None",
+          "is_async": false
+        },
+        {
+          "name": "is_empty",
+          "signature": "()",
+          "return_type": "bool",
+          "is_async": false
+        },
+        {
+          "name": "capacity",
+          "signature": "()",
+          "return_type": "int",
+          "is_async": false
+        },
+        {
+          "name": "fp_rate",
+          "signature": "()",
+          "return_type": "float",
+          "is_async": false
+        },
+        {
+          "name": "contains_batch",
+          "signature": "(items: list[str])",
+          "return_type": "list[bool]",
+          "is_async": false
+        }
+      ],
+      "slots": [],
+      "doc_comment": null
+    },
+    "anti_analysis.TlsChallengeResult": {
+      "module": "anti_analysis",
+      "name": "TlsChallengeResult",
+      "fields": [
+        {
+          "name": "challenge_detected",
+          "rust_type": "bool",
+          "python_type": "bool",
+          "has_get": true,
+          "has_set": false
+        },
+        {
+          "name": "challenge_type",
+          "rust_type": "String",
+          "python_type": "str",
+          "has_get": true,
+          "has_set": false
+        },
+        {
+          "name": "confidence",
+          "rust_type": "f32",
+          "python_type": "float",
+          "has_get": true,
+          "has_set": false
+        },
+        {
+          "name": "ja4",
+          "rust_type": "String",
+          "python_type": "str",
+          "has_get": true,
+          "has_set": false
+        },
+        {
+          "name": "anomaly_flags",
+          "rust_type": "Vec<String>",
+          "python_type": "list[str]",
+          "has_get": true,
+          "has_set": false
+        },
+        {
+          "name": "raw_indicators",
+          "rust_type": "Vec<String>",
+          "python_type": "list[str]",
+          "has_get": true,
+          "has_set": false
+        }
+      ],
+      "methods": [],
+      "slots": [
+        "challenge_detected",
+        "challenge_type",
+        "confidence",
+        "ja4",
+        "anomaly_flags",
+        "raw_indicators"
+      ],
+      "doc_comment": null
+    },
+    "anti_analysis.H2SettingsResult": {
+      "module": "anti_analysis",
+      "name": "H2SettingsResult",
+      "fields": [
+        {
+          "name": "anomaly_detected",
+          "rust_type": "bool",
+          "python_type": "bool",
+          "has_get": true,
+          "has_set": false
+        },
+        {
+          "name": "anomaly_type",
+          "rust_type": "String",
+          "python_type": "str",
+          "has_get": true,
+          "has_set": false
+        },
+        {
+          "name": "bot_score",
+          "rust_type": "f32",
+          "python_type": "float",
+          "has_get": true,
+          "has_set": false
+        },
+        {
+          "name": "expected_window_size",
+          "rust_type": "u32",
+          "python_type": "int",
+          "has_get": true,
+          "has_set": false
+        },
+        {
+          "name": "actual_window_size",
+          "rust_type": "Option<u32>",
+          "python_type": "int | None",
+          "has_get": true,
+          "has_set": false
+        },
+        {
+          "name": "mismatch_details",
+          "rust_type": "String",
+          "python_type": "str",
+          "has_get": true,
+          "has_set": false
+        }
+      ],
+      "methods": [],
+      "slots": [
+        "anomaly_detected",
+        "anomaly_type",
+        "bot_score",
+        "expected_window_size",
+        "actual_window_size",
+        "mismatch_details"
+      ],
+      "doc_comment": null
+    },
+    "anti_analysis.HoneypotProbeResult": {
+      "module": "anti_analysis",
+      "name": "HoneypotProbeResult",
+      "fields": [
+        {
+          "name": "honeypot_detected",
+          "rust_type": "bool",
+          "python_type": "bool",
+          "has_get": true,
+          "has_set": false
+        },
+        {
+          "name": "honeypot_type",
+          "rust_type": "String",
+          "python_type": "str",
+          "has_get": true,
+          "has_set": false
+        },
+        {
+          "name": "confidence",
+          "rust_type": "f32",
+          "python_type": "float",
+          "has_get": true,
+          "has_set": false
+        },
+        {
+          "name": "response_times_ms",
+          "rust_type": "Vec<f32>",
+          "python_type": "list[float]",
+          "has_get": true,
+          "has_set": false
+        },
+        {
+          "name": "internal_links",
+          "rust_type": "usize",
+          "python_type": "int",
+          "has_get": true,
+          "has_set": false
+        },
+        {
+          "name": "external_links",
+          "rust_type": "usize",
+          "python_type": "int",
+          "has_get": true,
+          "has_set": false
+        },
+        {
+          "name": "hidden_elements",
+          "rust_type": "usize",
+          "python_type": "int",
+          "has_get": true,
+          "has_set": false
+        },
+        {
+          "name": "probe_url",
+          "rust_type": "String",
+          "python_type": "str",
+          "has_get": true,
+          "has_set": false
+        },
+        {
+          "name": "total_time_ms",
+          "rust_type": "f32",
+          "python_type": "float",
+          "has_get": true,
+          "has_set": false
+        }
+      ],
+      "methods": [],
+      "slots": [
+        "honeypot_detected",
+        "honeypot_type",
+        "confidence",
+        "response_times_ms",
+        "internal_links",
+        "external_links",
+        "hidden_elements",
+        "probe_url",
+        "total_time_ms"
+      ],
+      "doc_comment": null
+    },
+    "anti_analysis.QuickProbeResult": {
+      "module": "anti_analysis",
+      "name": "QuickProbeResult",
+      "fields": [
+        {
+          "name": "abandoned",
+          "rust_type": "bool",
+          "python_type": "bool",
+          "has_get": true,
+          "has_set": false
+        },
+        {
+          "name": "reason",
+          "rust_type": "String",
+          "python_type": "str",
+          "has_get": true,
+          "has_set": false
+        },
+        {
+          "name": "confidence",
+          "rust_type": "f32",
+          "python_type": "float",
+          "has_get": true,
+          "has_set": false
+        },
+        {
+          "name": "evasion_type",
+          "rust_type": "String",
+          "python_type": "str",
+          "has_get": true,
+          "has_set": false
+        },
+        {
+          "name": "probe_time_ms",
+          "rust_type": "f32",
+          "python_type": "float",
+          "has_get": true,
+          "has_set": false
+        },
+        {
+          "name": "tls_result",
+          "rust_type": "Option<TlsChallengeResult>",
+          "python_type": "TlsChallengeResult | None",
+          "has_get": true,
+          "has_set": false
+        },
+        {
+          "name": "h2_result",
+          "rust_type": "Option<H2SettingsResult>",
+          "python_type": "H2SettingsResult | None",
+          "has_get": true,
+          "has_set": false
+        },
+        {
+          "name": "honeypot_result",
+          "rust_type": "Option<HoneypotProbeResult>",
+          "python_type": "HoneypotProbeResult | None",
+          "has_get": true,
+          "has_set": false
+        }
+      ],
+      "methods": [],
+      "slots": [
+        "abandoned",
+        "reason",
+        "confidence",
+        "evasion_type",
+        "probe_time_ms",
+        "tls_result",
+        "h2_result",
+        "honeypot_result"
+      ],
+      "doc_comment": null
+    },
+    "anti_analysis.AbandonCheckResult": {
+      "module": "anti_analysis",
+      "name": "AbandonCheckResult",
+      "fields": [
+        {
+          "name": "abandoned",
+          "rust_type": "bool",
+          "python_type": "bool",
+          "has_get": true,
+          "has_set": false
+        },
+        {
+          "name": "reason",
+          "rust_type": "Option<String>",
+          "python_type": "str | None",
+          "has_get": true,
+          "has_set": false
+        },
+        {
+          "name": "abandoned_at",
+          "rust_type": "Option<f64>",
+          "python_type": "float | None",
+          "has_get": true,
+          "has_set": false
+        },
+        {
+          "name": "trust_score",
+          "rust_type": "f32",
+          "python_type": "float",
+          "has_get": true,
+          "has_set": false
+        }
+      ],
+      "methods": [],
+      "slots": [
+        "abandoned",
+        "reason",
+        "abandoned_at",
+        "trust_score"
+      ],
+      "doc_comment": null
+    },
+    "aho_corasick.PatternHit": {
+      "module": "aho_corasick",
+      "name": "PatternHit",
+      "fields": [
+        {
+          "name": "start",
+          "rust_type": "usize",
+          "python_type": "int",
+          "has_get": true,
+          "has_set": false
+        },
+        {
+          "name": "end",
+          "rust_type": "usize",
+          "python_type": "int",
+          "has_get": true,
+          "has_set": false
+        },
+        {
+          "name": "pattern",
+          "rust_type": "String",
+          "python_type": "str",
+          "has_get": true,
+          "has_set": false
+        },
+        {
+          "name": "label",
+          "rust_type": "Option<String>",
+          "python_type": "str | None",
+          "has_get": true,
+          "has_set": false
+        },
+        {
+          "name": "value",
+          "rust_type": "String",
+          "python_type": "str",
+          "has_get": true,
+          "has_set": false
+        }
+      ],
+      "methods": [],
+      "slots": [
+        "start",
+        "end",
+        "pattern",
+        "label",
+        "value"
+      ],
+      "doc_comment": null
+    },
+    "aho_corasick.AhoCorasickMatcher": {
+      "module": "aho_corasick",
+      "name": "AhoCorasickMatcher",
+      "fields": [],
+      "methods": [
+        {
+          "name": "new",
+          "signature": "(patterns: list[str], labels: list[str], capture_patterns: list[str])",
+          "return_type": "Self",
+          "is_async": false
+        },
+        {
+          "name": "scan",
+          "signature": "(text: str, boundary_policy: str | None)",
+          "return_type": "list[PatternHit]",
+          "is_async": false
+        },
+        {
+          "name": "scan_with_captures",
+          "signature": "(text: str)",
+          "return_type": "list[tuple[int, int, str, str | None, str]]",
+          "is_async": false
+        },
+        {
+          "name": "scan_batch",
+          "signature": "(texts: list[str], boundary_policy: str | None)",
+          "return_type": "list[list[PatternHit]]",
+          "is_async": false
+        },
+        {
+          "name": "len",
+          "signature": "()",
+          "return_type": "int",
+          "is_async": false
+        },
+        {
+          "name": "is_empty",
+          "signature": "()",
+          "return_type": "bool",
+          "is_async": false
+        },
+        {
+          "name": "find_any",
+          "signature": "(text: str)",
+          "return_type": "bool",
+          "is_async": false
+        },
+        {
+          "name": "close",
+          "signature": "()",
+          "return_type": "None",
+          "is_async": false
+        }
+      ],
+      "slots": [],
+      "doc_comment": null
+    },
+    "dedup_bloom.PyDistributedBloomFilter": {
+      "module": "dedup_bloom",
+      "name": "PyDistributedBloomFilter",
+      "fields": [],
+      "methods": [
+        {
+          "name": "new",
+          "signature": "(cache_dir: str)",
+          "return_type": "Self",
+          "is_async": false
+        },
+        {
+          "name": "add",
+          "signature": "(item: str)",
+          "return_type": "bool",
+          "is_async": false
+        },
+        {
+          "name": "add_batch",
+          "signature": "(items: list[str])",
+          "return_type": "list[bool]",
+          "is_async": false
+        },
+        {
+          "name": "contains",
+          "signature": "(item: str)",
+          "return_type": "bool",
+          "is_async": false
+        },
+        {
+          "name": "contains_batch",
+          "signature": "(items: list[str])",
+          "return_type": "list[bool]",
+          "is_async": false
+        },
+        {
+          "name": "frequency",
+          "signature": "(item: str)",
+          "return_type": "int",
+          "is_async": false
+        },
+        {
+          "name": "len",
+          "signature": "()",
+          "return_type": "int",
+          "is_async": false
+        },
+        {
+          "name": "memory_bytes",
+          "signature": "()",
+          "return_type": "int",
+          "is_async": false
+        },
+        {
+          "name": "save",
+          "signature": "()",
+          "return_type": "str",
+          "is_async": false
+        },
+        {
+          "name": "load",
+          "signature": "(cache_dir: str)",
+          "return_type": "Self",
+          "is_async": false
+        },
+        {
+          "name": "reset",
+          "signature": "()",
+          "return_type": "None",
+          "is_async": false
+        },
+        {
+          "name": "save_to_lmdb_bytes",
+          "signature": "()",
+          "return_type": "list[int]",
+          "is_async": false
+        },
+        {
+          "name": "load_from_lmdb_bytes",
+          "signature": "(data: bytes)",
+          "return_type": "Self",
+          "is_async": false
+        }
+      ],
+      "slots": [],
+      "doc_comment": null
+    },
+    "dedup_bloom.DedupBloomStats": {
+      "module": "dedup_bloom",
+      "name": "DedupBloomStats",
+      "fields": [
+        {
+          "name": "total_items",
+          "rust_type": "usize",
+          "python_type": "int",
+          "has_get": true,
+          "has_set": false
+        },
+        {
+          "name": "memory_bytes",
+          "rust_type": "usize",
+          "python_type": "int",
+          "has_get": true,
+          "has_set": false
+        },
+        {
+          "name": "tier_count",
+          "rust_type": "usize",
+          "python_type": "int",
+          "has_get": true,
+          "has_set": false
+        },
+        {
+          "name": "tier_0_fpp",
+          "rust_type": "f64",
+          "python_type": "float",
+          "has_get": true,
+          "has_set": false
+        },
+        {
+          "name": "tier_0_items",
+          "rust_type": "usize",
+          "python_type": "int",
+          "has_get": true,
+          "has_set": false
+        },
+        {
+          "name": "tier_1_fpp",
+          "rust_type": "f64",
+          "python_type": "float",
+          "has_get": true,
+          "has_set": false
+        },
+        {
+          "name": "tier_1_items",
+          "rust_type": "usize",
+          "python_type": "int",
+          "has_get": true,
+          "has_set": false
+        },
+        {
+          "name": "tier_2_fpp",
+          "rust_type": "f64",
+          "python_type": "float",
+          "has_get": true,
+          "has_set": false
+        },
+        {
+          "name": "tier_2_items",
+          "rust_type": "usize",
+          "python_type": "int",
+          "has_get": true,
+          "has_set": false
+        }
+      ],
+      "methods": [],
+      "slots": [
+        "total_items",
+        "memory_bytes",
+        "tier_count",
+        "tier_0_fpp",
+        "tier_0_items",
+        "tier_1_fpp",
+        "tier_1_items",
+        "tier_2_fpp",
+        "tier_2_items"
+      ],
+      "doc_comment": null
+    },
+    "url_set.UrlSet": {
+      "module": "url_set",
+      "name": "UrlSet",
+      "fields": [],
+      "methods": [
+        {
+          "name": "new",
+          "signature": "(capacity: int)",
+          "return_type": "Self",
+          "is_async": false
+        },
+        {
+          "name": "add",
+          "signature": "(url: str)",
+          "return_type": "bool",
+          "is_async": false
+        },
+        {
+          "name": "contains",
+          "signature": "(url: str)",
+          "return_type": "bool",
+          "is_async": false
+        },
+        {
+          "name": "add_batch",
+          "signature": "(urls: list[str])",
+          "return_type": "list[bool]",
+          "is_async": false
+        },
+        {
+          "name": "len",
+          "signature": "()",
+          "return_type": "int",
+          "is_async": false
+        },
+        {
+          "name": "total_seen",
+          "signature": "()",
+          "return_type": "int",
+          "is_async": false
+        },
+        {
+          "name": "is_empty",
+          "signature": "()",
+          "return_type": "bool",
+          "is_async": false
+        },
+        {
+          "name": "clear",
+          "signature": "()",
+          "return_type": "None",
+          "is_async": false
+        },
+        {
+          "name": "memory_bytes",
+          "signature": "()",
+          "return_type": "int",
+          "is_async": false
+        },
+        {
+          "name": "to_list",
+          "signature": "()",
+          "return_type": "list[int]",
+          "is_async": false
+        }
+      ],
+      "slots": [],
+      "doc_comment": null
+    },
+    "arti_bridge.ArtiNode": {
+      "module": "arti_bridge",
+      "name": "ArtiNode",
+      "fields": [],
+      "methods": [
+        {
+          "name": "new",
+          "signature": "(data_dir: str | None)",
+          "return_type": "Self",
+          "is_async": false
+        },
+        {
+          "name": "start",
+          "signature": "()",
+          "return_type": "bool",
+          "is_async": false
+        },
+        {
+          "name": "fetch_onion",
+          "signature": "(url: str, timeout_s: float | None)",
+          "return_type": "tuple[int, list[int]]",
+          "is_async": false
+        },
+        {
+          "name": "fetch_batch",
+          "signature": "(urls: list[str], timeout_s: float | None)",
+          "return_type": "list[tuple[int, list[int]]]",
+          "is_async": false
+        },
+        {
+          "name": "is_bootstrapped",
+          "signature": "()",
+          "return_type": "bool",
+          "is_async": false
+        },
+        {
+          "name": "bootstrap_status_str",
+          "signature": "()",
+          "return_type": "str",
+          "is_async": false
+        },
+        {
+          "name": "circuits_prebuilt",
+          "signature": "()",
+          "return_type": "int",
+          "is_async": false
+        },
+        {
+          "name": "pool_size",
+          "signature": "()",
+          "return_type": "int",
+          "is_async": false
+        },
+        {
+          "name": "clear_pool",
+          "signature": "()",
+          "return_type": "None",
+          "is_async": false
+        },
+        {
+          "name": "isolate_circuit",
+          "signature": "(session_name: str)",
+          "return_type": "bool",
+          "is_async": false
+        },
+        {
+          "name": "open_stream",
+          "signature": "(destination: str, port: int)",
+          "return_type": "tuple[int, list[int]]",
+          "is_async": false
+        },
+        {
+          "name": "open_stream_async",
+          "signature": "(destination: str, port: int, timeout_s: float | None)",
+          "return_type": "Any",
+          "is_async": false
+        },
+        {
+          "name": "session_status",
+          "signature": "()",
+          "return_type": "dict[str, str]",
+          "is_async": false
+        },
+        {
+          "name": "rotate_all_circuits",
+          "signature": "()",
+          "return_type": "bool",
+          "is_async": false
+        },
+        {
+          "name": "rotate_all_circuits_async",
+          "signature": "()",
+          "return_type": "Any",
+          "is_async": false
+        },
+        {
+          "name": "close",
+          "signature": "()",
+          "return_type": "None",
+          "is_async": false
+        }
+      ],
+      "slots": [],
+      "doc_comment": null
+    },
+    "xxhash_ext.StreamHasher64": {
+      "module": "xxhash_ext",
+      "name": "StreamHasher64",
+      "fields": [],
+      "methods": [
+        {
+          "name": "new",
+          "signature": "()",
+          "return_type": "Self",
+          "is_async": false
+        },
+        {
+          "name": "update",
+          "signature": "(data: bytes)",
+          "return_type": "None",
+          "is_async": false
+        },
+        {
+          "name": "digest",
+          "signature": "()",
+          "return_type": "int",
+          "is_async": false
+        },
+        {
+          "name": "hexdigest",
+          "signature": "()",
+          "return_type": "str",
+          "is_async": false
+        },
+        {
+          "name": "reset",
+          "signature": "()",
+          "return_type": "None",
+          "is_async": false
+        },
+        {
+          "name": "update_str",
+          "signature": "(s: str)",
+          "return_type": "None",
+          "is_async": false
+        }
+      ],
+      "slots": [],
+      "doc_comment": null
+    },
+    "graph_cache.PyGraphLRUCache": {
+      "module": "graph_cache",
+      "name": "PyGraphLRUCache",
+      "fields": [],
+      "methods": [
+        {
+          "name": "new",
+          "signature": "(max_entries: int, max_bytes: int)",
+          "return_type": "Self",
+          "is_async": false
+        },
+        {
+          "name": "get",
+          "signature": "(key: str)",
+          "return_type": "list[int] | None",
+          "is_async": false
+        },
+        {
+          "name": "put",
+          "signature": "(key: str, value: list[int])",
+          "return_type": "bool",
+          "is_async": false
+        },
+        {
+          "name": "len",
+          "signature": "()",
+          "return_type": "int",
+          "is_async": false
+        },
+        {
+          "name": "is_empty",
+          "signature": "()",
+          "return_type": "bool",
+          "is_async": false
+        },
+        {
+          "name": "clear",
+          "signature": "()",
+          "return_type": "None",
+          "is_async": false
+        },
+        {
+          "name": "contains_key",
+          "signature": "(key: str)",
+          "return_type": "bool",
+          "is_async": false
+        },
+        {
+          "name": "remove",
+          "signature": "(key: str)",
+          "return_type": "list[int] | None",
+          "is_async": false
+        },
+        {
+          "name": "stats",
+          "signature": "()",
+          "return_type": "dict[str, int]",
+          "is_async": false
+        }
+      ],
+      "slots": [],
+      "doc_comment": null
+    },
+    "ioc_dedup.MmapIocDedupStore": {
+      "module": "ioc_dedup",
+      "name": "MmapIocDedupStore",
+      "fields": [],
+      "methods": [
+        {
+          "name": "new",
+          "signature": "(path: str, force_new: bool)",
+          "return_type": "Self",
+          "is_async": false
+        },
+        {
+          "name": "add",
+          "signature": "(value: str, ioc_type_str: str, confidence: float)",
+          "return_type": "bool",
+          "is_async": false
+        },
+        {
+          "name": "contains",
+          "signature": "(value: str, ioc_type_str: str)",
+          "return_type": "bool",
+          "is_async": false
+        },
+        {
+          "name": "advance_sprint",
+          "signature": "(new_sprint_id: int)",
+          "return_type": "None",
+          "is_async": false
+        },
+        {
+          "name": "len",
+          "signature": "()",
+          "return_type": "int",
+          "is_async": false
+        },
+        {
+          "name": "is_empty",
+          "signature": "()",
+          "return_type": "bool",
+          "is_async": false
+        },
+        {
+          "name": "stats",
+          "signature": "()",
+          "return_type": "tuple[int, int, int]",
+          "is_async": false
+        },
+        {
+          "name": "get_by_type",
+          "signature": "(ioc_type_str: str)",
+          "return_type": "list[str]",
+          "is_async": false
+        },
+        {
+          "name": "get_entries_by_type",
+          "signature": "(ioc_type_str: str)",
+          "return_type": "list[tuple[str, int, int, int, float]]",
+          "is_async": false
+        },
+        {
+          "name": "msync",
+          "signature": "()",
+          "return_type": "tuple[]",
+          "is_async": false
+        },
+        {
+          "name": "close",
+          "signature": "()",
+          "return_type": "tuple[]",
+          "is_async": false
+        },
+        {
+          "name": "clear",
+          "signature": "()",
+          "return_type": "None",
+          "is_async": false
+        },
+        {
+          "name": "get_sprint",
+          "signature": "()",
+          "return_type": "int",
+          "is_async": false
+        },
+        {
+          "name": "path",
+          "signature": "()",
+          "return_type": "str",
+          "is_async": false
+        },
+        {
+          "name": "byte_size",
+          "signature": "()",
+          "return_type": "int",
+          "is_async": false
+        },
+        {
+          "name": "get_state_bytes",
+          "signature": "()",
+          "return_type": "list[int]",
+          "is_async": false
+        }
+      ],
+      "slots": [],
+      "doc_comment": null
+    },
+    "ioc_dedup.IocDedupStore": {
+      "module": "ioc_dedup",
+      "name": "IocDedupStore",
+      "fields": [],
+      "methods": [
+        {
+          "name": "new",
+          "signature": "(sprint_id: int)",
+          "return_type": "Self",
+          "is_async": false
+        },
+        {
+          "name": "add",
+          "signature": "(value: str, ioc_type_str: str, confidence: float)",
+          "return_type": "bool",
+          "is_async": false
+        },
+        {
+          "name": "contains",
+          "signature": "(value: str, ioc_type_str: str)",
+          "return_type": "bool",
+          "is_async": false
+        },
+        {
+          "name": "advance_sprint",
+          "signature": "(new_sprint_id: int)",
+          "return_type": "None",
+          "is_async": false
+        },
+        {
+          "name": "len",
+          "signature": "()",
+          "return_type": "int",
+          "is_async": false
+        },
+        {
+          "name": "is_empty",
+          "signature": "()",
+          "return_type": "bool",
+          "is_async": false
+        },
+        {
+          "name": "stats",
+          "signature": "()",
+          "return_type": "tuple[int, int, int]",
+          "is_async": false
+        },
+        {
+          "name": "get_by_type",
+          "signature": "(ioc_type_str: str)",
+          "return_type": "list[str]",
+          "is_async": false
+        },
+        {
+          "name": "get_entries_by_type",
+          "signature": "(ioc_type_str: str)",
+          "return_type": "list[tuple[str, int, int, int, float]]",
+          "is_async": false
+        },
+        {
+          "name": "get_state_bytes",
+          "signature": "()",
+          "return_type": "list[int]",
+          "is_async": false
+        },
+        {
+          "name": "set_state_from_bytes",
+          "signature": "(data: bytes)",
+          "return_type": "bool",
+          "is_async": false
+        },
+        {
+          "name": "clear",
+          "signature": "()",
+          "return_type": "None",
+          "is_async": false
+        },
+        {
+          "name": "get_sprint",
+          "signature": "()",
+          "return_type": "int",
+          "is_async": false
+        },
+        {
+          "name": "to_bytes",
+          "signature": "()",
+          "return_type": "list[int]",
+          "is_async": false
+        }
+      ],
+      "slots": [],
+      "doc_comment": null
+    },
+    "lsh_index.LSHIndex": {
+      "module": "lsh_index",
+      "name": "LSHIndex",
+      "fields": [],
+      "methods": [
+        {
+          "name": "new",
+          "signature": "(num_tables: int, num_rows: int)",
+          "return_type": "Self",
+          "is_async": false
+        },
+        {
+          "name": "get_num_tables",
+          "signature": "()",
+          "return_type": "int",
+          "is_async": false
+        },
+        {
+          "name": "get_num_rows",
+          "signature": "()",
+          "return_type": "int",
+          "is_async": false
+        },
+        {
+          "name": "len",
+          "signature": "()",
+          "return_type": "int",
+          "is_async": false
+        },
+        {
+          "name": "is_empty",
+          "signature": "()",
+          "return_type": "bool",
+          "is_async": false
+        },
+        {
+          "name": "insert",
+          "signature": "(doc_id: str, fingerprint: int)",
+          "return_type": "None",
+          "is_async": false
+        },
+        {
+          "name": "query",
+          "signature": "(fingerprint: int, max_results: int)",
+          "return_type": "list[tuple[str, float]]",
+          "is_async": false
+        },
+        {
+          "name": "batch_query",
+          "signature": "(fingerprints: list[int], max_results: int)",
+          "return_type": "list[list[tuple[str, float]]]",
+          "is_async": false
+        },
+        {
+          "name": "clear",
+          "signature": "()",
+          "return_type": "None",
+          "is_async": false
+        },
+        {
+          "name": "cluster_size",
+          "signature": "()",
+          "return_type": "int",
+          "is_async": false
+        }
+      ],
+      "slots": [],
+      "doc_comment": null
+    }
+  },
+  "functions": {
+    "pdf.extract_text": {
+      "module": "pdf",
+      "name": "extract_text",
+      "signature": "(path: str)",
+      "return_type": "str",
+      "is_async": false,
+      "doc_comment": null
+    },
+    "pdf.extract_text_from_bytes": {
+      "module": "pdf",
+      "name": "extract_text_from_bytes",
+      "signature": "(data: bytes)",
+      "return_type": "str",
+      "is_async": false,
+      "doc_comment": null
+    },
+    "pdf.extract_text_and_iocs_from_bytes": {
+      "module": "pdf",
+      "name": "extract_text_and_iocs_from_bytes",
+      "signature": "(data: bytes)",
+      "return_type": "tuple[str, list[tuple[str, str]]]",
+      "is_async": false,
+      "doc_comment": null
+    },
+    "pdf.extract_text_and_iocs": {
+      "module": "pdf",
+      "name": "extract_text_and_iocs",
+      "signature": "(path: str)",
+      "return_type": "tuple[str, list[tuple[str, str]]]",
+      "is_async": false,
+      "doc_comment": null
+    },
+    "pdf.extract_iocs": {
+      "module": "pdf",
+      "name": "extract_iocs",
+      "signature": "(path: str)",
+      "return_type": "list[tuple[str, str]]",
+      "is_async": false,
+      "doc_comment": null
+    },
+    "pdf.extract_iocs_from_bytes": {
+      "module": "pdf",
+      "name": "extract_iocs_from_bytes",
+      "signature": "(data: bytes)",
+      "return_type": "list[tuple[str, str]]",
+      "is_async": false,
+      "doc_comment": null
+    },
+    "pdf.extract_metadata": {
+      "module": "pdf",
+      "name": "extract_metadata",
+      "signature": "(path: str)",
+      "return_type": "PdfMetadata",
+      "is_async": false,
+      "doc_comment": null
+    },
+    "pdf.extract_metadata_from_bytes": {
+      "module": "pdf",
+      "name": "extract_metadata_from_bytes",
+      "signature": "(data: bytes)",
+      "return_type": "PdfMetadata",
+      "is_async": false,
+      "doc_comment": null
+    },
+    "pdf.extract_pdf_forensics": {
+      "module": "pdf",
+      "name": "extract_pdf_forensics",
+      "signature": "(path: str)",
+      "return_type": "PdfForensics",
+      "is_async": false,
+      "doc_comment": null
+    },
+    "pdf.extract_pdf_forensics_from_bytes": {
+      "module": "pdf",
+      "name": "extract_pdf_forensics_from_bytes",
+      "signature": "(data: bytes)",
+      "return_type": "PdfForensics",
+      "is_async": false,
+      "doc_comment": null
+    },
+    "url_engine.normalize": {
+      "module": "url_engine",
+      "name": "normalize",
+      "signature": "(raw_url: str)",
+      "return_type": "str",
+      "is_async": false,
+      "doc_comment": null
+    },
+    "url_engine.fingerprint": {
+      "module": "url_engine",
+      "name": "fingerprint",
+      "signature": "(url: str)",
+      "return_type": "int",
+      "is_async": false,
+      "doc_comment": null
+    },
+    "url_engine.strip_tracking_params": {
+      "module": "url_engine",
+      "name": "strip_tracking_params",
+      "signature": "(url: str)",
+      "return_type": "str",
+      "is_async": false,
+      "doc_comment": null
+    },
+    "url_engine.canonicalize_batch": {
+      "module": "url_engine",
+      "name": "canonicalize_batch",
+      "signature": "(urls: list[str])",
+      "return_type": "list[str]",
+      "is_async": false,
+      "doc_comment": null
+    },
+    "url_engine.batch_fingerprint": {
+      "module": "url_engine",
+      "name": "batch_fingerprint",
+      "signature": "(urls: list[str])",
+      "return_type": "list[int | None]",
+      "is_async": false,
+      "doc_comment": null
+    },
+    "url_engine.is_valid_url": {
+      "module": "url_engine",
+      "name": "is_valid_url",
+      "signature": "(url: str)",
+      "return_type": "bool",
+      "is_async": false,
+      "doc_comment": null
+    },
+    "url_engine.filter_valid_urls": {
+      "module": "url_engine",
+      "name": "filter_valid_urls",
+      "signature": "(urls: list[str])",
+      "return_type": "list[str]",
+      "is_async": false,
+      "doc_comment": null
+    },
+    "url_engine.get_tracking_params": {
+      "module": "url_engine",
+      "name": "get_tracking_params",
+      "signature": "()",
+      "return_type": "list[str]",
+      "is_async": false,
+      "doc_comment": null
+    },
+    "url_engine.extract_domain": {
+      "module": "url_engine",
+      "name": "extract_domain",
+      "signature": "(url: str)",
+      "return_type": "str",
+      "is_async": false,
+      "doc_comment": null
+    },
+    "aho_corasick_simd.count_patterns": {
+      "module": "aho_corasick_simd",
+      "name": "count_patterns",
+      "signature": "(text: str, patterns: list[str])",
+      "return_type": "dict[str, int]",
+      "is_async": false,
+      "doc_comment": null
+    },
+    "aho_corasick_simd.extract_unique": {
+      "module": "aho_corasick_simd",
+      "name": "extract_unique",
+      "signature": "(values: list[SIMDMatch])",
+      "return_type": "list[str]",
+      "is_async": false,
+      "doc_comment": null
+    },
+    "xml_sanitize.sanitize_xml": {
+      "module": "xml_sanitize",
+      "name": "sanitize_xml",
+      "signature": "(raw: str)",
+      "return_type": "str",
+      "is_async": false,
+      "doc_comment": null
+    },
+    "xml_sanitize.batch_sanitize_xml": {
+      "module": "xml_sanitize",
+      "name": "batch_sanitize_xml",
+      "signature": "(items: list[str])",
+      "return_type": "list[str]",
+      "is_async": false,
+      "doc_comment": null
+    },
+    "ffi_safe.ffi_circuit_is_open": {
+      "module": "ffi_safe",
+      "name": "ffi_circuit_is_open",
+      "signature": "(_module: str)",
+      "return_type": "bool",
+      "is_async": false,
+      "doc_comment": null
+    },
+    "ffi_safe.ffi_record_failure": {
+      "module": "ffi_safe",
+      "name": "ffi_record_failure",
+      "signature": "(module: str, error_type: str, error_msg: str)",
+      "return_type": "None",
+      "is_async": false,
+      "doc_comment": null
+    },
+    "ffi_safe.ffi_record_success": {
+      "module": "ffi_safe",
+      "name": "ffi_record_success",
+      "signature": "(module: str)",
+      "return_type": "None",
+      "is_async": false,
+      "doc_comment": null
+    },
+    "ffi_safe.ffi_get_all_states": {
+      "module": "ffi_safe",
+      "name": "ffi_get_all_states",
+      "signature": "()",
+      "return_type": "str",
+      "is_async": false,
+      "doc_comment": null
+    },
+    "query_terms.scan_query_context": {
+      "module": "query_terms",
+      "name": "scan_query_context",
+      "signature": "(text: str, domains: list[str], ipv4s: list[str], ipv6s: list[str], terms: list[str])",
+      "return_type": "list[tuple[int, int, str, str, str]]",
+      "is_async": false,
+      "doc_comment": null
+    },
+    "query_terms.extract_payload_context": {
+      "module": "query_terms",
+      "name": "extract_payload_context",
+      "signature": "(text: str, hit_start: int, hit_end: int, radius: int)",
+      "return_type": "str",
+      "is_async": false,
+      "doc_comment": null
+    },
+    "text_norm.nfc_normalize": {
+      "module": "text_norm",
+      "name": "nfc_normalize",
+      "signature": "(text: str)",
+      "return_type": "str",
+      "is_async": false,
+      "doc_comment": null
+    },
+    "text_norm.nfd_normalize": {
+      "module": "text_norm",
+      "name": "nfd_normalize",
+      "signature": "(text: str)",
+      "return_type": "str",
+      "is_async": false,
+      "doc_comment": null
+    },
+    "text_norm.batch_nfc_normalize": {
+      "module": "text_norm",
+      "name": "batch_nfc_normalize",
+      "signature": "(texts: list[str])",
+      "return_type": "list[str]",
+      "is_async": false,
+      "doc_comment": null
+    },
+    "text_norm.strip_diacritics": {
+      "module": "text_norm",
+      "name": "strip_diacritics",
+      "signature": "(text: str)",
+      "return_type": "str",
+      "is_async": false,
+      "doc_comment": null
+    },
+    "text_norm.batch_strip_diacritics": {
+      "module": "text_norm",
+      "name": "batch_strip_diacritics",
+      "signature": "(texts: list[str])",
+      "return_type": "list[str]",
+      "is_async": false,
+      "doc_comment": null
+    },
+    "text_norm.batch_nfc_normalize_fast": {
+      "module": "text_norm",
+      "name": "batch_nfc_normalize_fast",
+      "signature": "(texts: list[str])",
+      "return_type": "list[str]",
+      "is_async": false,
+      "doc_comment": null
+    },
+    "text_norm.batch_strip_diacritics_fast": {
+      "module": "text_norm",
+      "name": "batch_strip_diacritics_fast",
+      "signature": "(texts: list[str])",
+      "return_type": "list[str]",
+      "is_async": false,
+      "doc_comment": null
+    },
+    "metal_shared_buf.get_shared_buf_telemetry": {
+      "module": "metal_shared_buf",
+      "name": "get_shared_buf_telemetry",
+      "signature": "()",
+      "return_type": "dict[str, int]",
+      "is_async": false,
+      "doc_comment": null
+    },
+    "metal_shared_buf.is_metal_shared_available": {
+      "module": "metal_shared_buf",
+      "name": "is_metal_shared_available",
+      "signature": "()",
+      "return_type": "bool",
+      "is_async": false,
+      "doc_comment": null
+    },
+    "p2p_harvest.harvest": {
+      "module": "p2p_harvest",
+      "name": "harvest",
+      "signature": "(keyword: str, protocols: list[str], duration_s: int | None, max_results: int | None)",
+      "return_type": "Any",
+      "is_async": false,
+      "doc_comment": null
+    },
+    "p2p_harvest.dht_crawl_async": {
+      "module": "p2p_harvest",
+      "name": "dht_crawl_async",
+      "signature": "(keyword: str, duration_s: int | None, max_results: int | None)",
+      "return_type": "Any",
+      "is_async": false,
+      "doc_comment": null
+    },
+    "p2p_harvest.ipfs_bitswap_crawl_async": {
+      "module": "p2p_harvest",
+      "name": "ipfs_bitswap_crawl_async",
+      "signature": "(keyword: str, duration_s: int | None, max_results: int | None)",
+      "return_type": "Any",
+      "is_async": false,
+      "doc_comment": null
+    },
+    "p2p_harvest.tor_consensus_scrape_async": {
+      "module": "p2p_harvest",
+      "name": "tor_consensus_scrape_async",
+      "signature": "(keyword: str, duration_s: int | None, max_results: int | None)",
+      "return_type": "Any",
+      "is_async": false,
+      "doc_comment": null
+    },
+    "p2p_harvest.i2p_leaseset_resolve_async": {
+      "module": "p2p_harvest",
+      "name": "i2p_leaseset_resolve_async",
+      "signature": "(b32_addr: str, duration_s: int | None)",
+      "return_type": "Any",
+      "is_async": false,
+      "doc_comment": null
+    },
+    "sprint_policies.compute_feed_dominance": {
+      "module": "sprint_policies",
+      "name": "compute_feed_dominance",
+      "signature": "(total_accepted: int, feed_accepted: int, nonfeed_accepted: int, dominance_ratio_threshold: float | None, min_nonfeed_findings: int | None, strict: bool | None, eligible_nonfeed_lanes_terminal: bool | None, nonfeed_diagnostic_timed_out: bool | None)",
+      "return_type": "Any",
+      "is_async": false,
+      "doc_comment": null
+    },
+    "sprint_policies.compute_feed_dominance_simple": {
+      "module": "sprint_policies",
+      "name": "compute_feed_dominance_simple",
+      "signature": "(total_accepted: int, feed_accepted: int, nonfeed_accepted: int)",
+      "return_type": "Any",
+      "is_async": false,
+      "doc_comment": null
+    },
+    "sprint_policies.create_lane_budget_pool": {
+      "module": "sprint_policies",
+      "name": "create_lane_budget_pool",
+      "signature": "()",
+      "return_type": "dict[str, Any]",
+      "is_async": false,
+      "doc_comment": null
+    },
+    "sprint_policies.lane_pool_get_utilization": {
+      "module": "sprint_policies",
+      "name": "lane_pool_get_utilization",
+      "signature": "(pool: dict[str, Any])",
+      "return_type": "float",
+      "is_async": false,
+      "doc_comment": null
+    },
+    "sprint_policies.lane_pool_lane_count": {
+      "module": "sprint_policies",
+      "name": "lane_pool_lane_count",
+      "signature": "(pool: dict[str, Any])",
+      "return_type": "int",
+      "is_async": false,
+      "doc_comment": null
+    },
+    "deobfuscate.decode_ioc_candidates": {
+      "module": "deobfuscate",
+      "name": "decode_ioc_candidates",
+      "signature": "(text: str, max_depth: int | None)",
+      "return_type": "DeobfuscateResult",
+      "is_async": false,
+      "doc_comment": null
+    },
+    "deobfuscate.batch_decode_ioc_candidates": {
+      "module": "deobfuscate",
+      "name": "batch_decode_ioc_candidates",
+      "signature": "(texts: list[str], max_depth: int | None)",
+      "return_type": "list[DeobfuscateResult]",
+      "is_async": false,
+      "doc_comment": null
+    },
+    "deobfuscate.deobfuscate_telemetry": {
+      "module": "deobfuscate",
+      "name": "deobfuscate_telemetry",
+      "signature": "()",
+      "return_type": "tuple[int, int, int]",
+      "is_async": false,
+      "doc_comment": null
+    },
+    "lmdb_dht.lmdb_dht_close_env": {
+      "module": "lmdb_dht",
+      "name": "lmdb_dht_close_env",
+      "signature": "(path: str)",
+      "return_type": "tuple[]",
+      "is_async": false,
+      "doc_comment": null
+    },
+    "dns_tunnel.rust_calculate_entropy": {
+      "module": "dns_tunnel",
+      "name": "rust_calculate_entropy",
+      "signature": "(query: str)",
+      "return_type": "float",
+      "is_async": false,
+      "doc_comment": null
+    },
+    "dns_tunnel.rust_fast_entropy_screen": {
+      "module": "dns_tunnel",
+      "name": "rust_fast_entropy_screen",
+      "signature": "(query: str, threshold: float)",
+      "return_type": "tuple[float, int]",
+      "is_async": false,
+      "doc_comment": null
+    },
+    "dns_tunnel.rust_ngram_analysis": {
+      "module": "dns_tunnel",
+      "name": "rust_ngram_analysis",
+      "signature": "(query: str)",
+      "return_type": "tuple[float, float, float, float]",
+      "is_async": false,
+      "doc_comment": null
+    },
+    "dns_tunnel.rust_wavelet_preprocess": {
+      "module": "dns_tunnel",
+      "name": "rust_wavelet_preprocess",
+      "signature": "(query: str)",
+      "return_type": "list[float]",
+      "is_async": false,
+      "doc_comment": null
+    },
+    "dns_tunnel.rust_entropy_ngram": {
+      "module": "dns_tunnel",
+      "name": "rust_entropy_ngram",
+      "signature": "(query: str, entropy_threshold: float)",
+      "return_type": "tuple[float, int, float, float, float, float]",
+      "is_async": false,
+      "doc_comment": null
+    },
+    "dns_tunnel.rust_majority_vote": {
+      "module": "dns_tunnel",
+      "name": "rust_majority_vote",
+      "signature": "(entropy_flag: int, // 1 = suspicious, 0 = benign, -1 = inconclusive\n    ngram_anomaly: float, has_encoding: bool, ngram_threshold: float, majority_threshold: int)",
+      "return_type": "tuple[str, float]",
+      "is_async": false,
+      "doc_comment": null
+    },
+    "unicode_fingerprint.extract_fingerprint": {
+      "module": "unicode_fingerprint",
+      "name": "extract_fingerprint",
+      "signature": "(text: str)",
+      "return_type": "PyUnicodeFingerprint",
+      "is_async": false,
+      "doc_comment": null
+    },
+    "unicode_fingerprint.compute_fingerprint_similarity": {
+      "module": "unicode_fingerprint",
+      "name": "compute_fingerprint_similarity",
+      "signature": "(a: PyUnicodeFingerprint, b: PyUnicodeFingerprint)",
+      "return_type": "float",
+      "is_async": false,
+      "doc_comment": null
+    },
+    "unicode_fingerprint.fingerprints_identical": {
+      "module": "unicode_fingerprint",
+      "name": "fingerprints_identical",
+      "signature": "(a: PyUnicodeFingerprint, b: PyUnicodeFingerprint)",
+      "return_type": "bool",
+      "is_async": false,
+      "doc_comment": null
+    },
+    "zero_copy.buffer_entropy": {
+      "module": "zero_copy",
+      "name": "buffer_entropy",
+      "signature": "(input: Any)",
+      "return_type": "float",
+      "is_async": false,
+      "doc_comment": null
+    },
+    "pipeline_compose.pipeline_map": {
+      "module": "pipeline_compose",
+      "name": "pipeline_map",
+      "signature": "(items: list[Any], fn_name: str)",
+      "return_type": "list[Any]",
+      "is_async": false,
+      "doc_comment": null
+    },
+    "pipeline_compose.pipeline_filter": {
+      "module": "pipeline_compose",
+      "name": "pipeline_filter",
+      "signature": "(items: list[Any], fn_name: str)",
+      "return_type": "list[Any]",
+      "is_async": false,
+      "doc_comment": null
+    },
+    "pipeline_compose.pipeline_filter_map": {
+      "module": "pipeline_compose",
+      "name": "pipeline_filter_map",
+      "signature": "(items: list[Any], filter_fn: str, map_fn: str)",
+      "return_type": "list[Any]",
+      "is_async": false,
+      "doc_comment": null
+    },
+    "pipeline_compose.pipeline_fold": {
+      "module": "pipeline_compose",
+      "name": "pipeline_fold",
+      "signature": "(items: list[Any], fold_fn: str, initial: Any)",
+      "return_type": "Any",
+      "is_async": false,
+      "doc_comment": null
+    },
+    "pipeline_compose.pipeline_count": {
+      "module": "pipeline_compose",
+      "name": "pipeline_count",
+      "signature": "(items: list[Any], predicate_fn: str)",
+      "return_type": "int",
+      "is_async": false,
+      "doc_comment": null
+    },
+    "pipeline_compose.pipeline_compose_two": {
+      "module": "pipeline_compose",
+      "name": "pipeline_compose_two",
+      "signature": "(items: list[Any], stage1: str, stage2: str)",
+      "return_type": "list[Any]",
+      "is_async": false,
+      "doc_comment": null
+    },
+    "pipeline_compose.pipeline_batch_stats": {
+      "module": "pipeline_compose",
+      "name": "pipeline_batch_stats",
+      "signature": "(items: list[Any])",
+      "return_type": "tuple[int, int, int, int, int]",
+      "is_async": false,
+      "doc_comment": null
+    },
+    "signal_batch.batch_quality_score": {
+      "module": "signal_batch",
+      "name": "batch_quality_score",
+      "signature": "(text_lens: list[Any], texts: list[Any], fetch_errors: list[Any], failure_stages: list[Any])",
+      "return_type": "list[tuple[float, str, str, str, bool, str | None]]",
+      "is_async": false,
+      "doc_comment": null
+    },
+    "quic.fetch": {
+      "module": "quic",
+      "name": "fetch",
+      "signature": "(url: str, method: str, body: list[int] | None, headers: list[tuple[str, str]] | None, timeout_s: float | None)",
+      "return_type": "QuicResponse",
+      "is_async": false,
+      "doc_comment": null
+    },
+    "quic.fetch_async": {
+      "module": "quic",
+      "name": "fetch_async",
+      "signature": "(url: str, method: str | None, body: list[int] | None, headers: list[tuple[str, str]] | None, timeout_s: float | None)",
+      "return_type": "Any",
+      "is_async": false,
+      "doc_comment": null
+    },
+    "mach_remap.can_remap": {
+      "module": "mach_remap",
+      "name": "can_remap",
+      "signature": "()",
+      "return_type": "bool",
+      "is_async": false,
+      "doc_comment": null
+    },
+    "mach_remap.remap_stats": {
+      "module": "mach_remap",
+      "name": "remap_stats",
+      "signature": "()",
+      "return_type": "MachRemapStats",
+      "is_async": false,
+      "doc_comment": null
+    },
+    "tls_metadata.extract_tls_metadata": {
+      "module": "tls_metadata",
+      "name": "extract_tls_metadata",
+      "signature": "(san_entries: list[tuple[int, str]], issuer_org: str | None, der_bytes: list[int] | None)",
+      "return_type": "tuple[list[str], str | None, str | None]",
+      "is_async": false,
+      "doc_comment": null
+    },
+    "git_forensics.export_forensics_to_kuzu": {
+      "module": "git_forensics",
+      "name": "export_forensics_to_kuzu",
+      "signature": "(records: list[GitForensicRecord])",
+      "return_type": "str",
+      "is_async": false,
+      "doc_comment": null
+    },
+    "git_forensics.export_forensics_to_csv": {
+      "module": "git_forensics",
+      "name": "export_forensics_to_csv",
+      "signature": "(records: list[GitForensicRecord])",
+      "return_type": "str",
+      "is_async": false,
+      "doc_comment": null
+    },
+    "memory.allocate_bytes": {
+      "module": "memory",
+      "name": "allocate_bytes",
+      "signature": "(gib: float, subsystem: int)",
+      "return_type": "tuple[bool, int, int]",
+      "is_async": false,
+      "doc_comment": null
+    },
+    "memory.release_bytes": {
+      "module": "memory",
+      "name": "release_bytes",
+      "signature": "(gib: float, subsystem: int)",
+      "return_type": "int",
+      "is_async": false,
+      "doc_comment": null
+    },
+    "memory.get_allocation_stats": {
+      "module": "memory",
+      "name": "get_allocation_stats",
+      "signature": "()",
+      "return_type": "tuple[int, int, float]",
+      "is_async": false,
+      "doc_comment": null
+    },
+    "memory.set_allocation_ceiling": {
+      "module": "memory",
+      "name": "set_allocation_ceiling",
+      "signature": "(gib: float)",
+      "return_type": "None",
+      "is_async": false,
+      "doc_comment": null
+    },
+    "memory.get_uma_state_u8": {
+      "module": "memory",
+      "name": "get_uma_state_u8",
+      "signature": "()",
+      "return_type": "int",
+      "is_async": false,
+      "doc_comment": null
+    },
+    "memory.set_uma_state_u8": {
+      "module": "memory",
+      "name": "set_uma_state_u8",
+      "signature": "(state: int)",
+      "return_type": "int",
+      "is_async": false,
+      "doc_comment": null
+    },
+    "memory.mlx_alloc_bytes_add": {
+      "module": "memory",
+      "name": "mlx_alloc_bytes_add",
+      "signature": "(bytes: int)",
+      "return_type": "int",
+      "is_async": false,
+      "doc_comment": null
+    },
+    "memory.mlx_alloc_bytes_sub": {
+      "module": "memory",
+      "name": "mlx_alloc_bytes_sub",
+      "signature": "(bytes: int)",
+      "return_type": "int",
+      "is_async": false,
+      "doc_comment": null
+    },
+    "memory.mlx_alloc_bytes_get": {
+      "module": "memory",
+      "name": "mlx_alloc_bytes_get",
+      "signature": "()",
+      "return_type": "int",
+      "is_async": false,
+      "doc_comment": null
+    },
+    "memory.mlx_cache_hit": {
+      "module": "memory",
+      "name": "mlx_cache_hit",
+      "signature": "()",
+      "return_type": "int",
+      "is_async": false,
+      "doc_comment": null
+    },
+    "memory.mlx_cache_miss": {
+      "module": "memory",
+      "name": "mlx_cache_miss",
+      "signature": "()",
+      "return_type": "int",
+      "is_async": false,
+      "doc_comment": null
+    },
+    "memory.mlx_cache_stats": {
+      "module": "memory",
+      "name": "mlx_cache_stats",
+      "signature": "()",
+      "return_type": "tuple[int, int]",
+      "is_async": false,
+      "doc_comment": null
+    },
+    "memory.get_process_rss_gib": {
+      "module": "memory",
+      "name": "get_process_rss_gib",
+      "signature": "()",
+      "return_type": "float",
+      "is_async": false,
+      "doc_comment": null
+    },
+    "memory.get_total_memory_gib": {
+      "module": "memory",
+      "name": "get_total_memory_gib",
+      "signature": "()",
+      "return_type": "float",
+      "is_async": false,
+      "doc_comment": null
+    },
+    "memory.get_available_memory_gib": {
+      "module": "memory",
+      "name": "get_available_memory_gib",
+      "signature": "()",
+      "return_type": "float",
+      "is_async": false,
+      "doc_comment": null
+    },
+    "memory.current_rss_bytes": {
+      "module": "memory",
+      "name": "current_rss_bytes",
+      "signature": "()",
+      "return_type": "int",
+      "is_async": false,
+      "doc_comment": null
+    },
+    "memory.peak_rss_bytes": {
+      "module": "memory",
+      "name": "peak_rss_bytes",
+      "signature": "()",
+      "return_type": "int",
+      "is_async": false,
+      "doc_comment": null
+    },
+    "memory.memory_pressure_level": {
+      "module": "memory",
+      "name": "memory_pressure_level",
+      "signature": "()",
+      "return_type": "int",
+      "is_async": false,
+      "doc_comment": null
+    },
+    "memory.set_memory_pressure_thresholds": {
+      "module": "memory",
+      "name": "set_memory_pressure_thresholds",
+      "signature": "(soft_gib: float, hard_gib: float)",
+      "return_type": "None",
+      "is_async": false,
+      "doc_comment": null
+    },
+    "memory.advise_free": {
+      "module": "memory",
+      "name": "advise_free",
+      "signature": "(ptr: int, len: int)",
+      "return_type": "bool",
+      "is_async": false,
+      "doc_comment": null
+    },
+    "memory.get_metal_active_memory_bytes": {
+      "module": "memory",
+      "name": "get_metal_active_memory_bytes",
+      "signature": "()",
+      "return_type": "int",
+      "is_async": false,
+      "doc_comment": null
+    },
+    "memory.get_metal_active_memory_gib": {
+      "module": "memory",
+      "name": "get_metal_active_memory_gib",
+      "signature": "()",
+      "return_type": "float",
+      "is_async": false,
+      "doc_comment": null
+    },
+    "memory.get_memory_snapshot": {
+      "module": "memory",
+      "name": "get_memory_snapshot",
+      "signature": "()",
+      "return_type": "Any",
+      "is_async": false,
+      "doc_comment": null
+    },
+    "dns.resolve_async": {
+      "module": "dns",
+      "name": "resolve_async",
+      "signature": "(hostname: str, qtype: str)",
+      "return_type": "list[str]",
+      "is_async": false,
+      "doc_comment": null
+    },
+    "dns.resolve_happy_eyeballs": {
+      "module": "dns",
+      "name": "resolve_happy_eyeballs",
+      "signature": "(hostname: str)",
+      "return_type": "list[str]",
+      "is_async": false,
+      "doc_comment": null
+    },
+    "dns.prefetch": {
+      "module": "dns",
+      "name": "prefetch",
+      "signature": "(hostnames: list[str])",
+      "return_type": "dict[str, list[str]]",
+      "is_async": false,
+      "doc_comment": null
+    },
+    "dns.resolve_many": {
+      "module": "dns",
+      "name": "resolve_many",
+      "signature": "(queries: list[tuple[str, str]])",
+      "return_type": "dict[str, list[str]]",
+      "is_async": false,
+      "doc_comment": null
+    },
+    "dns.get_stats": {
+      "module": "dns",
+      "name": "get_stats",
+      "signature": "()",
+      "return_type": "DnsStats",
+      "is_async": false,
+      "doc_comment": null
+    },
+    "dns.resolve_async_await": {
+      "module": "dns",
+      "name": "resolve_async_await",
+      "signature": "(hostname: str, qtype: str | None)",
+      "return_type": "Any",
+      "is_async": false,
+      "doc_comment": null
+    },
+    "dns.resolve_happy_eyeballs_async": {
+      "module": "dns",
+      "name": "resolve_happy_eyeballs_async",
+      "signature": "(hostname: str)",
+      "return_type": "Any",
+      "is_async": false,
+      "doc_comment": null
+    },
+    "dns.prefetch_async": {
+      "module": "dns",
+      "name": "prefetch_async",
+      "signature": "(hostnames: list[str])",
+      "return_type": "Any",
+      "is_async": false,
+      "doc_comment": null
+    },
+    "dns.resolve_many_async": {
+      "module": "dns",
+      "name": "resolve_many_async",
+      "signature": "(queries: list[tuple[str, str]])",
+      "return_type": "Any",
+      "is_async": false,
+      "doc_comment": null
+    },
+    "serde_json_rs.serde_json_reexport": {
+      "module": "serde_json_rs",
+      "name": "serde_json_reexport",
+      "signature": "(json_str: str, pretty: bool, sort_keys: bool)",
+      "return_type": "str",
+      "is_async": false,
+      "doc_comment": null
+    },
+    "serde_json_rs.serde_json_pretty": {
+      "module": "serde_json_rs",
+      "name": "serde_json_pretty",
+      "signature": "(json_str: str)",
+      "return_type": "str",
+      "is_async": false,
+      "doc_comment": null
+    },
+    "serde_json_rs.serde_json_compact": {
+      "module": "serde_json_rs",
+      "name": "serde_json_compact",
+      "signature": "(json_str: str)",
+      "return_type": "str",
+      "is_async": false,
+      "doc_comment": null
+    },
+    "serde_json_rs.serde_json_pretty_sorted": {
+      "module": "serde_json_rs",
+      "name": "serde_json_pretty_sorted",
+      "signature": "(json_str: str)",
+      "return_type": "str",
+      "is_async": false,
+      "doc_comment": null
+    },
+    "serde_json_rs.serde_json_compact_sorted": {
+      "module": "serde_json_rs",
+      "name": "serde_json_compact_sorted",
+      "signature": "(json_str: str)",
+      "return_type": "str",
+      "is_async": false,
+      "doc_comment": null
+    },
+    "serde_json_rs.serde_json_dumps_compact_bytes": {
+      "module": "serde_json_rs",
+      "name": "serde_json_dumps_compact_bytes",
+      "signature": "(data: Any)",
+      "return_type": "list[int]",
+      "is_async": false,
+      "doc_comment": null
+    },
+    "serde_json_rs.serde_json_dumps_pretty_bytes": {
+      "module": "serde_json_rs",
+      "name": "serde_json_dumps_pretty_bytes",
+      "signature": "(data: Any, sort_keys: bool)",
+      "return_type": "list[int]",
+      "is_async": false,
+      "doc_comment": null
+    },
+    "serde_json_rs.serde_json_compact_bytes": {
+      "module": "serde_json_rs",
+      "name": "serde_json_compact_bytes",
+      "signature": "(input: bytes)",
+      "return_type": "list[int]",
+      "is_async": false,
+      "doc_comment": null
+    },
+    "serde_json_rs.serde_json_pretty_bytes": {
+      "module": "serde_json_rs",
+      "name": "serde_json_pretty_bytes",
+      "signature": "(input: bytes, sort_keys: bool)",
+      "return_type": "list[int]",
+      "is_async": false,
+      "doc_comment": null
+    },
+    "serde_json_rs.batch_serde_json": {
+      "module": "serde_json_rs",
+      "name": "batch_serde_json",
+      "signature": "(items: list[tuple[str, bool, bool]])",
+      "return_type": "list[str]",
+      "is_async": false,
+      "doc_comment": null
+    },
+    "serde_json_rs.batch_serde_json_pretty": {
+      "module": "serde_json_rs",
+      "name": "batch_serde_json_pretty",
+      "signature": "(items: list[str])",
+      "return_type": "list[str]",
+      "is_async": false,
+      "doc_comment": null
+    },
+    "serde_json_rs.batch_serde_json_compact": {
+      "module": "serde_json_rs",
+      "name": "batch_serde_json_compact",
+      "signature": "(items: list[str])",
+      "return_type": "list[str]",
+      "is_async": false,
+      "doc_comment": null
+    },
+    "serde_json_rs.batch_serde_json_pretty_sorted": {
+      "module": "serde_json_rs",
+      "name": "batch_serde_json_pretty_sorted",
+      "signature": "(items: list[str])",
+      "return_type": "list[str]",
+      "is_async": false,
+      "doc_comment": null
+    },
+    "serde_json_rs.batch_serde_json_compact_sorted": {
+      "module": "serde_json_rs",
+      "name": "batch_serde_json_compact_sorted",
+      "signature": "(items: list[str])",
+      "return_type": "list[str]",
+      "is_async": false,
+      "doc_comment": null
+    },
+    "serde_json_rs.serde_json_parse": {
+      "module": "serde_json_rs",
+      "name": "serde_json_parse",
+      "signature": "(json_str: str)",
+      "return_type": "str",
+      "is_async": false,
+      "doc_comment": null
+    },
+    "sendfile.sendfile_available": {
+      "module": "sendfile",
+      "name": "sendfile_available",
+      "signature": "()",
+      "return_type": "bool",
+      "is_async": false,
+      "doc_comment": null
+    },
+    "telemetry_agg.create_telemetry_aggregator": {
+      "module": "telemetry_agg",
+      "name": "create_telemetry_aggregator",
+      "signature": "()",
+      "return_type": "PyTelemetryAggregator",
+      "is_async": false,
+      "doc_comment": null
+    },
+    "html_parse.extract_links_zero_copy": {
+      "module": "html_parse",
+      "name": "extract_links_zero_copy",
+      "signature": "(html: str, _base_url: str)",
+      "return_type": "list[tuple[int, int]]",
+      "is_async": false,
+      "doc_comment": null
+    },
+    "html_parse.extract_links": {
+      "module": "html_parse",
+      "name": "extract_links",
+      "signature": "(html: str, base_url: str)",
+      "return_type": "list[str]",
+      "is_async": false,
+      "doc_comment": null
+    },
+    "html_parse.extract_links_with_text": {
+      "module": "html_parse",
+      "name": "extract_links_with_text",
+      "signature": "(html: str, base_url: str)",
+      "return_type": "list[tuple[str, str]]",
+      "is_async": false,
+      "doc_comment": null
+    },
+    "html_parse.batch_extract_links_with_text": {
+      "module": "html_parse",
+      "name": "batch_extract_links_with_text",
+      "signature": "(items: list[tuple[str, str]])",
+      "return_type": "list[list[tuple[str, str]]]",
+      "is_async": false,
+      "doc_comment": null
+    },
+    "html_parse.extract_emails": {
+      "module": "html_parse",
+      "name": "extract_emails",
+      "signature": "(html: str)",
+      "return_type": "list[str]",
+      "is_async": false,
+      "doc_comment": null
+    },
+    "html_parse.extract_html_text": {
+      "module": "html_parse",
+      "name": "extract_html_text",
+      "signature": "(html: str)",
+      "return_type": "str",
+      "is_async": false,
+      "doc_comment": null
+    },
+    "html_parse.batch_extract_html_text": {
+      "module": "html_parse",
+      "name": "batch_extract_html_text",
+      "signature": "(items: list[str])",
+      "return_type": "list[str]",
+      "is_async": false,
+      "doc_comment": null
+    },
+    "html_parse.batch_extract_emails": {
+      "module": "html_parse",
+      "name": "batch_extract_emails",
+      "signature": "(items: list[str])",
+      "return_type": "list[list[str]]",
+      "is_async": false,
+      "doc_comment": null
+    },
+    "html_parse.batch_extract_titles": {
+      "module": "html_parse",
+      "name": "batch_extract_titles",
+      "signature": "(items: list[str])",
+      "return_type": "list[str | None]",
+      "is_async": false,
+      "doc_comment": null
+    },
+    "html_parse.extract_meta_description": {
+      "module": "html_parse",
+      "name": "extract_meta_description",
+      "signature": "(html: str)",
+      "return_type": "str | None",
+      "is_async": false,
+      "doc_comment": null
+    },
+    "html_parse.extract_title": {
+      "module": "html_parse",
+      "name": "extract_title",
+      "signature": "(html: str)",
+      "return_type": "str | None",
+      "is_async": false,
+      "doc_comment": null
+    },
+    "html_parse.batch_extract_links": {
+      "module": "html_parse",
+      "name": "batch_extract_links",
+      "signature": "(items: list[tuple[str, str]])",
+      "return_type": "list[list[str]]",
+      "is_async": false,
+      "doc_comment": null
+    },
+    "html_parse.extract_microdata": {
+      "module": "html_parse",
+      "name": "extract_microdata",
+      "signature": "(html: str)",
+      "return_type": "list[MicrodataItem]",
+      "is_async": false,
+      "doc_comment": null
+    },
+    "html_parse.batch_extract_microdata": {
+      "module": "html_parse",
+      "name": "batch_extract_microdata",
+      "signature": "(items: list[str])",
+      "return_type": "list[list[MicrodataItem]]",
+      "is_async": false,
+      "doc_comment": null
+    },
+    "tls13.ja4_from_client_hello": {
+      "module": "tls13",
+      "name": "ja4_from_client_hello",
+      "signature": "(chello_hex: str)",
+      "return_type": "str",
+      "is_async": false,
+      "doc_comment": null
+    },
+    "tls13.ja4_from_client_hello_bytes": {
+      "module": "tls13",
+      "name": "ja4_from_client_hello_bytes",
+      "signature": "(chello_bytes: bytes)",
+      "return_type": "str",
+      "is_async": false,
+      "doc_comment": null
+    },
+    "tls13.connect_and_ja4": {
+      "module": "tls13",
+      "name": "connect_and_ja4",
+      "signature": "(host: str, port: int, sni: str | None, alpn: list[str] | None, timeout_ms: int | None)",
+      "return_type": "dict[str, Any]",
+      "is_async": false,
+      "doc_comment": null
+    },
+    "tls13.batch_ja4": {
+      "module": "tls13",
+      "name": "batch_ja4",
+      "signature": "(hosts: list[tuple[str, int]], snis: list[str] | None, alpn: list[str] | None, timeout_ms: int | None)",
+      "return_type": "list[dict[str, Any]]",
+      "is_async": false,
+      "doc_comment": null
+    },
+    "ioc_extract.fast_ioc_extract": {
+      "module": "ioc_extract",
+      "name": "fast_ioc_extract",
+      "signature": "(text: str)",
+      "return_type": "list[tuple[str, str]]",
+      "is_async": false,
+      "doc_comment": null
+    },
+    "ioc_extract.fast_ioc_extract_batch": {
+      "module": "ioc_extract",
+      "name": "fast_ioc_extract_batch",
+      "signature": "(text: str)",
+      "return_type": "list[tuple[str, str]]",
+      "is_async": false,
+      "doc_comment": null
+    },
+    "ioc_extract.extract_iocs": {
+      "module": "ioc_extract",
+      "name": "extract_iocs",
+      "signature": "(text: str)",
+      "return_type": "list[tuple[str, str]]",
+      "is_async": false,
+      "doc_comment": null
+    },
+    "ioc_extract.extract_iocs_flat": {
+      "module": "ioc_extract",
+      "name": "extract_iocs_flat",
+      "signature": "(text: str)",
+      "return_type": "list[tuple[str, str]]",
+      "is_async": false,
+      "doc_comment": null
+    },
+    "ioc_extract.url_normalize": {
+      "module": "ioc_extract",
+      "name": "url_normalize",
+      "signature": "(url: str)",
+      "return_type": "str",
+      "is_async": false,
+      "doc_comment": null
+    },
+    "ioc_extract.batch_dedup_urls": {
+      "module": "ioc_extract",
+      "name": "batch_dedup_urls",
+      "signature": "(urls: list[str])",
+      "return_type": "list[str]",
+      "is_async": false,
+      "doc_comment": null
+    },
+    "ioc_extract.chi_square": {
+      "module": "ioc_extract",
+      "name": "chi_square",
+      "signature": "(data: bytes)",
+      "return_type": "float",
+      "is_async": false,
+      "doc_comment": null
+    },
+    "ioc_extract.batch_sha256": {
+      "module": "ioc_extract",
+      "name": "batch_sha256",
+      "signature": "(items: list[str])",
+      "return_type": "list[str]",
+      "is_async": false,
+      "doc_comment": null
+    },
+    "ioc_extract.detect_encoding_patterns": {
+      "module": "ioc_extract",
+      "name": "detect_encoding_patterns",
+      "signature": "(query: str)",
+      "return_type": "list[str]",
+      "is_async": false,
+      "doc_comment": null
+    },
+    "crypto_accelerate.batch_sha256_hw": {
+      "module": "crypto_accelerate",
+      "name": "batch_sha256_hw",
+      "signature": "(items: list[str])",
+      "return_type": "list[str]",
+      "is_async": false,
+      "doc_comment": null
+    },
+    "crypto_accelerate.batch_encrypt_aes_gcm": {
+      "module": "crypto_accelerate",
+      "name": "batch_encrypt_aes_gcm",
+      "signature": "(password: str, salt: list[int], items: list[str])",
+      "return_type": "list[list[int]]",
+      "is_async": false,
+      "doc_comment": null
+    },
+    "crypto_accelerate.batch_decrypt_aes_gcm": {
+      "module": "crypto_accelerate",
+      "name": "batch_decrypt_aes_gcm",
+      "signature": "(password: str, salt: list[int], items: list[list[int]])",
+      "return_type": "list[str | None]",
+      "is_async": false,
+      "doc_comment": null
+    },
+    "metal_compute.init": {
+      "module": "metal_compute",
+      "name": "init",
+      "signature": "()",
+      "return_type": "tuple[bool, str | None, str | None]",
+      "is_async": false,
+      "doc_comment": null
+    },
+    "metal_compute.get_device_info": {
+      "module": "metal_compute",
+      "name": "get_device_info",
+      "signature": "()",
+      "return_type": "tuple[bool, str | None, int, int]",
+      "is_async": false,
+      "doc_comment": null
+    },
+    "metal_compute.is_metal_available": {
+      "module": "metal_compute",
+      "name": "is_metal_available",
+      "signature": "()",
+      "return_type": "bool",
+      "is_async": false,
+      "doc_comment": null
+    },
+    "metal_compute.batch_matmul": {
+      "module": "metal_compute",
+      "name": "batch_matmul",
+      "signature": "(query: list[float], expert_weights: list[float], batch_size: int, num_experts: int, hidden_dim: int, expert_dim: int)",
+      "return_type": "tuple[list[float], (usize, int, usize), float]",
+      "is_async": false,
+      "doc_comment": null
+    },
+    "metal_compute.batch_matvec": {
+      "module": "metal_compute",
+      "name": "batch_matvec",
+      "signature": "(query: list[float], expert_weights: list[float], batch_size: int, num_experts: int, hidden_dim: int)",
+      "return_type": "tuple[list[float], (usize, usize), float]",
+      "is_async": false,
+      "doc_comment": null
+    },
+    "metal_compute.get_telemetry": {
+      "module": "metal_compute",
+      "name": "get_telemetry",
+      "signature": "()",
+      "return_type": "dict[str, int]",
+      "is_async": false,
+      "doc_comment": null
+    },
+    "metal_compute.clear_cache": {
+      "module": "metal_compute",
+      "name": "clear_cache",
+      "signature": "()",
+      "return_type": "int",
+      "is_async": false,
+      "doc_comment": null
+    },
+    "simhash_ext.hamming_dist": {
+      "module": "simhash_ext",
+      "name": "hamming_dist",
+      "signature": "(a: int, b: int)",
+      "return_type": "int",
+      "is_async": false,
+      "doc_comment": null
+    },
+    "tracing.configure_tracing": {
+      "module": "tracing",
+      "name": "configure_tracing",
+      "signature": "(enabled: bool, _otlp_endpoint: str | None, service_name: str | None, _debug: bool)",
+      "return_type": "bool",
+      "is_async": false,
+      "doc_comment": null
+    },
+    "tracing.is_tracing_active": {
+      "module": "tracing",
+      "name": "is_tracing_active",
+      "signature": "()",
+      "return_type": "bool",
+      "is_async": false,
+      "doc_comment": null
+    },
+    "tracing.start_span": {
+      "module": "tracing",
+      "name": "start_span",
+      "signature": "(name: str, trace_id: str, span_id: str, traceflags: str)",
+      "return_type": "tuple[str, str, bool]",
+      "is_async": false,
+      "doc_comment": null
+    },
+    "tracing.span_enter": {
+      "module": "tracing",
+      "name": "span_enter",
+      "signature": "(trace_id: str, span_id: str)",
+      "return_type": "bool",
+      "is_async": false,
+      "doc_comment": null
+    },
+    "tracing.get_current_trace_id": {
+      "module": "tracing",
+      "name": "get_current_trace_id",
+      "signature": "()",
+      "return_type": "tuple[str, bool]",
+      "is_async": false,
+      "doc_comment": null
+    },
+    "tracing.get_current_span_id": {
+      "module": "tracing",
+      "name": "get_current_span_id",
+      "signature": "()",
+      "return_type": "tuple[str, bool]",
+      "is_async": false,
+      "doc_comment": null
+    },
+    "tracing.add_span_event": {
+      "module": "tracing",
+      "name": "add_span_event",
+      "signature": "(name: str, _attributes_json: str | None)",
+      "return_type": "None",
+      "is_async": false,
+      "doc_comment": null
+    },
+    "tracing.generate_trace_id": {
+      "module": "tracing",
+      "name": "generate_trace_id",
+      "signature": "()",
+      "return_type": "str",
+      "is_async": false,
+      "doc_comment": null
+    },
+    "tracing.generate_span_id": {
+      "module": "tracing",
+      "name": "generate_span_id",
+      "signature": "()",
+      "return_type": "str",
+      "is_async": false,
+      "doc_comment": null
+    },
+    "tracing.async_span_enter": {
+      "module": "tracing",
+      "name": "async_span_enter",
+      "signature": "(name: str)",
+      "return_type": "tuple[str, str, str]",
+      "is_async": false,
+      "doc_comment": null
+    },
+    "tracing.async_span_exit": {
+      "module": "tracing",
+      "name": "async_span_exit",
+      "signature": "(async_span_key: str, trace_id: str, span_id: str)",
+      "return_type": "None",
+      "is_async": false,
+      "doc_comment": null
+    },
+    "tracing.get_active_async_span_count": {
+      "module": "tracing",
+      "name": "get_active_async_span_count",
+      "signature": "()",
+      "return_type": "int",
+      "is_async": false,
+      "doc_comment": null
+    },
+    "tracing.get_active_async_spans": {
+      "module": "tracing",
+      "name": "get_active_async_spans",
+      "signature": "()",
+      "return_type": "list[tuple[str, str, int]]",
+      "is_async": false,
+      "doc_comment": null
+    },
+    "office.extract_text": {
+      "module": "office",
+      "name": "extract_text",
+      "signature": "(path: str, format: str)",
+      "return_type": "str",
+      "is_async": false,
+      "doc_comment": null
+    },
+    "office.extract_text_from_bytes": {
+      "module": "office",
+      "name": "extract_text_from_bytes",
+      "signature": "(data: bytes, format: str)",
+      "return_type": "str",
+      "is_async": false,
+      "doc_comment": null
+    },
+    "office.extract_iocs": {
+      "module": "office",
+      "name": "extract_iocs",
+      "signature": "(path: str, format: str)",
+      "return_type": "list[tuple[str, str]]",
+      "is_async": false,
+      "doc_comment": null
+    },
+    "office.extract_iocs_from_bytes": {
+      "module": "office",
+      "name": "extract_iocs_from_bytes",
+      "signature": "(data: bytes, format: str)",
+      "return_type": "list[tuple[str, str]]",
+      "is_async": false,
+      "doc_comment": null
+    },
+    "office.extract_metadata": {
+      "module": "office",
+      "name": "extract_metadata",
+      "signature": "(path: str, format: str)",
+      "return_type": "OfficeMetadata",
+      "is_async": false,
+      "doc_comment": null
+    },
+    "office.extract_metadata_from_bytes": {
+      "module": "office",
+      "name": "extract_metadata_from_bytes",
+      "signature": "(data: bytes, format: str)",
+      "return_type": "OfficeMetadata",
+      "is_async": false,
+      "doc_comment": null
+    },
+    "feed_decision.feed_decision_classify": {
+      "module": "feed_decision",
+      "name": "feed_decision_classify",
+      "signature": "(assembled_text_len: int, pre_fallback_hits_count: int, quality_band: str, metadata_boost: bool, language_mismatch: bool, _article_fallback_used: bool, article_fallback_attempted: bool, post_fallback_findings_count: int, adapter_source_priority_bias: float, adapter_metadata_richness_band: str)",
+      "return_type": "tuple[str, bool, bool, bool, bool, str]",
+      "is_async": false,
+      "doc_comment": null
+    },
+    "feed_decision.feed_stage_diagnose": {
+      "module": "feed_decision",
+      "name": "feed_stage_diagnose",
+      "signature": "(entries_seen: int, entries_with_empty_assembled_text: int, entries_scanned: int, entries_with_hits: int, findings_built_pre_store: int, patterns_configured: int, findings_lost_to_dedup_total: int)",
+      "return_type": "str",
+      "is_async": false,
+      "doc_comment": null
+    },
+    "feed_decision.feed_branch_hint": {
+      "module": "feed_decision",
+      "name": "feed_branch_hint",
+      "signature": "(feed_signal_present: bool, fallback_useful: int, fallback_waste: int, _findings_rich: int, findings_fallback: int, entries_with_hits: int)",
+      "return_type": "str",
+      "is_async": false,
+      "doc_comment": null
+    },
+    "feed_decision.feed_economics_verdict": {
+      "module": "feed_decision",
+      "name": "feed_economics_verdict",
+      "signature": "(feed_signal_present: bool, fallback_useful: int, fallback_waste: int, findings_rich: int, findings_fallback: int)",
+      "return_type": "tuple[str, int, int, int, int]",
+      "is_async": false,
+      "doc_comment": null
+    },
+    "feed_decision.feed_branch_verdict": {
+      "module": "feed_decision",
+      "name": "feed_branch_verdict",
+      "signature": "(feed_signal_present: bool, fallback_useful: int, fallback_waste: int, findings_rich: int, findings_fallback: int, squandered_high_usefulness: int, metadata_strong_but_content_weak: int, low_trust_feed_hits: int, total_entries_with_hits: int, entries_seen: int, feed_native_yield_ratio: float, fallback_value_ratio: float)",
+      "return_type": "Any",
+      "is_async": false,
+      "doc_comment": null
+    },
+    "url_ops.classify_url": {
+      "module": "url_ops",
+      "name": "classify_url",
+      "signature": "(url: str)",
+      "return_type": "tuple[str, str]",
+      "is_async": false,
+      "doc_comment": null
+    },
+    "url_ops.batch_classify": {
+      "module": "url_ops",
+      "name": "batch_classify",
+      "signature": "(urls: list[Any])",
+      "return_type": "list[tuple[str, str]]",
+      "is_async": false,
+      "doc_comment": null
+    },
+    "url_ops.priority_classify_urls": {
+      "module": "url_ops",
+      "name": "priority_classify_urls",
+      "signature": "(urls: list[tuple[str, float]])",
+      "return_type": "list[tuple[str, float, str]]",
+      "is_async": false,
+      "doc_comment": null
+    },
+    "url_ops.extract_host": {
+      "module": "url_ops",
+      "name": "extract_host",
+      "signature": "(url: str)",
+      "return_type": "str",
+      "is_async": false,
+      "doc_comment": null
+    },
+    "url_ops.looks_like_feed_url": {
+      "module": "url_ops",
+      "name": "looks_like_feed_url",
+      "signature": "(path: str)",
+      "return_type": "bool",
+      "is_async": false,
+      "doc_comment": null
+    },
+    "url_ops.canonical_url": {
+      "module": "url_ops",
+      "name": "canonical_url",
+      "signature": "(url: str)",
+      "return_type": "str",
+      "is_async": false,
+      "doc_comment": null
+    },
+    "url_ops.strip_tracking": {
+      "module": "url_ops",
+      "name": "strip_tracking",
+      "signature": "(url: str)",
+      "return_type": "str",
+      "is_async": false,
+      "doc_comment": null
+    },
+    "url_ops.url_dedup_key": {
+      "module": "url_ops",
+      "name": "url_dedup_key",
+      "signature": "(url: str)",
+      "return_type": "str",
+      "is_async": false,
+      "doc_comment": null
+    },
+    "url_ops.url_dedup_hash": {
+      "module": "url_ops",
+      "name": "url_dedup_hash",
+      "signature": "(url: str)",
+      "return_type": "int",
+      "is_async": false,
+      "doc_comment": null
+    },
+    "url_ops.canonical_url_batch": {
+      "module": "url_ops",
+      "name": "canonical_url_batch",
+      "signature": "(urls: list[Any])",
+      "return_type": "list[str]",
+      "is_async": false,
+      "doc_comment": null
+    },
+    "bloom.bloom_check_batch": {
+      "module": "bloom",
+      "name": "bloom_check_batch",
+      "signature": "(items: list[str], capacity: int)",
+      "return_type": "list[bool]",
+      "is_async": false,
+      "doc_comment": null
+    },
+    "madvise.madvise_on_mmap_region": {
+      "module": "madvise",
+      "name": "madvise_on_mmap_region",
+      "signature": "(addr: int, length: int, advice: int)",
+      "return_type": "int",
+      "is_async": false,
+      "doc_comment": null
+    },
+    "madvise.madvise_hugepage": {
+      "module": "madvise",
+      "name": "madvise_hugepage",
+      "signature": "(addr: int, length: int)",
+      "return_type": "int",
+      "is_async": false,
+      "doc_comment": null
+    },
+    "madvise.mmap_alloc_with_hugepage": {
+      "module": "madvise",
+      "name": "mmap_alloc_with_hugepage",
+      "signature": "(size: int, read_write: bool)",
+      "return_type": "tuple[int, int]",
+      "is_async": false,
+      "doc_comment": null
+    },
+    "madvise.mmap_free_hugepage": {
+      "module": "madvise",
+      "name": "mmap_free_hugepage",
+      "signature": "(addr: int, size: int)",
+      "return_type": "bool",
+      "is_async": false,
+      "doc_comment": null
+    },
+    "madvise.mmap_hugepage": {
+      "module": "madvise",
+      "name": "mmap_hugepage",
+      "signature": "(path: str, read_only: bool)",
+      "return_type": "tuple[int, int]",
+      "is_async": false,
+      "doc_comment": null
+    },
+    "madvise.munmap_hugepage": {
+      "module": "madvise",
+      "name": "munmap_hugepage",
+      "signature": "(addr: int, size: int)",
+      "return_type": "bool",
+      "is_async": false,
+      "doc_comment": null
+    },
+    "madvise.madvise_free_reusable": {
+      "module": "madvise",
+      "name": "madvise_free_reusable",
+      "signature": "(addr: int, length: int, advice: int)",
+      "return_type": "int",
+      "is_async": false,
+      "doc_comment": null
+    },
+    "madvise.mlock_key_region": {
+      "module": "madvise",
+      "name": "mlock_key_region",
+      "signature": "(addr: int, length: int)",
+      "return_type": "int",
+      "is_async": false,
+      "doc_comment": null
+    },
+    "madvise.munlock_key_region": {
+      "module": "madvise",
+      "name": "munlock_key_region",
+      "signature": "(addr: int, length: int)",
+      "return_type": "int",
+      "is_async": false,
+      "doc_comment": null
+    },
+    "madvise.madvise_dontdump_region": {
+      "module": "madvise",
+      "name": "madvise_dontdump_region",
+      "signature": "(addr: int, length: int)",
+      "return_type": "int",
+      "is_async": false,
+      "doc_comment": null
+    },
+    "madvise.get_hugepage_size": {
+      "module": "madvise",
+      "name": "get_hugepage_size",
+      "signature": "()",
+      "return_type": "int",
+      "is_async": false,
+      "doc_comment": null
+    },
+    "anti_analysis.mark_host_abandoned": {
+      "module": "anti_analysis",
+      "name": "mark_host_abandoned",
+      "signature": "(domain: str, reason: str)",
+      "return_type": "None",
+      "is_async": false,
+      "doc_comment": null
+    },
+    "anti_analysis.is_host_abandoned": {
+      "module": "anti_analysis",
+      "name": "is_host_abandoned",
+      "signature": "(domain: str)",
+      "return_type": "AbandonCheckResult",
+      "is_async": false,
+      "doc_comment": null
+    },
+    "anti_analysis.get_abandoned_domains": {
+      "module": "anti_analysis",
+      "name": "get_abandoned_domains",
+      "signature": "()",
+      "return_type": "list[str]",
+      "is_async": false,
+      "doc_comment": null
+    },
+    "anti_analysis.sync_abandoned_from_python": {
+      "module": "anti_analysis",
+      "name": "sync_abandoned_from_python",
+      "signature": "(python_abandoned_domains: list[tuple[str, str]])",
+      "return_type": "None",
+      "is_async": false,
+      "doc_comment": null
+    },
+    "anti_analysis.get_evasion_telemetry": {
+      "module": "anti_analysis",
+      "name": "get_evasion_telemetry",
+      "signature": "()",
+      "return_type": "PyDict>",
+      "is_async": false,
+      "doc_comment": null
+    },
+    "graph_traverse.drop_connections": {
+      "module": "graph_traverse",
+      "name": "drop_connections",
+      "signature": "()",
+      "return_type": "tuple[]",
+      "is_async": false,
+      "doc_comment": null
+    },
+    "ioc_extract_simd.extract_iocs_simd": {
+      "module": "ioc_extract_simd",
+      "name": "extract_iocs_simd",
+      "signature": "(text: str)",
+      "return_type": "list[tuple[str, str]]",
+      "is_async": false,
+      "doc_comment": null
+    },
+    "ioc_extract_simd.batch_extract_iocs_simd": {
+      "module": "ioc_extract_simd",
+      "name": "batch_extract_iocs_simd",
+      "signature": "(texts: list[str])",
+      "return_type": "list[tuple[str, str]]",
+      "is_async": false,
+      "doc_comment": null
+    },
+    "ioc_extract_simd.batch_extract_iocs_simd_indexed": {
+      "module": "ioc_extract_simd",
+      "name": "batch_extract_iocs_simd_indexed",
+      "signature": "(texts: list[str])",
+      "return_type": "list[tuple[int, str, str]]",
+      "is_async": false,
+      "doc_comment": null
+    },
+    "ane.facenet_register_model": {
+      "module": "ane",
+      "name": "facenet_register_model",
+      "signature": "(model_id: str, model_path: str, embedding_dim: int | None)",
+      "return_type": "str",
+      "is_async": false,
+      "doc_comment": null
+    },
+    "ane.facenet_is_registered": {
+      "module": "ane",
+      "name": "facenet_is_registered",
+      "signature": "()",
+      "return_type": "bool",
+      "is_async": false,
+      "doc_comment": null
+    },
+    "ane.facenet_unregister": {
+      "module": "ane",
+      "name": "facenet_unregister",
+      "signature": "()",
+      "return_type": "tuple[]",
+      "is_async": false,
+      "doc_comment": null
+    },
+    "ane.facenet_get_model_info": {
+      "module": "ane",
+      "name": "facenet_get_model_info",
+      "signature": "()",
+      "return_type": "list[tuple[str, str]] | None",
+      "is_async": false,
+      "doc_comment": null
+    },
+    "ane.voiceprint_register_model": {
+      "module": "ane",
+      "name": "voiceprint_register_model",
+      "signature": "(model_id: str, model_path: str, embedding_dim: int | None)",
+      "return_type": "str",
+      "is_async": false,
+      "doc_comment": null
+    },
+    "ane.voiceprint_is_registered": {
+      "module": "ane",
+      "name": "voiceprint_is_registered",
+      "signature": "()",
+      "return_type": "bool",
+      "is_async": false,
+      "doc_comment": null
+    },
+    "ane.voiceprint_unregister": {
+      "module": "ane",
+      "name": "voiceprint_unregister",
+      "signature": "()",
+      "return_type": "tuple[]",
+      "is_async": false,
+      "doc_comment": null
+    },
+    "ane.voiceprint_get_model_info": {
+      "module": "ane",
+      "name": "voiceprint_get_model_info",
+      "signature": "()",
+      "return_type": "list[tuple[str, str]] | None",
+      "is_async": false,
+      "doc_comment": null
+    },
+    "ane.init": {
+      "module": "ane",
+      "name": "init",
+      "signature": "()",
+      "return_type": "tuple[bool, str | None]",
+      "is_async": false,
+      "doc_comment": null
+    },
+    "ane.get_status": {
+      "module": "ane",
+      "name": "get_status",
+      "signature": "()",
+      "return_type": "tuple[bool, int, int]",
+      "is_async": false,
+      "doc_comment": null
+    },
+    "ane.load_model": {
+      "module": "ane",
+      "name": "load_model",
+      "signature": "(model_id: str, model_path: str, hidden_dim: int, max_seq_len: int)",
+      "return_type": "str",
+      "is_async": false,
+      "doc_comment": null
+    },
+    "ane.unload_model": {
+      "module": "ane",
+      "name": "unload_model",
+      "signature": "(model_id: str)",
+      "return_type": "tuple[]",
+      "is_async": false,
+      "doc_comment": null
+    },
+    "ane.list_models": {
+      "module": "ane",
+      "name": "list_models",
+      "signature": "()",
+      "return_type": "list[str]",
+      "is_async": false,
+      "doc_comment": null
+    },
+    "ane.validate_batch": {
+      "module": "ane",
+      "name": "validate_batch",
+      "signature": "(batch_size: int, seq_len: int, max_seq_len: int)",
+      "return_type": "tuple[]",
+      "is_async": false,
+      "doc_comment": null
+    },
+    "ane.run_inference": {
+      "module": "ane",
+      "name": "run_inference",
+      "signature": "(model_id: str, input_ids: list[int], attention_mask: list[int])",
+      "return_type": "list[float]",
+      "is_async": false,
+      "doc_comment": null
+    },
+    "ane.embed_tokens": {
+      "module": "ane",
+      "name": "embed_tokens",
+      "signature": "(model_id: str, token_ids: list[int], attention_mask: list[int])",
+      "return_type": "list[float]",
+      "is_async": false,
+      "doc_comment": null
+    },
+    "ane.get_telemetry": {
+      "module": "ane",
+      "name": "get_telemetry",
+      "signature": "()",
+      "return_type": "dict[str, int]",
+      "is_async": false,
+      "doc_comment": null
+    },
+    "ane.get_supported_compute_units": {
+      "module": "ane",
+      "name": "get_supported_compute_units",
+      "signature": "()",
+      "return_type": "list[str]",
+      "is_async": false,
+      "doc_comment": null
+    },
+    "ane.is_ane_available": {
+      "module": "ane",
+      "name": "is_ane_available",
+      "signature": "()",
+      "return_type": "bool",
+      "is_async": false,
+      "doc_comment": null
+    },
+    "ane.gnn_load_model": {
+      "module": "ane",
+      "name": "gnn_load_model",
+      "signature": "(model_id: str, model_path: str, in_dim: int | None, hidden_dim: int | None, out_dim: int | None, num_layers: int | None)",
+      "return_type": "str",
+      "is_async": false,
+      "doc_comment": null
+    },
+    "ane.gnn_validate_batch": {
+      "module": "ane",
+      "name": "gnn_validate_batch",
+      "signature": "(batch_size: int, in_dim: int)",
+      "return_type": "tuple[]",
+      "is_async": false,
+      "doc_comment": null
+    },
+    "ane.gnn_store_embeddings": {
+      "module": "ane",
+      "name": "gnn_store_embeddings",
+      "signature": "(embeddings: list[tuple[str, list[float]]])",
+      "return_type": "int",
+      "is_async": false,
+      "doc_comment": null
+    },
+    "ane.gnn_get_embeddings": {
+      "module": "ane",
+      "name": "gnn_get_embeddings",
+      "signature": "(kuzu_ids: list[str])",
+      "return_type": "list[tuple[str, list[float]]]",
+      "is_async": false,
+      "doc_comment": null
+    },
+    "ane.gnn_run_inference": {
+      "module": "ane",
+      "name": "gnn_run_inference",
+      "signature": "(model_id: str, node_ids: list[str], features: list[float], edges: list[tuple[int, int]])",
+      "return_type": "list[list[float]]",
+      "is_async": false,
+      "doc_comment": null
+    },
+    "ane.gnn_predict_links": {
+      "module": "ane",
+      "name": "gnn_predict_links",
+      "signature": "(embeddings: list[tuple[str, list[float]]], edges: list[tuple[int, int]], candidate_pairs: list[tuple[int, int]], gnn_weight: float | None, min_score: float | None)",
+      "return_type": "list[tuple[int, int, float, float, float, str]]",
+      "is_async": false,
+      "doc_comment": null
+    },
+    "ane.crossmodal_store_face": {
+      "module": "ane",
+      "name": "crossmodal_store_face",
+      "signature": "(node_id: str, embedding: list[float])",
+      "return_type": "int",
+      "is_async": false,
+      "doc_comment": null
+    },
+    "ane.crossmodal_store_voice": {
+      "module": "ane",
+      "name": "crossmodal_store_voice",
+      "signature": "(node_id: str, embedding: list[float])",
+      "return_type": "int",
+      "is_async": false,
+      "doc_comment": null
+    },
+    "ane.crossmodal_query_face": {
+      "module": "ane",
+      "name": "crossmodal_query_face",
+      "signature": "(embedding: list[float], max_results: int | None, min_similarity: float | None)",
+      "return_type": "list[tuple[str, float]]",
+      "is_async": false,
+      "doc_comment": null
+    },
+    "ane.crossmodal_query_voice": {
+      "module": "ane",
+      "name": "crossmodal_query_voice",
+      "signature": "(embedding: list[float], max_results: int | None, min_similarity: float | None)",
+      "return_type": "list[tuple[str, float]]",
+      "is_async": false,
+      "doc_comment": null
+    },
+    "ane.crossmodal_get_face": {
+      "module": "ane",
+      "name": "crossmodal_get_face",
+      "signature": "(node_id: str)",
+      "return_type": "list[float] | None",
+      "is_async": false,
+      "doc_comment": null
+    },
+    "ane.crossmodal_get_voice": {
+      "module": "ane",
+      "name": "crossmodal_get_voice",
+      "signature": "(node_id: str)",
+      "return_type": "list[float] | None",
+      "is_async": false,
+      "doc_comment": null
+    },
+    "ane.crossmodal_face_similarity": {
+      "module": "ane",
+      "name": "crossmodal_face_similarity",
+      "signature": "(embedding_a: list[float], embedding_b: list[float])",
+      "return_type": "float",
+      "is_async": false,
+      "doc_comment": null
+    },
+    "ane.crossmodal_voice_similarity": {
+      "module": "ane",
+      "name": "crossmodal_voice_similarity",
+      "signature": "(embedding_a: list[float], embedding_b: list[float])",
+      "return_type": "float",
+      "is_async": false,
+      "doc_comment": null
+    },
+    "ane.crossmodal_stats": {
+      "module": "ane",
+      "name": "crossmodal_stats",
+      "signature": "()",
+      "return_type": "dict[str, int]",
+      "is_async": false,
+      "doc_comment": null
+    },
+    "content_hasher.sha256_hex": {
+      "module": "content_hasher",
+      "name": "sha256_hex",
+      "signature": "(data: bytes)",
+      "return_type": "str",
+      "is_async": false,
+      "doc_comment": null
+    },
+    "content_hasher.blake3_64": {
+      "module": "content_hasher",
+      "name": "blake3_64",
+      "signature": "(body: bytes)",
+      "return_type": "str",
+      "is_async": false,
+      "doc_comment": null
+    },
+    "content_hasher.xxh3_64_hex": {
+      "module": "content_hasher",
+      "name": "xxh3_64_hex",
+      "signature": "(data: bytes)",
+      "return_type": "str",
+      "is_async": false,
+      "doc_comment": null
+    },
+    "content_hasher.blake3_hex": {
+      "module": "content_hasher",
+      "name": "blake3_hex",
+      "signature": "(body: bytes)",
+      "return_type": "str",
+      "is_async": false,
+      "doc_comment": null
+    },
+    "content_hasher.batch_xxh3_64_hex": {
+      "module": "content_hasher",
+      "name": "batch_xxh3_64_hex",
+      "signature": "(items: list[list[int]])",
+      "return_type": "list[str]",
+      "is_async": false,
+      "doc_comment": null
+    },
+    "content_hasher.batch_blake3_64": {
+      "module": "content_hasher",
+      "name": "batch_blake3_64",
+      "signature": "(bodies: list[list[int]])",
+      "return_type": "list[str]",
+      "is_async": false,
+      "doc_comment": null
+    },
+    "feed_pipeline.feed_entry_pipeline": {
+      "module": "feed_pipeline",
+      "name": "feed_entry_pipeline",
+      "signature": "(raw_xml: str, max_entries: int, patterns: list[str], labels: list[str])",
+      "return_type": "None",
+      "is_async": false,
+      "doc_comment": null
+    },
+    "feed_pipeline.feed_batch_pipeline": {
+      "module": "feed_pipeline",
+      "name": "feed_batch_pipeline",
+      "signature": "(feeds: list[tuple[str, int]], patterns: list[str], labels: list[str])",
+      "return_type": "None",
+      "is_async": false,
+      "doc_comment": null
+    },
+    "simd_similarity.batch_cosine_scores": {
+      "module": "simd_similarity",
+      "name": "batch_cosine_scores",
+      "signature": "(query_flat: list[float], candidates_flat: list[float], num_queries: int, num_candidates: int, dim: int)",
+      "return_type": "list[list[float]]",
+      "is_async": false,
+      "doc_comment": null
+    },
+    "simd_similarity.batch_topk_indices": {
+      "module": "simd_similarity",
+      "name": "batch_topk_indices",
+      "signature": "(scores_flat: list[float], num_queries: int, num_candidates: int, k: int)",
+      "return_type": "tuple[list[list[int]], list[list[float]]]",
+      "is_async": false,
+      "doc_comment": null
+    },
+    "simd_similarity.batch_hamming_scores": {
+      "module": "simd_similarity",
+      "name": "batch_hamming_scores",
+      "signature": "(query_packed: list[int], candidates_packed: list[int], num_candidates: int, num_bytes: int)",
+      "return_type": "list[float]",
+      "is_async": false,
+      "doc_comment": null
+    },
+    "simd_similarity.batch_hamming_scores_batched": {
+      "module": "simd_similarity",
+      "name": "batch_hamming_scores_batched",
+      "signature": "(queries_packed: list[int], candidates_packed: list[int], num_queries: int, num_candidates: int, num_bytes: int)",
+      "return_type": "list[list[float]]",
+      "is_async": false,
+      "doc_comment": null
+    },
+    "simd_similarity.batch_cosine_scores_npy": {
+      "module": "simd_similarity",
+      "name": "batch_cosine_scores_npy",
+      "signature": "(q: list[float], c: list[float], nq: int, nc: int, dim: int)",
+      "return_type": "list[list[float]]",
+      "is_async": false,
+      "doc_comment": null
+    },
+    "ioc_extract_fast.extract_structured_entities_py": {
+      "module": "ioc_extract_fast",
+      "name": "extract_structured_entities_py",
+      "signature": "(text: str)",
+      "return_type": "list[tuple[int, int, str, str]]",
+      "is_async": false,
+      "doc_comment": null
+    },
+    "ioc_extract_fast.batch_extract_structured_entities_py": {
+      "module": "ioc_extract_fast",
+      "name": "batch_extract_structured_entities_py",
+      "signature": "(texts: list[str])",
+      "return_type": "list[list[tuple[int, int, str, str]]]",
+      "is_async": false,
+      "doc_comment": null
+    },
+    "ioc_extract_fast.ioc_extract_unified": {
+      "module": "ioc_extract_fast",
+      "name": "ioc_extract_unified",
+      "signature": "(text: str)",
+      "return_type": "list[tuple[str, str]]",
+      "is_async": false,
+      "doc_comment": null
+    },
+    "ioc_extract_fast.batch_ioc_extract_unified": {
+      "module": "ioc_extract_fast",
+      "name": "batch_ioc_extract_unified",
+      "signature": "(texts: list[str])",
+      "return_type": "list[list[tuple[str, str]]]",
+      "is_async": false,
+      "doc_comment": null
+    },
+    "parquet_reader.parquet_row_group_stats": {
+      "module": "parquet_reader",
+      "name": "parquet_row_group_stats",
+      "signature": "(path: str)",
+      "return_type": "list[tuple[int, float, float, int]] | None",
+      "is_async": false,
+      "doc_comment": null
+    },
+    "parquet_reader.parquet_get_metadata": {
+      "module": "parquet_reader",
+      "name": "parquet_get_metadata",
+      "signature": "(path: str)",
+      "return_type": "tuple[int, int] | None",
+      "is_async": false,
+      "doc_comment": null
+    },
+    "parquet_reader.parquet_read_row_group_ipc": {
+      "module": "parquet_reader",
+      "name": "parquet_read_row_group_ipc",
+      "signature": "(path: str, row_group: int, columns: list[Any], batch_size: int | None)",
+      "return_type": "bytes | None",
+      "is_async": false,
+      "doc_comment": null
+    },
+    "parquet_reader.parquet_iter_all_row_groups": {
+      "module": "parquet_reader",
+      "name": "parquet_iter_all_row_groups",
+      "signature": "(path: str, columns: list[Any], batch_size: int | None)",
+      "return_type": "list[bytes]",
+      "is_async": false,
+      "doc_comment": null
+    },
+    "parquet_reader.parquet_read_table": {
+      "module": "parquet_reader",
+      "name": "parquet_read_table",
+      "signature": "(path: str, columns: list[Any], batch_size: int | None)",
+      "return_type": "Any | None",
+      "is_async": false,
+      "doc_comment": null
+    },
+    "quality_gate.normalize_quality_text": {
+      "module": "quality_gate",
+      "name": "normalize_quality_text",
+      "signature": "(text: str)",
+      "return_type": "str",
+      "is_async": false,
+      "doc_comment": null
+    },
+    "quality_gate.compute_entropy": {
+      "module": "quality_gate",
+      "name": "compute_entropy",
+      "signature": "(text: str)",
+      "return_type": "float",
+      "is_async": false,
+      "doc_comment": null
+    },
+    "quality_gate.compute_entropy_fast": {
+      "module": "quality_gate",
+      "name": "compute_entropy_fast",
+      "signature": "(text: str)",
+      "return_type": "float",
+      "is_async": false,
+      "doc_comment": null
+    },
+    "quality_gate.entropy": {
+      "module": "quality_gate",
+      "name": "entropy",
+      "signature": "(data: bytes)",
+      "return_type": "float",
+      "is_async": false,
+      "doc_comment": null
+    },
+    "quality_gate.dedup_fingerprint": {
+      "module": "quality_gate",
+      "name": "dedup_fingerprint",
+      "signature": "(text: str)",
+      "return_type": "str",
+      "is_async": false,
+      "doc_comment": null
+    },
+    "quality_gate.url_fingerprint": {
+      "module": "quality_gate",
+      "name": "url_fingerprint",
+      "signature": "(url: str)",
+      "return_type": "str",
+      "is_async": false,
+      "doc_comment": null
+    },
+    "quality_gate.assess_findings_quality_batch": {
+      "module": "quality_gate",
+      "name": "assess_findings_quality_batch",
+      "signature": "(findings: list[PyFindingInput])",
+      "return_type": "Any",
+      "is_async": false,
+      "doc_comment": null
+    },
+    "quality_gate.batch_entropy": {
+      "module": "quality_gate",
+      "name": "batch_entropy",
+      "signature": "(texts: list[str])",
+      "return_type": "list[float]",
+      "is_async": false,
+      "doc_comment": null
+    },
+    "quality_gate.batch_dedup_fingerprints": {
+      "module": "quality_gate",
+      "name": "batch_dedup_fingerprints",
+      "signature": "(texts: list[str])",
+      "return_type": "list[str]",
+      "is_async": false,
+      "doc_comment": null
+    },
+    "quality_gate.batch_url_fingerprints": {
+      "module": "quality_gate",
+      "name": "batch_url_fingerprints",
+      "signature": "(urls: list[str])",
+      "return_type": "list[str]",
+      "is_async": false,
+      "doc_comment": null
+    },
+    "quality_gate.batch_normalize_quality_text": {
+      "module": "quality_gate",
+      "name": "batch_normalize_quality_text",
+      "signature": "(texts: list[str])",
+      "return_type": "list[str]",
+      "is_async": false,
+      "doc_comment": null
+    },
+    "onion_validation.rust_validate_onion_v3": {
+      "module": "onion_validation",
+      "name": "rust_validate_onion_v3",
+      "signature": "(address: str)",
+      "return_type": "bool",
+      "is_async": false,
+      "doc_comment": null
+    },
+    "onion_validation.rust_validate_onion_v3_detailed": {
+      "module": "onion_validation",
+      "name": "rust_validate_onion_v3_detailed",
+      "signature": "(address: str)",
+      "return_type": "str",
+      "is_async": false,
+      "doc_comment": null
+    },
+    "onion_validation.rust_validate_onion_batch": {
+      "module": "onion_validation",
+      "name": "rust_validate_onion_batch",
+      "signature": "(addresses: list[str])",
+      "return_type": "list[bool]",
+      "is_async": false,
+      "doc_comment": null
+    },
+    "nw_connection.fetch": {
+      "module": "nw_connection",
+      "name": "fetch",
+      "signature": "(url: str, timeout_ms: int | None)",
+      "return_type": "NwResponse",
+      "is_async": false,
+      "doc_comment": null
+    },
+    "nw_connection.fetch_async": {
+      "module": "nw_connection",
+      "name": "fetch_async",
+      "signature": "(url: str, timeout_ms: int | None)",
+      "return_type": "Any",
+      "is_async": false,
+      "doc_comment": null
+    },
+    "nw_connection.fetch_quic": {
+      "module": "nw_connection",
+      "name": "fetch_quic",
+      "signature": "(url: str, timeout_ms: int | None)",
+      "return_type": "NwResponse",
+      "is_async": false,
+      "doc_comment": null
+    },
+    "nw_connection.fetch_quic_async": {
+      "module": "nw_connection",
+      "name": "fetch_quic_async",
+      "signature": "(url: str, timeout_ms: int | None)",
+      "return_type": "Any",
+      "is_async": false,
+      "doc_comment": null
+    },
+    "nw_connection.pool_stats": {
+      "module": "nw_connection",
+      "name": "pool_stats",
+      "signature": "()",
+      "return_type": "Any",
+      "is_async": false,
+      "doc_comment": null
+    },
+    "ip_parse.parse_ip_fast": {
+      "module": "ip_parse",
+      "name": "parse_ip_fast",
+      "signature": "(s: str)",
+      "return_type": "str | None",
+      "is_async": false,
+      "doc_comment": null
+    },
+    "ip_parse.is_private_ip": {
+      "module": "ip_parse",
+      "name": "is_private_ip",
+      "signature": "(s: str)",
+      "return_type": "bool",
+      "is_async": false,
+      "doc_comment": null
+    },
+    "ip_parse.is_public_ip": {
+      "module": "ip_parse",
+      "name": "is_public_ip",
+      "signature": "(s: str)",
+      "return_type": "bool",
+      "is_async": false,
+      "doc_comment": null
+    },
+    "ip_parse.batch_ip_classify": {
+      "module": "ip_parse",
+      "name": "batch_ip_classify",
+      "signature": "(ips: list[str])",
+      "return_type": "list[int]",
+      "is_async": false,
+      "doc_comment": null
+    },
+    "ip_parse.cidr_contains": {
+      "module": "ip_parse",
+      "name": "cidr_contains",
+      "signature": "(cidr: str, ip: str)",
+      "return_type": "bool",
+      "is_async": false,
+      "doc_comment": null
+    },
+    "simdjson_extract.json_pointer_extract": {
+      "module": "simdjson_extract",
+      "name": "json_pointer_extract",
+      "signature": "(json_bytes: bytes, pointer: str)",
+      "return_type": "list[int] | None",
+      "is_async": false,
+      "doc_comment": null
+    },
+    "simdjson_extract.json_pointer_extract_multi": {
+      "module": "simdjson_extract",
+      "name": "json_pointer_extract_multi",
+      "signature": "(json_bytes: bytes, pointers: list[str])",
+      "return_type": "list[list[int]]",
+      "is_async": false,
+      "doc_comment": null
+    },
+    "arti_bridge.fetch_onion_async": {
+      "module": "arti_bridge",
+      "name": "fetch_onion_async",
+      "signature": "(node: ArtiNode, url: str, timeout_s: float | None)",
+      "return_type": "Any",
+      "is_async": false,
+      "doc_comment": null
+    },
+    "arti_bridge.fetch_batch_async": {
+      "module": "arti_bridge",
+      "name": "fetch_batch_async",
+      "signature": "(node: ArtiNode, urls: list[str], timeout_s: float | None)",
+      "return_type": "Any",
+      "is_async": false,
+      "doc_comment": null
+    },
+    "stealth_bridge.dns_resolve_async": {
+      "module": "stealth_bridge",
+      "name": "dns_resolve_async",
+      "signature": "(hostname: str, qtype: str | None)",
+      "return_type": "Any",
+      "is_async": false,
+      "doc_comment": null
+    },
+    "stealth_bridge.dns_resolve_batch_async": {
+      "module": "stealth_bridge",
+      "name": "dns_resolve_batch_async",
+      "signature": "(hostnames: list[str], qtype: str | None)",
+      "return_type": "Any",
+      "is_async": false,
+      "doc_comment": null
+    },
+    "stealth_bridge.get_quic_backend": {
+      "module": "stealth_bridge",
+      "name": "get_quic_backend",
+      "signature": "()",
+      "return_type": "str",
+      "is_async": false,
+      "doc_comment": null
+    },
+    "stealth_bridge.supports_curl_cffi_quic": {
+      "module": "stealth_bridge",
+      "name": "supports_curl_cffi_quic",
+      "signature": "()",
+      "return_type": "bool",
+      "is_async": false,
+      "doc_comment": null
+    },
+    "stealth_bridge.encode_response_metadata_arrow": {
+      "module": "stealth_bridge",
+      "name": "encode_response_metadata_arrow",
+      "signature": "(url: str, status: int, headers: list[tuple[str, str]], timing_ms: float)",
+      "return_type": "list[int]",
+      "is_async": false,
+      "doc_comment": null
+    },
+    "stealth_bridge.decode_response_metadata_arrow": {
+      "module": "stealth_bridge",
+      "name": "decode_response_metadata_arrow",
+      "signature": "(data: list[int])",
+      "return_type": "tuple[str, int, list[tuple[str, str]], float]",
+      "is_async": false,
+      "doc_comment": null
+    },
+    "stealth_bridge.p2p_harvest_bridge": {
+      "module": "stealth_bridge",
+      "name": "p2p_harvest_bridge",
+      "signature": "(keyword: str, protocols: list[str], duration_s: int | None, max_results: int | None)",
+      "return_type": "Any",
+      "is_async": false,
+      "doc_comment": null
+    },
+    "stealth_bridge.get_p2p_protocol_status": {
+      "module": "stealth_bridge",
+      "name": "get_p2p_protocol_status",
+      "signature": "()",
+      "return_type": "dict[str, bool]",
+      "is_async": false,
+      "doc_comment": null
+    },
+    "iosurface_bridge.is_iosurface_bridge_available": {
+      "module": "iosurface_bridge",
+      "name": "is_iosurface_bridge_available",
+      "signature": "()",
+      "return_type": "tuple[bool, str | None]",
+      "is_async": false,
+      "doc_comment": null
+    },
+    "iosurface_bridge.get_iosurface_from_pixelbuffer": {
+      "module": "iosurface_bridge",
+      "name": "get_iosurface_from_pixelbuffer",
+      "signature": "(pixel_buffer_ptr: int)",
+      "return_type": "IOSurfaceTextureDescriptor",
+      "is_async": false,
+      "doc_comment": null
+    },
+    "iosurface_bridge.create_metal_texture_from_iosurface": {
+      "module": "iosurface_bridge",
+      "name": "create_metal_texture_from_iosurface",
+      "signature": "(iosurface_ptr: int, width: int, height: int, pixel_format: str, plane: int)",
+      "return_type": "tuple[int, int, int]",
+      "is_async": false,
+      "doc_comment": null
+    },
+    "iosurface_bridge.get_iosurface_bridge_telemetry": {
+      "module": "iosurface_bridge",
+      "name": "get_iosurface_bridge_telemetry",
+      "signature": "()",
+      "return_type": "dict[str, Any]",
+      "is_async": false,
+      "doc_comment": null
+    },
+    "iosurface_bridge.create_shared_buffer_from_pixelbuffer": {
+      "module": "iosurface_bridge",
+      "name": "create_shared_buffer_from_pixelbuffer",
+      "signature": "(pixel_buffer_ptr: int, width: int, height: int, bytes_per_row: int, pixel_format: str)",
+      "return_type": "tuple[]",
+      "is_async": false,
+      "doc_comment": null
+    },
+    "xxhash_ext.content_hash_64": {
+      "module": "xxhash_ext",
+      "name": "content_hash_64",
+      "signature": "(data: bytes)",
+      "return_type": "int",
+      "is_async": false,
+      "doc_comment": null
+    },
+    "xxhash_ext.content_hash_hex": {
+      "module": "xxhash_ext",
+      "name": "content_hash_hex",
+      "signature": "(data: bytes)",
+      "return_type": "str",
+      "is_async": false,
+      "doc_comment": null
+    },
+    "xxhash_ext.batch_content_hash": {
+      "module": "xxhash_ext",
+      "name": "batch_content_hash",
+      "signature": "(items: list[str])",
+      "return_type": "list[int]",
+      "is_async": false,
+      "doc_comment": null
+    },
+    "xxhash_ext.batch_content_hash_parallel": {
+      "module": "xxhash_ext",
+      "name": "batch_content_hash_parallel",
+      "signature": "(items: list[str])",
+      "return_type": "list[int]",
+      "is_async": false,
+      "doc_comment": null
+    },
+    "xxhash_ext.batch_content_hash_hex": {
+      "module": "xxhash_ext",
+      "name": "batch_content_hash_hex",
+      "signature": "(items: list[str])",
+      "return_type": "list[str]",
+      "is_async": false,
+      "doc_comment": null
+    },
+    "xxhash_ext.batch_content_hash_hex_parallel": {
+      "module": "xxhash_ext",
+      "name": "batch_content_hash_hex_parallel",
+      "signature": "(items: list[str])",
+      "return_type": "list[str]",
+      "is_async": false,
+      "doc_comment": null
+    },
+    "xxhash_ext.double_hash_64": {
+      "module": "xxhash_ext",
+      "name": "double_hash_64",
+      "signature": "(item: str)",
+      "return_type": "tuple[int, int]",
+      "is_async": false,
+      "doc_comment": null
+    },
+    "compress.compress_page": {
+      "module": "compress",
+      "name": "compress_page",
+      "signature": "(data: bytes)",
+      "return_type": "list[int]",
+      "is_async": false,
+      "doc_comment": null
+    },
+    "compress.decompress_page": {
+      "module": "compress",
+      "name": "decompress_page",
+      "signature": "(wire: bytes)",
+      "return_type": "list[int]",
+      "is_async": false,
+      "doc_comment": null
+    },
+    "compress.batch_compress_pages": {
+      "module": "compress",
+      "name": "batch_compress_pages",
+      "signature": "(pages: list[list[int]])",
+      "return_type": "list[list[int]]",
+      "is_async": false,
+      "doc_comment": null
+    },
+    "compress.batch_decompress_pages": {
+      "module": "compress",
+      "name": "batch_decompress_pages",
+      "signature": "(wires: list[list[int]])",
+      "return_type": "list[list[int]]",
+      "is_async": false,
+      "doc_comment": null
+    },
+    "compress.register_zstd_dict": {
+      "module": "compress",
+      "name": "register_zstd_dict",
+      "signature": "(dict_id: int, dict_data: list[int])",
+      "return_type": "bool",
+      "is_async": false,
+      "doc_comment": null
+    },
+    "compress.unregister_zstd_dict": {
+      "module": "compress",
+      "name": "unregister_zstd_dict",
+      "signature": "(dict_id: int)",
+      "return_type": "bool",
+      "is_async": false,
+      "doc_comment": null
+    },
+    "compress.compress_page_dict": {
+      "module": "compress",
+      "name": "compress_page_dict",
+      "signature": "(data: bytes, dict_id: int)",
+      "return_type": "list[int]",
+      "is_async": false,
+      "doc_comment": null
+    },
+    "compress.lz4_compress_raw": {
+      "module": "compress",
+      "name": "lz4_compress_raw",
+      "signature": "(data: bytes)",
+      "return_type": "list[int]",
+      "is_async": false,
+      "doc_comment": null
+    },
+    "compress.lz4_decompress_raw": {
+      "module": "compress",
+      "name": "lz4_decompress_raw",
+      "signature": "(compressed: bytes)",
+      "return_type": "list[int]",
+      "is_async": false,
+      "doc_comment": null
+    },
+    "compress.lz4_compress_jsonl_batch": {
+      "module": "compress",
+      "name": "lz4_compress_jsonl_batch",
+      "signature": "(lines: list[list[int]])",
+      "return_type": "list[int]",
+      "is_async": false,
+      "doc_comment": null
+    },
+    "compress.lz4_decompress_jsonl_batch": {
+      "module": "compress",
+      "name": "lz4_decompress_jsonl_batch",
+      "signature": "(compressed: bytes)",
+      "return_type": "list[list[int]]",
+      "is_async": false,
+      "doc_comment": null
+    },
+    "ioc_dedup.ioc_dedup_from_bytes": {
+      "module": "ioc_dedup",
+      "name": "ioc_dedup_from_bytes",
+      "signature": "(data: list[int])",
+      "return_type": "IocDedupStore",
+      "is_async": false,
+      "doc_comment": null
+    },
+    "int_counter_layout.build_layout": {
+      "module": "int_counter_layout",
+      "name": "build_layout",
+      "signature": "(names: list[str])",
+      "return_type": "IntCounterLayoutRust",
+      "is_async": false,
+      "doc_comment": null
+    },
+    "topology.init_topology_py": {
+      "module": "topology",
+      "name": "init_topology_py",
+      "signature": "()",
+      "return_type": "PyTopologyInfo",
+      "is_async": false,
+      "doc_comment": null
+    },
+    "topology.p_core_count_py": {
+      "module": "topology",
+      "name": "p_core_count_py",
+      "signature": "()",
+      "return_type": "int",
+      "is_async": false,
+      "doc_comment": null
+    },
+    "topology.e_core_count_py": {
+      "module": "topology",
+      "name": "e_core_count_py",
+      "signature": "()",
+      "return_type": "int",
+      "is_async": false,
+      "doc_comment": null
+    },
+    "topology.total_logical_cores_py": {
+      "module": "topology",
+      "name": "total_logical_cores_py",
+      "signature": "()",
+      "return_type": "int",
+      "is_async": false,
+      "doc_comment": null
+    },
+    "topology.is_m1_py": {
+      "module": "topology",
+      "name": "is_m1_py",
+      "signature": "()",
+      "return_type": "bool",
+      "is_async": false,
+      "doc_comment": null
+    },
+    "topology.get_p_core_indices_py": {
+      "module": "topology",
+      "name": "get_p_core_indices_py",
+      "signature": "()",
+      "return_type": "list[int]",
+      "is_async": false,
+      "doc_comment": null
+    },
+    "topology.get_e_core_indices_py": {
+      "module": "topology",
+      "name": "get_e_core_indices_py",
+      "signature": "()",
+      "return_type": "list[int]",
+      "is_async": false,
+      "doc_comment": null
+    },
+    "topology.apply_affinity_for_workload_py": {
+      "module": "topology",
+      "name": "apply_affinity_for_workload_py",
+      "signature": "(workload: str)",
+      "return_type": "None",
+      "is_async": false,
+      "doc_comment": null
+    },
+    "fulltext_index.fulltext_delete_index": {
+      "module": "fulltext_index",
+      "name": "fulltext_delete_index",
+      "signature": "(index_path: str)",
+      "return_type": "bool",
+      "is_async": false,
+      "doc_comment": null
+    },
+    "fulltext_index.fulltext_doc_count": {
+      "module": "fulltext_index",
+      "name": "fulltext_doc_count",
+      "signature": "(index_path: str)",
+      "return_type": "int",
+      "is_async": false,
+      "doc_comment": null
+    },
+    "fulltext_index.fulltext_is_available": {
+      "module": "fulltext_index",
+      "name": "fulltext_is_available",
+      "signature": "()",
+      "return_type": "bool",
+      "is_async": false,
+      "doc_comment": null
+    },
+    "adaptive_scheduler.get_adaptive_cpu_threads": {
+      "module": "adaptive_scheduler",
+      "name": "get_adaptive_cpu_threads",
+      "signature": "()",
+      "return_type": "int",
+      "is_async": false,
+      "doc_comment": null
+    },
+    "adaptive_scheduler.get_adaptive_io_threads": {
+      "module": "adaptive_scheduler",
+      "name": "get_adaptive_io_threads",
+      "signature": "()",
+      "return_type": "int",
+      "is_async": false,
+      "doc_comment": null
+    },
+    "adaptive_scheduler.set_adaptive_phase": {
+      "module": "adaptive_scheduler",
+      "name": "set_adaptive_phase",
+      "signature": "(phase: str)",
+      "return_type": "None",
+      "is_async": false,
+      "doc_comment": null
+    },
+    "adaptive_scheduler.get_adaptive_phase": {
+      "module": "adaptive_scheduler",
+      "name": "get_adaptive_phase",
+      "signature": "()",
+      "return_type": "str",
+      "is_async": false,
+      "doc_comment": null
+    },
+    "adaptive_scheduler.get_adaptive_mixed_threshold": {
+      "module": "adaptive_scheduler",
+      "name": "get_adaptive_mixed_threshold",
+      "signature": "()",
+      "return_type": "int",
+      "is_async": false,
+      "doc_comment": null
+    },
+    "adaptive_scheduler.get_adaptive_mixed_threshold_via_metal": {
+      "module": "adaptive_scheduler",
+      "name": "get_adaptive_mixed_threshold_via_metal",
+      "signature": "()",
+      "return_type": "int",
+      "is_async": false,
+      "doc_comment": null
+    },
+    "adaptive_scheduler.get_metal_limit_bytes_py": {
+      "module": "adaptive_scheduler",
+      "name": "get_metal_limit_bytes_py",
+      "signature": "()",
+      "return_type": "int",
+      "is_async": false,
+      "doc_comment": null
+    },
+    "adaptive_scheduler.sync_metal_memory_pressure_py": {
+      "module": "adaptive_scheduler",
+      "name": "sync_metal_memory_pressure_py",
+      "signature": "()",
+      "return_type": "int",
+      "is_async": false,
+      "doc_comment": null
+    },
+    "adaptive_scheduler.get_total_active_threads_budget": {
+      "module": "adaptive_scheduler",
+      "name": "get_total_active_threads_budget",
+      "signature": "()",
+      "return_type": "int",
+      "is_async": false,
+      "doc_comment": null
+    },
+    "adaptive_scheduler.get_available_thread_budget": {
+      "module": "adaptive_scheduler",
+      "name": "get_available_thread_budget",
+      "signature": "()",
+      "return_type": "int",
+      "is_async": false,
+      "doc_comment": null
+    },
+    "adaptive_scheduler.get_threshold_switch_counter": {
+      "module": "adaptive_scheduler",
+      "name": "get_threshold_switch_counter",
+      "signature": "()",
+      "return_type": "int",
+      "is_async": false,
+      "doc_comment": null
+    },
+    "adaptive_scheduler.get_current_metal_level": {
+      "module": "adaptive_scheduler",
+      "name": "get_current_metal_level",
+      "signature": "()",
+      "return_type": "int",
+      "is_async": false,
+      "doc_comment": null
+    },
+    "adaptive_scheduler.get_seconds_since_last_switch": {
+      "module": "adaptive_scheduler",
+      "name": "get_seconds_since_last_switch",
+      "signature": "()",
+      "return_type": "float",
+      "is_async": false,
+      "doc_comment": null
+    },
+    "adaptive_scheduler.get_threshold_monitoring_stats": {
+      "module": "adaptive_scheduler",
+      "name": "get_threshold_monitoring_stats",
+      "signature": "()",
+      "return_type": "tuple[int, int, float]",
+      "is_async": false,
+      "doc_comment": null
+    },
+    "adaptive_scheduler.get_thread_budget_breakdown": {
+      "module": "adaptive_scheduler",
+      "name": "get_thread_budget_breakdown",
+      "signature": "()",
+      "return_type": "tuple[int, int, int, int, int]",
+      "is_async": false,
+      "doc_comment": null
+    },
+    "whisper.is_available": {
+      "module": "whisper",
+      "name": "is_available",
+      "signature": "()",
+      "return_type": "bool",
+      "is_async": false,
+      "doc_comment": null
+    },
+    "whisper.get_cache_dir": {
+      "module": "whisper",
+      "name": "get_cache_dir",
+      "signature": "()",
+      "return_type": "str",
+      "is_async": false,
+      "doc_comment": null
+    },
+    "whisper.speaker_similarity": {
+      "module": "whisper",
+      "name": "speaker_similarity",
+      "signature": "(embedding_a: list[float], embedding_b: list[float])",
+      "return_type": "float",
+      "is_async": false,
+      "doc_comment": null
+    },
+    "accelerate.init": {
+      "module": "accelerate",
+      "name": "init",
+      "signature": "()",
+      "return_type": "tuple[bool, str, str | None]",
+      "is_async": false,
+      "doc_comment": null
+    },
+    "accelerate.get_backend_info": {
+      "module": "accelerate",
+      "name": "get_backend_info",
+      "signature": "()",
+      "return_type": "tuple[str, bool]",
+      "is_async": false,
+      "doc_comment": null
+    },
+    "accelerate.is_vdsp_available": {
+      "module": "accelerate",
+      "name": "is_vdsp_available",
+      "signature": "()",
+      "return_type": "bool",
+      "is_async": false,
+      "doc_comment": null
+    },
+    "accelerate.cosine_similarity": {
+      "module": "accelerate",
+      "name": "cosine_similarity",
+      "signature": "(a: list[float], b: list[float], normalize: bool)",
+      "return_type": "float",
+      "is_async": false,
+      "doc_comment": null
+    },
+    "accelerate.batch_cosine_similarity": {
+      "module": "accelerate",
+      "name": "batch_cosine_similarity",
+      "signature": "(queries: list[float], candidates: list[float], num_queries: int, num_candidates: int, hidden_dim: int, normalize: bool)",
+      "return_type": "list[float]",
+      "is_async": false,
+      "doc_comment": null
+    },
+    "accelerate.batch_normalize": {
+      "module": "accelerate",
+      "name": "batch_normalize",
+      "signature": "(vectors: list[float], batch_size: int, hidden_dim: int)",
+      "return_type": "list[float]",
+      "is_async": false,
+      "doc_comment": null
+    },
+    "accelerate.get_telemetry": {
+      "module": "accelerate",
+      "name": "get_telemetry",
+      "signature": "()",
+      "return_type": "dict[str, int]",
+      "is_async": false,
+      "doc_comment": null
+    },
+    "h2_safari_preset.get_safari18_settings": {
+      "module": "h2_safari_preset",
+      "name": "get_safari18_settings",
+      "signature": "()",
+      "return_type": "H2Settings",
+      "is_async": false,
+      "doc_comment": null
+    },
+    "h2_safari_preset.get_safari17_settings": {
+      "module": "h2_safari_preset",
+      "name": "get_safari17_settings",
+      "signature": "()",
+      "return_type": "H2Settings",
+      "is_async": false,
+      "doc_comment": null
+    },
+    "h2_safari_preset.get_safari16_settings": {
+      "module": "h2_safari_preset",
+      "name": "get_safari16_settings",
+      "signature": "()",
+      "return_type": "H2Settings",
+      "is_async": false,
+      "doc_comment": null
+    },
+    "h2_safari_preset.get_preset_for_profile": {
+      "module": "h2_safari_preset",
+      "name": "get_preset_for_profile",
+      "signature": "(profile: str)",
+      "return_type": "H2Settings | None",
+      "is_async": false,
+      "doc_comment": null
+    },
+    "h2_safari_preset.needs_webkit_preset": {
+      "module": "h2_safari_preset",
+      "name": "needs_webkit_preset",
+      "signature": "(profile: str)",
+      "return_type": "bool",
+      "is_async": false,
+      "doc_comment": null
+    },
+    "h2_safari_preset.get_webkit_window_increment": {
+      "module": "h2_safari_preset",
+      "name": "get_webkit_window_increment",
+      "signature": "()",
+      "return_type": "int",
+      "is_async": false,
+      "doc_comment": null
+    },
+    "h2_safari_preset.get_webkit_initial_window_size": {
+      "module": "h2_safari_preset",
+      "name": "get_webkit_initial_window_size",
+      "signature": "()",
+      "return_type": "int",
+      "is_async": false,
+      "doc_comment": null
+    },
+    "h2_safari_preset.get_curl_default_initial_window_size": {
+      "module": "h2_safari_preset",
+      "name": "get_curl_default_initial_window_size",
+      "signature": "()",
+      "return_type": "int",
+      "is_async": false,
+      "doc_comment": null
+    },
+    "h2_safari_preset.validate_safari_fingerprint": {
+      "module": "h2_safari_preset",
+      "name": "validate_safari_fingerprint",
+      "signature": "(profile: str)",
+      "return_type": "PyDict>>",
+      "is_async": false,
+      "doc_comment": null
+    },
+    "h2_safari_preset.get_webkit_profiles": {
+      "module": "h2_safari_preset",
+      "name": "get_webkit_profiles",
+      "signature": "()",
+      "return_type": "list[str]",
+      "is_async": false,
+      "doc_comment": null
+    },
+    "circuit_breaker.circuit_breaker_is_open": {
+      "module": "circuit_breaker",
+      "name": "circuit_breaker_is_open",
+      "signature": "(domain: str)",
+      "return_type": "bool",
+      "is_async": false,
+      "doc_comment": null
+    },
+    "circuit_breaker.circuit_breaker_record_success": {
+      "module": "circuit_breaker",
+      "name": "circuit_breaker_record_success",
+      "signature": "(domain: str)",
+      "return_type": "None",
+      "is_async": false,
+      "doc_comment": null
+    },
+    "circuit_breaker.circuit_breaker_record_failure": {
+      "module": "circuit_breaker",
+      "name": "circuit_breaker_record_failure",
+      "signature": "(domain: str, is_timeout: bool)",
+      "return_type": "None",
+      "is_async": false,
+      "doc_comment": null
+    },
+    "circuit_breaker.circuit_breaker_half_open_probe": {
+      "module": "circuit_breaker",
+      "name": "circuit_breaker_half_open_probe",
+      "signature": "(domain: str)",
+      "return_type": "bool",
+      "is_async": false,
+      "doc_comment": null
+    },
+    "circuit_breaker.circuit_breaker_get_stats": {
+      "module": "circuit_breaker",
+      "name": "circuit_breaker_get_stats",
+      "signature": "(domain: str)",
+      "return_type": "tuple[int, int, int]",
+      "is_async": false,
+      "doc_comment": null
+    },
+    "claims_extraction.extract_claims": {
+      "module": "claims_extraction",
+      "name": "extract_claims",
+      "signature": "(text: str, title: str, summary: str, source_type: str, evidence_type: str)",
+      "return_type": "list[tuple[str, str, float, str, str]]",
+      "is_async": false,
+      "doc_comment": null
+    },
+    "ioc_cooccurrence_rs.compute_cooccurrence_edges_py": {
+      "module": "ioc_cooccurrence_rs",
+      "name": "compute_cooccurrence_edges_py",
+      "signature": "(findings: list[dict[str, Any]])",
+      "return_type": "list[tuple[str, str, str, str, float, str, int]]",
+      "is_async": false,
+      "doc_comment": null
+    },
+    "ioc_cooccurrence_rs.batch_cooccurrence_edges_py": {
+      "module": "ioc_cooccurrence_rs",
+      "name": "batch_cooccurrence_edges_py",
+      "signature": "(batch_list: list[list[dict[str, Any]]])",
+      "return_type": "list[tuple[str, str, str, str, float, str, int]]",
+      "is_async": false,
+      "doc_comment": null
+    },
+    "async_bridge.resolve_async_py": {
+      "module": "async_bridge",
+      "name": "resolve_async_py",
+      "signature": "(//     hostname: str, //     qtype: str | None, //)",
+      "return_type": "Any",
+      "is_async": false,
+      "doc_comment": null
+    },
+    "async_bridge.async_fetch_py": {
+      "module": "async_bridge",
+      "name": "async_fetch_py",
+      "signature": "(url: str, method: str | None, body: list[int] | None, headers: list[tuple[str, str]] | None, timeout_s: float | None)",
+      "return_type": "Any",
+      "is_async": false,
+      "doc_comment": null
+    },
+    "async_bridge.async_fetch_onion_py": {
+      "module": "async_bridge",
+      "name": "async_fetch_onion_py",
+      "signature": "(node: Any, url: str, method: str | None, body: list[int] | None, headers: list[tuple[str, str]] | None, timeout_s: float | None)",
+      "return_type": "Any",
+      "is_async": false,
+      "doc_comment": null
+    },
+    "async_query.init_async_pool": {
+      "module": "async_query",
+      "name": "init_async_pool",
+      "signature": "(db_path: str, max_connections: int, timeout_secs: int)",
+      "return_type": "tuple[]",
+      "is_async": false,
+      "doc_comment": null
+    },
+    "async_query.rust_async_query": {
+      "module": "async_query",
+      "name": "rust_async_query",
+      "signature": "(sql: str)",
+      "return_type": "list[list[str]]",
+      "is_async": false,
+      "doc_comment": null
+    },
+    "async_query.rust_async_query_with_params": {
+      "module": "async_query",
+      "name": "rust_async_query_with_params",
+      "signature": "(sql: str, params: list[Any])",
+      "return_type": "list[list[str]]",
+      "is_async": false,
+      "doc_comment": null
+    },
+    "async_query.check_duckdb_health": {
+      "module": "async_query",
+      "name": "check_duckdb_health",
+      "signature": "(db_path: str)",
+      "return_type": "str",
+      "is_async": false,
+      "doc_comment": null
+    }
+  },
+  "registrations": {
+    "aho_corasick": {
+      "module": "aho_corasick",
+      "registration_type": "mixed",
+      "functions": [],
+      "classes": [
+        "AhoCorasickMatcher",
+        "PatternHit"
+      ]
+    },
+    "bloom": {
+      "module": "bloom",
+      "registration_type": "mixed",
+      "functions": [
+        "bloom_check_batch"
+      ],
+      "classes": [
+        "BloomFilter"
+      ]
+    },
+    "url_set": {
+      "module": "url_set",
+      "registration_type": "mixed",
+      "functions": [],
+      "classes": [
+        "MmapUrlSet",
+        "UrlSet"
+      ]
+    },
+    "pdf": {
+      "module": "pdf",
+      "registration_type": "mixed",
+      "functions": [
+        "extract_text",
+        "extract_text_from_bytes",
+        "extract_text_and_iocs",
+        "extract_text_and_iocs_from_bytes",
+        "extract_iocs",
+        "extract_iocs_from_bytes",
+        "extract_metadata",
+        "extract_metadata_from_bytes",
+        "extract_pdf_forensics",
+        "extract_pdf_forensics_from_bytes"
+      ],
+      "classes": [
+        "PdfMetadata",
+        "PdfForensics"
+      ]
+    },
+    "office": {
+      "module": "office",
+      "registration_type": "mixed",
+      "functions": [
+        "extract_text",
+        "extract_text_from_bytes",
+        "extract_iocs",
+        "extract_iocs_from_bytes",
+        "extract_metadata",
+        "extract_metadata_from_bytes"
+      ],
+      "classes": [
+        "OfficeMetadata"
+      ]
+    },
+    "url_ops": {
+      "module": "url_ops",
+      "registration_type": "register_functions",
+      "functions": [],
+      "classes": [
+        "UrlClassifyCachePy"
+      ]
+    },
+    "content_hasher": {
+      "module": "content_hasher",
+      "registration_type": "mixed",
+      "functions": [
+        "batch_xxh3_64_hex"
+      ],
+      "classes": [
+        "ContentHasher"
+      ]
+    },
+    "dedup_bloom": {
+      "module": "dedup_bloom",
+      "registration_type": "mixed",
+      "functions": [],
+      "classes": [
+        "PyDistributedBloomFilter",
+        "DedupBloomStats"
+      ]
+    },
+    "graph_cache": {
+      "module": "graph_cache",
+      "registration_type": "mixed",
+      "functions": [],
+      "classes": [
+        "PyGraphLRUCache"
+      ]
+    },
+    "query_terms": {
+      "module": "query_terms",
+      "registration_type": "register_functions",
+      "functions": [],
+      "classes": []
+    },
+    "dns_tunnel": {
+      "module": "dns_tunnel",
+      "registration_type": "register_functions",
+      "functions": [],
+      "classes": []
+    },
+    "ioc_extract": {
+      "module": "ioc_extract",
+      "registration_type": "register_functions",
+      "functions": [],
+      "classes": []
+    },
+    "ioc_extract_simd": {
+      "module": "ioc_extract_simd",
+      "registration_type": "register_functions",
+      "functions": [],
+      "classes": []
+    },
+    "ioc_stream_scan": {
+      "module": "ioc_stream_scan",
+      "registration_type": "register_functions",
+      "functions": [],
+      "classes": []
+    },
+    "url_engine": {
+      "module": "url_engine",
+      "registration_type": "register_functions",
+      "functions": [],
+      "classes": []
+    },
+    "simhash_ext": {
+      "module": "simhash_ext",
+      "registration_type": "register_functions",
+      "functions": [],
+      "classes": []
+    },
+    "lsh_index": {
+      "module": "lsh_index",
+      "registration_type": "register_functions",
+      "functions": [],
+      "classes": []
+    },
+    "link_predictor": {
+      "module": "link_predictor",
+      "registration_type": "register_functions",
+      "functions": [],
+      "classes": []
+    },
+    "text_similarity": {
+      "module": "text_similarity",
+      "registration_type": "register_functions",
+      "functions": [],
+      "classes": []
+    },
+    "xxhash_ext": {
+      "module": "xxhash_ext",
+      "registration_type": "register_functions",
+      "functions": [],
+      "classes": []
+    },
+    "tls_metadata": {
+      "module": "tls_metadata",
+      "registration_type": "register_functions",
+      "functions": [],
+      "classes": []
+    },
+    "tls13": {
+      "module": "tls13",
+      "registration_type": "register_functions",
+      "functions": [],
+      "classes": []
+    },
+    "dns": {
+      "module": "dns",
+      "registration_type": "register_functions",
+      "functions": [],
+      "classes": []
+    },
+    "crypto_accelerate": {
+      "module": "crypto_accelerate",
+      "registration_type": "register_functions",
+      "functions": [],
+      "classes": []
+    },
+    "adaptive_scheduler": {
+      "module": "adaptive_scheduler",
+      "registration_type": "register_functions",
+      "functions": [],
+      "classes": []
+    },
+    "int_counter_layout": {
+      "module": "int_counter_layout",
+      "registration_type": "register_functions",
+      "functions": [],
+      "classes": []
+    },
+    "hot_edges_rs": {
+      "module": "hot_edges_rs",
+      "registration_type": "register_functions",
+      "functions": [],
+      "classes": []
+    },
+    "telemetry_agg": {
+      "module": "telemetry_agg",
+      "registration_type": "register_functions",
+      "functions": [],
+      "classes": []
+    },
+    "quality_gate": {
+      "module": "quality_gate",
+      "registration_type": "register_functions",
+      "functions": [],
+      "classes": []
+    },
+    "text_norm": {
+      "module": "text_norm",
+      "registration_type": "register_functions",
+      "functions": [],
+      "classes": []
+    },
+    "madvise": {
+      "module": "madvise",
+      "registration_type": "register_functions",
+      "functions": [],
+      "classes": []
+    },
+    "lmdb_dht": {
+      "module": "lmdb_dht",
+      "registration_type": "register_functions",
+      "functions": [],
+      "classes": []
+    },
+    "compress": {
+      "module": "compress",
+      "registration_type": "register_functions",
+      "functions": [
+        "lz4_compress_raw",
+        "lz4_decompress_raw",
+        "lz4_compress_jsonl_batch",
+        "lz4_decompress_jsonl_batch"
+      ],
+      "classes": []
+    },
+    "graph_traverse": {
+      "module": "graph_traverse",
+      "registration_type": "register_functions",
+      "functions": [],
+      "classes": []
+    },
+    "html_parse": {
+      "module": "html_parse",
+      "registration_type": "register_functions",
+      "functions": [],
+      "classes": []
+    },
+    "memory": {
+      "module": "memory",
+      "registration_type": "register_functions",
+      "functions": [],
+      "classes": []
+    },
+    "signal_batch": {
+      "module": "signal_batch",
+      "registration_type": "register_functions",
+      "functions": [],
+      "classes": []
+    },
+    "simd_similarity": {
+      "module": "simd_similarity",
+      "registration_type": "register_functions",
+      "functions": [],
+      "classes": []
+    },
+    "zero_copy": {
+      "module": "zero_copy",
+      "registration_type": "register_functions",
+      "functions": [],
+      "classes": []
+    },
+    "serde_json_rs": {
+      "module": "serde_json_rs",
+      "registration_type": "register_functions",
+      "functions": [],
+      "classes": []
+    },
+    "simdjson_extract": {
+      "module": "simdjson_extract",
+      "registration_type": "register_functions",
+      "functions": [],
+      "classes": []
+    },
+    "stix_2_1": {
+      "module": "stix_2_1",
+      "registration_type": "register_functions",
+      "functions": [],
+      "classes": []
+    },
+    "sendfile": {
+      "module": "sendfile",
+      "registration_type": "register_functions",
+      "functions": [],
+      "classes": []
+    },
+    "pool_run": {
+      "module": "pool_run",
+      "registration_type": "register_functions",
+      "functions": [],
+      "classes": []
+    },
+    "elastic_pool": {
+      "module": "elastic_pool",
+      "registration_type": "register_functions",
+      "functions": [],
+      "classes": []
+    },
+    "graph_centrality": {
+      "module": "graph_centrality",
+      "registration_type": "register_functions",
+      "functions": [],
+      "classes": []
+    },
+    "graph_analytics": {
+      "module": "graph_analytics",
+      "registration_type": "register_functions",
+      "functions": [],
+      "classes": []
+    },
+    "claims_extraction": {
+      "module": "claims_extraction",
+      "registration_type": "register_functions",
+      "functions": [],
+      "classes": []
+    },
+    "ane": {
+      "module": "ane",
+      "registration_type": "register_functions",
+      "functions": [],
+      "classes": []
+    },
+    "data": {
+      "module": "data",
+      "registration_type": "register_functions",
+      "functions": [],
+      "classes": []
+    },
+    "collections": {
+      "module": "collections",
+      "registration_type": "register_functions",
+      "functions": [],
+      "classes": []
+    },
+    "feed_decision": {
+      "module": "feed_decision",
+      "registration_type": "register_functions",
+      "functions": [],
+      "classes": []
+    },
+    "regex_lz4": {
+      "module": "regex_lz4",
+      "registration_type": "register",
+      "functions": [],
+      "classes": []
+    },
+    "parquet_reader": {
+      "module": "parquet_reader",
+      "registration_type": "register",
+      "functions": [],
+      "classes": []
+    },
+    "deobfuscate": {
+      "module": "deobfuscate",
+      "registration_type": "register",
+      "functions": [],
+      "classes": []
+    },
+    "quic": {
+      "module": "quic",
+      "registration_type": "register",
+      "functions": [],
+      "classes": []
+    },
+    "async_bridge": {
+      "module": "async_bridge",
+      "registration_type": "register",
+      "functions": [],
+      "classes": []
+    },
+    "stealth_bridge": {
+      "module": "stealth_bridge",
+      "registration_type": "register",
+      "functions": [],
+      "classes": []
+    },
+    "anti_analysis": {
+      "module": "anti_analysis",
+      "registration_type": "register",
+      "functions": [],
+      "classes": []
+    },
+    "nw_connection": {
+      "module": "nw_connection",
+      "registration_type": "register",
+      "functions": [],
+      "classes": []
+    },
+    "h2_safari_preset": {
+      "module": "h2_safari_preset",
+      "registration_type": "register",
+      "functions": [],
+      "classes": []
+    },
+    "arti_bridge": {
+      "module": "arti_bridge",
+      "registration_type": "register",
+      "functions": [],
+      "classes": []
+    },
+    "p2p_harvest": {
+      "module": "p2p_harvest",
+      "registration_type": "register",
+      "functions": [],
+      "classes": []
+    },
+    "darwin_affinity": {
+      "module": "darwin_affinity",
+      "registration_type": "register",
+      "functions": [],
+      "classes": []
+    },
+    "topology": {
+      "module": "topology",
+      "registration_type": "register",
+      "functions": [],
+      "classes": []
+    },
+    "swarm_dag": {
+      "module": "swarm_dag",
+      "registration_type": "register",
+      "functions": [],
+      "classes": []
+    },
+    "sprint_policies": {
+      "module": "sprint_policies",
+      "registration_type": "register",
+      "functions": [],
+      "classes": []
+    },
+    "native_db": {
+      "module": "native_db",
+      "registration_type": "register",
+      "functions": [],
+      "classes": []
+    },
+    "async_query": {
+      "module": "async_query",
+      "registration_type": "register",
+      "functions": [],
+      "classes": []
+    },
+    "rolling_hash": {
+      "module": "rolling_hash",
+      "registration_type": "register",
+      "functions": [],
+      "classes": []
+    },
+    "simd": {
+      "module": "simd",
+      "registration_type": "register",
+      "functions": [],
+      "classes": []
+    },
+    "spsc_queue": {
+      "module": "spsc_queue",
+      "registration_type": "register",
+      "functions": [],
+      "classes": []
+    },
+    "mpsc_pool": {
+      "module": "mpsc_pool",
+      "registration_type": "register",
+      "functions": [],
+      "classes": []
+    },
+    "arrow_batch_builder": {
+      "module": "arrow_batch_builder",
+      "registration_type": "register",
+      "functions": [],
+      "classes": []
+    },
+    "federated_qtable": {
+      "module": "federated_qtable",
+      "registration_type": "register",
+      "functions": [],
+      "classes": []
+    },
+    "health": {
+      "module": "health",
+      "registration_type": "register",
+      "functions": [],
+      "classes": []
+    },
+    "os_unfair_lock": {
+      "module": "os_unfair_lock",
+      "registration_type": "register",
+      "functions": [],
+      "classes": []
+    },
+    "aimd_controller": {
+      "module": "aimd_controller",
+      "registration_type": "register",
+      "functions": [],
+      "classes": []
+    },
+    "pipeline_compose": {
+      "module": "pipeline_compose",
+      "registration_type": "register",
+      "functions": [],
+      "classes": []
+    },
+    "mlx_bridge": {
+      "module": "mlx_bridge",
+      "registration_type": "register",
+      "functions": [],
+      "classes": []
+    },
+    "whisper": {
+      "module": "whisper",
+      "registration_type": "register",
+      "functions": [],
+      "classes": []
+    },
+    "accelerate": {
+      "module": "accelerate",
+      "registration_type": "register",
+      "functions": [],
+      "classes": []
+    },
+    "metal_compute": {
+      "module": "metal_compute",
+      "registration_type": "register",
+      "functions": [],
+      "classes": []
+    },
+    "metal_shared_buf": {
+      "module": "metal_shared_buf",
+      "registration_type": "register",
+      "functions": [],
+      "classes": []
+    },
+    "metal_hashcrack": {
+      "module": "metal_hashcrack",
+      "registration_type": "register",
+      "functions": [],
+      "classes": []
+    },
+    "iosurface_bridge": {
+      "module": "iosurface_bridge",
+      "registration_type": "register",
+      "functions": [],
+      "classes": []
+    },
+    "feed_pipeline": {
+      "module": "feed_pipeline",
+      "registration_type": "register",
+      "functions": [],
+      "classes": []
+    },
+    "tracing": {
+      "module": "tracing",
+      "registration_type": "register",
+      "functions": [],
+      "classes": []
+    },
+    "fulltext_index": {
+      "module": "fulltext_index",
+      "registration_type": "register",
+      "functions": [],
+      "classes": []
+    },
+    "rate_limit": {
+      "module": "rate_limit",
+      "registration_type": "register_module",
+      "functions": [],
+      "classes": []
+    },
+    "git_forensics": {
+      "module": "git_forensics",
+      "registration_type": "register_module",
+      "functions": [],
+      "classes": []
+    },
+    "warc_parser": {
+      "module": "warc_parser",
+      "registration_type": "register_module",
+      "functions": [],
+      "classes": []
+    },
+    "unindexed_scanner": {
+      "module": "unindexed_scanner",
+      "registration_type": "register_module",
+      "functions": [],
+      "classes": []
+    },
+    "aho_corasick_simd": {
+      "module": "aho_corasick_simd",
+      "registration_type": "register_module",
+      "functions": [],
+      "classes": []
+    },
+    "ioc_extract_fast": {
+      "module": "ioc_extract_fast",
+      "registration_type": "mixed",
+      "functions": [
+        "ioc_extract_unified"
+      ],
+      "classes": []
+    },
+    "finding_collapser": {
+      "module": "finding_collapser",
+      "registration_type": "mixed",
+      "functions": [
+        "collapse_findings"
+      ],
+      "classes": []
+    },
+    "xml_sanitize": {
+      "module": "xml_sanitize",
+      "registration_type": "mixed",
+      "functions": [
+        "sanitize_xml",
+        "batch_sanitize_xml"
+      ],
+      "classes": []
+    },
+    "ip_parse": {
+      "module": "ip_parse",
+      "registration_type": "mixed",
+      "functions": [
+        "parse_ip_fast",
+        "is_private_ip",
+        "is_public_ip",
+        "batch_ip_classify",
+        "cidr_contains"
+      ],
+      "classes": []
+    }
+  },
+  "validation_rules": {
+    "slots_match": true,
+    "types_match": true,
+    "methods_match": true,
+    "fail_on_mismatch": true
+  }
+}

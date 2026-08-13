@@ -362,3 +362,434 @@ def _load_mobileclip_from_pool():
     model, _, _ = create_model_and_transforms('mobileclip_s0')
     tok = get_tokenizer('mobileclip_s0')
     return (model, tok)
+
+
+# ============================================================================
+# NEXTGEN-03: Cross-Modal Identity Fusion Engine
+# ============================================================================
+
+class IdentityFusion:
+    """
+    NEXTGEN-03: Fuses face embeddings, voiceprints, and text IOCs into unified identity nodes.
+
+    This class implements the cross-modal identity fusion pipeline:
+    1. FaceNet embedding (512d) → face vector
+    2. Speaker embedding (256d) → voice vector
+    3. Text IOCs (username, email, etc.) → IOC signals
+    4. Weighted fusion → unified IdentityNode with confidence score
+
+    Architecture:
+    ```
+    ┌─────────────┐    ┌──────────────────┐
+    │ FaceNet ANE │───▶│ Face Vector 512d │──┐
+    └─────────────┘    └──────────────────┘  │
+                                            ▼
+    ┌─────────────┐    ┌──────────────────┐  │   ┌──────────────────┐
+    │ Whisper.cpp │───▶│ Voice Vector 256d│──┼──▶│ IdentityFusion   │───▶ IdentityNode
+    └─────────────┘    └──────────────────┘  │   │ (weighted fuse)  │
+                                            │   └──────────────────┘
+    ┌─────────────┐    ┌──────────────────┐  │
+    │ IOC Graph   │───▶│ Text IOC Signals │──┘
+    └─────────────┘    └──────────────────┘
+    ```
+
+    Confidence scoring:
+    - Face only: confidence = face_score
+    - Voice only: confidence = voice_score
+    - Text only: confidence = ioc_score
+    - Face + Voice: confidence = 0.5 * face + 0.5 * voice
+    - Face + Voice + Text: confidence = 0.4 * face + 0.3 * voice + 0.3 * text
+
+    M1 8GB safe:
+    - FaceNet: ANE (no GPU RAM usage)
+    - Voiceprint: whisper encoder (CPU/ANE)
+    - LSH index: Rust-backed for O(1) lookup
+    """
+    __slots__ = ('_graph', '_min_confidence', '_face_weight', '_voice_weight', '_text_weight',
+                 '_crossmodal_store', '_lsh_available')
+
+    # Default weights for fusion
+    DEFAULT_FACE_WEIGHT = 0.4
+    DEFAULT_VOICE_WEIGHT = 0.3
+    DEFAULT_TEXT_WEIGHT = 0.3
+
+    def __init__(
+        self,
+        graph: Any = None,
+        min_confidence: float = 0.6,
+        face_weight: float = DEFAULT_FACE_WEIGHT,
+        voice_weight: float = DEFAULT_VOICE_WEIGHT,
+        text_weight: float = DEFAULT_TEXT_WEIGHT,
+    ):
+        """
+        Initialize IdentityFusion engine.
+
+        Args:
+            graph: IOCGraph instance for persistence (optional)
+            min_confidence: Minimum confidence threshold for identity linking
+            face_weight: Weight for face signal in fusion (default: 0.4)
+            voice_weight: Weight for voice signal in fusion (default: 0.3)
+            text_weight: Weight for text IOC signal in fusion (default: 0.3)
+        """
+        self._graph = graph
+        self._min_confidence = min(min_confidence, 1.0)
+        self._face_weight = face_weight
+        self._voice_weight = voice_weight
+        self._text_weight = text_weight
+
+        # Initialize cross-modal LSH store (Rust-backed)
+        self._crossmodal_store = None
+        self._lsh_available = False
+        self._init_crossmodal_store()
+
+    def _init_crossmodal_store(self) -> None:
+        """Initialize Rust-backed cross-modal LSH store."""
+        try:
+            from hledac.universal.core.rust_backend import rust
+            if hasattr(rust.ane, 'crossmodal_store_face'):
+                self._crossmodal_store = rust.ane
+                self._lsh_available = True
+                logger.info('IdentityFusion: Rust cross-modal LSH available')
+            else:
+                logger.warning('IdentityFusion: Rust cross-modal LSH not available')
+        except ImportError:
+            logger.warning('IdentityFusion: Rust backend not available')
+
+    async def fuse_identity(
+        self,
+        face_vector: list[float] | None = None,
+        voice_vector: list[float] | None = None,
+        text_iocs: dict[str, Any] | None = None,
+        face_id: str | None = None,
+        voice_id: str | None = None,
+        source_image_hash: str | None = None,
+        source_audio_hash: str | None = None,
+        face_confidence: float = 0.9,
+        voice_confidence: float = 0.85,
+        ioc_confidence: float = 0.7,
+    ) -> dict[str, Any]:
+        """
+        NEXTGEN-03: Fuse face, voiceprint, and text IOC signals into unified identity.
+
+        Args:
+            face_vector: 512-dim face embedding (FaceNet)
+            voice_vector: 256-dim speaker embedding (Whisper encoder)
+            text_iocs: Dict of text IOC signals:
+                {
+                    'username': str,
+                    'email': str,
+                    'aliases': list[str],
+                    'platforms': list[str],
+                }
+            face_id: Unique ID for this face embedding
+            voice_id: Unique ID for this voiceprint
+            source_image_hash: SHA256 hash of source image
+            source_audio_hash: SHA256 hash of source audio
+            face_confidence: Face detection confidence (0-1)
+            voice_confidence: Voice quality confidence (0-1)
+            ioc_confidence: Text IOC match confidence (0-1)
+
+        Returns:
+            Dict with:
+                - identity_id: Unique identifier for this identity
+                - face_id: Face node ID (if face provided)
+                - voice_id: Voiceprint node ID (if voice provided)
+                - confidence: Overall fusion confidence (0-1)
+                - face_score: Normalized face score (0-1)
+                - voice_score: Normalized voice score (0-1)
+                - text_score: Normalized text IOC score (0-1)
+                - signals: Dict of individual signal scores
+                - matched_identities: List of matched existing identities
+        """
+        import time
+        import xxhash
+
+        # Generate identity IDs
+        timestamp = time.time()
+        identity_id = f"identity_{xxhash.xxh64(str(timestamp).encode()).hexdigest()[:16]}"
+
+        # Compute fusion confidence
+        signals = {}
+        total_weight = 0.0
+        weighted_sum = 0.0
+
+        # Process face signal
+        face_score = 0.0
+        if face_vector is not None and len(face_vector) == 512:
+            face_score = self._compute_face_score(face_vector, face_confidence)
+            signals['face'] = face_score
+            weighted_sum += face_score * self._face_weight
+            total_weight += self._face_weight
+
+        # Process voice signal
+        voice_score = 0.0
+        if voice_vector is not None and len(voice_vector) == 256:
+            voice_score = self._compute_voice_score(voice_vector, voice_confidence)
+            signals['voice'] = voice_score
+            weighted_sum += voice_score * self._voice_weight
+            total_weight += self._voice_weight
+
+        # Process text IOC signal
+        text_score = 0.0
+        if text_iocs is not None and any(text_iocs.values()):
+            text_score = self._compute_text_score(text_iocs, ioc_confidence)
+            signals['text'] = text_score
+            weighted_sum += text_score * self._text_weight
+            total_weight += self._text_weight
+
+        # Compute overall confidence
+        if total_weight > 0:
+            confidence = weighted_sum / total_weight
+        else:
+            confidence = 0.0
+
+        # Normalize signals
+        signals['face'] = signals.get('face', 0.0)
+        signals['voice'] = signals.get('voice', 0.0)
+        signals['text'] = signals.get('text', 0.0)
+
+        # Find matching identities via cross-modal search
+        matched_identities = await self._find_matching_identities(
+            face_vector, voice_vector, text_iocs, confidence
+        )
+
+        result = {
+            'identity_id': identity_id,
+            'face_id': face_id,
+            'voice_id': voice_id,
+            'confidence': confidence,
+            'face_score': face_score,
+            'voice_score': voice_score,
+            'text_score': text_score,
+            'signals': signals,
+            'matched_identities': matched_identities,
+            'source_image_hash': source_image_hash,
+            'source_audio_hash': source_audio_hash,
+        }
+
+        # Persist to Kuzu if graph is available
+        if self._graph is not None:
+            await self._persist_identity(result, face_vector, voice_vector)
+
+        return result
+
+    def _compute_face_score(self, face_vector: list[float], confidence: float) -> float:
+        """Compute normalized face score from embedding and detection confidence."""
+        # Face score = detection confidence (no cross-reference available yet)
+        # In future: compare with known face database for recognition
+        return confidence
+
+    def _compute_voice_score(self, voice_vector: list[float], confidence: float) -> float:
+        """Compute normalized voice score from embedding and quality confidence."""
+        # Voice score = quality confidence
+        # In future: compare with speaker database for identification
+        return confidence
+
+    def _compute_text_score(self, text_iocs: dict[str, Any], confidence: float) -> float:
+        """Compute normalized text IOC score."""
+        # Text score based on IOC completeness
+        score = 0.0
+        weights = {
+            'email': 0.3,
+            'username': 0.3,
+            'aliases': 0.2,
+            'platforms': 0.2,
+        }
+
+        for key, weight in weights.items():
+            if text_iocs.get(key):
+                if isinstance(text_iocs[key], list):
+                    score += weight * min(1.0, len(text_iocs[key]) / 3)
+                else:
+                    score += weight
+
+        return score * confidence
+
+    async def _find_matching_identities(
+        self,
+        face_vector: list[float] | None,
+        voice_vector: list[float] | None,
+        text_iocs: dict[str, Any] | None,
+        current_confidence: float,
+    ) -> list[dict[str, Any]]:
+        """Find matching identities via cross-modal LSH search."""
+        matches = []
+
+        if not self._lsh_available or self._crossmodal_store is None:
+            return matches
+
+        # Query face matches
+        if face_vector is not None:
+            try:
+                face_matches = self._crossmodal_store.crossmodal_query_face(
+                    face_vector,
+                    max_results=10,
+                    min_similarity=0.7,
+                )
+                for node_id, similarity in face_matches:
+                    if similarity >= self._min_confidence:
+                        matches.append({
+                            'node_id': node_id,
+                            'type': 'face',
+                            'similarity': float(similarity),
+                        })
+            except Exception:
+                pass
+
+        # Query voice matches
+        if voice_vector is not None:
+            try:
+                voice_matches = self._crossmodal_store.crossmodal_query_voice(
+                    voice_vector,
+                    max_results=10,
+                    min_similarity=0.7,
+                )
+                for node_id, similarity in voice_matches:
+                    if similarity >= self._min_confidence:
+                        matches.append({
+                            'node_id': node_id,
+                            'type': 'voice',
+                            'similarity': float(similarity),
+                        })
+            except Exception:
+                pass
+
+        # Sort by similarity and deduplicate
+        matches.sort(key=lambda x: x['similarity'], reverse=True)
+        seen = set()
+        deduped = []
+        for m in matches:
+            if m['node_id'] not in seen:
+                seen.add(m['node_id'])
+                deduped.append(m)
+
+        return deduped[:10]
+
+    async def _persist_identity(
+        self,
+        identity: dict[str, Any],
+        face_vector: list[float] | None,
+        voice_vector: list[float] | None,
+    ) -> None:
+        """Persist identity to Kuzu graph."""
+        try:
+            # Store face embedding in cross-modal index
+            if face_vector is not None and identity.get('face_id'):
+                try:
+                    self._crossmodal_store.crossmodal_store_face(
+                        identity['face_id'],
+                        face_vector,
+                    )
+                except Exception:
+                    pass
+
+            # Store voiceprint embedding in cross-modal index
+            if voice_vector is not None and identity.get('voice_id'):
+                try:
+                    self._crossmodal_store.crossmodal_store_voice(
+                        identity['voice_id'],
+                        voice_vector,
+                    )
+                except Exception:
+                    pass
+
+            # Buffer to IOCGraph
+            if hasattr(self._graph, 'buffer_face') and face_vector is not None:
+                await self._graph.buffer_face(
+                    face_id=identity.get('face_id', ''),
+                    embedding=face_vector,
+                    source_image_hash=identity.get('source_image_hash', ''),
+                    confidence=identity.get('face_score', 0.9),
+                )
+
+            if hasattr(self._graph, 'buffer_voiceprint') and voice_vector is not None:
+                await self._graph.buffer_voiceprint(
+                    voice_id=identity.get('voice_id', ''),
+                    embedding=voice_vector,
+                    source_audio_hash=identity.get('source_audio_hash', ''),
+                    confidence=identity.get('voice_score', 0.85),
+                )
+        except Exception as e:
+            logger.warning(f'IdentityFusion: persist failed: {e}')
+
+    async def query_similar_faces(
+        self,
+        face_vector: list[float],
+        max_results: int = 10,
+        min_similarity: float = 0.7,
+    ) -> list[tuple[str, float]]:
+        """
+        Query similar faces via cross-modal LSH index.
+
+        Args:
+            face_vector: 512-dim query embedding
+            max_results: Maximum number of results
+            min_similarity: Minimum similarity threshold
+
+        Returns:
+            List of (face_id, similarity) tuples
+        """
+        if not self._lsh_available or self._crossmodal_store is None:
+            return []
+
+        try:
+            return self._crossmodal_store.crossmodal_query_face(
+                face_vector,
+                max_results=max_results,
+                min_similarity=min_similarity,
+            )
+        except Exception:
+            return []
+
+    async def query_similar_voices(
+        self,
+        voice_vector: list[float],
+        max_results: int = 10,
+        min_similarity: float = 0.7,
+    ) -> list[tuple[str, float]]:
+        """
+        Query similar voiceprints via cross-modal LSH index.
+
+        Args:
+            voice_vector: 256-dim query embedding
+            max_results: Maximum number of results
+            min_similarity: Minimum similarity threshold
+
+        Returns:
+            List of (voice_id, similarity) tuples
+        """
+        if not self._lsh_available or self._crossmodal_store is None:
+            return []
+
+        try:
+            return self._crossmodal_store.crossmodal_query_voice(
+                voice_vector,
+                max_results=max_results,
+                min_similarity=min_similarity,
+            )
+        except Exception:
+            return []
+
+    def clear_index(self) -> None:
+        """Clear cross-modal LSH index."""
+        if self._lsh_available and self._crossmodal_store is not None:
+            try:
+                self._crossmodal_store.crossmodal_clear()
+                logger.info('IdentityFusion: cross-modal index cleared')
+            except Exception as e:
+                logger.warning(f'IdentityFusion: clear_index failed: {e}')
+
+    def get_stats(self) -> dict[str, Any]:
+        """Get cross-modal store statistics."""
+        if not self._lsh_available or self._crossmodal_store is None:
+            return {'available': False}
+
+        try:
+            stats = self._crossmodal_store.crossmodal_stats()
+            return {
+                'available': True,
+                'face_count': stats.get('face_count', 0),
+                'voice_count': stats.get('voice_count', 0),
+            }
+        except Exception:
+            return {'available': False}

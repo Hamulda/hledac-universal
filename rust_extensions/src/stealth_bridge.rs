@@ -385,6 +385,60 @@ pub fn decode_response_metadata_arrow(
 }
 
 // ============================================================================
+// P2P Harvest Bridge (delegates to p2p_harvest module)
+// ============================================================================
+
+/// NEXTGEN-01: P2P harvest bridge — delegates to p2p_harvest::harvest.
+///
+/// Provides a convenience function in the stealth_bridge module for P2P OSINT.
+///
+/// # Arguments
+/// * `py` - Python GIL guard
+/// * `keyword` - Search keyword
+/// * `protocols` - List of protocols to search
+/// * `duration_s` - Crawl duration
+/// * `max_results` - Maximum results
+///
+/// # Returns
+/// Python awaitable with list of findings
+#[cfg(feature = "stealth_bridge")]
+#[cfg(feature = "p2p_harvest")]
+#[pyfunction]
+pub fn p2p_harvest_bridge(
+    py: Python<'_>,
+    keyword: String,
+    protocols: Vec<String>,
+    duration_s: Option<u64>,
+    max_results: Option<usize>,
+) -> PyResult<Bound<'_, PyAny>> {
+    use crate::p2p_harvest::harvest;
+    harvest(py, keyword, protocols, duration_s, max_results)
+}
+
+/// Check which P2P protocols are available.
+///
+/// Returns a dict of protocol -> availability status.
+#[cfg(feature = "stealth_bridge")]
+#[pyfunction]
+pub fn get_p2p_protocol_status() -> std::collections::HashMap<String, bool> {
+    let mut status = std::collections::HashMap::new();
+    status.insert("bt_dht".to_string(), true);
+    #[cfg(feature = "p2p_harvest")]
+    {
+        status.insert("ipfs".to_string(), true);
+        status.insert("tor".to_string(), true);
+        status.insert("i2p".to_string(), true);
+    }
+    #[cfg(not(feature = "p2p_harvest"))]
+    {
+        status.insert("ipfs".to_string(), false);
+        status.insert("tor".to_string(), false);
+        status.insert("i2p".to_string(), false);
+    }
+    status
+}
+
+// ============================================================================
 // Module Registration
 // ============================================================================
 
@@ -408,6 +462,15 @@ pub fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
         m.add_function(wrap_pyfunction!(encode_response_metadata_arrow, m)?)?;
         m.add_function(wrap_pyfunction!(decode_response_metadata_arrow, m)?)?;
     }
+
+    // P2P Harvest bridge
+    #[cfg(feature = "p2p_harvest")]
+    {
+        m.add_function(wrap_pyfunction!(p2p_harvest_bridge, m)?)?;
+    }
+
+    // Protocol status
+    m.add_function(wrap_pyfunction!(get_p2p_protocol_status, m)?)?;
 
     Ok(())
 }

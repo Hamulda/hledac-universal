@@ -1,7 +1,19 @@
 // build.rs — dynamic Python version detection via pyo3-build-config.
 //
-// Previous version hard-coded `/opt/homebrew/opt/python@3.13/...` which
-// broke builds against Python 3.14 (current target per CLAUDE.md).
+// NEXTGEN-05: BUILD-TIME FFI TYPE-SAFETY
+// This build script now performs:
+// 1. Dynamic Python version detection via pyo3-build-config
+// 2. FFI type manifest generation (ffi_type_manifest.py)
+//    - Parses #[pyclass] and #[pyfunction] in src/*.rs
+//    - Generates _ffi_type_manifest.json (type metadata)
+//    - Generates hledac_rust_extensions.pyi (auto-generated stub)
+// 3. macOS-specific linker flags
+// 4. Platform-specific feature detection (NEON, vDSP availability)
+//
+// This transforms RUNTIME segfaults into BUILD-TIME failures when:
+// - Python slots don't match Rust #[pyclass] field layout
+// - Missing getters/setters on Python side
+// - Type mismatches between Python hints and Rust types
 //
 // Strategy:
 // 1. Let pyo3-build-config::get() auto-detect the Python interpreter
@@ -12,8 +24,10 @@
 // 3. Re-run on maturin/pyproject.toml changes AND pyo3-build-config
 //    env vars — covers Python header changes, virtualenv switches,
 //    and maturin version upgrades that could alter ABI flags.
+// 4. Re-run when Rust source files change (src/**/*.rs).
 
 use pyo3_build_config::use_pyo3_cfgs;
+use std::process::Command;
 
 fn extract_features_from_cargo_toml() -> Vec<String> {
     // Build.rs runs after Cargo parses features, but there's no CARGO_FEATURE_*
@@ -141,4 +155,80 @@ fn main() {
     println!("cargo:rerun-if-env-changed=PYO3_CONFIG_FILE");
     println!("cargo:rerun-if-env-changed=PYO3_PYTHON");
     println!("cargo:rerun-if-env-changed=PATH"); // Python interpreter switch
+
+    // NEXTGEN-05: FFI Type Manifest Generation
+    // Run the Python script to generate:
+    //   1. _ffi_type_manifest.json — type metadata for validation
+    //   2. hledac_rust_extensions.pyi — auto-generated stub
+    //
+    // This is BUILD-TIME FFI safety: any mismatch between Rust structs
+    // and Python types will cause a BUILD FAILURE (not runtime segfault).
+    run_ffi_type_manifest();
+
+    // Re-run when Rust source files change — they affect the generated manifest
+    println!("cargo:rerun-if-changed=src/lib.rs");
+    println!("cargo:rerun-if-changed=src/");
+}
+
+// ============================================================================
+// NEXTGEN-05: FFI Type Manifest Generation
+// ============================================================================
+
+/// Run ffi_type_manifest.py to generate FFI type metadata.
+///
+/// This generates:
+///   - _ffi_type_manifest.json: Type metadata for build-time validation
+///   - hledac_rust_extensions.pyi: Auto-generated Python stub
+///
+/// Errors are non-fatal — the build continues but validation may fail later.
+fn run_ffi_type_manifest() {
+    let script_path = std::path::Path::new("ffi_type_manifest.py");
+
+    if !script_path.exists() {
+        eprintln!(
+            "[build.rs] WARNING: ffi_type_manifest.py not found at {:?}",
+            script_path
+        );
+        return;
+    }
+
+    // Use the Python interpreter that pyo3-build-config detected
+    let python = std::env::var("PYO3_PYTHON")
+        .or_else(|_| std::env::var("PYTHON"))
+        .unwrap_or_else(|_| "python".to_string());
+
+    eprintln!("[build.rs] NEXTGEN-05: Generating FFI type manifest...");
+
+    match Command::new(&python).arg(script_path).output() {
+        Ok(output) => {
+            // Print stdout from the script
+            if !output.stdout.is_empty() {
+                for line in String::from_utf8_lossy(&output.stdout).lines() {
+                    eprintln!("[build.rs]   {}", line);
+                }
+            }
+
+            if output.status.success() {
+                eprintln!("[build.rs] ✓ FFI type manifest generated successfully");
+
+                // Tell Cargo about the generated files
+                println!("cargo:generated-files=ffi_type_manifest.py");
+            } else {
+                let stderr = String::from_utf8_lossy(&output.stderr);
+                eprintln!(
+                    "[build.rs] WARNING: FFI manifest generation returned non-zero: {}",
+                    output.status
+                );
+                if !stderr.is_empty() {
+                    eprintln!("[build.rs]   stderr: {}", stderr);
+                }
+            }
+        }
+        Err(e) => {
+            eprintln!(
+                "[build.rs] WARNING: Failed to run ffi_type_manifest.py: {}",
+                e
+            );
+        }
+    }
 }

@@ -100,6 +100,8 @@ class CrossSprintGate:
       1. SprintDeltaIndex DuckDB (fast path): O(1) lookups
       2. DuckDB entity_observations (deep path): Full historical query
 
+    [NEXTGEN-04]: Three-tier with MmapDeltaIndex for zero-latency bundle lookups.
+
     Thread safety: skip_cache access under asyncio.Lock.
     Fail-soft: any DuckDB error -> "allow all" (returns empty skip set).
     """
@@ -107,6 +109,7 @@ class CrossSprintGate:
     __slots__ = (
         "_duckdb_store",
         "_delta_index",
+        "_mmap_delta_index",  # [NEXTGEN-04]: MmapDeltaIndex for zero-latency
         "_enabled",
         "_lock",
         "_skip_cache",
@@ -117,6 +120,7 @@ class CrossSprintGate:
     def __init__(self, duckdb_store: Any | None = None) -> None:
         self._duckdb_store: Any = duckdb_store
         self._delta_index: Any = None  # [DETA]-001: SprintDeltaIndex reference
+        self._mmap_delta_index: Any = None  # [NEXTGEN-04]: MmapDeltaIndex reference
         self._enabled: bool = _ENABLE_CROSS_SPRINT_GATE
         self._lock: asyncio.Lock = asyncio.Lock()
         self._skip_cache: dict[str, tuple[bool, float]] = {}  # entity_value -> (should_skip, ts)
@@ -129,6 +133,7 @@ class CrossSprintGate:
             "cache_hits": 0,
             "cache_misses": 0,
             "delta_index_skips": 0,  # [DETA]-001: DuckDB fast path skips
+            "mmap_delta_skips": 0,  # [NEXTGEN-04]: MmapDeltaIndex skips
         }
 
     @property
@@ -156,6 +161,18 @@ class CrossSprintGate:
             except Exception as e:
                 logger.debug("[CrossSprintGate] SprintDeltaIndex init failed: %s", e)
                 self._delta_index = None
+
+    def inject_mmap_delta_index(self) -> None:
+        """[NEXTGEN-04]: Inject MmapDeltaIndex singleton for zero-latency bundle lookups."""
+        if self._mmap_delta_index is None:
+            try:
+                from hledac.universal.knowledge.sprint_delta_index import (
+                    get_mmap_delta_index,
+                )
+                self._mmap_delta_index = get_mmap_delta_index()
+            except Exception as e:
+                logger.debug("[CrossSprintGate] MmapDeltaIndex init failed: %s", e)
+                self._mmap_delta_index = None
 
     async def should_skip_batch(
         self,

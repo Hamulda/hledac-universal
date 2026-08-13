@@ -87,6 +87,7 @@ from ..tools.url_dedup import DeduplicationStrategy, dedupe_url_list
 from collections import deque
 from ..knowledge.cross_sprint_gate import get_cross_sprint_gate
 from ..knowledge.entity_confirmation import get_entity_confirmation_service, get_entity_confirmation_service_sync
+from ..knowledge.sprint_delta_index import MmapDeltaIndex, get_mmap_delta_index
 
 from .base import UniversalCoordinator
 
@@ -858,7 +859,7 @@ class FetchCoordinator(UniversalCoordinator):
     A5-02: evidence_sink parameter enables Dependency Inversion —
     FetchCoordinator never imports EvidenceLog directly.
     """
-    __slots__ = ('_adaptive_priority_provider', '_aimd', '_aimd_semaphore', '_base_retry_delay', '_batch_cp_result', '_blitz_mode', '_capacity', '_captcha_detections', '_captcha_detector', '_clearance_jar', '_concurrency', '_concurrency_provider', '_config', '_cooldown_seconds', '_cover_count', '_cross_sprint_gate', '_entity_confirmation_service', '_ctx', '_current_geo_context', '_darknet_connector', '_dedup_lock', '_domain_rate_limiter', '_effective_ua', '_enqueue_pivot_provider', '_entropy_bridge_queue', '_entropy_bridge_task', '_entropy_alerts_processed', '_entropy_prune_counter', '_evidence_ids', '_evidence_sink', '_frontier', '_geo_proxies', '_gopher_transport', '_gopher_transport_enabled', '_hints_extractor', '_host_ips_cache', '_host_ips_inflight', '_http_cache_enabled', '_http_cache_transport', '_hypothesis_depth_provider', '_hypothesis_depth_setter', '_hypothesis_query_count_provider', '_hypothesis_query_count_setter', '_lightpanda_lock', '_lightpanda_pool', '_lightpanda_pool_started', '_max_backoff_delay', '_max_retries', '_micro_sprint_queue', '_micro_sprint_original_findings', '_micro_sprint_worker_task', '_orchestrator', '_paywall_bypass', '_per_host_gate', '_per_host_limit', '_pivot_queue_provider', '_pivot_stats_provider', '_privacy_allocator', '_privacy_lock', '_processed_urls', '_retry_budget', '_retry_budget_lock', '_retry_budget_max', '_retry_budget_window', '_robots_parser', '_running', '_session_checkpoint_task', '_session_lmdb_env', '_session_manager', '_sprint_config_provider', '_sprint_remaining_provider', '_stop_reason', '_swarm_dag', '_swarm_dag_rebalance_task', '_telemetry', '_tor_transport', '_tor_transport_enabled', '_urls_fetched_count', '_zstd')
+    __slots__ = ('_adaptive_priority_provider', '_aimd', '_aimd_semaphore', '_base_retry_delay', '_batch_cp_result', '_blitz_mode', '_capacity', '_captcha_detections', '_captcha_detector', '_clearance_jar', '_concurrency', '_concurrency_provider', '_config', '_cooldown_seconds', '_cover_count', '_cross_sprint_gate', '_entity_confirmation_service', '_ctx', '_current_geo_context', '_darknet_connector', '_dedup_lock', '_domain_rate_limiter', '_effective_ua', '_enqueue_pivot_provider', '_entropy_bridge_queue', '_entropy_bridge_task', '_entropy_alerts_processed', '_entropy_prune_counter', '_evidence_ids', '_evidence_sink', '_frontier', '_geo_proxies', '_gopher_transport', '_gopher_transport_enabled', '_hints_extractor', '_host_ips_cache', '_host_ips_inflight', '_http_cache_enabled', '_http_cache_transport', '_hypothesis_depth_provider', '_hypothesis_depth_setter', '_hypothesis_query_count_provider', '_hypothesis_query_count_setter', '_lightpanda_lock', '_lightpanda_pool', '_lightpanda_pool_started', '_max_backoff_delay', '_max_retries', '_micro_sprint_queue', '_micro_sprint_original_findings', '_micro_sprint_worker_task', '_mmap_delta_index', '_orchestrator', '_paywall_bypass', '_per_host_gate', '_per_host_limit', '_pivot_queue_provider', '_pivot_stats_provider', '_privacy_allocator', '_privacy_lock', '_processed_urls', '_retry_budget', '_retry_budget_lock', '_retry_budget_max', '_retry_budget_window', '_robots_parser', '_running', '_session_checkpoint_task', '_session_lmdb_env', '_session_manager', '_sprint_config_provider', '_sprint_remaining_provider', '_stop_reason', '_swarm_dag', '_swarm_dag_rebalance_task', '_telemetry', '_tor_transport', '_tor_transport_enabled', '_urls_fetched_count', '_zstd')
 
     def __init__(self, config: FetchCoordinatorConfig | None=None, max_concurrent: int=3, blitz_mode: bool=True, pivot_queue_provider: Callable[[], Any]=lambda: None, pivot_stats_provider: Callable[[], dict] | None=None, hypothesis_query_count_provider: Callable[[], int]=lambda: 0, hypothesis_query_count_setter: Callable[[int], None]=lambda v: None, hypothesis_depth_provider: Callable[[], int]=lambda: 0, hypothesis_depth_setter: Callable[[int], None]=lambda v: None, sprint_config_provider: Callable[[], Any]=lambda: None, adaptive_priority_provider: Callable[[str, float], float]=lambda tt, base: base, enqueue_pivot_provider: Callable[..., Any]=lambda **kw: None, concurrency_provider: Callable[[], tuple[int, int, str, bool] | None] | None=None, sprint_remaining_provider: Callable[[], float | None]=lambda: None, evidence_sink: object | None=None) -> None:
         super().__init__(name='FetchCoordinator', max_concurrent=max_concurrent)
@@ -878,6 +879,8 @@ class FetchCoordinator(UniversalCoordinator):
         self._frontier: deque = deque(maxlen=1000)
         self._processed_urls: DeduplicationStrategy = _create_dedup_strategy()
         self._cross_sprint_gate = get_cross_sprint_gate()
+        # [NEXTGEN-04]: Initialize MmapDeltaIndex for zero-latency sprint caching
+        self._mmap_delta_index: MmapDeltaIndex = get_mmap_delta_index()
         self._entity_confirmation_service = get_entity_confirmation_service_sync()
         self._evidence_ids: deque = deque(maxlen=500)
         self._evidence_sink = evidence_sink  # A5-02: Dependency Inversion — injected sink, not direct EvidenceLog import
@@ -985,7 +988,7 @@ class FetchCoordinator(UniversalCoordinator):
         # Configurable via HLEDAC_RATE_LIMIT_RPS env var
         _rate_limit_rps = FeatureFlags.get_float(FeatureFlag.RATE_LIMIT_RPS, 0.5)
         self._domain_rate_limiter = DomainRateLimiter(rate=_rate_limit_rps, max_hosts=512)
-        self._telemetry: dict[str, Any] = {'aimd_concurrency': self._aimd.window, 'active_fetches': 0, 'total_successes': 0, 'total_failures': 0, 'circuit_breaker_blocks': 0, 'circuit_breaker_active': 0, 'uma_state': 'ok', 'decrease_factor_used': 1.0, 'backpressure_clamp_events': 0, 'io_only_skipped': 0, 'cross_sprint_skipped': 0, 'entity_confirmation_skipped': 0}
+        self._telemetry: dict[str, Any] = {'aimd_concurrency': self._aimd.window, 'active_fetches': 0, 'total_successes': 0, 'total_failures': 0, 'circuit_breaker_blocks': 0, 'circuit_breaker_active': 0, 'uma_state': 'ok', 'decrease_factor_used': 1.0, 'backpressure_clamp_events': 0, 'io_only_skipped': 0, 'cross_sprint_skipped': 0, 'entity_confirmation_skipped': 0, 'mmap_delta_skipped': 0}
         # CB-04: Retry budget per domain — track total retries in last 60s to prevent amplification
         # ISSUE-011 FIX: Use LazyAsyncioLock instead of threading.Lock
         # threading.Lock blocks the event loop when called from async context
@@ -2232,6 +2235,25 @@ class FetchCoordinator(UniversalCoordinator):
                         self._entity_confirmation_service._store = _duckdb
             except Exception as exc:
                 logger.debug('[META-002] DeltaSyncEngine config/load failed (fail-soft): %s', exc)
+        
+        # [NEXTGEN-04]: Register prior sprint bundles in MmapDeltaIndex for zero-latency caching
+        try:
+            _prior = ctx.get('prior_sprint_ids', [])
+            if _prior and self._mmap_delta_index is not None:
+                from hledac.universal.paths import get_sprint_bundle_path
+                _registered = 0
+                for _sprint_id in _prior:
+                    _bundle_path = get_sprint_bundle_path(_sprint_id)
+                    if _bundle_path and _bundle_path.exists():
+                        _loaded = self._mmap_delta_index.register_bundle(_bundle_path, _sprint_id)
+                        _registered += _loaded
+                if _registered > 0:
+                    logger.info(
+                        '[NEXTGEN-04] MmapDeltaIndex loaded: %d entities from %d sprints',
+                        _registered, len(_prior),
+                    )
+        except Exception as exc:
+            logger.debug('[NEXTGEN-04] MmapDeltaIndex bundle registration failed (fail-soft): %s', exc)
         logger.info('FetchCoordinator started with %s URLs in frontier', len(self._frontier))
         
         # BREAKTHROUGH #2: Initialize SpeculativePrefetcher for streaming link prediction
@@ -2241,11 +2263,16 @@ class FetchCoordinator(UniversalCoordinator):
                 StreamingLinkPredictor,
                 LinkPredictorConfig,
             )
-            # Get DuckDB path from orchestrator or ctx
+            # [BREAKTHROUGH-2]: Get DuckDB path from orchestrator or ctx
             db_path: str | None = None
             if self._orchestrator:
-                db_path = getattr(self._orchestrator, '_duckdb_store', None)
+                # Try to get path from DuckDB store object
+                _duckdb = getattr(self._orchestrator, '_duckdb_store', None)
+                if _duckdb is not None:
+                    # DuckDB store object may have a path attribute
+                    db_path = getattr(_duckdb, '_db_path', None) or getattr(_duckdb, 'path', None)
             if db_path is None:
+                # Fall back to context
                 db_path = self._ctx.get('duckdb_path')
             
             if db_path:
@@ -2259,7 +2286,7 @@ class FetchCoordinator(UniversalCoordinator):
                     self,
                     max_prefetch=100,
                 )
-                # Initialize with DuckDB path via context
+                # [BREAKTHROUGH-2]: Store DuckDB path in context for link predictor
                 self._ctx['duckdb_path'] = db_path
                 logger.info('[BREAKTHROUGH-2] SpeculativePrefetcher initialized with db_path=%s', db_path)
             else:
@@ -2456,16 +2483,42 @@ class FetchCoordinator(UniversalCoordinator):
         freshness_list: list[Any] = []
         confirmed_set: set[str] = set()
 
-        # META-001: Cross-sprint pre-fetch gate
-        try:
-            if self._cross_sprint_gate is not None and self._cross_sprint_gate.enabled:
-                gate_entities: list[dict[str, str]] = []
+        # [NEXTGEN-04]: MmapDeltaIndex pre-fetch gate — ZERO-LATENCY check
+        # Uses instance variable initialized in __init__ (no redundant singleton call)
+        if self._mmap_delta_index is not None and self._mmap_delta_index.enabled:
+            try:
+                # Extract entity tuples from URLs
+                entity_tuples: list[tuple[str, str]] = []
                 for url in unique_batch:
                     _host = _fast_url_host(url)
                     if _host:
+                        entity_tuples.append((_host.lower(), "domain"))
+                
+                if entity_tuples:
+                    # Batch O(1) freshness check
+                    fresh_results = self._mmap_delta_index.is_fresh_batch(entity_tuples)
+                    
+                    # Add fresh entities to skip_set (no fetch needed)
+                    for (ev, ioc_type), is_fresh in fresh_results.items():
+                        if is_fresh:
+                            skip_set.add(ev)
+                            self._telemetry["mmap_delta_skipped"] += 1
+                            
+            except Exception:  # noqa: BLE001
+                pass  # Fail-soft: continue to DuckDB path
+
+        # META-001: Cross-sprint pre-fetch gate (DuckDB fallback)
+        try:
+            if self._cross_sprint_gate is not None and self._cross_sprint_gate.enabled:
+                # Filter to only non-mmap-skipped entities
+                gate_entities: list[dict[str, str]] = []
+                for url in unique_batch:
+                    _host = _fast_url_host(url)
+                    if _host and _host not in skip_set:
                         gate_entities.append({"entity_value": _host.lower(), "entity_type": "domain"})
                 if gate_entities:
-                    skip_set, freshness_list = await self._cross_sprint_gate.should_skip_batch(gate_entities)
+                    cs_skip_set, freshness_list = await self._cross_sprint_gate.should_skip_batch(gate_entities)
+                    skip_set.update(cs_skip_set)
         except Exception:  # noqa: BLE001
             pass
 
@@ -2475,7 +2528,7 @@ class FetchCoordinator(UniversalCoordinator):
                 conf_tuples = [
                     (_fast_url_host(url).lower(), "domain")
                     for url in unique_batch
-                    if _fast_url_host(url)
+                    if _fast_url_host(url) and _fast_url_host(url).lower() not in skip_set
                 ]
                 if conf_tuples:
                     conf_results = await self._entity_confirmation_service.is_confirmed_batch(conf_tuples)

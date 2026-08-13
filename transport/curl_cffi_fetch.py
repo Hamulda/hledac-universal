@@ -93,7 +93,6 @@ Architecture (Issue 3.5 consolidation):
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-import threading
 
 import asyncio
 import errno
@@ -110,7 +109,6 @@ import time
 import urllib.parse
 from collections import deque
 from contextlib import aclosing
-from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Awaitable, Protocol, runtime_checkable
 
 from hledac.universal.core.constants import M1_BOUNDS
@@ -1308,6 +1306,25 @@ def get_curl_cffi_runtime_status() -> dict[str, Any]:
     Return runtime status for telemetry.
     """
     available, reason = is_curl_cffi_available()
+
+    # NEXTGEN-02: Anti-analysis telemetry
+    anti_analysis_telemetry = {}
+    try:
+        import rust
+        if hasattr(rust, 'anti_analysis'):
+            anti_analysis_telemetry = rust.anti_analysis.get_evasion_telemetry()
+    except ImportError:
+        pass
+
+    # Python-side abandoned domains count
+    try:
+        from hledac.universal.fetching.tarpit_detector import get_abandoned_domains
+        _abandoned = get_abandoned_domains()
+        anti_analysis_telemetry['python_abandoned_count'] = len(_abandoned)
+        anti_analysis_telemetry['python_abandoned_domains'] = [d for d, _ in _abandoned]
+    except ImportError:
+        pass
+
     return {
         "curl_cffi_available": available,
         "availability_reason": reason,
@@ -1325,6 +1342,8 @@ def get_curl_cffi_runtime_status() -> dict[str, Any]:
         "eviction_active": _eviction_started,
         "eviction_interval_s": _EVICTION_INTERVAL_S,
         "profile_idle_ttl_s": _PROFILE_SESSION_IDLE_TTL_S,
+        # NEXTGEN-02: Anti-analysis telemetry
+        "anti_analysis": anti_analysis_telemetry,
     }
 
 
@@ -1953,11 +1972,73 @@ async def fetch_via_curl_cffi(
     All darknet URLs (.onion, .i2p, .b32.i2p) MUST pass through a configured proxy.
     If proxies=None for a darknet URL, raises RuntimeError immediately rather
     than leaking via Clearnet (which would cause deanonymization).
+
+    NEXTGEN-02: Pre-fetch anti-analysis gate.
+    Before any network activity, checks if domain is already abandoned or
+    exhibits TLS fingerprint challenges. Abandoned domains are skipped immediately
+    without consuming bandwidth, CPU, or LLM tokens.
     """
     # P0-2 MODERN-02: Centralized fail-closed TLD router
     # This is the single gate that prevents .onion/.i2p leak via Clearnet.
     # Raises RuntimeError if darknet TLD without proxy — fail-closed security.
     proxies = _route_tld_to_proxy(url, proxies)
+
+    # NEXTGEN-02: Pre-fetch anti-analysis gate
+    # Check if domain is already abandoned (from previous detection)
+    from hledac.universal.fetching.tarpit_detector import is_domain_abandoned, mark_domain_abandoned
+
+    _domain = _extract_domain_from_url(url)
+    if _domain:
+        _abandoned, _reason = is_domain_abandoned(_domain)
+        if _abandoned:
+            logger.info(
+                '[NEXTGEN-02] Fetch SKIPPED — domain already abandoned: %s reason=%s url=%s',
+                _domain, _reason, url,
+            )
+            return _make_error_result(
+                url,
+                error=f"domain_abandoned:{_reason}",
+                failure_stage="anti_analysis_gate",
+                network_error_kind="abandoned",
+                selected_transport="curl_cffi",
+                tls_impersonate=profile,
+            )
+
+    # NEXTGEN-02: Rust anti_analysis quick probe (if available)
+    try:
+        import rust
+        if hasattr(rust, 'anti_analysis'):
+            _probe_result = await rust.anti_analysis.quick_probe_async(url)
+            if _probe_result.abandoned:
+                # Domain abandoned by Rust anti_analysis
+                _evasion_reason = _probe_result.reason or 'unknown_challenge'
+                _confidence = _probe_result.confidence or 0.5
+
+                # Sync abandon state to Python timing tracker
+                if _domain:
+                    mark_domain_abandoned(_domain, _evasion_reason)
+
+                logger.info(
+                    '[NEXTGEN-02] Fetch ABANDONED — anti_analysis detected challenge: '
+                    'url=%s evasion_type=%s confidence=%.2f reason=%s',
+                    url, _probe_result.evasion_type, _confidence, _evasion_reason,
+                )
+                return _make_error_result(
+                    url,
+                    error=f"anti_analysis_abandoned:{_evasion_reason}",
+                    failure_stage="anti_analysis_gate",
+                    network_error_kind="challenge_detected",
+                    selected_transport="curl_cffi",
+                    tls_impersonate=profile,
+                )
+    except ImportError:
+        # Rust anti_analysis not available — proceed without pre-fetch check
+        pass
+    except asyncio.CancelledError:
+        raise
+    except Exception as _e:  # noqa: BLE001
+        # Fail soft — don't block fetch if anti_analysis probe fails
+        logger.debug('[NEXTGEN-02] Anti_analysis probe failed (continuing): %s', _e)
 
     available, avail_reason = is_curl_cffi_available()
     if not available:

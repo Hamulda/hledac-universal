@@ -70,6 +70,9 @@ class DomainTimingRecord(msgspec.Struct, gc=False):
     response_times: list[float]  # most recent N response times (ms)
     trend_score: float  # running exponential trend (0.0 — 1.0)
     last_seen: float  # monotonic timestamp
+    # NEXTGEN-02: Abandoned state — if set, all future fetches to this domain are skipped
+    abandoned: bool = False
+    abandon_reason: str = ''
 
 
 # ---------------------------------------------------------------------------
@@ -150,6 +153,9 @@ class _DomainTimingTracker:
     and a running exponential trend score. Used to detect progressive slowdown
     across multiple requests to the same host.
 
+    NEXTGEN-02: Extended with domain abandonment — domains can be permanently
+    skipped without any network activity.
+
     Thread-safe via explicit lock (not async — callers run in thread pool).
     """
 
@@ -165,6 +171,9 @@ class _DomainTimingTracker:
             now = time.monotonic()
             if domain in self._data:
                 rec = self._data[domain]
+                # NEXTGEN-02: Don't update abandoned domains
+                if rec.abandoned:
+                    return
                 rec.response_times.append(response_time_ms)
                 if len(rec.response_times) > self._max_samples:
                     rec.response_times = rec.response_times[-self._max_samples:]
@@ -187,11 +196,94 @@ class _DomainTimingTracker:
         with self._lock:
             if domain in self._data:
                 rec = self._data[domain]
+                # NEXTGEN-02: Abandoned domains have maximum trend score
+                if rec.abandoned:
+                    return 1.0
                 if time.monotonic() - rec.last_seen > 600:  # expire after 10min
                     del self._data[domain]
                     return 0.0
                 return rec.trend_score
         return 0.0
+
+    # NEXTGEN-02: Domain abandonment methods
+    def mark_abandoned(self, domain: str, reason: str) -> None:
+        """Mark a domain as abandoned — all future fetches will be skipped.
+
+        Args:
+            domain: Domain to abandon (will be lowercased)
+            reason: Reason for abandonment (e.g., 'cf_turnstile_detected', 'datadome')
+        """
+        with self._lock:
+            now = time.monotonic()
+            if domain in self._data:
+                rec = self._data[domain]
+                rec.abandoned = True
+                rec.abandon_reason = reason
+                self._data.move_to_end(domain)
+                logger.info(
+                    '[TarpitDetector] NEXTGEN-02: Domain ABANDONED: %s reason=%s',
+                    domain, reason,
+                )
+            else:
+                # Create new abandoned record
+                rec = DomainTimingRecord(
+                    domain=domain,
+                    response_times=[],
+                    trend_score=1.0,  # Max trend score = skip immediately
+                    last_seen=now,
+                    abandoned=True,
+                    abandon_reason=reason,
+                )
+                self._data[domain] = rec
+                if len(self._data) > self._max_entries:
+                    self._data.popitem(last=False)  # LRU eviction
+                logger.info(
+                    '[TarpitDetector] NEXTGEN-02: Domain ABANDONED: %s reason=%s',
+                    domain, reason,
+                )
+
+    def is_abandoned(self, domain: str) -> tuple[bool, str]:
+        """Check if a domain is abandoned and get the reason.
+
+        Args:
+            domain: Domain to check
+
+        Returns:
+            (is_abandoned, reason) tuple
+        """
+        with self._lock:
+            if domain in self._data:
+                rec = self._data[domain]
+                return (rec.abandoned, rec.abandon_reason)
+        return (False, '')
+
+    def get_abandoned_count(self) -> int:
+        """Get count of abandoned domains."""
+        with self._lock:
+            return sum(1 for rec in self._data.values() if rec.abandoned)
+
+    def clear_abandoned(self) -> None:
+        """Clear all abandoned domains (reset at sprint start)."""
+        with self._lock:
+            cleared = 0
+            for domain in list(self._data.keys()):
+                if self._data[domain].abandoned:
+                    del self._data[domain]
+                    cleared += 1
+            if cleared > 0:
+                logger.info(
+                    '[TarpitDetector] NEXTGEN-02: Cleared %d abandoned domains',
+                    cleared,
+                )
+
+    def get_abandoned_domains(self) -> list[tuple[str, str]]:
+        """Get list of all abandoned domains with reasons."""
+        with self._lock:
+            return [
+                (domain, rec.abandon_reason)
+                for domain, rec in self._data.items()
+                if rec.abandoned
+            ]
 
     @staticmethod
     def _compute_trend(times: list[float]) -> float:
@@ -603,6 +695,83 @@ def reset_timing_tracker() -> None:
     _domain_timing_tracker = _DomainTimingTracker()
 
 
+# NEXTGEN-02: Domain abandonment API
+def mark_domain_abandoned(domain: str, reason: str) -> None:
+    """Mark a domain as abandoned — skip all future fetches.
+
+    NEXTGEN-02: Prevents any network activity to the domain, saving:
+    - Bandwidth (no response downloaded)
+    - CPU (no HTML parsing)
+    - LLM tokens (no text extraction or analysis)
+    - Time (200ms-30s per blocked domain)
+
+    Args:
+        domain: Domain to abandon (will be lowercased)
+        reason: Reason for abandonment (e.g., 'cf_turnstile', 'datadome', 'timing_tarpit')
+    """
+    _domain_timing_tracker.mark_abandoned(domain.lower(), reason)
+
+
+def is_domain_abandoned(domain: str) -> tuple[bool, str]:
+    """Check if a domain is abandoned.
+
+    Args:
+        domain: Domain to check
+
+    Returns:
+        (is_abandoned, reason) tuple
+    """
+    return _domain_timing_tracker.is_abandoned(domain.lower())
+
+
+def get_abandoned_domains() -> list[tuple[str, str]]:
+    """Get list of all abandoned domains with reasons.
+
+    Returns:
+        List of (domain, reason) tuples
+    """
+    return _domain_timing_tracker.get_abandoned_domains()
+
+
+def clear_abandoned_domains() -> None:
+    """Clear all abandoned domains (call at sprint start).
+
+    NEXTGEN-02: Resets the abandoned domains cache for a new sprint.
+    """
+    _domain_timing_tracker.clear_abandoned()
+
+
+def sync_rust_abandoned() -> None:
+    """Sync Rust anti_analysis abandonment state with Python tracker.
+
+    NEXTGEN-02: Ensures consistency between Python and Rust abandonment trackers.
+    Call this:
+    - At sprint start (after clear_abandoned_domains)
+    - After bulk domain abandonment operations
+    - Periodically during long sprints
+
+    Note: The Rust tracker is updated by Python when domains are abandoned
+    during the fetch flow (see curl_cffi_fetch.py). This function provides
+    explicit synchronization for bulk operations.
+    """
+    try:
+        import rust
+        if hasattr(rust, 'anti_analysis'):
+            # Get Python abandoned domains
+            python_abandoned = get_abandoned_domains()
+            # Sync to Rust
+            rust.anti_analysis.sync_abandoned_from_python(python_abandoned)
+            logger.debug(
+                '[NEXTGEN-02] Synced %d abandoned domains to Rust tracker',
+                len(python_abandoned),
+            )
+    except ImportError:
+        # Rust anti_analysis not available
+        pass
+    except Exception as e:  # noqa: BLE001
+        logger.debug('[NEXTGEN-02] Rust sync failed (continuing): %s', e)
+
+
 __all__ = [
     'TarpitDetector',
     'TarpitResult',
@@ -611,4 +780,10 @@ __all__ = [
     'detect_tarpit',
     'reset_timing_tracker',
     'TARPIT_ABORT_THRESHOLD',
+    # NEXTGEN-02: Domain abandonment API
+    'mark_domain_abandoned',
+    'is_domain_abandoned',
+    'get_abandoned_domains',
+    'clear_abandoned_domains',
+    'sync_rust_abandoned',
 ]

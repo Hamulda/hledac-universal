@@ -552,6 +552,10 @@ def verify_bundle(bundle_path: Path) -> dict[str, Any]:
 # Constants for tar archive processing
 _TAR_BLOCK_SIZE = 512  # tar records are 512-byte blocks
 
+# [NEXTGEN-04]: Standard library json for entity_index serialization
+# Using stdlib json instead of orjson for compatibility
+import json as _stdlib_json
+
 
 def _data_offset(header_offset: int, member_size: int) -> int:
     """Calculate actual data offset after tar header and padding."""
@@ -828,6 +832,54 @@ async def index_bundle_entities(
         logger.warning("[BUNDLER] Entity indexing failed: %s", e)
 
 
+def _build_entity_index_for_bundle(
+    entity_index: dict[str, dict[str, Any]],
+) -> bytes:
+    """
+    Build entity_index.json.zst bytes from entity_index dict.
+    
+    [NEXTGEN-04]: Stores mmap-ready entity index with byte-range offsets
+    for zero-copy delta patching without DuckDB I/O.
+    """
+    try:
+        import compression.zstd
+        index_bytes = _stdlib_json.dumps(entity_index).encode("utf-8")
+        return compression.zstd.compress(index_bytes, level=3)
+    except ImportError:
+        return _stdlib_json.dumps(entity_index).encode("utf-8")
+
+
+def _add_entity_index_to_bundle(
+    artifacts: dict[str, bytes],
+    manifest_entries: list[dict[str, str]],
+    entity_index: dict[str, dict[str, Any]],
+) -> None:
+    """
+    Add entity_index.json.zst to bundle artifacts with SHA-256 manifest entry.
+    
+    [NEXTGEN-04]: Enables MmapDeltaIndex to load entity freshness data
+    from bundle without DuckDB queries.
+    """
+    if not entity_index:
+        return
+    
+    try:
+        index_bytes = _build_entity_index_for_bundle(entity_index)
+        artifacts["entity_index.json.zst"] = index_bytes
+        manifest_entries.append({
+            "file": "entity_index.json.zst",
+            "sha256": _compute_sha256(index_bytes),
+            "size": str(len(index_bytes)),
+        })
+        logger.info(
+            "[BUNDLER] Added entity_index.json.zst (%d entries, %d bytes)",
+            len(entity_index),
+            len(index_bytes),
+        )
+    except Exception as e:
+        logger.warning("[BUNDLER] Failed to add entity_index to bundle: %s", e)
+
+
 async def bundle_and_index_sprint(
     sprint_id: str,
     report_path: Path | None = None,
@@ -845,6 +897,9 @@ async def bundle_and_index_sprint(
     Convenience function that calls bundle_sprint() and then
     extract_bundle_streaming() + index_bundle_entities().
 
+    [NEXTGEN-04] ENHANCEMENT: Now also includes entity_index.json.zst in bundle
+    archive with mmap offsets for zero-latency delta indexing via MmapDeltaIndex.
+
     Args:
         Same as bundle_sprint() plus:
         index_entities: If True, also index entities for [META]-001
@@ -854,7 +909,7 @@ async def bundle_and_index_sprint(
     Returns:
         Path to created bundle, or None on failure
     """
-    # Create the bundle
+    # Original flow: create bundle first, then index
     bundle_path = bundle_sprint(
         sprint_id,
         report_path=report_path,
@@ -868,15 +923,91 @@ async def bundle_and_index_sprint(
     if bundle_path is None:
         return None
 
-    # Index entities if requested
+    # [NEXTGEN-04] Extract and index entities with mmap offsets
+    entity_index: dict[str, dict[str, Any]] = {}
     if index_entities:
         try:
             _, entity_index = await extract_bundle_streaming(bundle_path, sprint_id)
             await index_bundle_entities(sprint_id, bundle_path, entity_index, duckdb_store=duckdb_store)
+            
+            # [NEXTGEN-04] Rebuild bundle with entity_index.json.zst
+            # This creates a new bundle with the delta index embedded
+            if entity_index:
+                try:
+                    bundle_path = await _rebuild_bundle_with_entity_index(
+                        bundle_path, sprint_id, entity_index
+                    )
+                except Exception as rebuild_err:
+                    logger.warning(
+                        "[BUNDLER] [NEXTGEN-04] Bundle rebuild failed: %s",
+                        rebuild_err,
+                    )
+            
+            logger.info(
+                "[BUNDLER] [NEXTGEN-04] Built entity_index with %d entries for mmap delta",
+                len(entity_index),
+            )
         except Exception as e:
             logger.warning("[BUNDLER] Entity indexing failed: %s", e)
 
     return bundle_path
+
+
+async def _rebuild_bundle_with_entity_index(
+    original_bundle_path: Path,
+    sprint_id: str,
+    entity_index: dict[str, dict[str, Any]],
+) -> Path:
+    """
+    [NEXTGEN-04]: Rebuild bundle to include entity_index.json.zst.
+    
+    Reads the original bundle, adds entity_index.json.zst, and writes
+    a new bundle. This enables MmapDeltaIndex to load entity data
+    directly from the bundle without DuckDB queries.
+    """
+    try:
+        # Read original bundle
+        original_bytes = original_bundle_path.read_bytes()
+        
+        # Decompress tar
+        try:
+            import compression.zstd
+            tar_bytes = compression.zstd.decompress(original_bytes)
+        except Exception:
+            tar_bytes = original_bytes
+        
+        # Extract artifacts from original tar
+        artifacts: dict[str, bytes] = {}
+        tar_buffer = io.BytesIO(tar_bytes)
+        with tarfile.open(fileobj=tar_buffer, mode="r") as tar:
+            for member in tar:
+                if member.isfile():
+                    f = tar.extractfile(member)
+                    if f is not None:
+                        artifacts[member.name] = f.read()
+        
+        # Add entity_index.json.zst
+        manifest_entries = _collect_manifest_entries(artifacts)
+        _add_entity_index_to_bundle(artifacts, manifest_entries, entity_index)
+        
+        # Create new bundle (manifest already includes entity_index entry from _add_entity_index_to_bundle)
+        timestamp = datetime.now(UTC).isoformat()
+        manifest_bytes = _build_manifest_bytes(manifest_entries, sprint_id, timestamp)
+        artifacts["manifest.sha256"] = manifest_bytes
+        
+        new_bundle_path = _create_bundle_archive(artifacts, original_bundle_path, sprint_id, timestamp)
+        
+        if new_bundle_path:
+            logger.info(
+                "[BUNDLER] [NEXTGEN-04] Rebuilt bundle with entity_index: %s",
+                new_bundle_path,
+            )
+        
+        return new_bundle_path or original_bundle_path
+        
+    except Exception as e:
+        logger.warning("[BUNDLER] [NEXTGEN-04] Bundle rebuild error: %s", e)
+        return original_bundle_path
 
 
 __all__ = [
@@ -885,5 +1016,6 @@ __all__ = [
     "verify_bundle",
     "extract_bundle_streaming",
     "index_bundle_entities",
+    "_build_entity_index_for_bundle",  # [NEXTGEN-04]: For direct bundle building
     "BUNDLE_FORMAT_VERSION",
 ]
