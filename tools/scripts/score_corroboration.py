@@ -17,6 +17,8 @@ Outputs JSON:
     "recommended_next_pivots": [...],
     "summary": {...}
   }
+
+ISSUE-04: Uses canonical duckdb_pool for connection management.
 """
 
 
@@ -93,6 +95,7 @@ def main() -> None:
 
     findings: list[dict] = []
 
+    # ISSUE-04: Use canonical duckdb_pool instead of raw duckdb.connect()
     if args.report:
         findings = load_report(args.report)
     elif args.seeds_json:
@@ -101,15 +104,15 @@ def main() -> None:
         from hledac.universal.runtime.evidence_corroboration import score_seeds_by_corroboration as _score_seeds
         scores = _score_seeds(seeds)
     elif args.duckdb:
-        import duckdb
+        # ISSUE-04: Use canonical duckdb_pool instead of raw duckdb.connect()
+        from hledac.universal.core.duckdb_pool import duckdb_ro_connection
         if not args.query:
             print("ERROR: --query required with --duckdb", file=sys.stderr)
             sys.exit(1)
-        conn = duckdb.connect(args.duckdb, read_only=True)
-        rows = conn.execute(args.query).fetchall()
-        col_names = [c[0] for c in conn.description] if conn.description else []
-        findings = [dict(zip(col_names, row, strict=False)) for row in rows]
-        conn.close()
+        with duckdb_ro_connection(args.duckdb) as conn:
+            rows = conn.execute(args.query).fetchall()
+            col_names = [c[0] for c in conn.description] if conn.description else []
+            findings = [dict(zip(col_names, row, strict=False)) for row in rows]
     else:
         print("ERROR: provide --report, --seeds-json, or --duckdb", file=sys.stderr)
         sys.exit(1)

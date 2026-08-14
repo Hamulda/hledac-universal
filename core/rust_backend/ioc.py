@@ -41,7 +41,8 @@ _PY_HASH_RE = re.compile(r"\b[a-fA-F0-9]{32}\b|\b[a-fA-F0-9]{40}\b|\b[a-fA-F0-9]
 
 # ISSUE-4 FIX: Shared batch helper to eliminate duplicate `if not texts` guards.
 # Both _RustIocDomain and _PythonIocDomain use the same pattern for parallel batch ops.
-from typing import Any, Callable
+from typing import Any
+from collections.abc import Callable
 
 
 def _batch_extract_iocs_helper(

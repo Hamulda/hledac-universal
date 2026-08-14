@@ -38,7 +38,8 @@ import uuid
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from typing import Any, AsyncGenerator, Optional
+from typing import Any, Optional
+from collections.abc import AsyncGenerator
 
 from hledac.universal.utils.asyncx import safe_create_task
 

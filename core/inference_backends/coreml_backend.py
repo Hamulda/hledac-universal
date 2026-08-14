@@ -16,7 +16,8 @@ from __future__ import annotations
 
 import logging
 import time
-from typing import TYPE_CHECKING, Any, AsyncIterator
+from typing import TYPE_CHECKING, Any
+from collections.abc import AsyncIterator
 
 if TYPE_CHECKING:
     from hledac.universal.core.inference_coordinator import InferenceRequest, InferenceResponse, Token

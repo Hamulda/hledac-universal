@@ -43,7 +43,8 @@ import asyncio
 import functools
 import threading
 from concurrent.futures import ThreadPoolExecutor
-from typing import Any, Callable, Awaitable, overload
+from typing import Any, overload
+from collections.abc import Callable, Awaitable
 
 from hledac.universal.core.config.m1_air_config import M1AirConfig
 

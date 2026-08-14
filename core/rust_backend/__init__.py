@@ -2,17 +2,17 @@
 """
 AccelBackend: lazy-resolving facade for the Rust acceleration layer.
 
-
-
-
-
+ISSUE-06 Refactoring: Bloom architecture consolidation
+  - Canonical implementations: utils/bloom_filter.py (BloomFilter, RotatingBloomFilter, MultiTierRotatingBloomFilter)
+  - Domain wrapper: core/rust_backend/bloom.py (_RustBloomDomain, _PythonBloomDomain)
+  - Thin delegation pattern: domain wraps canonical impl with Rust/Python fallback
 
 Architecture:
   core/rust_backend/
 
   ├── __init__.py    ← AccelBackend facade + get_accel() singleton
   ├── _prober.py     ← one-time Rust extension probe (cached, never re-probes)
-  ├── bloom.py       ← BloomFilter, UrlSet
+  ├── bloom.py       ← BloomFilter domain (thin delegate to utils/bloom_filter.py)
   ├── url.py         ← URL normalization, fingerprint, classification
   ├── hash.py        ← ContentHasher, xxHash64, blake3
   ├── quality.py     ← entropy, dedup fingerprint, URL fingerprint
@@ -21,6 +21,29 @@ Architecture:
   ├── misc.py        ← graph, hot_edges, aho, evidence, madvise, memory,
   │                     json, spsc, query, text, int_counter, simd,
   │                     sprint_policies + all pure-Python fallbacks
+
+Bloom Filter Architecture (ISSUE-06):
+  Canonical implementations (utils/bloom_filter.py):
+    - BloomFilter: Byte array with xxHash/MD5, LRU hash cache
+    - RotatingBloomFilter: Single-tier rotating (Rust accelerated)
+    - MultiTierRotatingBloomFilter: Per-host tiers + global bloom, mmap persistence
+    - MmapBloomFilter: Memory-mapped persistence
+
+  Domain wrapper (core/rust_backend/bloom.py):
+    - _RustBloomDomain: Delegates to hledac_rust_extensions (FNV-1a, 10x faster)
+    - _PythonBloomDomain: Delegates to utils/bloom_filter (pure Python)
+
+  Usage:
+    # Via domain (recommended):
+    from core.rust_backend import rust
+    bf = rust.bloom.BloomFilter(capacity=10000)
+    
+    # Multi-tier rotating (per-host + global):
+    mtbf = rust.bloom.MultiTierRotatingBloomFilter(
+        per_host_capacity=10000,
+        global_capacity=100000,
+        max_tiers=100,
+    )
 
 R6: SINGLE ENTRY POINT — all Rust extension access MUST go through this module.
 =================================================================================
@@ -1128,6 +1151,96 @@ class _RustCompatShim:
         - crossmodal_* functions for face/voice LSH indexing
         """
         return self._accel.ane
+
+    # =========================================================================
+    # ISSUE-02: capability() — typed accessor for common capabilities
+    # =========================================================================
+    # Use this instead of rust.raw.<symbol> for common capabilities.
+    # Each capability returns the Rust object if available, or None.
+
+    def capability(self, name: str) -> Any:
+        """ISSUE-02: Typed accessor for Rust capabilities.
+
+        Returns the Rust object for the given capability, or None if unavailable.
+        This method routes through the probe so it benefits from:
+        - ABI version checking
+        - Capability scoring
+        - Container-based force override
+
+        Supported capabilities:
+            "ioc"         → IOC extraction module (batch_ioc_extract_unified, etc.)
+            "ioc_stream"  → Streaming IOC scanner (StreamingIocScanner)
+            "bloom"       → Bloom filter (BloomFilter class)
+            "hash"        → Content hasher (ContentHasher)
+            "url"         → URL normalization (url_normalize, etc.)
+            "graph"       → Graph algorithms (graph centrality, etc.)
+            "dedup"       → Dedup (IocDedupStore)
+            "mlx_cache"   → MLX cache stats (mlx_cache_hit/miss/stats)
+            "darwin_affinity" → M1 core affinity (darwin_affinity module)
+            "topology"    → CPU topology (topology module)
+            "anneal"      → ANE Neural Engine (ane module)
+            "stealth"     → TLS stealth (stealth_bridge module)
+            "anti_analysis" → Anti-analysis (anti_analysis module)
+            "tls13"       → TLS 1.3 (tls13 module)
+            "feed_pipeline" → Feed pipeline (feed_entry_pipeline)
+            "link_predictor" → Link prediction (link_predictor module)
+
+        Usage:
+            from hledac.universal.core.rust_backend import rust
+
+            # Instead of: rust.raw.batch_ioc_extract_unified(...)
+            batch_fn = rust.capability("ioc")
+            if batch_fn is not None:
+                results = batch_fn(texts)
+
+            # Instead of: rust.raw.ane.facenet_encode(...)
+            ane = rust.capability("anneal")
+            if ane is not None:
+                embedding = ane.facenet_encode(image_bytes)
+        """
+        # Map of capability names to their accessors
+        _CAPABILITY_MAP: dict[str, callable[[], Any]] = {
+            "ioc": lambda: getattr(self.raw, "batch_ioc_extract_unified", None),
+            "ioc_fast": lambda: getattr(self.raw, "fast_ioc_extract", None),
+            "ioc_simd": lambda: getattr(self.raw, "ioc_extract_simd", None),
+            "ioc_stream": lambda: getattr(self.raw, "StreamingIocScanner", None),
+            "bloom": lambda: getattr(self.raw, "BloomFilter", None),
+            "bloom_mmap": lambda: getattr(self.raw, "MmapBloomFilter", None),
+            "hash": lambda: getattr(self.raw, "ContentHasher", None),
+            "xxhash": lambda: getattr(self.raw, "batch_xxh3_64_bytes", None),
+            "url": lambda: getattr(self.raw, "url_normalize", None),
+            "url_batch": lambda: getattr(self.raw, "canonicalize_batch", None),
+            "graph": lambda: self.graph,  # Domain accessor
+            "dedup": lambda: self.ioc_dedup,  # Domain accessor
+            "mlx_cache": lambda: self.raw.mlx_cache_hit if hasattr(self.raw, "mlx_cache_hit") else None,
+            "mlx_alloc": lambda: self.raw.mlx_alloc_bytes_add if hasattr(self.raw, "mlx_alloc_bytes_add") else None,
+            "darwin_affinity": lambda: getattr(self.raw, "darwin_affinity", None),
+            "topology": lambda: getattr(self.raw, "topology", None),
+            "anneal": lambda: getattr(self.raw, "ane", None),
+            "stealth": lambda: getattr(self.raw, "stealth_bridge", None),
+            "anti_analysis": lambda: self.raw.anti_analysis if hasattr(self.raw, "anti_analysis") else None,
+            "tls13": lambda: getattr(self.raw, "tls13", None),
+            "feed_pipeline": lambda: self.feed_pipeline,  # Domain accessor
+            "link_predictor": lambda: getattr(self.raw, "link_predictor", None),
+            "feed_decision": lambda: self.feed_decision,  # Domain accessor
+            "signal_batch": lambda: self.signal,  # Domain accessor
+            "pipeline_compose": lambda: self.pipeline_compose,  # Domain accessor
+            "federated_qtable": lambda: self.federated_qtable,  # Domain accessor
+            "async_query": lambda: self.async_query,  # Domain accessor
+            "sprint_policies": lambda: self.sprint_policies,  # Domain accessor
+            "query": lambda: self.query,  # Domain accessor
+            "simd": lambda: self.simd,  # Domain accessor
+            "simhash": lambda: self.simhash,  # Domain accessor
+            "lsh": lambda: self.lsh,  # Domain accessor
+            "whisper": lambda: getattr(self.raw, "whisper", None),
+            "ane": lambda: getattr(self.raw, "ane", None),
+        }
+
+        accessor = _CAPABILITY_MAP.get(name)
+        if accessor is None:
+            # Fallback: try raw accessor
+            return getattr(self.raw, name, None)
+        return accessor()
 
     def __repr__(self) -> str:
         return repr(self._accel)

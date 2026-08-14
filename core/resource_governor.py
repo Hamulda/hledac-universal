@@ -3873,7 +3873,8 @@ def get_qos_signal() -> QoSProfile:
 
 import enum
 from dataclasses import dataclass, field
-from typing import Callable, Awaitable, Any
+from typing import Any
+from collections.abc import Callable, Awaitable
 import asyncio
 import heapq
 

@@ -171,7 +171,8 @@ except ImportError:
 # ---------------------------------------------------------------------------
 
 from contextlib import contextmanager
-from typing import TYPE_CHECKING, Any, Callable, TypeVar, Iterator
+from typing import TYPE_CHECKING, Any, TypeVar
+from collections.abc import Callable, Iterator
 
 if TYPE_CHECKING:
     import duckdb

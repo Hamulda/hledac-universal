@@ -20,7 +20,8 @@ from dataclasses import dataclass, field
 import msgspec
 from enum import Enum
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any
+from collections.abc import Callable
 
 class SanityVerdict(Enum):
     SANITY_PASS = 'SANITY_PASS'

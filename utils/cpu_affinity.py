@@ -51,7 +51,7 @@ import logging
 import os
 import platform
 import threading
-from typing import Sequence
+from collections.abc import Sequence
 
 __all__ = [
     "set_mlx_affinity",

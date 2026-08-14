@@ -21,7 +21,8 @@ SRP Separation (ARCH-SRP-001):
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, AsyncIterator, Protocol, TypeVar
+from typing import TYPE_CHECKING, Protocol, TypeVar
+from collections.abc import AsyncIterator
 
 from hledac.universal.brain._inference.stream_handler import StreamHandler
 from hledac.universal.brain._inference.generate import GenerationFacade

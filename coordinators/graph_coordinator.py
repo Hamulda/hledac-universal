@@ -17,7 +17,7 @@ import asyncio
 import logging
 from collections import deque
 from typing import Any
-from typing import Callable
+from collections.abc import Callable
 from urllib.parse import urlparse
 
 import msgspec

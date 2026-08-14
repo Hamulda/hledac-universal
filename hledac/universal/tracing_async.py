@@ -30,7 +30,8 @@ import asyncio
 import functools
 import sys
 from contextlib import contextmanager
-from typing import TYPE_CHECKING, Callable, TypeVar
+from typing import TYPE_CHECKING, TypeVar
+from collections.abc import Callable
 
 if TYPE_CHECKING:
     from typing import ParamSpec

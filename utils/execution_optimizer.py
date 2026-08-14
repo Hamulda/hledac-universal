@@ -31,14 +31,11 @@ from .async_helpers import parallel_ok, parallel
 from .lru_cache import LRUCache
 from hledac.universal.utils.asyncx import safe_wait_for
 
-# MODERN-33: Try to import Rust darwin_affinity extension
-try:
-    import hledac_rust_extensions as rust
-    _RUST_DARWIN_AFFINITY = getattr(rust, 'darwin_affinity', None)
-    _RUST_TOPOLOGY = getattr(rust, 'topology', None)
-except ImportError:
-    _RUST_DARWIN_AFFINITY = None
-    _RUST_TOPOLOGY = None
+# MODERN-33: Use facade for Rust darwin_affinity extension
+from hledac.universal.core.rust_backend import rust
+
+_RUST_DARWIN_AFFINITY = getattr(rust.raw, 'darwin_affinity', None)
+_RUST_TOPOLOGY = getattr(rust.raw, 'topology', None)
 
 if TYPE_CHECKING:
     pass

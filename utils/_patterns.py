@@ -23,12 +23,11 @@ from operator import itemgetter
 from typing import (
     TYPE_CHECKING,
     Any,
-    Awaitable,
-    Callable,
     Literal,
     ParamSpec,
     TypeVar,
 )
+from collections.abc import Awaitable, Callable
 import logging
 
 from collections.abc import Sequence

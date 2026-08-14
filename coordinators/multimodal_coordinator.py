@@ -42,14 +42,28 @@ except ImportError:
 from .base import DecisionResponse, ExecutionResult, OperationResult, OperationType, UniversalCoordinator
 
 # C1-X FIX: Import MLX_AVAILABLE from SSOT (zero-import detection)
+# Uses importlib.metadata.version("mlx") — no mlx.core import at module load
 from hledac.universal.utils.mlx_memory import MLX_AVAILABLE
 
-try:
-    import mlx.core as mx
-    from mlx import nn
-except ImportError:
-    mx = None
-    nn = None
+
+# ISSUE-08 FIX: Lazy MLX import helpers — zero-cost until first MLX use
+def _get_mx() -> Any:
+    """Lazily import mlx.core, returning None if unavailable."""
+    if MLX_AVAILABLE:
+        from hledac.universal.utils.mlx_memory._core import get_mx as _get_mx_from_core
+        return _get_mx_from_core()
+    return None
+
+
+def _get_nn() -> Any:
+    """Lazily import mlx.nn, returning None if unavailable."""
+    if MLX_AVAILABLE:
+        try:
+            from mlx import nn as _nn
+            return _nn
+        except ImportError:
+            return None
+    return None
 
 logger = logging.getLogger(__name__)
 
@@ -107,6 +121,8 @@ class MLXMultimodalEncoder:
 
     def _init_encoders(self) -> None:
         """Initialize MLX encoder models."""
+        # ISSUE-08 FIX: Lazy import mlx.core
+        mx = _get_mx()
 
         class VisionEncoder:
             __slots__ = ('conv1', 'conv2', 'fc')
@@ -161,6 +177,8 @@ class MLXMultimodalEncoder:
                 raise ImportError("numpy required for vision encoding — pip install 'hledac[dev]'")
             return self._fallback_vision_encode(image)
         try:
+            # ISSUE-08 FIX: Lazy import mlx.core
+            mx = _get_mx()
             if image.ndim == 3:
                 image = image[np.newaxis, ...]
             x = mx.array(image.astype(np.float32))
@@ -179,6 +197,8 @@ class MLXMultimodalEncoder:
                 raise ImportError("numpy required for audio encoding — pip install 'hledac[dev]'")
             return self._fallback_audio_encode(audio)
         try:
+            # ISSUE-08 FIX: Lazy import mlx.core
+            mx = _get_mx()
             if audio.ndim == 1:
                 audio = audio[np.newaxis, np.newaxis, :]
             elif audio.ndim == 2:
@@ -195,6 +215,8 @@ class MLXMultimodalEncoder:
         if not self.mlx_available:
             return self._generate_text_embedding(text)
         try:
+            # ISSUE-08 FIX: Lazy import mlx.core
+            mx = _get_mx()
             tokens = self._simple_tokenize(text)
             x = mx.array(tokens[np.newaxis, :].astype(np.int32))
             embedding = self.text_encoder(x)
@@ -296,7 +318,9 @@ class ContrastiveLearning:
 
     def _init_projection(self):
         """Initialize projection layer."""
+        # ISSUE-08 FIX: Lazy import mlx.core
         if MLX_AVAILABLE:
+            mx = _get_mx()
             weight = mx.random.normal((self.embedding_dim, self.embedding_dim)) * 0.02
             return lambda x: mx.matmul(x, weight)
         else:
@@ -315,6 +339,8 @@ class ContrastiveLearning:
             Contrastive loss value
         """
         if MLX_AVAILABLE:
+            # ISSUE-08 FIX: Lazy import mlx.core
+            mx = _get_mx()
             text_proj = np.array(self.text_projection(mx.array(text_embeddings)))
             image_proj = np.array(self.image_projection(mx.array(image_embeddings)))
         else:

@@ -22,7 +22,7 @@ import sys
 import time
 import tracemalloc
 from collections import OrderedDict
-from typing import Any, Tuple
+from typing import Any
 from operator import attrgetter, itemgetter
 ROOT = '/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal'
 

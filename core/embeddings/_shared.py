@@ -17,7 +17,8 @@ import functools
 import gc
 import os
 import threading
-from typing import Any, Callable
+from typing import Any
+from collections.abc import Callable
 DEFAULT_MODEL_PATH = 'mlx-community/Hermes-3-Llama-3.2-3B-4bit'
 DEFAULT_MAX_KV_SIZE = 8192
 DEFAULT_KV_BITS = 4

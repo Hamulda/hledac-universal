@@ -78,7 +78,8 @@ import threading
 import time
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import TYPE_CHECKING, Any, Callable, Generic, TypeVar
+from typing import TYPE_CHECKING, Any, Generic, TypeVar
+from collections.abc import Callable
 
 from operator import attrgetter, itemgetter
 from otel._buffer import BoundedRing

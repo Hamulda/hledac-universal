@@ -21,40 +21,43 @@ if TYPE_CHECKING:
     import coremltools as _ct_module
 
 # --------------------------------------------------------------------------- #
-# Optional MLX — fail-soft
+# ISSUE-08 FIX: Import MLX_AVAILABLE from SSOT (zero-import detection)
+# Uses importlib.metadata.version("mlx") — no mlx.core import at module load
 # --------------------------------------------------------------------------- #
-try:
-    import mlx.core as mx
-
-    MLX_AVAILABLE = True
-except ImportError:
-    MLX_AVAILABLE = False
-    mx = None  # type: ignore[assignment]
+from hledac.universal.utils.mlx_memory import MLX_AVAILABLE
 
 # --------------------------------------------------------------------------- #
-# Optional CoreML — fail-soft
+# Optional CoreML — fail-soft (imported lazily in methods, not at module level)
 # --------------------------------------------------------------------------- #
-try:
-    import coremltools as ct
+COREML_AVAILABLE: bool = False
+_ct_module: Any = None
 
-    COREML_AVAILABLE = True
-except ImportError:
-    COREML_AVAILABLE = False
-    ct: Any = None  # type: ignore[assignment]
+
+def _ct_models() -> Any:
+    """Return typed coremltools module — only call when COREML_AVAILABLE is True."""
+    global _ct_module, COREML_AVAILABLE
+    if COREML_AVAILABLE and _ct_module is not None:
+        return _ct_module
+    try:
+        import coremltools as ct
+        _ct_module = ct
+        COREML_AVAILABLE = True
+        return ct
+    except ImportError:
+        COREML_AVAILABLE = False
+        raise RuntimeError("CoreML tools not available")
+
 
 # --------------------------------------------------------------------------- #
 # Module-level helpers for type-narrowed access (MLX_AVAILABLE guards)
 # --------------------------------------------------------------------------- #
 def _mx_arrays() -> Any:
     """Return typed mlx module — only call when MLX_AVAILABLE is True."""
-    assert MLX_AVAILABLE
-    return mx
-
-
-def _ct_models() -> Any:
-    """Return typed coremltools module — only call when COREML_AVAILABLE is True."""
-    assert COREML_AVAILABLE
-    return ct
+    # ISSUE-08 FIX: Lazy import mlx.core via SSOT
+    if MLX_AVAILABLE:
+        from hledac.universal.utils.mlx_memory._core import get_mx as _get_mx_from_core
+        return _get_mx_from_core()
+    raise RuntimeError("MLX not available — cannot call _mx_arrays()")
 
 
 # Benchmark threshold

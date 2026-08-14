@@ -29,7 +29,8 @@ import logging
 import math
 import os as _os
 import msgspec
-from typing import TYPE_CHECKING, Any, Iterator
+from typing import TYPE_CHECKING, Any
+from collections.abc import Iterator
 
 from operator import attrgetter, itemgetter
 from hledac.universal.utils.asyncx import _check_gathered

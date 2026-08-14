@@ -40,7 +40,8 @@ import functools
 import logging
 import random
 import traceback
-from typing import Any, Callable, TypeVar
+from typing import Any, TypeVar
+from collections.abc import Callable
 
 T = TypeVar("T", default=Any)
 

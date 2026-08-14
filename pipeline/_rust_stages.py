@@ -19,7 +19,8 @@ Usage:
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING, Any, Callable, TypeVar
+from typing import TYPE_CHECKING, Any, TypeVar
+from collections.abc import Callable
 
 if TYPE_CHECKING:
     pass

@@ -1215,92 +1215,56 @@ def _python_batch_cosine_similarity(vectors: list[list[float]], query: list[floa
 
 
 # =============================================================================
-# DuckDB Read-Only Connection Pool (bounded, for Rust FFI fallback path)
+# DuckDB Read-Only Connection Pool (ISSUE-04: delegated to core.duckdb_pool)
 # =============================================================================
-# ISSUE #3 FIX: Replaces per-call duckdb.connect() + conn.close() pattern.
-# Per-call connect costs 30-50ms cold-start + 1-2MB RAM allocation.
-# Pooled connections are reused, eliminating 3-5GB/s RAM churn at burst load.
+# ISSUE-04: Replaced inline pool with canonical duckdb_pool.
+# This ensures:
+# - Bounded pool size from resource_governor (io_threads = 2 on M1 8GB)
+# - Health validation on acquire (prevents stale connections)
+# - M1 8GB safe defaults on all connections
+# - Single source of truth for connection pooling
 
-_POOL_MAX_SIZE: int = 4  # MVCC allows multiple readers; 4 covers burst parallelism
-_POOL: deque[tuple[str, Any]] = deque()  # DuckDBPyConnection at runtime
-_POOL_PATHS: set[str] = set()  # track which db_paths are in pool
-_POOL_LOCK = Lock()
-import functools
+from hledac.universal.core.duckdb_pool import (
+    duckdb_ro_acquire,
+    duckdb_ro_pool,
+    get_pool_stats,
+    close_all_pools,
+)
+
+# Backward compatibility aliases
+_POOL_MAX_SIZE: int = 4  # Deprecated: use duckdb_ro_pool.max_size
 
 
-@functools.cache
 def _get_duckdb_module() -> Any:
-    """Lazy import of duckdb module — called once at first pool acquisition.
-
-    Thread-safe via functools.cache internal lock (PEP 603 memoization).
-    No global variable needed; cache handles idempotent initialization.
-    """
-    import duckdb
-
-    return duckdb
+    """Get DuckDB module (lazy import to avoid hard dependency)."""
+    try:
+        import duckdb
+        return duckdb
+    except ImportError:
+        return None
 
 
 def _acquire_ro_conn(db_path: str) -> Any:
-    """Acquire a read-only DuckDB connection from the pool (bounded, LRU)."""
-    _duckdb = _get_duckdb_module()
-    with _POOL_LOCK:
-        # Evict LRU entry if pool is full (bounded)
-        while len(_POOL) >= _POOL_MAX_SIZE:
-            _, evict_conn = _POOL.popleft()
-            _POOL_PATHS.discard(evict_conn.database_path if hasattr(evict_conn, "database_path") else None)
-            try:
-                evict_conn.close()
-            except Exception:  # noqa: BLE001
-                pass
-        # Try to reuse existing connection for this db_path (LRU hit)
-        for i, (path, conn) in enumerate(_POOL):
-            if path == db_path:
-                try:
-                    # Test aliveness — DuckDB connections can go stale after checkpoint
-                    conn.execute("SELECT 1")
-                    # Move matched entry to end (most recently used) — rebuild deque
-                    _POOL.append(_POOL.popleft())
-                    return conn
-                except Exception:
-                    # Stale connection — remove and recreate
-                    _POOL_PATHS.discard(path)
-                    del _POOL[i]
-                    break
-    # Open fresh connection (outside lock to minimize lock hold time)
-    try:
-        new_conn = _duckdb.connect(db_path, read_only=True)
-        new_conn.execute("PRAGMA busy_timeout=5000")
-        # M1 8GB: memory_limit + threads + preserve_insertion_order
-        try:
-            new_conn.execute("SET memory_limit = '1GB'")
-            new_conn.execute("PRAGMA threads = 2")
-            new_conn.execute("SET preserve_insertion_order = false")
-        except Exception:  # noqa: BLE001
-            pass
-    except Exception:
-        raise
-    with _POOL_LOCK:
-        _POOL.append((db_path, new_conn))
-        _POOL_PATHS.add(db_path)
-    return new_conn
+    """
+    Acquire a read-only DuckDB connection from the canonical pool.
+
+    ISSUE-04: Now delegates to duckdb_pool.duckdb_ro_acquire().
+    Features:
+    - Bounded pool size from resource_governor
+    - Health validation on acquire
+    - M1 8GB safe defaults
+    """
+    return duckdb_ro_acquire(db_path)
 
 
 def _pool_stats() -> dict:
     """Return pool statistics for diagnostics."""
-    with _POOL_LOCK:
-        return {"pool_size": len(_POOL), "max_size": _POOL_MAX_SIZE, "paths": len(_POOL_PATHS)}
+    return get_pool_stats()
 
 
 def _pool_close_all() -> None:
     """Close all pooled connections. Call on process shutdown."""
-    with _POOL_LOCK:
-        while _POOL:
-            _, conn = _POOL.popleft()
-            try:
-                conn.close()
-            except Exception:  # noqa: BLE001
-                pass
-        _POOL_PATHS.clear()
+    close_all_pools()
 
 
 # =============================================================================
@@ -1327,7 +1291,13 @@ def _python_parallel_duckdb_queries(db_path: str, queries: list[str]) -> list[di
 
 
 def _python_query_duckdb(db_path: str, sql: str) -> list[dict[str, Any]]:
-    """Query DuckDB using pooled read-only connection (no per-call connect)."""
+    """
+    Query DuckDB using pooled read-only connection.
+
+    ISSUE-04: Uses canonical duckdb_pool. Connections are automatically
+    validated on acquire and returned to the pool for reuse.
+    Stale connections are handled by the pool's health checks.
+    """
     try:
         conn = _acquire_ro_conn(db_path)
         try:
@@ -1336,17 +1306,6 @@ def _python_query_duckdb(db_path: str, sql: str) -> list[dict[str, Any]]:
             rows = cur.fetchall()
             return [dict(zip(cols, row)) for row in rows]
         except Exception:
-            # Connection may be stale after error; evict on next acquire
-            with _POOL_LOCK:
-                for i, (path, c) in enumerate(_POOL):
-                    if c is conn and path == db_path:
-                        _POOL_PATHS.discard(path)
-                        del _POOL[i]
-                        break
-            try:
-                conn.close()
-            except Exception:  # noqa: BLE001
-                pass
             raise
     except Exception:
         return []

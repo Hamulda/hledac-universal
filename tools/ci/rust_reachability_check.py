@@ -18,7 +18,7 @@ from __future__ import annotations
 import re
 import sys
 from pathlib import Path
-from typing import Iterator
+from collections.abc import Iterator
 
 
 def extract_pub_modules(lib_rs_content: str) -> set[str]:

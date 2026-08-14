@@ -33,7 +33,8 @@ from __future__ import annotations
 import asyncio
 import logging
 import random as _random
-from typing import TYPE_CHECKING, Any, Awaitable, Callable, TypeVar
+from typing import TYPE_CHECKING, Any, TypeVar
+from collections.abc import Awaitable, Callable
 
 if TYPE_CHECKING:
     from collections.abc import Sequence

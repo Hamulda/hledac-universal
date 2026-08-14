@@ -83,7 +83,8 @@ from contextlib import AsyncExitStack, suppress
 from contextvars import ContextVar
 from dataclasses import dataclass, field
 from enum import Enum, auto
-from typing import TYPE_CHECKING, Any, Callable, Final
+from typing import TYPE_CHECKING, Any, Final
+from collections.abc import Callable
 
 if TYPE_CHECKING:
     from types import FrameType

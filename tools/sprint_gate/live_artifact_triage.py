@@ -11,7 +11,8 @@ import argparse
 import json
 import sys
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Callable, Any
+from typing import TYPE_CHECKING, Any
+from collections.abc import Callable
 import msgspec
 from enum import StrEnum
 from pathlib import Path

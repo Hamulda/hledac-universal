@@ -57,6 +57,8 @@ lz4_flex = "0.10"
 libc = "0.2"
 serde_json = "1"
 serde = { version = "1", features = ["derive"] }
+# bincode: Fast binary serialization for LRU cache persistence (graph_traverse/cache.rs)
+bincode = { version = "2.0", features = ["derive", "serde"] }
 crossbeam-channel = "0.5"
 # R4 FIX (B-10): Remove bundled — Rust links against the shared DuckDB library
 # provided by the Python duckdb wheel (single authority). This eliminates the
@@ -76,7 +78,8 @@ arrow = { version = "58", optional = true, features = ["ipc"] }
 
 # R24: OpenTelemetry-compatible tracing via tracing-subscriber JSON stdout
 # Python reads spans from stdout JSON — no opentelemetry dep conflicts
-tracing = { version = "0.1", optional = true, features = ["std"] }
+# tracing is always available for instrumentation (bloom, ioc_extract_fast, etc.)
+tracing = { version = "0.1", features = ["std"] }
 tracing-subscriber = { version = "0.3", default-features = false, features = ["fmt", "env-filter", "json"], optional = true }
 
 # PDF extraction via lopdf — pure Rust PDF parser
@@ -239,8 +242,6 @@ hound = { version = "3.5", optional = true }
 # cid: IPFS Content Identifiers (NOT USED - cid 0.10 has yanked core2 dep)
 # cid = { version = "0.10", optional = true, features = ["serde"] }
 # unsigned-varint: required by libp2p for protocol negotiation
-# bincode: Fast binary serialization for BT DHT
-bincode = { version = "2.0", optional = true, features = ["derive", "serde"] }
 # sha1: SHA1 hash for BitTorrent DHT info_hash computation
 sha1 = { version = "0.10", optional = true }
 # reqwest: HTTP client for Tor consensus scraping (directory authorities)
@@ -343,11 +344,13 @@ accelerate = []
 
 # advanced: Feed pipeline, federated learning, pattern matching
 # Pure Rust, no heavy deps — always compiled in full builds
-# Includes: regex_lz4, content_hasher, adaptive_scheduler, simd_similarity,
+# Includes: content_hasher, adaptive_scheduler, simd_similarity,
 # feed_decision, pipeline_compose, feed_pipeline, federated_qtable,
 # signal_batch, dedup_bloom, graph_cache
+#
+# NOTE: regex_lz4 REMOVED (2026-08-14) — zombie module, no Python callers.
+# If needed, uncomment in lib.rs and add back here.
 advanced = [
-    "regex_lz4",
     "content_hasher",
     "adaptive_scheduler",
     "swarm_dag",
@@ -360,6 +363,12 @@ advanced = [
     "dedup_bloom",
     "graph_cache",
 ]
+
+# ISSUE-AUDIT: anti_analysis feature added (2026-08-14)
+# FIX: Missing feature gate for anti_analysis module in lib.rs
+# This module provides pre-fetch challenge detection for OSINT evasion.
+# Dependencies: rustls, webpki-roots (declared via evasive_tls feature)
+anti_analysis = []
 
 # full: All features (development/CI only, ~3× compile time vs core-only)
 # [NEXUS]-018-03: Mach vm_remap zero-copy remapping — opt-in, macOS only.
@@ -419,7 +428,6 @@ p2p_harvest = [
     "dep:arrow",
     "dep:sha1",
     "shared_tokio",
-    "dep:tracing",
 ]
 
 # [MODERN-07]: Shared Tokio runtime for all async modules.
@@ -486,7 +494,7 @@ embedded_tor = [
 # Only stubs that are referenced by a composite feature need to stay here.
 # Empty stubs (X = []) have NO effect on compilation.
 bloom = []           # Referenced by core; #[cfg(feature = "bloom")] in lib.rs
-regex_lz4 = []        # Referenced by advanced; #[cfg(feature = "advanced")] in lib.rs
+# NOTE: regex_lz4 REMOVED (2026-08-14) — zombie module, no Python callers
 content_hasher = []   # Referenced by advanced; #[cfg(feature = "advanced")] in lib.rs
 adaptive_scheduler = []  # Referenced by advanced; #[cfg(feature = "advanced")] in lib.rs
 # MODERN-13: Added shared_tokio dep for tokio::spawn integration.
@@ -551,7 +559,6 @@ mlx_fabric = ["metal_shared", "iosurface"]
 # R24: OpenTelemetry-compatible tracing via tracing-subscriber JSON stdout
 # Python reads spans from stdout JSON — no opentelemetry dep conflicts
 otel = [
-    "dep:tracing",
     "dep:tracing-subscriber",
 ]
 
@@ -668,8 +675,12 @@ lto = false           # No LTO in dev (faster incremental links)
 
 [profile.release]
 opt-level = 3
-lto = "thin"
-codegen-units = 1
+# ISSUE-01: M1 8GB optimization
+# - lto = false: Disable LTO for faster compile (saves ~2GB RAM during build)
+# - codegen-units = 16: Parallel compilation units to cap memory usage
+# For full LTO (slower build, ~2GB more RAM): use thin or fat
+lto = false
+codegen-units = 16
 strip = "symbols"
 # SAFE-1 FIX: Changed from "abort" to "unwind" — CRITICAL for FFI safety.
 #
@@ -703,6 +714,11 @@ panic = "unwind"
 
 [build-dependencies]
 pyo3-build-config = "0.29"
+# ISSUE-01: blake2b fast hashing for source hash computation in build.rs
+# NOTE: Crate name is blake2b_simd (underscore), not blake2b-simd (hyphen)
+blake2b_simd = "1.0"
+# ISSUE-01: hex encoding for blake2b hash output
+hex = "0.4"
 
 [lints.rust]
 unused = "warn"

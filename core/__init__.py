@@ -34,6 +34,13 @@ __all__ = [
     "FlagInfo",
     "FlagValidationError",
     "validate_sprint_flags",
+    # ISSUE-04: DuckDB connection pool
+    "duckdb_ro_pool",
+    "duckdb_rw_pool",
+    "duckdb_ro_acquire",
+    "duckdb_ro_connection",
+    "close_all_pools",
+    "get_pool_stats",
 ]
 
 # ── PEP 810 lazy imports — nothing imported at module load time ───────────────
@@ -203,9 +210,35 @@ def _load_feature_flags() -> dict[str, object]:
     return _ff_cache
 
 
+# ISSUE-04: DuckDB connection pool loader
+_duckdb_pool_cache: dict[str, object] | None = None
+
+
+def _load_duckdb_pool() -> dict[str, object]:
+    global _duckdb_pool_cache
+    if _duckdb_pool_cache is None:
+        from hledac.universal.core.duckdb_pool import (
+            duckdb_ro_pool,
+            duckdb_rw_pool,
+            duckdb_ro_acquire,
+            duckdb_ro_connection,
+            close_all_pools,
+            get_pool_stats,
+        )
+        _duckdb_pool_cache = {
+            "duckdb_ro_pool": duckdb_ro_pool,
+            "duckdb_rw_pool": duckdb_rw_pool,
+            "duckdb_ro_acquire": duckdb_ro_acquire,
+            "duckdb_ro_connection": duckdb_ro_connection,
+            "close_all_pools": close_all_pools,
+            "get_pool_stats": get_pool_stats,
+        }
+    return _duckdb_pool_cache
+
+
 # ── Dispatch table: name → loader ───────────────────────────────────────────
 
-_LOADER_DISPATCH: tuple[tuple[frozenset[str], _load_locks | _load_embeddings | _load_resource_governor | _load_resource_lifecycle | _load_system_detector | _load_uma_budget | _load_concurrency | _load_feature_flags], ...] = (
+_LOADER_DISPATCH: tuple[tuple[frozenset[str], _load_locks | _load_embeddings | _load_resource_governor | _load_resource_lifecycle | _load_system_detector | _load_uma_budget | _load_concurrency | _load_feature_flags | _load_duckdb_pool], ...] = (
     (frozenset(("LockCategory", "LockInfo", "register_lock", "acquire_in_order", "get_registered_locks", "get_locks_by_category", "AsyncLockDCLP", "make_counter")), _load_locks),
     (frozenset(("MLXEmbeddingManager", "EmbeddingTask", "apply_task_prefix", "should_normalize")), _load_embeddings),
     (frozenset(("Priority",)), _load_resource_governor),
@@ -214,6 +247,7 @@ _LOADER_DISPATCH: tuple[tuple[frozenset[str], _load_locks | _load_embeddings | _
     (frozenset(("Watchdog",)), _load_uma_budget),
     (frozenset(("ConcurrencyCategory", "get_semaphore")), _load_concurrency),
     (frozenset(("FeatureFlags", "FeatureFlag", "FlagCategory", "FlagInfo", "FlagValidationError", "validate_sprint_flags")), _load_feature_flags),
+    (frozenset(("duckdb_ro_pool", "duckdb_rw_pool", "duckdb_ro_acquire", "duckdb_ro_connection", "close_all_pools", "get_pool_stats")), _load_duckdb_pool),
 )
 
 

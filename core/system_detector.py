@@ -45,7 +45,7 @@ from typing import Literal
 try:
     from typing import Literal
 except ImportError:
-    from typing_extensions import Literal
+    from typing import Literal
 from hledac.universal.core.psutil_shim import psutil_module as _psutil_mod
 
 class HardwareCapabilities(msgspec.Struct, frozen=True, gc=False):

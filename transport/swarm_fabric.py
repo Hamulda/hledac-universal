@@ -80,7 +80,8 @@ import asyncio
 import logging
 from dataclasses import dataclass
 from enum import Enum
-from typing import TYPE_CHECKING, Any, AsyncIterator, Self
+from typing import TYPE_CHECKING, Any, Self
+from collections.abc import AsyncIterator
 
 import msgspec
 

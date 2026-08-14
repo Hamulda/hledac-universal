@@ -28,7 +28,8 @@ import asyncio
 import logging as _logging
 import traceback
 import time as _t
-from typing import TYPE_CHECKING, Any, Callable
+from typing import TYPE_CHECKING, Any
+from collections.abc import Callable
 
 from operator import attrgetter, itemgetter
 import msgspec

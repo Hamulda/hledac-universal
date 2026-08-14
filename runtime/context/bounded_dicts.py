@@ -41,7 +41,7 @@ from __future__ import annotations
 import msgspec
 
 from collections import OrderedDict
-from typing import Callable, Iterator
+from collections.abc import Callable, Iterator
 
 __all__ = [
     "BoundedLRUDict",

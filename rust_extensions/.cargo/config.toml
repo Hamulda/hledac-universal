@@ -24,10 +24,8 @@ rustflags = [
   # enable-loopinterchange: enables loop interchange for better cache locality
   "-C", "llvm-args=-enable-misched",
   "-C", "llvm-args=-enable-loopinterchange",
-  # lto=fat removed — incompatible with embed-bitcode=no on Rust 1.96+
-  # Enable manually: RUSTFLAGS="-C lto=fat" cargo build --release
-  # Max cross-module inlining
-  "-C", "codegen-units=1",
+  # ISSUE-01: M1 8GB optimization — codegen-units=16 for parallel compilation
+  "-C", "codegen-units=16",
   # Linker: allow undefined symbols (Python loads them at runtime)
   "-C", "link-arg=-undefined",
   "-C", "link-arg=dynamic_lookup",
@@ -36,6 +34,11 @@ rustflags = [
 [profile.release]
 opt-level = 3
 strip = true
+# ISSUE-01: M1 8GB memory optimization
+# lto = false: Disable LTO to save ~2GB RAM during compilation
+# For full LTO: use thin (moderate RAM) or fat (2GB extra)
+lto = false
+codegen-units = 16
 # SAFE-1 FIX: Removed panic = "abort" — .cargo/config.toml profile settings override
 # Cargo.toml. With abort, catch_unwind becomes inert (panics → SIGABRT → kills Python).
 # Cargo.toml:486 now sets panic = "unwind", enabling FFI safety infrastructure:

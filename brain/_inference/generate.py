@@ -19,7 +19,8 @@ from __future__ import annotations
 import asyncio
 import logging
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any, AsyncIterator
+from typing import TYPE_CHECKING, Any
+from collections.abc import AsyncIterator
 
 if TYPE_CHECKING:
     from hledac.universal.brain._metal.metal_device import MetalDevice

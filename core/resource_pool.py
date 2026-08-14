@@ -44,7 +44,8 @@ from concurrent.futures import ThreadPoolExecutor
 from contextvars import ContextVar
 from dataclasses import dataclass, field
 from enum import Enum, auto
-from typing import TYPE_CHECKING, Any, Generator
+from typing import TYPE_CHECKING, Any
+from collections.abc import Generator
 from hledac.universal.core.env_config import ENV
 if TYPE_CHECKING:
     pass

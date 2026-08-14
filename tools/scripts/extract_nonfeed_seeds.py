@@ -124,7 +124,11 @@ _COLUMN_DISPATCH: dict[str, tuple[str, type | None]] = {
 
 # ---------------------------------------------------------------------------
 # DuckDB reading helpers (modern Python 3.14+ patterns)
+# ISSUE-04: All duckdb.connect() calls MUST route through canonical pool
 # ---------------------------------------------------------------------------
+
+# ISSUE-04: Use canonical duckdb_pool instead of raw duckdb.connect()
+from hledac.universal.core.duckdb_pool import duckdb_ro_connection
 
 
 def _safe_table_name(name: str) -> str | None:
@@ -134,13 +138,16 @@ def _safe_table_name(name: str) -> str | None:
 
 @contextmanager
 def _duckdb_connection(db_path: str):
-    """Context manager for DuckDB connection - ensures proper cleanup."""
-    import duckdb
-    conn = duckdb.connect(db_path, read_only=True)
-    try:
+    """
+    Context manager for DuckDB connection - ensures proper cleanup.
+
+    ISSUE-04: Uses canonical duckdb_pool instead of raw connect. This ensures:
+    - Bounded pool size from resource_governor
+    - Health validation on acquire
+    - M1 8GB safe defaults
+    """
+    with duckdb_ro_connection(db_path) as conn:
         yield conn
-    finally:
-        conn.close()
 
 
 # ---------------------------------------------------------------------------

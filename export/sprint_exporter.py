@@ -2598,7 +2598,6 @@ def _collect_sidecar_iocs(sfo_list: list) -> tuple[int, list[str], list[str], li
 
 def _build_enrichment_value_delta(scorecard: dict, input_accepted: int) -> dict:
     """Sprint F251E: Build enrichment_value_delta from scorecard surfaces."""
-    """
     evd: dict[str, Any] = {
         "input_accepted_findings_count": input_accepted,
         "sidecar_stored_findings_count": 0,
@@ -4303,8 +4302,7 @@ def _derive_branch_truth(  # noqa: F811
     public_verdict: dict[str, Any] | None,
     branch_value: dict[str, Any] | None,
 ) -> str:
-    """
-    Sprint F150P Section  1: branch_truth  --  definitive feed/public balance summary.
+    """Sprint F150P Section  1: branch_truth  --  definitive feed/public balance summary.
 
     Combines feed_verdict + public_verdict + branch_value into single sentence.
 
@@ -4454,4 +4452,3 @@ def _get_correlation_shortlist(correlation: dict[str, Any] | None) -> str | None
 
 # Sprint F238E Phase C: Optional runtime_timing section in JSON export
 _MAX_RUNTIME_TIMING_EVENTS = 500  # mirror of _MAX_TELEMETRY_EVENTS in sprint_timer.py
-

@@ -43,8 +43,10 @@ _mlx_alloc_bytes_sub: Any = None
 _mlx_alloc_bytes_get: Any = None
 
 try:
-    from hledac_rust_extensions import mlx_alloc_bytes_add, mlx_alloc_bytes_sub, mlx_alloc_bytes_get
-    _RUST_ALLOC_AVAILABLE = True
+    from hledac.universal.core.rust_backend import rust
+    mlx_alloc_bytes_add = rust.raw.mlx_alloc_bytes_add  # None if unavailable
+    mlx_alloc_bytes_sub = rust.raw.mlx_alloc_bytes_sub  # None if unavailable
+    mlx_alloc_bytes_get = rust.raw.mlx_alloc_bytes_get  # None if unavailable    _RUST_ALLOC_AVAILABLE = True
     _mlx_alloc_bytes_add = mlx_alloc_bytes_add
     _mlx_alloc_bytes_sub = mlx_alloc_bytes_sub
     _mlx_alloc_bytes_get = mlx_alloc_bytes_get

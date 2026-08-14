@@ -22,7 +22,8 @@ import asyncio
 import logging
 import time
 from abc import ABC, abstractmethod
-from typing import TYPE_CHECKING, Any, AsyncIterator, Callable
+from typing import TYPE_CHECKING, Any
+from collections.abc import AsyncIterator, Callable
 
 if TYPE_CHECKING:
     from hledac.universal.core.inference_coordinator import (

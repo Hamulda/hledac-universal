@@ -78,7 +78,8 @@ import os
 import threading
 import time
 import warnings
-from typing import TYPE_CHECKING, Any, Callable, Literal, TypeVar
+from typing import TYPE_CHECKING, Any, Literal, TypeVar
+from collections.abc import Callable
 
 from hledac.universal.runtime.worker_pool import RustWorkerPool, get_rust_pool
 from hledac.universal.utils.asyncx import safe_wait_for

@@ -29,7 +29,8 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Callable
-from typing import TypeVar, Awaitable, Generic
+from typing import TypeVar, Generic
+from collections.abc import Awaitable
 from dataclasses import dataclass
 import msgspec
 

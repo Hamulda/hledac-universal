@@ -68,7 +68,8 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
-from typing import TYPE_CHECKING, Any, AsyncIterator
+from typing import TYPE_CHECKING, Any
+from collections.abc import AsyncIterator
 
 from hledac.universal.knowledge.duckdb_store import CanonicalFinding
 from hledac.universal.utils.source_types import SourceType

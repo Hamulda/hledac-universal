@@ -110,17 +110,17 @@ class DuckDBGraphAttachment:
         return self._ensure().get_connected_iocs(ioc_value, max_hops=max_hops)
 
     def get_connected_iocs_batch(
-        self, values: List[str], max_hops: int = 2
-    ) -> dict[str, List[dict[str, Any]]]:
+        self, values: list[str], max_hops: int = 2
+    ) -> dict[str, list[dict[str, Any]]]:
         """Batch graph traversal for multiple IOC values."""
         return self._ensure().get_connected_iocs_batch(values, max_hops=max_hops)
 
     def annotate_findings_with_graph_context(
         self,
-        findings: List[Any],
+        findings: list[Any],
         max_hops: int = 2,
         max_annotations: int = 50,
-    ) -> List[Any]:
+    ) -> list[Any]:
         """Enrich findings with graph-derived context (aliases, relationships)."""
         return self._ensure().annotate_findings_with_graph_context(
             findings, max_hops=max_hops, max_annotations=max_annotations

@@ -23,7 +23,8 @@ import threading
 from dataclasses import dataclass, field
 import msgspec
 from enum import IntEnum
-from typing import Any, Callable, Generic, TypeVar
+from typing import Any, Generic, TypeVar
+from collections.abc import Callable
 
 from hledac.universal.core.locks import make_lock, LockCategory
 

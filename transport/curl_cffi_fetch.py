@@ -108,7 +108,8 @@ import time
 import urllib.parse
 from collections import deque
 from contextlib import aclosing
-from typing import TYPE_CHECKING, Any, Awaitable, Protocol, runtime_checkable
+from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
+from collections.abc import Awaitable
 
 from hledac.universal.core.constants import M1_BOUNDS
 from hledac.universal.utils.locks import LazyAsyncioLock

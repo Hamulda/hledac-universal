@@ -58,7 +58,8 @@ Example:
 import asyncio
 import logging
 import warnings
-from typing import Any, Awaitable
+from typing import Any
+from collections.abc import Awaitable
 from .async_helpers import safe_gather_fire_and_forget
 logger = logging.getLogger(__name__)
 

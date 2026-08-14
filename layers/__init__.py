@@ -17,7 +17,8 @@ Issue 6.1: Layer Protocol + LayerStack for IoC cross-cutting concerns.
 """
 
 import functools
-from typing import TypeVar, Callable
+from typing import TypeVar
+from collections.abc import Callable
 
 from .communication_layer import CommunicationLayer
 

@@ -17,7 +17,8 @@ import time
 import warnings
 from enum import Enum
 from pathlib import Path
-from typing import Any, AsyncIterator, Awaitable, Callable, cast
+from typing import Any, cast
+from collections.abc import AsyncIterator, Awaitable, Callable
 import numpy as np
 logger = logging.getLogger(__name__)
 

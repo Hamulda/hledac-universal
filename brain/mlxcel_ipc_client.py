@@ -78,7 +78,8 @@ import sys
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, AsyncIterator
+from typing import Any
+from collections.abc import AsyncIterator
 from hledac.universal.utils.locks import LazyAsyncioLock
 logger = logging.getLogger(__name__)
 _MLXCEL_PATHS = [Path.home() / '.local' / 'bin' / 'mlxcel', Path.home() / 'bin' / 'mlxcel', Path('/usr/local/bin/mlxcel'), Path('/opt/homebrew/bin/mlxcel'), Path('/opt/bin/mlxcel')]

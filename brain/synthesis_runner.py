@@ -434,7 +434,8 @@ _GRAMMAR_BUILD_LOCK = threading.Lock()
 # G2: Streaming findings infrastructure for M1 8GB memory efficiency
 # ---------------------------------------------------------------------------
 
-from typing import AsyncIterator, Protocol, TypeAlias
+from typing import Protocol, TypeAlias
+from collections.abc import AsyncIterator
 
 # Type alias: findings can be a list or an async iterator
 FindingsSource: TypeAlias = "list[dict] | AsyncIterator[dict]"

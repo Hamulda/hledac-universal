@@ -19,7 +19,8 @@ import threading
 import time
 import warnings
 from collections import OrderedDict
-from typing import TYPE_CHECKING, Any, Callable
+from typing import TYPE_CHECKING, Any
+from collections.abc import Callable
 
 from hledac.universal.utils.asyncx import safe_create_task
 from hledac.universal.utils.memory_tier import get_adaptive_cache_size, get_lora_cache_max, get_model_cache_max

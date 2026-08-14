@@ -34,6 +34,19 @@ repos:
         require_serial: false
         args: ["--fix", "--unsafe-fixes"]
 
+  # ── ISSUE-08: Eager imports audit (lazy MLX pattern enforcement) ────────────
+  - repo: local
+    hooks:
+      - id: audit-eager-imports
+        name: audit eager imports (MLX pattern)
+        entry: uv run python tools/audit/audit_eager_imports.py
+        language: system
+        types: [python]
+        pass_filenames: false
+        require_serial: true
+        # Exclude test/probe/build dirs
+        exclude: "^tests/|^probe_/|^evaluate/|^build/|^dist/|^\\.venv/"
+
   # ── Pyright: static type checking (~20-40s, parallelizable) ──────────────
   - repo: local
     hooks:

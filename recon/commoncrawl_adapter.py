@@ -19,7 +19,7 @@ import io
 import logging
 import time as time_mod
 from dataclasses import dataclass, field
-from typing import AsyncIterator
+from collections.abc import AsyncIterator
 import msgspec
 
 from hledac.universal.utils.asyncx import _check_gathered

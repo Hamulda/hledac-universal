@@ -74,14 +74,20 @@ __all__ = [
 # ── MLX Support ────────────────────────────────────────────────────────────────
 
 # C1-X FIX: Import MLX_AVAILABLE from SSOT (zero-import detection)
-from hledac.universal.utils.mlx_memory import MLX_AVAILABLE as _MLX_AVAILABLE
+try:
+    from utils.mlx_memory import MLX_AVAILABLE as _MLX_AVAILABLE
+except ImportError:
+    _MLX_AVAILABLE = False
 
 
 def _get_mlx() -> Any:
     """Lazy import MLX core - returns None if MLX not available."""
     # C1-X FIX: Use centralized get_mx() from mlx_memory SSOT
-    from hledac.universal.utils.mlx_memory._core import get_mx as _get_mx_from_core
-    return _get_mx_from_core()
+    try:
+        from utils.mlx_memory._core import get_mx as _get_mx_from_core
+        return _get_mx_from_core()
+    except ImportError:
+        return None
 
 
 # ── Enums & Config ────────────────────────────────────────────────────────────

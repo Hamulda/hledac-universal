@@ -49,7 +49,7 @@ from operator import attrgetter, itemgetter
 import msgspec
 
 if TYPE_CHECKING:
-    from typing import Callable
+    from collections.abc import Callable
 
 __all__ = [
     "CapabilityCost",

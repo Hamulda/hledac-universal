@@ -24,69 +24,84 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 # --------------------------------------------------------------------------- #
-# Optional MLX — fail-soft
+# ISSUE-08 FIX: Import MLX_AVAILABLE from SSOT (zero-import detection)
+# Uses importlib.metadata.version("mlx") — no mlx.core import at module load
 # --------------------------------------------------------------------------- #
-try:
-    import mlx.core as mx
-    import mlx.nn as nn
-
-    MLX_AVAILABLE = True
-except ImportError:
-    MLX_AVAILABLE = False
-    mx = None  # type: ignore[assignment]
-    nn = None  # type: ignore[assignment]
+from hledac.universal.utils.mlx_memory import MLX_AVAILABLE
 
 # Crypto-safe RNG — F350M-R
 _RNG = secrets.SystemRandom()
 
 # --------------------------------------------------------------------------- #
-# Module-level helpers — type-narrowed access za MLX_AVAILABLE guard
+# ISSUE-08 FIX: Lazy MLX import helpers — zero-cost until first MLX use
 # --------------------------------------------------------------------------- #
-def _mx() -> "_mlx_module":
-    """Return typed mlx.core — only call when MLX_AVAILABLE is True."""
-    assert MLX_AVAILABLE
-    return mx  # type: ignore[return-value]
+_mx_module: Any = None
+_nn_module: Any = None
 
 
-def _nn() -> "_nn_module":
-    """Return typed mlx.nn — only call when MLX_AVAILABLE is True."""
-    assert MLX_AVAILABLE
-    return nn  # type: ignore[return-value]
+def _get_mx() -> "_mlx_module":
+    """Lazily import mlx.core — only call when MLX_AVAILABLE is True."""
+    global _mx_module
+    if MLX_AVAILABLE and _mx_module is None:
+        try:
+            import mlx.core as _mx
+            _mx_module = _mx
+        except ImportError:
+            raise RuntimeError("MLX not available — cannot call _get_mx()")
+    if _mx_module is None:
+        raise RuntimeError("MLX not available — cannot call _get_mx()")
+    return _mx_module
+
+
+def _get_nn() -> "_nn_module":
+    """Lazily import mlx.nn — only call when MLX_AVAILABLE is True."""
+    global _nn_module
+    if MLX_AVAILABLE and _nn_module is None:
+        try:
+            import mlx.nn as _nn
+            _nn_module = _nn
+        except ImportError:
+            raise RuntimeError("MLX.nn not available — cannot call _get_nn()")
+    if _nn_module is None:
+        raise RuntimeError("MLX.nn not available — cannot call _get_nn()")
+    return _nn_module
 
 
 # --------------------------------------------------------------------------- #
-# MLX MLP Model — jen když je MLX dostupné
+# MLX MLP Model — ISSUE-08 FIX: Deferred class definition via factory
 # --------------------------------------------------------------------------- #
-if MLX_AVAILABLE:
+class TaskPrioritizer:
+    """
+    MLP pro predikci přínosu a doby trvání úlohy.
+    Vstup: 10-dim feature vector (task metadata)
+    Výstup: [gain, duration]
 
-    class TaskPrioritizer(nn.Module):
-        """
-        MLP pro predikci přínosu a doby trvání úlohy.
-        Vstup: 10-dim feature vector (task metadata)
-        Výstup: [gain, duration]
-        """
+    ISSUE-08 FIX: Uses lazy initialization pattern.
+    Call _ensure_mlx() or _create_mlx_instance() before using MLX features.
+    """
 
-        __slots__ = tuple(("fc1", "fc2"))
+    __slots__ = tuple(("fc1", "fc2", "_mlx_initialized"))
 
-        def __init__(self, input_dim: int = 10, hidden_dim: int = 32) -> None:
-            super().__init__()
-            self.fc1 = nn.Linear(input_dim, hidden_dim)
-            self.fc2 = nn.Linear(hidden_dim, 2)
-
-        def __call__(self, x: Any) -> Any:
-            x = nn.relu(self.fc1(x))
-            return self.fc2(x)
-
-else:
-
-    class TaskPrioritizer:  # type: ignore[no-redef]
-        """Stub when MLX unavailable."""
-
-        def __init__(self, *args: Any, **kwargs: Any) -> None:
+    def __init__(self, input_dim: int = 10, hidden_dim: int = 32) -> None:
+        # ISSUE-08 FIX: Lazy initialization of MLX components
+        if MLX_AVAILABLE:
+            try:
+                nn = _get_nn()
+                mx = _get_mx()
+                self.fc1 = nn.Linear(input_dim, hidden_dim)
+                self.fc2 = nn.Linear(hidden_dim, 2)
+                self._mlx_initialized = True
+            except RuntimeError:
+                raise ImportError("TaskPrioritizer requires MLX (not available)")
+        else:
             raise ImportError("TaskPrioritizer requires MLX (not available)")
 
-        def __call__(self, *args: Any, **kwargs: Any) -> Any:
+    def __call__(self, x: Any) -> Any:
+        if not getattr(self, '_mlx_initialized', False):
             raise ImportError("TaskPrioritizer requires MLX (not available)")
+        nn = _get_nn()
+        x = nn.relu(self.fc1(x))
+        return self.fc2(x)
 
 
 # --------------------------------------------------------------------------- #
@@ -200,7 +215,9 @@ class TaskPrioritizerWrapper:
         if not self.model_path.exists():
             return
         try:
-            loaded = mx.load(str(self.model_path))  # type: ignore[union-attr]
+            # ISSUE-08 FIX: Use lazy _get_mx() instead of module-level mx
+            _mlx = _get_mx()
+            loaded = _mlx.load(str(self.model_path))  # type: ignore[union-attr]
             if isinstance(loaded, dict):
                 flat = dict(loaded.items())
                 nested = self._unflatten_params(flat)
@@ -217,9 +234,11 @@ class TaskPrioritizerWrapper:
         if not MLX_AVAILABLE or self.model is None:
             return
         try:
+            # ISSUE-08 FIX: Use lazy _get_mx() instead of module-level mx
+            _mlx = _get_mx()
             self.model_path.parent.mkdir(parents=True, exist_ok=True)
             flat = self._flatten_params(dict(self.model.parameters()))
-            mx.savez(str(self.model_path), **flat)  # type: ignore[union-attr]
+            _mlx.savez(str(self.model_path), **flat)  # type: ignore[union-attr]
             logger.info("Saved TaskPrioritizer to %s", self.model_path)
         except Exception as e:
             logger.error("Failed to save TaskPrioritizer: %s", e)
@@ -282,7 +301,8 @@ class TaskPrioritizerWrapper:
             historical_gain,
             historical_duration,
         ]
-        _mlx = _mx()
+        # ISSUE-08 FIX: Use lazy _get_mx() instead of _mx()
+        _mlx = _get_mx()
         return _mlx.array(features, dtype=_mlx.float32)
 
     async def predict(self, task_metadata: dict) -> tuple[float, float]:
@@ -320,8 +340,9 @@ class TaskPrioritizerWrapper:
         features = self.extract_features(task_metadata)
         if features is None:
             return
-        _mlx = _mx()
-        _nn_mod = _nn()
+        # ISSUE-08 FIX: Use lazy _get_mx() and _get_nn() instead of _mx() and _nn()
+        _mlx = _get_mx()
+        _nn_mod = _get_nn()
         target = _mlx.array(
             [actual_gain, actual_duration], dtype=_mlx.float32
         )

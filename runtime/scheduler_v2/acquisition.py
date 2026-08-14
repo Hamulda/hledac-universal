@@ -24,7 +24,8 @@ from __future__ import annotations
 import asyncio
 import logging
 import time as _time
-from typing import Any, Sequence
+from typing import Any
+from collections.abc import Sequence
 
 import msgspec
 

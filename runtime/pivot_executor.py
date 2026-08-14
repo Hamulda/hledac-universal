@@ -31,7 +31,8 @@ import os
 import time
 from dataclasses import dataclass
 import msgspec
-from typing import Any, Callable, Awaitable
+from typing import Any
+from collections.abc import Callable, Awaitable
 from hledac.universal.utils.uuid7 import new_runtime_id
 __all__ = ['PivotExecutionRequest', 'PivotExecutionResult', 'AutonomousPivotExecutor', 'MAX_ACTIVE_PIVOTS', 'MAX_PIVOTS_PER_SPRINT', 'PIVOT_TIMEOUT_S', 'MAX_PIVOT_FINDINGS']
 logger = logging.getLogger(__name__)

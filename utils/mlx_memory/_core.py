@@ -787,8 +787,11 @@ _RUST_AVAILABLE: bool = False
 
 # Try to load Rust atomic facade
 try:
-    from hledac_rust_extensions import mlx_cache_hit, mlx_cache_miss, mlx_cache_stats, mlx_cache_stats_reset
-    _RUST_AVAILABLE = True
+    from hledac.universal.core.rust_backend import rust
+    mlx_cache_hit = rust.raw.mlx_cache_hit  # None if unavailable
+    mlx_cache_miss = rust.raw.mlx_cache_miss  # None if unavailable
+    mlx_cache_stats = rust.raw.mlx_cache_stats  # None if unavailable
+    mlx_cache_stats_reset = rust.raw.mlx_cache_stats_reset  # None if unavailable    _RUST_AVAILABLE = True
     logger.debug("[MODERN-43] Rust atomic cache facade available")
 except ImportError:
     logger.debug("[MODERN-43] Rust atomic cache facade unavailable, using Python fallback")

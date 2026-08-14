@@ -37,7 +37,8 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
-from typing import TYPE_CHECKING, Any, AsyncIterator, Awaitable, cast
+from typing import TYPE_CHECKING, Any, cast
+from collections.abc import AsyncIterator, Awaitable
 from hledac.universal.utils.executor_decorator import offload_to
 from hledac.universal.utils.asyncx import parallel, parallel_ok
 from operator import attrgetter, itemgetter

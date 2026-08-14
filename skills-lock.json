@@ -7,6 +7,12 @@
       "skillPath": "skills/productivity/caveman/SKILL.md",
       "computedHash": "934433479903febc585bf6deb5f0cebc63137e3f86b7babe0aab1ecb94d6d7a4"
     },
+    "codebase-recon": {
+      "source": "yujiachen-y/codebase-recon-skill",
+      "sourceType": "github",
+      "skillPath": "skills/codebase-recon/SKILL.md",
+      "computedHash": "06df65b61e9e66942b21eeddcda762d5ce10e5ed709971aa4793ac3e876fb2e6"
+    },
     "diagnose": {
       "source": "mattpocock/skills",
       "sourceType": "github",

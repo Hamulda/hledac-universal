@@ -45,7 +45,8 @@ import threading
 import time as _time
 from abc import ABC, abstractmethod
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Callable, Protocol
+from typing import TYPE_CHECKING, Any, Protocol
+from collections.abc import Callable
 
 import numpy as np
 

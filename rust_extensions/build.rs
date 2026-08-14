@@ -9,11 +9,18 @@
 //    - Generates hledac_rust_extensions.pyi (auto-generated stub)
 // 3. macOS-specific linker flags
 // 4. Platform-specific feature detection (NEON, vDSP availability)
+// 5. ABI mode verification (ISSUE-03): Validates non-abi3 vs abi3 consistency
 //
 // This transforms RUNTIME segfaults into BUILD-TIME failures when:
 // - Python slots don't match Rust #[pyclass] field layout
 // - Missing getters/setters on Python side
 // - Type mismatches between Python hints and Rust types
+// - ABI mode mismatch (non-abi3 build but .abi3.so expected)
+//
+// ABI Mode Detection Strategy:
+//   NON-ABI3 (extension-module): Produces cpython-314-darwin.so
+//   ABI3 (abi3-py3XX feature):   Produces abi3.so
+//   This project uses NON-ABI3 — see Cargo.toml lines 6-27 for rationale.
 //
 // Strategy:
 // 1. Let pyo3-build-config::get() auto-detect the Python interpreter
@@ -71,6 +78,16 @@ fn extract_features_from_cargo_toml() -> Vec<String> {
 }
 
 fn main() {
+    // ISSUE-01: Compute source hash for freshness verification
+    // This hash is emitted as a compile-time env var accessible via option_env! in lib.rs
+    let source_hash = compute_source_hash();
+    if !source_hash.is_empty() {
+        println!("cargo:rustc-env=CARGO_SOURCE_HASH={}", source_hash);
+        eprintln!("[build.rs] ISSUE-01: Source hash = {}", &source_hash[..16.min(source_hash.len())]);
+    } else {
+        eprintln!("[build.rs] WARNING: Could not compute source hash (src/ not found)");
+    }
+
     // Parse Cargo.toml [features] section and emit as compile-time env var.
     // __features__() in lib.rs reads this via option_env!.
     let features = extract_features_from_cargo_toml();
@@ -78,6 +95,9 @@ fn main() {
         let features_list = features.join(",");
         println!("cargo:rustc-env=CARGO_FEATURES_LIST={}", features_list);
     }
+
+    // ISSUE-03: ABI mode verification — ensure crate-type matches expected output name
+    verify_abi_mode();
 
     // Triggers pyo3's auto-detection and emits the necessary rustc-cfgs
     // (PyPy3, Py_3_x, etc.). Linking flags are still set by maturin
@@ -165,9 +185,194 @@ fn main() {
     // and Python types will cause a BUILD FAILURE (not runtime segfault).
     run_ffi_type_manifest();
 
+    // ISSUE-11: BUILD_MANIFEST Generation
+    // Generate BUILD_MANIFEST.json containing SHA256 of all source files.
+    // This enables fail-closed staleness detection at runtime.
+    run_build_manifest();
+
     // Re-run when Rust source files change — they affect the generated manifest
     println!("cargo:rerun-if-changed=src/lib.rs");
     println!("cargo:rerun-if-changed=src/");
+}
+
+// ============================================================================
+// ISSUE-03: ABI Mode Verification
+// ============================================================================
+
+/// ISSUE-03: Verify that crate-type matches the expected output filename.
+///
+/// ABI Mode Detection:
+///   - NON-ABI3 (extension-module): Produces cpython-314-darwin.so
+///   - ABI3 (abi3-py3XX feature):    Produces abi3.so
+///
+/// This project uses NON-ABI3 (see Cargo.toml lines 6-27 for rationale).
+/// The prober (_prober.py) expects hledac_rust_extensions.cpython-314-darwin.so
+///
+/// This function detects the ABI mode from Cargo.toml and:
+///   1. Emits expected output filename as a cargo warning
+///   2. Fails the build if abi3 is detected (not supported by this project)
+fn verify_abi_mode() {
+    let cargo_toml = match std::fs::read_to_string("Cargo.toml") {
+        Ok(content) => content,
+        Err(e) => {
+            eprintln!("[build.rs] ERROR: Failed to read Cargo.toml: {}", e);
+            return;
+        }
+    };
+
+    // Check for abi3 feature in pyo3 dependency
+    // IMPORTANT: Look for actual feature declarations, not comments containing "abi3"
+    // Pattern: features = ["abi3-py3"] or features = ["extension-module", "abi3-py314"]
+    // We match quoted strings only to avoid matching comment text
+    let has_abi3_feature = cargo_toml.contains(r#""abi3-py3"#)
+        || cargo_toml.contains(r#""abi3"#);
+
+    // Check for extension-module in actual dependency, not comments
+    // Pattern: features = [..., "extension-module", ...]
+    let has_extension_module = cargo_toml.contains(r#""extension-module""#);
+
+    // Detect crate-type from [lib] section
+    let is_cdylib = cargo_toml.contains(r#"crate-type = ["cdylib""#)
+        || cargo_toml.contains("crate-type = [\"cdylib\"");
+
+    if has_abi3_feature {
+        // ABI3 build detected — this is NOT supported by this project
+        eprintln!(
+            r#"[build.rs] ERROR: ABI3 build detected but this project requires NON-ABI3!
+|
+| ABI3 builds produce: hledac_rust_extensions.abi3.so
+| This project expects: hledac_rust_extensions.cpython-314-darwin.so
+|
+| ABI3 is incompatible with pyo3-async-runtimes future_into_py() which requires
+| full Python C API access (tp_subclass, tp_new, memory-view) not available in
+| the stable ABI subset.
+|
+| To fix: Remove abi3-py3XX feature from Cargo.toml pyo3 dependency.
+| Current configuration requires: extension-module (non-abi3).
+"#
+        );
+        std::process::exit(1);
+    } else if has_extension_module && is_cdylib {
+        // NON-ABI3 build detected — this is correct
+        eprintln!(
+            "[build.rs] INFO: NON-ABI3 build confirmed (extension-module + cdylib)"
+        );
+        eprintln!(
+            "[build.rs] INFO: Expected output: hledac_rust_extensions.cpython-{{PYTHON_VERSION}}-darwin.so"
+        );
+        eprintln!(
+            "[build.rs] INFO: Prober (_prober.py) expects: hledac_rust_extensions.cpython-{{MAJOR}}{{MINOR}}-darwin.so"
+        );
+
+        // Emit expected filename pattern as cargo warning for CI visibility
+        println!("cargo:warning=[ISSUE-03] NON-ABI3 build: verify output is cpython-*-darwin.so NOT .abi3.so");
+    } else {
+        // Unknown configuration
+        eprintln!(
+            "[build.rs] WARNING: Unknown ABI configuration. Please verify:"
+        );
+        eprintln!(
+            "[build.rs]   - pyo3 features should include: extension-module (non-abi3)"
+        );
+        eprintln!(
+            "[build.rs]   - crate-type should include: cdylib"
+        );
+    }
+}
+
+// ============================================================================
+// ISSUE-01: Source Hash Generation
+// ============================================================================
+
+/// ISSUE-01: Compute a blake2b hash of all Rust source files.
+///
+/// This hash is computed at build time and stored in the FFI manifest.
+/// Python uses it to verify the binary matches the current source state.
+///
+/// Returns the hex hash string or empty string on error.
+fn compute_source_hash() -> String {
+    use std::io::Read;
+    
+    let src_dir = std::path::Path::new("src");
+    if !src_dir.exists() {
+        return String::new();
+    }
+
+    // Collect all .rs and .toml files
+    let mut file_paths: Vec<_> = Vec::new();
+    if let Ok(entries) = std::fs::read_dir(src_dir) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.is_file() {
+                if let Some(ext) = path.extension() {
+                    if ext == "rs" || ext == "toml" {
+                        file_paths.push(path);
+                    }
+                }
+            } else if path.is_dir() {
+                // Recursively find .rs files in subdirectories
+                if let Ok(sub_entries) = std::fs::read_dir(&path) {
+                    for sub_entry in sub_entries.flatten() {
+                        let sub_path = sub_entry.path();
+                        if sub_path.is_file() {
+                            if let Some(ext) = sub_path.extension() {
+                                if ext == "rs" || ext == "toml" {
+                                    file_paths.push(sub_path);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    if file_paths.is_empty() {
+        return String::new();
+    }
+
+    // Sort for deterministic ordering
+    file_paths.sort();
+
+    // Use blake2 for fast hashing
+    // Simple approach: hash the concatenated sizes + first/last 2KB of each file
+    let mut hasher = blake2b_simd::Params::new()
+        .hash_length(32)
+        .to_state();
+
+    for path in &file_paths {
+        // Hash file path
+        hasher.update(path.to_string_lossy().as_bytes());
+        
+        // Hash file size
+        if let Ok(metadata) = std::fs::metadata(path) {
+            let size = metadata.len();
+            hasher.update(&size.to_le_bytes());
+            
+            // Sample first 4KB + last 4KB
+            if let Ok(mut file) = std::fs::File::open(path) {
+                let mut buffer = [0u8; 4096];
+                
+                // First 4KB
+                if let Ok(n) = file.read(&mut buffer) {
+                    hasher.update(&buffer[..n]);
+                }
+                
+                // Last 4KB if file > 8KB
+                if size > 8192 {
+                    use std::io::Seek;
+                    if file.seek(std::io::SeekFrom::End(-4096)).is_ok() {
+                        if let Ok(n) = file.read(&mut buffer) {
+                            hasher.update(&buffer[..n]);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    let hash = hasher.finalize();
+    hex::encode(hash)
 }
 
 // ============================================================================
@@ -227,6 +432,75 @@ fn run_ffi_type_manifest() {
         Err(e) => {
             eprintln!(
                 "[build.rs] WARNING: Failed to run ffi_type_manifest.py: {}",
+                e
+            );
+        }
+    }
+}
+
+// ============================================================================
+// ISSUE-11: BUILD_MANIFEST Generation
+// ============================================================================
+
+/// Run build_manifest.py to generate BUILD_MANIFEST.json.
+///
+/// This generates BUILD_MANIFEST.json containing:
+///   - SHA256 hash of all source files (src/**/*.rs, Cargo.toml)
+///   - Build timestamp
+///   - Build command used
+///   - Platform info
+///
+/// This enables fail-closed staleness detection at runtime:
+/// if the source files have been modified since the build, the Rust
+/// extension will raise RustExtensionStale instead of silently degrading.
+///
+/// Errors are non-fatal — the build continues but runtime may fail.
+fn run_build_manifest() {
+    let script_path = std::path::Path::new("build_manifest.py");
+
+    if !script_path.exists() {
+        eprintln!(
+            "[build.rs] WARNING: build_manifest.py not found at {:?}",
+            script_path
+        );
+        return;
+    }
+
+    // Use the Python interpreter that pyo3-build-config detected
+    let python = std::env::var("PYO3_PYTHON")
+        .or_else(|_| std::env::var("PYTHON"))
+        .unwrap_or_else(|_| "python".to_string());
+
+    eprintln!("[build.rs] ISSUE-11: Generating BUILD_MANIFEST...");
+
+    match Command::new(&python).arg(script_path).output() {
+        Ok(output) => {
+            // Print stdout from the script
+            if !output.stdout.is_empty() {
+                for line in String::from_utf8_lossy(&output.stdout).lines() {
+                    eprintln!("[build.rs]   {}", line);
+                }
+            }
+
+            if output.status.success() {
+                eprintln!("[build.rs] ✓ BUILD_MANIFEST generated successfully");
+
+                // Tell Cargo about the generated file
+                println!("cargo:generated-files=build_manifest.py");
+            } else {
+                let stderr = String::from_utf8_lossy(&output.stderr);
+                eprintln!(
+                    "[build.rs] WARNING: BUILD_MANIFEST generation returned non-zero: {}",
+                    output.status
+                );
+                if !stderr.is_empty() {
+                    eprintln!("[build.rs]   stderr: {}", stderr);
+                }
+            }
+        }
+        Err(e) => {
+            eprintln!(
+                "[build.rs] WARNING: Failed to run build_manifest.py: {}",
                 e
             );
         }

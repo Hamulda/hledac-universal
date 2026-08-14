@@ -21,7 +21,8 @@ GHOST_INVARIANTS:
 """
 
 import logging
-from typing import Any, Callable, Protocol, TypeVar, runtime_checkable
+from typing import Any, Protocol, TypeVar, runtime_checkable
+from collections.abc import Callable
 
 import msgspec
 

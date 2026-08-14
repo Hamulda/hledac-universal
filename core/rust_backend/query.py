@@ -3,6 +3,7 @@
 DuckDB query execution with connection pooling.
 Provides parallel and single query execution with pooled connections.
 
+ISSUE-04: Now uses core.duckdb_pool as the canonical RO pool.
 """
 
 from __future__ import annotations
@@ -15,16 +16,21 @@ from typing import TYPE_CHECKING, Any
 if TYPE_CHECKING:
     from hledac_rust_extensions import hledac_rust_extensions
 
+# ISSUE-04: Use canonical pool instead of inline pool
+from hledac.universal.core.duckdb_pool import (
+    duckdb_ro_acquire,
+    duckdb_ro_pool,
+    get_pool_stats,
+    close_all_pools,
+)
+
 
 # =============================================================================
-# DuckDB Read-Only Connection Pool
+# DuckDB Read-Only Connection Pool (ISSUE-04: Now delegated to duckdb_pool)
 # =============================================================================
 
-# ISSUE #3 FIX: Replaces per-call duckdb.connect() + conn.close() pattern.
-# Pooled connections are reused, eliminating 3-5GB/s RAM churn at burst load.
-_DUCKDB_POOL: dict[str, deque] = {}
-_DUCKDB_POOL_LOCK = Lock()
-_POOL_MAX_SIZE = 4
+# DEPRECATED: Inline pool replaced by core.duckdb_pool
+# Keeping for backward compatibility until all callers migrate
 
 
 def _get_duckdb_module() -> Any:
@@ -38,52 +44,26 @@ def _get_duckdb_module() -> Any:
 
 
 def _acquire_ro_conn(db_path: str) -> Any:
-    """Acquire read-only connection from pool."""
-    global _DUCKDB_POOL, _DUCKDB_POOL_LOCK
-    duckdb = _get_duckdb_module()
-    if duckdb is None:
-        return None
+    """
+    Acquire read-only connection from canonical pool.
 
-    with _DUCKDB_POOL_LOCK:
-        if db_path not in _DUCKDB_POOL:
-            _DUCKDB_POOL[db_path] = deque(maxlen=_POOL_MAX_SIZE)
-
-        pool = _DUCKDB_POOL[db_path]
-        if pool:
-            try:
-                conn = pool.popleft()
-                # Test connection is still alive
-                conn.execute("SELECT 1")
-                return conn
-            except Exception:  # noqa: BLE001
-                pass
-
-    # Create new connection
-    try:
-        conn = duckdb.connect(db_path, read_only=True)
-        return conn
-    except Exception:
-        return None
+    ISSUE-04: Now delegates to duckdb_pool.duckdb_ro_acquire().
+    This ensures:
+    - Bounded pool size from resource_governor
+    - Health validation on acquire
+    - M1 8GB safe defaults
+    """
+    return duckdb_ro_acquire(db_path)
 
 
 def _pool_stats() -> dict:
     """Get pool statistics for debugging."""
-    global _DUCKDB_POOL
-    with _DUCKDB_POOL_LOCK:
-        return {path: len(pool) for path, pool in _DUCKDB_POOL.items()}
+    return get_pool_stats()
 
 
 def _pool_close_all() -> None:
     """Close all pooled connections."""
-    global _DUCKDB_POOL
-    with _DUCKDB_POOL_LOCK:
-        for pool in _DUCKDB_POOL.values():
-            for conn in pool:
-                try:
-                    conn.close()
-                except Exception:  # noqa: BLE001
-                    pass
-        _DUCKDB_POOL.clear()
+    close_all_pools()
 
 
 # =============================================================================
@@ -136,7 +116,12 @@ def _python_parallel_duckdb_queries(db_path: str, queries: list[str]) -> list[di
 
 
 def _python_query_duckdb(db_path: str, sql: str) -> list[dict[str, Any]]:
-    """Python fallback: execute single query with pooled connection."""
+    """
+    Python fallback: execute single query with pooled connection.
+
+    ISSUE-04: Uses canonical duckdb_pool. Connections are automatically
+    returned to the pool on context exit.
+    """
     conn = _acquire_ro_conn(db_path)
     if conn is None:
         return []
@@ -147,17 +132,7 @@ def _python_query_duckdb(db_path: str, sql: str) -> list[dict[str, Any]]:
         return [dict(zip(columns, row)) for row in rows]
     except Exception:
         return []
-    finally:
-        # Return connection to pool
-        global _DUCKDB_POOL
-        with _DUCKDB_POOL_LOCK:
-            if db_path in _DUCKDB_POOL:
-                _DUCKDB_POOL[db_path].append(conn)
-            else:
-                try:
-                    conn.close()
-                except Exception:  # noqa: BLE001
-                    pass
+    # Connection stays in pool for reuse (no explicit return needed)
 
 
 def get_query_domain(ext: object | None) -> _RustQueryDomain | _PythonQueryDomain:

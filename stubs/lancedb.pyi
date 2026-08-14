@@ -2,7 +2,8 @@
 # LanceDB provides high-capacity vector search with IVF-PQ support.
 # Lazy-imported at runtime when HLEDAC_VECTOR_BACKEND="lancedb".
 
-from typing import Any, Sequence
+from typing import Any
+from collections.abc import Sequence
 
 class LanceDBConnection:
     def open_table(self, name: str) -> LanceTable: ...

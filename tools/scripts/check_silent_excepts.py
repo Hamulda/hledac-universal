@@ -1,9 +1,11 @@
 #!/usr/bin/env python3
-"""CI check: detect silent `except: pass` blocks WITHOUT `# noqa: BLE001` comment.
+"""CI check: detect silent `except: pass` blocks WITHOUT noqa comment.
 
-Fails CI if any production source file contains a bare `except X: pass` (or
-`except: pass`) that lacks the explicit noqa marker. Forces deliberate opt-in
-for every silent suppression in production code.
+Fails CI if any production source file contains a bare `except: pass` that
+lacks the explicit noqa marker. Forces deliberate opt-in for every silent
+suppression in production code.
+
+Accepts both `# noqa: BLE001` and `# noqa: BARE-EXCEPT` markers.
 
 Scope: production Python under hledac/universal, excluding tests/ legacy/
 archive/ compat/ _deprecated/ build/ benchmark_results/ .venv*/.
@@ -67,7 +69,11 @@ def find_unmarked_sites(path: Path) -> list[tuple[int, str, str]]:
             continue
         pass_idx = node.body[0].lineno - 1
         line = lines[pass_idx]
-        if "noqa: BARE-EXCEPT" in line:
+        # Check both pass line and except line for noqa marker
+        except_line = lines[node.lineno - 1]
+        if "noqa: BARE-EXCEPT" in line or "noqa: BLE001" in line:
+            continue
+        if "noqa: BARE-EXCEPT" in except_line or "noqa: BLE001" in except_line:
             continue
         method = func_for_line.get(pass_idx + 1, "<module>")
         except_sig = lines[node.lineno - 1].rstrip()
@@ -105,7 +111,7 @@ def main() -> int:
         return 0
 
     print(f"FAIL: {total_sites} unmarked silent excepts in {total_files} files")
-    print("Add `# noqa: BLE001  # fail-soft suppression: <method>` to each pass.")
+    print("Add `# noqa: BLE001` or `# noqa: BARE-EXCEPT` to each pass line to suppress.")
     print()
     # Show top 10 offenders
     for path, n in sorted(examples_per_file.items(), key=lambda x: -x[1])[:10]:

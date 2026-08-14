@@ -31,7 +31,8 @@ M1 8GB: žádná extra RAM (pouze 1× reference na modul).
 
 import importlib
 import sys
-from typing import Any, Callable, TypeVar
+from typing import Any, TypeVar
+from collections.abc import Callable
 
 __all__ = ["lazy", "lazy_callable"]
 

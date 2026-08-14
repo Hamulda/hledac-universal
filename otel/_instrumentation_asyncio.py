@@ -22,7 +22,8 @@ from __future__ import annotations
 import asyncio
 import contextvars
 import sys
-from typing import TYPE_CHECKING, Any, Coroutine, TypeVar
+from typing import TYPE_CHECKING, Any, TypeVar
+from collections.abc import Coroutine
 
 try:
     from cachetools import LRUCache as _LRUCache

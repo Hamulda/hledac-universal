@@ -10,7 +10,8 @@ AdaptiveEmbeddingBatcher is re-exported from core.embeddings.manager
 import asyncio
 import logging
 import time as time_module
-from typing import TYPE_CHECKING, Awaitable, Callable
+from typing import TYPE_CHECKING
+from collections.abc import Awaitable, Callable
 import numpy as np
 from hledac.universal.core.embeddings.manager import AdaptiveEmbeddingBatcher
 logger = logging.getLogger(__name__)

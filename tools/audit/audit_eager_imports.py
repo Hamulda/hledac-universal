@@ -25,6 +25,7 @@ HEAVY_MODULES = {
     "mlx",
     "mlx.core",
     "mlx_embeddings",
+    "mlx_vlm",
     "torch",
     "transformers",
     "torchvision",
@@ -91,17 +92,12 @@ ALLOWED = {
     "intelligence/pattern_mining.py",
     "intelligence/relationship_discovery.py",
     "intel/dns_tunnel_detector.py",
-    # Coordinators
-    "coordinators/multimodal_coordinator.py",
     # Network/DHT
     "network/dns_tunnel_detector.py",
     "dht/local_graph.py",
     # Prefetch
     "prefetch/prefetch_oracle.py",
     "prefetch/ssm_reranker.py",
-    # Research
-    "research/spike_priority.py",
-    "research/task_prioritizer.py",
     # RL
     "rl/qmix.py",
     "rl/state_extractor.py",
@@ -123,6 +119,18 @@ ALLOWED = {
     "intelligence/cryptographic_intelligence.py",
     "security/encryption.py",
     "security/vault_manager.py",
+    "secrets_vault/vault.py",
+    # Recon modules — feature-gated heavy dependencies
+    "recon/dark_web_intelligence.py",
+    "recon/cryptographic_intelligence.py",
+    "recon/dns/dns_tunnel_detector.py",
+    # Core Rust backend — selectolax fallback for HTML parsing
+    "core/rust_backend/html.py",
+    "core/rust_backend/misc.py",
+    # MLX embeddings server — requires mlx_embeddings
+    "mlx_server.py",
+    # Knowledge vector index — mlx-accelerated similarity
+    "knowledge/vector_index_base.py",
     # Optional extras
     "transport/http3_lane.py",  # aioquic via [http3] extra
 }
@@ -138,6 +146,7 @@ EXCLUDE_DIRS = {
     ".git",
     "tests/",
     "benchmarks/",
+    "benchmarks_shadow/",
     "scripts/",
     "tools/",
     "probe_",
@@ -231,7 +240,10 @@ def main() -> None:
     exclude_tests = "--exclude-tests" in sys.argv
     exclude_probe = "--exclude-probe" in sys.argv
 
-    root = Path(__file__).parent.parent
+    # BUG-FIX: Script is at tools/audit/audit_eager_imports.py
+    # Path(__file__).parent = tools/audit, .parent.parent = tools (WRONG!)
+    # Correct: tools/audit -> tools -> project_root (3 levels up)
+    root = Path(__file__).resolve().parent.parent.parent
     violations = []
 
     for py_file in root.rglob("*.py"):

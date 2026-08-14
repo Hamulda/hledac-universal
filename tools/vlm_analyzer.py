@@ -19,14 +19,44 @@ from hledac.universal.utils._patterns import make_lazy_lock_classmethod  # F320-
 
 logger = logging.getLogger(__name__)
 
-# Lazy import guard — mlx-vlm is optional
-MLX_VLM_AVAILABLE = False
-try:
-    from mlx_vlm import generate as vlm_generate
-    from mlx_vlm import load as vlm_load
-    MLX_VLM_AVAILABLE = True
-except ImportError:
-    logger.debug("mlx-vlm not available")
+# ISSUE-08 FIX: Import MLX_AVAILABLE from SSOT (zero-import detection)
+# Uses importlib.metadata.version("mlx") — no mlx.core import at module load
+from hledac.universal.utils.mlx_memory import MLX_AVAILABLE
+
+# ISSUE-08 FIX: Lazy mlx_vlm import helpers — zero-cost until first VLM use
+_vlm_generate: Any = None
+_vlm_load: Any = None
+
+
+def _is_mlx_vlm_available() -> bool:
+    """Check if mlx_vlm is available (caches result)."""
+    global _vlm_generate, _vlm_load
+    if _vlm_generate is not None and _vlm_load is not None:
+        return True
+    if MLX_AVAILABLE:
+        try:
+            from mlx_vlm import generate as _gen
+            from mlx_vlm import load as _load
+            _vlm_generate = _gen
+            _vlm_load = _load
+            return True
+        except ImportError:  # noqa: BLE001
+            pass
+    return False
+
+
+def _get_vlm_generate():
+    """Lazily get vlm_generate function."""
+    if not _is_mlx_vlm_available():
+        raise RuntimeError("mlx_vlm not available")
+    return _vlm_generate
+
+
+def _get_vlm_load():
+    """Lazily get vlm_load function."""
+    if not _is_mlx_vlm_available():
+        raise RuntimeError("mlx_vlm not available")
+    return _vlm_load
 
 
 class VLMUnavailableError(Exception):
@@ -80,13 +110,17 @@ class VLMAnalyzer:
                 logger.debug("[VLMAnalyzer] No VLM configured — set VLM_MODEL_ID to enable")
                 return False
 
-            if not MLX_VLM_AVAILABLE:
+            if not MLX_AVAILABLE:
+                logger.warning("[VLMAnalyzer] mlx-vlm requires MLX (not available)")
+                return False
+
+            if not _is_mlx_vlm_available():
                 logger.warning("[VLMAnalyzer] mlx-vlm not available")
                 return False
 
             try:
                 cls._model, cls._processor = await asyncio.to_thread(
-                    vlm_load, model_id
+                    _get_vlm_load(), model_id
                 )
                 logger.info(f"[VLMAnalyzer] Model loaded: {model_id}")
                 return True
@@ -160,8 +194,9 @@ class VLMAnalyzer:
                 tmp_path = f.name
 
             # Generate description
+            # ISSUE-08 FIX: Use lazy _get_vlm_generate() instead of module-level vlm_generate
             result = await asyncio.to_thread(
-                vlm_generate,
+                _get_vlm_generate(),
                 self._model,
                 self._processor,
                 image=tmp_path,

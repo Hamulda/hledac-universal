@@ -21,7 +21,8 @@ import threading
 import time
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, AsyncIterator
+from typing import TYPE_CHECKING
+from collections.abc import AsyncIterator
 
 import msgspec
 from tenacity import (

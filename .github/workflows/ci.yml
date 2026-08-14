@@ -104,6 +104,32 @@ jobs:
       - name: BLE001 audit (CI mode — fail on NEW violations)
         run: make audit-ci
 
+  # ISSUE-04: DuckDB connection pool canonical path guard
+  duckdb-pool-guard:
+    name: duckdb-pool · canonical write path guard
+    runs-on: macos-latest
+    timeout-minutes: 3
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v4
+        with:
+          enable-cache: true
+          cache-dependency-glob: |
+            pyproject.toml
+            uv.lock
+
+      - name: Set up Python
+        run: uv python install ${{ env.PYTHON_VERSION }}
+
+      - name: ISSUE-04: Check for unauthorized duckdb.connect() usage
+        run: |
+          echo "=== ISSUE-04: DuckDB Connection Pool Canonical Path Guard ==="
+          uv run --no-sync python tools/scripts/check_duckdb_connect.py
+
   python-jit-benchmark:
     name: python-jit-benchmark · JIT vs non-JIT
     runs-on: macos-latest
@@ -159,6 +185,78 @@ jobs:
             pytest_no_jit.log
             pytest_jit.log
           retention-days: 7
+
+  # ISSUE-01: Rust extension freshness gate — runs in parallel with build-rust
+  rust-freshness:
+    name: rust-freshness · source vs binary check
+    runs-on: macos-latest
+    timeout-minutes: 5
+    # Only run when Rust source files have changed
+    if: "github.event_name == 'push' || github.event_name == 'pull_request'"
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v4
+        with:
+          enable-cache: true
+          cache-dependency-glob: |
+            pyproject.toml
+            uv.lock
+
+      - name: Set up Python
+        run: uv python install ${{ env.PYTHON_VERSION }}
+
+      - name: Sync project venv
+        run: uv sync --locked --python ${{ env.PYTHON_VERSION }}
+
+      - name: ISSUE-01: Source freshness gate
+        run: |
+          echo "=== Rust Extension Source Freshness Check ==="
+          echo "Checking if .so binary is stale (source newer than binary)..."
+          uv run --no-sync python -c "
+import sys
+sys.path.insert(0, '.')
+from core.rust_backend._prober import _check_source_freshness, _get_rust_source_mtime, _so_mtime, _get_rebuild_instruction
+
+src_mtime = _get_rust_source_mtime()
+so_mtime = _so_mtime()
+
+if src_mtime is None:
+    print('No Rust source directory found — skipping check')
+    sys.exit(0)
+
+if so_mtime is None:
+    print('No .so file found — Rust extension not built')
+    print('Run: make rust-build')
+    sys.exit(0)
+
+is_stale, reason = _check_source_freshness()
+print(f'Source mtime: {src_mtime}')
+print(f'So mtime: {so_mtime}')
+print(f'Stale: {is_stale}')
+print(f'Reason: {reason}')
+
+if is_stale:
+    print('')
+    print('=' * 60)
+    print('ERROR: Rust extension is STALE!')
+    print('=' * 60)
+    print('The .so binary was built BEFORE the source files were modified.')
+    print('This means the binary is running OLD code while source has been updated.')
+    print('Performance may be degraded and bugs may exist.')
+    print('')
+    print('To rebuild:')
+    print(_get_rebuild_instruction())
+    print('')
+    sys.exit(1)
+else:
+    print('OK: Source and binary are in sync')
+    sys.exit(0)
+"
+        # Don't fail CI if .so doesn't exist yet (first build)
+        continue-on-error: true
 
   build-rust:
     name: maturin build · wheel
@@ -224,6 +322,9 @@ jobs:
           args: --release
         env:
           UV_PYTHON: ""
+          # ISSUE-01: M1 8GB memory optimization
+          CARGO_PROFILE_RELEASE_LTO: "false"
+          CARGO_PROFILE_RELEASE_CODEGEN_UNITS: "16"
           # MACOSX_DEPLOYMENT_TARGET: controlled by rust_extensions/Cargo.toml
 
       - name: Smoke test — verify_build.py

@@ -42,7 +42,8 @@ import threading
 import time as time_module
 import weakref
 from enum import IntEnum
-from typing import TYPE_CHECKING, Any, Callable
+from typing import TYPE_CHECKING, Any
+from collections.abc import Callable
 import msgspec
 
 from hledac.universal.runtime.protocols.cleanup_protocol import shutdown_aclose

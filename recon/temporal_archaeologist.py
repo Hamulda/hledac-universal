@@ -23,6 +23,7 @@ async def _read_text_with_cap(resp: httpx.Response, cap: int = _MAX_ARCHIVE_BYTE
 
 
 
+"""
 Advanced temporal content recovery and timeline reconstruction system.
 
 Features:

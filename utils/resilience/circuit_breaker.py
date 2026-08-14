@@ -26,7 +26,8 @@ import time
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any, Callable, Optional, TypeVar
+from typing import Any, Optional, TypeVar
+from collections.abc import Callable
 
 from hledac.universal.utils.asyncx import safe_create_task
 

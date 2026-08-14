@@ -15,7 +15,8 @@ GHOST_INVARIANTS:
 """
 
 from collections.abc import Iterable
-from typing import Any, Iterator
+from typing import Any
+from collections.abc import Iterator
 
 from hledac.universal.runtime.protocols.graph_protocol import GraphProtocol
 

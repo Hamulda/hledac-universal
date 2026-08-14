@@ -42,9 +42,93 @@ from typing import Optional
 _REPO_ROOT = Path(__file__).resolve().parent  # rust_extensions/
 _SRC_DIR = _REPO_ROOT / "src"
 _LIB_RS = _SRC_DIR / "lib.rs"
+_CARGO_TOML = _REPO_ROOT / "Cargo.toml"  # Root Cargo.toml for hash
 _OUTPUT_DIR = _REPO_ROOT
 PYI_OUTPUT = _OUTPUT_DIR / "hledac_rust_extensions.pyi"
 MANIFEST_OUTPUT = _OUTPUT_DIR / "_ffi_type_manifest.json"
+
+
+# ============================================================================
+# ISSUE-01: Source Hash Computation
+# ============================================================================
+
+import hashlib
+
+
+def _compute_source_hash() -> str:
+    """
+    Compute a BLAKE2B hash of all Rust source files.
+
+    IMPORTANT: This MUST match _compute_source_hash() in build_manifest.py
+    and _compute_source_content_hash() in _prober.py.
+
+    Uses two-level hashing:
+    1. Per-file: blake2b(path + size + sample) = file_hash
+    2. Overall: blake2b(concatenated file_hashes)
+
+    Algorithm (must match build_manifest.py):
+    - Collects files from rust_extensions/src/*.rs and rust_extensions/Cargo.toml
+    - NOTE: Does NOT recurse into subdirectories (uses glob, not rglob)
+    - Sorts files by path for deterministic ordering
+    - For each file: blake2b(relative_path + size + first_4KB + last_4KB)
+    - Final hash: BLAKE2B-256 of all file_hash bytes concatenated
+
+    Returns a hex string of the hash, or empty string on error.
+    """
+    try:
+        import hashlib
+
+        if not _SRC_DIR.exists():
+            return ""
+
+        # Collect all .rs and .toml files (MUST match build_manifest.py exactly)
+        # IMPORTANT: Use glob, NOT rglob - we only want files directly in src/
+        file_paths: list[Path] = []
+        for ext in ("*.rs", "*.toml"):
+            for path in sorted(_SRC_DIR.glob(ext)):
+                if path.is_file():
+                    file_paths.append(path)
+
+        # Also include Cargo.toml from rust_extensions root
+        # This matches build_manifest.py
+        if _CARGO_TOML.exists():
+            file_paths.append(_CARGO_TOML)
+
+        # Sort for deterministic ordering
+        file_paths.sort(key=str)
+
+        if not file_paths:
+            return ""
+
+        # Two-level hashing (matches build_manifest.py exactly)
+        overall_hasher = hashlib.blake2b(digest_size=32)
+
+        for path in file_paths:
+            relative_path = str(path.relative_to(_REPO_ROOT))
+            size = path.stat().st_size
+
+            # Per-file hash: blake2b(path + size + sample)
+            file_hasher = hashlib.blake2b(digest_size=32)
+            file_hasher.update(relative_path.encode())
+            file_hasher.update(size.to_bytes(8, "little"))
+
+            try:
+                content = path.read_bytes()
+                sample_size = min(4096, len(content))
+                file_hasher.update(content[:sample_size])
+                if len(content) > 8192:
+                    file_hasher.update(content[-4096:])
+            except OSError:
+                continue
+
+            file_hash = file_hasher.hexdigest()
+
+            # Overall hash: blake2b of all file_hash bytes
+            overall_hasher.update(file_hash.encode())
+
+        return overall_hasher.hexdigest()
+    except Exception:
+        return ""
 
 
 # ============================================================================
@@ -905,11 +989,16 @@ def generate_ffi_manifest(
     registrations: dict[str, ModuleRegistration]
 ) -> dict:
     """Generate the FFI type manifest JSON."""
+    # ISSUE-01: Compute source hash for freshness verification
+    source_hash = _compute_source_hash()
+    
     manifest = {
         "version": "1.0.0",
         "generated_at": datetime.now(timezone.utc).isoformat(),
         "capability": "NEXTGEN-05",
         "description": "Build-time FFI type-safety manifest",
+        # ISSUE-01: Source hash for binary freshness verification
+        "__source_hash__": source_hash,
         "classes": {},
         "functions": {},
         "registrations": {},

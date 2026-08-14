@@ -30,7 +30,8 @@ from datetime import UTC, datetime
 from html.parser import HTMLParser
 from pathlib import Path
 import sys as _sys
-from typing import Any, Iterator, Literal, cast
+from typing import Any, Literal, cast
+from collections.abc import Iterator
 import aiosqlite
 import msgspec
 import orjson

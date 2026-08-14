@@ -28,7 +28,8 @@ import logging
 import os
 import time
 import uuid
-from typing import TYPE_CHECKING, Any, Awaitable, Callable
+from typing import TYPE_CHECKING, Any
+from collections.abc import Awaitable, Callable
 
 from hledac.universal.utils.asyncx import safe_wait_for
 

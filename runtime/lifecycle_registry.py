@@ -10,7 +10,8 @@ M1 8GB: No GC overhead — objects released deterministically.
 """
 from dataclasses import dataclass, field
 import msgspec
-from typing import Any, Callable, Final
+from typing import Any, Final
+from collections.abc import Callable
 
 class OwnedResource(msgspec.Struct, gc=False):
     """Explicit lifecycle: acquire → use → release. Zero weakref.

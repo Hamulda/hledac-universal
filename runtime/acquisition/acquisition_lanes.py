@@ -12,7 +12,8 @@ accepted_findings after the gather).
 """
 
 
-from typing import Any, AsyncIterator
+from typing import Any
+from collections.abc import AsyncIterator
 
 _scheduler_lanes = None
 

@@ -23,7 +23,8 @@ import asyncio
 import functools
 import logging
 from contextlib import asynccontextmanager
-from typing import Any, Callable, Optional, TypeVar
+from typing import Any, Optional, TypeVar
+from collections.abc import Callable
 
 from hledac.universal.utils.asyncx import safe_create_task
 from hledac.universal.utils.resilience.circuit_breaker import (

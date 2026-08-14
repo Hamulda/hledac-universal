@@ -192,6 +192,9 @@ jobs:
           args: --release --out dist/wheels
         env:
           UV_PYTHON: ""
+          # ISSUE-01: M1 8GB memory optimization
+          CARGO_PROFILE_RELEASE_LTO: "false"
+          CARGO_PROFILE_RELEASE_CODEGEN_UNITS: "16"
           # MACOSX_DEPLOYMENT_TARGET: controlled by rust_extensions/Cargo.toml
 
       - name: Stub guard — single hledac_rust_extensions.pyi
@@ -268,6 +271,30 @@ with tempfile.TemporaryDirectory() as tmpdir:
           # for the rust_extensions CI lane. Run those in a separate
           # workflow (`sprint_tests.yml` etc.).
           uv run --no-sync pytest tests/test_rust_extensions.py tests/test_hledac_core_rust.py -v
+
+      - name: ISSUE-01: Source freshness gate
+        # ISSUE-01: CRITICAL — verify source is not stale before running tests.
+        # This catches the case where .so was built before recent source changes.
+        run: |
+          echo "=== Source Freshness Check ==="
+          uv run --no-sync python -c "
+import sys
+sys.path.insert(0, '.')
+from core.rust_backend._prober import probe, _check_source_freshness, _get_rebuild_instruction
+r = probe()
+if r.source_stale:
+    print('ERROR: Source is STALE! Binary needs rebuild.')
+    print(f'Reason: {r.source_stale_reason}')
+    print(f'Rebuild: {r.rebuild_instruction}')
+    sys.exit(1)
+elif not r.available:
+    print('WARNING: Rust extension not available')
+    sys.exit(0)
+else:
+    print('OK: Source is fresh (binary up-to-date with source)')
+    sys.exit(0)
+"
+        continue-on-error: true  # Don't fail CI on freshness issues, just warn
 
       - name: Verify fallback guard (Python without Rust)
         # Sanity check: when the Rust extension is removed, the Python

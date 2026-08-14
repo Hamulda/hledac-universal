@@ -24,13 +24,15 @@ import asyncio
 import logging
 import time
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any, Awaitable, Callable, Generic, Protocol, TypeVar
+from typing import TYPE_CHECKING, Any, Generic, Protocol, TypeVar
+from collections.abc import Awaitable, Callable
 
 import msgspec
 from hledac.universal.compat.msgspec_gc_compat import Struct
 
 if TYPE_CHECKING:
-    from typing import AsyncIterator, Protocol
+    from typing import Protocol
+    from collections.abc import AsyncIterator
 
 logger = logging.getLogger(__name__)
 

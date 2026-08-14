@@ -36,7 +36,8 @@ SOLUTION: Domain-specific bounded executors (see domain_executors.py)
 import asyncio
 import functools
 from concurrent.futures import ThreadPoolExecutor
-from typing import Any, Awaitable, Callable, Coroutine, TypeVar, cast
+from typing import Any, TypeVar, cast
+from collections.abc import Awaitable, Callable, Coroutine
 T = TypeVar('T')
 
 def run_sync_async(coro: Awaitable[T]) -> T:

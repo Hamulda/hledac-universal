@@ -66,7 +66,8 @@ import time as _time
 import weakref
 from dataclasses import dataclass, field
 from enum import Enum, auto
-from typing import TYPE_CHECKING, Any, Iterator
+from typing import TYPE_CHECKING, Any
+from collections.abc import Iterator
 
 logger = _logging.getLogger(__name__)
 

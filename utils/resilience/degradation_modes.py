@@ -29,7 +29,8 @@ import asyncio
 import time
 from dataclasses import dataclass, field
 from enum import IntEnum
-from typing import Callable, Optional
+from typing import Optional
+from collections.abc import Callable
 
 
 class DegradedMode(IntEnum):

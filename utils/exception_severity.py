@@ -44,7 +44,8 @@ import time
 import weakref
 from dataclasses import dataclass, field
 from enum import Enum, auto
-from typing import TYPE_CHECKING, Any, Callable, ParamSpec, TypeVar
+from typing import TYPE_CHECKING, Any, ParamSpec, TypeVar
+from collections.abc import Callable
 
 if TYPE_CHECKING:
     from collections.abc import Awaitable

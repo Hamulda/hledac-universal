@@ -23,6 +23,57 @@ PYTHON  := uv run --no-sync python
 PYTEST  := uv run --no-sync pytest
 
 # =============================================================================
+# Rust Extension Build (ISSUE-01, ISSUE-11)
+# =============================================================================
+
+# M1 8GB optimized build flags
+# - CARGO_PROFILE_RELEASE_LTO=false: Disable LTO to save ~2GB RAM during compile
+# - codegen-units=16: Parallel compilation to cap memory usage
+# Detection: uname -m returns "arm64" on Apple Silicon, "x86_64" on Intel
+
+.PHONY: rust-build
+rust-build:
+	@echo "[rust-build] Building Rust extension (M1 optimized)..."
+	@echo "  NOTE: If build fails with OOM, try: make rust-build-light"
+	@if [ "$$(uname -m)" = "arm64" ]; then \
+		echo "  Detected Apple Silicon — using M1 8GB optimized flags"; \
+		CARGO_PROFILE_RELEASE_LTO=false cargo build --release --manifest-path rust_extensions/Cargo.toml; \
+	else \
+		cargo build --release --manifest-path rust_extensions/Cargo.toml; \
+	fi
+
+.PHONY: rust-build-light
+rust-build-light:
+	@echo "[rust-build-light] Building Rust extension with reduced memory usage..."
+	CARGO_PROFILE_RELEASE_LTO=false CARGO_PROFILE_RELEASE_CODEGEN_UNITS=16 \
+		cargo build --release --manifest-path rust_extensions/Cargo.toml
+
+.PHONY: rust-develop
+rust-develop:
+	@echo "[rust-develop] Building and installing Rust extension in development mode..."
+	cd rust_extensions && maturin develop --release && cd ..
+
+.PHONY: rust-check-fresh
+rust-check-fresh:
+	@echo "[rust-check-fresh] Checking source freshness..."
+	$(PYTHON) -c "from core.rust_backend._prober import _check_source_freshness; stale, reason = _check_source_freshness(); print(f'Stale: {stale}'); print(f'Reason: {reason}')"
+
+.PHONY: rust-verify
+rust-verify:
+	@echo "[rust-verify] Verifying Rust extension..."
+	$(PYTHON) -c "import sys; sys.path.insert(0, '.'); from core.rust_backend._prober import probe; r = probe(); print(f'Available: {r.available}'); print(f'Backend: {r.backend}'); print(f'Source stale: {r.source_stale}'); print(f'Needs rebuild: {r.needs_rebuild}'); print(f'Rebuild: {r.rebuild_instruction}')"
+
+.PHONY: rust-all
+rust-all: rust-build rust-verify
+
+# ISSUE-11: BUILD_MANIFEST generation
+# Run after cargo build to generate BUILD_MANIFEST.json
+.PHONY: rust-manifest
+rust-manifest:
+	@echo "[rust-manifest] Generating BUILD_MANIFEST.json..."
+	$(PYTHON) rust_extensions/build_manifest.py
+
+# =============================================================================
 # Help
 # =============================================================================
 
@@ -53,6 +104,14 @@ help:
 # =============================================================================
 # CI Targets — consumed by .github/workflows/
 # =============================================================================
+
+# ISSUE-01: CI entry point for Rust extension freshness gate
+# ISSUE-11: Enhanced with BUILD_MANIFEST verification
+.PHONY: rust-ci
+rust-ci:
+	@echo "[CI] Rust extension freshness check..."
+	$(PYTHON) rust_extensions/build_manifest.py --verify || (echo "ERROR: BUILD_MANIFEST stale! Rebuild required." && exit 1)
+	$(PYTHON) -c "import sys; from core.rust_backend._prober import probe; r = probe(); print(f'Source stale: {r.source_stale}'); print(f'Rebuild instruction: {r.rebuild_instruction}'); sys.exit(1 if r.source_stale else 0)" || (echo "ERROR: Rust source is stale! Rebuild required." && exit 1)
 
 .PHONY: probe-ci
 probe-ci:

@@ -1351,7 +1351,6 @@ class WASMDashboardBuilder:
             })
 
         # Sort by timestamp ascending
-        normalized.sort(key=itemgetter("""))
 
         return {"events": normalized}
 

@@ -27,7 +27,8 @@ import logging
 import time
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import TYPE_CHECKING, Any, Callable
+from typing import TYPE_CHECKING, Any
+from collections.abc import Callable
 from hledac.universal.utils.asyncx import safe_wait_for
 from hledac.universal.utils._patterns import collect_results_async  # F320: DRY batch processing
 
