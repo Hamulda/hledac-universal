@@ -66,30 +66,56 @@ def _get_uma_budget():
         from hledac.universal.utils.uma_budget import is_uma_critical
         _uma_budget = is_uma_critical
     return _uma_budget
-try:
-    import mlx.core as mx
 
-    @mx.compile
-    def _cosine_sim_batch(a: mx.array, b: mx.array) -> mx.array:
-        """MLX-compiled cosine similarity for batch processing.
+# C1-X FIX: Import MLX_AVAILABLE from SSOT (zero-import detection)
+from hledac.universal.utils.mlx_memory import MLX_AVAILABLE
 
-        Args:
-            a: Query embeddings (B, D) or (D,) — auto-handles singleton query
-            b: Candidate embeddings (N, D)
+# Lazy accessor for mlx.core — uses centralized get_mx() from SSOT
+def _get_mx():
+    """Lazy accessor for mlx.core — uses centralized get_mx() from SSOT."""
+    from hledac.universal.utils.mlx_memory._core import get_mx as _get_mx_from_core
+    return _get_mx_from_core()
 
-        Returns:
-            Similarity scores (B, N) — squeeze to (N,) if B=1
-        """
-        if a.ndim == 1:
-            a = a[None, :]
-        eps = 1e-08
-        a_norm = mx.linalg.norm(a, axis=-1, keepdims=True)
-        b_norm = mx.linalg.norm(b, axis=-1, keepdims=True)
-        a_n = a / (a_norm + eps)
-        b_n = b / (b_norm + eps)
-        return a_n @ b_n.T
-    MLX_AVAILABLE = True
-except ImportError:
+# C1-X FIX: Only attempt MLX import if SSOT says it's available
+_COMPILED_CACHE: dict[str, Any] = {}
+
+if MLX_AVAILABLE:
+    try:
+        import mlx.core as mx
+
+        @mx.compile
+        def _cosine_sim_batch(a: Any, b: Any) -> Any:
+            """MLX-compiled cosine similarity for batch processing.
+
+            Args:
+                a: Query embeddings (B, D) or (D,) — auto-handles singleton query
+                b: Candidate embeddings (N, D)
+
+            Returns:
+                Similarity scores (B, N) — squeeze to (N,) if B=1
+            """
+            if a.ndim == 1:
+                a = a[None, :]
+            eps = 1e-08
+            a_norm = mx.linalg.norm(a, axis=-1, keepdims=True)
+            b_norm = mx.linalg.norm(b, axis=-1, keepdims=True)
+            a_n = a / (a_norm + eps)
+            b_n = b / (b_norm + eps)
+            return a_n @ b_n.T
+    except ImportError:
+        import numpy as np
+
+        def _cosine_sim_batch(a, b):
+            """Numpy fallback for cosine similarity."""
+            a = np.asarray(a)
+            b = np.asarray(b)
+            if a.ndim == 1:
+                a = a[None, :]
+            eps = 1e-08
+            a_n = a / (np.linalg.norm(a, axis=-1, keepdims=True) + eps)
+            b_n = b / (np.linalg.norm(b, axis=-1, keepdims=True) + eps)
+            return a_n @ b_n.T
+else:
     import numpy as np
 
     def _cosine_sim_batch(a, b):
@@ -102,8 +128,6 @@ except ImportError:
         a_n = a / (np.linalg.norm(a, axis=-1, keepdims=True) + eps)
         b_n = b / (np.linalg.norm(b, axis=-1, keepdims=True) + eps)
         return a_n @ b_n.T
-    MLX_AVAILABLE = False
-_COMPILED_CACHE: dict[str, mx.array] = {}
 _RRF_RERANKER_CACHE: dict[str, Any] = {}
 
 def _get_rrf_reranker() -> Any | None:

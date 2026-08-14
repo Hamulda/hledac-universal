@@ -48,7 +48,7 @@ def get_process_rss_gib() -> float:
         DeprecationWarning,
         stacklevel=2,
     )
-    from core.memory import get_process_rss_gib as _fn
+    from hledac.universal.core.memory import get_process_rss_gib as _fn
     return _fn()
 
 
@@ -63,7 +63,7 @@ def get_available_memory_gib() -> float:
         DeprecationWarning,
         stacklevel=2,
     )
-    from core.memory import get_available_memory_gib as _fn
+    from hledac.universal.core.memory import get_available_memory_gib as _fn
     return _fn()
 
 
@@ -78,7 +78,7 @@ def get_metal_active_memory_bytes() -> int:
         DeprecationWarning,
         stacklevel=2,
     )
-    from core.memory import get_metal_active_memory_bytes as _fn
+    from hledac.universal.core.memory import get_metal_active_memory_bytes as _fn
     return _fn()
 
 

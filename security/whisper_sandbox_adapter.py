@@ -27,9 +27,12 @@ Usage:
 
 from __future__ import annotations
 
+import asyncio
 from abc import ABC, abstractmethod
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal, Protocol, runtime_checkable
+
+from hledac.universal.utils.asyncx import safe_wait_for
 
 import msgspec
 
@@ -222,7 +225,7 @@ class DirectWhisperAdapter:
             from hledac.universal.brain.whisper_engine import get_whisper_engine
             
             engine = await get_whisper_engine()
-            raw = await asyncio.wait_for(
+            raw = await safe_wait_for(
                 engine.transcribe(str(audio_path), model_size=model_size, language=language),
                 timeout=timeout_s,
             )

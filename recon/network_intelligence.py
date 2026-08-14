@@ -173,7 +173,7 @@ async def resolve_dns_doh(domain: str) -> dict[str, list[str]]:
 
     # Try dnspython with DoH first
     try:
-        import dns.asyncresolver
+        # E3 FIX: Removed unused dns.asyncresolver import (not used in this path)
         import dns.message
         import dns.query
 

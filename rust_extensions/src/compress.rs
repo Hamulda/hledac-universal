@@ -233,10 +233,19 @@ fn decompress_page_impl(wire: &[u8]) -> Result<Vec<u8>, &'static str> {
 ///
 /// Returns:
 ///   bytes — wire-format compressed page (marker + payload)
+///
+/// ## GIL Handling
+/// Releases GIL via `release_gil` during CPU-bound compression (lz4/zstd).
+/// This allows asyncio event loop to run on other threads during compression.
 #[pyfunction]
 pub fn compress_page(data: &[u8]) -> PyResult<Vec<u8>> {
-    compress_page_impl(data)
-        .map_err(|e| pyo3::exceptions::PyValueError::new_err(format!("compress_page: {}", e)))
+    use crate::gil::release_gil;
+    Python::attach(|py| {
+        release_gil(py, || {
+            compress_page_impl(data)
+                .map_err(|e| pyo3::exceptions::PyValueError::new_err(format!("compress_page: {}", e)))
+        })
+    })
 }
 
 /// Decompress a wire-format page from LMDB storage.
@@ -246,10 +255,18 @@ pub fn compress_page(data: &[u8]) -> PyResult<Vec<u8>> {
 ///
 /// Returns:
 ///   bytes — decompressed original page
+///
+/// ## GIL Handling
+/// Releases GIL via `release_gil` during CPU-bound decompression.
 #[pyfunction]
 pub fn decompress_page(wire: &[u8]) -> PyResult<Vec<u8>> {
-    decompress_page_impl(wire)
-        .map_err(|e| pyo3::exceptions::PyValueError::new_err(format!("decompress_page: {}", e)))
+    use crate::gil::release_gil;
+    Python::attach(|py| {
+        release_gil(py, || {
+            decompress_page_impl(wire)
+                .map_err(|e| pyo3::exceptions::PyValueError::new_err(format!("decompress_page: {}", e)))
+        })
+    })
 }
 
 /// Compress many pages in parallel via rayon.
@@ -384,10 +401,18 @@ pub fn unregister_zstd_dict(dict_id: u32) -> PyResult<bool> {
 ///
 /// Returns:
 ///   bytes — wire-format compressed page
+///
+/// ## GIL Handling
+/// Releases GIL via `release_gil` during CPU-bound zstd compression.
 #[pyfunction]
 pub fn compress_page_dict(data: &[u8], dict_id: u32) -> PyResult<Vec<u8>> {
-    compress_page_with_dict_impl(data, dict_id)
-        .map_err(|e| pyo3::exceptions::PyValueError::new_err(format!("compress_page_dict: {}", e)))
+    use crate::gil::release_gil;
+    Python::attach(|py| {
+        release_gil(py, || {
+            compress_page_with_dict_impl(data, dict_id)
+                .map_err(|e| pyo3::exceptions::PyValueError::new_err(format!("compress_page_dict: {}", e)))
+        })
+    })
 }
 
 // ---------------------------------------------------------------------------
@@ -404,21 +429,29 @@ pub fn compress_page_dict(data: &[u8], dict_id: u32) -> PyResult<Vec<u8>> {
 ///
 /// Returns:
 ///   bytes — lz4 frame compressed data
+///
+/// ## GIL Handling
+/// Releases GIL via `release_gil` during CPU-bound lz4 compression.
 #[pyfunction]
 pub fn lz4_compress_raw(data: &[u8]) -> PyResult<Vec<u8>> {
+    use crate::gil::release_gil;
     if data.is_empty() {
         return Ok(Vec::new());
     }
-    // lz4_flex frame format — appends nothing extra, self-contained.
-    match lz4_flex::compress_prepend_size(data) {
-        out if out.len() < data.len() => {
-            // Strip the 4-byte little-endian size prefix (lz4_flex always prepends it).
-            // Safe: size prefix is exactly 4 bytes at the start.
-            Ok(out[4..].to_vec())
-        }
-        // Compression didn't help — store raw
-        out => Ok(out[4..].to_vec()),
-    }
+    Python::attach(|py| {
+        release_gil(py, || {
+            // lz4_flex frame format — appends nothing extra, self-contained.
+            match lz4_flex::compress_prepend_size(data) {
+                out if out.len() < data.len() => {
+                    // Strip the 4-byte little-endian size prefix (lz4_flex always prepends it).
+                    // Safe: size prefix is exactly 4 bytes at the start.
+                    Ok(out[4..].to_vec())
+                }
+                // Compression didn't help — store raw
+                out => Ok(out[4..].to_vec()),
+            }
+        })
+    })
 }
 
 /// Decompress lz4 frame bytes back to original.
@@ -431,19 +464,27 @@ pub fn lz4_compress_raw(data: &[u8]) -> PyResult<Vec<u8>> {
 ///
 /// Returns:
 ///   bytes — decompressed original data
+///
+/// ## GIL Handling
+/// Releases GIL via `release_gil` during CPU-bound lz4 decompression.
 #[pyfunction]
 pub fn lz4_decompress_raw(compressed: &[u8]) -> PyResult<Vec<u8>> {
+    use crate::gil::release_gil;
     if compressed.is_empty() {
         return Ok(Vec::new());
     }
-    // Re-add the 4-byte size prefix that lz4_flex::decompress_size_prepended expects.
-    let size = compressed.len() as u32;
-    let mut wire = Vec::with_capacity(4 + compressed.len());
-    wire.extend_from_slice(&size.to_le_bytes());
-    wire.extend_from_slice(compressed);
+    Python::attach(|py| {
+        release_gil(py, || {
+            // Re-add the 4-byte size prefix that lz4_flex::decompress_size_prepended expects.
+            let size = compressed.len() as u32;
+            let mut wire = Vec::with_capacity(4 + compressed.len());
+            wire.extend_from_slice(&size.to_le_bytes());
+            wire.extend_from_slice(compressed);
 
-    lz4_flex::decompress_size_prepended(&wire)
-        .map_err(|e| pyo3::exceptions::PyValueError::new_err(format!("lz4_decompress_raw: {}", e)))
+            lz4_flex::decompress_size_prepended(&wire)
+                .map_err(|e| pyo3::exceptions::PyValueError::new_err(format!("lz4_decompress_raw: {}", e)))
+        })
+    })
 }
 
 /// Compress a JSONL batch: join lines with '\n', compress with lz4 frame.
@@ -456,21 +497,36 @@ pub fn lz4_decompress_raw(compressed: &[u8]) -> PyResult<Vec<u8>> {
 ///
 /// Returns:
 ///   bytes — lz4 frame containing all lines joined by newline
+///
+/// ## GIL Handling
+/// Releases GIL via `release_gil` during CPU-bound lz4 compression.
 #[pyfunction]
 pub fn lz4_compress_jsonl_batch(lines: Vec<Vec<u8>>) -> PyResult<Vec<u8>> {
+    use crate::gil::release_gil;
     if lines.is_empty() {
         return Ok(Vec::new());
     }
-    // Join with '\n' — JSONL standard delimiter
-    let total: usize = lines.iter().map(|l| l.len()).sum::<usize>() + lines.len() - 1;
-    let mut combined = Vec::with_capacity(total);
-    for (i, line) in lines.iter().enumerate() {
-        if i > 0 {
-            combined.push(b'\n');
-        }
-        combined.extend_from_slice(line);
-    }
-    lz4_compress_raw(&combined)
+    Python::attach(|py| {
+        release_gil(py, || {
+            // Join with '\n' — JSONL standard delimiter
+            let total: usize = lines.iter().map(|l| l.len()).sum::<usize>() + lines.len() - 1;
+            let mut combined = Vec::with_capacity(total);
+            for (i, line) in lines.iter().enumerate() {
+                if i > 0 {
+                    combined.push(b'\n');
+                }
+                combined.extend_from_slice(line);
+            }
+            // Direct lz4 compression (avoid nested Python::attach)
+            match lz4_flex::compress_prepend_size(&combined) {
+                out if out.len() < combined.len() => {
+                    // Strip the 4-byte little-endian size prefix
+                    Ok(out[4..].to_vec())
+                }
+                out => Ok(out[4..].to_vec()),
+            }
+        })
+    })
 }
 
 /// Decompress an lz4-compressed JSONL batch into individual lines.
@@ -482,17 +538,32 @@ pub fn lz4_compress_jsonl_batch(lines: Vec<Vec<u8>>) -> PyResult<Vec<u8>> {
 ///
 /// Returns:
 ///   list of bytes — individual JSON lines
+///
+/// ## GIL Handling
+/// Releases GIL via `release_gil` during CPU-bound lz4 decompression.
 #[pyfunction]
 pub fn lz4_decompress_jsonl_batch(compressed: &[u8]) -> PyResult<Vec<Vec<u8>>> {
+    use crate::gil::release_gil;
     if compressed.is_empty() {
         return Ok(Vec::new());
     }
-    let decompressed = lz4_decompress_raw(compressed)?;
-    let lines: Vec<Vec<u8>> = decompressed
-        .split(|&b| b == b'\n')
-        .map(|s| s.to_vec())
-        .collect();
-    Ok(lines)
+    Python::attach(|py| {
+        release_gil(py, || {
+            // Re-add the 4-byte size prefix
+            let size = compressed.len() as u32;
+            let mut wire = Vec::with_capacity(4 + compressed.len());
+            wire.extend_from_slice(&size.to_le_bytes());
+            wire.extend_from_slice(compressed);
+
+            let decompressed = lz4_flex::decompress_size_prepended(&wire)
+                .map_err(|e| pyo3::exceptions::PyValueError::new_err(format!("lz4_decompress_jsonl_batch: {}", e)))?;
+            let lines: Vec<Vec<u8>> = decompressed
+                .split(|&b| b == b'\n')
+                .map(|s| s.to_vec())
+                .collect();
+            Ok(lines)
+        })
+    })
 }
 
 /// Register compression functions with a Python module.
@@ -504,6 +575,10 @@ pub fn register_functions(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(register_zstd_dict, m)?)?;
     m.add_function(wrap_pyfunction!(unregister_zstd_dict, m)?)?;
     m.add_function(wrap_pyfunction!(compress_page_dict, m)?)?;
+    m.add_function(wrap_pyfunction!(lz4_compress_raw, m)?)?;
+    m.add_function(wrap_pyfunction!(lz4_decompress_raw, m)?)?;
+    m.add_function(wrap_pyfunction!(lz4_compress_jsonl_batch, m)?)?;
+    m.add_function(wrap_pyfunction!(lz4_decompress_jsonl_batch, m)?)?;
     Ok(())
 }
 

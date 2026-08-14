@@ -474,22 +474,18 @@ class RIRCorrelatorAdapter:
 
         Returns CanonicalFinding list with source_type="rir_correlation".
         Stats snapshot updated after correlation run.
-        Uses get_running_loop + run_until_complete, falls back to new_event_loop
-        only when no loop is running (GHOST_INVARIANTS compliant).
+        SCAVENGER-FIX: Uses run_sync_async() instead of get_running_loop + run_until_complete.
+        run_sync_async() uses asyncio.Runner() (PEP 654) for Python 3.11+ and handles
+        both running and non-running event loop cases.
         CancelledError propagates.
         """
-        import asyncio
+        from hledac.universal.utils.sync_bridge import run_sync_async
         try:
-            loop = asyncio.get_running_loop()
-            result = loop.run_until_complete(correlate_rir_signals(findings, query))
-        except RuntimeError:
-            loop = asyncio.new_event_loop()
-            try:
-                result = loop.run_until_complete(correlate_rir_signals(findings, query))
-            finally:
-                loop.close()
+            result = run_sync_async(correlate_rir_signals(findings, query))
         except asyncio.CancelledError:
             raise
+        except Exception:
+            return []
         self._stats_snapshot = {'lookups_performed': result.queried_count, 'cache_hits': result.cache_hits, 'correlations_produced': len(result.correlations)}
         return to_canonical_findings(list(result.correlations), query)
 

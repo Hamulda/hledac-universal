@@ -166,7 +166,10 @@ class BoundedStageQueue(Generic[T_out]):
     stage_name: str
     _base_maxsize: int = field(default=0, repr=False)
     _uma_state: str = field(default="ok", repr=False)
-    _queue: asyncio.Queue[T_out] = field(default_factory=lambda: asyncio.Queue(maxsize=0))
+    # D6 FIX: Default maxsize=512 instead of unbounded (maxsize=0).
+    # __post_init__ will replace with self.maxsize anyway, but this avoids
+    # creating a temporary unbounded queue object.
+    _queue: asyncio.Queue[T_out] = field(default_factory=lambda: asyncio.Queue(maxsize=512))
     _dropped: int = field(default=0, repr=False)
     _lock: asyncio.Lock = field(default_factory=asyncio.Lock)
 

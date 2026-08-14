@@ -54,7 +54,6 @@
 use pyo3::prelude::*;
 use pyo3::types::PyList;
 use rayon::prelude::*;
-use regex_automata::Regex as RegexSimple;
 use regex_automata::meta::Regex;
 use std::collections::HashSet;
 
@@ -125,9 +124,9 @@ static IOC_META_REGEX_G2: std::sync::LazyLock<Result<Regex, regex_automata::meta
 /// Uses separate compilation (not build_many) because the full RFC 4291 pattern exceeds
 /// regex-automata's NFA size limit even at 50 MB.
 /// F1.2 fix: Result type instead of .expect() for fail-soft behavior.
-static IPV6_REGEX: std::sync::LazyLock<Result<RegexSimple, regex::Error>> =
+static IPV6_REGEX: std::sync::LazyLock<Result<Regex, regex_automata::meta::BuildError>> =
     std::sync::LazyLock::new(|| {
-        RegexSimple::new(concat!(
+        Regex::new(concat!(
             r"(?i)^(?:[0-9a-f]{1,4}:){7}[0-9a-f]{1,4}$|",
             r"^(?:[0-9a-f]{1,4}:){1,7}:$|",
             r"^(?:[0-9a-f]{1,4}:){1,6}:[0-9a-f]{1,4}$|",

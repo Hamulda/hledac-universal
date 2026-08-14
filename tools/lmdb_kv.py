@@ -49,9 +49,9 @@ class LMDBKVStore:
 
     Uses buffers=True for zero-copy reads and orjson for fast serialization.
     """
-    __slots__ = tuple(('_env', '_finalizer', '_map_size', '_max_keys', '_path'))
+    __slots__ = tuple(('_env', '_finalizer', '_map_size', '_max_keys', '_path', '_critical'))
 
-    def __init__(self, path: str | Path | None=None, map_size: int=DEFAULT_MAP_SIZE, max_keys: int=MAX_KEYS):
+    def __init__(self, path: str | Path | None=None, map_size: int=DEFAULT_MAP_SIZE, max_keys: int=MAX_KEYS, critical: bool=False):
         """
         Initialize LMDB KV store.
 
@@ -60,6 +60,9 @@ class LMDBKVStore:
                   are available, uses SPRINT_LMDB_ROOT / "kvstore.lmdb".
             map_size: Maximum database size in bytes
             max_keys: Maximum number of keys (for bounded storage)
+            critical: If True, use synchronous writes for durability.
+                      WAL stores should use critical=True to avoid crash-consistency issues
+                      when HLEDAC_WAL_UNIFIED=0 opt-out path is used.
         """
         if not LMDB_AVAILABLE:
             raise ImportError('lmdb package not available')
@@ -74,11 +77,24 @@ class LMDBKVStore:
         self._path.mkdir(parents=True, exist_ok=True)
         self._map_size = map_size
         self._max_keys = max_keys
-        if _USE_CANONICAL and open_lmdb is not None:
-            self._env = open_lmdb(self._path, map_size=map_size, max_dbs=1, writemap=False, metasync=True, readahead=False)
+        self._critical = critical
+        
+        # F1 FIX: Use critical parameter for sync behavior
+        # critical=True → sync=True, metasync=True, writemap=False (safe, durable)
+        # critical=False → sync=False, metasync=False, writemap=True (fast, crash-risk)
+        if critical:
+            sync, metasync, writemap = True, True, False
         else:
-            self._env = lmdb.open(str(self._path), map_size=map_size, max_dbs=1, writemap=False, metasync=True, readahead=False)
-        logger.info(f'LMDB KV store initialized at {self._path}')
+            sync, metasync, writemap = False, False, True
+            
+        if _USE_CANONICAL and open_lmdb is not None:
+            self._env = open_lmdb(self._path, map_size=map_size, max_dbs=1, 
+                                   writemap=writemap, metasync=metasync, readahead=False)
+        else:
+            self._env = lmdb.open(str(self._path), map_size=map_size, max_dbs=1,
+                                   writemap=writemap, metasync=metasync, readahead=False,
+                                   sync=sync)
+        logger.info(f'LMDB KV store initialized at {self._path} (critical={critical})')
         # F264: Use weakref.finalize for deterministic LMDB cleanup
         self._finalizer = weakref.finalize(self, self._cleanup)
 

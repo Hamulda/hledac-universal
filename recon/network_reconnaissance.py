@@ -45,7 +45,7 @@ from datetime import UTC, datetime
 from enum import Enum
 from typing import Any, Literal
 from hledac.universal.utils.msgspec_json import loads as _msgspec_loads
-import dns.asyncresolver
+import dns.resolver  # E3 FIX: dns.asyncresolver removed in dnspython 3.x; use dns.resolver (async-aware in 3.x)
 import httpx
 from hledac.universal.transport.session_pool import session_pool
 from hledac.universal.utils.asyncx import parallel_ok, parallel
@@ -139,7 +139,8 @@ class DNSEnumerator:
     __slots__ = tuple(('resolver',))
 
     def __init__(self, nameservers: list[str] | None=None):
-        self.resolver = dns.asyncresolver.Resolver()
+        # E3 FIX: dns.asyncresolver.Resolver() → dns.resolver.Resolver() (dnspython 3.x compatible)
+        self.resolver = dns.resolver.Resolver()
         if nameservers:
             self.resolver.nameservers = nameservers
         self.resolver.timeout = 5
@@ -780,7 +781,8 @@ class PassiveDNSClient:
     __slots__ = tuple(('_resolver',))
 
     def __init__(self) -> None:
-        self._resolver = dns.asyncresolver.Resolver()
+        # E3 FIX: dns.asyncresolver.Resolver() → dns.resolver.Resolver() (dnspython 3.x compatible)
+        self._resolver = dns.resolver.Resolver()
         self._resolver.nameservers = self._RESOLVERS
         self._resolver.timeout = self._TIMEOUT_S
         self._resolver.lifetime = self._TIMEOUT_S
@@ -903,12 +905,16 @@ class DHTProbe:
     _MAX_NODES = 50
 
     async def bootstrap_nodes(self) -> list[tuple[str, int]]:
-        """Resolve bootstrap nodes přes DNS."""
+        """Resolve bootstrap nodes přes DNS.
+        
+        E3 FIX: Uses dns.resolver (dnspython 3.x compatible) instead of dns.asyncresolver.
+        In dnspython 3.x, dns.resolver.Resolver() is natively async-aware.
+        """
         nodes: list[tuple[str, int]] = []
         for host, port in self._BOOTSTRAP:
             try:
-                import dns.asyncresolver
-                r = dns.asyncresolver.Resolver()
+                # E3 FIX: dns.resolver.Resolver() works in both 2.x (sync) and 3.x (async-aware)
+                r = dns.resolver.Resolver()
                 async with asyncio.timeout(3.0):
                     ans = await r.resolve(host, 'A')
                 ips = [str(a) for a in ans]
@@ -987,7 +993,8 @@ async def resolve_cname_chain(domain: str, max_depth: int=10) -> list[CNAMERecor
     current = domain
     seen: set[str] = set()
     try:
-        resolver = dns.asyncresolver.Resolver()
+        # E3 FIX: dns.asyncresolver.Resolver() → dns.resolver.Resolver() (dnspython 3.x compatible)
+        resolver = dns.resolver.Resolver()
         resolver.nameservers = ['1.1.1.1', '8.8.8.8']
         resolver.timeout = 3.0
         resolver.lifetime = 10.0
@@ -1001,7 +1008,8 @@ async def resolve_cname_chain(domain: str, max_depth: int=10) -> list[CNAMERecor
                 cname_value = str(answers[0]).rstrip('.')
                 chain.append(CNAMERecord(source=current, target=cname_value, ttl=answers.ttl))
                 current = cname_value
-            except (TimeoutError, dns.asyncresolver.NoAnswer, dns.asyncresolver.NXDOMAIN):
+            except (TimeoutError, dns.resolver.NoAnswer, dns.resolver.NXDOMAIN):
+                # E3 FIX: dns.asyncresolver.* → dns.resolver.* (dnspython 3.x compatible)
                 break
     except Exception as e:
         logger.debug(f'resolve_cname_chain({domain}): {e}')

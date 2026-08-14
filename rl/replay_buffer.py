@@ -4,20 +4,15 @@ Replay buffer pro MARL s ukládáním do numpy polí (bezpečné, serializovatel
 from pathlib import Path
 
 import numpy as np
-_mlx_core_mod = None
-_MLX_CORE_AVAILABLE = False
 
+# C1-X FIX: Import MLX_AVAILABLE from SSOT (zero-import detection)
+from hledac.universal.utils.mlx_memory import MLX_AVAILABLE
+
+# Lazy accessor for mlx.core — uses centralized get_mx() from SSOT
 def _get_mlx_core():
     """Lazily import mlx.core, returning None if unavailable."""
-    global _mlx_core_mod, _MLX_CORE_AVAILABLE
-    if _mlx_core_mod is None:
-        try:
-            import mlx.core as _mlx_core_mod
-            _MLX_CORE_AVAILABLE = True
-        except ImportError:
-            _mlx_core_mod = None
-            _MLX_CORE_AVAILABLE = False
-    return _mlx_core_mod
+    from hledac.universal.utils.mlx_memory._core import get_mx as _get_mx_from_core
+    return _get_mx_from_core()
 
 class MARLReplayBuffer:
     __slots__ = tuple(('actions', 'capacity', 'dones', 'n_agents', 'next_states', 'pos', 'rewards', 'size', 'state_dim', 'states'))

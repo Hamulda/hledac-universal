@@ -56,7 +56,7 @@ TOR_AVAILABLE = _HTTpx_SOCKS_AVAILABLE
 _RUST_URL_SET_AVAILABLE = False
 _UrlSet = None
 try:
-    from hledac.universal import rust
+    from hledac.universal.hledac.universal import rust
     if hasattr(rust, "url_set"):
         _RUST_URL_SET_AVAILABLE = True
         _UrlSet = rust.url_set.MmapUrlSet
@@ -509,7 +509,10 @@ class DarkWebCrawler:
             return None
 
     def _parse_content(self, url: str, html: str) -> DarkWebContent:
-        """Parse HTML content and extract intelligence."""
+        """Parse HTML content and extract intelligence.
+
+        G1 FIX: beautifulsoup4 REMOVED — selectolax primary, regex fallback.
+        """
         if SELECTOLAX_AVAILABLE:
             try:
                 tree = _SelectolaxHTMLParser(html)
@@ -520,32 +523,42 @@ class DarkWebCrawler:
                 title = title_tag.text(strip=True) if title_tag else None
                 desc_tag = tree.css_first("meta[name='description']")
                 meta_description = desc_tag.get('content', '') if desc_tag else ''
-            except Exception:
-                from bs4 import BeautifulSoup
-                soup = BeautifulSoup(html, 'html.parser')
-                for script in soup(['script', 'style']):
-                    script.decompose()
-                text = soup.get_text(separator=' ', strip=True)
-                title_tag = soup.find('title')
-                title = title_tag.get_text(strip=True) if title_tag else None
-                desc_tag = soup.find('meta', attrs={'name': 'description'})
-                meta_description = desc_tag.get('content', '') if desc_tag else ''
+            except Exception:  # noqa: BLE001
+                # Fallback to regex (stdlib only)
+                text, title, meta_description = self._regex_parse_html(html)
         else:
-            from bs4 import BeautifulSoup
-            soup = BeautifulSoup(html, 'html.parser')
-            for script in soup(['script', 'style']):
-                script.decompose()
-            text = soup.get_text(separator=' ', strip=True)
-            title_tag = soup.find('title')
-            title = title_tag.get_text(strip=True) if title_tag else None
-            desc_tag = soup.find('meta', attrs={'name': 'description'})
-            meta_description = desc_tag.get('content', '') if desc_tag else ''
+            # selectolax not available — regex-only path
+            text, title, meta_description = self._regex_parse_html(html)
         crypto_addresses = {'bitcoin': self.BTC_ADDRESS_PATTERN.findall(text), 'monero': self.XMR_ADDRESS_PATTERN.findall(text)}
         emails = self.EMAIL_PATTERN.findall(text)
         pgp_blocks = self.PGP_BLOCK_PATTERN.findall(html)
         magnet_links = self.MAGNET_PATTERN.findall(text)
         metadata = {'meta_description': meta_description, 'meta_keywords': '', 'server': ''}
         return DarkWebContent(url=url, content_hash=hashlib.sha256(html.encode()).hexdigest(), content_type='text/html', title=title, text_content=text, extracted_at=time.time(), metadata=metadata, cryptocurrency_addresses=crypto_addresses, emails=emails, pgp_blocks=[p[0] for p in pgp_blocks], magnet_links=magnet_links, raw_html=html)
+
+    def _regex_parse_html(self, html: str) -> tuple[str, str | None, str]:
+        """Parse HTML using regex only (no external deps).
+
+        G1 FIX: Replaces beautifulsoup4 fallback.
+        Returns (text, title, meta_description).
+        """
+        import re
+        # Remove scripts, styles, noscripts
+        text = re.sub(r'<script[^>]*>.*?</script>', '', html, flags=re.DOTALL | re.IGNORECASE)
+        text = re.sub(r'<style[^>]*>.*?</style>', '', text, flags=re.DOTALL | re.IGNORECASE)
+        text = re.sub(r'<noscript[^>]*>.*?</noscript>', '', text, flags=re.DOTALL | re.IGNORECASE)
+        # Extract title
+        title_match = re.search(r'<title[^>]*>([^<]+)</title>', text, re.IGNORECASE)
+        title = title_match.group(1).strip() if title_match else None
+        # Extract meta description
+        desc_match = re.search(r'<meta[^>]+name=["\']description["\'][^>]+content=["\']([^"\']+)["\']', html, re.IGNORECASE)
+        if not desc_match:
+            desc_match = re.search(r'<meta[^>]+content=["\']([^"\']+)["\'][^>]+name=["\']description["\']', html, re.IGNORECASE)
+        meta_description = desc_match.group(1).strip() if desc_match else ''
+        # Strip remaining tags
+        text = re.sub(r'<[^>]+>', ' ', text)
+        text = re.sub(r'\s+', ' ', text).strip()
+        return text, title, meta_description
 
     async def extract_and_encode_images(self, html: str, page_url: str, sprint_id: str, fetch_coordinator, vision_encoder, vector_store) -> list[dict]:
         """
@@ -575,14 +588,19 @@ class DarkWebCrawler:
         return results
 
     def _parse_html_images(self, html: str, page_url: str) -> list:
-        """Parse HTML and extract raw image tags."""
+        """Parse HTML and extract raw image tags.
+
+        G1 FIX: beautifulsoup4 REMOVED — selectolax primary, regex fallback.
+        Returns list of image src strings (compatible with selectolax node attributes).
+        """
         try:
             if SELECTOLAX_AVAILABLE:
                 tree = _SelectolaxHTMLParser(html)
                 return tree.css('img[src]')
-            from bs4 import BeautifulSoup
-            soup = BeautifulSoup(html, 'html.parser')
-            return soup.find_all('img', src=True)
+            # Fallback: regex-only (stdlib)
+            import re
+            pattern = re.compile(r'<img[^>]+src=["\']([^"\']+)["\']', re.IGNORECASE)
+            return [m.group(1) for m in pattern.finditer(html) if m.group(1)]
         except Exception as exc:
             logger.warning('HTML parse failed for %s: %s', page_url, exc)
             return []
@@ -701,7 +719,10 @@ class DarkWebCrawler:
             return False
 
     def _extract_links(self, html: str, base_domain: str) -> list[str]:
-        """Extract .onion links from content."""
+        """Extract .onion links from content.
+
+        G1 FIX: beautifulsoup4 REMOVED — selectolax primary, regex fallback.
+        """
         links: list[str] = []
         seen: set[str] = set()
         if SELECTOLAX_AVAILABLE:
@@ -719,10 +740,11 @@ class DarkWebCrawler:
                 return links
             except Exception:  # noqa: BLE001
                 pass
-        from bs4 import BeautifulSoup
-        soup = BeautifulSoup(html, 'html.parser')
-        for link in soup.find_all('a', href=True):
-            href = link['href']
+        # Fallback: regex-only (stdlib)
+        import re
+        pattern = re.compile(r'<a[^>]+href=["\']([^"\']+)["\']', re.IGNORECASE)
+        for match in pattern.finditer(html):
+            href = match.group(1)
             parsed = urlparse(href)
             if not parsed.netloc:
                 href = urljoin(f'http://{base_domain}', href)

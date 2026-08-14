@@ -103,7 +103,9 @@ class WALManager:
             self._wal_lmdb = None
         else:
             from hledac.universal.tools.lmdb_kv import LMDBKVStore
-            self._wal_lmdb = LMDBKVStore(path=self._wal_path, map_size=self._map_size)
+            # F1 FIX: WAL data must be crash-consistent even in opt-out path
+            # critical=True ensures sync=True, metasync=True, writemap=False
+            self._wal_lmdb = LMDBKVStore(path=self._wal_path, map_size=self._map_size, critical=True)
         self._initialized = True
         self._ensure_cleanup()
 

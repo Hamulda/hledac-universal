@@ -33,6 +33,8 @@ from __future__ import annotations
 import asyncio
 import logging
 import threading
+
+from hledac.universal.core.locks import LockCategory, make_lock
 import time
 from dataclasses import dataclass, field
 import msgspec
@@ -53,7 +55,7 @@ logger = logging.getLogger(__name__)
 
 # Module-level bridge singleton (lazily constructed)
 _BRIDGE: "OtelBridge | None" = None
-_BRIDGE_LOCK = threading.Lock()
+_BRIDGE_LOCK = make_lock(LockCategory.METRICS, "python_otel_bridge._BRIDGE_LOCK")
 
 
 # ── Lazy OTel imports (M1 8GB RAM budget) ────────────────────────────────────

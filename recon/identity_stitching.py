@@ -1238,10 +1238,17 @@ class IdentityStitchingEngine:
 
         # Fallback to TF-IDF cosine similarity
         all_texts = texts1 + texts2
+        # G2 FIX: scikit-learn is in [ml] extra. Without it, falls back to
+        # simple lexical similarity (word overlap).
         try:
             from sklearn.feature_extraction.text import TfidfVectorizer
             from sklearn.metrics.pairwise import cosine_similarity
-        except ImportError:
+        except ImportError as e:
+            if "sklearn" in str(e) or "scikit-learn" in str(e):
+                logger.debug(
+                    f'TF-IDF similarity unavailable: scikit-learn not installed. '
+                    f'Install with: pip install hledac-universal[ml]'
+                )
             return self._lexical_similarity(texts1, texts2)
         if len(all_texts) >= 2:
             try:

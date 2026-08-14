@@ -561,7 +561,9 @@ class BoundedInferencePipeline:
                 self._update_ema('inf_avg_ms', inf_ms)
 
                 # Post-inference cleanup (throttled Metal clear)
-                self._engine._mlx_clear_and_timestamp()
+                # C2b-FIX: _mlx_clear_and_timestamp() calls mx.eval([]) which blocks
+                # the event loop for 1-50ms. Offload to thread pool.
+                await asyncio.to_thread(self._engine._mlx_clear_and_timestamp)
 
                 # Backpressure: blocks when post queue is full
                 await self._inf_to_post.put(item)

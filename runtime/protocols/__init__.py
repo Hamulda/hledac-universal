@@ -60,7 +60,7 @@ from .analytics_protocol import AnalyticsProtocol
 from .stix_protocol import StixProtocol
 
 # Scheduler v2 protocols (F350M-R)
-from runtime.scheduler_v2.protocol import AcquisitionOrchestratorProtocol, SchedulerProtocol
+from hledac.universal.runtime.scheduler_v2.protocol import AcquisitionOrchestratorProtocol, SchedulerProtocol
 
 # Re-export all protocols for convenience
 from .storage_protocol import StorageProtocol

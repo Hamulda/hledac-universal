@@ -37,8 +37,24 @@ def evidence_log_init(
     """Call async initialize() on EvidenceLog and record WARMUP event.
 
     Idempotent: safe to call multiple times on the same instance.
-    Fail-soft: any exception is swallowed so initialization failures
-    never block the sprint.
+
+    FAIL-SOFT POLICY (intentional):
+        EvidenceLog initialization failures are swallowed intentionally.
+        Rationale: EvidenceLog is a non-critical observability service.
+        - Missing evidence events do NOT compromise sprint correctness
+        - Sprint must continue even if evidence persistence fails
+        - User can debug evidence issues post-hoc from logs
+        - Blocking sprint on evidence failure would hide the real issue
+
+    This is NOT the same as the A7 antipattern:
+        - A7 was about muffled ROOT-CAUSE during bootstrap of critical services
+        - Here we have optional SERVICE failure that doesn't affect core operation
+        - The distinction: critical vs optional, bootstrap vs runtime
+
+    NOTE: The exception handling uses bare `except Exception` because:
+        1. We genuinely want to catch ALL initialization errors
+        2. We explicitly do NOT want to re-raise anything
+        3. Logging would pollute output without providing actionable info
     """
     # MODERN-06 FIX: Ensure event loop is always closed to prevent leaks.
     # Previously, newly created loops were never closed, causing resource leaks.

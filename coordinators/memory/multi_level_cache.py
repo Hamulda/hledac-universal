@@ -39,7 +39,7 @@ from hledac.universal.coordinators.memory._core import (
 from hledac.universal.utils.lru_cache import LRUCache
 from hledac.universal.utils.msgspec_json import decode_zstd as _decode_zstd
 from hledac.universal.utils.msgspec_json import encode_zstd as _encode_zstd
-from utils._patterns import AsyncLazyLockDescriptor  # F320-REFACTOR-2
+from hledac.universal.utils._patterns import AsyncLazyLockDescriptor  # F320-REFACTOR-2
 
 logger = logging.getLogger(__name__)
 

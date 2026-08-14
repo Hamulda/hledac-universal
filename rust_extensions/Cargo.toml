@@ -35,6 +35,7 @@ rayon = "1.10"
 # Provides: GraphMap, UnGraph, DiGraph, NodeIndex, algo::kosaraju_scc
 petgraph = { version = "0.6", features = ["serde-1"] }
 regex-automata = { version = "0.4", default-features = false, features = ["meta"] }
+regex = "1.11"  # For html_parse.rs and simple regex operations
 url = "2"
 lol_html = "2.9"
 xml = "1.3"
@@ -181,11 +182,19 @@ block2 = { version = "0.6", optional = true }
 objc2-foundation = { version = "0.2", optional = true }
 
 # SILICON-06: coreml — CoreML model loading, compilation, and ANE inference.
+# NEXTGEN-05: Rust-native CoreML FFI — replaces Python bridge with direct CoreML C API.
 # Replaces the empty `ane` feature stub with real CoreML bindings from Rust.
 # ANE (Apple Neural Engine) uses dedicated memory — does not compete with main RAM.
 # M1 8GB: ~3 MB compile, models loaded from disk on-demand, released after use.
+#
+# Key APIs:
+# - coreml::Model::load_from_url() — load .mlmodelc bundle
+# - coreml::ModelConfiguration::new().with_compute_units(ComputeUnits::NeuralEngine)
+# - coreml::MultiArray::new_f32() — create input tensor
+# - model.predict_with_options() — run inference
+#
 # Python fallback: coremltools + ANE via brain/ane_engine.py.
-coreml = { version = "0.2", optional = true }
+coreml = { version = "0.3", optional = true }
 
 # SILICON-01: Metal GPU compute — opportunistic hash cracking during I/O wait.
 # macOS-only (Metal.framework). ~45s compile, ~3 MB dylib.
@@ -212,6 +221,11 @@ whisper-rs = { version = "0.13", optional = true }
 # Used by whisper.rs for reading 16kHz mono WAV audio samples.
 hound = { version = "3.5", optional = true }
 
+# NEXTGEN-01: HTTP client for Clearnet/Git/S3/CT Log via reqwest
+# Feature-gated: ~5MB additional compile, M1 8GB safe
+# Provides: Native HTTP/1.1, HTTP/2 support with connection pooling
+# Note: HTTP/3 via quinn feature (already declared above)
+# 
 # NEXTGEN-01: Native P2P harvesters (IPFS/TOR/I2P) in Tokio runtime
 # NOTE: These dependencies are intentionally minimal to keep M1 8GB compile time low.
 # Full libp2p with all transports adds ~10MB compile; we use only what's needed.
@@ -231,9 +245,14 @@ bincode = { version = "2.0", optional = true, features = ["derive", "serde"] }
 sha1 = { version = "0.10", optional = true }
 # reqwest: HTTP client for Tor consensus scraping (directory authorities)
 # M1 8GB: ~2MB compile, ~500KB resident
+# Single reqwest declaration for both NEXTGEN-01 and p2p_harvest features
 reqwest = { version = "0.12", optional = true, default-features = false, features = [
     "json",
     "rustls-tls",
+    "brotli",
+    "gzip",
+    "deflate",
+    "zstd",
 ] }
 
 
@@ -355,6 +374,9 @@ full = ["core", "data", "graph", "advanced", "tls13", "pdf", "office", "quic", "
 
 # DEEP features: Forensics and Storage modules
 # deep_git: Git packfile forensics — mmap, streaming zlib, delta chains
+# NOTE (2026-08-14): git_forensics module is ORPHANED — no Python callers found.
+# Python's exposed_service_hunter.py has its own Git packfile analysis.
+# Module kept as dormant asset; re-wire if deep Git forensics needed.
 # M1 8GB: ~1MB compile, zero-copy mmap access
 deep_git = []
 
@@ -397,6 +419,7 @@ p2p_harvest = [
     "dep:arrow",
     "dep:sha1",
     "shared_tokio",
+    "dep:tracing",
 ]
 
 # [MODERN-07]: Shared Tokio runtime for all async modules.
@@ -496,7 +519,9 @@ ane = ["coreml_ane"]
 # ANE uses dedicated memory — does not compete with main RAM budget.
 # Python fallback: coremltools + brain/ane_engine.py for CoreML inference.
 coreml_ane = ["dep:coreml"]
-# SILICON-01: Metal GPU hash cracking — opportunistic during I/O wait
+# SILICON-01: Metal GPU compute — GPU hash cracking is DEPRECATED per D6.
+# metal_hashcrack module: NO Python callers found (2026-08-14 audit).
+# metal_compute module: Used by mlx_bridge for GPU matmul (active).
 # metal crate: ~45s compile, ~3 MB dylib, macOS-only (Metal.framework)
 # M1 8GB: GPU buffers bounded to 64 MB, released after each crack call
 # Python fallback: CPU NEON + Rayon hash cracking (always available)

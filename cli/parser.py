@@ -51,7 +51,10 @@ def main() -> int:
             return runner.run(async_main())
     except KeyboardInterrupt:
         return 130  # SIGINT
-    except (NameError, AttributeError, ImportError) as _e:
+    except ImportError as _e:
+        # Only ImportError is fatal — missing dependencies must abort
+        # NameError/AttributeError removed: Ruff F821/F811 now enabled,
+        # these are caught at lint time rather than swallowed at runtime
         from hledac.universal.runtime.sprint_entrypoint import _fatal
         _fatal(_e, code=3)  # logs _MAIN_FATAL + exits 3
 
@@ -89,7 +92,7 @@ async def dispatch_async(args: argparse.Namespace) -> int:
     if sub == "sprint" or sprint_target is not None:
         try:
             return await _dispatch_sprint_async(args)
-        except (NameError, AttributeError, ImportError):
+        except ImportError:
             raise  # propagate to main() → code 3
     elif sub == "pivot":
         return await _dispatch_pivot_async(args)
@@ -118,7 +121,7 @@ async def dispatch_async(args: argparse.Namespace) -> int:
 async def _dispatch_sprint_async(args: argparse.Namespace) -> int:
     """Run canonical sprint via ``core.__main__.run_sprint()``."""
     from hledac.universal.core.__main__ import run_sprint
-    from hledac.universal.runtime.sprint_entrypoint import SprintFlags
+    from hledac.universal.runtime.sprint_entrypoint import SprintFlags, dry_run_sprint
 
     logger = logging.getLogger(__name__)
     logger.info("[CLI] sprint: delegating to core.__main__.run_sprint()")
@@ -184,7 +187,7 @@ async def _dispatch_sprint_async(args: argparse.Namespace) -> int:
                 shutdown_event=shutdown_event,
             )
         return 0
-    except (NameError, AttributeError, ImportError) as _e:
+    except ImportError as _e:
         raise  # propagate to main() → code 3
     except SystemExit as _e:
         return _e.code if isinstance(_e.code, int) else 1

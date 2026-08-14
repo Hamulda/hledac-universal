@@ -7,10 +7,10 @@ LRU Cache Utilities — DEPRECATED
 
     Old import                              → New import
     ----------------------------------------------------------------
-    from utils.lru_cache import LRUCache    → from utils.cache import LRUCache
-    from utils.lru_cache import TTLCache    → from utils.cache import TTLCache
-    from utils.lru_cache import SlidingWindowKVCache → from utils.cache import SlidingWindowKVCache
-    from utils.lru_cache import lru_cache    → Use functools.lru_cache or async_cached
+    from hledac.universal.utils.lru_cache import LRUCache    → from utils.cache import LRUCache
+    from hledac.universal.utils.lru_cache import TTLCache    → from utils.cache import TTLCache
+    from hledac.universal.utils.lru_cache import SlidingWindowKVCache → from utils.cache import SlidingWindowKVCache
+    from hledac.universal.utils.lru_cache import lru_cache    → Use functools.lru_cache or async_cached
 
     The new location provides:
     - Unified cache package (utils/cache/)
@@ -30,9 +30,9 @@ from collections.abc import Callable
 from typing import Generic, TypeVar, cast
 
 # Re-export from new location for backward compatibility
-from utils.cache import LRUCache
-from utils.cache import SlidingWindowKVCache
-from utils.cache import TTLCache
+from hledac.universal.utils.cache import LRUCache
+from hledac.universal.utils.cache import SlidingWindowKVCache
+from hledac.universal.utils.cache import TTLCache
 
 __all__ = ["LRUCache", "TTLCache", "SlidingWindowKVCache", "lru_cache"]
 

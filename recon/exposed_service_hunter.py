@@ -43,7 +43,7 @@ from urllib.parse import urlparse
 import httpx
 from hledac.universal.core.concurrency import ConcurrencyCategory, get_semaphore
 from hledac.universal.transport.session_pool import session_pool
-from hledac.universal.utils.asyncx import parallel_ok
+from hledac.universal.utils.asyncx import parallel_ok, safe_wait_for
 from hledac.universal.utils._patterns import scan_parallel
 logger = logging.getLogger(__name__)
 
@@ -701,7 +701,7 @@ class RsyncScanner:
     async def _enumerate_modules(self, host: str) -> list[str]:
         """Enumerate rsync modules by connecting to daemon."""
         try:
-            reader, writer = await asyncio.wait_for(
+            reader, writer = await safe_wait_for(
                 asyncio.open_connection(host, self.RSYNC_PORT),
                 timeout=self.RSYNC_TIMEOUT
             )
@@ -737,7 +737,7 @@ class RsyncScanner:
         A module may not require auth but still deny file listing.
         """
         try:
-            reader, writer = await asyncio.wait_for(
+            reader, writer = await safe_wait_for(
                 asyncio.open_connection(host, self.RSYNC_PORT),
                 timeout=self.RSYNC_TIMEOUT
             )
@@ -3151,7 +3151,7 @@ async def banner_grabber(host: str, port: int, timeout: float = 5.0) -> str | No
     else:
         # Raw TCP banner
         try:
-            reader, writer = await asyncio.wait_for(
+            reader, writer = await safe_wait_for(
                 asyncio.open_connection(host, port),
                 timeout=timeout
             )
@@ -3164,7 +3164,7 @@ async def banner_grabber(host: str, port: int, timeout: float = 5.0) -> str | No
                     writer.write(b'QUIT\r\n')
                     await writer.drain()
 
-                banner = await asyncio.wait_for(reader.read(1024), timeout=timeout)
+                banner = await safe_wait_for(reader.read(1024), timeout=timeout)
                 return banner.decode('utf-8', errors='ignore').strip()
             finally:
                 writer.close()

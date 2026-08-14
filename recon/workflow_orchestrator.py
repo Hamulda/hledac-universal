@@ -22,7 +22,7 @@ import msgspec
 from datetime import UTC, datetime
 from typing import Any
 from hledac.universal.utils.asyncx import parallel_ok
-from utils.async_task import safe_create_task
+from hledac.universal.utils.async_task import safe_create_task
 from operator import attrgetter, itemgetter
 logger = logging.getLogger(__name__)
 MODULE_TIMEOUT = 60

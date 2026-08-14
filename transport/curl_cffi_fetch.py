@@ -16,29 +16,26 @@ This module implements the hybrid Python↔Rust stealth transport:
 ├─────────────────────────────────────────────────────────────────────────┤
 │  curl_cffi_fetch.py                                                    │
 │  - JA3 rotation pool (6 browser profiles: Chrome, Safari, Firefox)     │
-│  - TLS impersonation via rustls-ffi (curl_cffi backend)              │
-│  - HTTP/2 SETTINGS spoofing for Safari profiles                        │
+│  - TLS impersonation via rustls-ffi (curl_cffi backend)               │
+│  - HTTP/2 SETTINGS spoofing for Safari profiles                         │
 │  - Session pooling with LRU eviction                                   │
-│  - JA3 ban detection + exponential backoff retry                      │
+│  - JA3 ban detection + exponential backoff retry                       │
 └───────────────────────────────┬─────────────────────────────────────────┘
                                 │ async FFI (future_into_py)
-                                │ Arrow IPC (bulk transfer)
 ┌───────────────────────────────┴─────────────────────────────────────────┐
 │                    Rust Layer (I/O)                                     │
 ├─────────────────────────────────────────────────────────────────────────┤
-│  stealth_bridge.rs (MODERN-16)                                        │
-│  - DNS resolution bridge (→ dns.rs)                                   │
-│  - QUIC handshake bridge (→ quic.rs)                                  │
-│  - Network.framework bridge (→ nw_connection.rs)                       │
-│  - Arrow IPC for batch data transfer                                   │
+│  stealth_bridge.rs (MODERN-16)                                         │
+│  - DNS resolution via tokio::net::lookup_host                         │
 │                                                                         │
-│  async_runtime.rs                                                     │
+│  async_runtime.rs                                                      │
 │  - Shared Tokio runtime (4 workers, M1 8GB safe)                       │
-│                                                                         │
-│  dns.rs / quic.rs / nw_connection.rs                                   │
-│  - Raw I/O primitives                                                  │
-│  - DoH DNS, QUIC, TLS handshake                                        │
 └─────────────────────────────────────────────────────────────────────────┘
+
+NOTE: QUIC/HTTP3 is handled by http3_lane.py (separate module with its own
+      Rust adapters: QuinnRustlsTransportAdapter, NwQuicTransportAdapter).
+      Network.framework TCP is handled by nw_connection_lane.py (separate
+      module with NwConnectionLane adapter).
 
 ### Why curl_cffi STAYS in Python
 
@@ -54,21 +51,24 @@ This module implements the hybrid Python↔Rust stealth transport:
    INITIAL_WINDOW_SIZE=4,194,304 vs curl_cffi's default 65,535. This
    anti-bot fingerprinting is tied to the impersonation profiles.
 
-### What Rust DOES
+### What Rust DOES (in this module)
 
-1. **DNS resolution** — rust.dns.resolve_async_await() with DoH support
-2. **QUIC handshake** — rust.quic.fetch_async() for HTTP/3
-3. **Network.framework** — rust.nw_connection.fetch_async() on macOS
-4. **Arrow IPC** — Batch data transfer via arrow_batch_builder.rs
+1. **DNS resolution** — rust.stealth_bridge.dns_resolve_async() via
+   tokio::net::lookup_host (async FFI bridge)
+
+NOTE: QUIC/HTTP3 and Network.framework TCP are handled in separate modules:
+- QUIC/HTTP3 → http3_lane.py (NwQuicTransportAdapter, QuinnRustlsTransportAdapter)
+- Network.framework TCP → nw_connection_lane.py (NwConnectionLane)
 
 ### Async FFI Usage
 
 ```python
-# curl_cffi handles JA3, Rust handles DNS
+# curl_cffi handles JA3/TLS impersonation, Rust handles DNS only
 async def fetch_stealth(url: str) -> bytes:
-    # DNS via Rust (async FFI)
+    # DNS via Rust stealth_bridge (async FFI)
     host = extract_host(url)
-    ips = await rust.stealth_bridge.dns_resolve_async(host)
+    if _HAS_RUST_STEALTH_BRIDGE:
+        ips = await _RUST_STEALTH_BRIDGE.dns_resolve_async(host)
 
     # curl_cffi handles HTTP/2 + TLS impersonation (JA3)
     session = await get_curl_session(profile="chrome136")
@@ -80,10 +80,9 @@ async def fetch_stealth(url: str) -> bytes:
 ### Files
 
 - transport/curl_cffi_fetch.py — Python curl_cffi wrapper (THIS FILE)
-- rust_extensions/src/stealth_bridge.rs — Rust async FFI bridge
-- rust_extensions/src/dns.rs — Async DNS with DoH
-- rust_extensions/src/quic.rs — QUIC/HTTP3 via quinn+h3
-- rust_extensions/src/nw_connection.rs — Apple Network.framework
+- rust_extensions/src/stealth_bridge.rs — Rust DNS resolver via tokio
+- transport/http3_lane.py — QUIC/HTTP3 lane (separate module with own Rust adapters)
+- transport/nw_connection_lane.py — Network.framework TCP lane (separate module)
 
 Architecture (Issue 3.5 consolidation):
   - This file is the canonical module: session management + JA3 rotation + fetch API
@@ -366,7 +365,7 @@ def _get_webkit_h2_settings(profile: str) -> dict[str, Any] | None:
     
     try:
         # Lazy import of Rust extension (registered at top-level in hledac.rust)
-        from hledac.rust import get_preset_for_profile as _rust_get_webkit_preset
+        from hledac.universal.hledac.rust import get_preset_for_profile as _rust_get_webkit_preset
         preset = _rust_get_webkit_preset(profile)
         if preset is None:
             return None
@@ -1310,7 +1309,7 @@ def get_curl_cffi_runtime_status() -> dict[str, Any]:
     # NEXTGEN-02: Anti-analysis telemetry
     anti_analysis_telemetry = {}
     try:
-        from hledac.rust import rust as _hledac_rust
+        from hledac.universal.hledac.rust import rust as _hledac_rust
         if hasattr(_hledac_rust, 'anti_analysis') and _hledac_rust.anti_analysis is not None:
             anti_analysis_telemetry = _hledac_rust.anti_analysis.get_evasion_telemetry()
     except ImportError:
@@ -2006,7 +2005,7 @@ async def fetch_via_curl_cffi(
 
     # NEXTGEN-02: Rust anti_analysis quick probe (if available)
     try:
-        from hledac.rust import rust as _hledac_rust
+        from hledac.universal.hledac.rust import rust as _hledac_rust
         if hasattr(_hledac_rust, 'anti_analysis') and _hledac_rust.anti_analysis is not None:
             _probe_result = await _hledac_rust.anti_analysis.quick_probe_async(url)
             if _probe_result.abandoned:

@@ -5,7 +5,7 @@ Provides decorators and context managers for applying circuit-breaker pattern
 to existing async functions without major refactoring.
 
 Usage:
-    from utils.resilience.decorators import circuit_protected, with_circuit_breaker
+    from hledac.universal.utils.resilience.decorators import circuit_protected, with_circuit_breaker
 
     # As decorator
     @with_circuit_breaker("duckdb_ingest", severity=FailureSeverity.HIGH)
@@ -25,14 +25,16 @@ import logging
 from contextlib import asynccontextmanager
 from typing import Any, Callable, Optional, TypeVar
 
-from utils.resilience.circuit_breaker import (
+from hledac.universal.utils.asyncx import safe_create_task
+from hledac.universal.utils.resilience.circuit_breaker import (
     CircuitBreaker,
     CircuitBreakerConfig,
     CircuitBreakerOpen,
     CircuitBreakers,
     CircuitState,
 )
-from utils.resilience.degradation_modes import FailureSeverity
+from hledac.universal.utils.resilience.degradation_modes import FailureSeverity
+from hledac.universal.utils.sync_bridge import run_sync_async
 
 logger = logging.getLogger(__name__)
 
@@ -146,15 +148,17 @@ def with_circuit_breaker(
 
             @functools.wraps(fn)
             def sync_wrapper(*args: Any, **kwargs: Any) -> Any:
-                # Safe event loop access for sync wrapper
+                # D3-FIX: Use run_sync_async() instead of asyncio.run()
+                # run_sync_async() handles both running and non-running loop cases
+                # using asyncio.Runner() (PEP 654) for Python 3.11+ compatibility
                 try:
                     loop = asyncio.get_running_loop()
-                    # Can't use asyncio.run() in async context - defer to async wrapper
-                    raise RuntimeError("Sync wrapper called from async context")
+                    # Running loop - can't use asyncio.run(), use threadsafe
+                    can_exec = run_sync_async(circuit.can_execute())
                 except RuntimeError:
-                    # No running loop - safe to use asyncio.run()
-                    can_exec = asyncio.run(circuit.can_execute())
-                
+                    # No running loop - use run_sync_async (uses asyncio.Runner)
+                    can_exec = run_sync_async(circuit.can_execute())
+
                 if not can_exec:
                     if record_to_registry:
                         _record_rejection(name, severity)
@@ -175,11 +179,11 @@ def with_circuit_breaker(
                     circuit._record_failure()
                     try:
                         loop = asyncio.get_running_loop()
-                        # Can't await from sync - log and continue
-                        logger.warning("Circuit breaker check_open needs async context")
+                        # Running loop - use threadsafe submission
+                        run_sync_async(circuit._check_open())
                     except RuntimeError:
-                        # No running loop - safe to use asyncio.run()
-                        asyncio.run(circuit._check_open())
+                        # No running loop - use run_sync_async (uses asyncio.Runner)
+                        run_sync_async(circuit._check_open())
 
                     if record_to_registry:
                         _record_failure(name, severity, e)
@@ -194,20 +198,16 @@ def with_circuit_breaker(
 def _record_failure(component: str, severity: FailureSeverity, error: Exception) -> None:
     """Record failure to SprintHealthLedger if available."""
     try:
-        from utils.resilience import get_ledger
+        from hledac.universal.utils.resilience import get_ledger
         ledger = get_ledger()
-        task = asyncio.create_task(ledger.record_failure(
-            component=component,
-            severity=severity,
-            error=error,
-        ))
-        # Best-effort: add done callback to log if recording fails
-        def _log_if_failed(t: asyncio.Task) -> None:
-            try:
-                t.result()
-            except Exception as recorded_exc:
-                logger.warning("[REGISTRY] Failed to record failure: %s", recorded_exc)
-        task.add_done_callback(_log_if_failed)
+        safe_create_task(
+            ledger.record_failure(
+                component=component,
+                severity=severity,
+                error=error,
+            ),
+            name=f"resilience:record_failure:{component}",
+        )
     except Exception:
         pass
 
@@ -215,21 +215,17 @@ def _record_failure(component: str, severity: FailureSeverity, error: Exception)
 def _record_rejection(component: str, severity: FailureSeverity) -> None:
     """Record circuit breaker rejection."""
     try:
-        from utils.resilience import get_ledger
+        from hledac.universal.utils.resilience import get_ledger
         ledger = get_ledger()
         rejection_error = RuntimeError(f"Circuit breaker {component} is OPEN")
-        task = asyncio.create_task(ledger.record_failure(
-            component=component,
-            severity=severity,
-            error=rejection_error,
-        ))
-        # Best-effort: add done callback to log if recording fails
-        def _log_if_failed(t: asyncio.Task) -> None:
-            try:
-                t.result()
-            except Exception as recorded_exc:
-                logger.warning("[REGISTRY] Failed to record rejection: %s", recorded_exc)
-        task.add_done_callback(_log_if_failed)
+        safe_create_task(
+            ledger.record_failure(
+                component=component,
+                severity=severity,
+                error=rejection_error,
+            ),
+            name=f"resilience:record_rejection:{component}",
+        )
     except Exception:
         pass
 
@@ -258,7 +254,7 @@ def degradation_aware(
             @functools.wraps(fn)
             async def async_wrapper(*args: Any, **kwargs: Any) -> Any:
                 try:
-                    from utils.resilience import get_ledger
+                    from hledac.universal.utils.resilience import get_ledger
                     ledger = get_ledger()
                     action = ledger.get_component_action(component)
                 except Exception:
@@ -280,7 +276,7 @@ def degradation_aware(
             @functools.wraps(fn)
             def sync_wrapper(*args: Any, **kwargs: Any) -> Any:
                 try:
-                    from utils.resilience import get_ledger
+                    from hledac.universal.utils.resilience import get_ledger
                     ledger = get_ledger()
                     action = ledger.get_component_action(component)
                 except Exception:

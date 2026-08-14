@@ -154,6 +154,8 @@ def _fallback_dct(image_data: bytes, width: int, height: int) -> bytes:
 
     Returns:
         Transformed image bytes
+
+    G2 FIX: scipy.fftpack is in [ml] extra. Without it, returns original data.
     """
     try:
         import numpy as np
@@ -172,8 +174,10 @@ def _fallback_dct(image_data: bytes, width: int, height: int) -> bytes:
 
         return dct2.tobytes()
     except ImportError:
-        # No scipy - return original data
-        logger.debug("scipy not available for DCT fallback")
+        # G2 FIX: Clear message for missing [ml] extra
+        logger.debug(
+            "scipy.fftpack.dct unavailable: install with: pip install hledac-universal[ml]"
+        )
         return image_data
     except Exception as e:
         logger.warning(f"DCT fallback failed: {e}")

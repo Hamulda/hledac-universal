@@ -755,7 +755,7 @@ def sync_rust_abandoned() -> None:
     explicit synchronization for bulk operations.
     """
     try:
-        from hledac.rust import rust as _hledac_rust
+        from hledac.universal.hledac.rust import rust as _hledac_rust
         if hasattr(_hledac_rust, 'anti_analysis') and _hledac_rust.anti_analysis is not None:
             # Get Python abandoned domains
             python_abandoned = get_abandoned_domains()

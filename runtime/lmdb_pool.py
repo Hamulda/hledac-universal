@@ -49,6 +49,7 @@ from typing import TYPE_CHECKING, Any, TypeVar
 
 import asyncio
 
+from hledac.universal.core.locks import LockCategory, make_lock
 from hledac.universal.utils.asyncx import safe_wait_for
 from hledac.universal.runtime._shared.lmdb_pool_helpers import _LMDB_WORKERS
 
@@ -83,7 +84,7 @@ T = TypeVar("T")
 # Module-level singleton — lazy-initialized on first use
 # ---------------------------------------------------------------------------
 
-_pool_lock = threading.Lock()
+_pool_lock = make_lock(LockCategory.CACHE, "lmdb_pool._pool_lock")
 _pool: "LmdbPool | None" = None
 
 

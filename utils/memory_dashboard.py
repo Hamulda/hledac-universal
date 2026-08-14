@@ -20,26 +20,15 @@ try:
     PSUTIL_AVAILABLE = True
 except ImportError:
     psutil = None
-# MLX — lazy (ISSUE 3.2 fix): moved from top-level to lazy accessor.
-# Top-level `import mlx.core as mx` loaded MLX at module import time,
-# breaking PLANNER: ZERO MLX invariant when async_utils → duckdb_store chain
-# imported memory_dashboard during planner module load.
-# mx is only used inside UnifiedMemoryMonitor.snapshot() — lazy accessor is safe.
-MLX_AVAILABLE = False
-_mx_module: Any | None = None
 
+# C1-X FIX: Import MLX_AVAILABLE from SSOT (zero-import detection)
+from hledac.universal.utils.mlx_memory import MLX_AVAILABLE
 
+# Lazy accessor for mlx.core — uses centralized get_mx() from SSOT
 def _get_mx() -> Any | None:
     """Lazily cached mlx.core module reference. Returns None if unavailable."""
-    global _mx_module
-    if _mx_module is None:
-        try:
-            import mlx.core as _mx
-            _mx_module = _mx
-            MLX_AVAILABLE = True
-        except ImportError:
-            _mx_module = False
-    return _mx_module if _mx_module is not False else None
+    from hledac.universal.utils.mlx_memory._core import get_mx as _get_mx_from_core
+    return _get_mx_from_core()
 
 class UnifiedMemorySnapshot(msgspec.Struct, frozen=True, gc=False):
     """

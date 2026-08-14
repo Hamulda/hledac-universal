@@ -14,12 +14,15 @@ from typing import TYPE_CHECKING, Awaitable, Callable
 import numpy as np
 from hledac.universal.core.embeddings.manager import AdaptiveEmbeddingBatcher
 logger = logging.getLogger(__name__)
-_MLX_AVAILABLE = False
-try:
-    import mlx.core as mx
-    _MLX_AVAILABLE = True
-except ImportError:
-    mx = None
+
+# C1-X FIX: Import MLX_AVAILABLE from SSOT (zero-import detection)
+from hledac.universal.utils.mlx_memory import MLX_AVAILABLE
+
+# Lazy accessor for mlx.core - only used for Metal memory queries
+def _get_mlx():
+    """Lazy accessor for mlx.core — uses centralized get_mx() from SSOT."""
+    from hledac.universal.utils.mlx_memory._core import get_mx as _get_mx_from_core
+    return _get_mx_from_core()
 if TYPE_CHECKING:
     pass
 _MLX_EMBEDDINGS_AVAILABLE = False

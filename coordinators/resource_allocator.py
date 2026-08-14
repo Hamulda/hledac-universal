@@ -221,7 +221,12 @@ class IntelligentResourceAllocator:
         return default_config
 
     def _init_prediction_model(self):
-        """Initialize resource usage prediction model (lazy)."""
+        """Initialize resource usage prediction model (lazy).
+
+        G2 FIX: scikit-learn is in [ml] extra. Without it, returns None
+        and prediction falls back to heuristic-based estimation.
+        Enable ML features: HLEDAC_ML_FEATURES=1 + pip install hledac-universal[ml]
+        """
         if self._prediction_model is not None:
             return self._prediction_model
         try:
@@ -229,7 +234,13 @@ class IntelligentResourceAllocator:
             from sklearn.multioutput import MultiOutputRegressor
             base_model = RandomForestRegressor(n_estimators=100, random_state=42, max_depth=10)
             self._prediction_model = MultiOutputRegressor(base_model)
-        except ImportError:
+        except ImportError as e:
+            # G2 FIX: Clear error message for missing [ml] extra
+            if "sklearn" in str(e) or "scikit-learn" in str(e):
+                logger.debug(
+                    "ML prediction model unavailable: scikit-learn not installed. "
+                    "Install with: pip install hledac-universal[ml]"
+                )
             self._prediction_model = None
         return self._prediction_model
 
@@ -240,23 +251,39 @@ class IntelligentResourceAllocator:
 
     @property
     def anomaly_detector(self):
-        """Lazy property for anomaly detector."""
+        """Lazy property for anomaly detector.
+
+        G2 FIX: scikit-learn is in [ml] extra. Without it, returns None.
+        """
         if self._anomaly_detector is None:
             try:
                 from sklearn.ensemble import IsolationForest
                 self._anomaly_detector = IsolationForest(contamination=0.1, random_state=42)
-            except ImportError:
+            except ImportError as e:
+                if "sklearn" in str(e) or "scikit-learn" in str(e):
+                    logger.debug(
+                        "Anomaly detector unavailable: scikit-learn not installed. "
+                        "Install with: pip install hledac-universal[ml]"
+                    )
                 self._anomaly_detector = None
         return self._anomaly_detector
 
     @property
     def scaler(self):
-        """Lazy property for scaler."""
+        """Lazy property for scaler.
+
+        G2 FIX: scikit-learn is in [ml] extra. Without it, returns None.
+        """
         if self._scaler is None:
             try:
                 from sklearn.preprocessing import StandardScaler
                 self._scaler = StandardScaler()
-            except ImportError:
+            except ImportError as e:
+                if "sklearn" in str(e) or "scikit-learn" in str(e):
+                    logger.debug(
+                        "StandardScaler unavailable: scikit-learn not installed. "
+                        "Install with: pip install hledac-universal[ml]"
+                    )
                 self._scaler = None
         return self._scaler
 

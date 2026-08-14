@@ -1571,8 +1571,10 @@ logger = logging.getLogger(__name__)
 async def _scrape_mojeek(
     query: str, n: int = 10
 ) -> list[dict]:
-    """Mojeek independent crawler, no CAPTCHA policy."""
-    from bs4 import BeautifulSoup
+    """Mojeek independent crawler, no CAPTCHA policy.
+
+    G1 FIX: beautifulsoup4 REMOVED — uses selectolax with CSS selectors.
+    """
     _UA = (  # noqa: N806
         "Mozilla/5.0 (Macintosh; ARM Mac OS X 14_0) "
         "AppleWebKit/605.1.15 (KHTML, like Gecko) "
@@ -1595,15 +1597,35 @@ async def _scrape_mojeek(
             return []
         if status != 200:
             return []
-        soup = BeautifulSoup(str(text), "html.parser")
-        for li in soup.select("ul.results-standard li")[:n]:
-            a = li.select_one("a.ob")
-            p = li.select_one("p.s")
-            if a and a.get("href"):
+        # G1 FIX: Use selectolax instead of beautifulsoup4
+        try:
+            from selectolax.parser import HTMLParser as _Parser
+            tree = _Parser(str(text))
+            for li in tree.css("ul.results-standard li")[:n]:
+                a = li.css_first("a.ob")
+                p = li.css_first("p.s")
+                if a:
+                    href = a.attributes.get("href", "")
+                    if href:
+                        results.append({
+                            "title":   a.text(strip=True),
+                            "url":     href,
+                            "snippet": p.text(strip=True) if p else "",
+                            "source":  "mojeek_scrape"
+                        })
+        except ImportError:
+            # Fallback: regex-only (stdlib) — less precise but works
+            import re
+            # Match result blocks: title link + snippet
+            pattern = re.compile(
+                r'<li[^>]*>.*?<a[^>]+class="ob"[^>]+href="([^"]+)"[^>]*>([^<]+)</a>.*?<p[^>]+class="s"[^>]*>([^<]+)</p>.*?</li>',
+                re.DOTALL | re.IGNORECASE
+            )
+            for match in pattern.finditer(str(text))[:n]:
                 results.append({
-                    "title":   a.get_text(strip=True),
-                    "url":     a["href"],
-                    "snippet": p.get_text(strip=True) if p else "",
+                    "title":   match.group(2).strip(),
+                    "url":     match.group(1).strip(),
+                    "snippet": match.group(3).strip(),
                     "source":  "mojeek_scrape"
                 })
     except Exception as e:

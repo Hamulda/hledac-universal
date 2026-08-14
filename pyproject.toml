@@ -267,9 +267,21 @@ observability = [
 # Install with: uv sync --extra ml
 ml = [
     # Issue M4: Classical ML — moved from main deps to [ml] extra.
-    # M1 8GB: 0 usage in codebase; saves ~500 MB disk + RAM pressure.
-    # xgboost, lightgbm, scipy, scikit-learn: NO runtime imports anywhere.
-    # transformers pin (>=5.10.2) unifies main deps duplicate (was >=4.30).
+    # M1 8GB: saves ~500 MB disk + RAM pressure.
+    #
+    # G2 FIX: scipy/scikit-learn ARE used in main code (UNDECLARED dependency).
+    # Files using sklearn/scipy WITHOUT [ml] extra installed:
+    #   - coordinators/resource_allocator.py: RandomForestRegressor, IsolationForest
+    #   - knowledge/rag_engine.py: PCA, GaussianMixture
+    #   - recon/identity_stitching.py: TfidfVectorizer
+    #   - multimodal/vision_encoder.py: scipy.linalg.svd
+    #   - graph/quantum_pathfinder.py: scipy.sparse
+    #
+    # All imports are lazy (try/except) with graceful fallback, BUT:
+    #   1. Feature flag HLEDAC_ML_FEATURES=1 enables ML prediction/anomaly detection
+    #   2. Without [ml] extra, ML features silently degrade to simple heuristics
+    #   3. ImportError messages now clarify: "pip install hledac-universal[ml]"
+    #
     "scipy>=1.17.1",
     "scikit-learn>=1.9.0",
     "xgboost>=3.2.0",
@@ -296,15 +308,35 @@ ml = [
 ml-diskcache = [
     "diskcache>=5.6.0",  # safetensors/embedding weights cache (LanceDB, model downloads)
 ]
-# ── mlx-lm Architecture Note (F4XX) ─────────────────────────────────────────
-# WARNING: mlx-lm Python package (installed via [ml] extra above) is intended
-# ONLY for development and as a FALLBACK when the external Rust mlxcel binary
-# is not available.
+# ── mlx-lm Architecture Note (F4XX, Updated C3) ─────────────────────────────────
 #
-# PRODUCTION INFERENCE ARCHITECTURE (M1 8GB / 16+ threads):
-#   The canonical inference path uses `mlxcel` — a standalone Rust binary that
-#   runs OUTSIDE the Python process via UNIX domain socket
+# PRIMARY INFERENCE PATH — In-Process mlx-lm (DeepHermes3Engine)
+# ════════════════════════════════════════════════════════════════════════════════
+#
+#   DEFAULT on M1 8GB: DeepHermes3Engine with in-process mlx-lm Python bindings.
+#   This is the ACTUAL production path when mlxcel binary is not installed.
+#
+#   Characteristics:
+#     - All MLX operations (Hermes, embeddings, NER, reranking) share the same
+#       in-process MLX runtime (~300MB base RSS for MLX Metal runtime)
+#     - KV cache and model weights share unified memory with Python orchestrator
+#     - M1 8GB: Works reliably within ~6GB ceiling
+#     - Single process: crash of MLX bindings crashes Python (no isolation)
+#
+# OPTIONAL mlxcel PATH — Out-of-Process Rust Inference
+# ════════════════════════════════════════════════════════════════════════════════
+#
+#   OPT-IN optimization: `mlxcel` is a standalone Rust binary that runs
+#   OUTSIDE the Python process via UNIX domain socket
 #   (/tmp/hledac_mlxcel.sock) or subprocess pipes.
+#
+#   Install mlxcel (outside pip/uv — requires Rust toolchain):
+#     cargo install mlxcel
+#   Or download prebuilt binary from GitHub releases.
+#
+#   mlxcel is auto-detected at runtime via:
+#     ~/.local/bin/mlxcel, ~/bin/mlxcel, /usr/local/bin/mlxcel,
+#     /opt/homebrew/bin/mlxcel, $PATH/mlxcel
 #
 #   Benefits of mlxcel over in-process mlx-lm:
 #     - RSS savings: ~300MB (Python mlx-lm bindings + MLX Metal runtime NOT
@@ -314,18 +346,22 @@ ml-diskcache = [
 #     - Failure isolation: mlxcel crash ≠ Python crash
 #     - Metal context: Rust has direct GPU queue access without Python GIL
 #
-#   Installation of mlxcel (outside pip/uv):
-#     # Build from source or download release from GitHub releases
-#     cargo install mlxcel  # or download prebuilt binary
-#     # mlxcel is auto-detected at runtime via:
-#     #   ~/.local/bin/mlxcel, ~/bin/mlxcel, /usr/local/bin/mlxcel,
-#     #   /opt/homebrew/bin/mlxcel, $PATH/mlxcel
-#
-#   When mlxcel IS available: Brain/model_manager.py routes ALL Hermes inference
+#   When mlxcel IS available: Brain/model_manager.py routes Hermes inference
 #   through MlxcelIpcClient → mlxcel (DeepHermes3Engine stays unloaded).
 #
 #   When mlxcel is NOT available: Falls back to DeepHermes3Engine (in-process
-#   mlx-lm Python bindings) — development / CI / no-Rust environments only.
+#   mlx-lm Python bindings) — this is the DEFAULT on most M1 8GB setups.
+#
+# IMPORTANT (C3 Fix):
+#   The 150+ `import mlx.core as mx` in the codebase are NOT only for Hermes.
+#   They are used throughout for: MLX embeddings, ANE operations, reranking,
+#   memory management, warmup caches, etc. These are IN-PROCESS by design.
+#   mlxcel only handles LLM text generation — not these other MLX operations.
+#
+#   Therefore, even with mlxcel installed:
+#     - mlx.core IS still loaded for other MLX operations
+#     - The ~300MB savings apply ONLY to Hermes inference (LLM generation)
+#     - Other MLX operations (embeddings, NER) remain in-process
 #
 # VERSION COLLISION CHECK (transformers vs dspy):
 #   dspy>=3.2.1 typically requires transformers>=4.30.0
@@ -516,8 +552,8 @@ line-length = 120
 target-version = "py314"
 
 [tool.ruff.lint]
-select = ["E", "F", "W", "I", "N", "UP", "B", "C4", "DTZ", "T10", "ISC", "BLE001", "YTT", "ANN", "PIE790", "C901", "F811"]  # noqa: E501  # I002: dual-namespace guard; YTT/ANN/PIE790/C901: code quality; F811: redefinition (C-1 double-def guard); RUFF022 is enforced via python -m ruff_ext --ci
-ignore = ["E501", "F821", "B027"]  # BLE001: P1-01 audit in progress — see Issue #32
+select = ["E", "F", "W", "I", "N", "UP", "B", "C4", "DTZ", "T10", "ISC", "BLE001", "YTT", "ANN", "PIE790", "C901", "F811", "F821"]  # noqa: E501  # I002: dual-namespace guard; YTT/ANN/PIE790/C901: code quality; F811: redefinition (C-1 double-def guard); F821: undefined names — caught at lint time, not runtime; RUFF022 is enforced via python -m ruff_ext --ci
+ignore = ["E501", "B027", "UP006", "UP035"]  # G8: Allow lowercase collections (List, Dict) for backward compat; BLE001: P1-01 audit in progress — see Issue #32
 # E911: P1-1 custom — forbid asyncio.run() outside allowed entry points.
 # Allowed: __main__, tools/, tests/. Use: grep -rn 'asyncio\.run(' ... | grep -v __main__ | grep -v 'tools/' | grep -v 'tests/'
 # CI: run `grep -rn 'asyncio\.run(' runtime intelligence brain knowledge prefetch cli layers transport network export report rendering coordinators/ 2>/dev/null | grep -v __main__ | grep -v tools/ | grep -v tests/` — expect 0 matches.

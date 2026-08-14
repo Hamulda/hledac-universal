@@ -6,7 +6,19 @@ This module provides robust data validation functions with comprehensive
 
 error handling, type safety, and performance optimization for M1 systems.
 """
-import json
+# G4 FIX: stdlib json replaced with orjson fallback (M1 optimized, 5-10× faster)
+try:
+    import orjson
+
+    def _json_dumps_sort_keys(data: dict) -> str:
+        """Serialize dict to JSON string with sorted keys using orjson."""
+        return orjson.dumps(data, option=orjson.OPT_SORT_KEYS).decode("utf-8")
+
+except ImportError:
+    import json
+
+    _json_dumps_sort_keys = lambda data: json.dumps(data, sort_keys=True)  # type: ignore[assignment]
+
 import logging
 import re
 from collections.abc import Callable
@@ -135,7 +147,10 @@ class DataValidator:
         Returns:
             Validation result dictionary with success status and details
         """
-        cache_key = f'schema_{hash(json.dumps(data, sort_keys=True))}_{hash(json.dumps(schema, sort_keys=True))}'
+        # G4 FIX: Use orjson-backed _json_dumps_sort_keys for cache key hashing
+        data_str = _json_dumps_sort_keys(data)
+        schema_str = _json_dumps_sort_keys(schema)
+        cache_key = f"schema_{hash(data_str)}_{hash(schema_str)}"
         if cache_key in self._cache:
             return self._cache[cache_key]
         errors: list[ValidationError] = []

@@ -15,7 +15,7 @@ Severity Levels:
   P4_DEBUG: Noise suppression, sampled at 1% (internal diagnostics)
 
 Usage:
-    from utils.exception_severity import Severity, exc_event
+    from hledac.universal.utils.exception_severity import Severity, exc_event
 
     # P0 - critical, never suppressed
     with exc_event(Severity.P0_CRITICAL, "data_loss", "db_write_failed"):
@@ -242,7 +242,7 @@ class _EventRegistry:
                 
                 # Also record to ExceptionDiagnostics for full diagnostics
                 try:
-                    from utils.exception_diagnostics import get_diagnostics
+                    from hledac.universal.utils.exception_diagnostics import get_diagnostics
                     get_diagnostics().record(aggregated)
                 except Exception:  # noqa: BLE001
                     pass  # Non-critical
@@ -262,7 +262,7 @@ class _EventRegistry:
                 
                 # Also record to ExceptionDiagnostics for full diagnostics
                 try:
-                    from utils.exception_diagnostics import get_diagnostics
+                    from hledac.universal.utils.exception_diagnostics import get_diagnostics
                     get_diagnostics().record(event)
                 except Exception:  # noqa: BLE001
                     pass  # Non-critical
@@ -413,7 +413,7 @@ def exc_event(
     Context manager for exception event tracking with severity classification.
 
     Usage:
-        from utils.exception_severity import Severity, exc_event
+        from hledac.universal.utils.exception_severity import Severity, exc_event
 
         # P0 - critical, never suppressed, re-raised
         with exc_event(Severity.P0_CRITICAL, "db.write", cascade_id="req-123"):
@@ -565,7 +565,7 @@ def configure_severity(
     Configure severity levels at runtime.
 
     Usage:
-        from utils.exception_severity import configure_severity
+        from hledac.universal.utils.exception_severity import configure_severity
         configure_severity(p3_sample_rate=0.05)  # Only 5% of P3 logs
         configure_severity(p1_threshold=1)  # Immediate rate-limiting for P1
     """

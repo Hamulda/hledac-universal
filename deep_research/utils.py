@@ -212,25 +212,44 @@ class Harvester:
 
         Returns:
             List of tables, each table is list of rows, each row is list of cells
+
+        G1 FIX: Replaced beautifulsoup4 with selectolax or regex fallback.
         """
+        # Try selectolax first (CSS selectors)
         try:
-            from bs4 import BeautifulSoup
-            soup = BeautifulSoup(html, 'html.parser')
+            from selectolax.parser import HTMLParser as _Parser
+            tree = _Parser(html)
             tables = []
-            for table in soup.find_all('table'):
+            for table in tree.css('table'):
                 table_data = []
-                for row in table.find_all('tr'):
+                for row in table.css('tr'):
                     row_data = []
-                    for cell in row.find_all(['td', 'th']):
-                        row_data.append(cell.get_text(strip=True))
+                    for cell in row.css('td, th'):
+                        row_data.append(cell.text(strip=True))
                     if row_data:
                         table_data.append(row_data)
                 if table_data:
                     tables.append(table_data)
             return tables
         except ImportError:
-            logger.warning('BeautifulSoup not available for table extraction')
-            return []
+            pass
+        # Fallback: regex-only (stdlib)
+        import re
+        tables = []
+        table_pattern = re.compile(r'<table[^>]*>(.*?)</table>', re.DOTALL | re.IGNORECASE)
+        row_pattern = re.compile(r'<tr[^>]*>(.*?)</tr>', re.DOTALL | re.IGNORECASE)
+        cell_pattern = re.compile(r'<t[dh][^>]*>(.*?)</t[dh]>', re.DOTALL | re.IGNORECASE)
+        for table_match in table_pattern.finditer(html):
+            table_content = table_match.group(1)
+            table_data = []
+            for row_match in row_pattern.finditer(table_content):
+                row_content = row_match.group(1)
+                row_data = [re.sub(r'<[^>]+>', '', cell).strip() for cell in cell_pattern.findall(row_content)]
+                if row_data:
+                    table_data.append(row_data)
+            if table_data:
+                tables.append(table_data)
+        return tables
 
     @staticmethod
     def clean_text(text: str) -> str:

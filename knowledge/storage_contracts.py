@@ -40,7 +40,7 @@ import msgspec
 from hledac.universal.compat.msgspec_gc_compat import Struct
 
 if TYPE_CHECKING:
-    from knowledge.sprint_facts.canonical_finding import CanonicalFinding
+    from hledac.universal.knowledge.sprint_facts.canonical_finding import CanonicalFinding
 
 
 class CanonicalFindingContract(Struct, frozen=True):
@@ -110,7 +110,7 @@ class CanonicalFindingContract(Struct, frozen=True):
         Returns:
             CanonicalFinding instance
         """
-        from knowledge.sprint_facts.canonical_finding import CanonicalFinding
+        from hledac.universal.knowledge.sprint_facts.canonical_finding import CanonicalFinding
 
         return CanonicalFinding(
             finding_id=self.finding_id,

@@ -14,7 +14,14 @@ Design:
 
 Canonical owner: runtime/sprint_scheduler.py (integration point)
 """
-import json
+# G4 FIX: stdlib json replaced with orjson fallback (M1 optimized, 5-10× faster)
+try:
+    import orjson
+    _HAS_ORJSON = True
+except ImportError:
+    import json
+    _HAS_ORJSON = False
+
 import logging
 import math
 import os
@@ -311,9 +318,9 @@ class SprintPolicyManager:
         if self._qmix_trainer is not None:
             return
         try:
-            from rl.qmix import QMIXAgent, QMixer, QMIXJointTrainer
-            from rl.replay_buffer import MARLReplayBuffer
-            from rl.state_extractor import StateExtractor
+            from hledac.universal.rl.qmix import QMIXAgent, QMixer, QMIXJointTrainer
+            from hledac.universal.rl.replay_buffer import MARLReplayBuffer
+            from hledac.universal.rl.state_extractor import StateExtractor
             _STATE_DIM = 27
             self._state_extractor = StateExtractor(state_dim=_STATE_DIM)
             self._replay_buffer = MARLReplayBuffer(capacity=50000, state_dim=_STATE_DIM, n_agents=5)
@@ -377,14 +384,24 @@ class SprintPolicyManager:
             return
         try:
             payload = {'sprint_sequence_number': self._state.sprint_sequence_number, 'epsilon': self._state.epsilon, 'total_reward': self._state.total_reward, 'sprint_rewards': self._state.sprint_rewards[-100:], _QMIX_FIELD: self._state.qmix_weights, 'last_train_sprint': self._state.last_train_sprint, 'q_network_weights_path': self._state.q_network_weights_path, 'last_train_step': self._state.last_train_step, 'cumulative_train_steps': self._state.cumulative_train_steps, 'last_loss': self._state.last_loss, 'loss_history': list(getattr(self._state, 'loss_history', []))[-100:], 'mean_q_value_history': list(getattr(self._state, 'mean_q_value_history', []))[-100:], 'epsilon_history': list(getattr(self._state, 'epsilon_history', []))[-100:], 'last_train_step_sprint': int(getattr(self._state, 'last_train_step_sprint', 0)), 'training_steps_completed': int(getattr(self._state, 'training_steps_completed', 0)), 'epistemic_strength_history': list(getattr(self._state, 'epistemic_strength_history', []))[-100:]}
-            encoded = json.dumps(payload, ensure_ascii=False).encode('utf-8')
+
+            # G4 FIX: Use orjson with fallback for JSON serialization
+            if _HAS_ORJSON:
+                encoded = orjson.dumps(payload, option=orjson.OPT_NON_STR_KEY)
+            else:
+                encoded = json.dumps(payload, ensure_ascii=False).encode('utf-8')
+
             if ZSTD_AVAILABLE and _zstd:
                 compressed = _zstd.compress(encoded, level=3)
                 with open(self._policy_path, 'wb') as f:
                     f.write(compressed)
             else:
-                with open(self._policy_path, 'w', encoding='utf-8') as f:
-                    f.write(json.dumps(payload))
+                if _HAS_ORJSON:
+                    with open(self._policy_path, 'wb') as f:
+                        f.write(encoded)
+                else:
+                    with open(self._policy_path, 'w', encoding='utf-8') as f:
+                        f.write(json.dumps(payload))
             log.debug('[SprintPolicyManager] State persisted to %s', self._policy_path)
         except Exception as e:
             log.debug('[SprintPolicyManager] _save failed: %s', e)
@@ -774,10 +791,10 @@ class SprintPolicyManager:
         QMIX agents 0-4 map to base actions, agents 5-10 map to lane combos.
         """
         if not self._enabled:
-            from rl.actions import ACTION_CONTINUE
+            from hledac.universal.rl.actions import ACTION_CONTINUE
             return ACTION_CONTINUE
         if self.should_explore():
-            from rl.actions import ACTION_DEEP_DIVE
+            from hledac.universal.rl.actions import ACTION_DEEP_DIVE
             return ACTION_DEEP_DIVE
         if self._qmix_trainer is not None and self._agents is not None and (self._state_extractor is not None):
             try:
@@ -802,7 +819,7 @@ class SprintPolicyManager:
                                 if q_val > best_q:
                                     best_q = q_val
                                     best_action = int(agent_id)
-                        from rl.actions import ACTION_BRANCH, ACTION_CONTINUE, ACTION_FETCH_MORE, ACTION_YIELD, action_from_lane_combo
+                        from hledac.universal.rl.actions import ACTION_BRANCH, ACTION_CONTINUE, ACTION_FETCH_MORE, ACTION_YIELD, action_from_lane_combo
                         if best_action < 5:
                             ACTION_MAP = {0: ACTION_CONTINUE, 1: ACTION_FETCH_MORE, 2: ACTION_BRANCH, 3: ACTION_YIELD, 4: ACTION_CONTINUE}
                             return ACTION_MAP.get(best_action, ACTION_CONTINUE)
@@ -813,7 +830,7 @@ class SprintPolicyManager:
                             return ACTION_CONTINUE
             except Exception:  # noqa: BLE001
                 pass
-        from rl.actions import ACTION_CONTINUE
+        from hledac.universal.rl.actions import ACTION_CONTINUE
         return ACTION_CONTINUE
 
     def _compute_delta(self, ratio: float) -> float:

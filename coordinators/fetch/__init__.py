@@ -15,7 +15,7 @@ Services:
     )
 
 Facade Coordinator:
-    from coordinators.fetch import FetchCoordinatorFacade
+    from hledac.universal.coordinators.fetch import FetchCoordinatorFacade
 
 Usage:
     facade = FetchCoordinatorFacade()

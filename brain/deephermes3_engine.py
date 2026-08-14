@@ -2043,7 +2043,7 @@ class DeepHermes3Engine:
                                 for _ in mlx_lm.stream_generate(model=self._model, tokenizer=self._tokenizer, prompt=self._system_prompt, prompt_cache=self._system_prompt_cache, max_tokens=1):  # type: ignore[arg-type]
                                     pass
                         finally:
-                            _safe_mlx_eval_and_clear_cache('system_prompt_cache_prefill')
+                            await asyncio.to_thread(_safe_mlx_eval_and_clear_cache, 'system_prompt_cache_prefill')
                 await asyncio.to_thread(_prefill)
                 self._kv_cache_stats['cache_prefills'] = 1
             logger.info('[CACHE] System prompt cache initialized (cold prefill)')
@@ -2120,7 +2120,7 @@ class DeepHermes3Engine:
                                         for _ in mlx_lm.stream_generate(model=self._model, tokenizer=self._tokenizer, prompt=self._system_prompt, prompt_cache=self._system_prompt_cache, max_tokens=1):  # type: ignore[arg-type]
                                             pass
                                 finally:
-                                    _safe_mlx_eval_and_clear_cache('system_prompt_cache_parallel_prefill')
+                                    await asyncio.to_thread(_safe_mlx_eval_and_clear_cache, 'system_prompt_cache_parallel_prefill')
                         await asyncio.to_thread(_do_prefill)
                         self._kv_cache_stats['cache_prefills'] += 1
                     logger.info('[P1-3] System prompt cache prefill complete (parallel)')
@@ -2638,7 +2638,7 @@ class DeepHermes3Engine:
         if self._kv_cache_enabled is False:
             return {}
         # G2: Delegate to shared config — single source of truth
-        from brain.kv_cache_config import get_kv_cache_config
+        from hledac.universal.brain.kv_cache_config import get_kv_cache_config
 
         # Probe Metal memory via MetalDevice (or fallback)
         metal_active_bytes = None
@@ -2684,7 +2684,7 @@ class DeepHermes3Engine:
             int: kv_bits value (4, 6, or 8) — never below 4 (F265C-METAL invariant)
         """
         # G2: Delegate to shared config — single source of truth
-        from brain.kv_cache_config import get_kv_cache_config
+        from hledac.universal.brain.kv_cache_config import get_kv_cache_config
 
         if self._force_kv_quantize:
             logger.debug("[B.KV] KV quant forced on: kv_bits=%d", max(4, self._kv_bits))
@@ -3331,7 +3331,9 @@ class DeepHermes3Engine:
                     logger.warning('[P2-7] main-thread inference timeout (attempt %d/%d), retrying in %.1fs', _attempt + 1, _retries + 1, _base_delay)
                     await asyncio.sleep(_base_delay)
                     _base_delay *= 1.5
-                    self._mlx_clear_and_timestamp(force_clear=True)  # L-04: force clear after timeout (fragmented KV cache)
+                    # C2c-FIX: _mlx_clear_and_timestamp() calls mx.eval([]) which blocks
+                    # the event loop for 1-50ms. Offload to thread pool.
+                    await asyncio.to_thread(self._mlx_clear_and_timestamp, True)  # L-04: force clear after timeout (fragmented KV cache)
                     continue
                 logger.warning('[P2-7] main-thread inference timeout after %d attempts — propagating', _retries + 1)
                 raise
@@ -3908,7 +3910,7 @@ class DeepHermes3Engine:
                 logger.warning('[STREAM] generate_stream failed: %s', e)
                 return
         try:
-            _safe_mlx_eval_and_clear_cache('generate_stream_post')
+            await asyncio.to_thread(_safe_mlx_eval_and_clear_cache, 'generate_stream_post')
         except Exception:  # noqa: BLE001
             pass
 
@@ -5139,7 +5141,7 @@ class DeepHermes3Engine:
             except Exception as e:
                 logger.debug(f'[SUSTAIN] prompt_cache experiment failed: {e}')
         response = mlx_generate(**generate_kwargs)
-        _safe_mlx_eval_and_clear_cache('sustain_inference')
+        await asyncio.to_thread(_safe_mlx_eval_and_clear_cache, 'sustain_inference')
         try:
             from ..utils.mlx_memory import format_mlx_memory_snapshot
             logger.debug(f'[SUSTAIN] POST: {format_mlx_memory_snapshot()}')
@@ -5201,7 +5203,7 @@ class DeepHermes3Engine:
         # Execute warmup generation (worker thread or inline)
         await self._execute_warmup_generation(warmup_prompt)
 
-        _safe_mlx_eval_and_clear_cache('warmup_prefill')
+        await asyncio.to_thread(_safe_mlx_eval_and_clear_cache, 'warmup_prefill')
         logger.info('[WARMUP] Prefix cache warmup complete (fresh build)')
         return True
 

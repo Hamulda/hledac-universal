@@ -56,6 +56,8 @@ Feature flags: HLEDAC_ENABLE_CONTRADICTION_FEEDBACK=1 (default ON)
 from __future__ import annotations
 
 import asyncio
+
+from hledac.universal.utils.asyncx import safe_create_task, safe_wait_for
 import logging
 import os
 import time as _time
@@ -366,8 +368,9 @@ class ContradictionFeedbackBridge:
 
         # 1. AdversarialVerifier (fail-soft: reqs HypothesisEngine)
         try:
-            tasks["adversarial"] = asyncio.create_task(
-                self._run_adversarial_verifier(findings)
+            tasks["adversarial"] = safe_create_task(
+                self._run_adversarial_verifier(findings),
+                name="contradiction:adversarial",
             )
             engines_available.append("adversarial")
         except Exception:  # noqa: BLE001
@@ -375,8 +378,9 @@ class ContradictionFeedbackBridge:
 
         # 2. InsightEngine
         try:
-            tasks["insight"] = asyncio.create_task(
-                self._run_insight_engine(findings)
+            tasks["insight"] = safe_create_task(
+                self._run_insight_engine(findings),
+                name="contradiction:insight",
             )
             engines_available.append("insight")
         except Exception:  # noqa: BLE001
@@ -384,8 +388,9 @@ class ContradictionFeedbackBridge:
 
         # 3. DempsterShafer
         try:
-            tasks["dempster_shafer"] = asyncio.create_task(
-                self._run_dempster_shafer(findings)
+            tasks["dempster_shafer"] = safe_create_task(
+                self._run_dempster_shafer(findings),
+                name="contradiction:dempster_shafer",
             )
             engines_available.append("dempster_shafer")
         except Exception:  # noqa: BLE001
@@ -393,8 +398,9 @@ class ContradictionFeedbackBridge:
 
         # 4. EvidenceNetworkAnalyzer
         try:
-            tasks["evidence_network"] = asyncio.create_task(
-                self._run_evidence_network(findings)
+            tasks["evidence_network"] = safe_create_task(
+                self._run_evidence_network(findings),
+                name="contradiction:evidence_network",
             )
             engines_available.append("evidence_network")
         except Exception:  # noqa: BLE001
@@ -402,8 +408,9 @@ class ContradictionFeedbackBridge:
 
         # 5. GraphRAG (if available)
         try:
-            tasks["graph_rag"] = asyncio.create_task(
-                self._run_graph_rag(findings)
+            tasks["graph_rag"] = safe_create_task(
+                self._run_graph_rag(findings),
+                name="contradiction:graph_rag",
             )
             engines_available.append("graph_rag")
         except Exception:  # noqa: BLE001
@@ -416,7 +423,7 @@ class ContradictionFeedbackBridge:
 
         for engine_name, task in tasks.items():
             try:
-                result = await asyncio.wait_for(
+                result = await safe_wait_for(
                     task, timeout=AUDIT_TIMEOUT_S / max(len(tasks), 1)
                 )
                 if result:

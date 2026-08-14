@@ -212,7 +212,7 @@ def check_q4_adapters() -> list[CheckResult]:
             "Q4",
             "wayback_diff_miner_class_exists",
             _check_callable("intelligence.wayback_diff_miner", "WaybackDiffMiner"),
-            "from intelligence.wayback_diff_miner import WaybackDiffMiner",
+            "from recon.wayback_diff_miner import WaybackDiffMiner",
         ),
     ]
     return [c() for c in checks]

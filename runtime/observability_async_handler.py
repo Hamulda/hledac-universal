@@ -107,7 +107,7 @@ class AsyncioQueueAdapter:
 
     __slots__ = ("_queue",)
 
-    def __init__(self, maxsize: int = 0) -> None:
+    def __init__(self, maxsize: int = 1024) -> None:
         self._queue: asyncio.Queue[str] = asyncio.Queue(maxsize=maxsize)
 
     def put_nowait(self, item: Any) -> None:

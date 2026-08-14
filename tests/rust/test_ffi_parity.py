@@ -156,7 +156,7 @@ def _infer_domain_module(cls_name: str) -> str:
         "mlx": "mlx_bridge",
         "pool": "pool_run",
         "federated": "federated_qtable",
-        "parquet": "parquet_reader",
+        # "parquet": "parquet_reader",  # DELETED (2026-08-14) - no Python callers
         "pipeline": "pipeline_compose",
         "cooccurrence": "ioc_cooccurrence_rs",
         "signal": "signal_batch",

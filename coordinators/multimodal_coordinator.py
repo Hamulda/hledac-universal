@@ -41,14 +41,16 @@ except ImportError:
     HAS_NUMPY = False
 from .base import DecisionResponse, ExecutionResult, OperationResult, OperationType, UniversalCoordinator
 
+# C1-X FIX: Import MLX_AVAILABLE from SSOT (zero-import detection)
+from hledac.universal.utils.mlx_memory import MLX_AVAILABLE
+
 try:
     import mlx.core as mx
     from mlx import nn
-    MLX_AVAILABLE = True
 except ImportError:
-    MLX_AVAILABLE = False
     mx = None
     nn = None
+
 logger = logging.getLogger(__name__)
 
 class ModalityType(Enum):
@@ -257,6 +259,9 @@ class MLXMultimodalEncoder:
         Replaces np.random.randn() fallbacks to avoid poisoning LanceDB ANN index
         with non-deterministic vectors. Uses a stable hash of the seed to
         produce reproducible embeddings for the same input.
+        
+        F6 FIX: When this embedding is used in ModalityOutput, set metadata['is_hash_fallback']=True
+        to allow consumers to filter out noise vectors from ANN queries.
         
         Args:
             seed: String or int used to seed the RNG deterministically
@@ -533,16 +538,31 @@ class UniversalMultimodalCoordinator(UniversalCoordinator):
                 features['format'] = 'path'
                 # IO-4 fix: Use deterministic fallback to avoid poisoning LanceDB ANN index
                 embedding = self._get_deterministic_embedding(f'image_path_{content}', scale=0.1)
-                confidence = 0.8
+                # F6 FIX: Mark hash-fallback embeddings so consumers can filter from ANN
+                fallback_metadata = {'is_hash_fallback': True, 'fallback_reason': 'path_not_processable'}
+                return ModalityOutput(
+                    modality=ModalityType.IMAGE, embedding=embedding, features=features,
+                    metadata=fallback_metadata, confidence=0.8,
+                )
             else:
                 # IO-4 fix: Use deterministic fallback to avoid poisoning LanceDB ANN index
                 embedding = self._get_deterministic_embedding('image_unknown', scale=0.1)
-                confidence = 0.75
+                # F6 FIX: Mark hash-fallback embeddings so consumers can filter from ANN
+                fallback_metadata = {'is_hash_fallback': True, 'fallback_reason': 'unknown_format'}
+                return ModalityOutput(
+                    modality=ModalityType.IMAGE, embedding=embedding, features=features,
+                    metadata=fallback_metadata, confidence=0.75,
+                )
         except Exception as e:
             logger.warning(f'Image processing failed: {e}')
             # IO-4 fix: Use deterministic fallback to avoid poisoning LanceDB ANN index
             embedding = self._get_deterministic_embedding('image_error', scale=0.1)
-            confidence = 0.7
+            # F6 FIX: Mark hash-fallback embeddings so consumers can filter from ANN
+            fallback_metadata = {'is_hash_fallback': True, 'fallback_reason': 'processing_error'}
+            return ModalityOutput(
+                modality=ModalityType.IMAGE, embedding=embedding, features=features,
+                metadata=fallback_metadata, confidence=0.7,
+            )
         return ModalityOutput(modality=ModalityType.IMAGE, embedding=embedding, features=features, confidence=confidence)
 
     def _generate_image_embedding_fallback(self, image: Any) -> Any:
@@ -645,12 +665,28 @@ class UniversalMultimodalCoordinator(UniversalCoordinator):
             else:
                 # IO-4 fix: Use deterministic fallback to avoid poisoning LanceDB ANN index
                 embedding = self._get_deterministic_embedding('audio_non_array', scale=0.1)
-                confidence = 0.7
+                # F6 FIX: Mark hash-fallback embeddings so consumers can filter from ANN
+                fallback_metadata = {'is_hash_fallback': True, 'fallback_reason': 'non_array_input'}
+                return ModalityOutput(
+                    modality=ModalityType.AUDIO,
+                    embedding=embedding,
+                    features=features,
+                    metadata=fallback_metadata,
+                    confidence=0.7,
+                )
         except Exception as e:
             logger.warning(f'Audio processing failed: {e}')
             # IO-4 fix: Use deterministic fallback to avoid poisoning LanceDB ANN index
             embedding = self._get_deterministic_embedding('audio_error', scale=0.1)
-            confidence = 0.7
+            # F6 FIX: Mark hash-fallback embeddings so consumers can filter from ANN
+            fallback_metadata = {'is_hash_fallback': True, 'fallback_reason': 'processing_error'}
+            return ModalityOutput(
+                modality=ModalityType.AUDIO,
+                embedding=embedding,
+                features=features,
+                metadata=fallback_metadata,
+                confidence=0.7,
+            )
         return ModalityOutput(
             modality=ModalityType.AUDIO,
             embedding=embedding,
@@ -726,7 +762,15 @@ class UniversalMultimodalCoordinator(UniversalCoordinator):
                     else:
                         # IO-4 fix: Use deterministic fallback to avoid poisoning LanceDB ANN index
                         embedding = self._get_deterministic_embedding('video_no_text', scale=0.1)
-                        confidence = 0.5
+                        # F6 FIX: Mark hash-fallback embeddings so consumers can filter from ANN
+                        fallback_metadata = {'is_hash_fallback': True, 'fallback_reason': 'no_text_content'}
+                        return ModalityOutput(
+                            modality=ModalityType.VIDEO,
+                            embedding=embedding,
+                            features=features,
+                            metadata=fallback_metadata,
+                            confidence=0.5,
+                        )
 
                     return ModalityOutput(
                         modality=ModalityType.VIDEO,
@@ -738,12 +782,28 @@ class UniversalMultimodalCoordinator(UniversalCoordinator):
             # Fallback: no valid video content
             # IO-4 fix: Use deterministic fallback to avoid poisoning LanceDB ANN index
             embedding = self._get_deterministic_embedding('video_no_content', scale=0.1)
-            confidence = 0.65
+            # F6 FIX: Mark hash-fallback embeddings so consumers can filter from ANN
+            fallback_metadata = {'is_hash_fallback': True, 'fallback_reason': 'no_valid_video'}
+            return ModalityOutput(
+                modality=ModalityType.VIDEO,
+                embedding=embedding,
+                features=features,
+                metadata=fallback_metadata,
+                confidence=0.65,
+            )
         except Exception as e:
             logger.warning(f'Video processing failed: {e}')
             # IO-4 fix: Use deterministic fallback to avoid poisoning LanceDB ANN index
             embedding = self._get_deterministic_embedding('video_error', scale=0.1)
-            confidence = 0.6
+            # F6 FIX: Mark hash-fallback embeddings so consumers can filter from ANN
+            fallback_metadata = {'is_hash_fallback': True, 'fallback_reason': 'processing_error'}
+            return ModalityOutput(
+                modality=ModalityType.VIDEO,
+                embedding=embedding,
+                features=features,
+                metadata=fallback_metadata,
+                confidence=0.6,
+            )
         return ModalityOutput(
             modality=ModalityType.VIDEO,
             embedding=embedding,
@@ -770,12 +830,28 @@ class UniversalMultimodalCoordinator(UniversalCoordinator):
     async def _process_document(self, content: Any) -> ModalityOutput:
         """Process document content (placeholder)."""
         # IO-4 fix: Use deterministic fallback to avoid poisoning LanceDB ANN index
-        return ModalityOutput(modality=ModalityType.DOCUMENT, embedding=self._get_deterministic_embedding('document', scale=0.1), features={'pages': 0, 'type': 'document'}, confidence=0.9)
+        # F6 FIX: Mark hash-fallback embeddings so consumers can filter from ANN
+        fallback_metadata = {'is_hash_fallback': True, 'fallback_reason': 'placeholder_implementation'}
+        return ModalityOutput(
+            modality=ModalityType.DOCUMENT,
+            embedding=self._get_deterministic_embedding('document', scale=0.1),
+            features={'pages': 0, 'type': 'document'},
+            metadata=fallback_metadata,
+            confidence=0.9,
+        )
 
     async def _process_chart(self, content: Any) -> ModalityOutput:
         """Process chart content (placeholder)."""
         # IO-4 fix: Use deterministic fallback to avoid poisoning LanceDB ANN index
-        return ModalityOutput(modality=ModalityType.CHART, embedding=self._get_deterministic_embedding('chart', scale=0.1), features={'type': 'chart', 'data_points': 0}, confidence=0.7)
+        # F6 FIX: Mark hash-fallback embeddings so consumers can filter from ANN
+        fallback_metadata = {'is_hash_fallback': True, 'fallback_reason': 'placeholder_implementation'}
+        return ModalityOutput(
+            modality=ModalityType.CHART,
+            embedding=self._get_deterministic_embedding('chart', scale=0.1),
+            features={'type': 'chart', 'data_points': 0},
+            metadata=fallback_metadata,
+            confidence=0.7,
+        )
 
     def _generate_text_embedding(self, text: str) -> Any:
         """Generate text embedding using MLX if available, fast hash fallback otherwise."""

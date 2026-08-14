@@ -11,8 +11,9 @@ Zajišťuje:
 - Jednotné rozhraní pro Hermes3, ModernBERT a GLiNER
 - Strict 1-model-at-a-time policy pro M1 8GB stabilitu
 
-- F4XX: Out-of-Process inference přes mlxcel UNIX socket / subprocess
-  (mlxcel = externí Rust binárka, šetří ~300MB Python RSS)
+- C3: In-process mlx-lm (DeepHermes3Engine) je PRIMARY na M1 8GB
+  mlxcel (externí Rust binárka) je OPTIONAL — šetří ~300MB Python RSS,
+  ale vyžaduje cargo install mlxcel. Startup log ukazuje aktivní cestu.
 """
 import asyncio
 import gc
@@ -36,7 +37,10 @@ from hledac.universal.utils.executor_decorator import offload_to
 from hledac.universal.utils.import_resolver import lazy
 
 T = TypeVar('T')
-MLX_AVAILABLE = False
+
+# C1 FIX: Import from SSOT instead of hardcoded False
+# Uses importlib.metadata.version("mlx") detection — no mlx.core import at module load
+from hledac.universal.utils.mlx_memory import MLX_AVAILABLE
 _MLXCEL_DETECTED: bool = False
 
 def _detect_mlxcel() -> bool:
@@ -70,6 +74,29 @@ def _detect_mlxcel() -> bool:
 def _mlxcel_is_available() -> bool:
     """Runtime check: mlxcel binary detected on system."""
     return _detect_mlxcel()
+
+
+def _log_inference_path() -> None:
+    """
+    C3 Fix: Log which inference path is active at startup.
+
+    Provides transparency about the mlx-lm vs mlxcel routing so operators
+    understand which path is actually being used and what the implications are.
+    """
+    mlxcel_detected = _mlxcel_is_available()
+    if mlxcel_detected:
+        logger.info('[INFERENCE PATH] mlxcel detected — Hermes will use OUT-OF-PROCESS Rust inference')
+        logger.info('[INFERENCE PATH] Benefits: ~300MB RSS savings, failure isolation, direct Metal queue')
+        logger.info('[INFERENCE PATH] Note: Other MLX ops (embeddings, NER, reranking) remain IN-PROCESS')
+    else:
+        logger.info('[INFERENCE PATH] mlxcel NOT detected — Hermes will use IN-PROCESS mlx-lm Python bindings')
+        logger.info('[INFERENCE PATH] All MLX operations (Hermes, embeddings, NER) share in-process runtime')
+        logger.info('[INFERENCE PATH] To enable mlxcel optimization: cargo install mlxcel')
+        logger.info('[INFERENCE PATH] See pyproject.toml [mlx-lm Architecture Note] for details')
+
+
+# Log inference path on module import (once per process)
+_log_inference_path()
 _model_max_rss_gb: float = 6.0
 _MODEL_SIZES_GB = {'hermes': 1.75, 'modernbert': 0.5, 'gliner': 0.3}
 _UNLOAD_TIMEOUT_S: float = 5.0
@@ -144,11 +171,11 @@ def _verify_rss_after_unload(model_key: str, rss_before: float) -> None:
 
 def _get_mlx_safe() -> Any:
     """Get mlx.core module via mlx_memory lazy init. Returns mx or None."""
-    global MLX_AVAILABLE
     if MLX_AVAILABLE:
         try:
-            from ..utils.mlx_memory import _get_mlx_core
-            return _get_mlx_core()
+            # C1 FIX: Use correct get_mx from _core (was non-existent _get_mlx_core)
+            from hledac.universal.utils.mlx_memory._core import get_mx
+            return get_mx()
         except Exception:
             return None
     return None
@@ -332,12 +359,13 @@ class ModelManager:
         """
         Factory pro Hermes3Engine / MlxcelHermesAdapter.
 
-        F4XX: Pokud je dostupný mlxcel (Rust out-of-process inference server),
-        vrací MlxcelHermesAdapter — všechna generování jdou přes UNIX socket do
-        externího Rust procesu (~300MB RSS úspora oproti in-process mlx-lm).
+        C3 FIX: In-process mlx-lm (DeepHermes3Engine) je PRIMARY.
+        mlxcel (Rust out-of-process inference) je OPTIONAL — šetří ~300MB RSS
+        pokud je dostupný (vyžaduje cargo install mlxcel).
 
-        Pokud mlxcel není k dispozici, vrací DeepHermes3Engine (původní
-        in-process mlx-lm Python bindings) — nouzový fallback.
+        Routing logiky:
+        - mlxcel dostupný → MlxcelHermesAdapter (out-of-process)
+        - mlxcel nedostupný → DeepHermes3Engine (in-process, default)
         """
         if _mlxcel_is_available():
             logger.info('[MODEL MANAGER] mlxcel detected — routing Hermes via MlxcelHermesAdapter')

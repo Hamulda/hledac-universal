@@ -164,18 +164,30 @@ def _get_mlx() -> Any:
             _MLX_CACHE = None
     return _MLX_CACHE
 _SPARSE_CACHE: Any | None = None
+_SPARSE_LOGGED: bool = False
 
 def _get_scipy_sparse() -> Any:
     """Lazy scipy.sparse loader — returns module or None if unavailable.
 
+    G2 FIX: scipy is in [ml] extra. Without it, pathfinding uses
+    dense matrix operations instead of sparse (higher memory, slower).
+    Log warning once per session to guide installation.
+
     M1 impact: avoids scipy overhead when only DuckPGQGraph is used.
     """
-    global _SPARSE_CACHE
+    global _SPARSE_CACHE, _SPARSE_LOGGED
     if _SPARSE_CACHE is None:
         try:
             from scipy import sparse
             _SPARSE_CACHE = sparse
         except ImportError:
+            if not _SPARSE_LOGGED:
+                import logging
+                logging.getLogger(__name__).debug(
+                    "scipy.sparse unavailable: sparse matrix operations disabled. "
+                    "Install with: pip install hledac-universal[ml]"
+                )
+                _SPARSE_LOGGED = True
             _SPARSE_CACHE = None
     return _SPARSE_CACHE
 if TYPE_CHECKING:
@@ -184,17 +196,21 @@ if TYPE_CHECKING:
     from scipy import sparse
 
 def _is_mlx_available() -> bool:
-    return _get_mlx() is not None
+    # C1-X FIX: Use SSOT MLX_AVAILABLE instead of local detection
+    from hledac.universal.utils.mlx_memory import MLX_AVAILABLE
+    return MLX_AVAILABLE
 
 def _is_scipy_available() -> bool:
     return _get_scipy_sparse() is not None
-MLX_AVAILABLE = None
+
+# C1-X FIX: Import MLX_AVAILABLE from SSOT (zero-import detection)
+from hledac.universal.utils.mlx_memory import MLX_AVAILABLE
+
 SCIPY_AVAILABLE = None
 
 def _get_MLX_AVAILABLE():
-    global MLX_AVAILABLE
-    if MLX_AVAILABLE is None:
-        MLX_AVAILABLE = _is_mlx_available()
+    # C1-X FIX: Use SSOT MLX_AVAILABLE
+    from hledac.universal.utils.mlx_memory import MLX_AVAILABLE
     return MLX_AVAILABLE
 
 def _get_SCIPY_AVAILABLE():

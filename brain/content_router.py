@@ -7,7 +7,7 @@ This module provides stateless, pure functions for content classification
 using regex + keyword matching. No ML model required — <1ms latency.
 
 Usage:
-    from brain.content_router import classify_content, get_preferred_model
+    from hledac.universal.brain.content_router import classify_content, get_preferred_model
     
     task_type = classify_content("Write a SQL query to join...")
     model_id = get_preferred_model(task_type)

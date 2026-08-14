@@ -35,7 +35,7 @@ use blake2::digest::{Update, VariableOutput};
 use blake2::Blake2bVar;
 use pyo3::prelude::*;
 use pyo3::types::PyList;
-use regex_automata::Regex;
+use regex_automata::meta::Regex;
 use std::fmt::Write as _;
 
 // Sprint F216R canonical URL normalizer (lives in url_engine.rs).
@@ -74,6 +74,19 @@ static NON_PRINTABLE_RE: std::sync::LazyLock<Regex> = std::sync::LazyLock::new(|
 static WHITESPACE_RE: std::sync::LazyLock<Regex> =
     std::sync::LazyLock::new(|| Regex::new(r"\s+").expect("hardcoded whitespace regex"));
 
+/// Helper: replace all non-overlapping matches with a replacement string
+fn replace_all<'a>(regex: &Regex, haystack: &'a str, replacement: &str) -> String {
+    let mut result = String::with_capacity(haystack.len());
+    let mut last_end = 0;
+    for m in regex.find_iter(haystack) {
+        result.push_str(&haystack[last_end..m.start()]);
+        result.push_str(replacement);
+        last_end = m.end();
+    }
+    result.push_str(&haystack[last_end..]);
+    result
+}
+
 // ---------------------------------------------------------------------------
 // Normalization
 // ---------------------------------------------------------------------------
@@ -98,9 +111,9 @@ pub fn normalize_quality_text(text: &str) -> String {
         return String::new();
     }
     // Collapse whitespace runs (includes \t \n \r) → single space.
-    let ws_collapsed = WHITESPACE_RE.replace_all(trimmed, " ");
+    let ws_collapsed = replace_all(&WHITESPACE_RE, trimmed, " ");
     // Strip remaining non-printable (ord < 32 excluding \t \n \r, plus \x7f).
-    NON_PRINTABLE_RE.replace_all(&ws_collapsed, "").into_owned()
+    replace_all(&NON_PRINTABLE_RE, &ws_collapsed, "")
 }
 
 // ---------------------------------------------------------------------------

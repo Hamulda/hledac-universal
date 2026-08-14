@@ -76,34 +76,41 @@ _IVF_PQ_NPROBES_DEFAULT = 8
 
 # -----------------------------------------------------------------------
 # MLX compiled cosine similarity (shared across implementations)
+# C1-X FIX: Import MLX_AVAILABLE from SSOT (zero-import detection)
 # -----------------------------------------------------------------------
-_MLX_AVAILABLE = False
+from hledac.universal.utils.mlx_memory import MLX_AVAILABLE as _MLX_AVAILABLE
+
+# Lazy accessor for mlx.core — uses centralized get_mx() from SSOT
+def _get_mx():
+    """Lazy accessor for mlx.core — uses centralized get_mx() from SSOT."""
+    from hledac.universal.utils.mlx_memory._core import get_mx as _get_mx_from_core
+    return _get_mx_from_core()
+
 _mlx_cosine_similarity_batch: Any = None
+if _MLX_AVAILABLE:
+    try:
+        import mlx.core as mx
 
-try:
-    import mlx.core as mx
+        @mx.compile
+        def _mlx_cosine_similarity_batch_impl(
+            query_emb: "mx.array", candidates: "mx.array"
+        ) -> "mx.array":
+            """MLX-compiled batch cosine similarity for exact re-ranking.
 
-    @mx.compile
-    def _mlx_cosine_similarity_batch_impl(
-        query_emb: "mx.array", candidates: "mx.array"
-    ) -> "mx.array":
-        """MLX-compiled batch cosine similarity for exact re-ranking.
+            Args:
+                query_emb: (D,) query vector
+                candidates: (N, D) candidate vectors (normalized)
 
-        Args:
-            query_emb: (D,) query vector
-            candidates: (N, D) candidate vectors (normalized)
+            Returns:
+                (N,) cosine similarities
+            """
+            q_norm = mx.linalg.norm(query_emb, keepdims=True)
+            q_normalized = query_emb / mx.maximum(q_norm, 1e-8)
+            return mx.matmul(candidates, q_normalized)
 
-        Returns:
-            (N,) cosine similarities
-        """
-        q_norm = mx.linalg.norm(query_emb, keepdims=True)
-        q_normalized = query_emb / mx.maximum(q_norm, 1e-8)
-        return mx.matmul(candidates, q_normalized)
-
-    _mlx_cosine_similarity_batch = _mlx_cosine_similarity_batch_impl
-    _MLX_AVAILABLE = True
-except ImportError:  # noqa: BLE001
-    pass
+        _mlx_cosine_similarity_batch = _mlx_cosine_similarity_batch_impl
+    except ImportError:  # noqa: BLE001
+        pass
 
 
 # -----------------------------------------------------------------------

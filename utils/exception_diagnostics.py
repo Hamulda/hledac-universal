@@ -12,7 +12,7 @@ Provides:
 
 Usage:
 
-    from utils.exception_diagnostics import ExceptionDiagnostics, get_diagnostics
+    from hledac.universal.utils.exception_diagnostics import ExceptionDiagnostics, get_diagnostics
 
     # Get singleton
     diag = get_diagnostics()
@@ -41,7 +41,8 @@ from collections import defaultdict, deque
 from dataclasses import dataclass, field
 from typing import Any
 
-from utils.exception_severity import Severity, ExceptionEvent
+from hledac.universal.core.locks import LockCategory, make_lock
+from hledac.universal.utils.exception_severity import Severity, ExceptionEvent
 
 __all__ = [
     "ExceptionDiagnostics",
@@ -134,7 +135,7 @@ class ExceptionDiagnostics:
     """
 
     _instance: ExceptionDiagnostics | None = None
-    _lock = threading.Lock()
+    _lock = make_lock(LockCategory.METRICS, "exception_diagnostics._lock")
 
     # Configuration
     MAX_EVENTS: int = 10000
@@ -161,7 +162,7 @@ class ExceptionDiagnostics:
         self._counts_by_severity: dict[str, int] = defaultdict(int)
         self._total_suppressed: int = 0
         self._last_snapshot: float = time.time()
-        self._snapshot_lock = threading.Lock()
+        self._snapshot_lock = make_lock(LockCategory.METRICS, "exception_diagnostics._snapshot_lock")
 
     def record(self, event: ExceptionEvent) -> None:
         """

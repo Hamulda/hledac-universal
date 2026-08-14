@@ -123,13 +123,20 @@ class VisionEncoder:
         scale = np.sqrt(2.0 / (_MOBILE_NET_RAW_DIM + IMAGE_VECTOR_DIM))
         random_matrix = rng.standard_normal((_MOBILE_NET_RAW_DIM, IMAGE_VECTOR_DIM), dtype=np.float32) * scale
         # SVD-based orthonormalization
+        # G2 FIX: scipy is in [ml] extra. Without it, falls back to QR decomposition
+        # which is slightly less numerically stable but works without scipy.
         try:
             # Use scipy if available for better numerical stability
             from scipy.linalg import svd
             U, _S, Vt = svd(random_matrix, full_matrices=False)
             # Use the U @ Vt product to get orthonormal columns
             proj_matrix = (U @ Vt).astype(np.float32)
-        except ImportError:
+        except ImportError as e:
+            if "scipy" in str(e):
+                logger.debug(
+                    f'VisionEncoder: scipy.linalg.svd unavailable, using QR fallback. '
+                    f'Install with: pip install hledac-universal[ml]'
+                )
             # Fallback: simple QR-based orthonormalization
             Q, R = np.linalg.qr(random_matrix)
             # Ensure proper sign (positive diagonal for stability)

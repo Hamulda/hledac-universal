@@ -27,6 +27,8 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from hledac.universal.core.locks import LockCategory, make_lock
+
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator
 
@@ -35,7 +37,7 @@ if TYPE_CHECKING:
 DB_PATH: Path = Path(__file__).parent / "domain_candidates.duckdb"
 _MAX_MV_ROWS: int = 50_000
 _MV_REFRESH_INTERVAL_S: float = 300.0  # 5 min (no-op without MV, kept for API compat)
-_CREATE_LOCK = threading.Lock()
+_CREATE_LOCK = make_lock(LockCategory.GRAPH, "duckdb_domain_mv._CREATE_LOCK")
 
 logger = logging.getLogger(__name__)
 
@@ -544,7 +546,7 @@ class DuckDBDomainMv:
 # ── Singleton ────────────────────────────────────────────────────────────────
 
 _MV_INSTANCE: DuckDBDomainMv | None = None
-_MV_INIT_LOCK = threading.Lock()
+_MV_INIT_LOCK = make_lock(LockCategory.GRAPH, "duckdb_domain_mv._MV_INIT_LOCK")
 
 
 def get_domain_mv() -> DuckDBDomainMv:

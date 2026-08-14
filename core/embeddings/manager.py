@@ -337,32 +337,22 @@ def get_gpu_arbiter() -> GPUArbiter:
 # Breaks the PLANNER: ZERO MLX invariant when imported by runtime planners.
 # Fix: defer to first actual use, not module-load time.
 
-MLX_AVAILABLE: bool | None = None
-MLX_EMBEDDINGS_AVAILABLE: bool | None = None
+# C1-X FIX: Import MLX_AVAILABLE from SSOT (zero-import detection)
+from hledac.universal.utils.mlx_memory import MLX_AVAILABLE
 
-# Lazy mlx.core accessor (reused from legacy.py to ensure single init point)
-_mlx_core_module: Any | None = None
+MLX_EMBEDDINGS_AVAILABLE: bool | None = None
 
 
 def _get_mlx_core() -> Any | None:
     """Lazily cached mlx.core module reference. Returns None if unavailable."""
-    global _mlx_core_module
-    if _mlx_core_module is None:
-        try:
-            import mlx.core as _mx
-            _mlx_core_module = _mx
-        except ImportError:
-            _mlx_core_module = False
-    return _mlx_core_module if _mlx_core_module is not False else None
+    # C1-X FIX: Use centralized get_mx() from mlx_memory SSOT
+    from hledac.universal.utils.mlx_memory._core import get_mx as _get_mx_from_core
+    return _get_mx_from_core()
 
 
 def _lazy_mlx_init() -> None:
     """Lazy MLX init — called on first use of MLXEmbeddingManager, not at module load."""
-    global MLX_AVAILABLE, MLX_EMBEDDINGS_AVAILABLE
-    if MLX_AVAILABLE is not None:
-        return  # Already initialized
-    _get_mlx_core()  # Probe availability
-    MLX_AVAILABLE = _mlx_core_module is not None
+    global MLX_EMBEDDINGS_AVAILABLE
     if not MLX_AVAILABLE:
         warnings.warn('MLX not available. Install: pip install mlx>=0.15.0', stacklevel=2)
     try:

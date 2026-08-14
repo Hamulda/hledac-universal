@@ -1,6 +1,6 @@
 {
   "version": "1.0.0",
-  "generated_at": "2026-08-13T21:48:24.992422+00:00",
+  "generated_at": "2026-08-14T00:06:57.452076+00:00",
   "capability": "NEXTGEN-05",
   "description": "Build-time FFI type-safety manifest",
   "classes": {
@@ -1726,6 +1726,29 @@
       "slots": [],
       "doc_comment": null
     },
+    "arrow_ipc_mmap.ArrowIpcMmapResult": {
+      "module": "arrow_ipc_mmap",
+      "name": "ArrowIpcMmapResult",
+      "fields": [],
+      "methods": [
+        {
+          "name": "release",
+          "signature": "()",
+          "return_type": "None",
+          "is_async": false
+        }
+      ],
+      "slots": [],
+      "doc_comment": null
+    },
+    "arrow_ipc_mmap.ArrowIpcMmapStats": {
+      "module": "arrow_ipc_mmap",
+      "name": "ArrowIpcMmapStats",
+      "fields": [],
+      "methods": [],
+      "slots": [],
+      "doc_comment": null
+    },
     "dedup_bloom.PyDistributedBloomFilter": {
       "module": "dedup_bloom",
       "name": "PyDistributedBloomFilter",
@@ -3051,6 +3074,22 @@
       "name": "remap_stats",
       "signature": "()",
       "return_type": "MachRemapStats",
+      "is_async": false,
+      "doc_comment": null
+    },
+    "mach_remap.remap_arrow_ipc_to_shared": {
+      "module": "mach_remap",
+      "name": "remap_arrow_ipc_to_shared",
+      "signature": "(path: str)",
+      "return_type": "tuple[int, int]",
+      "is_async": false,
+      "doc_comment": null
+    },
+    "mach_remap.unmap_shared_arrow_ipc": {
+      "module": "mach_remap",
+      "name": "unmap_shared_arrow_ipc",
+      "signature": "(virtual_address: int, size: int)",
+      "return_type": "tuple[]",
       "is_async": false,
       "doc_comment": null
     },
@@ -4774,6 +4813,14 @@
       "is_async": false,
       "doc_comment": null
     },
+    "arrow_ipc_mmap.get_arrow_ipc_mmap_stats": {
+      "module": "arrow_ipc_mmap",
+      "name": "get_arrow_ipc_mmap_stats",
+      "signature": "()",
+      "return_type": "ArrowIpcMmapStats",
+      "is_async": false,
+      "doc_comment": null
+    },
     "nw_connection.fetch": {
       "module": "nw_connection",
       "name": "fetch",
@@ -4889,7 +4936,7 @@
     "stealth_bridge.dns_resolve_async": {
       "module": "stealth_bridge",
       "name": "dns_resolve_async",
-      "signature": "(hostname: str, qtype: str | None)",
+      "signature": "(//!     hostname: str, //!)",
       "return_type": "Any",
       "is_async": false,
       "doc_comment": null
@@ -5211,6 +5258,110 @@
       "name": "apply_affinity_for_workload_py",
       "signature": "(workload: str)",
       "return_type": "None",
+      "is_async": false,
+      "doc_comment": null
+    },
+    "topology.detect_perflevel_clusters_py": {
+      "module": "topology",
+      "name": "detect_perflevel_clusters_py",
+      "signature": "()",
+      "return_type": "list[PyPerfLevelCluster]",
+      "is_async": false,
+      "doc_comment": null
+    },
+    "topology.get_p_core_cluster_py": {
+      "module": "topology",
+      "name": "get_p_core_cluster_py",
+      "signature": "()",
+      "return_type": "PyPerfLevelCluster | None",
+      "is_async": false,
+      "doc_comment": null
+    },
+    "topology.get_e_core_cluster_py": {
+      "module": "topology",
+      "name": "get_e_core_cluster_py",
+      "signature": "()",
+      "return_type": "PyPerfLevelCluster | None",
+      "is_async": false,
+      "doc_comment": null
+    },
+    "binary_matryoshka.quantize_to_binary": {
+      "module": "binary_matryoshka",
+      "name": "quantize_to_binary",
+      "signature": "(embedding: list[float])",
+      "return_type": "list[int]",
+      "is_async": false,
+      "doc_comment": null
+    },
+    "binary_matryoshka.batch_quantize_to_binary": {
+      "module": "binary_matryoshka",
+      "name": "batch_quantize_to_binary",
+      "signature": "(embeddings: list[float], num_embeddings: int)",
+      "return_type": "list[list[int]]",
+      "is_async": false,
+      "doc_comment": null
+    },
+    "binary_matryoshka.bruteforce_hamming_search": {
+      "module": "binary_matryoshka",
+      "name": "bruteforce_hamming_search",
+      "signature": "(query: list[int], database: list[int], num_entries: int, top_k: int, min_similarity: float)",
+      "return_type": "list[tuple[int, int]]",
+      "is_async": false,
+      "doc_comment": null
+    },
+    "binary_matryoshka.matryoshka_search": {
+      "module": "binary_matryoshka",
+      "name": "matryoshka_search",
+      "signature": "(query: list[int], database: list[int], num_entries: int, top_k: int)",
+      "return_type": "list[tuple[int, int]]",
+      "is_async": false,
+      "doc_comment": null
+    },
+    "binary_matryoshka.create_binary_database": {
+      "module": "binary_matryoshka",
+      "name": "create_binary_database",
+      "signature": "(path: str, embeddings: list[float], num_embeddings: int, finding_keys: list[str], text_hashes: list[str])",
+      "return_type": "int",
+      "is_async": false,
+      "doc_comment": null
+    },
+    "binary_matryoshka.open_binary_database": {
+      "module": "binary_matryoshka",
+      "name": "open_binary_database",
+      "signature": "(path: str)",
+      "return_type": "HashMap<String, u64>>>",
+      "is_async": false,
+      "doc_comment": null
+    },
+    "binary_matryoshka.get_binary_vector": {
+      "module": "binary_matryoshka",
+      "name": "get_binary_vector",
+      "signature": "(path: str, index: int)",
+      "return_type": "list[int] | None",
+      "is_async": false,
+      "doc_comment": null
+    },
+    "binary_matryoshka.get_finding_key_at": {
+      "module": "binary_matryoshka",
+      "name": "get_finding_key_at",
+      "signature": "(path: str, index: int)",
+      "return_type": "str | None",
+      "is_async": false,
+      "doc_comment": null
+    },
+    "binary_matryoshka.get_text_hash_at": {
+      "module": "binary_matryoshka",
+      "name": "get_text_hash_at",
+      "signature": "(path: str, index: int)",
+      "return_type": "str | None",
+      "is_async": false,
+      "doc_comment": null
+    },
+    "binary_matryoshka.search_binary_database": {
+      "module": "binary_matryoshka",
+      "name": "search_binary_database",
+      "signature": "(path: str, query: list[float], top_k: int, min_similarity: float, use_ml: bool)",
+      "return_type": "HashMap<String, Py<PyAny>>>>",
       "is_async": false,
       "doc_comment": null
     },
@@ -5933,6 +6084,12 @@
       "functions": [],
       "classes": []
     },
+    "binary_matryoshka": {
+      "module": "binary_matryoshka",
+      "registration_type": "register_functions",
+      "functions": [],
+      "classes": []
+    },
     "zero_copy": {
       "module": "zero_copy",
       "registration_type": "register_functions",
@@ -6023,12 +6180,6 @@
       "functions": [],
       "classes": []
     },
-    "parquet_reader": {
-      "module": "parquet_reader",
-      "registration_type": "register",
-      "functions": [],
-      "classes": []
-    },
     "deobfuscate": {
       "module": "deobfuscate",
       "registration_type": "register",
@@ -6079,6 +6230,12 @@
     },
     "p2p_harvest": {
       "module": "p2p_harvest",
+      "registration_type": "register",
+      "functions": [],
+      "classes": []
+    },
+    "swarm_fabric": {
+      "module": "swarm_fabric",
       "registration_type": "register",
       "functions": [],
       "classes": []

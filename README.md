@@ -2,6 +2,24 @@
 
 Asynchronní autonomní OSINT orchestrátor pro M1 MacBook (8GB UMA).
 
+## Instalace
+
+### coremltools na Python 3.14
+
+**Python 3.14**: coremltools 8.x/9.x nemá PyPI wheel pro Python 3.14.
+Použij Apple Anaconda channel s předkompilovanými M1 (aarch64) wheel:
+
+```bash
+pip install --extra-index-url https://pypi.anaconda.org/apple/repo/simple coremltools
+```
+
+Nebo pro uv:
+```bash
+uv pip install --extra-index-url https://pypi.anaconda.org/apple/repo/simple coremltools
+```
+
+**Note**: coremltools 10.x+ může mít 3.14 wheel — sleduj PyPI po 2026-Q4.
+
 ## Rychlý start
 
 ```bash

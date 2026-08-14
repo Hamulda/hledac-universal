@@ -3,8 +3,8 @@ core/inference_backends/ — Optional inference backends (mlxcel, coreml, mlx_in
 ================================================================================
 These backends are available to InferenceCoordinator:
 
-- mlxcel: Default on M1 8GB (RSS savings ~2GB via subprocess isolation)
-- mlx_inproc: Opt-in via HLEDAC_INFERENCE_BACKEND=mlx_inproc (in-process, dev/debug)
+- mlx_inproc: Default on M1 8GB (in-process mlx-lm via DeepHermes3Engine)
+- mlxcel: Opt-in via HLEDAC_INFERENCE_BACKEND=mlxcel (out-of-process Rust, RSS savings)
 - coreml: Opt-in via HLEDAC_INFERENCE_BACKEND=coreml (CoreML FastAPI)
 
 MlxcelBackend: Out-of-process mlxcel via MlxcelIpcClient (JSON-RPC over UDS)

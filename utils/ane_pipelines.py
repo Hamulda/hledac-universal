@@ -10,17 +10,17 @@ Designed for M1/Apple Silicon with fail-safe fallbacks.
 import logging
 from typing import Any
 
-# MLX import with fallback.
-#
+# C1-X FIX: Import MLX_AVAILABLE from SSOT (zero-import detection)
+# Uses importlib.metadata.version("mlx") — no mlx.core import at module load
+from hledac.universal.utils.mlx_memory import MLX_AVAILABLE
+
 # We type `mx` as `Any` (not `ModuleType | None`) so downstream signatures
 # like `mx.array`, `mx.zeros`, `mx.compile` stay statically valid — `Any`
 # carries every attribute, including the ones used in type hints. Runtime
 # code is gated on `MLX_AVAILABLE`; the type stays permissive on purpose.
 try:
     import mlx.core as mx  # type: ignore[import-not-found]
-    MLX_AVAILABLE = True
 except ImportError:
-    MLX_AVAILABLE = False
     mx: Any = None
 
 logger = logging.getLogger(__name__)

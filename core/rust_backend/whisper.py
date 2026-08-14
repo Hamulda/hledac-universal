@@ -128,7 +128,7 @@ class _PythonWhisperDomain:
         """
         # Try to use the existing whispercpp-based implementation
         try:
-            from brain.whisper_engine import WhisperEngine
+            from hledac.universal.brain.whisper_engine import WhisperEngine
 
             engine = WhisperEngine(model_size=model_size)
             result = engine.transcribe(audio_path, language=language)

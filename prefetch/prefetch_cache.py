@@ -9,7 +9,7 @@ import time
 from pathlib import Path
 from typing import Any
 import orjson
-from hledac.universal.utils.asyncx import safe_create_task, safe_gather_fire_and_forget
+from hledac.universal.utils.asyncx import safe_create_task, safe_gather_fire_and_forget, safe_wait_for
 logger = logging.getLogger(__name__)
 
 # C3-03: Bounded write queue with backpressure.
@@ -41,7 +41,7 @@ class _BoundedWriteQueue:
     async def put(self, item: tuple[str, str, Any]) -> bool:
         """Put item on queue with backpressure. Returns True on success, False on timeout."""
         try:
-            await asyncio.wait_for(self._q.put(item), timeout=self._put_timeout)
+            await safe_wait_for(self._q.put(item), timeout=self._put_timeout)
             return True
         except asyncio.TimeoutError:
             return False

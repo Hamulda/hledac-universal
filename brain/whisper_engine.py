@@ -61,6 +61,8 @@ import time as time_module
 from pathlib import Path
 from typing import Any, Literal
 
+from hledac.universal.utils.asyncx import safe_wait_for
+
 import msgspec
 
 logger = logging.getLogger(__name__)
@@ -262,7 +264,7 @@ async def _convert_to_wav_16khz(
             stdout=asyncio.subprocess.DEVNULL,
             stderr=asyncio.subprocess.PIPE,
         )
-        _, stderr = await asyncio.wait_for(
+        _, stderr = await safe_wait_for(
             proc.communicate(),
             timeout=60.0,
         )
@@ -321,7 +323,7 @@ async def _download_model_ggml(model_size: str) -> Path | None:
                 stdout=asyncio.subprocess.DEVNULL,
                 stderr=asyncio.subprocess.PIPE,
             )
-            _, stderr = await asyncio.wait_for(
+            _, stderr = await safe_wait_for(
                 proc.communicate(),
                 timeout=_MODEL_DOWNLOAD_TIMEOUT_S + 30,
             )
@@ -409,7 +411,7 @@ async def _curl_download_coreml(url: str, zip_path: Path, timeout_s: int) -> boo
         stdout=asyncio.subprocess.DEVNULL,
         stderr=asyncio.subprocess.PIPE,
     )
-    _, stderr = await asyncio.wait_for(
+    _, stderr = await safe_wait_for(
         proc.communicate(),
         timeout=timeout_s + 30,
     )
@@ -759,7 +761,7 @@ class WhisperEngine:
                     return None
 
                 # Run transcription with timeout
-                result = await asyncio.wait_for(
+                result = await safe_wait_for(
                     asyncio.to_thread(
                         self._transcribe_sync,
                         str(audio_path),

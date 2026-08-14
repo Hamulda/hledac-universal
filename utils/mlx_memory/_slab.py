@@ -138,7 +138,7 @@ class MetalSlabPool:
                     logger.debug(f'[MetalSlabPool] HIT slab={slab_id[:8]} size={actual_size // 1024}KB')
                     # MODERN-43: Track slab pool hit via Rust atomic
                     try:
-                        from utils.mlx_memory._core import _cache_hit
+                        from hledac.universal.utils.mlx_memory._core import _cache_hit
                         _cache_hit()
                     except Exception:
                         pass  # Non-critical, don't fail allocation
@@ -153,7 +153,7 @@ class MetalSlabPool:
                     logger.debug(f'[MetalSlabPool] MISS — total cap reached ({self._stats_allocated_bytes / 1024 ** 2:.0f}MB)')
                     # MODERN-43: Track slab pool miss via Rust atomic
                     try:
-                        from utils.mlx_memory._core import _cache_miss
+                        from hledac.universal.utils.mlx_memory._core import _cache_miss
                         _cache_miss()
                     except Exception:
                         pass  # Non-critical

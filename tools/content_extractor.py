@@ -1,6 +1,9 @@
 """
 Content extractor module - import-safe with bounded extraction.
 Extracts main text from HTML and structured data from previews.
+
+G1 FIX: Removed beautifulsoup4 fallback — selectolax+regex is primary and sufficient.
+If selectolax fails, regex fallback handles all cases without external dependencies.
 """
 
 import logging
@@ -9,12 +12,7 @@ from dataclasses import dataclass, field
 
 from hledac.universal.compat.msgspec_gc_compat import Struct
 logger = logging.getLogger(__name__)
-try:
-    from bs4 import BeautifulSoup
-    BS4_AVAILABLE = True
-except ImportError:
-    BS4_AVAILABLE = False
-    BeautifulSoup = None
+
 try:
     from hledac.universal.utils.html_text_fast import html_to_text_fast
     HTML_TEXT_FAST_AVAILABLE = True

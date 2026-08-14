@@ -16,8 +16,8 @@ import time
 from dataclasses import dataclass, field
 from typing import Any, Optional
 
-from utils.resilience.degradation_modes import DegradedMode, FailureSeverity
-from utils.resilience.failure_registry import SprintHealthLedger, get_ledger
+from hledac.universal.utils.resilience.degradation_modes import DegradedMode, FailureSeverity
+from hledac.universal.utils.resilience.failure_registry import SprintHealthLedger, get_ledger
 
 logger = logging.getLogger(__name__)
 

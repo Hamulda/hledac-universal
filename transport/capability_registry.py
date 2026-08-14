@@ -56,7 +56,7 @@ M1 8GB CONSIDERATIONS:
   - Results cached after first check (ContextVar for per-sprint isolation)
 
 USAGE:
-  from transport.capability_registry import (
+  from hledac.universal.transport.capability_registry import (
       get_capability,
       is_protocol_ready,
       get_all_capabilities,
@@ -79,6 +79,8 @@ import os
 import shutil
 from enum import Enum
 from typing import TYPE_CHECKING
+
+from hledac.universal.utils.asyncx import safe_wait_for
 
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable
@@ -327,7 +329,7 @@ async def _detect_arti_capability() -> tuple[TransportCapability, str]:
                         except Exception as e:
                             return False
 
-                    bootstrapped = await asyncio.wait_for(
+                    bootstrapped = await safe_wait_for(
                         loop.run_in_executor(None, _do_start),
                         timeout=5.0,
                     )

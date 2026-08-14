@@ -1669,7 +1669,8 @@ class _RustMPSCBytes:
                 # S1-03 FIX: wait_for applies backpressure — caller yields the
                 # event loop for up to `timeout` seconds before giving up.
                 # This prevents unbounded queue growth under sustained ingestion.
-                await asyncio.wait_for(self._queue.put(item), timeout=timeout)
+                # D5 FIX: safe_wait_for for correct TaskGroup composition
+                await safe_wait_for(self._queue.put(item), timeout=timeout)
                 return True
             except asyncio.TimeoutError:
                 # Queue full for timeout seconds — apply backpressure signal.

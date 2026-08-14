@@ -23,7 +23,7 @@ Features
 
 Usage
 -----
-    from utils.cache import LRUCache
+    from hledac.universal.utils.cache import LRUCache
 
     cache = LRUCache(max_size=100)
     cache[key] = value      # Set

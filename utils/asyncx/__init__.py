@@ -22,10 +22,10 @@ Structure:
 Backward compatibility: all public API is re-exported from this package.
 
 Preferred imports:
-    from utils.asyncx import parallel, parallel_ok, silent_except
-    from utils.asyncx import bounded_parallel_map, chunked_taskgroup
-    from utils.asyncx import BoundedPerHostGate, DomainRateLimiter
-    from utils.asyncx import safe_wait_for, retry_backoff_async
+    from hledac.universal.utils.asyncx import parallel, parallel_ok, silent_except
+    from hledac.universal.utils.asyncx import bounded_parallel_map, chunked_taskgroup
+    from hledac.universal.utils.asyncx import BoundedPerHostGate, DomainRateLimiter
+    from hledac.universal.utils.asyncx import safe_wait_for, retry_backoff_async
 """
 
 from __future__ import annotations
@@ -33,7 +33,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 # Import from submodules
-from utils.asyncx._core import (
+from hledac.universal.utils.asyncx._core import (
     async_getaddrinfo,
     first_completed,
     monotonic_ms,
@@ -44,18 +44,18 @@ from utils.asyncx._core import (
     stop_task,
 )
 
-from utils.asyncx._fault import (
+from hledac.universal.utils.asyncx._fault import (
     get_cascading_failure_id,
     silent_except,
 )
 
-from utils.asyncx._monitor import (
+from hledac.universal.utils.asyncx._monitor import (
     AsyncMonitor,
     get_async_monitor,
     init_async_monitoring,
 )
 
-from utils.asyncx._parallel import (
+from hledac.universal.utils.asyncx._parallel import (
     ExceptionPolicy,
     ParallelResult,
     RaceFirstSuccessResult,
@@ -77,14 +77,14 @@ from utils.asyncx._parallel import (
     ConcurrencyBudgetResolver,
 )
 
-from utils.asyncx._rate_limit import (
+from hledac.universal.utils.asyncx._rate_limit import (
     BoundedPerHostGate,
     DomainRateLimiter,
     _TokenBucketState,
 )
 
 # Re-export for backward compatibility
-from utils.asyncx._parallel import (
+from hledac.universal.utils.asyncx._parallel import (
     current_otel_context,
 )
 

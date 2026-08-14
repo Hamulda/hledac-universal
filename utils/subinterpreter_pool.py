@@ -48,6 +48,8 @@ import os
 import sys
 from typing import Any, TypeVar
 
+from hledac.universal.utils.asyncx import safe_wait_for
+
 logger = logging.getLogger(__name__)
 
 T = TypeVar("T")
@@ -240,7 +242,7 @@ async def run_batch_in_subinterpreters(
     futures = [loop.run_in_executor(pool, fn, item) for item in items]
 
     if timeout is not None:
-        results = await asyncio.wait_for(
+        results = await safe_wait_for(
             asyncio.gather(*futures, return_exceptions=True),
             timeout=timeout,
         )

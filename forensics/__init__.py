@@ -72,6 +72,14 @@ GhostSignal = None
 RecoveredContent = None
 detect_digital_ghosts = None
 
+# Git forensics detector — canonical in forensics/git_forensics.py (Rust-accelerated)
+GIT_FORENSICS_AVAILABLE = False
+GitForensicsDetector = None
+GitForensicsResult = None
+GitForensicRecord = None
+GitForensicsStats = None
+quick_git_analysis = None
+
 
 def _load_metadata_extractor() -> None:
     """Lazy load metadata extractor module."""
@@ -182,6 +190,35 @@ def _load_digital_ghost_detector() -> None:
         pass
 
 
+def _load_git_forensics() -> None:
+    """Lazy load git forensics detector module.
+
+    CANONICAL implementation is forensics/git_forensics.py (GitForensicsDetector).
+    Rust-accelerated via deep_git feature for packfile analysis.
+    """
+    global GIT_FORENSICS_AVAILABLE
+    global GitForensicsDetector
+    global GitForensicsResult
+    global GitForensicRecord
+    global GitForensicsStats
+    global quick_git_analysis
+
+    if GIT_FORENSICS_AVAILABLE:
+        return
+
+    try:
+        from .git_forensics import (
+            GitForensicsDetector,
+            GitForensicsResult,
+            GitForensicRecord,
+            GitForensicsStats,
+            quick_git_analysis,
+        )
+        GIT_FORENSICS_AVAILABLE = True
+    except ImportError:  # noqa: BLE001
+        pass
+
+
 # Auto-load on first import attempt
 try:
     _load_metadata_extractor()
@@ -195,6 +232,11 @@ except Exception:  # noqa: BLE001
 
 try:
     _load_digital_ghost_detector()
+except Exception:  # noqa: BLE001
+    pass
+
+try:
+    _load_git_forensics()
 except Exception:  # noqa: BLE001
     pass
 
@@ -233,4 +275,11 @@ __all__ = [
     "GhostSignal",
     "RecoveredContent",
     "detect_digital_ghosts",
+    # Git Forensics (canonical, Rust-accelerated)
+    "GIT_FORENSICS_AVAILABLE",
+    "GitForensicsDetector",
+    "GitForensicsResult",
+    "GitForensicRecord",
+    "GitForensicsStats",
+    "quick_git_analysis",
 ]

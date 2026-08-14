@@ -27,13 +27,8 @@ except ImportError:
     SELECTOLAX_AVAILABLE = False
     SelectolaxParser = None
 
-# BeautifulSoup — kept for backward compatibility only (deprecated path)
-try:
-    from bs4 import BeautifulSoup, Tag
-    BS4_AVAILABLE = True
-except ImportError:
-    BS4_AVAILABLE = False
-    BeautifulSoup = None
+# G1 FIX: beautifulsoup4 REMOVED — selectolax is primary, regex is final fallback
+# BeautifulSoup compatibility code removed - no longer maintained
 MAX_FORMS = 10
 MAX_FIELDS_PER_FORM = 10
 MAX_API_CANDIDATES = 20
@@ -100,16 +95,7 @@ class DeepWebHintsExtractor:
                 hints.js_markers = self._extract_js_markers_selectolax(parser)
                 hints.onion_links = self._extract_onion_links_selectolax(parser)
                 hints.bundle_urls = self._extract_js_bundle_urls_selectolax(parser, base_url)
-            # FALLBACK: BeautifulSoup (deprecated path)
-            elif BS4_AVAILABLE:
-                soup = BeautifulSoup(html_preview, 'html.parser')
-                hints.forms = self._extract_forms(soup, base_url)
-                hints.api_candidates = self._extract_api_candidates(html_preview, base_url)
-                hints.js_markers = self._extract_js_markers(html_preview)
-                ONION_REGEX = re.compile('[a-z0-9]{16,56}\\.onion', re.IGNORECASE)
-                hints.onion_links = ONION_REGEX.findall(html_preview)[:50]
-                hints.bundle_urls = self._extract_js_bundle_urls(html_preview, base_url)
-            # ULTIMATE FALLBACK: pure regex (no dependencies)
+            # ULTIMATE FALLBACK: pure regex (no dependencies) (G1 FIX: no bs4)
             else:
                 hints.forms = self._extract_forms_fallback(html_preview, base_url)
                 hints.api_candidates = self._extract_api_candidates(html_preview, base_url)

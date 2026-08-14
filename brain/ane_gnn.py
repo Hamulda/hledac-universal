@@ -119,14 +119,21 @@ try:
 except (ImportError, AttributeError):
     _rust_ane = None
 
-try:
-    import mlx.core as _mx
-    import mlx.nn as _nn
-    _MLX_AVAILABLE = True
-except ImportError:
-    _mx = None
-    _nn = None
-    _MLX_AVAILABLE = False
+# C1-X FIX: Import MLX_AVAILABLE from SSOT (zero-import detection)
+from hledac.universal.utils.mlx_memory import MLX_AVAILABLE as _MLX_AVAILABLE
+
+# Lazy accessor for mlx modules - uses centralized get_mx() from SSOT
+def _get_mlx_modules():
+    """Lazy accessor for mlx modules — uses centralized get_mx() from SSOT."""
+    from hledac.universal.utils.mlx_memory._core import get_mx as _get_mx_from_core
+    _mx = _get_mx_from_core()
+    if _mx is not None:
+        try:
+            import mlx.nn as _nn
+            return _mx, _nn
+        except ImportError:
+            pass
+    return None, None
 
 try:
     import CoreML as _CoreML

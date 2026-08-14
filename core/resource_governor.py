@@ -67,7 +67,7 @@ import msgspec
 _KT = TypeVar("_KT")
 _VT = TypeVar("_VT")
 
-from hledac.universal.utils.asyncx import safe_create_task, stop_task
+from hledac.universal.utils.asyncx import safe_create_task, safe_wait_for, stop_task
 
 
 class UMAState(StrEnum):
@@ -164,11 +164,21 @@ class ConcurrencyPreset(msgspec.Struct, frozen=True, gc=False):
     """
     Sprint F289: Immutable concurrency preset derived from UMA state.
     MODERN-36: Updated for unified 6-thread budget.
+    NEXTGEN-03: Added dedicated pool thread counts for asymmetric scheduling.
 
     Single source of truth for all concurrency limits derived from
     M1 8GB UMA state. Replaces scattered if-elif chains in:
     - M1ResourceGovernor._evaluate_impl()
     - BackpressureMonitor (via _TTL_BY_STATE, AIMD_DECREASE_BY_STATE)
+
+    NEXTGEN-03: M1 8GB Asymmetric Pool Budget:
+        Pool           | Threads | Cores | QoS           | Workload
+        ---------------|---------|-------|---------------|------------------
+        simd_pool      | 2       | P 0,1 | USER_INITIATED | ARM NEON SIMD
+        mlx_pool       | 2       | P 2,3 | USER_INTERACTIVE| MLX Metal
+        graph_pool     | 1       | P 2   | USER_INITIATED | Kuzu Graph
+        io_pool        | 1-2     | E 4+  | UTILITY        | DuckDB, Network
+        Tokio Workers  | 4       | E 4+  | UTILITY        | Async I/O
 
     M1 8GB 6-thread budget calibrated values:
         emergency:  1 worker,  1 fetch, block_model_load=True  — near-OOM
@@ -183,17 +193,33 @@ class ConcurrencyPreset(msgspec.Struct, frozen=True, gc=False):
     block_model_load: bool
     cache_ttl_seconds: float
     aimd_decrease_factor: float
+    # NEXTGEN-03: Dedicated pool thread counts
+    simd_threads: int = 2
+    mlx_threads: int = 2
+    graph_threads: int = 1
+    io_threads: int = 2
 
     @classmethod
     def from_state(cls, state: str) -> ConcurrencyPreset:
         """
         MODERN-36: 6-thread budget model for M1 8GB.
-        Thread budget breakdown: DuckDB RW(1) + DuckDB RO(2) + CPU I/O(3) = 6 total.
+        NEXTGEN-03: Added dedicated pool thread counts.
+
+        Thread budget breakdown: SIMD(2) + MLX(2) + Graph(1) + I/O(1) = 6 total.
         """
+        # NEXTGEN-03: Scale down dedicated pools based on UMA state
         match state:
             case "emergency":
                 return cls(
-                    max_workers=1, fetch_limit=1, block_model_load=True, cache_ttl_seconds=0.1, aimd_decrease_factor=0.0
+                    max_workers=1,
+                    fetch_limit=1,
+                    block_model_load=True,
+                    cache_ttl_seconds=0.1,
+                    aimd_decrease_factor=0.0,
+                    simd_threads=0,  # Disable SIMD at emergency
+                    mlx_threads=0,   # Disable MLX at emergency
+                    graph_threads=0,  # Disable Graph at emergency
+                    io_threads=1,     # Minimal I/O
                 )
             case "critical":
                 return cls(
@@ -202,6 +228,10 @@ class ConcurrencyPreset(msgspec.Struct, frozen=True, gc=False):
                     block_model_load=True,
                     cache_ttl_seconds=0.25,
                     aimd_decrease_factor=0.25,
+                    simd_threads=1,  # Reduce SIMD
+                    mlx_threads=1,   # Reduce MLX
+                    graph_threads=0,  # Disable Graph
+                    io_threads=1,
                 )
             case "warn":
                 return cls(
@@ -210,6 +240,10 @@ class ConcurrencyPreset(msgspec.Struct, frozen=True, gc=False):
                     block_model_load=False,
                     cache_ttl_seconds=1.0,
                     aimd_decrease_factor=0.5,
+                    simd_threads=1,  # Reduced SIMD
+                    mlx_threads=2,
+                    graph_threads=1,
+                    io_threads=2,
                 )
             case "soft_warn":
                 return cls(
@@ -218,6 +252,10 @@ class ConcurrencyPreset(msgspec.Struct, frozen=True, gc=False):
                     block_model_load=False,
                     cache_ttl_seconds=2.0,
                     aimd_decrease_factor=0.75,
+                    simd_threads=2,
+                    mlx_threads=2,
+                    graph_threads=1,
+                    io_threads=2,
                 )
             case "ok":
                 return cls(
@@ -226,6 +264,10 @@ class ConcurrencyPreset(msgspec.Struct, frozen=True, gc=False):
                     block_model_load=False,
                     cache_ttl_seconds=5.0,
                     aimd_decrease_factor=1.0,
+                    simd_threads=2,
+                    mlx_threads=2,
+                    graph_threads=1,
+                    io_threads=2,
                 )
             case _:
                 return cls(
@@ -234,6 +276,10 @@ class ConcurrencyPreset(msgspec.Struct, frozen=True, gc=False):
                     block_model_load=False,
                     cache_ttl_seconds=5.0,
                     aimd_decrease_factor=1.0,
+                    simd_threads=2,
+                    mlx_threads=2,
+                    graph_threads=1,
+                    io_threads=2,
                 )
 
 
@@ -642,8 +688,10 @@ try:
         _THRESHOLD_CRITICAL_GIB = _rg_float("THRESHOLD_CRITICAL_GIB")
         _THRESHOLD_EMERGENCY_GIB = _rg_float("THRESHOLD_EMERGENCY_GIB")
     _HYSTERESIS_EXIT_GIB: float = _rg_float("HYSTERESIS_EXIT_GIB")
-except (ImportError, NameError):
+except ImportError:
     # MODERN-36 Fix: Use SSOT values instead of derived from detected memory
+    # Only ImportError is fatal — missing dependencies must abort.
+    # NameError removed: Ruff F821 now catches undefined names at lint time.
     # Old: round(_DETECTED_TOTAL_GIB * _SOFT_WARN_RATIO, 2)
     # New: UmaBudget.THRESHOLD_*_GIB (from SSOT)
     _THRESHOLD_SOFT_WARN_GIB = UmaBudget.THRESHOLD_SOFT_WARN_GIB  # 5.5 GiB
@@ -2221,7 +2269,7 @@ class M1ResourceGovernor:
             try:
                 from hledac.universal.utils.mlx_cache import async_reconfigure_metal_cache_limit
 
-                success = await asyncio.wait_for(
+                success = await safe_wait_for(
                     async_reconfigure_metal_cache_limit(
                         uma_state=decision.uma_state,
                         thermal_headroom=decision.thermal_headroom,
@@ -2274,7 +2322,7 @@ class M1ResourceGovernor:
             from hledac.universal.core.global_co_scheduler import get_co_scheduler
             scheduler = get_co_scheduler()
             # Await with timeout to prevent deadlock
-            await asyncio.wait_for(
+            await safe_wait_for(
                 scheduler.on_pressure_change(decision.uma_state),
                 timeout=5.0,
             )
@@ -2727,7 +2775,7 @@ class AsyncUMAGuard:
                                 hard_limit_mb=self._hard_limit_mb,
                                 reason="timeout",
                             )
-                        await asyncio.wait_for(
+                        await safe_wait_for(
                             self._condition.wait(),
                             timeout=remaining_timeout,
                         )
@@ -3981,8 +4029,9 @@ class QoSSubscriptionRegistry:
                         f"level={qos_level}, deadline={deadline_s}s"
                     )
                     # Schedule force-cancel if no ack received
-                    asyncio.create_task(
-                        self._force_cancel_if_no_ack(cap, deadline_s)
+                    safe_create_task(
+                        self._force_cancel_if_no_ack(cap, deadline_s),
+                        name=f"resource_governor:force_cancel:{cap}",
                     )
                     results[cap] = False
                 else:

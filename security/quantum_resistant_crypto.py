@@ -44,11 +44,12 @@ class QuantumResistantCrypto:
         enabled = kwargs.get('enabled', True)
         key_id = kwargs.get('key_id', 'com.hledac.pq.signing.v1')
         try:
-            import asyncio
             from hledac.universal.security.pq_crypto import create_post_quantum_backend
-            loop = asyncio.new_event_loop()
-            self._backend, self._status = loop.run_until_complete(create_post_quantum_backend(enabled=enabled, key_id=key_id))
-            loop.close()
+            from hledac.universal.utils.sync_bridge import run_sync_async
+            # D4-1-FIX: Use run_sync_async() instead of new_event_loop/run_until_complete
+            # run_sync_async() uses asyncio.Runner() (PEP 654) for Python 3.11+
+            # and handles both running and non-running event loop cases
+            self._backend, self._status = run_sync_async(create_post_quantum_backend(enabled=enabled, key_id=key_id))
             if self._backend.is_available():
                 logger.info(f'QuantumResistantCrypto: Backend available ({self._backend.name})')
             else:

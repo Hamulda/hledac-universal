@@ -47,7 +47,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 import numpy as np
-from utils._patterns import LazyLockDescriptor  # F320-REFACTOR-2
+from hledac.universal.utils._patterns import LazyLockDescriptor  # F320-REFACTOR-2
 
 logger = logging.getLogger(__name__)
 

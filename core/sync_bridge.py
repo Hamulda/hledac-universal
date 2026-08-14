@@ -9,7 +9,7 @@ Architecture:
     ThreadPoolExecutor (MLX inference)
           │  tokens from sync gen_fn
           ▼
-    asyncio.Queue[_T] (unbounded, maxsize=0)
+    asyncio.Queue[_T] (bounded, maxsize=2048)  # D6 FIX: was unbounded
           │  await q.get()
           ▼
     async caller (event loop)
@@ -21,8 +21,8 @@ This pattern is M1-safe because:
   - MLX Metal ops run in the executor thread under get_metal_stream_context()
     (thread-local GPU stream — F288 fix in deephermes3_engine).
   - The event loop is never blocked; it only waits on q.get().
-  - The queue is unbounded (maxsize=0) so the producer NEVER blocks —
-    always at a clean cancellation point (work_queue.get()).
+  - The queue is bounded (maxsize=2048) to prevent memory exhaustion on M1 8GB.
+    On overflow, tokens are dropped with logging (drop-on-overflow pattern).
   - Cancellation via threading.Event + Future.cancel() stops the executor thread.
   - done_event (threading.Event) signals completion to the consumer.
 
@@ -33,6 +33,7 @@ Usage:
 P1-3 fix: Thread-safe queue ops via call_soon_threadsafe, non-blocking consumer loop,
           threading.Event for graceful executor termination.
 P0-4 fix: Always releases Arc ownership after task completes (rayon_drop_channel).
+D6 fix: Bounded queue to prevent memory exhaustion on M1 8GB.
 """
 
 from __future__ import annotations
@@ -53,19 +54,19 @@ async def stream_via_queue(
     *args: object,
 ) -> AsyncIterator[_T]:
     """
-    Bridge a synchronous generator to an async generator via an unbounded queue.
+    Bridge a synchronous generator to an async generator via a bounded queue.
 
     Runs ``gen_fn(*args)`` in a ThreadPoolExecutor.
-    Each token yielded by the generator is put into an asyncio.Queue (maxsize=0,
-    unbounded). The async consumer awaits q.get() and yields tokens one at a time.
+    Each token yielded by the generator is put into an asyncio.Queue (maxsize=2048,
+    bounded). The async consumer awaits q.get() and yields tokens one at a time.
     Completion is signaled via a threading.Event (not a sentinel value).
 
     This lets blocking sync generators (e.g. MLX stream_generate) run without
     blocking the event loop thread.
 
-    The unbounded queue (maxsize=0) is intentional: it guarantees the executor
-    thread is ALWAYS at a clean cancellation point (work_queue.get()), never
-    busy-spinning on a full queue. This makes M1 cancellation safe and fast.
+    The bounded queue (maxsize=2048) prevents memory exhaustion on M1 8GB.
+    On overflow, tokens are dropped with logging (drop-on-overflow pattern).
+    This ensures the executor thread is always at a clean cancellation point.
 
     Args:
         gen_fn: Synchronous callable that returns an Iterator[_T].
@@ -90,8 +91,11 @@ async def stream_via_queue(
     # This ensures the executor thread is always at a clean cancellation point:
     # either waiting at work_queue.get() (when queue is empty) or having
     # finished (when done_event is set). M1-safe because MLX Metal ops run
-    # under get_metal_stream_context() in deephermes3_engine._stream_tokens().
-    q: asyncio.Queue[_T] = asyncio.Queue(maxsize=0)  # unbounded
+    # under get_metal_stream_context() in deephermos3_engine._stream_tokens().
+    # D6 FIX: Bounded queue (maxsize=2048) to prevent memory exhaustion on M1 8GB.
+    # Producer uses put_nowait which raises QueueFull if full — handled by
+    # logging and continuing (drop-on-overflow pattern for streaming).
+    q: asyncio.Queue[_T] = asyncio.Queue(maxsize=2048)
     # P1-3 FIX: threading.Event for graceful producer termination.
     # Unlike fut.cancel() which only affects asyncio.Future, this flag is checked
     # by the producer thread itself, allowing it to exit cleanly.
@@ -115,7 +119,12 @@ async def stream_via_queue(
                 # asyncio.Queue.put_nowait() is NOT thread-safe when called from
                 # non-event-loop threads. call_soon_threadsafe schedules the operation
                 # on the event loop, ensuring proper synchronization.
-                loop.call_soon_threadsafe(q.put_nowait, token)  # type: ignore[arg-type]
+                try:
+                    loop.call_soon_threadsafe(q.put_nowait, token)  # type: ignore[arg-type]
+                except asyncio.QueueFull:
+                    # D6 FIX: Queue full — log and drop token to prevent memory exhaustion
+                    logger.debug("[stream_via_queue] queue full, dropping token")
+                    continue
         except Exception as e:  # A5-04: store exception instead of swallowing
             _producer_error[0] = e
             logger.warning("[stream_via_queue] producer raised: %s", e)

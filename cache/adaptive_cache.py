@@ -25,11 +25,13 @@ import msgspec
 from enum import IntEnum
 from typing import Any, Callable, Generic, TypeVar
 
+from hledac.universal.core.locks import make_lock, LockCategory
+
 logger = logging.getLogger(__name__)
 
 # Lazy import — Rust extensions sa neimportujú na module level
 _rust: Any = None
-_rust_lock = threading.Lock()
+_rust_lock = make_lock(LockCategory.CACHE, "adaptive_cache._rust_lock")
 
 
 def _get_rust() -> Any:
@@ -40,7 +42,7 @@ def _get_rust() -> Any:
             # Double-check po lock
             if _rust is None:
                 try:
-                    from hledac.universal import rust_extensions
+                    from hledac.universal.hledac.universal import rust_extensions
                     _rust = rust_extensions
                 except ImportError:
                     logger.warning("[AdaptiveCache] Rust extensions unavailable, using fallback")

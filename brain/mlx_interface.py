@@ -17,7 +17,7 @@ alone. This makes it hard to:
 Solution: Single import point with lazy initialization and caching.
 
 Usage:
-    from brain.mlx_interface import get_mlx, get_metal, get_mlx_lm
+    from hledac.universal.brain.mlx_interface import get_mlx, get_metal, get_mlx_lm
 
     mx = get_mlx()      # mlx.core singleton
     metal = get_metal()  # mx.metal singleton
@@ -79,7 +79,6 @@ __all__ = [
 _mlx_core: Any | None = None
 _mlx_metal: Any | None = None
 _mlx_lm_module: Any | None = None
-_mlx_available: bool = False
 _ffi_cb: Any | None = None
 _init_lock = threading.Lock()
 
@@ -88,18 +87,15 @@ _init_lock = threading.Lock()
 # Availability check
 # ---------------------------------------------------------------------------
 
+# C1-X FIX: Import MLX_AVAILABLE from SSOT (zero-import detection)
+# Uses importlib.metadata.version("mlx") — no mlx.core import at module load
+from hledac.universal.utils.mlx_memory import MLX_AVAILABLE
+
 
 def is_mlx_available() -> bool:
     """Check if MLX is available on this system."""
-    global _mlx_available
-    if _mlx_available:
-        return True
-    try:
-        import mlx.core as mx
-        _mlx_available = mx is not None
-    except Exception:
-        _mlx_available = False
-    return _mlx_available
+    # C1-X FIX: Use SSOT MLX_AVAILABLE instead of duplicate detection
+    return MLX_AVAILABLE
 
 
 def _get_ffi_cb() -> Any | None:
@@ -345,9 +341,9 @@ def metal_clear_cache() -> None:
 
 def reset_mlx_interface() -> None:
     """Reset all singletons (for testing only)."""
-    global _mlx_core, _mlx_metal, _mlx_lm_module, _mlx_available
+    global _mlx_core, _mlx_metal, _mlx_lm_module
     with _init_lock:
         _mlx_core = None
         _mlx_metal = None
         _mlx_lm_module = None
-        _mlx_available = False
+        # C1-X FIX: _mlx_available removed — now uses SSOT MLX_AVAILABLE

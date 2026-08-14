@@ -22,7 +22,7 @@ M1 8GB: All services use lazy initialization — transports that are
 not enabled via environment variables are never loaded.
 
 Usage:
-    from coordinators.fetch.services import FetchServiceRegistry
+    from hledac.universal.coordinators.fetch.services import FetchServiceRegistry
 
     registry = FetchServiceRegistry(config=config)
     await registry.initialize()

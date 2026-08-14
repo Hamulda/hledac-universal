@@ -7,7 +7,7 @@ codebase expect. It delegates to `core.rust_backend` or directly to
 `hledac_rust_extensions` as appropriate.
 
 Usage:
-    from hledac.rust import (
+    from hledac.universal.hledac.rust import (
         get_preset_for_profile,
         get_safari18_settings,
         get_safari17_settings,
@@ -95,7 +95,7 @@ class _HledacRustModule:
     Lazy-loading facade for hledac.rust submodules.
 
     Provides attribute-style access to Rust modules:
-        from hledac.rust import rust
+        from hledac.universal.hledac.rust import rust
         rust.anti_analysis.quick_probe_async(...)
         rust.stealth_bridge.dns_resolve_async(...)
     """

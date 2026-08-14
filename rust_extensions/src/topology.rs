@@ -77,6 +77,59 @@ use std::thread;
 use crate::qos_class_helpers::qos_class_i32_to_qos_class_t;
 
 // ============================================================================
+// NEXTGEN-03: PerfLevelCluster for Asymmetric Topology-Aware Scheduling
+// ============================================================================
+
+/// Performance level cluster — groups cores by type and performance level.
+///
+/// NEXTGEN-03: Used by elastic_pool.rs to create dedicated thread pools
+/// for different workload types (SIMD, MLX, Graph) with explicit core affinity.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PerfLevelCluster {
+    /// CPU core indices belonging to this cluster.
+    pub cpu_ids: Vec<usize>,
+    /// Performance level (0 = P-cores, 1 = E-cores).
+    pub perflevel: u32,
+    /// Cluster type: "p" for P-cores, "e" for E-cores.
+    pub cluster_type: String,
+}
+
+impl PerfLevelCluster {
+    /// Create a P-core cluster.
+    pub fn p_cores(cpu_ids: Vec<usize>, perflevel: u32) -> Self {
+        Self {
+            cpu_ids,
+            perflevel,
+            cluster_type: "p".to_string(),
+        }
+    }
+
+    /// Create an E-core cluster.
+    pub fn e_cores(cpu_ids: Vec<usize>, perflevel: u32) -> Self {
+        Self {
+            cpu_ids,
+            perflevel,
+            cluster_type: "e".to_string(),
+        }
+    }
+
+    /// Check if this is a P-core cluster.
+    pub fn is_p_core(&self) -> bool {
+        self.cluster_type == "p"
+    }
+
+    /// Check if this is an E-core cluster.
+    pub fn is_e_core(&self) -> bool {
+        self.cluster_type == "e"
+    }
+
+    /// Get thread count for this cluster.
+    pub fn thread_count(&self) -> usize {
+        self.cpu_ids.len()
+    }
+}
+
+// ============================================================================
 // Constants
 // ============================================================================
 
@@ -114,6 +167,9 @@ static TOPOLOGY: OnceLock<TopologyInfo> = OnceLock::new();
 
 /// Whether we're running on Apple Silicon.
 static IS_APPLE_SILICON: OnceLock<bool> = OnceLock::new();
+
+/// NEXTGEN-03: Global clusters cache — initialized once via detect_perflevel_clusters().
+static PERFLEVEL_CLUSTERS: OnceLock<Vec<PerfLevelCluster>> = OnceLock::new();
 
 /// Topology information cached at startup.
 #[derive(Debug, Clone)]
@@ -322,6 +378,76 @@ pub fn get_e_core_indices() -> Vec<usize> {
 }
 
 // ============================================================================
+// NEXTGEN-03: PerfLevelCluster Detection
+// ============================================================================
+
+/// Initialize perflevel clusters — called once at startup.
+///
+/// NEXTGEN-03: Returns cached Vec<PerfLevelCluster> where each cluster groups
+/// cores by performance level (P-core vs E-core).
+///
+/// M1 8GB configuration:
+///   - P-core cluster: CPU 0,1,2,3 (perflevel=0)
+///   - E-core cluster: CPU 4,5,6,7 (perflevel=1)
+///
+/// Returns:
+///   Vec<PerfLevelCluster> with clusters sorted by preference (P first, then E)
+pub fn detect_perflevel_clusters() -> &'static Vec<PerfLevelCluster> {
+    PERFLEVEL_CLUSTERS.get_or_init(|| {
+        let topo = get_topology();
+        let mut clusters = Vec::with_capacity(2);
+
+        // P-core cluster (perflevel 0) — priority for CPU-intensive work
+        if !topo.p_core_indices.is_empty() {
+            clusters.push(PerfLevelCluster::p_cores(
+                topo.p_core_indices.clone(),
+                0, // perflevel 0 = P-cores
+            ));
+        }
+
+        // E-core cluster (perflevel 1) — for I/O-bound work
+        if !topo.e_core_indices.is_empty() {
+            clusters.push(PerfLevelCluster::e_cores(
+                topo.e_core_indices.clone(),
+                1, // perflevel 1 = E-cores
+            ));
+        }
+
+        // Sort: P-cores first, then E-cores (P-cores have priority)
+        clusters.sort_by_key(|c| c.perflevel);
+
+        clusters
+    })
+}
+
+/// Get P-core cluster if available.
+pub fn get_p_core_cluster() -> Option<&'static PerfLevelCluster> {
+    let clusters = detect_perflevel_clusters();
+    clusters.iter().find(|c| c.is_p_core())
+}
+
+/// Get E-core cluster if available.
+pub fn get_e_core_cluster() -> Option<&'static PerfLevelCluster> {
+    let clusters = detect_perflevel_clusters();
+    clusters.iter().find(|c| c.is_e_core())
+}
+
+/// Get cluster for a specific workload type.
+///
+/// NEXTGEN-03: Maps workload to appropriate cluster for affinity binding.
+pub fn get_cluster_for_workload(workload: WorkloadType) -> Option<&'static PerfLevelCluster> {
+    match workload {
+        WorkloadType::CpuIntensive | WorkloadType::MlxInference | WorkloadType::GraphTraverse => {
+            get_p_core_cluster()
+        }
+        WorkloadType::IoBound | WorkloadType::NetworkIo | WorkloadType::Telemetry => {
+            get_e_core_cluster()
+        }
+        WorkloadType::Default => get_p_core_cluster(),
+    }
+}
+
+// ============================================================================
 // Public API — Workload-Aware Affinity
 // ============================================================================
 
@@ -516,6 +642,28 @@ fn apply_affinity_for_workload_py(workload: &str) {
     apply_affinity_for_workload_str(workload);
 }
 
+/// NEXTGEN-03: Detect perflevel clusters for topology-aware scheduling.
+///
+/// Returns a list of clusters, each with cpu_ids, perflevel, and cluster_type.
+/// M1 8GB: Returns [P-core cluster (CPU 0-3), E-core cluster (CPU 4-7)]
+#[pyfunction]
+fn detect_perflevel_clusters_py() -> Vec<PyPerfLevelCluster> {
+    let clusters = detect_perflevel_clusters();
+    clusters.iter().map(PyPerfLevelCluster::from).collect()
+}
+
+/// NEXTGEN-03: Get P-core cluster info.
+#[pyfunction]
+fn get_p_core_cluster_py() -> Option<PyPerfLevelCluster> {
+    get_p_core_cluster().map(|c| PyPerfLevelCluster::from(c))
+}
+
+/// NEXTGEN-03: Get E-core cluster info.
+#[pyfunction]
+fn get_e_core_cluster_py() -> Option<PyPerfLevelCluster> {
+    get_e_core_cluster().map(|c| PyPerfLevelCluster::from(c))
+}
+
 /// Python-friendly topology info struct.
 #[pyclass]
 #[derive(Debug, Clone)]
@@ -550,6 +698,31 @@ impl From<&TopologyInfo> for PyTopologyInfo {
     }
 }
 
+/// NEXTGEN-03: Python-friendly cluster info struct.
+#[pyclass]
+#[derive(Debug, Clone)]
+pub struct PyPerfLevelCluster {
+    #[pyo3(get)]
+    pub cpu_ids: Vec<usize>,
+    #[pyo3(get)]
+    pub perflevel: u32,
+    #[pyo3(get)]
+    pub cluster_type: String,
+    #[pyo3(get)]
+    pub thread_count: usize,
+}
+
+impl From<&PerfLevelCluster> for PyPerfLevelCluster {
+    fn from(cluster: &PerfLevelCluster) -> Self {
+        Self {
+            cpu_ids: cluster.cpu_ids.clone(),
+            perflevel: cluster.perflevel,
+            cluster_type: cluster.cluster_type.clone(),
+            thread_count: cluster.thread_count(),
+        }
+    }
+}
+
 /// Register topology functions in Python module.
 pub fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(init_topology_py, m)?)?;
@@ -560,7 +733,12 @@ pub fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(get_p_core_indices_py, m)?)?;
     m.add_function(wrap_pyfunction!(get_e_core_indices_py, m)?)?;
     m.add_function(wrap_pyfunction!(apply_affinity_for_workload_py, m)?)?;
+    // NEXTGEN-03: PerfLevelCluster registration
+    m.add_function(wrap_pyfunction!(detect_perflevel_clusters_py, m)?)?;
+    m.add_function(wrap_pyfunction!(get_p_core_cluster_py, m)?)?;
+    m.add_function(wrap_pyfunction!(get_e_core_cluster_py, m)?)?;
     m.add_class::<PyTopologyInfo>()?;
+    m.add_class::<PyPerfLevelCluster>()?;
 
     // Auto-initialize topology at module import
     let _ = init_topology();

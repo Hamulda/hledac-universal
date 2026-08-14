@@ -4678,7 +4678,10 @@ def main() -> None:
     """
     try:
         _main_dispatch()
-    except (NameError, AttributeError, ImportError) as e:
+    except ImportError as e:
+        # Only ImportError is fatal — missing dependencies must abort.
+        # NameError/AttributeError removed: Ruff F821/F811 now catches
+        # undefined names at lint time rather than swallowing at runtime.
         _fatal(e, code=3)  # programmer error / regression
     except KeyboardInterrupt:
         logger.info("[MAIN] Interrupted by user")

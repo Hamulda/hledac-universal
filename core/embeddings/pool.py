@@ -48,25 +48,16 @@ from hledac.universal.utils.mlx_cache import (
 
 logger = logging.getLogger(__name__)
 
-# === Safe MLX detection (ISSUE 3.2 fix) ===
-def _detect_mlx_available() -> bool:
-    """Uses importlib.metadata — find_spec loads mlx.core on macOS, violating PLANNER: ZERO MLX."""
-    try:
-        import importlib.metadata
-        importlib.metadata.version("mlx")
-        return True
-    except Exception:
-        return False
-
-
-MLX_AVAILABLE: bool = _detect_mlx_available()
+# C1-X FIX: Import MLX_AVAILABLE from SSOT (zero-import detection)
+# Uses importlib.metadata.version("mlx") — no mlx.core import at module load
+from hledac.universal.utils.mlx_memory import MLX_AVAILABLE
 
 
 def get_mx():
-    """Lazy accessor for mlx.core — never holds module-level reference."""
-    if not MLX_AVAILABLE:
-        return None
-    return _sys.modules.get("mlx.core")
+    """Lazy accessor for mlx.core — uses centralized get_mx() from SSOT."""
+    # C1-X FIX: Use centralized get_mx() from mlx_memory SSOT
+    from hledac.universal.utils.mlx_memory._core import get_mx as _get_mx_from_core
+    return _get_mx_from_core()
 
 
 # === Deprecated get_mlx_model — delegates to hermes_cache (M-11) ===

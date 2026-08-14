@@ -1,6 +1,17 @@
-"""
-Temporal Archaeologist
-======================
+# NEW-MEM-005: Archive content cap for M1 8GB safety
+# Wayback/archive content can be large, cap at 10MB
+_MAX_ARCHIVE_BYTES: int = 10 * 1024 * 1024
+
+
+async def _read_text_with_cap(resp: httpx.Response, cap: int = _MAX_ARCHIVE_BYTES) -> str:
+    """Read response text with payload cap for M1 RAM safety."""
+    try:
+        raw = resp.content or b""
+        if len(raw) > cap:
+            raw = raw[:cap]
+        return raw.decode("utf-8", errors="replace")
+    except Exception:
+        return ""
 
 
 
@@ -55,6 +66,20 @@ from hledac.universal.transport.session_pool import session_pool
 from hledac.universal.utils.rate_limiter import RateLimitConfig, RateLimiter
 from operator import attrgetter, itemgetter
 logger = logging.getLogger(__name__)
+
+# NEW-MEM-005: Archive content cap for M1 8GB safety
+_MAX_ARCHIVE_BYTES: int = 10 * 1024 * 1024  # 10MB cap for archive content
+
+
+async def _read_text_with_cap(resp: httpx.Response, cap: int = _MAX_ARCHIVE_BYTES) -> str:
+    """Read response text with payload cap for M1 RAM safety."""
+    try:
+        raw = resp.content or b""
+        if len(raw) > cap:
+            raw = raw[:cap]
+        return raw.decode("utf-8", errors="replace")
+    except Exception:
+        return ""
 
 class TemporalError(StrEnum):
     """String-based error codes for temporal archaeology operations."""
@@ -513,7 +538,8 @@ class TemporalArchaeologist:
             async with self._session.get(self.WAYBACK_CDX_URL, params=params) as resp:
                 if resp.status != 200:
                     return versions
-                data = await resp.text()
+                # NEW-MEM-005: Use capped read for CDX API (small, cap at 1MB)
+                data = await _read_text_with_cap(resp, cap=1024 * 1024)
                 lines = data.strip().split('\n')
                 if len(lines) <= 1:
                     return versions
@@ -569,7 +595,8 @@ class TemporalArchaeologist:
         try:
             async with self._session.get(wayback_url) as resp:
                 if resp.status == 200:
-                    content = await resp.text()
+                    # NEW-MEM-005: Use capped read for Wayback content
+                    content = await _read_text_with_cap(resp)
                     if len(content) <= self.max_content_size:
                         self._fetched_snapshots.add(wayback_url)
                         return content
@@ -587,7 +614,8 @@ class TemporalArchaeologist:
             async with self._session.get(search_url) as resp:
                 if resp.status != 200:
                     return versions
-                html = await resp.text()
+                # NEW-MEM-005: Use capped read for archive search (HTML, cap at 1MB)
+                html = await _read_text_with_cap(resp, cap=1024 * 1024)
                 pattern = 'href="(https://archive\\.today/[^"]+)"[^>]*>([^<]+)'
                 matches = re.findall(pattern, html)
                 for archive_url, title in matches[:10]:
@@ -607,7 +635,8 @@ class TemporalArchaeologist:
         try:
             async with self._session.get(archive_url) as resp:
                 if resp.status == 200:
-                    content = await resp.text()
+                    # NEW-MEM-005: Use capped read for archive content
+                    content = await _read_text_with_cap(resp)
                     if len(content) <= self.max_content_size:
                         return content
         except Exception as e:
@@ -625,7 +654,8 @@ class TemporalArchaeologist:
                 if resp.status == 200:
                     content = None
                     if include_content:
-                        content = await resp.text()
+                        # NEW-MEM-005: Use capped read for cache content
+                        content = await _read_text_with_cap(resp)
                         if len(content) > self.max_content_size:
                             content = None
                     version = ArchivedVersion(url=cache_url, timestamp=datetime.now(UTC), content_hash=hashlib.sha256((content or '').encode()).hexdigest()[:16], content=content, source='google_cache', is_deleted=False, metadata={})
@@ -645,7 +675,8 @@ class TemporalArchaeologist:
                 if resp.status == 200:
                     content = None
                     if include_content:
-                        content = await resp.text()
+                        # NEW-MEM-005: Use capped read for cache content
+                        content = await _read_text_with_cap(resp)
                         if len(content) > self.max_content_size:
                             content = None
                     version = ArchivedVersion(url=cache_url, timestamp=datetime.now(UTC), content_hash=hashlib.sha256((content or '').encode()).hexdigest()[:16], content=content, source='bing_cache', is_deleted=False, metadata={})

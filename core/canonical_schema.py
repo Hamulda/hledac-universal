@@ -39,7 +39,7 @@ Python appender, COPY FROM Arrow) derive their schema from here.
 
 Usage
 -----
-    from core.canonical_schema import (
+    from hledac.universal.core.canonical_schema import (
         CANONICAL_FINDINGS_COLUMNS,
         CANONICAL_FINDINGS_ARROW_SCHEMA,
         CANONICAL_FINDINGS_DUCKDB_DDL,

@@ -49,6 +49,11 @@ try:
 except ImportError:
     _IJSON_AVAILABLE = False
 
+# NEW-MEM-001: Fallback response size cap for streaming_json
+# When ijson unavailable, we use response.text() which loads full content.
+# Cap at 5MB to prevent OOM on M1 8GB. ijson users get streaming regardless.
+_STREAMING_FALLBACK_MAX_BYTES: int = 5 * 1024 * 1024  # 5 MB
+
 
 async def stream_json_array(
     response: httpx.Response,
@@ -75,8 +80,12 @@ async def stream_json_array(
     """
     if not _IJSON_AVAILABLE:
         logger.warning("[streaming_json] ijson not available, falling back to full parse")
-        # Fallback: full parse (not ideal but functional)
-        text = await response.text()
+        # NEW-MEM-001 FIX: Cap fallback text to prevent OOM
+        raw_content = response.content or b""
+        if len(raw_content) > _STREAMING_FALLBACK_MAX_BYTES:
+            raw_content = raw_content[:_STREAMING_FALLBACK_MAX_BYTES]
+            logger.debug(f"[streaming_json] fallback content capped to {_STREAMING_FALLBACK_MAX_BYTES} bytes")
+        text = raw_content.decode("utf-8", errors="replace")
         import orjson
         try:
             data = orjson.loads(text)
@@ -107,9 +116,12 @@ async def stream_json_array(
     except (RuntimeError, StopIteration, asyncio.CancelledError) as e:
         # ijson generators raise RuntimeError on protocol errors, StopIteration on premature end
         logger.debug(f"[streaming_json] ijson stream failed: {e}")
-        # Fallback: try to salvage what we can
+        # NEW-MEM-001 FIX: Cap salvage fallback to prevent OOM
         try:
-            text = await response.text()
+            raw_content = response.content or b""
+            if len(raw_content) > _STREAMING_FALLBACK_MAX_BYTES:
+                raw_content = raw_content[:_STREAMING_FALLBACK_MAX_BYTES]
+            text = raw_content.decode("utf-8", errors="replace")
             import orjson
             data = orjson.loads(text)
             if isinstance(data, list):

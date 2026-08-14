@@ -47,6 +47,8 @@ from typing import Any
 
 import msgspec
 
+from hledac.universal.core.locks import LockCategory, make_lock
+
 logger = logging.getLogger(__name__)
 
 # =============================================================================
@@ -576,7 +578,7 @@ class GlobalPeakCoScheduler:
 # =============================================================================
 
 _co_scheduler: GlobalPeakCoScheduler | None = None
-_co_scheduler_lock = threading.Lock()
+_co_scheduler_lock = make_lock(LockCategory.CONFIG, "global_co_scheduler._co_scheduler_lock")
 
 
 def get_co_scheduler() -> GlobalPeakCoScheduler:

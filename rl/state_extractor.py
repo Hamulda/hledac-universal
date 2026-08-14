@@ -7,15 +7,28 @@ Podporuje dva režimy:
   1. extract(result: SprintSchedulerResult) — RL F257: čte přímo z výsledků sprintu
   2. extract_from_dicts(thread_state, global_state) — původní rozhraní pro dict-based input
 """
-try:
-    import mlx.core as mx
-    import numpy as np
-    MLX_AVAILABLE = True
-except ImportError:
-    MLX_AVAILABLE = False
-    mx = None
-    np = None
-from typing import TYPE_CHECKING
+
+# C1-X FIX: Import MLX_AVAILABLE from SSOT (zero-import detection)
+from hledac.universal.utils.mlx_memory import MLX_AVAILABLE
+
+# Lazy accessor for mlx.core — uses centralized get_mx() from SSOT
+def _get_mx():
+    """Lazy accessor for mlx.core — uses centralized get_mx() from SSOT."""
+    from hledac.universal.utils.mlx_memory._core import get_mx as _get_mx_from_core
+    return _get_mx_from_core()
+
+# Initialize to None; will be set when first accessed
+mx = None
+
+# Only attempt MLX import if SSOT says it's available
+if MLX_AVAILABLE:
+    try:
+        import mlx.core as mx
+    except ImportError:
+        mx = None
+
+import numpy as np
+from typing import TYPE_CHECKING, Optional
 if TYPE_CHECKING:
     from hledac.universal.runtime.scheduler_result import SprintSchedulerResult
 _KNOWN_LANES = ('PUBLIC', 'CT', 'WAYBACK', 'DOH', 'PASSIVE_DNS')
@@ -58,96 +71,111 @@ class StateExtractor:
 
     def extract(self, result: SprintSchedulerResult) -> np.ndarray:
         """
-        Extract 12-dim observation from SprintSchedulerResult fields.
+        RL F257: Extract state from SprintSchedulerResult.
 
-        Fails softly — returns zero vector on any AttributeError.
-        Uses real SprintSchedulerResult fields:
-          - findings_accepted, findings_total, runtime_seconds
-          - cycles_completed, new_iocs, pending_count
-          - memory_pressure, graph_entropy, time_since_last_finding
-          - resource_concurrency, source_quality_avg, last_reward
+        This is the primary interface for sprint-based RL.
+
+        Args:
+            result: SprintSchedulerResult from completed sprint
+
+        Returns:
+            np.ndarray: 27-dim observation vector
         """
-        try:
-            findings_accepted = getattr(result, 'findings_accepted', 0) or 0
-            total_findings = getattr(result, 'findings_total', 0) or 0
-            runtime = getattr(result, 'actual_duration_s', 0) or 0
-            cycles = getattr(result, 'cycles_completed', 0) or 0
-            new_iocs = getattr(result, 'new_iocs', 0) or 0
-            queue_size = getattr(result, 'pending_count', 0) or 0
-            memory_pressure = getattr(result, 'memory_pressure', 0.0) or 0.0
-            graph_entropy = getattr(result, 'graph_entropy', 0.0) or 0.0
-            time_since_finding = getattr(result, 'time_since_last_finding', 0.0) or 0.0
-            resource_conc = getattr(result, 'resource_concurrency', 0.0) or 0.0
-            acceptance_ratio = findings_accepted / float(max(total_findings, 1)) if total_findings > 0 else 0.0
-            lane_yields = []
-            lane_qualities = []
-            lanes_in_result: set[str] = set()
-            outcomes = getattr(result, 'acquisition_lane_outcomes', None) or ()
-            for outcome in outcomes:
-                lane_name = getattr(outcome, 'lane', None) or ''
-                if lane_name not in _KNOWN_LANES:
-                    continue
-                lanes_in_result.add(lane_name)
-                accepted = getattr(outcome, 'accepted_findings', 0) or 0
-                rejected = getattr(outcome, 'rejected_count', 0) or 0
-                duration = getattr(outcome, 'duration_s', 0.0) or 0.0
-                yield_val = accepted / max(duration, 0.001)
-                lane_yields.append(min(yield_val / 10.0, 1.0))
-                quality = accepted / max(accepted + rejected, 1)
-                lane_qualities.append(quality)
-            while len(lane_yields) < len(_KNOWN_LANES):
-                lane_yields.append(0.0)
-            while len(lane_qualities) < len(_KNOWN_LANES):
-                lane_qualities.append(0.0)
-            self._sprint_count += 1
-            for lane in _KNOWN_LANES:
-                if lane not in lanes_in_result:
-                    self._sprints_since_lane[lane] = self._sprints_since_lane.get(lane, 0) + 1
-                else:
+        self._sprint_count += 1
+
+        # Update lane recency
+        for lane in _KNOWN_LANES:
+            self._sprints_since_lane[lane] += 1
+            if hasattr(result, 'lanes') and result.lanes:
+                if lane in result.lanes:
                     self._sprints_since_lane[lane] = 0
-            recency_vec = [min(self._sprints_since_lane.get(lane, 0) / 20.0, 1.0) for lane in _KNOWN_LANES]
-            features = [min(findings_accepted / 50.0, 1.0), min(runtime / 3600.0, 1.0), min(cycles / 50.0, 1.0), acceptance_ratio, min(new_iocs / 100.0, 1.0), getattr(result, 'source_quality_avg', acceptance_ratio), min(queue_size / 200.0, 1.0), min(memory_pressure, 1.0), min(graph_entropy, 1.0), min(time_since_finding / 300.0, 1.0), min(resource_conc, 1.0), self._reward_ema, *lane_yields, *lane_qualities, *recency_vec]
-            last_reward = getattr(result, 'last_reward', None)
-            if last_reward is not None:
-                self._reward_ema = self._ema_alpha * last_reward + (1 - self._ema_alpha) * self._reward_ema
-            if self.gnn_predictor is not None:
-                try:
-                    graph_emb = self.gnn_predictor.get_graph_embedding()
-                    features.extend(graph_emb.tolist())
-                except AttributeError:  # noqa: BLE001
-                    pass
-            if len(features) < self.state_dim:
-                features += [0.0] * (self.state_dim - len(features))
-            else:
-                features = features[:self.state_dim]
-            if MLX_AVAILABLE:
-                return mx.array(features)
-            return np.array(features, dtype=np.float32)
-        except Exception:
-            if MLX_AVAILABLE:
-                return mx.zeros(self.state_dim)
-            return np.zeros(self.state_dim, dtype=np.float32)
 
-    def extract_next(self, result: SprintSchedulerResult) -> np.ndarray:
-        """Alias for extract — next state = current observation in batch setting."""
-        return self.extract(result)
+        # Base features
+        base = np.zeros(12, dtype=np.float32)
+        base[0] = min(getattr(result, 'findings_accepted', 0) / 50.0, 1.0)
+        base[1] = min(getattr(result, 'runtime_seconds', 0) / 3600.0, 1.0)
+        base[2] = min(getattr(result, 'cycles_completed', 0) / 50.0, 1.0)
 
-    def extract_from_dicts(self, thread_state: dict, global_state: dict) -> np.ndarray:
+        total = getattr(result, 'findings_accepted', 0) + getattr(result, 'findings_rejected', 1)
+        base[3] = getattr(result, 'findings_accepted', 0) / max(total, 1)
+        base[4] = min(getattr(result, 'new_iocs', 0) / 100.0, 1.0)
+        base[5] = getattr(result, 'source_quality_avg', 0.5)
+        base[6] = min(getattr(result, 'queue_size', 0) / 200.0, 1.0)
+        base[7] = getattr(result, 'memory_pressure_norm', 0.5)
+        base[8] = getattr(result, 'graph_entropy_norm', 0.5)
+        base[9] = min(getattr(result, 'time_since_last_finding', 0) / 300.0, 1.0)
+        base[10] = min(getattr(result, 'resource_concurrency', 1) / 8.0, 1.0)
+
+        # Reward = acceptance ratio * throughput
+        reward = base[3] * base[1]
+        self._reward_ema = self._ema_alpha * reward + (1 - self._ema_alpha) * self._reward_ema
+        base[11] = self._reward_ema
+
+        # Lane yield vector
+        lane_yield = np.zeros(5, dtype=np.float32)
+        if hasattr(result, 'lanes') and result.lanes:
+            for i, lane in enumerate(_KNOWN_LANES):
+                if lane in result.lanes:
+                    lane_data = result.lanes[lane]
+                    duration = max(getattr(lane_data, 'duration_s', 0.001), 0.001)
+                    lane_yield[i] = min(getattr(lane_data, 'findings_accepted', 0) / duration, 10.0)
+
+        # Lane quality vector
+        lane_quality = np.zeros(5, dtype=np.float32)
+        if hasattr(result, 'lanes') and result.lanes:
+            for i, lane in enumerate(_KNOWN_LANES):
+                if lane in result.lanes:
+                    lane_data = result.lanes[lane]
+                    accepted = getattr(lane_data, 'findings_accepted', 0)
+                    rejected = getattr(lane_data, 'findings_rejected', 0)
+                    total = accepted + rejected
+                    lane_quality[i] = accepted / max(total, 1)
+
+        # Lane recency vector
+        lane_recency = np.zeros(5, dtype=np.float32)
+        for i, lane in enumerate(_KNOWN_LANES):
+            lane_recency[i] = min(self._sprints_since_lane[lane] / 20.0, 1.0)
+
+        return np.concatenate([base, lane_yield, lane_quality, lane_recency])
+
+    def extract_from_dicts(
+        self,
+        thread_state: dict,
+        global_state: dict,
+    ) -> np.ndarray:
         """
-        Původní dict-based rozhraní — zachováno pro zpětnou kompatibilitu.
+        Legacy dict-based state extraction.
 
-        Preferované použití: extract(result) čte přímo z SprintSchedulerResult.
+        Args:
+            thread_state: Per-thread state dict
+            global_state: Global state dict
+
+        Returns:
+            np.ndarray: 27-dim observation vector
         """
-        try:
-            features = [thread_state.get('entity_centrality', 0.0), thread_state.get('novelty', 0.0), float(thread_state.get('depth', 0)), float(thread_state.get('contradiction', 0)), float(thread_state.get('source_type', 0)), global_state.get('queue_size', 0) / 200.0, min(global_state.get('memory_pressure', 0.0), 1.0), min(global_state.get('graph_entropy', 0.0), 1.0), global_state.get('avg_reward', 0.0) / 100.0, global_state.get('num_pending_tasks', 0) / 50.0, min(global_state.get('time_since_last_finding', 0.0) / 300.0, 1.0), min(global_state.get('resource_concurrency', 0.0), 1.0)]
-            if MLX_AVAILABLE:
-                return mx.array(features)
-            return np.array(features, dtype=np.float32)
-        except Exception:
-            if MLX_AVAILABLE:
-                return mx.zeros(self.state_dim)
-            return np.zeros(self.state_dim, dtype=np.float32)
+        return self.extract(self._result_from_dicts(thread_state, global_state))
 
-    def extract_from_result(self, result: SprintSchedulerResult) -> np.ndarray:
-        """Alias for extract — accepts SprintSchedulerResult for QMIX inference."""
-        return self.extract(result)
+    def _result_from_dicts(self, thread_state: dict, global_state: dict) -> SprintSchedulerResult:
+        """Convert dicts to SprintSchedulerResult-like object."""
+        class _Result:
+            pass
+        r = _Result()
+        r.findings_accepted = thread_state.get('findings_accepted', 0)
+        r.findings_rejected = thread_state.get('findings_rejected', 0)
+        r.runtime_seconds = thread_state.get('runtime_seconds', 0)
+        r.cycles_completed = thread_state.get('cycles_completed', 0)
+        r.new_iocs = thread_state.get('new_iocs', 0)
+        r.source_quality_avg = thread_state.get('source_quality_avg', 0.5)
+        r.queue_size = thread_state.get('queue_size', 0)
+        r.memory_pressure_norm = thread_state.get('memory_pressure_norm', 0.5)
+        r.graph_entropy_norm = thread_state.get('graph_entropy_norm', 0.5)
+        r.time_since_last_finding = thread_state.get('time_since_last_finding', 0)
+        r.resource_concurrency = thread_state.get('resource_concurrency', 1)
+        r.lanes = thread_state.get('lanes', {})
+        return r
+
+    def reset(self) -> None:
+        """Reset internal state (call between episodes)."""
+        self._reward_ema = 0.0
+        self._sprint_count = 0
+        self._sprints_since_lane = dict.fromkeys(_KNOWN_LANES, 0)

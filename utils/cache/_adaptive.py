@@ -31,7 +31,7 @@ Features
 
 Usage
 -----
-    from utils.cache import IntelligentCache, CacheConfig
+    from hledac.universal.utils.cache import IntelligentCache, CacheConfig
 
     config = CacheConfig(max_size_bytes=50*1024*1024)
     cache = IntelligentCache(config)
@@ -73,22 +73,15 @@ __all__ = [
 
 # ── MLX Support ────────────────────────────────────────────────────────────────
 
-_MLX_AVAILABLE: bool | None = None
-_MLX_CORE: Any = None
+# C1-X FIX: Import MLX_AVAILABLE from SSOT (zero-import detection)
+from hledac.universal.utils.mlx_memory import MLX_AVAILABLE as _MLX_AVAILABLE
 
 
 def _get_mlx() -> Any:
     """Lazy import MLX core - returns None if MLX not available."""
-    global _MLX_AVAILABLE, _MLX_CORE
-    if _MLX_AVAILABLE is None:
-        try:
-            import mlx.core as mx
-            _MLX_CORE = mx
-            _MLX_AVAILABLE = True
-        except ImportError:
-            _MLX_AVAILABLE = False
-            _MLX_CORE = None
-    return _MLX_CORE
+    # C1-X FIX: Use centralized get_mx() from mlx_memory SSOT
+    from hledac.universal.utils.mlx_memory._core import get_mx as _get_mx_from_core
+    return _get_mx_from_core()
 
 
 # ── Enums & Config ────────────────────────────────────────────────────────────

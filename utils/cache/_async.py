@@ -26,7 +26,7 @@ M1 8GB bounds:
 
 Usage
 -----
-    from utils.cache import async_cached, AsyncLRUCache
+    from hledac.universal.utils.cache import async_cached, AsyncLRUCache
 
     # Decorator (per-key locks, bounded)
     @async_cached(maxsize=256)

@@ -105,30 +105,54 @@ pub fn serde_json_reexport(json_str: &str, pretty: bool, sort_keys: bool) -> Str
 
 /// Pretty-print a JSON string (indent=2, no key sorting).
 /// Drop-in for `json.dumps(d, indent=2)`.
+///
+/// ## GIL Handling
+/// Releases GIL via `release_gil` during CPU-bound serde_json parsing/serialization.
 #[pyfunction]
 pub fn serde_json_pretty(json_str: &str) -> String {
-    serde_json_reexport(json_str, true, false)
+    use crate::gil::release_gil;
+    Python::attach(|py| {
+        release_gil(py, || serde_json_reexport(json_str, true, false))
+    })
 }
 
 /// Compact serialize (no indent, no key sorting).
 /// Drop-in for `json.dumps(d)`.
+///
+/// ## GIL Handling
+/// Releases GIL via `release_gil` during CPU-bound serde_json parsing/serialization.
 #[pyfunction]
 pub fn serde_json_compact(json_str: &str) -> String {
-    serde_json_reexport(json_str, false, false)
+    use crate::gil::release_gil;
+    Python::attach(|py| {
+        release_gil(py, || serde_json_reexport(json_str, false, false))
+    })
 }
 
 /// Pretty-print with sorted keys (indent=2, sort_keys=True).
 /// Drop-in for `json.dumps(d, indent=2, sort_keys=True)`.
+///
+/// ## GIL Handling
+/// Releases GIL via `release_gil` during CPU-bound serde_json parsing/serialization.
 #[pyfunction]
 pub fn serde_json_pretty_sorted(json_str: &str) -> String {
-    serde_json_reexport(json_str, true, true)
+    use crate::gil::release_gil;
+    Python::attach(|py| {
+        release_gil(py, || serde_json_reexport(json_str, true, true))
+    })
 }
 
 /// Compact serialize with sorted keys.
 /// Drop-in for `json.dumps(d, sort_keys=True)`.
+///
+/// ## GIL Handling
+/// Releases GIL via `release_gil` during CPU-bound serde_json parsing/serialization.
 #[pyfunction]
 pub fn serde_json_compact_sorted(json_str: &str) -> String {
-    serde_json_reexport(json_str, false, true)
+    use crate::gil::release_gil;
+    Python::attach(|py| {
+        release_gil(py, || serde_json_reexport(json_str, false, true))
+    })
 }
 
 // ---------------------------------------------------------------------------
@@ -139,6 +163,11 @@ pub fn serde_json_compact_sorted(json_str: &str) -> String {
 ///
 /// orjson.dumps(data) → bytes. Drop-in for orjson.dumps() in hot paths
 /// (scorecard, telemetry) where we want Rust SIMD acceleration.
+///
+/// ## GIL Handling
+/// Releases GIL via `release_gil` during CPU-bound serde_json parsing/serialization.
+/// Python object access (call_method0) requires GIL, so we extract the string first,
+/// then release GIL for the pure-Rust serde_json work.
 ///
 /// # Arguments
 /// * `data` - Python dict (or any JSON-serializable structure)
@@ -151,21 +180,34 @@ pub fn serde_json_dumps_compact_bytes(
     data: &Bound<'_, PyAny>,
     _py: Python<'_>,
 ) -> PyResult<Vec<u8>> {
+    // Extract string from Python object WITH GIL held
     let json_str = match data.call_method0("__str__") {
         Ok(s) => s.extract::<String>().unwrap_or_default(),
         Err(_) => return Ok(Vec::new()),
     };
-    let value: serde_json::Value = match serde_json::from_str(&json_str) {
-        Ok(v) => v,
-        Err(_) => return Ok(Vec::new()),
-    };
-    Ok(serde_json::to_vec(&value).unwrap_or_default())
+
+    // Now release GIL for CPU-bound serde_json work
+    use crate::gil::release_gil;
+    Python::attach(|py| {
+        release_gil(py, || {
+            let value: serde_json::Value = match serde_json::from_str(&json_str) {
+                Ok(v) => v,
+                Err(_) => return Vec::new(),
+            };
+            serde_json::to_vec(&value).unwrap_or_default()
+        })
+    })
 }
 
 /// Pretty-print Python dict → bytes (orjson API compatible).
 ///
 /// orjson.dumps(data, option=orjson.OPT_INDENT_2) → bytes. Drop-in for
 /// orjson pretty-print in hot paths.
+///
+/// ## GIL Handling
+/// Releases GIL via `release_gil` during CPU-bound serde_json parsing/serialization.
+/// Python object access (call_method0) requires GIL, so we extract the string first,
+/// then release GIL for the pure-Rust serde_json work.
 ///
 /// # Arguments
 /// * `data` - Python dict
@@ -180,28 +222,39 @@ pub fn serde_json_dumps_pretty_bytes(
     sort_keys: bool,
     _py: Python<'_>,
 ) -> PyResult<Vec<u8>> {
+    // Extract string from Python object WITH GIL held
     let json_str = match data.call_method0("__str__") {
         Ok(s) => s.extract::<String>().unwrap_or_default(),
         Err(_) => return Ok(Vec::new()),
     };
-    let value: serde_json::Value = match serde_json::from_str(&json_str) {
-        Ok(v) => v,
-        Err(_) => return Ok(Vec::new()),
-    };
-    let value = if sort_keys {
-        sort_object_keys(&value)
-    } else {
-        value
-    };
-    Ok(serde_json::to_string_pretty(&value)
-        .unwrap_or_default()
-        .into_bytes())
+
+    // Now release GIL for CPU-bound serde_json work
+    use crate::gil::release_gil;
+    Python::attach(|py| {
+        release_gil(py, || {
+            let value: serde_json::Value = match serde_json::from_str(&json_str) {
+                Ok(v) => v,
+                Err(_) => return Vec::new(),
+            };
+            let value = if sort_keys {
+                sort_object_keys(&value)
+            } else {
+                value
+            };
+            serde_json::to_string_pretty(&value)
+                .unwrap_or_default()
+                .into_bytes()
+        })
+    })
 }
 
 /// Compact JSON from bytes — bytes-in, bytes-out (zero-copy output).
 ///
 /// For STIX export where we have pre-encoded JSON bytes and want
 /// compact bytes back. Avoids String↔bytes conversion overhead.
+///
+/// ## GIL Handling
+/// Releases GIL via `release_gil` during CPU-bound serde_json parsing/serialization.
 ///
 /// # Arguments
 /// * `input` - UTF-8 encoded JSON bytes
@@ -210,15 +263,23 @@ pub fn serde_json_dumps_pretty_bytes(
 /// Compact JSON bytes — empty Vec<u8> on error (caller falls back to Python)
 #[pyfunction]
 pub fn serde_json_compact_bytes(input: &[u8]) -> Vec<u8> {
-    let value: serde_json::Value = match serde_json::from_slice(input) {
-        Ok(v) => v,
-        Err(_) => return Vec::new(),
-    };
-    // serde_json::to_vec uses Writer internally — no extra allocation vs to_string
-    serde_json::to_vec(&value).unwrap_or_default()
+    use crate::gil::release_gil;
+    Python::attach(|py| {
+        release_gil(py, || {
+            let value: serde_json::Value = match serde_json::from_slice(input) {
+                Ok(v) => v,
+                Err(_) => return Vec::new(),
+            };
+            // serde_json::to_vec uses Writer internally — no extra allocation vs to_string
+            serde_json::to_vec(&value).unwrap_or_default()
+        })
+    })
 }
 
 /// Pretty JSON from bytes with optional key sorting.
+///
+/// ## GIL Handling
+/// Releases GIL via `release_gil` during CPU-bound serde_json parsing/serialization.
 ///
 /// # Arguments
 /// * `input` - UTF-8 encoded JSON bytes
@@ -228,18 +289,23 @@ pub fn serde_json_compact_bytes(input: &[u8]) -> Vec<u8> {
 /// Pretty-printed JSON bytes (indent=2) — empty Vec<u8> on error
 #[pyfunction]
 pub fn serde_json_pretty_bytes(input: &[u8], sort_keys: bool) -> Vec<u8> {
-    let value: serde_json::Value = match serde_json::from_slice(input) {
-        Ok(v) => v,
-        Err(_) => return Vec::new(),
-    };
-    let value = if sort_keys {
-        sort_object_keys(&value)
-    } else {
-        value
-    };
-    serde_json::to_string_pretty(&value)
-        .unwrap_or_default()
-        .into_bytes()
+    use crate::gil::release_gil;
+    Python::attach(|py| {
+        release_gil(py, || {
+            let value: serde_json::Value = match serde_json::from_slice(input) {
+                Ok(v) => v,
+                Err(_) => return Vec::new(),
+            };
+            let value = if sort_keys {
+                sort_object_keys(&value)
+            } else {
+                value
+            };
+            serde_json::to_string_pretty(&value)
+                .unwrap_or_default()
+                .into_bytes()
+        })
+    })
 }
 
 /// Batch serialize multiple JSON strings via rayon.
@@ -351,6 +417,9 @@ pub fn batch_serde_json_compact_sorted(items: Vec<String>) -> PyResult<Vec<Strin
 /// This validates JSON via serde_json (SIMD-accelerated), returning the canonical
 /// JSON string for zero-copy decode by `msgspec.json.decode()`.
 ///
+/// ## GIL Handling
+/// Releases GIL via `release_gil` during CPU-bound serde_json parsing/serialization.
+///
 /// # Arguments
 /// * `json_str` — UTF-8 encoded JSON string
 ///
@@ -358,11 +427,16 @@ pub fn batch_serde_json_compact_sorted(items: Vec<String>) -> PyResult<Vec<Strin
 /// JSON string (canonical form), or empty string on error (caller handles gracefully)
 #[pyfunction]
 pub fn serde_json_parse(json_str: &str) -> String {
-    let value: serde_json::Value = match serde_json::from_str(json_str) {
-        Ok(v) => v,
-        Err(_) => return String::new(),
-    };
-    serde_json::to_string(&value).unwrap_or_default()
+    use crate::gil::release_gil;
+    Python::attach(|py| {
+        release_gil(py, || {
+            let value: serde_json::Value = match serde_json::from_str(json_str) {
+                Ok(v) => v,
+                Err(_) => return String::new(),
+            };
+            serde_json::to_string(&value).unwrap_or_default()
+        })
+    })
 }
 
 #[cfg(test)]

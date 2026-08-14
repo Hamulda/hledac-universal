@@ -43,6 +43,7 @@ import threading
 from collections.abc import Callable
 from typing import Any, Literal, TypeVar
 
+from hledac.universal.core.locks import LockCategory, make_lock
 from hledac.universal.utils.asyncx import safe_wait_for
 
 logger = logging.getLogger(__name__)
@@ -54,7 +55,7 @@ T = TypeVar("T")
 # =============================================================================
 
 _SUBINTERPRETER_ENABLED: bool | None = None  # None = unprobed
-_SUBINTERPRETER_PROBE_LOCK = threading.Lock()
+_SUBINTERPRETER_PROBE_LOCK = make_lock(LockCategory.CONFIG, "execution_gateway._SUBINTERPRETER_PROBE_LOCK")
 
 
 def _env_subinterpreters_enabled() -> bool:
@@ -152,7 +153,7 @@ class WorkloadHint:
 # =============================================================================
 
 _gateway_instance: "ExecutionGateway | None" = None
-_gateway_lock = threading.Lock()
+_gateway_lock = make_lock(LockCategory.CONFIG, "execution_gateway._gateway_lock")
 
 
 class ExecutionGateway:

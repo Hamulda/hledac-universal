@@ -139,7 +139,9 @@ struct TraceContext {
 /// Work item — submitted to rayon pool dispatcher via channel.
 /// Uses Weak so the Arc can be dropped by the submitter after submission
 /// without affecting the worker thread's reference.
-struct WorkItem {
+///
+/// NEXTGEN-03: Made pub(crate) so elastic_pool.rs can use WorkItem for dedicated pool dispatchers.
+pub(crate) struct WorkItem {
     func: Py<PyAny>,
     args: Py<PyTuple>,
     /// Batch size hint — used by mixed dispatcher to select pool size
@@ -343,7 +345,9 @@ fn execute_with_optional_span<R>(trace_context: Option<TraceContext>, f: impl Fn
 /// dropped its Arc<SharedTask> (via Box::into_raw) before the worker started or finished.
 /// This prevents use-after-free where Arc was dropped at line 360 (drop(shared_box))
 /// while the worker thread was still running.
-fn execute_work_item(work: WorkItem) {
+///
+/// NEXTGEN-03: Made pub(crate) so elastic_pool.rs can use it for dedicated pool dispatchers.
+pub(crate) fn execute_work_item(work: WorkItem) {
     // R5 FIX: Upgrade Weak to Arc — may return None if Python already dropped its Arc.
     // This can happen when:
     //   1. Python called rayon_join_channel and its local Arc was dropped at function return
@@ -496,11 +500,17 @@ pub fn rayon_submit_channel_(
         trace_context,
     };
 
+    // NEXTGEN-03 FIX: Added simd/mlx/graph pool type matching.
+    // Dedicated pools connect to their respective dispatchers via elastic_pool module.
     let sender_mutex: &parking_lot::Mutex<Option<Sender<WorkItem>>> = match pool_type {
         "cpu" => cpu_sender(),
         "io" => io_sender(),
         "mixed" => mixed_sender(),
-        _ => cpu_sender(),
+        // NEXTGEN-03: Dedicated pools for asymmetric topology-aware scheduling
+        "simd" => crate::elastic_pool::simd_sender(),
+        "mlx" => crate::elastic_pool::mlx_sender(),
+        "graph" => crate::elastic_pool::graph_sender(),
+        _ => cpu_sender(), // Fallback for unknown types
     };
 
     let sender_guard = sender_mutex.lock();

@@ -165,12 +165,15 @@ except ImportError:
     PYMUPDF_AVAILABLE = False
     logger.warning('PyMuPDF not available - advanced PDF analysis disabled')
 DOCUMENT_INTELLIGENCE_AVAILABLE = True
-try:
-    import mlx.core as mx
-    MLX_AVAILABLE = True
-except ImportError:
-    MLX_AVAILABLE = False
-    logger.warning('MLX not available - semantic scoring disabled')
+
+# C1-X FIX: Import MLX_AVAILABLE from SSOT (zero-import detection)
+from hledac.universal.utils.mlx_memory import MLX_AVAILABLE
+
+# Lazy accessor for mlx.core — uses centralized get_mx() from SSOT
+def _get_mx():
+    """Lazy accessor for mlx.core — uses centralized get_mx() from SSOT."""
+    from hledac.universal.utils.mlx_memory._core import get_mx as _get_mx_from_core
+    return _get_mx_from_core()
 MPS_AVAILABLE = False
 VISION_OCR_AVAILABLE: bool | None = None
 _VisionOCREngine: Any | None = None

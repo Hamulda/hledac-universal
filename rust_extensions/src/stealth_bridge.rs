@@ -2,12 +2,11 @@
 //!
 //! ## MODERN-16: Hybrid Model Architecture
 //!
-//! This module implements the hybrid model where:
+//! This module provides async FFI bridges for the hybrid Python↔Rust model:
 //! - **Python keeps**: curl_cffi for JA3/TLS impersonation (stealth fingerprinting)
-//! - **Rust owns**: Raw socket I/O, QUIC handshake, DoH DNS, Tokio runtime
-//! - **Bridge**: Native async FFI via `future_into_py()` + Arrow IPC for bulk transfer
+//! - **Rust provides**: Async DNS resolution via tokio
 //!
-//! ### Architecture
+//! ## Architecture (CORRECTED)
 //!
 //! ```text
 //! ┌─────────────────────────────────────────────────────────────────┐
@@ -21,24 +20,20 @@
 //! │  - JA3 ban detection + exponential backoff retry              │
 //! └─────────────────────────────┬───────────────────────────────────┘
 //!                               │ async FFI (future_into_py)
-//!                               │ Arrow IPC (bulk transfer)
 //! ┌─────────────────────────────┴───────────────────────────────────┐
-//! │                    Rust Layer (I/O)                               │
+//! │                    Rust Layer (I/O)                             │
 //! ├─────────────────────────────────────────────────────────────────┤
 //! │  stealth_bridge.rs (THIS MODULE)                                │
-//! │  - DNS resolution bridge (→ dns.rs)                           │
-//! │  - QUIC handshake bridge (→ quic.rs)                           │
-//! │  - Network.framework bridge (→ nw_connection.rs)               │
-//! │  - Arrow IPC for batch data transfer                           │
+//! │  - DNS resolution via tokio::net::lookup_host                   │
 //! │                                                                 │
 //! │  async_runtime.rs                                              │
 //! │  - Shared Tokio runtime (4 workers, M1 8GB safe)               │
-//! │                                                                 │
-//! │  dns.rs / quic.rs / nw_connection.rs                           │
-//! │  - Raw I/O primitives                                          │
-//! │  - DoH DNS, QUIC, TLS handshake                                │
 //! └─────────────────────────────────────────────────────────────────┘
-//! ```
+//!
+//! NOTE: QUIC/HTTP3 is handled by http3_lane.py (separate module with its own
+//!       Rust adapters: QuinnRustlsTransportAdapter, NwQuicTransportAdapter).
+//!       Network.framework TCP is handled by nw_connection_lane.py (separate
+//!       module with NwConnectionLane adapter).
 //!
 //! ### Why curl_cffi STAYS in Python
 //!
@@ -54,12 +49,14 @@
 //!    `INITIAL_WINDOW_SIZE=4,194,304` vs curl_cffi's default `65,535`. This
 //!    anti-bot fingerprinting is tied to the impersonation profiles.
 //!
-//! ### What Rust DOES
+//! ### What Rust DOES (in this module)
 //!
-//! 1. **DNS resolution** — `rust.dns.resolve_async_await()` with DoH support
-//! 2. **QUIC handshake** — `rust.quic.fetch_async()` for HTTP/3
-//! 3. **Network.framework** — `rust.nw_connection.fetch_async()` on macOS
-//! 4. **Arrow IPC** — Batch data transfer via `arrow_batch_builder.rs`
+//! 1. **DNS resolution** — `dns_resolve_async()` and `dns_resolve_batch_async()`
+//!    via tokio::net::lookup_host (async FFI bridge)
+//!
+//! NOTE: QUIC/HTTP3 and Network.framework TCP are handled in separate modules:
+//! - QUIC/HTTP3 → http3_lane.py (NwQuicTransportAdapter, QuinnRustlsTransportAdapter)
+//! - Network.framework TCP → nw_connection_lane.py (NwConnectionLane)
 //!
 //! ### Async FFI Pattern
 //!
@@ -67,14 +64,19 @@
 //! use crate::async_bridge::future_into_py;
 //!
 //! #[pyfunction]
-//! pub fn bridge_dns_resolve(
+//! pub fn dns_resolve_async(
 //!     py: Python<'_>,
 //!     hostname: String,
 //! ) -> PyResult<Bound<'_, PyAny>> {
 //!     future_into_py(py, async move {
-//!         // Rust async DNS resolution
-//!         let ips = resolve_host_async(&hostname).await;
-//!         Ok(ips)
+//!         // Rust async DNS resolution via tokio
+//!         let addrs = tokio::net::lookup_host((hostname.as_str(), 0))
+//!             .await
+//!             .map(|iter| {
+//!                 iter.map(|addr| addr.ip().to_string()).collect::<Vec<_>>()
+//!             })
+//!             .unwrap_or_default();
+//!         Ok(addrs)
 //!     })
 //! }
 //! ```
@@ -82,11 +84,12 @@
 //! ### Python Usage
 //!
 //! ```python
-//! # curl_cffi handles JA3, Rust handles DNS
+//! # curl_cffi handles JA3/TLS impersonation, Rust handles DNS only
 //! async def fetch_stealth(url: str) -> bytes:
-//!     # DNS via Rust (async FFI)
+//!     # DNS via Rust stealth_bridge (async FFI)
 //!     host = extract_host(url)
-//!     ips = await rust.stealth_bridge.dns_resolve(host)
+//!     if _HAS_RUST_STEALTH_BRIDGE:
+//!         ips = await rust.stealth_bridge.dns_resolve_async(host)
 //!
 //!     # curl_cffi handles HTTP/2 + TLS impersonation (JA3)
 //!     session = await get_curl_session(profile="chrome136")
@@ -105,7 +108,7 @@
 //!
 //! - Shared Tokio runtime: 4 workers (~10 MB total)
 //! - No additional memory overhead for the bridge
-//! - Arrow IPC uses pre-allocated buffers (no OOM risk)
+//! - DNS resolution uses minimal memory (just the result Vec)
 
 #![allow(dead_code)]
 
@@ -220,16 +223,26 @@ pub fn dns_resolve_batch_async(
 }
 
 // ============================================================================
-// QUIC/HTTP3 Bridge
+// QUIC Backend Detection (informational only)
 // ============================================================================
+//
+// NOTE: Actual QUIC/HTTP3 is handled by http3_lane.py which routes to:
+//   - NwQuicTransportAdapter (macOS arm64) → nw_quic_lane.py
+//   - QuinnRustlsTransportAdapter (Linux/x86_64) → rust.quic.fetch_async()
+//   - AioquicTransportAdapter (fallback)
+//
+// This function is informational only - it reports which QUIC backend is
+// available but does NOT perform the actual HTTP/3 fetch.
 
-/// Check if QUIC/HTTP3 is available on this platform.
+/// Check which QUIC backend is available on this platform.
 ///
 /// Returns which QUIC backend is available:
-/// - "rust_quinn": Rust quinn + h3 + rustls
-/// - "nw_framework": Apple Network.framework (macOS only)
+/// - "rust_quinn": Rust quinn + h3 + rustls (Linux/x86_64)
+/// - "nw_framework": Apple Network.framework (macOS arm64)
 /// - "aioquic": Python aioquic (fallback, heavy)
 /// - "none": No QUIC available
+///
+/// NOTE: Actual HTTP/3 fetching is handled by http3_lane.py, not this module.
 #[cfg(feature = "stealth_bridge")]
 #[pyfunction]
 pub fn get_quic_backend() -> String {
@@ -254,6 +267,8 @@ pub fn get_quic_backend() -> String {
 ///
 /// curl_cffi >= 0.7 supports HTTP/3 via `HttpVersion.v3`. This function
 /// indicates whether curl_cffi should attempt QUIC after Alt-Svc discovery.
+///
+/// NOTE: Actual HTTP/3 fetching is handled by http3_lane.py, not this module.
 #[cfg(feature = "stealth_bridge")]
 #[pyfunction]
 pub fn supports_curl_cffi_quic() -> bool {
@@ -263,13 +278,26 @@ pub fn supports_curl_cffi_quic() -> bool {
 }
 
 // ============================================================================
-// Arrow IPC Bridge for Batch Data Transfer
+// Binary Metadata Encoding (NOT actual Arrow IPC)
 // ============================================================================
+//
+// NOTE: These functions use a simple binary format, NOT Arrow IPC.
+// For actual Arrow IPC serialization, use rust_extensions/src/arrow_batch_builder.rs
+// which provides true Arrow IPC RecordBatch encoding via the `arrow` crate.
+//
+// This module provides lightweight binary encoding for HTTP response metadata
+// as a convenience, not as a replacement for Arrow IPC.
 
-/// Convert HTTP response metadata to Arrow IPC format.
+/// Encode HTTP response metadata to a simple binary format.
 ///
-/// For bulk transfers, Arrow IPC provides efficient serialization
-/// with zero-copy reading on the Python side.
+/// NOTE: This is NOT actual Arrow IPC - it's a simple binary format:
+/// - URL length (4B LE) + URL bytes
+/// - Status code (2B LE)
+/// - Headers count (4B LE)
+/// - For each header: key_len (4B) + key + val_len (4B) + val
+/// - Timing in ms (8B LE)
+///
+/// For true Arrow IPC, use rust_extensions/src/arrow_batch_builder.rs instead.
 #[cfg(feature = "stealth_bridge")]
 #[pyfunction]
 pub fn encode_response_metadata_arrow(
@@ -278,11 +306,8 @@ pub fn encode_response_metadata_arrow(
     headers: Vec<(String, String)>,
     timing_ms: f64,
 ) -> PyResult<Vec<u8>> {
-    // Use arrow_batch_builder.rs for actual IPC encoding
-    // This is a thin wrapper that formats metadata for Arrow transfer
-
-    // For now, return a simple binary format
-    // Full Arrow IPC encoding would require the arrow crate
+    // NOTE: This is simple binary format, NOT actual Arrow IPC
+    // For real Arrow IPC, use arrow_batch_builder.rs
     use std::io::Write;
 
     let mut buf = Vec::new();
@@ -308,7 +333,11 @@ pub fn encode_response_metadata_arrow(
     Ok(buf)
 }
 
-/// Decode Arrow IPC formatted response metadata.
+/// Decode binary formatted response metadata.
+///
+/// NOTE: This decodes the simple binary format from encode_response_metadata_arrow,
+/// NOT actual Arrow IPC. For true Arrow IPC decoding, use arrow_ipc_to_record_batch()
+/// from the Python side (in duckdb_store.py).
 #[cfg(feature = "stealth_bridge")]
 #[pyfunction]
 pub fn decode_response_metadata_arrow(
@@ -443,25 +472,24 @@ pub fn get_p2p_protocol_status() -> std::collections::HashMap<String, bool> {
 // ============================================================================
 
 /// Register stealth_bridge functions with the Python module.
+///
+/// NOTE: This module only provides DNS resolution bridges.
+/// Actual QUIC/HTTP3 and Network.framework are handled by separate modules:
+/// - http3_lane.py → NwQuicTransportAdapter, QuinnRustlsTransportAdapter
+/// - nw_connection_lane.py → NwConnectionLane
 #[cfg(feature = "stealth_bridge")]
 pub fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
-    // DNS bridges (use tokio::net::lookup_host directly)
+    // DNS bridges (tokio::net::lookup_host)
     m.add_function(wrap_pyfunction!(dns_resolve_async, m)?)?;
     m.add_function(wrap_pyfunction!(dns_resolve_batch_async, m)?)?;
 
-    // QUIC bridge
-    #[cfg(feature = "stealth_bridge")]
-    {
-        m.add_function(wrap_pyfunction!(get_quic_backend, m)?)?;
-        m.add_function(wrap_pyfunction!(supports_curl_cffi_quic, m)?)?;
-    }
+    // QUIC backend detection (informational only)
+    m.add_function(wrap_pyfunction!(get_quic_backend, m)?)?;
+    m.add_function(wrap_pyfunction!(supports_curl_cffi_quic, m)?)?;
 
-    // Arrow IPC bridge
-    #[cfg(feature = "stealth_bridge")]
-    {
-        m.add_function(wrap_pyfunction!(encode_response_metadata_arrow, m)?)?;
-        m.add_function(wrap_pyfunction!(decode_response_metadata_arrow, m)?)?;
-    }
+    // Binary metadata encoding (NOT actual Arrow IPC)
+    m.add_function(wrap_pyfunction!(encode_response_metadata_arrow, m)?)?;
+    m.add_function(wrap_pyfunction!(decode_response_metadata_arrow, m)?)?;
 
     // P2P Harvest bridge
     #[cfg(feature = "p2p_harvest")]

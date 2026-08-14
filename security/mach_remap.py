@@ -49,6 +49,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from hledac.universal.utils.asyncx import safe_wait_for
 import os
 import subprocess
 import sys
@@ -483,7 +484,7 @@ async def run_with_zero_copy_sandbox(
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
         )
-        stdout, stderr = await asyncio.wait_for(
+        stdout, stderr = await safe_wait_for(
             proc.communicate(), timeout=timeout_s
         )
         return subprocess.CompletedProcess(

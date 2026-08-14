@@ -29,7 +29,7 @@ from collections import OrderedDict
 from typing import Any, TypeVar
 
 # Use unified LRUCache from new package
-from utils.cache import LRUCache
+from hledac.universal.utils.cache import LRUCache
 
 K = TypeVar("K", default=object)
 V = TypeVar("V", default=object)

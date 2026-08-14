@@ -30,6 +30,8 @@ import time
 import uuid
 from typing import TYPE_CHECKING, Any, Awaitable, Callable
 
+from hledac.universal.utils.asyncx import safe_wait_for
+
 if TYPE_CHECKING:
     from hledac_rust_extensions import hledac_rust_extensions
 
@@ -383,7 +385,7 @@ class PythonFallbackSwarmDAG:
 
         while self._running:
             try:
-                task_id, payload = await asyncio.wait_for(
+                task_id, payload = await safe_wait_for(
                     queue.get(),
                     timeout=1.0,
                 )

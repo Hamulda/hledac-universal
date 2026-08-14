@@ -43,6 +43,7 @@ import warnings
 from concurrent.futures import ThreadPoolExecutor
 from typing import TYPE_CHECKING, Any, Literal, TypeVar
 
+from hledac.universal.core.locks import LockCategory, make_lock
 from hledac.universal.utils.asyncx import safe_wait_for
 
 # TEL-02: Lazy import — OTel context capture for trace propagation across Rust boundary.
@@ -81,7 +82,7 @@ T = TypeVar("T", default=object)
 # Module-level singletons — initialised on first use (lazy).
 _pool: "SharedWorkerPool | None" = None
 _rust_pool: "RustWorkerPool | None" = None
-_pool_lock = threading.Lock()
+_pool_lock = make_lock(LockCategory.CACHE, "worker_pool._pool_lock")
 
 
 def get_shared_pool() -> "SharedWorkerPool":
@@ -96,22 +97,35 @@ def get_shared_pool() -> "SharedWorkerPool":
         return _pool
 
 
-def get_rust_pool(pool_type: Literal["cpu", "io", "mixed"] = "cpu") -> "RustWorkerPool":
+# NEXTGEN-03: Extended pool types for asymmetric topology-aware scheduling
+PoolType = Literal["cpu", "io", "mixed", "simd", "mlx", "graph"]
+
+# NEXTGEN-03 FIX: Track pools per type using dict, not single singleton.
+# Previously only one pool was tracked globally, causing issues when
+# multiple pool types were used simultaneously.
+_rust_pools: dict[PoolType, "RustWorkerPool"] = {}
+
+
+def get_rust_pool(pool_type: PoolType = "cpu") -> "RustWorkerPool":
     """Return a RustWorkerPool singleton for the given pool type.
 
+    NEXTGEN-03: Extended pool types for asymmetric topology-aware scheduling.
+    FIX: Now tracks pools per type using dict, not single singleton.
+
     Args:
-        pool_type: "cpu" → 4 P-cores (SIMD, hashing, pattern match)
-                   "io"  → 2 threads (DuckDB, graph_traverse, compress)
+        pool_type: "cpu"   → P-cores (SIMD, hashing, pattern match)
+                   "io"    → 2 threads (DuckDB, graph_traverse, compress)
                    "mixed" → adaptive 1-2 threads (IOC extract, url_ops, simhash)
+                   "simd"  → 2 P-cores 0,1 (ARM NEON SIMD, Aho-Corasick)
+                   "mlx"   → 2 P-cores 2,3 (MLX Metal dispatch)
+                   "graph" → 1 P-core 2 (Kuzu graph, petgraph)
     """
-    global _rust_pool
-    if _rust_pool is not None and _rust_pool._pool_type == pool_type:
-        return _rust_pool
+    if pool_type in _rust_pools:
+        return _rust_pools[pool_type]
     with _pool_lock:
-        if _rust_pool is None or _rust_pool._pool_type != pool_type:
-            _rust_pool = RustWorkerPool(pool_type=pool_type)
-        assert _rust_pool is not None
-        return _rust_pool
+        if pool_type not in _rust_pools:
+            _rust_pools[pool_type] = RustWorkerPool(pool_type=pool_type)
+        return _rust_pools[pool_type]
 
 
 class SharedWorkerPool:
@@ -307,18 +321,19 @@ class RustWorkerPool:
     rayon pool dispatcher — žádný thread::spawn per task).
     ~5μs/task vs ~500μs/task thread::spawn overhead.
 
-    MODERN-28 FIX: M1 8GB thread budget (all rayon + asyncio singletons):
-      cpu_pool: 4 threads (P-cores, QoS=USER_INITIATED=0x19)     ← P-core scheduling
-      io_pool:  2 threads (E-cores, QoS=UTILITY=0x11)            ← E-core efficiency
-      mixed_pool: 1-2 threads (adaptive, P-core ceiling)
+    NEXTGEN-03: M1 8GB asymmetric thread budget:
+      simd_pool: 2 threads (P 0,1, QoS=USER_INITIATED)    ← ARM NEON SIMD
+      mlx_pool:  2 threads (P 2,3, QoS=USER_INTERACTIVE)  ← MLX Metal dispatch
+      graph_pool: 1 thread  (P 2, shared with MLX)         ← Kuzu, petgraph
+      io_pool:    2 threads (E-cores, QoS=UTILITY)        ← DuckDB, network
       asyncio event loop: 1 thread
       ─────────────────────────────────────────
-      Total: 7-8 OS threads (fits 8-core M1)
+      Total: 8 OS threads (fits 8-core M1)
     """
 
     __slots__ = ("_pool_type", "_active_count", "_lock", "_async_lock")
 
-    def __init__(self, pool_type: Literal["cpu", "io", "mixed"] = "cpu") -> None:
+    def __init__(self, pool_type: PoolType = "cpu") -> None:
         self._pool_type = pool_type
         self._active_count = 0
         self._lock = threading.Lock()

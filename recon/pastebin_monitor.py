@@ -69,6 +69,10 @@ _PASTE_BLOOM_PATH_B: str = '~/.cache/hledac/paste_bloom_b.bin'
 _PASTE_BLOOM_CAPACITY: int = 500000
 _BLOOM: Any = None
 
+# NEW-MEM-003: Paste content size cap for M1 8GB safety
+# Pastes can be large (up to 10MB), cap at 5MB to prevent OOM
+_MAX_PASTE_BYTES: int = 5 * 1024 * 1024
+
 def _get_paste_bloom() -> Any:
     """Lazy-open rotating mmap Bloom filter for paste URI dedup."""
     global _BLOOM
@@ -102,6 +106,21 @@ def _get_zstd_compress():
         import zstd
         return zstd.compress
     return None
+
+
+# NEW-MEM-003: Paste content size cap for M1 8GB safety
+_MAX_PASTE_BYTES: int = 5 * 1024 * 1024  # 5MB cap for paste content
+
+
+async def _read_text_with_cap(resp: httpx.Response, cap: int = _MAX_PASTE_BYTES) -> str:
+    """Read response text with payload cap for M1 RAM safety."""
+    try:
+        raw = resp.content or b""
+        if len(raw) > cap:
+            raw = raw[:cap]
+        return raw.decode("utf-8", errors="replace")
+    except Exception:
+        return ""
 
 class _CircuitState(msgspec.Struct, frozen=True, gc=False):
     failures: int = 0
@@ -155,7 +174,8 @@ async def _scrape_pastebin_raw(paste_id: str, session: httpx.AsyncClient) -> str
             if resp.status_code == 404:
                 return None
             resp.raise_for_status()
-            return await resp.text()
+            # NEW-MEM-003: Use capped read for M1 8GB safety
+            return await _read_text_with_cap(resp)
     except Exception:
         return None
 
@@ -184,7 +204,8 @@ async def _scrape_rentry(raw_path: str, session: httpx.AsyncClient) -> str | Non
             if resp.status_code == 404:
                 return None
             resp.raise_for_status()
-            return await resp.text()
+            # NEW-MEM-003: Use capped read for M1 8GB safety
+            return await _read_text_with_cap(resp)
     except Exception:
         return None
 _RATERLIMIT_S = 1.0
@@ -237,7 +258,8 @@ async def _search_pastebin(query: str, session: httpx.AsyncClient) -> list[Paste
         async with session.get(search_url, timeout=_TIMEOUT_15) as resp:
             if resp.status_code != 200:
                 return []
-            html = await resp.text()
+            # NEW-MEM-003: Use capped read for search page (HTML, cap at 1MB)
+            html = await _read_text_with_cap(resp, cap=1024 * 1024)
         try:
             from selectolax.parser import HTMLParser
         except ImportError:
@@ -324,7 +346,8 @@ async def _search_rentry(query: str, session: httpx.AsyncClient) -> list[PasteFi
         async with session.get(search_url, timeout=_TIMEOUT_15) as resp:
             if resp.status_code != 200:
                 return []
-            html = await resp.text()
+            # NEW-MEM-003: Use capped read for search page (HTML, cap at 1MB)
+            html = await _read_text_with_cap(resp, cap=1024 * 1024)
         try:
             from selectolax.parser import HTMLParser
         except ImportError:

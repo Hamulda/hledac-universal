@@ -60,11 +60,12 @@ static ALLOCATION_CEILING_BYTES: AtomicU64 = AtomicU64::new((6.25 * 0.97 * 1024.
 #[repr(u8)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Subsystem {
-    Mlx = 0,    // MLX Metal allocations
-    DuckDB = 1, // DuckDB memory-mapped files
-    Tokio = 2,  // Tokio task heap allocations
-    Kuzu = 3,   // Kuzu graph database
-    Other = 4,  // Generic/uncategorized
+    Mlx = 0,       // MLX Metal allocations
+    DuckDB = 1,     // DuckDB memory-mapped files
+    Tokio = 2,      // Tokio task heap allocations
+    Kuzu = 3,       // Kuzu graph database
+    ArrowIpcMmap = 4, // NEXTGEN-02: Arrow IPC mmap pool
+    Other = 5,      // Generic/uncategorized
 }
 
 impl Subsystem {
@@ -74,6 +75,7 @@ impl Subsystem {
             1 => Subsystem::DuckDB,
             2 => Subsystem::Tokio,
             3 => Subsystem::Kuzu,
+            4 => Subsystem::ArrowIpcMmap,
             _ => Subsystem::Other,
         }
     }
@@ -84,6 +86,7 @@ impl Subsystem {
             Subsystem::DuckDB => "DuckDB",
             Subsystem::Tokio => "Tokio",
             Subsystem::Kuzu => "Kuzu",
+            Subsystem::ArrowIpcMmap => "ArrowIpcMmap",
             Subsystem::Other => "Other",
         }
     }

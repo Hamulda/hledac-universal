@@ -37,25 +37,23 @@ from hledac.universal.fetching.memory_budget_gate import _rss_gib as _cached_rss
 from hledac.universal.utils.config_introspection import safe_attr_get
 from operator import attrgetter, itemgetter
 logger = logging.getLogger(__name__)
-MLX_AVAILABLE = False
+
+# C1-X FIX: Import MLX_AVAILABLE from SSOT (zero-import detection)
+from hledac.universal.utils.mlx_memory import MLX_AVAILABLE
+
 _FALLBACK_RAM_ESTIMATE_MB: float = 500.0
-_MLX_CORE: Any | None = None  # lazy singleton for mlx.core
 
 
 def _get_mx() -> Any | None:
     """
     Lazy accessor for mlx.core — imports once and caches.
+    Uses centralized get_mx() from mlx_memory SSOT.
 
     Returns None if mlx is unavailable (non-Apple platform or ImportError).
     """
-    global _MLX_CORE
-    if _MLX_CORE is None:
-        try:
-            import mlx.core as mx
-            _MLX_CORE = mx
-        except ImportError:
-            _MLX_CORE = False  # cache negative result
-    return _MLX_CORE if _MLX_CORE is not False else None
+    # C1-X FIX: Use centralized get_mx() from mlx_memory SSOT
+    from hledac.universal.utils.mlx_memory._core import get_mx as _get_mx_from_core
+    return _get_mx_from_core()
 
 
 class ResourceBudget(msgspec.Struct, gc=False):

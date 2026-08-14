@@ -18,7 +18,7 @@
 
 use parking_lot::RwLock;
 use pyo3::prelude::*;
-use regex_automata::Regex;
+use regex_automata::meta::Regex;
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use std::sync::LazyLock;
@@ -554,7 +554,7 @@ fn extract_all_iocs(text: &str) -> HashSet<String> {
     let mut iocs = HashSet::new();
     for pattern in IOC_PATTERNS.iter() {
         for m in pattern.find_iter(text) {
-            iocs.insert(m.as_str().to_string());
+            iocs.insert(text[m.start()..m.end()].to_string());
         }
     }
     iocs

@@ -33,29 +33,16 @@ _EMBED_CACHE_DIR = Path.home() / '.hledac' / 'cache' / 'mlx_embed'
 _EMBED_CACHE_DIR.mkdir(parents=True, exist_ok=True)
 _PREWARM_LOCK = threading.Lock()
 
-# MLX_AVAILABLE — deferred to lazy accessor (ISSUE 3.2 fix)
-# Previously: top-level `import mlx.core as mx` loaded MLX into RAM at module import,
-# breaking PLANNER: ZERO MLX invariant when imported by runtime/acquisition_strategy_planner.
-# Fix: lazy probe via _get_mx(), first access only when MLXEmbeddingManager is instantiated.
-MLX_AVAILABLE: bool | None = None
-
-# Lazy mlx.core accessor
-_MLX_CORE: Any | None = None
+# C1-X FIX: Import MLX_AVAILABLE from SSOT (zero-import detection)
+# Uses importlib.metadata.version("mlx") — no mlx.core import at module load
+from hledac.universal.utils.mlx_memory import MLX_AVAILABLE
 
 
 def _get_mx() -> Any | None:
     """Lazily cached mlx.core module reference. Returns None if unavailable."""
-    global _MLX_CORE, MLX_AVAILABLE
-    if _MLX_CORE is None:
-        try:
-            import mlx.core as _mx
-            _MLX_CORE = _mx
-            MLX_AVAILABLE = True
-        except ImportError:
-            _MLX_CORE = False
-            MLX_AVAILABLE = False
-            warnings.warn('MLX not available. Install: pip install mlx>=0.15.0', stacklevel=2)
-    return _MLX_CORE if _MLX_CORE is not False else None
+    # C1-X FIX: Use centralized get_mx() from mlx_memory SSOT
+    from hledac.universal.utils.mlx_memory._core import get_mx as _get_mx_from_core
+    return _get_mx_from_core()
 
 
 MLX_EMBEDDINGS_LOAD: Any | None = None

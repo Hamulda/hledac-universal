@@ -180,6 +180,8 @@ class SemanticStore:
         # SAFE-4: Buffer overflow drop counter for observability
         # Tracks OSINT evidence silently lost due to bounded buffer
         self._buffer_overflow_drops: int = 0
+        # F2 FIX: Track which ANN backend is active for consistency checking
+        self._ann_backend: str = "unknown"
 
     # -------------------------------------------------------------------------
     # Lifecycle
@@ -237,17 +239,69 @@ class SemanticStore:
         # SWARM-002: Initialize multilingual components
         await self._initialize_multilingual()
 
-        # Open LanceDB (primary) — falls back to sqlite-vec on failure
+        # F2 FIX: Consistent ANN backend selection with vector_index.py
+        # Respect HLEDAC_VECTOR_BACKEND env var, auto-select based on M1 detection
+        from hledac.universal.knowledge.vector_index import _resolve_backend, _is_m1
+        resolved_backend = _resolve_backend()
+        if resolved_backend == "auto":
+            resolved_backend = "sqlite-vec" if _is_m1() else "lancedb"
+        
+        # F2 FIX: Startup consistency marker - invalidate old store on backend change
+        # This prevents orphaned vectors when switching between LanceDB and sqlite-vec
+        _backend_marker_path = self._db_path.parent / ".ann_backend_marker"
         try:
-            import lancedb
+            if _backend_marker_path.exists():
+                stored_backend = _backend_marker_path.read_text().strip()
+                if stored_backend != resolved_backend:
+                    logger.warning(
+                        "[SEMSTORE] ANN backend changed from '%s' to '%s'. "
+                        "Invalidating semantic store to prevent orphaned vectors.",
+                        stored_backend, resolved_backend
+                    )
+                    # F2 FIX COMPLETE: Delete BOTH sqlite-vec .db files AND LanceDB directory
+                    # sqlite-vec stores at: self._db_path.parent / "semantic_vec.db"
+                    # LanceDB stores at: self._db_path (directory with .lance data)
+                    for db_file in self._db_path.parent.glob("*.db"):
+                        db_name = db_file.name
+                        if "semantic_vec" in db_name or "lancedb" in db_name:
+                            try:
+                                db_file.unlink()
+                                logger.info("[SEMSTORE] Deleted stale .db file: %s", db_file)
+                            except Exception:
+                                pass
+                    # Clean up LanceDB directory if switching away from LanceDB
+                    if stored_backend == "lancedb" and self._db_path.exists():
+                        import shutil
+                        try:
+                            shutil.rmtree(self._db_path)
+                            logger.info("[SEMSTORE] Deleted stale LanceDB directory: %s", self._db_path)
+                        except Exception:
+                            pass
+            # Write new marker
+            _backend_marker_path.write_text(resolved_backend)
+        except Exception as e:
+            logger.debug("[SEMSTORE] Backend marker check failed: %s", e)
+        
+        self._ann_backend = resolved_backend
+        logger.info("[SEMSTORE] ANN backend resolved: %s", resolved_backend)
 
-            db_path_str = str(self._db_path.expanduser())
-            self._db = lancedb.connect(db_path_str)
+        # Open LanceDB (primary) — falls back to sqlite-vec on failure
+        # F2 FIX: Only try LanceDB if backend is explicitly lancedb
+        # Note: resolved_backend is already resolved (not "auto") at this point
+        _lance_enabled = resolved_backend == "lancedb"
+        try:
+            if _lance_enabled:
+                import lancedb
+
+                db_path_str = str(self._db_path.expanduser())
+                self._db = lancedb.connect(db_path_str)
         except Exception as e:
             logger.warning("[SEMSTORE] LanceDB connect failed: %s", e)
             self._db = None
+            _lance_enabled = False
 
         # Open or create LanceDB table (append mode — B.6)
+        _table_opened = False
         try:
             if self._db is not None:
                 self._table = self._db.open_table(_TABLE_NAME)
@@ -255,6 +309,7 @@ class SemanticStore:
                 logger.info(
                     f"SemanticStore: LanceDB table open: {self._table.count_rows()} rows"
                 )
+                _table_opened = True
             else:
                 self._table = None
         except Exception:
@@ -273,10 +328,11 @@ class SemanticStore:
         except Exception:
             self._table_multilingual = None
 
-        # Issue 4.3: sqlite-vec fallback — zero-RAM ANN search via SQLite extension.
+        # Issue 4.3: sqlite-vec — zero-RAM ANN search via SQLite extension.
         # On M1 8GB: avoids LanceDB process overhead (~50MB resident).
         # sqlite-vec is a single-file SQLite extension (<1MB), loaded in-process.
-        if self._table is None:
+        # F2 FIX: Use sqlite-vec when explicitly requested or as fallback when LanceDB fails
+        if not _table_opened or resolved_backend == "sqlite-vec":
             try:
                 import sqlite_vec
 
@@ -289,13 +345,14 @@ class SemanticStore:
                     f"finding_id_idx TEXT, ts REAL, ioc_types TEXT, "
                     f"embedding float[{self._embed_dim}])"
                 )
-                logger.info(f"[SEMSTORE] sqlite-vec fallback active: {vec_db_path}")
+                logger.info(f"[SEMSTORE] sqlite-vec active: {vec_db_path}")
             except Exception as e:
-                logger.warning("[SEMSTORE] sqlite-vec fallback failed: %s", e)
+                logger.warning("[SEMSTORE] sqlite-vec failed: %s", e)
                 self._vec_db = None
 
-        # SWARM-002: sqlite-vec fallback for multilingual
-        if self._table_multilingual is None:
+        # SWARM-002: sqlite-vec for multilingual
+        _multilingual_table_opened = self._table_multilingual is not None
+        if not _multilingual_table_opened or resolved_backend == "sqlite-vec":
             try:
                 import sqlite_vec
 
@@ -307,9 +364,9 @@ class SemanticStore:
                     f"finding_id_idx TEXT, ts REAL, ioc_types TEXT, language TEXT, "
                     f"embedding float[{self._embed_dim}])"
                 )
-                logger.info(f"[SEMSTORE] sqlite-vec multilingual fallback active: {vec_db_path}")
+                logger.info(f"[SEMSTORE] sqlite-vec multilingual active: {vec_db_path}")
             except Exception as e:
-                logger.warning("[SEMSTORE] sqlite-vec multilingual fallback failed: %s", e)
+                logger.warning("[SEMSTORE] sqlite-vec multilingual failed: %s", e)
                 self._vec_db_multilingual = None
 
         self._initialized = True
@@ -1181,7 +1238,7 @@ class SemanticStore:
     # Utility
     # -------------------------------------------------------------------------
 
-    def get_buffer_stats(self) -> dict[str, int]:
+    def get_buffer_stats(self) -> dict[str, Any]:
         """
         Return buffer statistics for observability.
 
@@ -1194,12 +1251,14 @@ class SemanticStore:
             - max_pending: configured maximum buffer size
             - overflow_drops: total items dropped due to buffer overflow since init
             - embed_validation_stats: SAFE-2.5 validation metrics
+            - ann_backend: currently active ANN backend (F2 FIX)
         """
         return {
             'pending_count': len(self._pending_texts),
             'max_pending': _MAX_PENDING,
             'overflow_drops': self._buffer_overflow_drops,
             'embed_validation_stats': self._embed_validation_stats.copy(),
+            'ann_backend': getattr(self, '_ann_backend', 'unknown'),
         }
 
     async def close(self) -> None:

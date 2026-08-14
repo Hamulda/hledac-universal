@@ -15,7 +15,7 @@ import os
 import tempfile
 from typing import Any
 
-from utils._patterns import make_lazy_lock_classmethod  # F320-REFACTOR-2
+from hledac.universal.utils._patterns import make_lazy_lock_classmethod  # F320-REFACTOR-2
 
 logger = logging.getLogger(__name__)
 

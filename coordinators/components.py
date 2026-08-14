@@ -12,7 +12,7 @@ Extracts three concerns from UniversalCoordinator into isolated components:
 - MemoryPressureMonitor: M1 memory monitoring
 
 Usage:
-    from coordinators.components import (
+    from hledac.universal.coordinators.components import (
         OperationTracker,
         LoadFactorCalculator,
         MemoryPressureMonitor,

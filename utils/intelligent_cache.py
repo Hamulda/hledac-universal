@@ -7,9 +7,9 @@ Intelligent Cache with ML-Powered Eviction — DEPRECATED
 
     Old import                              → New import
     ----------------------------------------------------------------
-    from utils.intelligent_cache import *   → from utils.cache import *
-    from utils.intelligent_cache import IntelligentCache → from utils.cache import IntelligentCache
-    from utils.intelligent_cache import MemoryOptimizedURLSet → from utils.cache import MemoryOptimizedURLSet
+    from hledac.universal.utils.intelligent_cache import *   → from utils.cache import *
+    from hledac.universal.utils.intelligent_cache import IntelligentCache → from utils.cache import IntelligentCache
+    from hledac.universal.utils.intelligent_cache import MemoryOptimizedURLSet → from utils.cache import MemoryOptimizedURLSet
 
     The new location provides:
     - Unified cache package (utils/cache/)
@@ -24,7 +24,7 @@ All implementations have been moved to utils/cache/.
 from __future__ import annotations
 
 # Re-export from new location for backward compatibility
-from utils.cache import (
+from hledac.universal.utils.cache import (
     CacheConfig,
     CacheEntry,
     CacheStats,

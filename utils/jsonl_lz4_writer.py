@@ -1,7 +1,7 @@
 import asyncio
 import logging
 import os
-from hledac.universal.utils.asyncx import safe_create_task, safe_wait_for
+from hledac.universal.utils.asyncx import safe_create_task, safe_wait_for  # noqa: F401 — safe_wait_for used for migration
 
 import threading
 logger = logging.getLogger(__name__)
@@ -127,7 +127,7 @@ class LZ4JSONLWriter:
             line_bytes = orjson.dumps(obj)
         self._ensure_writer_started()
         try:
-            await asyncio.wait_for(self._queue.put(line_bytes), timeout=self._write_timeout)
+            await safe_wait_for(self._queue.put(line_bytes), timeout=self._write_timeout)
             return True
         except asyncio.TimeoutError:
             # S1-09 FIX: return False instead of silently dropping. Caller decides
@@ -148,7 +148,7 @@ class LZ4JSONLWriter:
         try:
             async for obj in source:
                 try:
-                    await asyncio.wait_for(self._queue.put(_json.encode(obj)), timeout=self._write_timeout)
+                    await safe_wait_for(self._queue.put(_json.encode(obj)), timeout=self._write_timeout)
                     written += 1
                 except asyncio.TimeoutError:
                     # S1-09 FIX: count skipped lines instead of silently continuing.

@@ -1,5 +1,5 @@
 //!
-//! # Shared Tokio Runtime — MODERN-07 Architecture Fix
+//! # Shared Tokio Runtime — MODERN-07 Architecture Fix + NEXTGEN-03
 //!
 //! ## Problem Solved
 //!
@@ -41,6 +41,17 @@
 //! - **Max blocking threads**: 2× workers (for I/O-bound operations)
 //! - **Features enabled**: net, time, sync, io-util, macros
 //!
+//! ## NEXTGEN-03: P/E Core Separation
+//!
+//! Tokio workers are pinned to E-cores (4,5,6,7) for exclusive network I/O:
+//!
+//! | Pool | Cores | QoS | Workload |
+//! |------|-------|-----|----------|
+//! | Tokio Workers | E 4,5,6,7 | UTILITY | Network I/O |
+//! | SIMD Pool | P 0,1 | USER_INITIATED | ARM NEON SIMD |
+//! | MLX Pool | P 2,3 | USER_INTERACTIVE | MLX Metal |
+//! | Graph Pool | P 2 | USER_INITIATED | Kuzu Graph |
+//!
 //! ## Backward Compatibility
 //!
 //! - Existing `new()`, `try_new()`, `new_fallback()` patterns preserved
@@ -48,6 +59,30 @@
 //! - Graceful degradation on OOM via fallible `try_init()`
 
 use std::sync::OnceLock;
+
+// NEXTGEN-03: E-core configuration for Tokio workers
+// ============================================================================
+
+/// NEXTGEN-03: Configuration for E-core worker affinity.
+/// Tokio workers run on E-cores for network I/O exclusivity.
+#[derive(Debug, Clone, Copy)]
+pub struct ECoreWorkerConfig {
+    /// Number of workers to pin to E-cores.
+    pub worker_count: usize,
+    /// E-core indices to use.
+    pub e_core_indices: Vec<usize>,
+}
+
+impl Default for ECoreWorkerConfig {
+    fn default() -> Self {
+        // NEXTGEN-03: Use E-cores 4,5,6,7 (typical M1 8GB config)
+        let topo = crate::topology::get_topology();
+        Self {
+            worker_count: topo.e_core_count.min(4),
+            e_core_indices: topo.e_core_indices.clone(),
+        }
+    }
+}
 
 // ============================================================================
 // Constants
@@ -224,6 +259,43 @@ fn build_runtime(config: RuntimeConfig) -> Result<tokio::runtime::Runtime, Strin
     builder
         .worker_threads(config.workers)
         .max_blocking_threads(config.max_blocking);
+
+    // NEXTGEN-03: Configure thread builder for E-core affinity
+    // Tokio workers will be pinned to E-cores for network I/O exclusivity
+    let e_core_config = ECoreWorkerConfig::default();
+    builder.on_thread_start(move || {
+        // Apply E-core affinity for Tokio workers
+        #[cfg(target_os = "macos")]
+        {
+            crate::darwin_affinity::apply_ecore_affinity();
+            // Also set UTILITY QoS for network I/O
+            unsafe {
+                libc::pthread_set_qos_class_self_np(
+                    libc::qos_class_t::QOS_CLASS_UTILITY,
+                    0,
+                );
+            }
+        }
+        #[cfg(all(target_os = "linux", not(target_env = "musl")))]
+        {
+            // Apply E-core affinity on Linux
+            if !e_core_config.e_core_indices.is_empty() {
+                let mut mask: libc::cpu_set_t = unsafe { std::mem::zeroed() };
+                for &core in &e_core_config.e_core_indices {
+                    if core < 128 {
+                        unsafe { libc::CPU_SET(core, &mut mask) };
+                    }
+                }
+                let _ = unsafe {
+                    libc::pthread_setaffinity_np(
+                        libc::pthread_self(),
+                        std::mem::size_of::<libc::cpu_set_t>(),
+                        &mask,
+                    )
+                };
+            }
+        }
+    });
 
     if config.enable_all {
         builder.enable_all();

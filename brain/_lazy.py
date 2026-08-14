@@ -42,6 +42,8 @@ import threading
 from collections.abc import Callable
 from typing import Any, TypeVar
 
+from hledac.universal.core.locks import LockCategory, make_lock
+
 logger = logging.getLogger(__name__)
 
 T = TypeVar("T", default=Any)  # PEP 696: TypeVar with default
@@ -391,7 +393,7 @@ def _make_lazy_registry() -> dict[str, LazyModel]:
 # Thread-safety: PyCacheDict holds threading.RLock internally.
 # Registry is small (7 entries), TTL of 600s matches longest model TTL (ane:600s).
 # lru_cache(maxsize=None) would grow unbounded over 24h sprint → M1 swap.
-_registry_lock = threading.Lock()
+_registry_lock = make_lock(LockCategory.CACHE, "brain_lazy._registry_lock")
 _registry_cache: "PyCacheDict[None, dict[str, LazyModel]]" = PyCacheDict(2, 600.0)
 
 

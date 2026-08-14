@@ -2,26 +2,34 @@
 QMIX: Value Decomposition Networks for Multi-Agent Reinforcement Learning.
 Implementace v MLX s joint loss a správným tokem gradientů.
 """
-try:
-    import mlx.core as mx
-    import mlx.nn as nn
-    import mlx.optimizers as optim
 
+# C1-X FIX: Import MLX_AVAILABLE from SSOT (zero-import detection)
+from hledac.universal.utils.mlx_memory import MLX_AVAILABLE
 
+# Initialize to None; will be set when first accessed
+mx = None
+nn = None
+optim = None
+tree_map = None
+tree_flatten = None
+tree_unflatten = None
 
+# Only attempt MLX import if SSOT says it's available
+if MLX_AVAILABLE:
+    try:
+        import mlx.core as mx
+        import mlx.nn as nn
+        import mlx.optimizers as optim
+        from mlx.utils import tree_flatten, tree_map, tree_unflatten
+    except ImportError:
+        mx = None
+        nn = None
+        optim = None
+        tree_map = None
+        tree_flatten = None
+        tree_unflatten = None
 
-
-    from mlx.utils import tree_flatten, tree_map, tree_unflatten
-    MLX_AVAILABLE = True
-except ImportError:
-    MLX_AVAILABLE = False
-    mx = None
-    nn = None
-    optim = None
-    tree_map = None
-    tree_flatten = None
-    tree_unflatten = None
-from rl.actions import ACTION_DIM, ACTION_FETCH_MORE
+from hledac.universal.rl.actions import ACTION_DIM, ACTION_FETCH_MORE
 if MLX_AVAILABLE:
 
     class QMixer(nn.Module):

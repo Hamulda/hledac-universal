@@ -42,14 +42,25 @@ import numpy as np
 from ..security.pii_gate import fallback_sanitize
 from ..core.embeddings.cache import EmbeddingCache
 MAX_LLM_PROMPT_CHARS = 8192
-try:
-    import mlx.core as mx
-    import mlx.nn as mlx_nn
-    MLX_AVAILABLE = True
-except ImportError:
-    MLX_AVAILABLE = False
-    mx = None
-    mlx_nn = None
+
+# C1-X FIX: Import MLX_AVAILABLE from SSOT (zero-import detection)
+from hledac.universal.utils.mlx_memory import MLX_AVAILABLE
+
+# Lazy accessor for mlx modules - uses centralized get_mx() from SSOT
+def _get_mlx():
+    """Lazy accessor for mlx.core — uses centralized get_mx() from SSOT."""
+    from hledac.universal.utils.mlx_memory._core import get_mx as _get_mx_from_core
+    return _get_mx_from_core()
+
+def _get_mlx_nn():
+    """Lazy accessor for mlx.nn — returns None if unavailable."""
+    if MLX_AVAILABLE:
+        try:
+            import mlx.nn as _nn
+            return _nn
+        except ImportError:
+            pass
+    return None
 _torch_nn = None
 logger = logging.getLogger(__name__)
 

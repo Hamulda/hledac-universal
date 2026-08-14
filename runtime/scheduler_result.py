@@ -15,22 +15,18 @@ _UNSET: Any = object()
 def _run_async_safe(coro: Any) -> Any:
     """
     Run an async coroutine safely from sync context.
-    
-    Handles the case where there's already a running event loop.
-    Returns a fallback value if we can't run the coroutine.
+
+    D2-FIX: Replaced asyncio.run() with run_sync_async() from sync_bridge.py.
+    asyncio.run() is deprecated in library code (Python 3.14+) and fails silently
+    when called from within a running event loop. run_sync_async() handles both:
+    - No running loop → asyncio.Runner().run(coro) [PEP 654]
+    - Running loop → asyncio.run_coroutine_threadsafe().result()
     """
-    import asyncio
+    from hledac.universal.utils.sync_bridge import run_sync_async
     try:
-        loop = asyncio.get_running_loop()
-        # There's a running loop - can't use run_until_complete
-        # Return a minimal fallback
+        return run_sync_async(coro)
+    except Exception:
         return None
-    except RuntimeError:
-        # No running loop - safe to use asyncio.run
-        try:
-            return asyncio.run(coro)
-        except Exception:
-            return None
 
 @dataclass(slots=True)
 class SprintSchedulerResult:
@@ -668,13 +664,13 @@ class SprintResultBuilder:
         Update all health fields from SprintHealthLedger.
 
         Usage:
-            from utils.resilience import get_current_ledger
+            from hledac.universal.utils.resilience import get_current_ledger
             ledger = get_current_ledger()
             if ledger:
                 builder.update_health_from_ledger(ledger)
         """
         try:
-            from utils.resilience import HealthScore
+            from hledac.universal.utils.resilience import HealthScore
             score = HealthScore.from_ledger(ledger)
             self.with_health_mode(ledger.degradation_mode.name)
             self.with_health_score(score.total)

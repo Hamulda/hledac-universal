@@ -82,6 +82,8 @@ import math
 import random
 import secrets
 import time
+
+from hledac.universal.utils.asyncx import safe_wait_for
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from enum import Enum, auto
@@ -662,7 +664,7 @@ class HttpTransport:
                 # TTFB kill switch wrapper
                 if ttfb_timeout_s is not None and ttfb_timeout_s > 0:
                     try:
-                        result = await asyncio.wait_for(
+                        result = await safe_wait_for(
                             self._do_fetch(url, timeout_s, max_bytes, headers),
                             timeout=ttfb_timeout_s,
                         )
@@ -899,7 +901,7 @@ class HttpTransport:
         try:
             from hledac.universal.fetching.public_fetcher import _fetch_with_playwright
 
-            html = await asyncio.wait_for(
+            html = await safe_wait_for(
                 _fetch_with_playwright(url, timeout=timeout_s),
                 timeout=timeout_s + 10,  # playwright needs extra overhead
             )

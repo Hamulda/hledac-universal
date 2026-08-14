@@ -9,12 +9,27 @@ import time
 import urllib.parse
 from pathlib import Path
 from typing import TYPE_CHECKING
+import httpx
 from hledac.universal.utils.msgspec_json import loads as _msgspec_loads
 if TYPE_CHECKING:
     pass
 logger = logging.getLogger(__name__)
 _RE_ONION_V3 = re.compile('\\b[a-z2-7]{56}\\.onion\\b')
 _RE_ONION_V2 = re.compile('\\b[a-z2-7]{16}\\.onion\\b')
+
+# NEW-MEM-004: Onion seed content cap for M1 8GB safety
+_MAX_ONION_BYTES: int = 2 * 1024 * 1024  # 2MB cap for onion pages
+
+
+async def _read_text_with_cap(resp: httpx.Response, cap: int = _MAX_ONION_BYTES) -> str:
+    """Read response text with payload cap for M1 RAM safety."""
+    try:
+        raw = resp.content or b""
+        if len(raw) > cap:
+            raw = raw[:cap]
+        return raw.decode("utf-8", errors="replace")
+    except Exception:
+        return ""
 
 class OnionSeedManager:
     """
@@ -79,7 +94,6 @@ class OnionSeedManager:
         otherwise creates a temporary one.
         B6: 15s timeout per Ahmia request.
         """
-        import httpx
         ahmia_url = f'https://ahmia.fi/search/?q={urllib.parse.quote(query)}'
         try:
             if session is None:
@@ -88,12 +102,14 @@ class OnionSeedManager:
                     async with _sess.get(ahmia_url, headers={'User-Agent': 'Hledac/1.0 OSINT research tool'}) as resp:
                         if resp.status_code != 200:
                             return []
-                        html = await resp.text()
+                        # NEW-MEM-004: Use capped read for Ahmia search (HTML, cap at 1MB)
+                        html = await _read_text_with_cap(resp, cap=1024 * 1024)
             else:
                 async with session.get(ahmia_url, timeout=httpx.Timeout(15.0), headers={'User-Agent': 'Hledac/1.0 OSINT research tool'}) as resp:
                     if resp.status_code != 200:
                         return []
-                    html = await resp.text()
+                    # NEW-MEM-004: Use capped read for Ahmia search (HTML, cap at 1MB)
+                    html = await _read_text_with_cap(resp, cap=1024 * 1024)
             new_seeds: set[str] = set()
             for pattern in (_RE_ONION_V3, _RE_ONION_V2):
                 new_seeds.update(pattern.findall(html))
@@ -113,14 +129,14 @@ class OnionSeedManager:
     async def discover_via_tor(self, query: str, tor_session: httpx.AsyncClient) -> list[str]:
         """Ahmia .onion discovery přes Tor.
         Fallback na clearnet Ahmia pokud Tor nedostupný."""
-        import httpx
         AHMIA_ONION = 'juhanurmihxlp77nkq76byazcldy2hmbbj3j3jbcrpvzmntbxnjbxqd.onion'
         q_enc = urllib.parse.quote_plus(query)
 
         async def _fetch(url: str, sess: httpx.AsyncClient) -> str:
             async with sess.get(url, timeout=httpx.Timeout(30.0)) as r:
                 r.raise_for_status()
-                return await r.text()
+                # NEW-MEM-004: Use capped read for onion pages
+                return await _read_text_with_cap(r)
         html = ''
         try:
             html = await _fetch(f'http://{AHMIA_ONION}/search/?q={q_enc}', tor_session)

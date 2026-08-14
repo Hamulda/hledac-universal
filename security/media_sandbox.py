@@ -45,6 +45,7 @@ from typing import Any, TYPE_CHECKING
 import msgspec
 
 from hledac.universal.core.feature_flags import FeatureFlag, FeatureFlags
+from hledac.universal.utils.asyncx import safe_wait_for
 
 logger = logging.getLogger(__name__)
 
@@ -465,7 +466,8 @@ async def _run_in_subprocess_isolation(
     )
 
     try:
-        stdout, stderr = await asyncio.wait_for(
+        # D5 FIX: safe_wait_for for correct TaskGroup composition
+        stdout, stderr = await safe_wait_for(
             proc.communicate(input=stdin_data),
             timeout=timeout_s,
         )
@@ -705,7 +707,8 @@ async def run_whisper_in_subprocess(
         )
 
         try:
-            stdout, stderr = await asyncio.wait_for(
+            # D5 FIX: safe_wait_for for correct TaskGroup composition
+            stdout, stderr = await safe_wait_for(
                 proc.communicate(),
                 timeout=timeout_s,
             )
@@ -1030,7 +1033,8 @@ class MediaSandboxCoordinator:
             from hledac.universal.core.rust_backend import rust
 
             if rust.whisper.is_available():
-                raw = await asyncio.wait_for(
+                # D5 FIX: safe_wait_for for correct TaskGroup composition
+                raw = await safe_wait_for(
                     asyncio.to_thread(
                         rust.whisper.transcribe,
                         audio_path,
@@ -1079,7 +1083,8 @@ class MediaSandboxCoordinator:
             from hledac.universal.brain.whisper_engine import get_whisper_engine
 
             engine = await get_whisper_engine()
-            raw = await asyncio.wait_for(
+            # D5 FIX: safe_wait_for for correct TaskGroup composition
+            raw = await safe_wait_for(
                 engine.transcribe(
                     audio_path,
                     model_size=model_size,
@@ -1519,7 +1524,8 @@ except Exception as e:
                         stderr=asyncio.subprocess.PIPE,
                         env=safe_env,
                     )
-                    stdout, stderr = await asyncio.wait_for(
+                    # D5 FIX: safe_wait_for for correct TaskGroup composition
+                    stdout, stderr = await safe_wait_for(
                         proc.communicate(),
                         timeout=timeout_s,
                     )
@@ -1984,7 +1990,8 @@ async def run_pymupdf_sandboxed(
                 *cmd, stdin=asyncio.subprocess.DEVNULL,
                 stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE, env=safe_env,
             )
-            stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=timeout_s)
+            # D5 FIX: safe_wait_for for correct TaskGroup composition
+            stdout, stderr = await safe_wait_for(proc.communicate(), timeout=timeout_s)
 
             if proc.returncode == 0 and stdout:
                 try:

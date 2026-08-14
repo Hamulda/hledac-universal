@@ -1,12 +1,22 @@
 """
 Isolated executors — backed by RustWorkerPool (rayon thread pool).
 
-MODERN-33 + MODERN-34: P/E Core Affinity Integration
+MODERN-33 + MODERN-34 + NEXTGEN-03: P/E Core Affinity Integration
 ===================================================================
 This module uses Rust rayon pools with proper P/E core affinity:
+
+NEXTGEN-03: Asymmetric Topology-Aware Pools:
+  - simd_pool → P-cores 0,1 (USER_INITIATED) — ARM NEON SIMD operations
+  - mlx_pool → P-cores 2,3 (USER_INTERACTIVE) — MLX Metal dispatch
+  - graph_pool → P-core 2 (shared, USER_INITIATED) — Kuzu graph traversal
+  - io_pool → E-cores (UTILITY QoS) — DuckDB, network I/O
+
+Legacy pools (for backward compatibility):
   - cpu_pool → P-cores (USER_INITIATED QoS) via darwin_affinity.rs
   - io_pool → E-cores (UTILITY QoS) via darwin_affinity.rs
-  - Topology detection via rust topoology.rs (cached perflevel0/1)
+  - mixed_pool → P-cores (adaptive)
+
+Work-stealing: Disabled via breadth_first() — SIMD never steals from MLX.
 
 THREAD-BUDGET-01 + THREAD-BUDGET-02: Unified Thread Budget System
 ============================================================
@@ -16,9 +26,10 @@ This module provides the canonical thread budget enforcement for M1 8GB:
     ┌────────────────────────────────────────────────────────────────┐
     │ Thread Source           │ Count   │ Notes                    │
     ├────────────────────────┼─────────┼───────────────────────────│
-    │ Rayon CPU Pool         │ 1-4     │ P-cores, QoS=USER_INIT.. │
+    │ Rayon SIMD Pool        │ 2       │ P-cores 0,1, USER_INIT.. │
+    │ Rayon MLX Pool         │ 2       │ P-cores 2,3, USER_INTER. │
+    │ Rayon Graph Pool       │ 1       │ P-core 2, USER_INITIATED │
     │ Rayon I/O Pool         │ 1-2     │ E-cores, QoS=UTILITY     │
-    │ Rayon Mixed Pool       │ 0-2     │ Adaptive, P-core ceiling  │
     │ Rayon Dispatchers      │ 3       │ 1 per pool type          │
     │ asyncio Event Loop     │ 1       │ Reserved (ASYNCIO_RES.)  │
     │ System/OS Overhead     │ 1       │ Reserved                 │
@@ -43,9 +54,12 @@ Rationale (A8):
     Python interpreter isolation (~50μs/task for channel dispatch).
   - sys.path.insert Security Risk removed — RustWorkerPool doesn't spawn interpreters.
 
-Mapping: IsolatedDuckDBExecutor → RustWorkerPool("io"),
-         IsolatedMLXExecutor → RustWorkerPool("cpu"),
-         IsolatedEvidenceBatchWriter → RustWorkerPool("mixed").
+Mapping (NEXTGEN-03):
+  IsolatedSIMDExecutor → RustWorkerPool("simd"),  # ARM NEON, Aho-Corasick
+  IsolatedMLXExecutor → RustWorkerPool("mlx"),   # MLX Metal dispatch
+  IsolatedGraphExecutor → RustWorkerPool("graph"), # Kuzu graph, petgraph
+  IsolatedDuckDBExecutor → RustWorkerPool("io"),  # DuckDB, E-cores
+  IsolatedEvidenceBatchWriter → RustWorkerPool("mixed")
 
 Invariants:
   - Always-on: no feature flags, RustWorkerPool fallback covers all cases
@@ -148,6 +162,11 @@ __all__ = [
     # ISSUE [SWARM]-005: FFI Circuit Breaker Exceptions
     "CircuitBreakerOpenError",
     "FallbackActivatedError",
+    # NEXTGEN-03: Dedicated topology-aware executors
+    "IsolatedSIMDExecutor",
+    "IsolatedGraphExecutor",
+    "get_simd_executor",
+    "get_graph_executor",
 ]
 
 # -----------------------------------------------------------------------------
@@ -599,11 +618,16 @@ class IsolatedDuckDBExecutor:
 
 class IsolatedMLXExecutor:
     """
-    Executes MLX inference via RustWorkerPool("cpu").
+    NEXTGEN-03: Executes MLX inference via RustWorkerPool("mlx").
 
-    Backed by rayon cpu_pool (4 P-cores) for CPU-bound inference.
+    Backed by rayon mlx_pool (2 P-cores 2,3) for MLX Metal dispatch.
     Memory isolation: MLX Metal arena is managed independently by the
     MLX library — the pool provides thread-level parallelism.
+
+    Pool config (NEXTGEN-03):
+      - Backend: RustWorkerPool("mlx") → P-core 2,3
+      - QoS: USER_INTERACTIVE (minimal latency for GPU command submission)
+      - Threads: 2
 
     Note:
         MLX already releases GIL at C-level. The pool provides additional
@@ -611,14 +635,14 @@ class IsolatedMLXExecutor:
 
     Invariants:
       - Always-on: RustWorkerPool fallback covers all cases
-      - Bounded: cpu_pool cap = 4 threads (P-core QoS)
+      - Bounded: mlx_pool cap = 2 threads (P-core QoS)
       - Fail-safe: returns None on error, never raises
     """
 
     __slots__ = ("_pool", "_available")
 
     def __init__(self, *, max_inference: int = 2) -> None:
-        self._pool = get_rust_pool("cpu")
+        self._pool = get_rust_pool("mlx")
         self._available = _check_rust_pool_available()
 
     @property
@@ -805,11 +829,219 @@ class IsolatedEvidenceBatchWriter:
 
 
 # -----------------------------------------------------------------------------
+# NEXTGEN-03: IsolatedSIMDExecutor — backed by RustWorkerPool("simd")
+# -----------------------------------------------------------------------------
+
+
+class IsolatedSIMDExecutor:
+    """
+    NEXTGEN-03: Executes SIMD operations via RustWorkerPool("simd").
+
+    Backed by rayon simd_pool (2 P-cores 0,1) for ARM NEON SIMD operations.
+    Memory isolation: Rust pool provides thread-level parallelism.
+
+    Pool config (NEXTGEN-03):
+      - Backend: RustWorkerPool("simd") → P-core 0,1
+      - QoS: USER_INITIATED (CPU-intensive)
+      - Threads: 2
+      - Workload: ARM NEON SIMD (simd_similarity.rs, deep_ac Aho-Corasick)
+
+    Invariants:
+      - Always-on: RustWorkerPool fallback covers all cases
+      - Bounded: simd_pool cap = 2 threads (P-core QoS)
+      - Fail-safe: returns None on error, never raises
+    """
+
+    __slots__ = ("_pool", "_available")
+
+    def __init__(self, *, max_workers: int = 2) -> None:
+        self._pool = get_rust_pool("simd")
+        self._available = _check_rust_pool_available()
+
+    @property
+    def is_available(self) -> bool:
+        """Check if isolated execution is available (always True — Rust pool is always-on)."""
+        return self._available
+
+    async def run_simd_async(
+        self,
+        simd_func: Callable[..., Any],
+        *args: Any,
+        timeout: float | None = None,
+        **kwargs: Any,
+    ) -> Any:
+        """
+        Run SIMD function on the Rust simd_pool.
+
+        Args:
+            simd_func: Function that runs SIMD computation.
+            *args: Positional arguments.
+            timeout: Optional timeout in seconds.
+            **kwargs: Keyword arguments.
+
+        Returns:
+            SIMD result, or None on error.
+
+        Fail-safe: returns None on any error, never raises.
+        """
+        if not self._available:
+            try:
+                return simd_func(*args, **kwargs)
+            except Exception as e:
+                logger.warning(f"SIMD execution failed (pool unavailable): {e}")
+                return None
+
+        try:
+            if timeout is not None:
+                return await safe_wait_for(
+                    self._pool.submit(simd_func, *args, timeout=timeout, **kwargs),
+                    timeout=timeout,
+                    label="isolated_executors:simd",
+                )
+            return await self._pool.submit(simd_func, *args, **kwargs)
+        except asyncio.TimeoutError:
+            logger.warning("SIMD execution timeout")
+            return None
+        except Exception as e:
+            logger.warning(f"SIMD execution failed: {e}")
+            return None
+
+    def run_simd_sync(
+        self,
+        simd_func: Callable[..., Any],
+        *args: Any,
+        **kwargs: Any,
+    ) -> Any:
+        """Synchronous version of run_simd_async."""
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            with asyncio.Runner() as runner:
+                result = runner.run(self.run_simd_async(simd_func, *args, **kwargs))
+            return result
+        if loop.is_running():
+            coro = self.run_simd_async(simd_func, *args, **kwargs)
+            return asyncio.run_coroutine_threadsafe(coro, loop).result()
+        return loop.run_until_complete(self.run_simd_async(simd_func, *args, **kwargs))
+
+    def close(self) -> None:
+        """Close is a no-op for RustWorkerPool (process-wide singleton)."""
+        pass
+
+
+# -----------------------------------------------------------------------------
+# NEXTGEN-03: IsolatedGraphExecutor — backed by RustWorkerPool("graph")
+# -----------------------------------------------------------------------------
+
+
+class IsolatedGraphExecutor:
+    """
+    NEXTGEN-03: Executes graph operations via RustWorkerPool("graph").
+
+    Backed by rayon graph_pool (1 P-core 2) for Kuzu graph traversal.
+    Memory isolation: Rust pool provides thread-level parallelism.
+
+    Pool config (NEXTGEN-03):
+      - Backend: RustWorkerPool("graph") → P-core 2 (shared with MLX)
+      - QoS: USER_INITIATED (CPU-intensive)
+      - Threads: 1
+      - Workload: Kuzu graph traversal, petgraph PageRank
+
+    Note:
+      Single thread to avoid overwhelming GPU pipeline when co-located
+      with MLX pool on P-core 2.
+
+    Invariants:
+      - Always-on: RustWorkerPool fallback covers all cases
+      - Bounded: graph_pool cap = 1 thread
+      - Fail-safe: returns None on error, never raises
+    """
+
+    __slots__ = ("_pool", "_available")
+
+    def __init__(self, *, max_workers: int = 1) -> None:
+        self._pool = get_rust_pool("graph")
+        self._available = _check_rust_pool_available()
+
+    @property
+    def is_available(self) -> bool:
+        """Check if isolated execution is available (always True — Rust pool is always-on)."""
+        return self._available
+
+    async def run_graph_async(
+        self,
+        graph_func: Callable[..., Any],
+        *args: Any,
+        timeout: float | None = None,
+        **kwargs: Any,
+    ) -> Any:
+        """
+        Run graph function on the Rust graph_pool.
+
+        Args:
+            graph_func: Function that runs graph computation.
+            *args: Positional arguments.
+            timeout: Optional timeout in seconds.
+            **kwargs: Keyword arguments.
+
+        Returns:
+            Graph result, or None on error.
+
+        Fail-safe: returns None on any error, never raises.
+        """
+        if not self._available:
+            try:
+                return graph_func(*args, **kwargs)
+            except Exception as e:
+                logger.warning(f"Graph execution failed (pool unavailable): {e}")
+                return None
+
+        try:
+            if timeout is not None:
+                return await safe_wait_for(
+                    self._pool.submit(graph_func, *args, timeout=timeout, **kwargs),
+                    timeout=timeout,
+                    label="isolated_executors:graph",
+                )
+            return await self._pool.submit(graph_func, *args, **kwargs)
+        except asyncio.TimeoutError:
+            logger.warning("Graph execution timeout")
+            return None
+        except Exception as e:
+            logger.warning(f"Graph execution failed: {e}")
+            return None
+
+    def run_graph_sync(
+        self,
+        graph_func: Callable[..., Any],
+        *args: Any,
+        **kwargs: Any,
+    ) -> Any:
+        """Synchronous version of run_graph_async."""
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            with asyncio.Runner() as runner:
+                result = runner.run(self.run_graph_async(graph_func, *args, **kwargs))
+            return result
+        if loop.is_running():
+            coro = self.run_graph_async(graph_func, *args, **kwargs)
+            return asyncio.run_coroutine_threadsafe(coro, loop).result()
+        return loop.run_until_complete(self.run_graph_async(graph_func, *args, **kwargs))
+
+    def close(self) -> None:
+        """Close is a no-op for RustWorkerPool (process-wide singleton)."""
+        pass
+
+
+# -----------------------------------------------------------------------------
 # Module-level pool singletons — lazy, thread-safe
 # -----------------------------------------------------------------------------
 
 _duckdb_pool: IsolatedDuckDBExecutor | None = None
 _mlx_pool: IsolatedMLXExecutor | None = None
+_simd_pool: IsolatedSIMDExecutor | None = None
+_graph_pool: IsolatedGraphExecutor | None = None
 _evidence_pool: IsolatedEvidenceBatchWriter | None = None
 _pools_lock = threading.Lock()
 
@@ -898,19 +1130,76 @@ def get_evidence_batch_writer() -> IsolatedEvidenceBatchWriter:
         return _evidence_pool
 
 
+def get_simd_executor() -> IsolatedSIMDExecutor:
+    """Get or create global SIMD executor pool.
+
+    NEXTGEN-03: Returns IsolatedSIMDExecutor backed by RustWorkerPool("simd").
+
+    Resolution order (A3):
+      1. ServiceContainer ('executor.simd') — sprint-scoped via ctx.container
+      2. Fallback to module-level _simd_pool — backward-compatible global
+    """
+    global _simd_pool
+
+    if _simd_pool is not None:
+        return _simd_pool
+
+    try:
+        from hledac.universal.core.container import get_global_container
+
+        container = get_global_container()
+        inst = container.try_get("executor.simd")
+        if inst is not None:
+            return inst
+    except Exception:  # noqa: BLE001
+        pass
+
+    with _pools_lock:
+        if _simd_pool is None:
+            _simd_pool = IsolatedSIMDExecutor()
+        return _simd_pool
+
+
+def get_graph_executor() -> IsolatedGraphExecutor:
+    """Get or create global Graph executor pool.
+
+    NEXTGEN-03: Returns IsolatedGraphExecutor backed by RustWorkerPool("graph").
+
+    Resolution order (A3):
+      1. ServiceContainer ('executor.graph') — sprint-scoped via ctx.container
+      2. Fallback to module-level _graph_pool — backward-compatible global
+    """
+    global _graph_pool
+
+    if _graph_pool is not None:
+        return _graph_pool
+
+    try:
+        from hledac.universal.core.container import get_global_container
+
+        container = get_global_container()
+        inst = container.try_get("executor.graph")
+        if inst is not None:
+            return inst
+    except Exception:  # noqa: BLE001
+        pass
+
+    with _pools_lock:
+        if _graph_pool is None:
+            _graph_pool = IsolatedGraphExecutor()
+        return _graph_pool
+
+
 def close_all_pools() -> None:
     """
     MODERN-35: Close all global executor pools and shutdown Rust pools.
+    NEXTGEN-03: Also closes dedicated SIMD/MLX/Graph pools.
 
     Shuts down Rust rayon thread pools by calling shutdown() on each
     RustWorkerPool instance. This signals the Rust layer to release
     resources and reset internal state.
-
-    MODERN-35 FIX: Previously this function only nullified Python references
-    without actually closing the Rust pools. Now it properly signals the
-    Rust layer via shutdown().
     """
-    global _duckdb_pool, _mlx_pool, _evidence_pool
+    global _duckdb_pool, _mlx_pool, _simd_pool, _graph_pool, _evidence_pool
     with _pools_lock:
         # Shutdown Python wrapper classes first (if they have custom cleanup)
         if _duckdb_pool is not None:
@@ -923,16 +1212,21 @@ def close_all_pools() -> None:
                 _mlx_pool.close()
             except Exception:  # noqa: BLE001
                 pass
-        if _evidence_pool is not None:
+        if _simd_pool is not None:
             try:
-                _evidence_pool.close()
+                _simd_pool.close()
             except Exception:  # noqa: BLE001
                 pass
-
-        # MODERN-35: Shutdown Rust pools to release rayon thread pool resources
+        if _graph_pool is not None:
+            try:
+                _graph_pool.close()
+            except Exception:  # noqa: BLE001
+                pass
+        # NEXTGEN-03: Shutdown Rust pools to release rayon thread pool resources
+        # Includes dedicated pools: simd, mlx, graph
         try:
             from hledac.universal.runtime.worker_pool import get_rust_pool
-            for pool_type in ("cpu", "io", "mixed"):
+            for pool_type in ("cpu", "io", "mixed", "simd", "mlx", "graph"):
                 try:
                     rust_pool = get_rust_pool(pool_type)
                     rust_pool.shutdown()
@@ -945,6 +1239,8 @@ def close_all_pools() -> None:
         # Nullify references
         _duckdb_pool = None
         _mlx_pool = None
+        _simd_pool = None
+        _graph_pool = None
         _evidence_pool = None
         logger.debug("[ISOLATED-EXECUTORS] All pools closed")
 
@@ -2066,3 +2362,202 @@ def get_rayon_pool_manager() -> RayonPoolManager:
         if _rayon_manager is None:
             _rayon_manager = RayonPoolManager()
         return _rayon_manager
+
+
+# NEXTGEN-03: Dedicated executors for asymmetric topology-aware pools
+# ============================================================================
+
+
+class IsolatedSIMDExecutor:
+    """
+    NEXTGEN-03: Executes SIMD operations via RustWorkerPool("simd").
+
+    Backed by rayon simd_pool (2 threads on P-cores 0,1) for ARM NEON SIMD.
+    QoS: USER_INITIATED for maximum throughput.
+    
+    Use for:
+      - batch_cosine_scores() from simd_similarity.rs
+      - deep_ac Aho-Corasick pattern matching
+      - Other vectorized SIMD operations
+
+    Invariants:
+      - Always-on: RustWorkerPool fallback covers all cases
+      - Bounded: simd_pool cap = 2 threads
+      - Fail-safe: returns None on error, never raises
+    """
+
+    __slots__ = ("_pool", "_available")
+
+    def __init__(self) -> None:
+        # NEXTGEN-03: Use "simd" pool type
+        self._pool = get_rust_pool("simd")
+        self._available = _check_rust_pool_available()
+
+    @property
+    def is_available(self) -> bool:
+        """Check if isolated execution is available."""
+        return self._available
+
+    async def run_simd_async(
+        self,
+        simd_func: Callable[..., Any],
+        *args: Any,
+        timeout: float | None = None,
+        **kwargs: Any,
+    ) -> Any:
+        """Run SIMD function on the Rust simd_pool."""
+        if not self._available:
+            try:
+                return simd_func(*args, **kwargs)
+            except Exception as e:
+                logger.warning(f"SIMD execution failed (pool unavailable): {e}")
+                return None
+
+        try:
+            if timeout is not None:
+                return await safe_wait_for(
+                    self._pool.submit(simd_func, *args, timeout=timeout, **kwargs),
+                    timeout=timeout,
+                    label="isolated_executors:simd",
+                )
+            return await self._pool.submit(simd_func, *args, **kwargs)
+        except asyncio.TimeoutError:
+            logger.warning("SIMD execution timeout")
+            return None
+        except Exception as e:
+            logger.warning(f"SIMD execution failed: {e}")
+            return None
+
+    def run_simd_sync(
+        self,
+        simd_func: Callable[..., Any],
+        *args: Any,
+        **kwargs: Any,
+    ) -> Any:
+        """Synchronous version of run_simd_async."""
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            with asyncio.Runner() as runner:
+                result = runner.run(self.run_simd_async(simd_func, *args, **kwargs))
+            return result
+        if loop.is_running():
+            coro = self.run_simd_async(simd_func, *args, **kwargs)
+            return asyncio.run_coroutine_threadsafe(coro, loop).result()
+        return loop.run_until_complete(self.run_simd_async(simd_func, *args, **kwargs))
+
+    def close(self) -> None:
+        """Close is a no-op for RustWorkerPool."""
+        pass
+
+
+class IsolatedGraphExecutor:
+    """
+    NEXTGEN-03: Executes graph operations via RustWorkerPool("graph").
+
+    Backed by rayon graph_pool (1 thread on P-core 2, shared with MLX).
+    QoS: USER_INITIATED for graph traversal.
+    
+    Use for:
+      - Kuzu graph traversal (graph_traverse)
+      - petgraph PageRank computations
+      - Graph-based pattern matching
+
+    Note: Single thread to avoid overwhelming GPU pipeline.
+
+    Invariants:
+      - Always-on: RustWorkerPool fallback covers all cases
+      - Bounded: graph_pool cap = 1 thread
+      - Fail-safe: returns None on error, never raises
+    """
+
+    __slots__ = ("_pool", "_available")
+
+    def __init__(self) -> None:
+        # NEXTGEN-03: Use "graph" pool type
+        self._pool = get_rust_pool("graph")
+        self._available = _check_rust_pool_available()
+
+    @property
+    def is_available(self) -> bool:
+        """Check if isolated execution is available."""
+        return self._available
+
+    async def run_graph_async(
+        self,
+        graph_func: Callable[..., Any],
+        *args: Any,
+        timeout: float | None = None,
+        **kwargs: Any,
+    ) -> Any:
+        """Run graph function on the Rust graph_pool."""
+        if not self._available:
+            try:
+                return graph_func(*args, **kwargs)
+            except Exception as e:
+                logger.warning(f"Graph execution failed (pool unavailable): {e}")
+                return None
+
+        try:
+            if timeout is not None:
+                return await safe_wait_for(
+                    self._pool.submit(graph_func, *args, timeout=timeout, **kwargs),
+                    timeout=timeout,
+                    label="isolated_executors:graph",
+                )
+            return await self._pool.submit(graph_func, *args, **kwargs)
+        except asyncio.TimeoutError:
+            logger.warning("Graph execution timeout")
+            return None
+        except Exception as e:
+            logger.warning(f"Graph execution failed: {e}")
+            return None
+
+    def run_graph_sync(
+        self,
+        graph_func: Callable[..., Any],
+        *args: Any,
+        **kwargs: Any,
+    ) -> Any:
+        """Synchronous version of run_graph_async."""
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            with asyncio.Runner() as runner:
+                result = runner.run(self.run_graph_async(graph_func, *args, **kwargs))
+            return result
+        if loop.is_running():
+            coro = self.run_graph_async(graph_func, *args, **kwargs)
+            return asyncio.run_coroutine_threadsafe(coro, loop).result()
+        return loop.run_until_complete(self.run_graph_async(graph_func, *args, **kwargs))
+
+    def close(self) -> None:
+        """Close is a no-op for RustWorkerPool."""
+        pass
+
+
+# Module-level singletons for new executors
+_simd_executor: IsolatedSIMDExecutor | None = None
+_graph_executor: IsolatedGraphExecutor | None = None
+
+
+def get_simd_executor() -> IsolatedSIMDExecutor:
+    """Get or create global SIMD executor pool (NEXTGEN-03)."""
+    global _simd_executor
+    if _simd_executor is not None:
+        return _simd_executor
+    with _pools_lock:
+        if _simd_executor is None:
+            _simd_executor = IsolatedSIMDExecutor()
+        return _simd_executor
+
+
+def get_graph_executor() -> IsolatedGraphExecutor:
+    """Get or create global Graph executor pool (NEXTGEN-03)."""
+    global _graph_executor
+    if _graph_executor is not None:
+        return _graph_executor
+    with _pools_lock:
+        if _graph_executor is None:
+            _graph_executor = IsolatedGraphExecutor()
+        return _graph_executor

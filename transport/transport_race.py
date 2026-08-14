@@ -61,6 +61,8 @@ from hledac.universal.transport.circuit_breaker import (
 from hledac.universal.transport.utils import (
     safe_create_task,
 )
+from hledac.universal.utils.asyncx import safe_wait_for
+from hledac.universal.utils.asyncx import safe_wait_for
 
 logger = logging.getLogger(__name__)
 
@@ -1192,7 +1194,7 @@ class TransportRaceManager:
             else:
                 policy = POLICY_CLEARNET_H2
 
-            result = await asyncio.wait_for(
+            result = await safe_wait_for(
                 fetch_via_unified(
                     url=url,
                     policy=policy,
@@ -1232,7 +1234,7 @@ class TransportRaceManager:
             if not is_nw_connection_available():
                 return None
 
-            result = await asyncio.wait_for(
+            result = await safe_wait_for(
                 fetch_nw_connection(
                     url,
                     timeout_ms=int(timeout_s * 1000),
@@ -1295,7 +1297,7 @@ class TransportRaceManager:
             if not is_nw_quic_available():
                 return None
 
-            result = await asyncio.wait_for(
+            result = await safe_wait_for(
                 fetch_nw_quic(
                     url,
                     timeout_ms=int(timeout_s * 1000),
@@ -1348,7 +1350,7 @@ class TransportRaceManager:
             from hledac.universal.fetching.public_fetcher import (
                 _fetch_via_playwright,
             )
-            result = await asyncio.wait_for(
+            result = await safe_wait_for(
                 _fetch_via_playwright(url, timeout_s=timeout_s),
                 timeout=timeout_s * 2,  # playwright is slow
             )

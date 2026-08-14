@@ -15,7 +15,7 @@ Solution: Event-driven observer pattern — DeepHermes3Engine publishes
 state changes; ModelManager subscribes and reacts.
 
 Usage:
-    from brain.model_state import ModelState, ModelStateObserver, get_state_observer
+    from hledac.universal.brain.model_state import ModelState, ModelStateObserver, get_state_observer
 
     observer = get_state_observer()
     observer.subscribe(my_model_manager.on_model_state_change)

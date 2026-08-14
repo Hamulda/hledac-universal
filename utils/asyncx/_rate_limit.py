@@ -34,7 +34,7 @@ import time
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
-from utils.lru_cache import LRUCache
+from hledac.universal.utils.lru_cache import LRUCache
 
 if TYPE_CHECKING:
     pass

@@ -45,6 +45,11 @@ use pyo3::prelude::*;
 use pyo3::types::{PyBytes, PyList, PyTuple};
 use rayon::prelude::*;
 
+// Import budget functions from arrow_ipc_mmap module for M1 8GB safety
+use crate::arrow_ipc_mmap::{
+    account_mmap_alloc, account_mmap_free, check_mmap_budget, MAX_MMAP_POOL_BYTES,
+};
+
 use arrow::array::{ArrayRef, Float64Array, Int64Array, RecordBatch, StringArray};
 use arrow::datatypes::{DataType, Field, Schema};
 use arrow::ipc::writer::StreamWriter;
@@ -1014,6 +1019,8 @@ pub fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(build_findings_from_iocs, m)?)?;
     m.add_function(wrap_pyfunction!(build_record_batch_from_structs, m)?)?;
     m.add_function(wrap_pyfunction!(build_record_batch_from_findings, m)?)?;
+    // NEXTGEN-02: Arrow IPC zero-copy mmap path
+    m.add_function(wrap_pyfunction!(build_arrow_batch_to_mmap, m)?)?;
     Ok(())
 }
 
@@ -1158,6 +1165,230 @@ pub fn build_findings_from_iocs<'py>(
 }
 
 // ---------------------------------------------------------------------------
+// NEXTGEN-02: Arrow IPC Zero-Copy Mmap Path
+//
+// build_arrow_batch_to_mmap writes Arrow IPC RecordBatch directly to a
+// memory-mapped file. No intermediate Vec<u8> allocation, no PyBytes copy.
+//
+// Python path (before):
+//   ipc_bytes = build_arrow_batch_from_findings(findings)  # Vec<u8> → PyBytes
+//   pa.ipc.open_stream(ipc_bytes)  # Copy to Arrow buffers
+//
+// Rust path (after):
+//   path, schema_json, num_rows = build_arrow_batch_to_mmap(findings, "/tmp/batch.arrow")
+//   # pa.ipc.open_stream(mmap.mmap(path)) reads directly from disk
+//
+// Benefits:
+//   - No Vec<u8> intermediate allocation in Rust
+//   - No PyBytes copy to Python heap
+//   - Python reads via mmap → OS page cache, zero-copy from Arrow perspective
+//   - DuckDB COPY FROM reads via mmap → zero serialization
+//   - MLX mx.core.mmap() reads directly → zero-copy tensor
+// ---------------------------------------------------------------------------
+
+/// Build Arrow IPC RecordBatch and write directly to mmap file.
+///
+/// NEXTGEN-02: Zero-copy Arrow IPC via mmap
+///
+/// Writes Arrow IPC stream directly to a memory-mapped file. No intermediate
+/// Vec<u8> allocation. Python reads via pa.ipc.open_stream(mmap.mmap(path)).
+///
+/// Args:
+///     findings: Python list of CanonicalFinding dicts
+///     path: Path to the mmap file (will be created/truncated)
+///
+/// Returns:
+///     (schema_json: str, num_rows: int) on success, None on error.
+#[pyfunction]
+pub fn build_arrow_batch_to_mmap<'py>(
+    findings: &'py Bound<'py, PyList>,
+    path: &str,
+    py: Python<'py>,
+) -> PyResult<Option<(String, i64)>> {
+    use memmap2::{MmapMut, MmapOptions};
+    use std::fs::{File, OpenOptions};
+    use std::io::Write;
+
+    let n = findings.len();
+
+    if n == 0 {
+        // Write empty batch to mmap
+        let path_obj = std::path::Path::new(path);
+        if let Err(e) = std::fs::write(path_obj, b"") {
+            return Ok(None);
+        }
+        return Ok(Some(("{}".to_string(), 0)));
+    }
+
+    if n > MAX_FINDINGS_PER_CALL {
+        return Ok(None);
+    }
+
+    // Collect findings under GIL — single acquire for entire parse
+    let rows: Vec<FindingsRow> = findings
+        .iter()
+        .map(|item| FindingsRow::from_dict(&item))
+        .collect();
+
+    // Build columns (parallel if N >= threshold) — ISSUE F5-FIX: 13 columns
+    let (
+        ids, queries, source_types, confidences, timestamps,
+        provenance_jsons, payload_texts, claims_jsons,
+        // ISSUE F5-FIX: WARC provenance columns
+        warc_record_ids, warc_paths, compressed_offsets, compressed_sizes, warc_urls,
+    ) = if n < PARALLEL_THRESHOLD {
+        build_columns(&rows)
+    } else {
+        mixed_pool(n).install(|| build_columns_parallel(&rows))
+    };
+
+    // Build Arrow Schema with 13 fields (ISSUE F5-FIX: includes WARC provenance)
+    let schema = arrow::datatypes::Schema::new(vec![
+        arrow::datatypes::Field::new("id", arrow::datatypes::DataType::Utf8, true),
+        arrow::datatypes::Field::new("query", arrow::datatypes::DataType::Utf8, true),
+        arrow::datatypes::Field::new("source_type", arrow::datatypes::DataType::Utf8, true),
+        arrow::datatypes::Field::new("confidence", arrow::datatypes::DataType::Float64, true),
+        arrow::datatypes::Field::new("ts", arrow::datatypes::DataType::Float64, true),
+        arrow::datatypes::Field::new("provenance_json", arrow::datatypes::DataType::Utf8, true),
+        arrow::datatypes::Field::new("payload_text", arrow::datatypes::DataType::Utf8, true),
+        arrow::datatypes::Field::new("claims_json", arrow::datatypes::DataType::Utf8, true),
+        // ISSUE F5-FIX: WARC provenance columns
+        arrow::datatypes::Field::new("warc_record_id", arrow::datatypes::DataType::Utf8, true),
+        arrow::datatypes::Field::new("warc_path", arrow::datatypes::DataType::Utf8, true),
+        arrow::datatypes::Field::new("compressed_offset", arrow::datatypes::DataType::Int64, true),
+        arrow::datatypes::Field::new("compressed_size", arrow::datatypes::DataType::Int64, true),
+        arrow::datatypes::Field::new("warc_url", arrow::datatypes::DataType::Utf8, true),
+    ]);
+
+    // Build column arrays
+    use arrow::array::{ArrayRef, Float64Array, Int64Array, RecordBatch, StringArray};
+    let schema_ref = std::sync::Arc::new(schema);
+
+    let ids_array: ArrayRef = std::sync::Arc::new(StringArray::from(ids));
+    let queries_array: ArrayRef = std::sync::Arc::new(StringArray::from(queries));
+    let source_types_array: ArrayRef = std::sync::Arc::new(StringArray::from(source_types));
+    let confidences_array: ArrayRef = std::sync::Arc::new(Float64Array::from(confidences));
+    let timestamps_array: ArrayRef = std::sync::Arc::new(Float64Array::from(timestamps));
+    let provenance_jsons_array: ArrayRef = std::sync::Arc::new(StringArray::from(provenance_jsons));
+    let payload_texts_array: ArrayRef = std::sync::Arc::new(StringArray::from(payload_texts));
+    let claims_jsons_array: ArrayRef = std::sync::Arc::new(StringArray::from(claims_jsons));
+    let warc_record_ids_array: ArrayRef = std::sync::Arc::new(StringArray::from(warc_record_ids));
+    let warc_paths_array: ArrayRef = std::sync::Arc::new(StringArray::from(warc_paths));
+    let compressed_offsets_array: ArrayRef = std::sync::Arc::new(Int64Array::from(compressed_offsets));
+    let compressed_sizes_array: ArrayRef = std::sync::Arc::new(Int64Array::from(compressed_sizes));
+    let warc_urls_array: ArrayRef = std::sync::Arc::new(StringArray::from(warc_urls));
+
+    let batch = match RecordBatch::try_new(
+        schema_ref.clone(),
+        vec![
+            ids_array,
+            queries_array,
+            source_types_array,
+            confidences_array,
+            timestamps_array,
+            provenance_jsons_array,
+            payload_texts_array,
+            claims_jsons_array,
+            warc_record_ids_array,
+            warc_paths_array,
+            compressed_offsets_array,
+            compressed_sizes_array,
+            warc_urls_array,
+        ],
+    ) {
+        Ok(b) => b,
+        Err(_) => return Ok(None),
+    };
+
+    // Create mmap file
+    let path_obj = std::path::Path::new(path);
+    let file = match OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create(true)
+        .truncate(true)
+        .open(path_obj)
+    {
+        Ok(f) => f,
+        Err(_) => return Ok(None),
+    };
+
+    // Estimate size: ~100 bytes per row for typical IOC data
+    let estimated_size = ((n as u64).saturating_mul(100).max(64 * 1024))
+        .min(MAX_MMAP_POOL_BYTES / 2);
+
+    // Check budget BEFORE allocation
+    if let Err(e) = check_mmap_budget(estimated_size) {
+        eprintln!("[NEXTGEN-02] budget check failed: {}", e);
+        return Ok(None);
+    }
+
+    if let Err(e) = file.set_len(estimated_size) {
+        return Ok(None);
+    }
+
+    let mmap = match unsafe { MmapMut::map_mut(&file) } {
+        Ok(m) => m,
+        Err(_) => return Ok(None),
+    };
+
+    // Account allocation BEFORE writing (budget reserved for this operation)
+    account_mmap_alloc(estimated_size);
+
+    // Write Arrow IPC stream to mmap
+    let mut cursor = std::io::Cursor::new(unsafe { mmap.as_mut_slice() });
+    let mut writer = match arrow::ipc::writer::StreamWriter::try_new(
+        &mut cursor,
+        schema_ref.as_ref(),
+    ) {
+        Ok(w) => w,
+        Err(_) => {
+            account_mmap_free(estimated_size); // Rollback on error
+            return Ok(None);
+        }
+    };
+
+    if let Err(_) = writer.write(&batch) {
+        account_mmap_free(estimated_size); // Rollback on error
+        return Ok(None);
+    }
+
+    if let Err(_) = writer.finish() {
+        account_mmap_free(estimated_size); // Rollback on error
+        return Ok(None);
+    }
+
+    // Flush mmap to disk
+    if let Err(_) = mmap.flush() {
+        account_mmap_free(estimated_size); // Rollback on error
+        return Ok(None);
+    }
+
+    // Truncate to actual size
+    let bytes_written = cursor.position() as u64;
+    if let Err(_) = file.set_len(bytes_written) {
+        account_mmap_free(estimated_size); // Rollback on error
+        return Ok(None);
+    }
+
+    // Adjust budget: free estimated, re-alloc actual (if different)
+    if bytes_written != estimated_size {
+        account_mmap_free(estimated_size);
+        account_mmap_alloc(bytes_written);
+    }
+
+    // Serialize schema to JSON
+    let schema_json = match serde_json::to_string(schema_ref.as_ref()) {
+        Ok(j) => j,
+        Err(_) => "{}".to_string(),
+    };
+
+    // Return (schema_json, num_rows, bytes_written)
+    // Caller MUST call delete_arrow_ipc_mmap(path, bytes_written) to free budget
+    Ok(Some((schema_json, batch.num_rows() as i64, bytes_written as i64)))
+}
+
+// ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
 
@@ -1181,6 +1412,7 @@ mod tests {
         // MODERN-17: Test that build_ipc_bytes produces valid Arrow IPC stream
         // that can be parsed by arrow's StreamReader (same as pa.ipc.open_stream).
         // MODERN-20: Extended to 8 columns including claims_json.
+        // ISSUE F5-FIX: Extended to 13 columns including WARC provenance.
         let ids = vec!["id1".to_string(), "id2".to_string()];
         let queries = vec!["query1".to_string(), "query2".to_string()];
         let source_types = vec!["type1".to_string(), "type2".to_string()];
@@ -1199,6 +1431,11 @@ mod tests {
             provenance_jsons,
             payload_texts,
             claims_jsons,  // MODERN-20: Added
+            vec![],  // warc_record_ids
+            vec![],  // warc_paths
+            vec![],  // compressed_offsets
+            vec![],  // compressed_sizes
+            vec![],  // warc_urls
             2,
         )
         .expect("build_ipc_bytes should succeed");
@@ -1210,9 +1447,9 @@ mod tests {
         let reader = StreamReader::try_new(std::io::Cursor::new(&result), None)
             .expect("Should parse as valid Arrow IPC stream");
 
-        // Verify schema has correct fields — MODERN-20: 8 columns
+        // Verify schema has correct fields — ISSUE F5-FIX: 13 columns (WARC provenance)
         let schema = reader.schema();
-        assert_eq!(schema.fields().len(), 8);  // MODERN-20: Changed from 7 to 8
+        assert_eq!(schema.fields().len(), 13, "Should have 13 columns (8 base + 5 WARC)");
         assert_eq!(schema.field(0).name(), "id");
         assert_eq!(schema.field(1).name(), "query");
         assert_eq!(schema.field(2).name(), "source_type");
@@ -1221,6 +1458,12 @@ mod tests {
         assert_eq!(schema.field(5).name(), "provenance_json");
         assert_eq!(schema.field(6).name(), "payload_text");
         assert_eq!(schema.field(7).name(), "claims_json");  // MODERN-20: Added
+        // ISSUE F5-FIX: WARC provenance columns
+        assert_eq!(schema.field(8).name(), "warc_record_id");
+        assert_eq!(schema.field(9).name(), "warc_path");
+        assert_eq!(schema.field(10).name(), "compressed_offset");
+        assert_eq!(schema.field(11).name(), "compressed_size");
+        assert_eq!(schema.field(12).name(), "warc_url");
 
         // Collect batch and verify data
         let batches: Vec<_> = reader.collect().expect("Should collect batches");
@@ -1228,7 +1471,7 @@ mod tests {
 
         let batch = &batches[0];
         assert_eq!(batch.num_rows(), 2);
-        assert_eq!(batch.num_columns(), 8);  // MODERN-20: Changed from 7 to 8
+        assert_eq!(batch.num_columns(), 13, "Should have 13 columns");  // ISSUE F5-FIX
     }
 
     #[test]
@@ -1236,6 +1479,7 @@ mod tests {
         // MODERN-17: Empty batch should still produce valid Arrow IPC stream
         // with schema but no batches (valid per Arrow spec).
         // MODERN-20: Extended to 8 columns.
+        // ISSUE F5-FIX: Extended to 13 columns (WARC provenance).
         let result = build_ipc_bytes(
             vec![],
             vec![],
@@ -1245,6 +1489,11 @@ mod tests {
             vec![],
             vec![],
             vec![],  // MODERN-20: Added claims_jsons
+            vec![],  // warc_record_ids
+            vec![],  // warc_paths
+            vec![],  // compressed_offsets
+            vec![],  // compressed_sizes
+            vec![],  // warc_urls
             0,
         )
         .expect("build_ipc_bytes should succeed for empty batch");
@@ -1255,13 +1504,14 @@ mod tests {
         // Empty stream with schema is valid Arrow IPC
         let reader = StreamReader::try_new(std::io::Cursor::new(&result), None)
             .expect("Empty stream with schema should parse");
-        assert_eq!(reader.schema().fields().len(), 8);  // MODERN-20: Changed from 7 to 8
+        assert_eq!(reader.schema().fields().len(), 13, "Should have 13 columns");  // ISSUE F5-FIX
     }
 
     #[test]
     fn test_build_ipc_bytes_data_roundtrip() {
         // MODERN-17: Verify data integrity — what we write, we can read back
         // MODERN-20: Extended to 8 columns including claims_json.
+        // ISSUE F5-FIX: Extended to 13 columns (WARC provenance).
         let ids = vec!["f1".to_string(), "f2".to_string(), "f3".to_string()];
         let queries = vec!["q1".to_string(), "q2".to_string(), "q3".to_string()];
         let source_types = vec!["st1".to_string(), "st2".to_string(), "st3".to_string()];
@@ -1280,6 +1530,11 @@ mod tests {
             provenance_jsons.clone(),
             payload_texts.clone(),
             claims_jsons.clone(),  // MODERN-20: Added
+            vec![],  // warc_record_ids
+            vec![],  // warc_paths
+            vec![],  // compressed_offsets
+            vec![],  // compressed_sizes
+            vec![],  // warc_urls
             3,
         )
         .expect("build_ipc_bytes should succeed");
@@ -1290,7 +1545,8 @@ mod tests {
         let batches: Vec<_> = reader.collect().expect("Should collect batches");
         let batch = &batches[0];
 
-        // Verify column data
+        // Verify column data (13 columns total)
+        assert_eq!(batch.num_columns(), 13, "Should have 13 columns");
         let ids_col = batch.column(0).as_string::<i32>();
         let conf_col = batch.column(3).as_primitive::<arrow::datatypes::Float64Type>();
         let claims_col = batch.column(7).as_string::<i32>();  // MODERN-20: Added

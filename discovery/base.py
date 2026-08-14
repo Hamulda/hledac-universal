@@ -24,6 +24,12 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, AsyncIterator
 
 import msgspec
+from tenacity import (
+    retry,
+    retry_if_exception_type,
+    stop_after_attempt,
+    wait_exponential_jitter,
+)
 
 if TYPE_CHECKING:
     pass
@@ -377,44 +383,44 @@ class BaseDiscoveryMixin(ABC):
             self, "_rate_limiter", RateLimiter(self.rate_limit_rpm, self.burst_size)
         )
 
+    async def _discover_single_attempt(
+        self, query: str, limit: int
+    ) -> list[DiscoveryResult]:
+        """G6: Single discovery attempt (decorated with tenacity retry)."""
+        await self._rate_limiter.acquire()
+        results: list[DiscoveryResult] = []
+        async with asyncio.timeout(self.timeout_s):
+            async for result in self._do_discover(query, limit):
+                results.append(result)
+        return results
+
     async def discover(self, query: str, *, limit: int = 100) -> AsyncIterator[DiscoveryResult]:
         """
         Facade: rate-limit -> retry -> delegate to _do_discover().
 
         Yields DiscoveryResult items up to limit.
         Fail-safe: errors in _do_discover yield nothing.
+        G6: Uses tenacity @retry with exponential backoff + jitter.
         """
-        last_error: BaseException | None = None
-        for attempt in range(self.retry_attempts):
-            try:
-                await self._rate_limiter.acquire()
-
-                async with asyncio.timeout(self.timeout_s):
-                    async for result in self._do_discover(query, limit):
-                        yield result
-
-                return  # success
-            except asyncio.CancelledError:
-                raise
-            except Exception as exc:
-                last_error = exc
-                logger.debug(
-                    "[%s] discover attempt %d/%d failed: %s",
-                    self.name,
-                    attempt + 1,
-                    self.retry_attempts,
-                    exc,
-                )
-                if attempt < self.retry_attempts - 1:
-                    delay = self.retry_base_delay_s * (2**attempt)
-                    await asyncio.sleep(delay)
-
-        logger.debug(
-            "[%s] all %d attempts failed, yielding nothing: %s",
-            self.name,
-            self.retry_attempts,
-            last_error,
+        _retry_decorator = retry(
+            wait=wait_exponential_jitter(base=self.retry_base_delay_s, max=self.retry_base_delay_s * (2 ** self.retry_attempts)),
+            stop=stop_after_attempt(self.retry_attempts),
+            retry=retry_if_exception_type(Exception),
+            reraise=True,
         )
+        _attempt_fn = _retry_decorator(self._discover_single_attempt)
+
+        try:
+            results = await _attempt_fn(query, limit)
+            for result in results:
+                yield result
+        except Exception as exc:
+            logger.debug(
+                "[%s] all %d attempts failed, yielding nothing: %s",
+                self.name,
+                self.retry_attempts,
+                exc,
+            )
 
     async def health_check(self) -> bool:
         """

@@ -213,7 +213,7 @@ def _import_exporters():
     """Lazy import of exporters to avoid circular imports."""
     global _export_module
     if _export_module is None:
-        from hledac.universal import export
+        from hledac.universal.hledac.universal import export
 
         _export_module = export
     return _export_module

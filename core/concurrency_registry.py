@@ -52,6 +52,11 @@ import time
 import weakref
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
+
+from hledac.universal.utils.asyncx import safe_wait_for
+
+from hledac.universal.core.locks import LockCategory, make_lock
+
 if TYPE_CHECKING:
     from hledac.universal.core.resource_governor import M1ResourceGovernor
 logger = logging.getLogger(__name__)
@@ -209,7 +214,7 @@ class TaskTrackedSemaphore:
         
         try:
             if timeout:
-                await asyncio.wait_for(self._sem.acquire(), timeout=timeout)
+                await safe_wait_for(self._sem.acquire(), timeout=timeout)
             else:
                 await self._sem.acquire()
             
@@ -300,7 +305,7 @@ class ConcurrencyBudgetRegistry:
     - adjust_for_state používá asyncio.Lock pro serializaci
     """
     _instance: 'ConcurrencyBudgetRegistry | None' = None
-    _init_guard: threading.Lock = threading.Lock()
+    _init_guard = make_lock(LockCategory.CONFIG, "concurrency_registry._init_guard")
     _async_lock: asyncio.Lock | None = None
     __slots__ = tuple(('_budgets', '_governor', '_stats', '_uma_state', '_semaphores'))
 
@@ -644,7 +649,7 @@ async def concurrency_budget_for(
 
 
 _SEMAPHORE_CACHE: dict[ConcurrencyCategory, asyncio.Semaphore] = {}
-_SEMAPHORE_CACHE_LOCK: threading.Lock = threading.Lock()
+_SEMAPHORE_CACHE_LOCK = make_lock(LockCategory.CONFIG, "concurrency_registry._SEMAPHORE_CACHE_LOCK")
 
 def _get_cached_semaphore(category: ConcurrencyCategory) -> asyncio.Semaphore:
     """

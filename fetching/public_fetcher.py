@@ -36,6 +36,7 @@ from typing import TYPE_CHECKING, Any, Final, cast
 import msgspec
 
 from hledac.universal.core.env_config import ENV
+from hledac.universal.utils.asyncx import safe_wait_for
 from hledac.universal.utils.logging_config import get_logger
 
 logger = get_logger(__name__)
@@ -1498,7 +1499,8 @@ async def _fetch_core(
         race_timeout = min(timeout_s, 15.0)  # race has its own bound
         try:
             if ttfb_timeout_s is not None and ttfb_timeout_s > 0:
-                raw = await asyncio.wait_for(
+                # D5 FIX: safe_wait_for for correct TaskGroup composition
+                raw = await safe_wait_for(
                     fetch_via_race(
                         url=url,
                         timeout_s=race_timeout,
@@ -1535,7 +1537,8 @@ async def _fetch_core(
         # the full timeout_s (35 s) per attempt.
         if ttfb_timeout_s is not None and ttfb_timeout_s > 0:
             try:
-                raw = await asyncio.wait_for(
+                # D5 FIX: safe_wait_for for correct TaskGroup composition
+                raw = await safe_wait_for(
                     fetch_via_unified_with_race_fallback(
                         url=url,
                         policy=_policy,

@@ -161,7 +161,7 @@ def _get_secure_zero() -> Any:
     global _secure_zero
     if _secure_zero is None:
         try:
-            from utils.secure_zero import secure_zero as sz
+            from hledac.universal.utils.secure_zero import secure_zero as sz
 
             _secure_zero = sz
         except ImportError:
@@ -475,14 +475,23 @@ def _chmod_lmdb_path(path: Path) -> None:
         # Fallback: orjson always available in this project, this path rarely reached
         return _stdjson.dumps(data, default=str).encode('utf-8')
 
-    def _deserialize(self, raw: bytes) -> dict[str, Any]:
-        """Deserialize JSON bytes to dict."""
+    def _deserialize(self, raw: bytes | memoryview) -> dict[str, Any]:
+        """Deserialize JSON bytes to dict.
+
+        Args:
+            raw: JSON bytes or memoryview (e.g., from LMDB buffer)
+
+        Note:
+            Uses bytes(raw).decode() to safely handle memoryview input,
+            as memoryview doesn't have a .decode() method (Python 3.x).
+        """
         try:
             import orjson
 
             return orjson.loads(raw)
         except Exception:
-            return _stdjson.loads(raw.decode())
+            # memoryview has no .decode() — convert to bytes first (F7 FIX)
+            return _stdjson.loads(bytes(raw).decode())
 
     # ---- Public API ----
 

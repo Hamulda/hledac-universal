@@ -15,7 +15,7 @@ use crate::url_engine;
 use pyo3::prelude::*;
 use pyo3::types::PyList;
 use rayon::prelude::*;
-use regex_automata::Regex;
+use regex_automata::meta::Regex;
 use std::collections::HashSet;
 
 // ISSUE-014: Pre-compiled regex from centralized patterns (single source of truth)
@@ -79,9 +79,16 @@ fn scan_iocs(text: &str) -> Vec<(String, String)> {
     let mut iocs: Vec<(String, String)> = Vec::new();
     let mut seen: HashSet<String> = HashSet::new();
 
+    // Helper to extract matched string from regex Match
+    macro_rules! matched_str {
+        ($cap:expr, $text:expr) => {
+            &text[$cap.start()..$cap.end()]
+        };
+    }
+
     // IPv4: 15 chars max
     for cap in IPV4_RE.find_iter(text) {
-        let v = cap.as_str().to_string();
+        let v = matched_str!(cap, text).to_string();
         // insert returns true if new, v is still owned for iocs.push
         if seen.insert(v.clone()) {
             iocs.push((v, String::from("ipv4")));
@@ -89,49 +96,49 @@ fn scan_iocs(text: &str) -> Vec<(String, String)> {
     }
     // IPv6: 45 chars max
     for cap in IPV6_RE.find_iter(text) {
-        let v = cap.as_str().to_string();
+        let v = matched_str!(cap, text).to_string();
         if seen.insert(v.clone()) {
             iocs.push((v, String::from("ipv6")));
         }
     }
     // Domain
     for cap in DOMAIN_RE.find_iter(text) {
-        let v = cap.as_str().to_lowercase();
+        let v = matched_str!(cap, text).to_lowercase();
         if seen.insert(v.clone()) {
             iocs.push((v, String::from("domain")));
         }
     }
     // MD5: 32 chars
     for cap in MD5_RE.find_iter(text) {
-        let v = cap.as_str().to_string();
+        let v = matched_str!(cap, text).to_string();
         if seen.insert(v.clone()) {
             iocs.push((v, String::from("md5")));
         }
     }
     // SHA1: 40 chars
     for cap in SHA1_RE.find_iter(text) {
-        let v = cap.as_str().to_string();
+        let v = matched_str!(cap, text).to_string();
         if seen.insert(v.clone()) {
             iocs.push((v, String::from("sha1")));
         }
     }
     // SHA256: 64 chars
     for cap in SHA256_RE.find_iter(text) {
-        let v = cap.as_str().to_string();
+        let v = matched_str!(cap, text).to_string();
         if seen.insert(v.clone()) {
             iocs.push((v, String::from("sha256")));
         }
     }
     // Email
     for cap in EMAIL_RE.find_iter(text) {
-        let v = cap.as_str().to_lowercase();
+        let v = matched_str!(cap, text).to_lowercase();
         if seen.insert(v.clone()) {
             iocs.push((v, String::from("email")));
         }
     }
     // CVE
     for cap in CVE_RE.find_iter(text) {
-        let v = cap.as_str().to_string();
+        let v = matched_str!(cap, text).to_string();
         if seen.insert(v.clone()) {
             iocs.push((v, String::from("cve")));
         }

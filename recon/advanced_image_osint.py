@@ -40,12 +40,15 @@ try:
 except ImportError:
     PIL_AVAILABLE = False
     logger.warning('PIL not available - image processing disabled')
-try:
-    import mlx.core as mx
-    MLX_AVAILABLE = True
-except ImportError:
-    MLX_AVAILABLE = False
-    logger.warning('MLX not available - using numpy fallback')
+
+# C1-X FIX: Import MLX_AVAILABLE from SSOT (zero-import detection)
+from hledac.universal.utils.mlx_memory import MLX_AVAILABLE
+
+# Lazy accessor for mlx.core — uses centralized get_mx() from SSOT
+def _get_mx():
+    """Lazy accessor for mlx.core — uses centralized get_mx() from SSOT."""
+    from hledac.universal.utils.mlx_memory._core import get_mx as _get_mx_from_core
+    return _get_mx_from_core()
 
 class ImageHash(msgspec.Struct, gc=False):
     """Perceptual hash for image similarity."""
@@ -115,7 +118,11 @@ class PerceptualHashGenerator:
         return hex(int(bits, 2))[2:].zfill(self.hash_size * self.hash_size // 4)
 
     def _perceptual_hash(self, image: Image.Image) -> str:
-        """Compute perceptual hash using DCT (pHash)."""
+        """Compute perceptual hash using DCT (pHash).
+
+        G2 FIX: scipy.fftpack is in [ml] extra. Without it, uses simple
+        pixel subsampling fallback (less accurate hash).
+        """
         gray = image.convert('L')
         small = gray.resize((32, 32), Image.Resampling.LANCZOS)
         pixels = np.array(small, dtype=np.float32)
@@ -129,6 +136,11 @@ class PerceptualHashGenerator:
                 dct_result = dct(dct(pixels, axis=0), axis=1)
                 dct_low = dct_result[:8, :8]
             except ImportError:
+                # G2 FIX: Clear message for missing [ml] extra
+                logger.debug(
+                    "pHash DCT unavailable: scipy.fftpack not installed. "
+                    "Install with: pip install hledac-universal[ml]"
+                )
                 dct_low = pixels[:8, :8]
         avg = dct_low[1:, 1:].mean()
         bits = ''
@@ -290,6 +302,9 @@ class AdvancedSteganalysis:
         Perform chi-square test for LSB steganography.
 
         Returns p-value (close to 1 suggests steganography).
+
+        G2 FIX: scipy.stats is in [ml] extra. Without it, uses simple
+        ratio-based fallback.
         """
         try:
             from scipy.stats import chisquare
@@ -299,6 +314,11 @@ class AdvancedSteganalysis:
             chi2, p_value = chisquare(observed, expected)
             return float(p_value)
         except ImportError:
+            # G2 FIX: Clear message for missing [ml] extra
+            logger.debug(
+                "Chi-square test unavailable: scipy.stats not installed. "
+                "Install with: pip install hledac-universal[ml]"
+            )
             lsb = pixels[:, :, 0].flatten() & 1
             ratio = np.sum(lsb == 0) / len(lsb)
             return 1.0 - abs(ratio - 0.5) * 2

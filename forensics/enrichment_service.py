@@ -756,9 +756,11 @@ class ForensicsEnricher:
         try:
 
             async def _async_dns() -> dict[str, Any]:
+                # E3 FIX: dns.asyncresolver removed in dnspython 3.x
+                # Use dns.resolver (async-aware in 3.x) with unified API
                 try:
-                    import dns.asyncresolver
-                    resolver = dns.asyncresolver.Resolver()
+                    import dns.resolver
+                    resolver = dns.resolver.Resolver()
                     resolver.lifetime = _EXTERNAL_LOOKUP_TIMEOUT
                     resolver.timeout = _EXTERNAL_LOOKUP_TIMEOUT
                     result: dict[str, Any] = {'a': [], 'aaaa': [], 'mx': [], 'ns': []}
@@ -784,6 +786,7 @@ class ForensicsEnricher:
                         pass
                     return result
                 except ImportError:
+                    # Fallback: io_bound wrapper for sync dns.resolver (legacy/bare environments)
                     import dns.resolver
                     res: dict[str, Any] = {'a': [], 'aaaa': [], 'mx': [], 'ns': []}
                     for rtype, key, fmt in (('A', 'a', lambda r: str(r)), ('AAAA', 'aaaa', lambda r: str(r)), ('MX', 'mx', lambda r: f'{r.preference} {r.exchange}'), ('NS', 'ns', lambda r: str(r))):

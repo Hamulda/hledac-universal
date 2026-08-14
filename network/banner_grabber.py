@@ -207,12 +207,17 @@ class BannerGrabber:
             return BannerResult(ip=ip, port=port, banner='', protocol='http', elapsed_ms=elapsed_ms, error=f'breaker:{e}')
         timeout = PORT_TIMEOUTS.get(port, 5.0)
         scheme = 'https' if port in (443, 8443, 993) else 'http'
+        # E6 FIX: Use streaming with cap to avoid unbounded memory usage
+        from hledac.universal.transport.body_limiter import read_body_with_cap
+        _BANNER_MAX_BYTES = 64 * 1024  # 64KB cap for banner grab responses
         try:
             session = await self._get_fetch_session()
             import httpx
             url = f'{scheme}://{ip}:{port}'
             resp = await session.get(url, timeout=httpx.Timeout(total=timeout), headers={'User-Agent': 'curl/8.4.0'}, ssl=False)
-            banner = resp.text()
+            # Stream response with hard cap to prevent memory exhaustion from large responses
+            body_bytes, _ = await read_body_with_cap(resp.aiter_bytes(), _BANNER_MAX_BYTES)
+            banner = body_bytes.decode('utf-8', errors='replace')
         except TimeoutError:
             error = 'timeout'
         except Exception as e:

@@ -106,6 +106,7 @@ Backward compatibility:
 
 import logging
 import os
+import threading
 import weakref
 import msgspec
 from typing import TYPE_CHECKING, Any
@@ -163,6 +164,20 @@ _SUBMODULE_NAMES: tuple[str, ...] = (
 )
 
 _lazy_mod_cache: weakref.WeakValueDictionary[str, Any] = weakref.WeakValueDictionary()
+
+# F320: DCLP singleton lock — lazily initialized on first use
+_singleton_lock: "threading.Lock | None" = None
+_singleton_lock_sentinel: threading.Lock = threading.Lock()
+
+
+def _get_singleton_lock() -> threading.Lock:
+    """DCLP lazy lock init — avoids threading.Lock() at module load."""
+    global _singleton_lock
+    if _singleton_lock is None:
+        with _singleton_lock_sentinel:
+            if _singleton_lock is None:
+                _singleton_lock = threading.Lock()
+    return _singleton_lock
 
 
 def _get_submodule(name: str) -> Any:
@@ -287,13 +302,27 @@ class AccelBackend:
     """
 
     __slots__ = ("_probe_result", "_domains", "_container")
+    # D1 fix: Class-level DCLP lock for thread-safe singleton
+    _lock: "threading.Lock | None" = None
+    _lock_sentinel: threading.Lock = threading.Lock()
+
+    @classmethod
+    def _get_lock(cls) -> threading.Lock:
+        """DCLP lazy lock init — avoids extra lock overhead."""
+        if cls._lock is None:
+            with cls._lock_sentinel:
+                if cls._lock is None:
+                    cls._lock = threading.Lock()
+        return cls._lock
 
     def __new__(cls) -> "AccelBackend":
-        # Singleton — one instance per process
+        # D1 fix: Thread-safe singleton using DCLP with class-level lock
         global _accel_instance
         if _accel_instance is None:
-            instance = super().__new__(cls)
-            _accel_instance = instance
+            with cls._get_lock():
+                if _accel_instance is None:
+                    instance = super().__new__(cls)
+                    _accel_instance = instance
         return _accel_instance
 
     def __init__(self) -> None:
@@ -328,9 +357,10 @@ class AccelBackend:
 
         # Peek container (lowest priority — env vars above win if set)
         if self._container is not None:
+            # C2 fix: Catch only container/configuration errors, not all exceptions
             try:
                 force = self._container.try_get("rust.force")
-            except Exception:  # noqa: BLE001
+            except (AttributeError, LookupError):
                 pass  # container not available or rust.force not registered
 
         # 1-2. Env var override (backward compat — always-on, no toggles)
@@ -527,9 +557,10 @@ class AccelBackend:
         Zero-copy Arc staging, rayon parallelism, M1 8GB safe.
         Returns None if hledac_rust_extensions is unavailable.
         """
+        # C1 fix: Only catch module/attribute errors, not all exceptions
         try:
             return _pipeline_compose_get_domain()
-        except Exception:
+        except (AttributeError, ImportError):
             return None
 
     @property
@@ -540,9 +571,10 @@ class AccelBackend:
         batch_aggregate_signals: weighted signal vector aggregation.
         Returns None if hledac_rust_extensions is unavailable.
         """
+        # C1 fix: Only catch module/attribute errors, not all exceptions
         try:
             return _signal_batch_get_domain()
-        except Exception:
+        except (AttributeError, ImportError):
             return None
 
     @property
@@ -553,9 +585,10 @@ class AccelBackend:
         rayon parallel batch, auto-eviction, bincode persistence.
         Returns None if hledac_rust_extensions is unavailable.
         """
+        # C1 fix: Only catch module/attribute errors, not all exceptions
         try:
             return _federated_qtable_get_domain()
-        except Exception:
+        except (AttributeError, ImportError):
             return None
 
     @property
@@ -579,9 +612,10 @@ class AccelBackend:
         feed_branch_verdict: rich dict verdict for feed economics.
         Returns None if hledac_rust_extensions is unavailable.
         """
+        # C1 fix: Only catch module/attribute errors, not all exceptions
         try:
             return _feed_decision_get_domain()
-        except Exception:
+        except (AttributeError, ImportError):
             return None
 
     @property
@@ -592,9 +626,10 @@ class AccelBackend:
         feed_batch_pipeline: rayon-parallel multi-feed processing.
         Returns None if hledac_rust_extensions is unavailable.
         """
+        # C1 fix: Only catch module/attribute errors, not all exceptions
         try:
             return _feed_pipeline_get_domain()
-        except Exception:
+        except (AttributeError, ImportError):
             return None
 
     @property
@@ -625,8 +660,12 @@ class AccelBackend:
         return self._domains[name]
 
     def __repr__(self) -> str:
-        p = self._ensure_probe()
-        return f"AccelBackend(backend={p.backend}, available={p.available})"
+        # C3 fix: Avoid triggering probe side effects if not yet initialized
+        # Only run probe if already cached (avoids debug logging during repr)
+        if self._probe_result is not None:
+            p = self._probe_result
+            return f"AccelBackend(backend={p.backend}, available={p.available})"
+        return "AccelBackend(backend=unprobed)"
 
     def set_container(self, container: Any) -> None:
         """
@@ -671,10 +710,47 @@ def set_container(container: Any) -> None:
 
 
 def reset_accel() -> None:
-    """Reset the singleton and probe cache — for testing only."""
-    global _accel_instance
+    """Reset the singleton and probe cache — for testing only.
+    
+    B2 fix: Also resets DCLP lock state to ensure clean re-initialization
+    on subsequent get_accel() calls.
+    D1 fix: Resets AccelBackend class-level lock too.
+    """
+    global _accel_instance, _singleton_lock
     _accel_instance = None
+    # B2: Reset DCLP lock for clean re-initialization
+    _singleton_lock = None
+    # D1: Reset AccelBackend class-level lock
+    AccelBackend._lock = None
     _reset_probe()
+
+
+# =============================================================================
+# C4 fix: TLS metadata wrapper — moved to module level for efficiency
+# =============================================================================
+
+
+class _TlsMetadataWrapper:
+    """Wraps Rust extract_tls_metadata function with error handling.
+    
+    C4 fix: Defined at module level instead of inside property to avoid
+    class recreation on every tls property access.
+    """
+    __slots__ = ("_fn",)
+    
+    def __init__(self, fn: object) -> None:
+        self._fn = fn
+    
+    def extract_tls_metadata(
+        self,
+        san_entries: list[tuple[int, str]],
+        issuer_org: str | None,
+        der_bytes: bytes | None,
+    ) -> tuple[list[str], str | None, str | None]:
+        try:
+            return self._fn(san_entries, issuer_org, der_bytes)  # type: ignore
+        except (OSError, RuntimeError):  # C1 fix: Only catch FFI errors
+            return ([], None, None)
 
 
 # =============================================================================
@@ -730,13 +806,18 @@ class RustRawAccessor:
         return self._ext
 
     def call(self, name: str, *args: Any, **kwargs: Any) -> Any:
-        """Safely call a function from the Rust extension, returning None on any error."""
+        """Safely call a function from the Rust extension.
+        
+        B3 fix: Narrow exception handling - only catch Rust extension errors,
+        not Python programming errors (TypeError, etc.).
+        """
         fn = getattr(self._ext, name, None) if self._ext is not None else None
         if fn is None:
             return None
         try:
             return fn(*args, **kwargs)
-        except Exception:
+        except (SystemError, OSError, RuntimeError):  # noqa: BLE001
+            # Rust FFI errors only - re-raise Python programming errors
             return None
 
 
@@ -763,12 +844,11 @@ class _RustCompatShim:
     """
 
     __slots__ = ("_accel", "_raw_accessor")
-    _singleton_lock: "threading.Lock" = threading.Lock()
     _singleton_instance: "_RustCompatShim | None" = None
 
     def __new__(cls) -> "_RustCompatShim":
-        # F320: Thread-safe singleton using class-level lock
-        with cls._singleton_lock:
+        # F320: Thread-safe singleton using DCLP lazy lock
+        with _get_singleton_lock():
             if cls._singleton_instance is None:
                 instance = super().__new__(cls)
                 instance._accel = AccelBackend()
@@ -1054,25 +1134,14 @@ class _RustCompatShim:
 
     @property
     def tls(self) -> Any:
-        """Issue B5: TLS cert metadata — wraps extract_tls_metadata as rust.tls.extract_tls_metadata(...)."""
+        """Issue B5: TLS cert metadata — wraps extract_tls_metadata as rust.tls.extract_tls_metadata(...).
+        
+        C4 fix: Uses module-level _TlsMetadataWrapper class instead of inline definition.
+        """
         probe = self._accel._ensure_probe()
         raw_fn = getattr(probe.ext, "extract_tls_metadata", None)
         if raw_fn is not None:
-            # Inline minimal wrapper — same pattern as _TlsDomain removed from misc.py
-            class _TlsMetadataWrapper:
-                __slots__ = ("_fn",)
-                def __init__(self, fn: object) -> None:
-                    self._fn = fn
-                def extract_tls_metadata(
-                    self,
-                    san_entries: list[tuple[int, str]],
-                    issuer_org: str | None,
-                    der_bytes: bytes | None,
-                ) -> tuple[list[str], str | None, str | None]:
-                    try:
-                        return self._fn(san_entries, issuer_org, der_bytes)  # type: ignore
-                    except Exception:  # noqa: BLE001
-                        return ([], None, None)
+            # C4 fix: Use module-level class (defined above)
             return _TlsMetadataWrapper(raw_fn)
         return None
 
@@ -1112,13 +1181,20 @@ class RustBackend(_RustCompatShim):
 
 
 def _get_or_create_singleton() -> "RustBackend":
+    """Thread-safe singleton factory using DCLP pattern.
+    
+    B1 fix: Added DCLP lock to prevent race condition during parallel imports.
+    Uses the same lock as _RustCompatShim to ensure consistent singleton state.
+    """
     global _rust_compat_instance
-    if _rust_compat_instance is None:
-        instance: RustBackend = object.__new__(RustBackend)  # type: ignore[arg-type]
-        # Initialize all slot attributes (RustBackend inherits __slots__ from _RustCompatShim)
-        instance._accel = AccelBackend()  # type: ignore[attr-defined]
-        instance._raw_accessor = None  # type: ignore[attr-defined]
-        _rust_compat_instance = instance
+    # B1: Thread-safe singleton creation using DCLP
+    with _get_singleton_lock():
+        if _rust_compat_instance is None:
+            instance: RustBackend = object.__new__(RustBackend)  # type: ignore[arg-type]
+            # Initialize all slot attributes (RustBackend inherits __slots__ from _RustCompatShim)
+            instance._accel = AccelBackend()  # type: ignore[attr-defined]
+            instance._raw_accessor = None  # type: ignore[attr-defined]
+            _rust_compat_instance = instance
     assert _rust_compat_instance is not None
     return _rust_compat_instance
 
@@ -1138,8 +1214,16 @@ def check_metal_availability() -> dict[str, Any]:
 
 
 def _reset_rust_backend_for_tests() -> None:
-    """Reset all singletons — for test isolation."""
-    global _accel_instance, _rust_compat_instance
+    """Reset all singletons — for test isolation.
+    
+    B2 fix: Also resets DCLP lock state for clean re-initialization.
+    D1 fix: Resets AccelBackend class-level lock too.
+    """
+    global _accel_instance, _rust_compat_instance, _singleton_lock
     _accel_instance = None
     _rust_compat_instance = None
+    # B2: Reset DCLP lock for clean re-initialization
+    _singleton_lock = None
+    # D1: Reset AccelBackend class-level lock
+    AccelBackend._lock = None
     _reset_probe()

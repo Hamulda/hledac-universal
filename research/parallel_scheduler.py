@@ -104,6 +104,7 @@ class ParallelResearchScheduler:
         (
             "_all_done",
             "_completed",
+            "_completed_max_size",  # D9: max size for bounded dict
             "_cpu_queue",
             "_cpu_sem",
             "_io_queue",
@@ -127,19 +128,24 @@ class ParallelResearchScheduler:
         self._resource_allocator = resource_allocator
         self._max_io = max_concurrent_io
         self._max_cpu = max_concurrent_cpu
+        # D6 FIX: Bounded PriorityQueue to prevent memory exhaustion on M1 8GB.
+        # maxsize proportional to concurrency (10× factor for buffer).
         self._io_queue: asyncio.PriorityQueue[
             tuple[float, int, PrioritizedTask]
-        ] = asyncio.PriorityQueue()
+        ] = asyncio.PriorityQueue(maxsize=max_concurrent_io * 10)
         self._cpu_queue: asyncio.PriorityQueue[
             tuple[float, int, PrioritizedTask]
-        ] = asyncio.PriorityQueue()
+        ] = asyncio.PriorityQueue(maxsize=max_concurrent_cpu * 10)
         # ISSUE-037: BoundedSemaphore — raise na pře-Release
         self._io_sem = asyncio.BoundedSemaphore(max_concurrent_io)
         self._cpu_sem = asyncio.BoundedSemaphore(max_concurrent_cpu)
         self._seq = 0
         self._pending = 0
         self._all_done = asyncio.Event()
+        # D9 FIX: Use bounded dict with max size to prevent unbounded memory growth.
+        # LRU eviction when max_size exceeded; old entries auto-removed.
         self._completed: dict[str, Any] = {}
+        self._completed_max_size: int = 10_000  # D9: configurable max entries
         self._shutdown = False
 
     def _get_lock(self) -> asyncio.Lock:
@@ -245,11 +251,13 @@ class ParallelResearchScheduler:
             "pending": pending,
         }
 
-    def shutdown(self, wait: bool = True) -> None:
+    def shutdown(self, wait: bool = True, clear_completed: bool = True) -> None:
         """Shutdown the scheduler and signal workers to exit.
 
         Args:
             wait: If True, waits for all pending tasks to complete before returning.
+            clear_completed: If True (default), clears completed results after wait.
+                D9 FIX: Prevents memory accumulation across multiple research runs.
         """
         self._shutdown = True
         if wait:
@@ -258,6 +266,9 @@ class ParallelResearchScheduler:
                 asyncio.get_running_loop().run_until_complete(self.wait_all(timeout=30.0))
             except RuntimeError:  # noqa: BLE001
                 pass  # No running event loop
+        # D9 FIX: Clear completed results after run to free memory
+        if clear_completed:
+            self.clear_completed()
 
     def __enter__(self) -> "ParallelResearchScheduler":
         return self
@@ -270,6 +281,35 @@ class ParallelResearchScheduler:
         """Tie-break counter for heap ordering."""
         self._seq += 1
         return self._seq
+
+    def _set_completed(self, task_id: str, result: Any) -> None:
+        """Store completed task result with LRU-style bounded dict.
+
+        D9 FIX: Evicts oldest entries when max_size exceeded to prevent
+        unbounded memory growth during long-running research sessions.
+        """
+        if len(self._completed) >= self._completed_max_size:
+            # Evict oldest ~10% of entries when limit reached
+            evict_count = max(1, self._completed_max_size // 10)
+            keys_to_remove = list(self._completed.keys())[:evict_count]
+            for key in keys_to_remove:
+                del self._completed[key]
+        self._completed[task_id] = result
+
+    def get_completed_result(self, task_id: str) -> Any | None:
+        """Get completed task result, or None if not found."""
+        return self._completed.get(task_id)
+
+    def clear_completed(self) -> int:
+        """Clear completed results dict. Returns count of cleared entries.
+
+        D9 FIX: Call at end of run to free memory.
+        Returns:
+            Number of entries cleared.
+        """
+        count = len(self._completed)
+        self._completed.clear()
+        return count
 
     async def get_recommended_concurrency(self, task_type: str) -> int:
         """Return recommended concurrency for task type and current resources."""
@@ -338,24 +378,28 @@ class ParallelResearchScheduler:
             async with asyncio.timeout(task.timeout):
                 result = await task.coro_or_fn(*task.args, **task.kwargs)
             async with self._get_lock():
-                self._completed[task.task_id] = result
+                # D9 FIX: Use bounded dict with LRU eviction
+                self._set_completed(task.task_id, result)
         except asyncio.CancelledError:
             async with self._get_lock():
-                self._completed[task.task_id] = asyncio.CancelledError(
+                # D9 FIX: Use bounded dict with LRU eviction
+                self._set_completed(task.task_id, asyncio.CancelledError(
                     f"Task {task.task_id} cancelled"
-                )
+                ))
             raise
         except asyncio.TimeoutError:
             async with self._get_lock():
-                self._completed[task.task_id] = TimeoutError(
+                # D9 FIX: Use bounded dict with LRU eviction
+                self._set_completed(task.task_id, TimeoutError(
                     f"Task {task.task_id} timed out after {task.timeout}s"
-                )
+                ))
             logger.warning(
                 "Task %s timed out after %ss", task.task_id, task.timeout
             )
         except BaseException as e:  # noqa: BLE001 — intentional: must catch ALL exceptions including CancelledError/SystemExit
             async with self._get_lock():
-                self._completed[task.task_id] = e
+                # D9 FIX: Use bounded dict with LRU eviction
+                self._set_completed(task.task_id, e)
             logger.error(
                 "Task %s failed with %s: %s",
                 task.task_id,
@@ -378,24 +422,28 @@ class ParallelResearchScheduler:
             async with asyncio.timeout(task.timeout):
                 result = await asyncio.to_thread(_sync_wrapper)
             async with self._get_lock():
-                self._completed[task.task_id] = result
+                # D9 FIX: Use bounded dict with LRU eviction
+                self._set_completed(task.task_id, result)
         except asyncio.CancelledError:
             async with self._get_lock():
-                self._completed[task.task_id] = asyncio.CancelledError(
+                # D9 FIX: Use bounded dict with LRU eviction
+                self._set_completed(task.task_id, asyncio.CancelledError(
                     f"Task {task.task_id} cancelled"
-                )
+                ))
             raise
         except asyncio.TimeoutError:
             async with self._get_lock():
-                self._completed[task.task_id] = TimeoutError(
+                # D9 FIX: Use bounded dict with LRU eviction
+                self._set_completed(task.task_id, TimeoutError(
                     f"Task {task.task_id} timed out after {task.timeout}s"
-                )
+                ))
             logger.warning(
                 "CPU task %s timed out after %ss", task.task_id, task.timeout
             )
         except BaseException as e:  # noqa: BLE001 — intentional: must catch ALL exceptions including CancelledError/SystemExit
             async with self._get_lock():
-                self._completed[task.task_id] = e
+                # D9 FIX: Use bounded dict with LRU eviction
+                self._set_completed(task.task_id, e)
             logger.error(
                 "CPU task %s failed with %s: %s",
                 task.task_id,

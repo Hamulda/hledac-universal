@@ -46,7 +46,7 @@ from typing import TYPE_CHECKING, Any, Literal, TypeVar, cast, overload
 
 import msgspec
 
-from utils.asyncx._fault import _log_failure, silent_except
+from hledac.universal.utils.asyncx._fault import _log_failure, silent_except
 
 if TYPE_CHECKING:
     pass

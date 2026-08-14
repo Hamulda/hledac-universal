@@ -39,6 +39,7 @@ from dataclasses import dataclass
 import msgspec
 from typing import TYPE_CHECKING, Any
 from collections.abc import Awaitable, Callable
+from hledac.universal.utils.asyncx import safe_wait_for
 if TYPE_CHECKING:
     from collections.abc import Iterable
 logger = logging.getLogger(__name__)
@@ -100,7 +101,8 @@ class TwoPassPipeline:
         try:
             for item in items:
                 try:
-                    await asyncio.wait_for(self._queue.put(item), timeout=5.0)
+                    # D5 FIX: safe_wait_for for correct TaskGroup composition
+                    await safe_wait_for(self._queue.put(item), timeout=5.0)
                     self._stats.produced += 1
                     water = self._queue.qsize()
                     if water > self._stats.queue_high_water:
@@ -118,7 +120,8 @@ class TwoPassPipeline:
         """Single consumer worker — pulls from queue and applies consumer_fn."""
         while True:
             try:
-                item = await asyncio.wait_for(self._queue.get(), timeout=1.0)
+                # D5 FIX: safe_wait_for for correct TaskGroup composition
+                item = await safe_wait_for(self._queue.get(), timeout=1.0)
             except asyncio.TimeoutError:
                 if self._done.is_set() and self._queue.empty():
                     break
@@ -172,7 +175,8 @@ class TwoPassPipeline:
             try:
                 for item in items_iter:
                     try:
-                        await asyncio.wait_for(self._queue.put(item), timeout=5.0)
+                        # D5 FIX: safe_wait_for for correct TaskGroup composition
+                        await safe_wait_for(self._queue.put(item), timeout=5.0)
                         self._stats.produced += 1
                         water = self._queue.qsize()
                         if water > self._stats.queue_high_water:

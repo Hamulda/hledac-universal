@@ -954,50 +954,6 @@ pub fn is_iosurface_bridge_available() -> (bool, Option<String>) {
     (false, None)
 }
 
-/// Create a SharedMetalBuffer from a CVPixelBuffer via IOSurface.
-///
-/// This function is DEPRECATED — use `SharedMetalBuffer.from_iosurface()` directly
-/// from Python instead. This wrapper existed to bridge module boundaries but is no
-/// longer needed since the Python module-level helpers call the Rust FFI directly.
-///
-/// Args:
-///     pixel_buffer_ptr: Raw pointer to CVPixelBuffer (as usize)
-///     width: Frame width in pixels
-///     height: Frame height in pixels
-///     bytes_per_row: Bytes per row from CVPixelBuffer
-///     pixel_format: Pixel format string ("BGRA", "RGBA", etc.)
-///
-/// Returns:
-///     SharedMetalBuffer instance (zero-copy from IOSurface)
-///
-/// DEPRECATED: Use `create_shared_buffer_from_pixelbuffer()` from Python instead:
-///     from hledac.universal.core.rust_backend import rust
-///     buf = rust.metal_shared_buf.SharedMetalBuffer.from_iosurface(
-///         iosurface_ptr, width, height, bytes_per_row, pixel_format
-///     )
-#[cfg(target_os = "macos")]
-#[pyfunction]
-pub fn create_shared_buffer_from_pixelbuffer(
-    pixel_buffer_ptr: usize,
-    width: u32,
-    height: u32,
-    bytes_per_row: u32,
-    pixel_format: &str,
-) -> PyResult<()> {
-    // This function is deprecated — Python should use SharedMetalBuffer.from_iosurface() directly.
-    // The Python module-level helper in media_engine.py handles this correctly.
-    Err(pyo3::exceptions::PyDeprecationWarning::new_err(
-        "create_shared_buffer_from_pixelbuffer is deprecated. \
-         Use rust.metal_shared_buf.SharedMetalBuffer.from_iosurface() directly."
-    ))
-}
-
-#[cfg(not(target_os = "macos"))]
-#[pyfunction]
-pub fn is_iosurface_bridge_available() -> (bool, Option<String>) {
-    (false, None)
-}
-
 #[cfg(not(target_os = "macos"))]
 #[pyfunction]
 pub fn get_iosurface_from_pixelbuffer(_pixel_buffer_ptr: usize) -> PyResult<()> {

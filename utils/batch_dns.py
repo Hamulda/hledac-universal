@@ -79,9 +79,7 @@ ENV_OPT_OUT = "HLEDAC_BATCH_DNS_DISABLED"
 
 # aiodns REMOVED ISSUE-008: no longer a project dep.
 # Fallback path via loop.getaddrinfo() (stdlib) always available.
-# Manual install if needed: uv add aiodns
 HAS_AIODNS = False
-aiodns: Any = None  # type: ignore[no-redef]
 
 # Sprint F2.3: Common domains for pre-resolution
 # Top-level domains commonly seen in OSINT sprints — resolved eagerly
@@ -156,47 +154,9 @@ class BatchDNSStats:
             "aiodns_used": self.aiodns_used,
         }
 
-
-class _AiodnsResolver:
-    """
-    Optional c-ares backed DNS resolver using aiodns.
-
-    Provides connection pooling and multiplexing for faster parallel DNS queries.
-    Falls back gracefully when aiodns is unavailable.
-    """
-
-    __slots__ = ("_resolver", "_loop")
-
-    def __init__(self) -> None:
-        if not HAS_AIODNS:
-            raise ImportError("aiodns not available")
-        self._loop = asyncio.get_running_loop()
-        resolver_class = aiodns.DNSResolver  # type: ignore[attr-defined]
-        self._resolver = resolver_class(loop=self._loop)
-
-    async def resolve(self, hostname: str, timeout: float) -> list[str]:
-        """
-        Resolve hostname using c-ares (aiodns).
-
-        Returns IPv4 addresses sorted and deduplicated.
-        Raises on failure (caller handles exceptions).
-        """
-        try:
-            # aiodns 4.x: result.addresses is list[str], not list[object with .host]
-            result = await safe_wait_for(
-                self._resolver.gethostbyname(hostname, socket.AF_INET),
-                timeout=timeout, label="aiodns_resolve",
-            )
-            if result.addresses:
-                # aiodns 4.x: addresses are already strings
-                return sorted(set(str(addr) for addr in result.addresses))
-            return []
-        except (asyncio.TimeoutError, OSError, Exception) as exc:
-            logger.debug(
-                "[BATCH_DNS] aiodns failed for %s: %s: %s",
-                hostname, type(exc).__name__, exc,
-            )
-            raise
+# NOTE: _AiodnsResolver class removed - aiodns is no longer a project dependency.
+# All DNS resolution now uses stdlib asyncio.getaddrinfo() via loop.getaddrinfo().
+# The HAS_AIODNS flag is kept at False for API compatibility.
 
 
 def _is_dns_negative_error(exc: Exception) -> bool:

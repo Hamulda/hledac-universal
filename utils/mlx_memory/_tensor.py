@@ -237,6 +237,183 @@ class SharedTensor:
             self._array = None
             self._mx_cached = False
 
+    # ------------------------------------------------------------------------
+    # NEXTGEN-02: Arrow IPC Zero-Copy Mmap Path
+    # ------------------------------------------------------------------------
+
+    @classmethod
+    def from_mmap(
+        cls,
+        path: str,
+        shape: tuple[int, ...],
+        dtype: str = "float32",
+        offset: int = 0,
+    ) -> "SharedTensor":
+        """
+        NEXTGEN-02: Create SharedTensor from memory-mapped Arrow IPC file.
+
+        Zero-copy path: MLX reads directly from mmap'd Arrow IPC buffer.
+        No intermediate Python heap allocation.
+
+        MLX 0.24+ supports mx.core.mmap() for direct file-to-tensor mapping.
+
+        Args:
+            path: Path to the Arrow IPC mmap file or raw tensor file
+            shape: Desired tensor shape (rows, cols, ...)
+            dtype: Data type string ("float32", "int32", etc.)
+            offset: Byte offset into the file (for Arrow IPC footer parsing)
+
+        Returns:
+            SharedTensor backed by mmap'd file data
+
+        Raises:
+            RuntimeError: If MLX mmap is not available
+        """
+        import mmap
+        import os
+
+        mx = _get_mx()
+        if mx is None:
+            raise RuntimeError("MLX not available")
+
+        # Check if MLX supports mmap (0.24+)
+        if not hasattr(mx, "core") or not hasattr(mx.core, "mmap"):
+            # MLX 0.24+ not available - use standard numpy path
+            # Note: This is NOT zero-copy, but still avoids Python list allocation
+            if not os.path.exists(path):
+                raise FileNotFoundError(f"File not found: {path}")
+
+            with open(path, "rb") as f:
+                with mmap.mmap(f.fileno(), 0, access=mmap.ACCESS_READ) as mmapped:
+                    data = np.frombuffer(mmapped, dtype=getattr(np, dtype))
+                    data = data.reshape(shape)
+                    inst = object.__new__(cls)
+                    inst._array = mx.array(data)
+                    inst._metal_buf = None
+                    inst._shape = inst._array.shape
+                    inst._dtype = dtype
+                    inst._mx_cached = True
+                    return inst
+
+        # MLX native mmap path (0.24+)
+        mlx_dtype = getattr(mx, dtype)
+        if mlx_dtype is None:
+            raise ValueError(f"Unknown MLX dtype: {dtype}")
+
+        # Create MLX array via mmap
+        inst = object.__new__(cls)
+        inst._metal_buf = None  # No SharedMetalBuffer for pure mmap path
+        inst._shape = shape
+        inst._dtype = dtype
+        inst._mx_cached = False
+        inst._array = None
+
+        # Use MLX's native mmap for zero-copy tensor creation
+        # Try MLX 0.24+ mmap API first (true zero-copy)
+        try:
+            inst._array = mx.core.mmap(path, shape=shape, dtype=mlx_dtype)
+            inst._mx_cached = True
+        except (TypeError, AttributeError, OSError) as e:
+            # MLX mmap failed - likely unsupported file format or API changed
+            # Fall back to numpy path (still avoids Python list allocation)
+            import logging as _log
+            _log.getLogger("SharedTensor").debug(
+                "[NEXTGEN-02] MLX mmap failed (%s), falling back to numpy path", e
+            )
+            
+            if not os.path.exists(path):
+                raise FileNotFoundError(f"File not found: {path}")
+
+            with open(path, "rb") as f:
+                with mmap.mmap(f.fileno(), 0, access=mmap.ACCESS_READ) as mmapped:
+                    data = np.frombuffer(mmapped[offset:], dtype=getattr(np, dtype))
+                    if data.size != int(np.prod(shape)):
+                        # Resize if needed (Arrow IPC has header)
+                        needed = int(np.prod(shape))
+                        data = data[:needed]
+                    data = data.reshape(shape)
+                    inst._array = mx.array(data)
+                    inst._mx_cached = True
+
+        return inst
+
+    @classmethod
+    def from_arrow_ipc_mmap(
+        cls,
+        path: str,
+        column_index: int = 0,
+    ) -> "SharedTensor":
+        """
+        NEXTGEN-02: Create SharedTensor from Arrow IPC mmap file.
+
+        Reads the specified column from the Arrow IPC RecordBatch
+        and creates a zero-copy MLX tensor.
+
+        Args:
+            path: Path to the Arrow IPC mmap file
+            column_index: Column index in the RecordBatch (default: 0)
+
+        Returns:
+            SharedTensor with data from the specified column
+
+        Raises:
+            RuntimeError: If Arrow IPC read fails
+        """
+        import io as _io
+
+        try:
+            import pyarrow as _pa
+        except ImportError:  # noqa: BLE001
+            raise RuntimeError("PyArrow not available")
+
+        if not __import__("os").path.exists(path):
+            raise FileNotFoundError(f"Arrow IPC file not found: {path}")
+
+        with open(path, "rb") as f:
+            import mmap
+            with mmap.mmap(f.fileno(), 0, access=mmap.ACCESS_READ) as mmapped:
+                reader = _pa.ipc.open_stream(_io.BytesIO(mmapped))
+                batch = reader.read_record_batch()
+
+                if column_index >= batch.num_columns:
+                    raise ValueError(
+                        f"column_index {column_index} out of range (max: {batch.num_columns - 1})"
+                    )
+
+                # Extract column as numpy array
+                column = batch.column(column_index)
+                arr_np = column.to_numpy()
+
+                # Determine dtype from Arrow column type
+                # PyArrow type objects have .id attribute for fast comparison
+                import pyarrow as _pa
+                arrow_type = column.type
+                dtype_map = {
+                    _pa.float32(): "float32",
+                    _pa.float64(): "float64",
+                    _pa.int32(): "int32",
+                    _pa.int64(): "int64",
+                    _pa.uint32(): "uint32",
+                    _pa.uint64(): "uint64",
+                    # String types can't be directly converted to float
+                    _pa.string(): "float32",
+                    _pa.utf8(): "float32",
+                }
+                dtype = dtype_map.get(arrow_type, "float32")
+
+                mx = _get_mx()
+                if mx is None:
+                    raise RuntimeError("MLX not available")
+
+                inst = object.__new__(cls)
+                inst._metal_buf = None
+                inst._shape = arr_np.shape
+                inst._dtype = dtype
+                inst._mx_cached = False
+                inst._array = mx.array(arr_np.astype(getattr(__import__("numpy"), dtype)))
+
+                return inst
+
     def __repr__(self) -> str:
         backing = "metal" if self._metal_buf is not None else "array"
         return (

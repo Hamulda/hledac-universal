@@ -14,7 +14,7 @@ Architecture:
 - Circuit breaker decorators: Easy integration for existing code
 
 Usage:
-    from utils.resilience import FailureRegistry, SprintHealthLedger, DegradedMode
+    from hledac.universal.utils.resilience import FailureRegistry, SprintHealthLedger, DegradedMode
 
     # In sprint initialization:
     health = SprintHealthLedger.start_sprint(sprint_id="sprint_001")
@@ -34,14 +34,14 @@ Usage:
         return []  # Safe fallback on lower modes
 
     # Or use decorators:
-    from utils.resilience.decorators import with_circuit_breaker, degradation_aware
+    from hledac.universal.utils.resilience.decorators import with_circuit_breaker, degradation_aware
 
     @with_circuit_breaker("duckdb_ingest", severity=FailureSeverity.CRITICAL)
     async def critical_operation():
         ...
 """
 
-from utils.resilience.degradation_modes import (
+from hledac.universal.utils.resilience.degradation_modes import (
     DegradedMode,
     DegradationState,
     ModeTransition,
@@ -49,21 +49,21 @@ from utils.resilience.degradation_modes import (
     FailureSeverity,
     SeverityMapper,
 )
-from utils.resilience.failure_registry import (
+from hledac.universal.utils.resilience.failure_registry import (
     FailureEntry,
     FailureRegistry,
     SprintHealthLedger,
     get_ledger,
     get_current_ledger,
 )
-from utils.resilience.circuit_breaker import (
+from hledac.universal.utils.resilience.circuit_breaker import (
     CircuitBreaker,
     CircuitBreakerOpen,
     CircuitState,
     CircuitBreakers,
     CircuitBreakerConfig,
 )
-from utils.resilience.health_indicators import (
+from hledac.universal.utils.resilience.health_indicators import (
     HealthScore,
     HealthReporter,
     format_health_status,
@@ -73,7 +73,7 @@ from utils.resilience.health_indicators import (
 )
 
 try:
-    from utils.resilience.decorators import (
+    from hledac.universal.utils.resilience.decorators import (
         with_circuit_breaker,
         circuit_protected,
         degradation_aware,

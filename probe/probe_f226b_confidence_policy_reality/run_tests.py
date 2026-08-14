@@ -11,17 +11,19 @@ _root = Path(__file__).parent
 sys.path.insert(0, str(_root))
 
 # Import the modules we need directly (no package init)
-import intelligence.confidence_policy
-import intelligence.social_identity_miner
+# NOTE: 'intelligence' is a legacy alias for 'recon' via PEP 562 lazy loading.
+# Use canonical 'recon' imports for clarity.
+import recon.confidence_policy
+import recon.social_identity_miner
 import coordinators.claims_coordinator
 
 def run_tests():
-    from intelligence.confidence_policy import (
+    from recon.confidence_policy import (
         compute_confidence, _SOURCE_BASELINES,
         FEED, PUBLIC, CT, WAYBACK, PASSIVE_DNS, SOCIAL, PLANNER, STEALTH,
         MIN_CONFIDENCE, MAX_CONFIDENCE,
     )
-    from intelligence.social_identity_miner import SocialIdentityMiner, SOCIAL_MIN_CONFIDENCE
+    from recon.social_identity_miner import SocialIdentityMiner, SOCIAL_MIN_CONFIDENCE
     from coordinators.claims_coordinator import ClaimsCoordinator
 
     passed = 0

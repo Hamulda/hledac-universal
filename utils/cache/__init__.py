@@ -29,9 +29,9 @@ Migration from legacy modules
 -----------------------------
 Old import                                → New import
 -------------------------------------------------------------------------------
-from utils.lru_cache import LRUCache      → from utils.cache import LRUCache
-from utils.async_cache import AsyncLRUCache → from utils.cache import AsyncLRUCache
-from utils.intelligent_cache import IntelligentCache → from utils.cache import IntelligentCache
+from hledac.universal.utils.lru_cache import LRUCache      → from utils.cache import LRUCache
+from hledac.universal.utils.async_cache import AsyncLRUCache → from utils.cache import AsyncLRUCache
+from hledac.universal.utils.intelligent_cache import IntelligentCache → from utils.cache import IntelligentCache
 
 Note: PyCacheDict, AsyncPyCacheDict, BoundedLoRACache, GenerationalCache 
 remain in utils/cache.py (the parent module) for backward compatibility.

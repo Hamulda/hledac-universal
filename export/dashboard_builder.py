@@ -1436,7 +1436,7 @@ async def build_wasm_dashboard(
 
     Usage::
 
-        from export.dashboard_builder import build_wasm_dashboard
+        from hledac.universal.export.dashboard_builder import build_wasm_dashboard
 
         html_path = await build_wasm_dashboard(
             handoff=export_handoff,

@@ -8,6 +8,9 @@ PEP 698: Extracted from DeepHermes3Engine._get_gpu_memory, _get_metal_tier_thres
 M1 8GB UMA-aware memory management.
 
 PEP 749 (import self) patterns for clean circular import resolution.
+
+C1-X FIX: Import MLX_AVAILABLE from SSOT (utils.mlx_memory) instead of duplicate detection.
+Uses importlib.metadata.version("mlx") — no mlx.core import at module load.
 """
 
 from __future__ import annotations
@@ -19,21 +22,12 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from typing import Any
 
-# Module-level state
-_MLX_AVAILABLE_GLOBAL = False
+# C1-X FIX: Import from SSOT instead of duplicate detection
+# Uses importlib.metadata.version("mlx") — no mlx.core import at module load
+from hledac.universal.utils.mlx_memory import MLX_AVAILABLE
 
-
-def _check_mlx_availability() -> bool:
-    """Check MLX availability at module load time (lazy)."""
-    global _MLX_AVAILABLE_GLOBAL
-    if not _MLX_AVAILABLE_GLOBAL:
-        try:
-            import mlx.core as _mx
-            _ = _mx.metal.get_active_memory
-            _MLX_AVAILABLE_GLOBAL = True
-        except Exception:
-            _MLX_AVAILABLE_GLOBAL = False
-    return _MLX_AVAILABLE_GLOBAL
+# C1-X FIX: Remove duplicate _MLX_AVAILABLE_GLOBAL and _check_mlx_availability()
+# Now uses SSOT MLX_AVAILABLE from utils.mlx_memory (zero-import detection)
 
 
 @dataclass(frozen=True)
@@ -61,7 +55,8 @@ class MetalDevice:
     - macOS ~2.5GB + orchestrátor ~1GB + LLM ~2GB + KV cache ~0.75GB = ~6.25GB max
     - Soft ceiling: 5.5 GiB → hard cap fetch concurrency
     """
-    _mlx_available: bool = field(default_factory=_check_mlx_availability)
+    # C1-X FIX: Use SSOT MLX_AVAILABLE instead of local detection
+    _mlx_available: bool = field(default_factory=lambda: MLX_AVAILABLE)
 
     # M1 Metal memory thresholds (bytes)
     _TIER_THRESHOLDS: dict[str, tuple[int, int]] = field(default_factory=lambda: {
@@ -80,9 +75,11 @@ class MetalDevice:
         if not self._mlx_available:
             return 0
         try:
-            import mlx.core as mx
-            if hasattr(mx, 'get_active_memory'):
-                return mx.get_active_memory()  # type: ignore[union-attr]
+            # C1-X FIX: Use centralized get_mx() from mlx_memory SSOT
+            from hledac.universal.utils.mlx_memory._core import get_mx
+            mx = get_mx()
+            if mx is not None and hasattr(mx, 'get_active_memory'):
+                return mx.get_active_memory()
         except Exception:  # noqa: BLE001
             pass
         return 0
@@ -92,9 +89,11 @@ class MetalDevice:
         if not self._mlx_available:
             return 0
         try:
-            import mlx.core as mx
-            if hasattr(mx, 'get_peak_memory'):
-                return mx.get_peak_memory()  # type: ignore[union-attr]
+            # C1-X FIX: Use centralized get_mx() from mlx_memory SSOT
+            from hledac.universal.utils.mlx_memory._core import get_mx
+            mx = get_mx()
+            if mx is not None and hasattr(mx, 'get_peak_memory'):
+                return mx.get_peak_memory()
         except Exception:  # noqa: BLE001
             pass
         return 0

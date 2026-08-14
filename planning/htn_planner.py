@@ -633,17 +633,15 @@ class HTNPlanner:
         Then calls existing planning method with adjusted cost.
         """
         try:
+            from hledac.universal.utils.sync_bridge import run_sync_async
             epistemic_weight = max(0.0, min(1.0, 1.0 - evidence_strength * 0.5))
             adjusted_task = dict(task)
             adjusted_task['_epistemic_weight'] = epistemic_weight
             result = self.decomposer.decompose(adjusted_task.get('goal', adjusted_task.get('type', 'other')), adjusted_task.get('context', {}))
             if hasattr(result, '__await__'):
-                import asyncio
-                _decomp_loop = asyncio.new_event_loop()
-                try:
-                    return _decomp_loop.run_until_complete(result)
-                finally:
-                    _decomp_loop.close()
+                # D4-3-FIX: Use run_sync_async() instead of new_event_loop/run_until_complete
+                # run_sync_async() uses asyncio.Runner() (PEP 654) for proper loop lifecycle
+                return run_sync_async(result)
             return result
         except Exception:
             return None

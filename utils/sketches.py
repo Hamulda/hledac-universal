@@ -18,12 +18,15 @@ import pathlib
 from collections import OrderedDict
 from typing import Any
 logger = logging.getLogger(__name__)
+
+# C1-X FIX: Import MLX_AVAILABLE from SSOT (zero-import detection)
+from hledac.universal.utils.mlx_memory import MLX_AVAILABLE
+
 try:
     import mlx.core as mx
-    MLX_AVAILABLE = True
 except ImportError:
     mx = None
-    MLX_AVAILABLE = False
+
 try:
     import lmdb
     LMDB_AVAILABLE = True

@@ -8,8 +8,13 @@ ready for future MLX/Outlines synthesis layer.
 """
 import msgspec
 
-
-import json
+# G4 FIX: stdlib json replaced with orjson fallback (M1 optimized, 5-10× faster)
+try:
+    import orjson
+    _HAS_ORJSON = True
+except ImportError:
+    import json
+    _HAS_ORJSON = False
 import logging
 import os
 from collections.abc import Iterable
@@ -627,7 +632,12 @@ def _render_machine_readable_summary(report: dict[str, Any]) -> str:
     # Remove None values for cleaner output
     data = {k: v for k, v in data.items() if v is not None}
 
-    json_str = json.dumps(data, indent=2, sort_keys=True, ensure_ascii=False)
+    # G4 FIX: Use orjson with fallback for JSON output
+    if _HAS_ORJSON:
+        json_bytes = orjson.dumps(data, option=orjson.OPT_INDENT_2 | orjson.OPT_SORT_KEYS)
+        json_str = json_bytes.decode("utf-8")
+    else:
+        json_str = json.dumps(data, indent=2, sort_keys=True, ensure_ascii=False)
     return f"```json\n{json_str}\n```"
 
 

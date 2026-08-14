@@ -474,8 +474,7 @@ class HashAnalyzer:
         """
         Identify possible hash types from hash string.
         """
-        hash_clean = hash_value.strip()
-        hash_clean.lower()
+        hash_clean = hash_value.strip().lower()
         possible_types = []
         is_salted = False
         salt = None
@@ -612,6 +611,55 @@ class HashAnalyzer:
         """Get Python hash function for type."""
         hash_map = {HashType.MD5: lambda x: hashlib.md5(x.encode()).hexdigest(), HashType.SHA1: lambda x: hashlib.sha1(x.encode()).hexdigest(), HashType.SHA256: lambda x: hashlib.sha256(x.encode()).hexdigest(), HashType.SHA512: lambda x: hashlib.sha512(x.encode()).hexdigest(), HashType.SHA224: lambda x: hashlib.sha224(x.encode()).hexdigest(), HashType.SHA384: lambda x: hashlib.sha384(x.encode()).hexdigest()}
         return hash_map.get(hash_type)
+
+    def crack_batch(
+        self,
+        hash_values: list[str],
+        wordlist: list[str],
+        hash_type: HashType = HashType.MD5,
+    ) -> dict[str, str | None]:
+        """
+        Batch crack multiple hashes against the same wordlist.
+
+        Uses Metal GPU for parallel cracking (optimal for ≥4 hashes).
+        More efficient than calling crack_dictionary() N times because
+        the wordlist is processed once.
+
+        Args:
+            hash_values: List of hashes to crack (all must be same type)
+            wordlist: List of passwords to try
+            hash_type: Hash type (default: MD5)
+
+        Returns:
+            Dict mapping hash_value → cracked_password (or None if not found)
+        """
+        if not hash_values:
+            return {}
+
+        # Try Metal GPU batch cracking first (Rust-accelerated)
+        cracker = _get_metal_cracker()
+        if cracker is not None and hash_type == HashType.MD5:
+            try:
+                targets = [h.lower() for h in hash_values]
+                # Rust crack_batch_md5 returns HashMap<String, Option<String>>
+                # PyO3 converts Option<String> to Python str | None automatically
+                results_raw = cracker.crack_batch_md5(targets, wordlist)
+                # results_raw is already dict[str, str | None], just return as-is
+                if isinstance(results_raw, dict):
+                    # Map back to original case-preserved hash_values
+                    target_lower_to_original = {h.lower(): h for h in hash_values}
+                    return {
+                        target_lower_to_original.get(k, k): v
+                        for k, v in results_raw.items()
+                    }
+            except Exception as exc:
+                logger.debug("MetalHashCracker.crack_batch_md5 failed: %s", exc)
+
+        # CPU fallback: sequential cracking
+        results: dict[str, str | None] = {}
+        for hash_value in hash_values:
+            results[hash_value] = self.crack_dictionary(hash_value, wordlist, hash_type)
+        return results
 
 class EncryptionDetector:
     """

@@ -1338,7 +1338,6 @@ class AcquisitionOrchestrator:
             }
 
             # P4-1: Export to JSON for recovery
-            import json
             import os
             from pathlib import Path
 
@@ -1350,13 +1349,14 @@ class AcquisitionOrchestrator:
 
             # P4-1: Write with size limit (10MB max)
             try:
-                _json_str = json.dumps(_export_data, indent=2)
-                if len(_json_str.encode('utf-8')) > 10 * 1024 * 1024:
+                # G4: Use msgspec for canonical JSON encoding (faster than stdlib json)
+                _json_bytes = msgspec.json.format_utf8(_export_data, indent=2)
+                if len(_json_bytes) > 10 * 1024 * 1024:
                     log.debug("[P4-1] Partial export skipped -- would exceed 10MB limit")
                     return
 
-                with open(_full_path, 'w') as f:
-                    f.write(_json_str)
+                with open(_full_path, 'wb') as f:
+                    f.write(_json_bytes)
 
                 log.debug("[P4-1] Partial export saved: %s", _full_path)
                 ctx.result.partial_export_path = str(_full_path)

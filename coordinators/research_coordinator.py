@@ -42,7 +42,7 @@ import msgspec
 from hledac.universal.compat.msgspec_gc_compat import Struct
 from hledac.universal.compat.msgspec_gc_compat import Struct
 
-from hledac.universal.utils.asyncx import ParallelResult, parallel, safe_wait_for
+from hledac.universal.utils.asyncx import ParallelResult, parallel, safe_create_task, safe_wait_for
 from hledac.universal.utils.msgspec_json import encode as _msgspec_encode
 
 from .base import DecisionResponse, ExecutionResult, OperationResult, OperationType, UniversalCoordinator
@@ -588,7 +588,10 @@ class UniversalResearchCoordinator(UniversalCoordinator):
         try:
             from hledac.universal.knowledge.duckdb_store import DuckDBShadowStore
             store = DuckDBShadowStore()
-            asyncio.create_task(store.async_ingest_findings_batch(findings))
+            safe_create_task(
+                store.async_ingest_findings_batch(findings),
+                name="research:ingest_findings",
+            )
         except Exception as e:
             logger.warning(f'ResearchCoordinator: graph path ingest failed: {e}')
 

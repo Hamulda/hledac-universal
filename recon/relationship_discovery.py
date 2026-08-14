@@ -94,13 +94,25 @@ SCIPY_AVAILABLE = True
 _sparse_mod = None
 
 def _get_sparse():
-    """Lazy scipy.sparse loader — defers ~144 module load until first use."""
+    """Lazy scipy.sparse loader — defers ~144 module load until first use.
+
+    G2 FIX: scipy is in [ml] extra. Without it, relationship discovery uses
+    dense matrix operations instead of sparse (higher memory, slower).
+    Log warning once per session to guide installation.
+    """
     global _sparse_mod
     if _sparse_mod is None:
         try:
             from scipy import sparse as _sparse
             _sparse_mod = _sparse
         except ImportError:
+            if not hasattr(_get_sparse, '_logged'):
+                import logging
+                logging.getLogger(__name__).debug(
+                    "scipy.sparse unavailable: sparse matrix operations disabled. "
+                    "Install with: pip install hledac-universal[ml]"
+                )
+                _get_sparse._logged = True
             _sparse_mod = None
             globals()['SCIPY_AVAILABLE'] = False
     return _sparse_mod
@@ -153,13 +165,14 @@ except ImportError:
     community_louvain = None
     LOUVAIN_AVAILABLE = False
 
-# mlx — strict import with fallback
-try:
-    import mlx.core as mx
-    MLX_AVAILABLE = True
-except ImportError:
-    mx = None
-    MLX_AVAILABLE = False
+# C1-X FIX: Import MLX_AVAILABLE from SSOT (zero-import detection)
+from hledac.universal.utils.mlx_memory import MLX_AVAILABLE
+
+# Lazy accessor for mlx.core — uses centralized get_mx() from SSOT
+def _get_mx():
+    """Lazy accessor for mlx.core — uses centralized get_mx() from SSOT."""
+    from hledac.universal.utils.mlx_memory._core import get_mx as _get_mx_from_core
+    return _get_mx_from_core()
 
 logger = logging.getLogger(__name__)
 

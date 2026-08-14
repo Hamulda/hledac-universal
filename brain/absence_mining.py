@@ -57,7 +57,7 @@ from datetime import UTC, datetime
 from enum import Enum
 from typing import TYPE_CHECKING, Any
 
-from hledac.universal.utils.asyncx import safe_gather
+from hledac.universal.utils.asyncx import safe_gather, safe_wait_for
 
 if TYPE_CHECKING:
     from hledac.universal.brain.synthesis_runner import IOCEntity, OSINTReport
@@ -371,7 +371,7 @@ class AbsenceMiningEngine:
 
         try:
             async with self._semaphore:
-                result = await asyncio.wait_for(
+                result = await safe_wait_for(
                     self._do_entity_check(entity),
                     timeout=self._CHECK_TIMEOUT_S,
                 )

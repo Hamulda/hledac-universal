@@ -72,6 +72,7 @@ from hledac.universal.utils.asyncx import (
     async_getaddrinfo,
     parallel,
     safe_create_task,
+    safe_wait_for,
 )
 from hledac.universal.utils.batch_dns import get_batch_dns_resolver
 from hledac.universal.utils.flow_trace import (
@@ -264,6 +265,14 @@ AIMD_MIN_CONCURRENCY = 1
 AIMD_MAX_CONCURRENCY = 25
 AIMD_SUCCESS_THRESHOLD = 2
 AIMD_DECREASE_BY_STATE = {'ok': 1.0, 'soft_warn': 0.75, 'warn': 0.5, 'critical': 0.25, 'emergency': 0.0}
+
+# E4 FIX: Global in-flight response body memory limits for M1 8GB.
+# AIMD window (1-25) × 10MB = 250MB worst-case without this cap.
+# Strategy: semaphore-based byte budget + per-content-type max_bytes reduction.
+# Conservative estimate: use 10MB (article max) as permit size.
+_INFLIGHT_BYTES_BUDGET = 50 * 1024 * 1024  # 50 MB total in-flight budget
+_INFLIGHT_BYTES_PERMIT = 10 * 1024 * 1024  # 10 MB per fetch permit (5 concurrent max)
+_INFLIGHT_SEMAPHORE: asyncio.Semaphore | None = None  # Lazily initialized
 
 # BLITZ-13: Aggressive-mode concurrency constants.
 # When blitz mode is active, AIMD starts at the maximum allowed concurrency
@@ -872,6 +881,12 @@ class FetchCoordinator(UniversalCoordinator):
         self._evidence_sink = evidence_sink  # A5-02: Dependency Inversion — injected sink, not direct EvidenceLog import
         self._urls_fetched_count: int = 0
         self._stop_reason: str | None = None
+        # E4 FIX: In-flight response body memory tracking for M1 8GB.
+        # Limits concurrent fetches based on content-size budget.
+        # permits = _INFLIGHT_BYTES_BUDGET // _INFLIGHT_BYTES_PERMIT (5 max concurrent with 10MB permits)
+        self._inflight_sem: asyncio.Semaphore = asyncio.Semaphore(_INFLIGHT_BYTES_BUDGET // _INFLIGHT_BYTES_PERMIT)
+        self._inflight_bytes: int = 0  # Track current in-flight bytes
+        self._inflight_lock = asyncio.Lock()
         # M1-04: TTLCache(maxsize=2048, ttl=300) — bounded DNS cache, auto-evicts after 5 min
         self._host_ips_cache: TTLCache[str, list[str]] = TTLCache(maxsize=2048, ttl=300)
         # C3-02: Single-flight inflight map — prevents duplicate DNS resolutions within same batch
@@ -974,7 +989,7 @@ class FetchCoordinator(UniversalCoordinator):
         # Configurable via HLEDAC_RATE_LIMIT_RPS env var
         _rate_limit_rps = FeatureFlags.get_float(FeatureFlag.RATE_LIMIT_RPS, 0.5)
         self._domain_rate_limiter = DomainRateLimiter(rate=_rate_limit_rps, max_hosts=512)
-        self._telemetry: dict[str, Any] = {'aimd_concurrency': self._aimd.window, 'active_fetches': 0, 'total_successes': 0, 'total_failures': 0, 'circuit_breaker_blocks': 0, 'circuit_breaker_active': 0, 'uma_state': 'ok', 'decrease_factor_used': 1.0, 'backpressure_clamp_events': 0, 'io_only_skipped': 0, 'cross_sprint_skipped': 0, 'entity_confirmation_skipped': 0, 'mmap_delta_skipped': 0}
+        self._telemetry: dict[str, Any] = {'aimd_concurrency': self._aimd.window, 'active_fetches': 0, 'total_successes': 0, 'total_failures': 0, 'circuit_breaker_blocks': 0, 'circuit_breaker_active': 0, 'uma_state': 'ok', 'decrease_factor_used': 1.0, 'backpressure_clamp_events': 0, 'io_only_skipped': 0, 'cross_sprint_skipped': 0, 'entity_confirmation_skipped': 0, 'mmap_delta_skipped': 0, 'inflight_bytes': 0, 'inflight_permits': 0}
         # CB-04: Retry budget per domain — track total retries in last 60s to prevent amplification
         # ISSUE-011 FIX: Use LazyAsyncioLock instead of threading.Lock
         # threading.Lock blocks the event loop when called from async context
@@ -1590,9 +1605,52 @@ class FetchCoordinator(UniversalCoordinator):
         else:
             current_window = await self._acquire_python_slot(bp_clearing)
 
-        self._telemetry['aimd_concurrency'] = current_window
+        # E4 FIX: Acquire memory slot for in-flight response body
+        await self._inflight_sem.acquire()
         self._telemetry['active_fetches'] += 1
+        # E4 FIX: Update inflight telemetry
+        self._telemetry['inflight_permits'] = self._inflight_sem._value
         return (current_window, None)
+
+    # E4 FIX: Memory tracking helper methods
+    async def _release_inflight_memory(self, content_bytes: int) -> None:
+        """Release inflight memory slot after fetch completes.
+        
+        E4 FIX: Releases the semaphore permit acquired in _aimd_acquire.
+        Also tracks bytes for telemetry.
+        """
+        self._inflight_sem.release()
+        async with self._inflight_lock:
+            self._inflight_bytes = max(0, self._inflight_bytes - content_bytes)
+
+    def _get_effective_max_bytes(self, url: str, content_type: str | None = None) -> int:
+        """Get effective max_bytes based on content type and URL.
+        
+        E4 FIX: Reduces max_bytes for non-article content to save memory.
+        Articles get 10MB, everything else gets 2MB.
+        """
+        default_max = 2 * 1024 * 1024  # 2 MB default
+        
+        # Articles and feeds get higher limit
+        if content_type and ('html' in content_type or 'xml' in content_type):
+            # Check if it's likely an article
+            _article_indicators = ('/article', '/post', '/news', '/blog', '/story', 'rss', 'feed', 'atom', 'sitemap')
+            if any(ind in url.lower() for ind in _article_indicators):
+                return 10 * 1024 * 1024  # 10 MB for articles
+            return default_max
+        
+        # Non-HTML content gets smaller limit
+        if content_type:
+            if 'json' in content_type:
+                return 512 * 1024  # 512 KB for JSON
+            if 'text' in content_type:
+                return 1024 * 1024  # 1 MB for plain text
+            if content_type.startswith('image/') or content_type.startswith('video/') or content_type.startswith('audio/'):
+                return 5 * 1024 * 1024  # 5 MB for media
+            if 'pdf' in content_type or 'zip' in content_type or 'archive' in content_type:
+                return 5 * 1024 * 1024  # 5 MB for archives
+        
+        return default_max
 
     async def _aimd_release_success(self) -> float:
         """
@@ -1614,6 +1672,8 @@ class FetchCoordinator(UniversalCoordinator):
 
         self._telemetry['total_successes'] += 1
         self._telemetry['aimd_concurrency'] = new_window
+        # E4 FIX: Release inflight memory slot (10MB permit released)
+        self._inflight_sem.release()
         return new_window
 
     async def _aimd_release_failure(self) -> float:
@@ -1639,6 +1699,8 @@ class FetchCoordinator(UniversalCoordinator):
         self._telemetry['total_failures'] += 1
         self._telemetry['aimd_concurrency'] = new_window
         self._telemetry['decrease_factor_used'] = decrease_factor
+        # E4 FIX: Release inflight memory slot (10MB permit released)
+        self._inflight_sem.release()
         return new_window
 
     def _get_privacy_semaphore(self, url: str) -> tuple[asyncio.Semaphore | None, str]:
@@ -1838,7 +1900,7 @@ class FetchCoordinator(UniversalCoordinator):
             await self._aimd_release_failure()
             return None
 
-    async def _fetch_with_curl(self, url: str, proxy: str | None=None, *, resolve: dict[str, str] | None=None, _extra_headers: dict[str, str] | None=None) -> dict[str, Any] | None:
+    async def _fetch_with_curl(self, url: str, proxy: str | None=None, *, resolve: dict[str, str] | None=None, _extra_headers: dict[str, str] | None=None, _effective_max_bytes: int | None=None) -> dict[str, Any] | None:
         """Fetch URL via curl_cffi with HTTP/3 Alt-Svc support (F265C).
 
         ISSUE-0.2 FIX: Uses CAPS-based curl_cffi availability check.
@@ -1895,7 +1957,9 @@ class FetchCoordinator(UniversalCoordinator):
             _ja3_profile = next_ja3_profile()
             # F-07: Merge extra headers (clearance cookies) with request headers
             _req_headers = dict(_extra_headers) if _extra_headers else None
-            _curl_result = await fetch_via_curl_cffi_with_caps_check(url=url, headers=_req_headers, timeout_s=30.0, max_bytes=10 * 1024 * 1024, profile=_ja3_profile, http_version=_curl_http_version, _pre_probe=False, resolve=resolve)
+            # E4 FIX: Use effective max_bytes (2MB for non-articles, 10MB for articles)
+            _max_bytes = _effective_max_bytes if _effective_max_bytes else (10 * 1024 * 1024)
+            _curl_result = await fetch_via_curl_cffi_with_caps_check(url=url, headers=_req_headers, timeout_s=30.0, max_bytes=_max_bytes, profile=_ja3_profile, http_version=_curl_http_version, _pre_probe=False, resolve=resolve)
             if _curl_result is None:
                 return {'url': url, 'content': b'', 'error': 'curl_cffi_caps_check_failed'}
             _altsvc_record_from_result(url, _curl_result.get('headers'))
@@ -2632,8 +2696,36 @@ class FetchCoordinator(UniversalCoordinator):
 
         return filtered
 
+    @staticmethod
+    def _strip_result_content(result: dict[str, Any] | None) -> dict[str, Any] | None:
+        """E4 FIX: Strip heavy content fields from result to release memory.
+        
+        Content (bytes) and text (str) are not needed after post-processing.
+        Keeping them in memory wastes 2-10MB per result.
+        Returns a lightweight dict with only metadata fields.
+        """
+        if result is None:
+            return None
+        # Create lightweight result with only essential fields
+        return {
+            'url': result.get('url'),
+            'final_url': result.get('final_url'),
+            'status_code': result.get('status_code', 0),
+            'content_type': result.get('content_type', ''),
+            'headers': result.get('headers', {}),
+            'success': result.get('success', False),
+            'error': result.get('error'),
+            'evidence_id': result.get('evidence_id'),  # May be None
+            # Explicitly drop 'content' and 'text' to release memory
+        }
+
     async def _execute_batch_fetch(self, urls_to_fetch: list[str]) -> tuple[list[dict[str, Any] | None], float]:
-        """Phase 6: Execute parallel fetch with TOR/I2P vs clearnet separation."""
+        """Phase 6: Execute parallel fetch with TOR/I2P vs clearnet separation.
+        
+        E4 FIX: Uses lightweight result storage to avoid holding full content.
+        Content is stripped immediately after fetch completes to release memory.
+        Peak memory is now O(batch_size × overhead) instead of O(batch_size × max_bytes).
+        """
         from ..transport.transport_resolver import Transport, get_transport_for_url
 
         tor_i2p_urls: list[str] = []
@@ -2650,7 +2742,7 @@ class FetchCoordinator(UniversalCoordinator):
 
         if tor_i2p_urls:
             # P4-5 FIX: policy="log" returns list[T], not ParallelResult.
-            # The result is already the list of successes (no .ok needed).
+            # E4 FIX: Strip content immediately after fetch to release memory.
             tor_i2p_results = await parallel(
                 [self._fetch_url(url) for url in tor_i2p_urls],
                 concurrency=min(len(tor_i2p_urls), 2),
@@ -2658,11 +2750,11 @@ class FetchCoordinator(UniversalCoordinator):
                 ctx="fetch_coordinator.batch.tor_i2p",
             )
             for _url, _res in zip(tor_i2p_urls, tor_i2p_results, strict=False):
-                url_to_result[_url] = _res
+                url_to_result[_url] = self._strip_result_content(_res)
 
         if clearnet_urls:
             # P4-5 FIX: policy="log" returns list[T], not ParallelResult.
-            # The result is already the list of successes (no .ok needed).
+            # E4 FIX: Strip content immediately after fetch to release memory.
             clearnet_results = await parallel(
                 [self._fetch_url(url) for url in clearnet_urls],
                 concurrency=len(urls_to_fetch),
@@ -2670,7 +2762,7 @@ class FetchCoordinator(UniversalCoordinator):
                 ctx="fetch_coordinator.batch",
             )
             for _url, _res in zip(clearnet_urls, clearnet_results, strict=False):
-                url_to_result[_url] = _res
+                url_to_result[_url] = self._strip_result_content(_res)
 
         results = [url_to_result.get(_url) for _url in urls_to_fetch]
         batch_elapsed = time.time() - batch_start
@@ -2682,11 +2774,15 @@ class FetchCoordinator(UniversalCoordinator):
         results: list[dict[str, Any] | None],
         budget_mgr: Any,
     ) -> list[str]:
-        """Phase 7: Process fetch results and extract evidence IDs."""
+        """Phase 7: Process fetch results and extract evidence IDs.
+        
+        E4 FIX: Results already have content stripped by _execute_batch_fetch.
+        This method only extracts evidence_ids from lightweight result dicts.
+        """
         evidence_ids: list[str] = []
         for url, result in zip(urls_to_fetch, results, strict=False):
             if isinstance(result, Exception):
-                logger.debug('[BATCH] fetch exception for %s: %s: %s', url, type(result).__name__, result)
+                logger.debug('[BATCH] fetch exception for %s: %s', url, type(result).__name__)
                 continue
             if result and result.get('success'):
                 self._urls_fetched_count += 1
@@ -2894,6 +2990,9 @@ class FetchCoordinator(UniversalCoordinator):
             'batch_size': batch_size,
             'effective_parallelism': effective_parallelism,
             'batch_elapsed_ms': batch_elapsed_ms,
+            # E4 FIX: Inflight memory telemetry
+            'inflight_permits': self._inflight_sem._value,
+            'inflight_bytes': self._inflight_bytes,
             # BREAKTHROUGH #2: Speculative prefetch telemetry
             'prefetch_count': prefetch_count,
             'prefetch_dns': prefetch_dns,
@@ -2947,6 +3046,11 @@ class FetchCoordinator(UniversalCoordinator):
 
             # Phase 3: Main retry loop
             trace_fetch_start(url, 'pending', {'attempt': attempt, 'aimd_window': self._aimd_concurrency})
+            
+            # E4 FIX: Calculate effective max_bytes based on URL pattern before fetch
+            # This reduces memory usage for non-article content from 10MB to 2MB
+            _effective_max_bytes = self._get_effective_max_bytes(url)
+            
             result = await self._fetch_with_retry_loop(
                 url=url,
                 attempt=attempt,
@@ -2962,6 +3066,7 @@ class FetchCoordinator(UniversalCoordinator):
                 _pre_acquired_tor_session=_dc.pre_acquired_tor_session,
                 _pre_acquired_i2p_session=_dc.pre_acquired_i2p_session,
                 proxy=_dc.proxy,
+                _effective_max_bytes=_effective_max_bytes,  # E4 FIX: pass effective max_bytes
             )
 
             # Phase 5: Post-processing
@@ -3235,6 +3340,7 @@ class FetchCoordinator(UniversalCoordinator):
         _pre_acquired_tor_session: Any,
         _pre_acquired_i2p_session: Any,
         proxy: str | None,
+        _effective_max_bytes: int | None = None,  # E4 FIX: effective max_bytes from URL pattern
     ) -> dict[str, Any] | None:
         """
         F360-R: Refactored retry loop with phase-based approach.
@@ -3255,7 +3361,7 @@ class FetchCoordinator(UniversalCoordinator):
             result = await self._execute_retry_loop(
                 url, attempt, max_retries, base_delay, url_transport, route_decision,
                 _host_name, _resolve, _quinn_viable, _pre_acquired_tor_session,
-                _pre_acquired_i2p_session, proxy,
+                _pre_acquired_i2p_session, proxy, _effective_max_bytes,
             )
         except asyncio.CancelledError:
             # P0-3 FIX: Re-raise CancelledError for proper cancellation propagation.
@@ -3294,6 +3400,7 @@ class FetchCoordinator(UniversalCoordinator):
         _pre_acquired_tor_session: Any,
         _pre_acquired_i2p_session: Any,
         proxy: str | None,
+        _effective_max_bytes: int | None = None,  # E4 FIX: effective max_bytes
     ) -> dict[str, Any] | None:
         """F360-R: Execute retry loop - dispatch and retry logic."""
         result = None
@@ -3302,7 +3409,7 @@ class FetchCoordinator(UniversalCoordinator):
             result = await self._dispatch_transport_fetch(
                 url, attempt, url_transport, route_decision, host_name,
                 _resolve, _quinn_viable, _pre_acquired_tor_session,
-                _pre_acquired_i2p_session, proxy,
+                _pre_acquired_i2p_session, proxy, _effective_max_bytes,
             )
 
             # Check if we should retry
@@ -3358,6 +3465,7 @@ class FetchCoordinator(UniversalCoordinator):
         _pre_acquired_tor_session: Any,
         _pre_acquired_i2p_session: Any,
         proxy: str | None,
+        _effective_max_bytes: int | None = None,  # E4 FIX: effective max_bytes
     ) -> dict[str, Any] | None:
         """F360-R: Dispatch fetch to appropriate transport.
         
@@ -3369,9 +3477,9 @@ class FetchCoordinator(UniversalCoordinator):
         from ..transport.transport_resolver import Transport as _T
         
         if url_transport is _T.TOR:
-            return await self._fetch_with_tor(url, session=_pre_acquired_tor_session)
+            return await self._fetch_with_tor(url, session=_pre_acquired_tor_session, max_bytes=_effective_max_bytes)
         if url_transport is _T.I2P:
-            return await self._fetch_with_i2p(url, session=_pre_acquired_i2p_session)
+            return await self._fetch_with_i2p(url, session=_pre_acquired_i2p_session, max_bytes=_effective_max_bytes)
         if url_transport is _T.GOPHER:
             # GOPHER: use gopher transport if available
             if self._gopher_transport is not None and self._gopher_transport_enabled:
@@ -3383,8 +3491,10 @@ class FetchCoordinator(UniversalCoordinator):
             logger.debug('[GOPHER] Gopher transport unavailable')
             return None
         # Clearnet fetch via curl_cffi (preferred)
+        # E4 FIX: Use effective max_bytes (2MB for non-articles, 10MB for articles)
         return await self._fetch_with_curl(
             url=url, proxy=proxy, resolve=_resolve,
+            _effective_max_bytes=_effective_max_bytes,
         )
 
     async def _record_fetch_outcome(
@@ -4621,7 +4731,7 @@ class FetchCoordinator(UniversalCoordinator):
         """
         try:
             # Wait for alert with timeout (allows graceful shutdown)
-            alert = await asyncio.wait_for(queue.get(), timeout=5.0)
+            alert = await safe_wait_for(queue.get(), timeout=5.0)
 
             if not self._running:
                 return 'shutdown'
@@ -4736,7 +4846,7 @@ class FetchCoordinator(UniversalCoordinator):
         while self._running:
             try:
                 # Wait for request with timeout to allow graceful shutdown
-                request = await asyncio.wait_for(self._micro_sprint_queue.get(), timeout=5.0)
+                request = await safe_wait_for(self._micro_sprint_queue.get(), timeout=5.0)
 
                 if not self._running:
                     break

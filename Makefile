@@ -74,6 +74,7 @@ audit-ci:
 	$(PYTHON) -m tools.audit.ble_audit --ci
 	$(PYTHON) -m tools.audit.ci_root_scripts_guard
 	$(PYTHON) -m tools.audit.ci_tst001_guard
+	$(PYTHON) tools/audit/ban_stdlib_json.py || exit 1
 
 .PHONY: test-ci
 test-ci:

@@ -1037,12 +1037,12 @@ def memory_cleanup_fallback(
 
     Místo:
         try:
-            from utils import mlx_cache
+            from hledac.universal.utils import mlx_cache
             mlx_cache.mlx_cleanup_sync()
         except (ImportError, AttributeError) as e:
             logger.debug(f'Cleanup failed: {e}')
         try:
-            from core.memory_cycle import malloc_zone_pressure_relief
+            from hledac.universal.core.memory_cycle import malloc_zone_pressure_relief
             released = malloc_zone_pressure_relief()
         except (ImportError, AttributeError, OSError) as e:
             logger.debug(f'malloc relief failed: {e}')
@@ -1054,7 +1054,7 @@ def memory_cleanup_fallback(
     """
     if mlx_cleanup:
         try:
-            from utils import mlx_cache
+            from hledac.universal.utils import mlx_cache
 
             if level == "aggressive":
                 mlx_cache.mlx_cleanup_aggressive()
@@ -1068,7 +1068,7 @@ def memory_cleanup_fallback(
 
     if malloc_relief:
         try:
-            from core.memory_cycle import malloc_zone_pressure_relief
+            from hledac.universal.core.memory_cycle import malloc_zone_pressure_relief
 
             released = malloc_zone_pressure_relief()
             if released > 0 and logger:
@@ -1184,14 +1184,14 @@ class lazy_property:
 
             @lazy_property
             def engine(self) -> "HypothesisEngine":
-                from brain.research_hypothesis_engine import HypothesisEngine
+                from hledac.universal.brain.research_hypothesis_engine import HypothesisEngine
                 return HypothesisEngine(max_hypotheses=200)
 
     Místo:
         @property
         def engine(self) -> "HypothesisEngine":
             if self._engine is None:
-                from brain.research_hypothesis_engine import HypothesisEngine
+                from hledac.universal.brain.research_hypothesis_engine import HypothesisEngine
                 self._engine = HypothesisEngine(max_hypothheses=200)
             return self._engine
 

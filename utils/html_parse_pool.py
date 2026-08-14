@@ -12,6 +12,9 @@ M1 8GB constraints:
 - Lazy init = žádné import-time costy
 - asyncio.to_thread = macOS QoS-aware, automatic backpressure
 
+G1 FIX: beautifulsoup4 REMOVED — selectolax is primary, regex is final fallback.
+No external HTML parser dependencies needed.
+
 Použití:
     from hledac.universal.utils.html_parse_pool import parse_html_links, parse_html_text
 
@@ -21,8 +24,6 @@ Použití:
     # Pro text extraction (selectolax-based)
     text = await parse_html_text(html_content)
 """
-
-
 
 import asyncio
 from concurrent.futures import ThreadPoolExecutor
@@ -59,8 +60,10 @@ def _get_pool() -> ThreadPoolExecutor:
 def _parse_links_worker(html: str) -> list[dict[str, str]]:
     """
     CPU-bound: extract links from HTML.
-    selectolax-first (Rust, 10-50× faster than bs4), bs4 fallback.
+    selectolax-first (Rust, 10-50× faster), regex final fallback.
     Returns list of {url, title} dicts.
+
+    G1 FIX: Removed beautifulsoup4 fallback.
     """
     results: list[dict[str, str]] = []
     try:
@@ -79,22 +82,24 @@ def _parse_links_worker(html: str) -> list[dict[str, str]]:
     except ImportError:  # noqa: BLE001
         pass
 
-    # Fallback: BeautifulSoup (GIL-bound, slower)
-    from bs4 import BeautifulSoup
-
-    soup = BeautifulSoup(html, "html.parser")
-    for a in soup.find_all("a", href=True):
-        href = a["href"]
-        if isinstance(href, str) and href.startswith("http"):
-            results.append({"url": href, "title": a.get_text(strip=True)[:200]})
+    # Fallback: regex-only (stdlib)
+    import re
+    pattern = re.compile(r'<a[^>]+href=["\']([^"\']+)["\'][^>]*>([^<]*)</a>', re.IGNORECASE)
+    for match in pattern.finditer(html):
+        href = match.group(1)
+        title = match.group(2).strip()[:200]
+        if href.startswith("http"):
+            results.append({"url": href, "title": title})
     return results
 
 
 def _parse_text_worker(html: str) -> str:
     """
     CPU-bound: extract clean text from HTML.
-    selectolax-first (Rust), bs4 fallback, regex final fallback.
+    selectolax-first (Rust), regex final fallback.
     Returns cleaned text string.
+
+    G1 FIX: Removed beautifulsoup4 fallback — selectolax or regex only.
     """
     # Tier 1: selectolax (fast, Rust-based)
     try:
@@ -119,29 +124,13 @@ def _parse_text_worker(html: str) -> str:
     except ImportError:  # noqa: BLE001
         pass
 
-    # Tier 2: BeautifulSoup (slower, GIL-bound)
-    from bs4 import BeautifulSoup
-
-    soup = BeautifulSoup(html, "html.parser")
-    for tag in soup(["script", "style"]):
-        tag.decompose()
-    body = soup.body
-    if body:
-        text = body.get_text(separator=" ", strip=True)
-    else:
-        text = soup.get_text(separator=" ", strip=True)
-    import re
-
-    text = re.sub(r"\s+", " ", text).strip()
-    if text:
-        return text
-
-    # Tier 3: regex fallback (stdlib, no deps)
+    # Tier 2: regex fallback (stdlib only, no external deps)
     import re
 
     # Strip HTML tags, keep text
     text = re.sub(r"<script[^>]*>.*?</script>", "", html, flags=re.DOTALL | re.IGNORECASE)
     text = re.sub(r"<style[^>]*>.*?</style>", "", text, flags=re.DOTALL | re.IGNORECASE)
+    text = re.sub(r"<noscript[^>]*>.*?</noscript>", "", text, flags=re.DOTALL | re.IGNORECASE)
     text = re.sub(r"<[^>]+>", " ", text)
     text = re.sub(r"\s+", " ", text).strip()
     return text

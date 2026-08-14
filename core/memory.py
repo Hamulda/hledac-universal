@@ -19,11 +19,11 @@ TENTO MODUL vs. OSTATNÍ PAMĚŤOVÉ MODULY (A5-04 consolidation)
  ŽÁDNÝ PŘEKRYV FUNKCÍ — každý modul má jinou roli.
 
 MLX METRICS: Pro MLX-specific metriky použij:
-    from utils.mlx_memory import get_mlx_memory_metrics
+    from hledac.universal.utils.mlx_memory import get_mlx_memory_metrics
     # dict: active_mb, peak_mb, cache_mb, pressure_pct, pressure_level
 
 SYSTEM METRICS: Pro system-wide metriky použij:
-    from core.memory import get_memory_snapshot
+    from hledac.universal.core.memory import get_memory_snapshot
     # dict: rss_bytes, rss_gib, available_memory_gib, total_memory_gib,
     #       metal_active_bytes, metal_active_gib, pressure_level
 

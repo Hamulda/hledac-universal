@@ -745,17 +745,19 @@ def _parse_pastebin_urls(html_text: str, max_pastes: int = 10) -> list[str]:
                         paste_urls.append(f'https://pastebin.com/raw{href}')
             return paste_urls[:max_pastes]
         except Exception as e:
-            logger.debug('[Pastebin] selectolax parse failed, falling back to bs4: %s', e)
+            logger.debug('[Pastebin] selectolax parse failed, falling back to regex: %s', e)
 
-    # Fallback to BeautifulSoup
-    from bs4 import BeautifulSoup
-    soup = BeautifulSoup(html_text, 'html.parser')
-    paste_urls = [
-        f"https://pastebin.com/raw{a['href']}"
-        for tr in soup.select('table.maintable tr')[1:21]
-        for a in tr.select('td a')[:1]
-        if a.get('href')
-    ]
+    # G1 FIX: Replace beautifulsoup4 with regex fallback
+    import re
+    # Match: <td><a href="/raw/...">...</a></td> inside table.maintable
+    pattern = re.compile(
+        r'<td[^>]*>\s*<a[^>]+href=["\'](/raw/[^"\']+)["\'][^>]*>[^<]*</a>\s*</td>',
+        re.DOTALL | re.IGNORECASE
+    )
+    paste_urls = []
+    for match in pattern.finditer(html_text)[1:21]:  # Skip first (header row)
+        href = match.group(1)
+        paste_urls.append(f'https://pastebin.com/raw{href}')
     return paste_urls[:max_pastes]
 
 
@@ -833,14 +835,25 @@ async def search_github_gists(keyword: str, max_results: int=10) -> list[dict]:
                         results.append({'url': f'https://gist.github.com{meta_url}', 'title': meta_a.text(strip=True) if meta_a else '', 'snippet': snippet_text, 'source': 'github_gist_search'})
             except Exception:  # noqa: BLE001
                 pass
+        # G1 FIX: Replace beautifulsoup4 with regex fallback
         if not results:
-            from bs4 import BeautifulSoup
-            soup = BeautifulSoup(html_text, 'html.parser')
-            for item in soup.select('.gist-snippet')[:max_results]:
-                a = item.select_one('.gist-snippet-meta a')
-                p = item.select_one('.gist-snippet-body')
-                if a and a.get('href'):
-                    results.append({'url': f"https://gist.github.com{a['href']}", 'title': a.get_text(strip=True), 'snippet': p.get_text(strip=True)[:200] if p else '', 'source': 'github_gist_search'})
+            import re
+            # Match gist snippet metadata and body
+            snippet_pattern = re.compile(
+                r'<div[^>]+class=["\']gist-snippet["\'][^>]*>.*?<div[^>]+class=["\']gist-snippet-meta["\'][^>]*>.*?<a[^>]+href=["\']([^"\']+)["\'][^>]*>([^<]+)</a>.*?<div[^>]+class=["\']gist-snippet-body["\'][^>]*>(.*?)</div>',
+                re.DOTALL | re.IGNORECASE
+            )
+            for match in snippet_pattern.finditer(html_text)[:max_results]:
+                href = match.group(1).strip()
+                title = match.group(2).strip()
+                body = re.sub(r'<[^>]+>', '', match.group(3)).strip()[:200]
+                if href:
+                    results.append({
+                        'url': f'https://gist.github.com{href}',
+                        'title': title,
+                        'snippet': body,
+                        'source': 'github_gist_search'
+                    })
     except Exception as e:
         logger.debug(f'[GitHub Gist] {e}')
     return results
@@ -906,10 +919,21 @@ async def search_ahmia(query: str, max_results: int=20, use_onion: bool=False) -
                         results.append({'title': a.text(strip=True), 'url': href, 'snippet': p.text(strip=True) if p else '', 'source': 'ahmia_onion' if use_onion else 'ahmia_clearnet'})
             except Exception:  # noqa: BLE001
                 pass
+        # G1 FIX: Replace beautifulsoup4 with regex fallback
         if not results:
-            from bs4 import BeautifulSoup
-            soup = BeautifulSoup(html, 'html.parser')
-            results = [{'title': a.get_text(strip=True), 'url': a['href'], 'snippet': p.get_text(strip=True) if p else '', 'source': 'ahmia_onion' if use_onion else 'ahmia_clearnet'} for li in soup.select('li.result')[:max_results] for a in [li.select_one('h4 a')] for p in [li.select_one('p')] if a and a.get('href')]
+            import re
+            # Match: <li class="result">...<h4><a href="...">Title</a></h4>...<p>Snippet</p>...
+            pattern = re.compile(
+                r'<li[^>]*class=["\']result["\'][^>]*>.*?<h4[^>]*>.*?<a[^>]+href=["\']([^"\']+)["\'][^>]*>([^<]+)</a>.*?<p[^>]*>([^<]+)</p>',
+                re.DOTALL | re.IGNORECASE
+            )
+            for match in pattern.finditer(html)[:max_results]:
+                results.append({
+                    'title': match.group(2).strip(),
+                    'url': match.group(1).strip(),
+                    'snippet': match.group(3).strip(),
+                    'source': 'ahmia_onion' if use_onion else 'ahmia_clearnet'
+                })
         return results
     except Exception as e:
         logger.warning(f'[Ahmia] {e}')

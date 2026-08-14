@@ -32,7 +32,7 @@ import time
 from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING, Any, TypeVar
 
-from utils.asyncx._parallel import parallel
+from hledac.universal.utils.asyncx._parallel import parallel
 
 if TYPE_CHECKING:
     pass

@@ -729,19 +729,23 @@ fn extract_timestamp(line: &str) -> Option<(i64, String)> {
 
 /// Extract PGP key ID from content
 fn extract_pgp_key_id(content: &str) -> Option<String> {
-    // Look for hex patterns that look like key IDs
-    let hex_patterns = [
-        r"0x[0-9A-Fa-f]{8}",
-        r"0x[0-9A-Fa-f]{16}",
-        r"0x[0-9A-Fa-f]{40}",
-    ];
+    // Pre-compiled regex patterns for PGP key ID extraction (avoid per-call compilation)
+    static HEX8_RE: std::sync::LazyLock<regex::Regex> =
+        std::sync::LazyLock::new(|| regex::Regex::new(r"0x[0-9A-Fa-f]{8}").unwrap());
+    static HEX16_RE: std::sync::LazyLock<regex::Regex> =
+        std::sync::LazyLock::new(|| regex::Regex::new(r"0x[0-9A-Fa-f]{16}").unwrap());
+    static HEX40_RE: std::sync::LazyLock<regex::Regex> =
+        std::sync::LazyLock::new(|| regex::Regex::new(r"0x[0-9A-Fa-f]{40}").unwrap());
 
-    for pattern in &hex_patterns {
-        if let Some(re) = regex::Regex::new(pattern).ok() {
-            if let Some(m) = re.find(content) {
-                return Some(m.as_str().to_uppercase());
-            }
-        }
+    // Check longest patterns first (most specific)
+    if let Some(m) = HEX40_RE.find(content) {
+        return Some(m.as_str().to_uppercase());
+    }
+    if let Some(m) = HEX16_RE.find(content) {
+        return Some(m.as_str().to_uppercase());
+    }
+    if let Some(m) = HEX8_RE.find(content) {
+        return Some(m.as_str().to_uppercase());
     }
 
     None
@@ -749,23 +753,31 @@ fn extract_pgp_key_id(content: &str) -> Option<String> {
 
 /// Extract SSH fingerprint from content
 fn extract_ssh_fingerprint(content: &str) -> Option<String> {
-    // Look for SSH public key format
-    let ssh_patterns = [
-        r"ssh-(rsa|dsa|ecdsa|ed25519) ([A-Za-z0-9+/=]{20,})",
-        r"(ssh-ed25519) ([A-Za-z0-9+/=]{20,})",
-    ];
+    // Pre-compiled regex patterns for SSH key extraction (avoid per-call compilation)
+    static SSH_KEY_RE: std::sync::LazyLock<regex::Regex> = std::sync::LazyLock::new(|| {
+        regex::Regex::new(r"ssh-(rsa|dsa|ecdsa|ed25519)\s+([A-Za-z0-9+/=]{20,})").unwrap()
+    });
+    static ED25519_RE: std::sync::LazyLock<regex::Regex> = std::sync::LazyLock::new(|| {
+        regex::Regex::new(r"ssh-ed25519\s+([A-Za-z0-9+/=]{20,})").unwrap()
+    });
 
-    for pattern in &ssh_patterns {
-        if let Some(re) = regex::Regex::new(pattern).ok() {
-            if let Some(caps) = re.captures(content) {
-                let key_type = caps.get(1).map(|m| m.as_str()).unwrap_or("ssh");
-                let key_part = caps.get(2).map(|m| m.as_str()).unwrap_or("");
-                if key_part.len() >= 20 {
-                    // Take first 16 chars of base64 as fingerprint
-                    let fingerprint: String = key_part.chars().take(16).collect();
-                    return Some(format!("{}:{}", key_type, fingerprint));
-                }
-            }
+    // Check standard SSH keys first
+    if let Some(caps) = SSH_KEY_RE.captures(content) {
+        let key_type = caps.get(1).map(|m| m.as_str()).unwrap_or("ssh");
+        let key_part = caps.get(2).map(|m| m.as_str()).unwrap_or("");
+        if key_part.len() >= 20 {
+            // Take first 16 chars of base64 as fingerprint
+            let fingerprint: String = key_part.chars().take(16).collect();
+            return Some(format!("{}:{}", key_type, fingerprint));
+        }
+    }
+
+    // Check Ed25519 format
+    if let Some(caps) = ED25519_RE.captures(content) {
+        let key_part = caps.get(1).map(|m| m.as_str()).unwrap_or("");
+        if key_part.len() >= 20 {
+            let fingerprint: String = key_part.chars().take(16).collect();
+            return Some(format!("ed25519:{}", fingerprint));
         }
     }
 

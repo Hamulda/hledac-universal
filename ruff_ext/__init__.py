@@ -70,6 +70,12 @@ BANNED_ROOTS: frozenset[str] = frozenset({
     "graph",
     "prefilt",
     "hledac",
+    # Also banned: core/utils/recon/fetching/rl — dual-load with hledac.universal.*
+    "core",
+    "utils",
+    "recon",
+    "fetching",
+    "rl",
 })
 
 # Allowed import roots (stdlib, test frameworks, internal)
@@ -117,6 +123,12 @@ LEGACY_BARE_REMAP: dict[str, str] = {
     "graph": "hledac.universal.graph",
     "prefilt": "hledac.universal.prefilt",
     "hledac": "hledac.universal.hledac",
+    # Also banned: core/utils/recon/fetching/rl — dual-load with hledac.universal.*
+    "core": "hledac.universal.core",
+    "utils": "hledac.universal.utils",
+    "recon": "hledac.universal.recon",
+    "fetching": "hledac.universal.fetching",
+    "rl": "hledac.universal.rl",
 }
 
 

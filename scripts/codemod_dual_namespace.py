@@ -43,8 +43,8 @@ BANNED: frozenset[str] = frozenset({
     "prefetch", "cli", "tools", "discovery", "federated", "security",
     "infrastructure", "memory", "multimodal", "monitoring", "graph",
     "prefilt", "hledac",
-    # Also add core/utils/recon/fetching (create dual-load with hledac.universal.*)
-    "core", "utils", "recon", "fetching",
+    # Also add core/utils/recon/fetching/rl (create dual-load with hledac.universal.*)
+    "core", "utils", "recon", "fetching", "rl",
 })
 
 # Stdlib / test packages allowed as bare imports

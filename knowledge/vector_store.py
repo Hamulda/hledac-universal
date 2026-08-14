@@ -21,7 +21,7 @@ import logging
 from pathlib import Path
 import numpy as np
 
-from utils._patterns import CloseMethodDescriptor  # F320-REFACTOR-2
+from hledac.universal.utils._patterns import CloseMethodDescriptor  # F320-REFACTOR-2
 
 logger = logging.getLogger(__name__)
 _LANCEDB_ROOT = Path.home() / '.hledac' / 'lancedb'

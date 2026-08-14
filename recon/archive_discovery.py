@@ -59,11 +59,8 @@ from urllib.parse import quote, urlparse
 import httpx
 from hledac.universal.transport.session_pool import session_pool
 from operator import attrgetter, itemgetter
-try:
-    from bs4 import BeautifulSoup
-    BS4_AVAILABLE = True
-except ImportError:
-    BS4_AVAILABLE = False
+
+# G1 FIX: beautifulsoup4 REMOVED — selectolax is primary, regex fallback
 SELECTOLAX_AVAILABLE = False
 try:
     from selectolax.parser import HTMLParser as _SelectoLAXParser
@@ -319,7 +316,8 @@ class ArchiveTodayClient:
             search_url = f'{self.BASE_URL}/search/?q={quote(url)}'
             async with self.session.get(search_url, timeout=httpx.Timeout(total=self.timeout)) as response:
                 if response.status == 200:
-                    html = await response.text()
+                    # NEW-MEM-002: Use capped read for archive search (HTML pages, cap for safety)
+                    html = await _read_text_with_cap(response)
                     return self._parse_search_results(html, url)
                 else:
                     return []
@@ -585,7 +583,8 @@ class ArchiveResurrector:
                 params['to'] = (target_date + timedelta(days=30)).strftime('%Y%m%d')
             async with self._session.get(self.WAYBACK_CDX_URL, params=params) as resp:
                 if resp.status == 200:
-                    data = await resp.text()
+                    # NEW-MEM-002: Use capped read for CDX API (typically small, but cap for safety)
+                    data = await _read_text_with_cap(resp, cap=1024 * 1024)  # 1MB cap for CDX
                     lines = data.strip().split('\n')
                     if len(lines) > 1:
                         for line in lines[1:]:
@@ -682,7 +681,8 @@ class ArchiveResurrector:
             async with self._session.get(snapshot.archived_url) as resp:
                 if resp.status != 200:
                     return None
-                content = await resp.text()
+                # NEW-MEM-002: Use capped read for M1 8GB safety
+                content = await _read_text_with_cap(resp)
                 if len(content) < 100:
                     return None
                 if self._is_error_page(content):
@@ -1065,7 +1065,8 @@ async def query_common_crawl(domain: str, limit: int=10) -> list[CommonCrawlSnap
                 params = {'url': f'*.{domain}', 'output': 'json', 'limit': limit, 'fl': 'url,timestamp,status,length,offset'}
                 async with session.get(cdo, params=params, timeout=httpx.Timeout(total=30)) as resp:
                     if resp.status == 200:
-                        text = await resp.text()
+                        # NEW-MEM-002: Use capped read for CommonCrawl CDX (small lines, cap for safety)
+                        text = await _read_text_with_cap(resp, cap=512 * 1024)  # 512KB cap
                         for line in text.strip().split('\n'):
                             try:
                                 rec = _msgspec_loads(line)
@@ -1242,7 +1243,8 @@ class WaybackCDX:
         try:
             async with session.get(cdo, params=params, timeout=httpx.Timeout(total=30)) as resp:
                 if resp.status == 200:
-                    text = await resp.text()
+                    # NEW-MEM-002: Use capped read for CommonCrawl response
+                    text = await _read_text_with_cap(resp, cap=512 * 1024)  # 512KB cap
                     for line in text.strip().split('\n'):
                         try:
                             rec = _msgspec_loads(line)

@@ -554,6 +554,22 @@ def _make_ml_array(data_list: list, length: int=64):
         arr.setObject_atIndexedSubscript_(ns_arr[i], i)
     return arr
 
+def _make_ml_array_batch(np_array: np.ndarray) -> Any:
+    """Create MLMultiArray with shape [batch, seq_len] from NumPy array.
+    
+    F4 FIX: Batch CoreML inference — one ANE dispatch for N texts.
+    Uses vectorized ctypes.memmove for fast memory transfer.
+    """
+    batch, seq_len = np_array.shape
+    arr, err = _CoreML.MLMultiArray.alloc().initWithShape_dataType_error_([batch, seq_len], _CoreML.MLMultiArrayDataTypeInt32, None)
+    if err:
+        raise RuntimeError(f'MLMultiArray batch init failed: {err}')
+    # Vectorized fill — much faster than per-element loop
+    arr_data_ptr = arr.dataPointer()
+    np_array_flat = np_array.flatten().astype(np.int32)
+    ctypes.memmove(arr_data_ptr, np_array_flat.ctypes.data_as(ctypes.POINTER(ctypes.c_int32)), batch * seq_len * 4)
+    return arr
+
 def _coreml_embed(model, text: str) -> np.ndarray:
     tok = _get_hf_tokenizer()
     tokens = tok(text[:256], return_tensors='np', padding='max_length', max_length=64, truncation=True)
@@ -571,6 +587,68 @@ def _coreml_embed(model, text: str) -> np.ndarray:
     norm = np.linalg.norm(vec)
     return vec / norm if norm > 0 else vec
 
+def _coreml_embed_batch(model, texts: list[str], hidden_dim: int=384) -> np.ndarray:
+    """Batch CoreML embedding — F4 FIX: one ANE dispatch for N texts.
+    
+    Uses MLDictionaryFeatureProvider with batched [N, 64] MLMultiArray tensors.
+    Single ANE dispatch instead of N sequential calls — significant speedup on ANE.
+    
+    CoreML's predictionFromFeatures_error_ accepts MLDictionaryFeatureProvider
+    with MLMultiArray values where the first dimension represents the batch.
+    This allows ANE to process the entire batch in one hardware dispatch.
+    
+    Args:
+        model: CoreML model instance
+        texts: List of text strings to embed
+        hidden_dim: Embedding dimension (default 384)
+    
+    Returns:
+        np.ndarray shape (N, hidden_dim), L2 normalized
+    """
+    if not texts:
+        return np.zeros((0, hidden_dim), dtype=np.float32)
+    
+    tok = _get_hf_tokenizer()
+    # Batch tokenization — HuggingFace handles batching efficiently
+    tokens = tok(texts, return_tensors='np', padding='max_length', max_length=64, truncation=True)
+    input_ids = tokens['input_ids']  # shape: [batch, 64]
+    attn_mask = tokens['attention_mask']  # shape: [batch, 64]
+    batch_size = len(texts)
+    
+    # Create batched MLMultiArrays [batch, 64]
+    input_ids_ml = _make_ml_array_batch(input_ids)
+    attn_mask_ml = _make_ml_array_batch(attn_mask)
+    
+    # MLDictionaryFeatureProvider with batched MLMultiArray values
+    # CoreML interprets [N, 64] tensors as N independent sequences
+    arr_dict = _Foundation.NSMutableDictionary.alloc().init()
+    arr_dict.setObject_forKey_(input_ids_ml, _Foundation.NSString.stringWithString_('input_ids'))
+    arr_dict.setObject_forKey_(attn_mask_ml, _Foundation.NSString.stringWithString_('attention_mask'))
+    
+    provider, err = _CoreML.MLDictionaryFeatureProvider.alloc().initWithDictionary_error_(arr_dict, None)
+    if err:
+        raise RuntimeError(f'Batch feature provider failed: {err}')
+    
+    # F4 FIX: Single ANE inference call for entire batch (one dispatch vs N)
+    result, err = model.predictionFromFeatures_error_(provider, None)
+    if err:
+        raise RuntimeError(f'Batch inference failed: {err}')
+    
+    # Extract batched output [batch, hidden_dim]
+    vec_raw = result.featureValueForName_('var_570').multiArrayValue()
+    vec_data_ptr = vec_raw.dataPointer()
+    
+    # Efficient NumPy copy from MLMultiArray using ctypes.memmove (vectorized)
+    result_np = np.zeros((batch_size, hidden_dim), dtype=np.float32)
+    ctypes.memmove(result_np.ctypes.data_as(ctypes.POINTER(ctypes.c_float)), vec_data_ptr, batch_size * hidden_dim * 4)
+    
+    # L2 normalize each embedding
+    norms = np.linalg.norm(result_np, axis=1, keepdims=True)
+    norms = np.maximum(norms, 1e-09)
+    result_np = result_np / norms
+    
+    return result_np
+
 class ANEEmbedder:
     """
     Embedder, který se pokusí použít ANE (přes CoreML) a pokud není k dispozici,
@@ -580,7 +658,14 @@ class ANEEmbedder:
     """
     __slots__ = tuple(('_fallback_embedder', '_last_load_error', '_loaded', '_mlx_model', '_mlx_processor', 'coreml_path', 'hidden_dim', 'model', 'model_name', '_ane_mutex_acquired'))
 
-    def __init__(self, model_name: str='modernbert', hidden_dim: int=768):
+    # Model constants for AllMiniLML6V2 CoreML embedder
+    # AllMiniLM-L6-v2: 384 dimensions (not 768 like ModernBERT)
+    _DEFAULT_HIDDEN_DIM: int = 384
+    _DEFAULT_MODEL_NAME: str = 'AllMiniLML6V2'
+    # CoreML model filename (may differ from model_name for legacy compatibility)
+    _COREML_MODEL_FILENAME: str = 'AllMiniLML6V2.mlmodelc'
+
+    def __init__(self, model_name: str=_DEFAULT_MODEL_NAME, hidden_dim: int=_DEFAULT_HIDDEN_DIM):
         self.model_name = model_name
         self.hidden_dim = hidden_dim
         self.model = None
@@ -588,7 +673,8 @@ class ANEEmbedder:
         self._mlx_processor = None
         self._loaded = False
         self._last_load_error: str | None = None
-        self.coreml_path = MODELS_DIR / f'{model_name}_ane.mlpackage'
+        # Use actual CoreML model filename for legacy compatibility
+        self.coreml_path = MODELS_DIR / self._COREML_MODEL_FILENAME
         self._fallback_embedder: Callable[..., Awaitable[np.ndarray]] | None = None
         self._ane_mutex_acquired = False  # P3-6 FIX: Track mutex ownership
 
@@ -722,8 +808,9 @@ class ANEEmbedder:
             # E-34: Count once per actual embed call (CoreML path)
             next(_ANE_COUNTER_ATTEMPTED)
 
+            # F4 FIX: Batch CoreML inference — one ANE dispatch for N texts
             def _run():
-                return np.array([_coreml_embed(self.model, t) for t in texts], dtype=np.float32)
+                return _coreml_embed_batch(self.model, texts, hidden_dim=self.hidden_dim)
             return await asyncio.to_thread(_run)
         if self._mlx_model is not None:
             # E-34: Count once per actual embed call (MLX path)

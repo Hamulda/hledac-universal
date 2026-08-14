@@ -14,7 +14,7 @@ under the 5.5 GiB soft ceiling. Having a single implementation ensures
 consistency when Metal memory pressure changes.
 
 Usage:
-    from brain.kv_cache_config import get_kv_cache_config
+    from hledac.universal.brain.kv_cache_config import get_kv_cache_config
 
     config = get_kv_cache_config(
         input_tokens=512,
@@ -156,7 +156,7 @@ class MetalProbe:
         active_bytes = 0
         try:
             # G2: Use centralized mlx_interface for consistency
-            from brain.mlx_interface import get_mlx
+            from hledac.universal.brain.mlx_interface import get_mlx
             mx = get_mlx()
             if hasattr(mx.metal, "get_active_memory"):
                 active_bytes = int(mx.metal.get_active_memory())

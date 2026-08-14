@@ -2,6 +2,19 @@
 Universal Intelligence Module — CAPABILITY FOREST, NOT PRODUCTION OWNER
 ======================================================================
 
+**STATUS: LEGACY MODULE (F350M-R)**
+
+Tento modul je LEGACY CAPABILITY FOREST — obsahuje volitelné schopnosti,
+které nejsou součástí produkčního orchestrátoru.
+
+**Production sprint path:** ``core.__main__:run_sprint()``
+**Canonical orchestrator:** ``runtime.scheduler_v2``
+
+**Migrace F350M-R:**
+- Windup fáze → ``runtime/scheduler_v2/acquisition.py::_run_windup_sequence()``
+- Winddown fáze → ``runtime/scheduler_v2/winddown.py::WinddownOrchestrator``
+- Acquisition fáze → ``runtime/scheduler_v2/acquisition.py::AcquisitionOrchestrator``
+
 .. availability_flags::
     ``_AVAILABLE`` flags in this module indicate import success, NOT production
     readiness or canonical wiring. A ``_AVAILABLE = True`` flag means the module
@@ -10,18 +23,12 @@ Universal Intelligence Module — CAPABILITY FOREST, NOT PRODUCTION OWNER
       - recommended for new development
       - free of import-time side-effects (torch, sklearn, networkx may load)
 
-    Production sprint path: ``core.__main__:run_sprint()``
-    Canonical orchestrator: ``runtime.sprint_scheduler:SprintScheduler``
-
-Integrated from deep_research:
-- Archive Discovery (Wayback, Archive.today, IPFS, GitHub)
-- Temporal Analysis (time-series, trend detection)
-- Stealth Crawler (DuckDuckGo/Google scraping)
-- Web Intelligence (unified platform)
+**LEGACY ALIAS:** ``intelligence`` je historický alias pro ``recon`` přes PEP 562 __getattr__.
+Nový kód by měl používat ``from recon import ...`` místo ``from intelligence import ...``.
 
 Sprint F-A2: lazy module loading via PEP 562 ``__getattr__``.
 Each optional subsystem defers its import until first attribute access.
-Cold ``import intelligence`` now only pays for the spec table (~5-10ms)
+Cold ``import recon`` now only pays for the spec table (~5-10ms)
 instead of all 21 try/except blocks (~200ms).
 """
 

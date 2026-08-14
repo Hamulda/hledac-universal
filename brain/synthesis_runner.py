@@ -1307,11 +1307,11 @@ class SynthesisRunner:
         Returns:
             (kv_bits, tier_name, (emergency_bytes, critical_bytes, warn_bytes))
         """
-        from brain.kv_cache_config import get_metal_probe
+        from hledac.universal.brain.kv_cache_config import get_metal_probe
 
         probe = get_metal_probe()
         result = probe.probe()
-        from brain.kv_cache_config import get_metal_tier_thresholds
+        from hledac.universal.brain.kv_cache_config import get_metal_tier_thresholds
 
         thresholds = get_metal_tier_thresholds()
 
@@ -1332,7 +1332,7 @@ class SynthesisRunner:
 
     def _get_adaptive_kv_bits(self) -> int:
         """G2: Delegates to brain.kv_cache_config.get_kv_cache_config()."""
-        from brain.kv_cache_config import get_kv_cache_config
+        from hledac.universal.brain.kv_cache_config import get_kv_cache_config
 
         config = get_kv_cache_config(kv_bits_override=self._kv_bits)
         return config.kv_bits
@@ -1347,7 +1347,7 @@ class SynthesisRunner:
 
         Single source of truth for KV cache sizing on M1 8GB.
         """
-        from brain.kv_cache_config import get_kv_cache_config
+        from hledac.universal.brain.kv_cache_config import get_kv_cache_config
 
         config = get_kv_cache_config(
             input_tokens=input_tokens,

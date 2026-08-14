@@ -1632,20 +1632,35 @@ class RAGEngine:
         for level in range(1, max_levels + 1):
             if len(current_level_embeddings) < 3:
                 break
+            # G2 FIX: scikit-learn is in [ml] extra. Without it, RAPTOR clustering
+            # falls back to simple binning (no ML-based clustering).
             try:
                 from sklearn.decomposition import PCA
                 pca = PCA(n_components=2)
                 reduced = pca.fit_transform(np.array(current_level_embeddings))
-            except Exception as e:
-                logger.warning(f'[RAPTOR] PCA failed at level {level}: {e}')
+            except ImportError as e:
+                # G2 FIX: Clear error message
+                if "sklearn" in str(e) or "scikit-learn" in str(e):
+                    logger.warning(
+                        f'[RAPTOR] PCA unavailable at level {level}: scikit-learn not installed. '
+                        f'Install with: pip install hledac-universal[ml]'
+                    )
+                else:
+                    logger.warning(f'[RAPTOR] PCA failed at level {level}: {e}')
                 break
             n_clusters = max(2, min(8, len(current_level_embeddings) // 3))
             try:
                 from sklearn.mixture import GaussianMixture
                 gm = GaussianMixture(n_components=n_clusters, random_state=42, max_iter=50)
                 cluster_labels = gm.fit_predict(reduced)
-            except Exception as e:
-                logger.warning(f'[RAPTOR] GMM failed at level {level}: {e}')
+            except ImportError as e:
+                if "sklearn" in str(e) or "scikit-learn" in str(e):
+                    logger.warning(
+                        f'[RAPTOR] GaussianMixture unavailable at level {level}: scikit-learn not installed. '
+                        f'Install with: pip install hledac-universal[ml]'
+                    )
+                else:
+                    logger.warning(f'[RAPTOR] GMM failed at level {level}: {e}')
                 break
             prev_level_node_ids = [nid for nid, n in nodes.items() if n.level == level - 1]
             new_texts: list[str] = []

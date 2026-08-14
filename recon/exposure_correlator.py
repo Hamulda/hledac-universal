@@ -228,19 +228,12 @@ def _detect_open_buckets(entity_name: str) -> list[dict]:
     Sync wrapper for bucket enumeration.
 
     Returns list of bucket findings (sync, for integration with existing pipeline).
-    Uses get_running_loop + run_until_complete, falls back to new_event_loop only
-    when no loop is running (GHOST_INVARIANTS compliant).
+    SCAVENGER-FIX: Uses run_sync_async() instead of get_running_loop + run_until_complete.
+    run_sync_async() uses asyncio.Runner() (PEP 654) for Python 3.11+ and handles
+    both running and non-running event loop cases.
     """
-    import asyncio
-    try:
-        loop = asyncio.get_running_loop()
-        return loop.run_until_complete(_detect_open_buckets_async(entity_name))
-    except RuntimeError:
-        loop = asyncio.new_event_loop()
-        try:
-            return loop.run_until_complete(_detect_open_buckets_async(entity_name))
-        finally:
-            loop.close()
+    from hledac.universal.utils.sync_bridge import run_sync_async
+    return run_sync_async(_detect_open_buckets_async(entity_name))
 
 async def _resolve_cname_chain(resolver: PassiveDNSResolver, subdomain: str, max_depth: int=3) -> list[str]:
     """
@@ -306,19 +299,12 @@ def _detect_subdomain_takeover(subdomains: list[str]) -> list[dict]:
     Sync wrapper for subdomain takeover detection.
 
     Returns list of takeover findings.
-    Uses get_running_loop + run_until_complete, falls back to new_event_loop only
-    when no loop is running (GHOST_INVARIANTS compliant).
+    SCAVENGER-FIX: Uses run_sync_async() instead of get_running_loop + run_until_complete.
+    run_sync_async() uses asyncio.Runner() (PEP 654) for Python 3.11+ and handles
+    both running and non-running event loop cases.
     """
-    import asyncio
-    try:
-        loop = asyncio.get_running_loop()
-        return loop.run_until_complete(_detect_subdomain_takeover_async(subdomains))
-    except RuntimeError:
-        loop = asyncio.new_event_loop()
-        try:
-            return loop.run_until_complete(_detect_subdomain_takeover_async(subdomains))
-        finally:
-            loop.close()
+    from hledac.universal.utils.sync_bridge import run_sync_async
+    return run_sync_async(_detect_subdomain_takeover_async(subdomains))
 
 def _is_generic_hosting_jarm(jarm_hash: str) -> bool:
     """
@@ -360,6 +346,9 @@ def scan_open_storage(domains: list[str]) -> list[OpenStorageResult]:
 
     Returns list of OpenStorageResult for buckets returning HTTP 200.
     Fail-soft: returns [] on any error.
+    SCAVENGER-FIX: Uses run_sync_async() instead of new_event_loop/run_until_complete.
+    run_sync_async() uses asyncio.Runner() (PEP 654) for Python 3.11+ and handles
+    both running and non-running event loop cases.
     """
     try:
         from hledac.universal.network.open_storage_scanner import _OpenStorageScanner
@@ -372,11 +361,8 @@ def scan_open_storage(domains: list[str]) -> list[OpenStorageResult]:
         tasks = [scanner.scan_domain(d) for d in domains]
         return await parallel_ok(*tasks, label='exposure_correlator:562')
     try:
-        loop = asyncio.new_event_loop()
-        try:
-            scan_results = loop.run_until_complete(_scan_all())
-        finally:
-            loop.close()
+        from hledac.universal.utils.sync_bridge import run_sync_async
+        scan_results = run_sync_async(_scan_all())
     except Exception:
         return []
     for scan_result in scan_results:

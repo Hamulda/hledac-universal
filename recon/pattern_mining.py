@@ -56,12 +56,16 @@ from typing import Any
 import numpy as np
 from operator import attrgetter, itemgetter
 logger = logging.getLogger(__name__)
-try:
-    import mlx.core as mx
-    MLX_AVAILABLE = True
-except ImportError:
-    MLX_AVAILABLE = False
-    mx = None
+
+# C1-X FIX: Import MLX_AVAILABLE from SSOT (zero-import detection)
+from hledac.universal.utils.mlx_memory import MLX_AVAILABLE
+
+# Lazy accessor for mlx.core — uses centralized get_mx() from SSOT
+def _get_mx():
+    """Lazy accessor for mlx.core — uses centralized get_mx() from SSOT."""
+    from hledac.universal.utils.mlx_memory._core import get_mx as _get_mx_from_core
+    return _get_mx_from_core()
+
 _MAMBA_AVAILABLE = False
 _MAMBA_MODEL = None
 _MAMBA_TOKENIZER = None

@@ -20,7 +20,8 @@
 use pyo3::prelude::*;
 use pyo3::types::{PyList, PyTuple};
 use rayon::iter::{IntoParallelRefIterator, ParallelIterator};
-use regex_automata::{Regex, PatternID};
+use regex_automata::meta::Regex;
+use regex_automata::PatternID;
 use std::collections::HashSet;
 
 use crate::gil::release_gil;
@@ -245,7 +246,7 @@ fn build_ioc_regex_set() -> Result<(Regex, usize), String> {
         .collect::<Vec<_>>()
         .join("|");
 
-    let regex = Regex::new(&combined_pattern, Syntax::default()).map_err(|e| {
+    let regex = Regex::new(&combined_pattern).map_err(|e| {
         eprintln!("[ioc_extract_fast] Regex::new failed: {}", e);
         format!("Regex build error: {}", e)
     })?;
@@ -305,39 +306,44 @@ pub fn extract_iocs_from_text(text: &str) -> Vec<(String, String)> {
         IocType::EthAddr,
     ];
 
-    // Iterate all matches and check which capture group matched
-    for m in regex.find_iter(text) {
-        // regex_automata uses PatternID in matches, but with alternation we need to check groups
-        // The alternation pattern creates capture groups 1, 2, 3, etc. for each alternative
-        // We check which group has a match
-        for group_idx in 1..=pattern_count {
-            if let Some(caps) = m.get_group(group_idx) {
-                let value = caps.as_str();
-                if value.is_empty() {
-                    continue;
-                }
-                let pattern_idx = group_idx - 1;
-                if pattern_idx >= ioc_types.len() {
-                    continue;
-                }
-                let ioc_type = &ioc_types[pattern_idx];
+    // Iterate all matches using captures_iter to get pattern info
+    for caps in regex.captures_iter(text) {
+        // Get the matched pattern using pattern() which returns PatternID
+        let m = match caps.get_match() {
+            Some(m) => m,
+            None => continue,
+        };
+        
+        // Get pattern ID to determine which IOC type matched
+        let pattern_id = m.pattern();
+        let pattern_idx = pattern_id.as_usize();
+        
+        if pattern_idx >= ioc_types.len() {
+            continue;
+        }
+        
+        let ioc_type = &ioc_types[pattern_idx];
+        
+        // Extract the matched string from haystack
+        let value = &text[m.start()..m.end()];
+        if value.is_empty() {
+            continue;
+        }
 
-                // FIX Issue #8: Validate hash matches to prevent false positives.
-                if ioc_type.is_hash() && !is_valid_hex_hash(value, *ioc_type) {
-                    continue;
-                }
-                // Issue #15: entropy filter for hex hashes
-                if ioc_type.needs_entropy_filter() && !has_sufficient_entropy(value) {
-                    continue;
-                }
-                if seen.insert(value.to_string()) {
-                    let normalized = match ioc_type {
-                        IocType::Domain | IocType::Email => value.to_lowercase(),
-                        _ => value.to_string(),
-                    };
-                    results.push((normalized, ioc_type.as_str().to_string()));
-                }
-            }
+        // FIX Issue #8: Validate hash matches to prevent false positives.
+        if ioc_type.is_hash() && !is_valid_hex_hash(value, *ioc_type) {
+            continue;
+        }
+        // Issue #15: entropy filter for hex hashes
+        if ioc_type.needs_entropy_filter() && !has_sufficient_entropy(value) {
+            continue;
+        }
+        if seen.insert(value.to_string()) {
+            let normalized = match ioc_type {
+                IocType::Domain | IocType::Email => value.to_lowercase(),
+                _ => value.to_string(),
+            };
+            results.push((normalized, ioc_type.as_str().to_string()));
         }
     }
 
@@ -393,36 +399,44 @@ pub fn extract_structured_entities(text: &str) -> Vec<(usize, usize, String, Str
         IocType::EthAddr,
     ];
 
-    // Iterate all matches and check which capture group matched
-    for m in regex.find_iter(text) {
-        for group_idx in 1..=pattern_count {
-            if let Some(caps) = m.get_group(group_idx) {
-                let value = caps.as_str();
-                if value.is_empty() {
-                    continue;
-                }
-                let start = caps.start();
-                let end = caps.end();
-                let pattern_idx = group_idx - 1;
-                if pattern_idx >= ioc_types.len() {
-                    continue;
-                }
-                let ioc_type = &ioc_types[pattern_idx];
+    // Iterate all matches using captures_iter to get pattern info
+    for caps in regex.captures_iter(text) {
+        // Get the matched pattern using pattern() which returns PatternID
+        let m = match caps.get_match() {
+            Some(m) => m,
+            None => continue,
+        };
+        
+        // Get pattern ID to determine which IOC type matched
+        let pattern_id = m.pattern();
+        let pattern_idx = pattern_id.as_usize();
+        
+        if pattern_idx >= ioc_types.len() {
+            continue;
+        }
+        
+        let ioc_type = &ioc_types[pattern_idx];
+        
+        // Extract the matched string from haystack
+        let value = &text[m.start()..m.end()];
+        if value.is_empty() {
+            continue;
+        }
+        let start = m.start();
+        let end = m.end();
 
-                // Validate hashes
-                if ioc_type.is_hash() && !is_valid_hex_hash(value, *ioc_type) {
-                    continue;
-                }
-                if ioc_type.needs_entropy_filter() && !has_sufficient_entropy(value) {
-                    continue;
-                }
+        // Validate hashes
+        if ioc_type.is_hash() && !is_valid_hex_hash(value, *ioc_type) {
+            continue;
+        }
+        if ioc_type.needs_entropy_filter() && !has_sufficient_entropy(value) {
+            continue;
+        }
 
-                let label = ioc_type.as_str();
-                let key = (label.to_string(), value.to_string());
-                if seen.insert(key) {
-                    results.push((start, end, value.to_string(), label.to_string()));
-                }
-            }
+        let label = ioc_type.as_str();
+        let key = (label.to_string(), value.to_string());
+        if seen.insert(key) {
+            results.push((start, end, value.to_string(), label.to_string()));
         }
     }
 

@@ -44,7 +44,7 @@ from urllib.parse import urlparse
 
 from hledac.universal.core.constants import M1_BOUNDS
 from hledac.universal.core.env_config import ENV
-from hledac.universal.utils.asyncx import safe_create_task, parallel
+from hledac.universal.utils.asyncx import safe_create_task, safe_wait_for, parallel
 
 if __name__ == '__main__':
     import sys
@@ -519,7 +519,7 @@ async def fetch_via_unified_with_race_fallback(
 
     async def _try_fallback(name: str, fb_policy: TransportPolicy) -> dict[str, Any] | None:
         try:
-            fb_result = await asyncio.wait_for(
+            fb_result = await safe_wait_for(
                 fetch_via_unified(
                     url, policy=fb_policy, headers=headers,
                     timeout_s=race_timeout, max_bytes=max_bytes,

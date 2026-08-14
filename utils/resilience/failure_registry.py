@@ -40,7 +40,9 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any, AsyncGenerator, Optional
 
-from utils.resilience.degradation_modes import (
+from hledac.universal.utils.asyncx import safe_create_task
+
+from hledac.universal.utils.resilience.degradation_modes import (
     DegradationState,
     DegradedMode,
     DegradationThresholds,
@@ -330,21 +332,15 @@ class SprintHealthLedger:
     def _on_failure(self, entry: FailureEntry) -> None:
         """Handle failure - update degradation mode.
         
-        Uses fire-and-forget task with error callback to avoid compounding errors.
+        Uses safe_create_task with automatic error logging to avoid compounding errors.
         """
         try:
             loop = asyncio.get_running_loop()
-            # We have a running loop - create task
-            task = asyncio.create_task(
-                self._degradation_state.record_failure(entry.severity)
+            # We have a running loop - create task with safe wrapper
+            safe_create_task(
+                self._degradation_state.record_failure(entry.severity),
+                name="failure_registry:degradation",
             )
-            
-            def _log_on_error(t: asyncio.Task) -> None:
-                try:
-                    t.result()
-                except Exception as e:
-                    logger.debug("[DEGRADATION] Failed to record failure: %s", e)
-            task.add_done_callback(_log_on_error)
         except RuntimeError:
             # No running loop - degrade gracefully (failure won't affect degradation state)
             logger.debug(

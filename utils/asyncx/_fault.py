@@ -53,7 +53,7 @@ def _get_resilience():
     global _RESILIENCE_MODULE
     if _RESILIENCE_MODULE is None:
         try:
-            from utils.resilience import (
+            from hledac.universal.utils.resilience import (
                 FailureRegistry,
                 FailureSeverity,
                 get_ledger,

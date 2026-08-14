@@ -17,7 +17,7 @@ Architecture (M1 8GB Optimized):
 Cutoff Date: 2026-08-11 (historical extraction)
 
 Usage:
-    from recon.ct_slicing_engine import CTSlicingEngine
+    from hledac.universal.recon.ct_slicing_engine import CTSlicingEngine
     
     engine = CTSlicingEngine(watch_domains=['example.com'])
     await engine.start()

@@ -10,20 +10,20 @@ Enhanced version of silent_except_helper with:
 Usage (3 modern styles):
 
     # 1. Context manager with severity
-    from utils.silent_except_v2 import silenced, Severity
+    from hledac.universal.utils.silent_except_v2 import silenced, Severity
 
     with silenced(OSError, name="cleanup_lock", severity=Severity.P2_WARNING):
         cleanup_stale_lock()
 
     # 2. Function-level severity decorator
-    from utils.silent_except_v2 import silence_with_severity
+    from hledac.universal.utils.silent_except_v2 import silence_with_severity
 
     @silence_with_severity(ValueError, Severity.P2_WARNING, name="parse_legacy")
     def parse_legacy(raw: str) -> dict | None:
         return json.loads(raw)["field"]
 
     # 3. Direct severity logging
-    from utils.silent_except_v2 import severity_swallow
+    from hledac.universal.utils.silent_except_v2 import severity_swallow
 
     try:
         risky_op()
@@ -55,7 +55,7 @@ from contextlib import contextmanager
 from dataclasses import dataclass
 from typing import ParamSpec, TypeVar
 
-from utils.exception_severity import (
+from hledac.universal.utils.exception_severity import (
     Severity,
     ExceptionEvent,
     exc_event,
@@ -210,7 +210,7 @@ def silenced(
 
     Usage::
 
-        from utils.silent_except_v2 import silenced, Severity
+        from hledac.universal.utils.silent_except_v2 import silenced, Severity
 
         with silenced(OSError, asyncio.CancelledError,
                       name="cleanup_lock", severity=Severity.P2_WARNING):
@@ -265,7 +265,7 @@ def silence_with_severity(
 
     Usage::
 
-        from utils.silent_except_v2 import silence_with_severity, Severity
+        from hledac.universal.utils.silent_except_v2 import silence_with_severity, Severity
 
         @silence_with_severity(ValueError, Severity.P2_WARNING, name="parse_legacy")
         def parse_legacy(raw: str) -> dict | None:
@@ -320,7 +320,7 @@ def severity_swallow(
 
     Usage::
 
-        from utils.silent_except_v2 import severity_swallow, Severity
+        from hledac.universal.utils.silent_except_v2 import severity_swallow, Severity
 
         try:
             risky_op()
@@ -375,7 +375,7 @@ def safe_swallow(
       CRITICAL → P0_CRITICAL
 
     Usage (legacy style):
-        from utils.silent_except_helper import safe_swallow
+        from hledac.universal.utils.silent_except_helper import safe_swallow
 
         try:
             risky_op()

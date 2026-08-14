@@ -5,15 +5,23 @@ Extrahováno z __main__.py WINDUP sekce.
 Dedup, GNN inference, ANE semantic dedup, MoE synthesis,
 hypothesis enqueue, DuckPGQ checkpoint, scorecard.
 
-**VERDICT: DORMANT (donor/alternate)** — 2026-04-27, F206B
+======================================================================
+DEPRECATED — Replaced by runtime/scheduler_v2/acquisition.py:_run_windup_sequence()
+======================================================================
 
-DORMANT / ALTERNATE PATH (Sprint 8F7)
-======================================
-run_windup() je DORMANT — definovaná ale NIKDY nevolaná v produkci.
-Active runtime path je __main__._windup_synthesis().
+Tento modul je DEPRECATED od Sprint F350M-R (2026-08).
+Aktivní implementace windup fáze je nyní v:
+    runtime/scheduler_v2/acquisition.py::AcquisitionOrchestrator._run_windup_sequence()
 
-Tento modul je ponechán jako donor/alternate pro případné budoucí použití.
-NEPOUŽÍVÁ se v aktuálním produkčním běhu.
+run_windup() je zachována POUZE pro zpětnou kompatibilitu testů.
+Nepoužívejte v novém kódu.
+
+Kanonická produkční cesta:
+    core.__main__:run_sprint() → SprintSchedulerV2.run()
+    → AcquisitionOrchestrator.run() → _run_windup_sequence()
+
+DORMANT PATH (pro back-compat testy):
+    tests/test_e2e_dry_run.py:51 — stále volá run_windup() přímo
 """
 
 

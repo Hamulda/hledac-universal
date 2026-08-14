@@ -28,6 +28,8 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any, Callable, Optional, TypeVar
 
+from hledac.universal.utils.asyncx import safe_create_task
+
 logger = logging.getLogger(__name__)
 
 T = TypeVar("T")
@@ -324,21 +326,17 @@ class CircuitBreaker:
 
             # Record to registry if available
             try:
-                from utils.resilience import FailureRegistry, FailureSeverity, get_ledger
+                from hledac.universal.utils.resilience import FailureRegistry, FailureSeverity, get_ledger
                 ledger = get_ledger()
-                task = asyncio.create_task(ledger.record_failure(
-                    component=context["component"],
-                    severity=FailureSeverity(self._get_severity_from_state()),
-                    error=e,
-                    context={"circuit": self.name, "state": self._state.value},
-                ))
-                # Best-effort: add done callback to log if recording fails
-                def _log_on_error(t: asyncio.Task) -> None:
-                    try:
-                        t.result()
-                    except Exception as recorded_exc:
-                        logger.warning("[CIRCUIT] Failed to record failure: %s", recorded_exc)
-                task.add_done_callback(_log_on_error)
+                safe_create_task(
+                    ledger.record_failure(
+                        component=context["component"],
+                        severity=FailureSeverity(self._get_severity_from_state()),
+                        error=e,
+                        context={"circuit": self.name, "state": self._state.value},
+                    ),
+                    name=f"circuit_breaker:failure:{self.name}",
+                )
             except Exception:
                 pass
 

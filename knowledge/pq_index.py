@@ -13,18 +13,20 @@ ROLE: Compression/Acceleration Layer (NOT retrieval authority)
 
 
 import logging
+from typing import Any
 
 import numpy as np
 
 logger = logging.getLogger(__name__)
 
-# MLX import s fallback
-try:
-    import mlx.core as mx
-    MLX_AVAILABLE = True
-except ImportError:
-    MLX_AVAILABLE = False
-    mx = None
+# C1-X FIX: Import MLX_AVAILABLE from SSOT (zero-import detection)
+from hledac.universal.utils.mlx_memory import MLX_AVAILABLE
+
+# Lazy accessor for mlx.core — uses centralized get_mx() from SSOT
+def _get_mx():
+    """Lazy accessor for mlx.core — uses centralized get_mx() from SSOT."""
+    from hledac.universal.utils.mlx_memory._core import get_mx as _get_mx_from_core
+    return _get_mx_from_core()
 
 
 class PQIndex:
@@ -37,7 +39,7 @@ class PQIndex:
         - 12× paměťová úspora (768 → 8 byte per vector)
     """
 
-    __slots__ = ('d', 'm', 'k', 'n_iter', 'sub_dim', 'centroids', 'codes', 'ids', 'perm', '_is_trained')
+    __slots__ = ('d', 'm', 'k', 'n_iter', 'sub_dim', 'centroids', 'codes', 'ids', 'perm', '_is_trained', '_mx')
 
     def __init__(self, d: int = 768, m: int = 96, k: int = 256, n_iter: int = 20):
         """
@@ -64,13 +66,17 @@ class PQIndex:
         self.perm: mx.array | None = None
         self._is_trained = False
 
-    def train(self, vectors: mx.array) -> None:
+    def train(self, vectors: Any) -> None:
         """
         Train PQ centroids using k-means on sub-vectors.
 
         Args:
             vectors: MLX array of shape (n, d)
         """
+        mx = _get_mx()
+        if mx is None:
+            raise RuntimeError("MLX not available for PQ training")
+        
         n = vectors.shape[0]
         logger.info(f"Starting PQ training on {n} vectors, {self.n_iter} iterations")
 
@@ -116,7 +122,7 @@ class PQIndex:
         self._is_trained = True
         logger.info("PQ training completed")
 
-    def encode(self, vectors: mx.array) -> mx.array:
+    def encode(self, vectors: Any) -> Any:
         """
         Encode vectors to PQ codes.
 
@@ -126,6 +132,10 @@ class PQIndex:
         Returns:
             MLX array of shape (n, m) with uint8 codes
         """
+        mx = _get_mx()
+        if mx is None:
+            raise RuntimeError("MLX not available for PQ encoding")
+        
         if not self._is_trained:
             raise RuntimeError("PQ index not trained. Call train() first.")
 
@@ -144,7 +154,7 @@ class PQIndex:
 
         return mx.stack(codes, axis=1)
 
-    def add(self, node_id: str, vector: mx.array) -> None:
+    def add(self, node_id: str, vector: Any) -> None:
         """
         Add a single vector to the index.
 
@@ -152,6 +162,10 @@ class PQIndex:
             node_id: Unique identifier for the vector
             vector: MLX array of shape (d,)
         """
+        mx = _get_mx()
+        if mx is None:
+            raise RuntimeError("MLX not available for PQ add")
+        
         if not self._is_trained:
             raise RuntimeError("PQ index not trained. Call train() first.")
 
@@ -164,7 +178,7 @@ class PQIndex:
             self.codes = mx.concatenate([self.codes, code[None, :]], axis=0)
             self.ids.append(node_id)
 
-    def search(self, query: mx.array, k: int = 10) -> list[tuple[str, float]]:
+    def search(self, query: Any, k: int = 10) -> list[tuple[str, float]]:
         """
         Search for k nearest neighbors.
 
@@ -178,6 +192,10 @@ class PQIndex:
         Returns:
             List of (id, similarity) tuples, sorted by similarity descending
         """
+        mx = _get_mx()
+        if mx is None:
+            raise RuntimeError("MLX not available for PQ search")
+        
         if self.codes is None or len(self.ids) == 0:
             return []
 
@@ -225,6 +243,10 @@ class PQIndex:
 
     def save(self, path: str) -> None:
         """Save PQ index to file."""
+        mx = _get_mx()
+        if mx is None:
+            raise RuntimeError("MLX not available for PQ save")
+        
         if not self._is_trained:
             raise RuntimeError("Cannot save untrained PQ index")
 
@@ -239,6 +261,10 @@ class PQIndex:
 
     def load(self, path: str) -> None:
         """Load PQ index from file."""
+        mx = _get_mx()
+        if mx is None:
+            raise RuntimeError("MLX not available for PQ load")
+        
         data = mx.load(path)
         self.centroids = data['centroids']
         self.codes = data['codes']

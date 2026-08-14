@@ -49,7 +49,7 @@ class CoordinatorComponents:
     backward compatibility with existing code.
 
     Usage:
-        from coordinators.components import (
+        from hledac.universal.coordinators.components import (
             OperationTracker,
             LoadFactorCalculator,
             MemoryPressureMonitor,

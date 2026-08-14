@@ -488,6 +488,14 @@ class OpsECCoordinator(UniversalCoordinator):
         BLITZ-12: When blitz mode is active (duration ≤ 30 min), the jitter
         sleep is skipped — the sprint is a one-shot burst where anti-correlation
         timing provides no value.
+
+        E1 FIX: Now uses canonical fetch_via_curl_cffi_cached from transport layer
+        instead of raw AsyncSession. This ensures:
+        - Fail-closed darknet guard (_route_tld_to_proxy)
+        - JA3/TLS fingerprint rotation
+        - Session reuse via LRU cache
+        - max_bytes cap for memory safety
+        - Proper proxy configuration for Tor/I2P
         """
         import asyncio
         start_time = time.time()
@@ -502,45 +510,105 @@ class OpsECCoordinator(UniversalCoordinator):
                     delay = _RNG.uniform(min_delay, max_delay)
                 delay = max(min_delay, min(delay, max_delay))
                 await asyncio.sleep(delay)
-            try:
-                from curl_cffi.requests import AsyncSession
-                async with AsyncSession(impersonate=impersonate) as session:
-                    if method.upper() == 'GET':
-                        resp = await session.get(url, headers=headers, **kwargs)
-                    elif method.upper() == 'POST':
-                        resp = await session.post(url, headers=headers, **kwargs)
-                    else:
-                        resp = await session.request(method, url, headers=headers, **kwargs)
-                    elapsed = time.time() - start_time
-                    return {
-                        'success': True,
-                        'url': url,
-                        'status_code': resp.status_code,
-                        'content': resp.text[:5000] if hasattr(resp, 'text') else '',
-                        'headers': dict(resp.headers) if hasattr(resp, 'headers') else {},
-                        'elapsed_seconds': elapsed,
-                        'jitter_delay': delay,
-                        'impersonate': impersonate,
-                        'method': 'curl_cffi',
-                    }
-            except ImportError:
 
-                from hledac.universal.network.session_runtime import async_get_httpx_session
-                session = await async_get_httpx_session()
-                async with session.request(method, url, headers=headers, **kwargs) as resp:
-                    content = resp.text
-                    elapsed = time.time() - start_time
-                    return {
-                        'success': True,
-                        'url': url,
-                        'status_code': resp.status_code,
-                        'content': content[:5000],
-                        'headers': dict(resp.headers),
-                        'elapsed_seconds': elapsed,
-                        'jitter_delay': delay,
-                        'impersonate': None,
-                        'method': 'httpx',
-                    }
+            # E1 FIX: Use canonical transport layer instead of raw AsyncSession
+            # This ensures fail-closed darknet guard, JA3 rotation, session reuse, max_bytes cap
+            
+            # E1 ENHANCEMENT: Auto-detect darknet TLDs and configure proxies
+            # This ensures fail-closed behavior - darknet URLs require proxy configuration
+            from hledac.universal.transport.curl_cffi_fetch import _DARKNET_TLDS
+            
+            def _get_darknet_proxy(url: str) -> dict[str, str] | None:
+                """Detect darknet TLD and return appropriate proxy config."""
+                try:
+                    from urllib.parse import urlparse
+                    parsed = urlparse(url)
+                    host = parsed.netloc.lower().split(":")[0]
+                except Exception:
+                    return None
+                
+                is_darknet = any(host.endswith(tld) for tld in _DARKNET_TLDS)
+                if is_darknet:
+                    # Import proxy URLs from canonical transport module
+                    from hledac.universal.transport.curl_cffi_fetch import (
+                        _TOR_CURL_PROXY, _I2P_CURL_PROXY,
+                    )
+                    if host.endswith('.onion') or host.endswith('.b32.i2p'):
+                        return {"http": _TOR_CURL_PROXY, "https": _TOR_CURL_PROXY}
+                    elif host.endswith('.i2p'):
+                        return {"http": _I2P_CURL_PROXY, "https": _I2P_CURL_PROXY}
+                return None
+            
+            proxies = _get_darknet_proxy(url)
+            
+            if method.upper() == 'GET':
+                # Use canonical fetch_via_curl_cffi_cached for GET requests
+                from hledac.universal.fetching.curl_cffi_fetch import (
+                    fetch_via_curl_cffi_cached,
+                )
+                fetch_kwargs = {
+                    'url': url,
+                    'headers': headers,
+                    'timeout_s': 10.0,  # Default timeout
+                    'max_bytes': 5_000_000,  # 5MB cap
+                    'profile': impersonate,
+                }
+                if proxies:
+                    fetch_kwargs['proxies'] = proxies
+                result = await fetch_via_curl_cffi_cached(**fetch_kwargs)
+                elapsed = time.time() - start_time
+                # Adapt return format to match original interface
+                content = result.get('content', b'')
+                if isinstance(content, bytes):
+                    content = content[:5000].decode('utf-8', errors='replace')
+                else:
+                    content = str(content)[:5000]
+                return {
+                    'success': result.get('success', False),
+                    'url': url,
+                    'status_code': result.get('status_code', 0),
+                    'content': content,
+                    'headers': result.get('headers', {}),
+                    'elapsed_seconds': elapsed,
+                    'jitter_delay': delay,
+                    'impersonate': impersonate,
+                    'method': 'curl_cffi_cached',
+                }
+            else:
+                # For POST and other methods, use fetch_via_curl_cffi_with_caps_check
+                # This still goes through the canonical layer but without caching
+                from hledac.universal.fetching.curl_cffi_fetch import (
+                    fetch_via_curl_cffi_with_caps_check,
+                )
+                fetch_kwargs = {
+                    'url': url,
+                    'headers': headers,
+                    'timeout_s': 10.0,
+                    'max_bytes': 5_000_000,
+                    'profile': impersonate,
+                }
+                if proxies:
+                    fetch_kwargs['proxies'] = proxies
+                result = await fetch_via_curl_cffi_with_caps_check(**fetch_kwargs)
+                if result is None:
+                    raise RuntimeError("curl_cffi not available via CAPS")
+                elapsed = time.time() - start_time
+                content = result.get('content', b'')
+                if isinstance(content, bytes):
+                    content = content[:5000].decode('utf-8', errors='replace')
+                else:
+                    content = str(content)[:5000]
+                return {
+                    'success': result.get('success', False),
+                    'url': url,
+                    'status_code': result.get('status_code', 0),
+                    'content': content,
+                    'headers': result.get('headers', {}),
+                    'elapsed_seconds': elapsed,
+                    'jitter_delay': delay,
+                    'impersonate': impersonate,
+                    'method': 'curl_cffi',
+                }
         except Exception as e:
             elapsed = time.time() - start_time
             logger.error(f'Stealth request failed for {url}: {e}')

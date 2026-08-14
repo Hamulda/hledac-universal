@@ -69,7 +69,7 @@ _Severity: type | None = None
 def _get_severity() -> type:
     global _Severity
     if _Severity is None:
-        from utils.exception_severity import Severity as _S
+        from hledac.universal.utils.exception_severity import Severity as _S
         _Severity = _S
     return _Severity
 
@@ -78,7 +78,7 @@ class _SeverityPlaceholder:
     pass
 
 if typing.TYPE_CHECKING:
-    from utils.exception_severity import Severity as SeverityLevel
+    from hledac.universal.utils.exception_severity import Severity as SeverityLevel
     from collections.abc import Sequence
 
 __all__ = [
@@ -205,15 +205,15 @@ class ExceptionPolicy:
 
         # Rate-limiting for P1-P4
         if severity_obj is not None:
-            from utils.silent_except_v2 import _get_bucket
+            from hledac.universal.utils.silent_except_v2 import _get_bucket
             bucket = _get_bucket(context or "unknown", severity_obj)
             if not bucket.try_acquire():
                 return  # Rate-limited, skip log
 
             # Record event for diagnostics
             try:
-                from utils.exception_diagnostics import get_diagnostics
-                from utils.exception_severity import ExceptionEvent
+                from hledac.universal.utils.exception_diagnostics import get_diagnostics
+                from hledac.universal.utils.exception_severity import ExceptionEvent
                 import time
                 import uuid
 

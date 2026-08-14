@@ -195,11 +195,15 @@ class StealthCrawler:
             pass
         else:
             raise TypeError(
-                "StealthCrawler.search() uses asyncio.run() internally and cannot "
+                "StealthCrawler.search() uses run_sync_async internally and cannot "
                 "be called from an async context. Use search_async() instead."
             )
         try:
-            return asyncio.run(self.search_async(query, num_results, source))
+            # SCAVENGER-FIX: Replace asyncio.run() with run_sync_async()
+            # run_sync_async() uses asyncio.Runner() (PEP 654) for Python 3.11+
+            # and handles both running and non-running event loop cases
+            from hledac.universal.utils.sync_bridge import run_sync_async
+            return run_sync_async(self.search_async(query, num_results, source))
         except Exception as e:
             logger.error(f"Stealth search failed: {e}")
             return []
@@ -746,11 +750,8 @@ def quick_scrape(url: str, **kwargs) -> ScrapingResult:
             "await scraper.scrape(url)' instead."
         )
     scraper = StealthWebScraper()
-    return asyncio.run(scrape_async_coro(scraper, url, **kwargs))
-
-
-async def scrape_async_coro(
-    scraper: StealthWebScraper, url: str, **kwargs
-) -> ScrapingResult:
-    """Async coroutine wrapper so asyncio.run() can call scrape()."""
-    return await scraper.scrape(url, **kwargs)
+    # SCAVENGER-FIX: Replace asyncio.run() with run_sync_async()
+    # run_sync_async() uses asyncio.Runner() (PEP 654) for Python 3.11+
+    # and handles both running and non-running event loop cases
+    from hledac.universal.utils.sync_bridge import run_sync_async
+    return run_sync_async(scraper.scrape(url, **kwargs))

@@ -15,7 +15,7 @@
 use aho_corasick::{AhoCorasick, AhoCorasickBuilder, AhoCorasickKind};
 use parking_lot::Mutex;
 use pyo3::prelude::*;
-use regex_automata::Regex;
+use regex_automata::meta::Regex;
 use std::collections::HashMap;
 
 /// Interned string store — Box::leak for 'static lifetime.

@@ -83,7 +83,7 @@ from hledac.universal.transport.circuit_breaker import CBState
 
 # Resilience: Sprint Health Ledger integration for failure visibility
 try:
-    from utils.resilience import (
+    from hledac.universal.utils.resilience import (
         SprintHealthLedger,
         get_ledger,
         FailureSeverity,
@@ -290,10 +290,7 @@ def _fail_soft(
         yield
     except asyncio.CancelledError:
         raise  # Never swallow CancelledError
-    except* error_types as e:  # Python 3.11+ exception groups
-        if logger is not None:
-            logger.debug(f"{message}: {e}")
-    except Exception as e:  # Python 3.10 fallback
+    except Exception as e:  # Catch regular exceptions
         if logger is not None:
             logger.debug(f"{message}: {e}")
 
@@ -324,9 +321,6 @@ def _safe_call(
                 return fn(*args, **kwargs)
             except asyncio.CancelledError:
                 raise
-            except* error_types as e:
-                if logger is not None:
-                    logger.debug(f"{fn.__name__} failed: {e}")
             except Exception as e:
                 if logger is not None:
                     logger.debug(f"{fn.__name__} failed: {e}")
@@ -499,6 +493,182 @@ def arrow_ipc_to_pa_table(
             "[MODERN-25-EXT] %s: IPC→table failed: %s", source, _exc
         )
         return None
+
+
+# ---------------------------------------------------------------------------
+# NEXTGEN-02: Arrow IPC Zero-Copy Mmap Path
+# ---------------------------------------------------------------------------
+
+# NEXTGEN-02: Arrow IPC mmap helpers for zero-copy DuckDB/MLX ingest.
+# Reads Arrow IPC data directly from mmap files produced by Rust build_arrow_batch_to_mmap().
+
+
+def arrow_ipc_from_mmap(
+    path: str | Path,
+    source: str = "mmap",
+) -> Any | None:
+    """
+    NEXTGEN-02: Read Arrow IPC RecordBatch directly from mmap file.
+
+    Zero-copy path: Python reads directly from mmap'd file via pa.ipc.open_file().
+    No intermediate PyBytes allocation.
+
+    Args:
+        path: Path to the Arrow IPC mmap file
+        source: Human-readable origin for log messages
+
+    Returns:
+        RecordBatch on success, None on any failure (fail-open).
+    """
+    import io as _io
+
+    # Lazy import to avoid pyarrow load overhead when not using Arrow path
+    try:
+        import pyarrow as _pa
+    except ImportError:  # noqa: BLE001
+        _logging.getLogger("duckdb_store").debug(
+            "[NEXTGEN-02] %s: PyArrow unavailable", source
+        )
+        return None
+
+    path_obj = Path(path) if isinstance(path, str) else path
+
+    if not path_obj.exists():
+        _logging.getLogger("duckdb_store").debug(
+            "[NEXTGEN-02] %s: mmap file not found: %s", source, path
+        )
+        return None
+
+    try:
+        # Read via mmap for zero-copy
+        with open(path_obj, "rb") as f:
+            # Memory-map the file for zero-copy access
+            import mmap
+            with mmap.mmap(f.fileno(), 0, access=mmap.ACCESS_READ) as mmapped:
+                reader = _pa.ipc.open_stream(_io.BytesIO(mmapped))
+                return reader.read_record_batch()
+    except StopIteration:  # Empty schema-only batch
+        _logging.getLogger("duckdb_store").debug(
+            "[NEXTGEN-02] %s: empty RecordBatch", source
+        )
+        return None
+    except Exception as _exc:  # noqa: BLE001
+        _logging.getLogger("duckdb_store").debug(
+            "[NEXTGEN-02] %s: mmap IPC read failed: %s", source, _exc
+        )
+        return None
+
+
+def arrow_ipc_table_from_mmap(
+    path: str | Path,
+    source: str = "mmap",
+) -> Any | None:
+    """
+    NEXTGEN-02: Read Arrow IPC Table directly from mmap file.
+
+    Zero-copy path: reads full table from mmap'd file.
+
+    Args:
+        path: Path to the Arrow IPC mmap file
+        source: Human-readable origin for log messages
+
+    Returns:
+        Table on success, None on any failure (fail-open).
+    """
+    import io as _io
+
+    try:
+        import pyarrow as _pa
+    except ImportError:  # noqa: BLE001
+        _logging.getLogger("duckdb_store").debug(
+            "[NEXTGEN-02] %s: PyArrow unavailable", source
+        )
+        return None
+
+    path_obj = Path(path) if isinstance(path, str) else path
+
+    if not path_obj.exists():
+        return None
+
+    try:
+        with open(path_obj, "rb") as f:
+            import mmap
+            with mmap.mmap(f.fileno(), 0, access=mmap.ACCESS_READ) as mmapped:
+                reader = _pa.ipc.open_stream(_io.BytesIO(mmapped))
+                return reader.read_all()
+    except Exception as _exc:  # noqa: BLE001
+        _logging.getLogger("duckdb_store").debug(
+            "[NEXTGEN-02] %s: mmap IPC→table failed: %s", source, _exc
+        )
+        return None
+
+
+def duckdb_ingest_from_mmap(
+    path: str | Path,
+    table_name: str,
+    conn: Any,
+    source: str = "mmap",
+) -> int:
+    """
+    NEXTGEN-02: Zero-copy DuckDB ingest from Arrow IPC mmap file.
+
+    DuckDB reads directly from mmap file via COPY ... FROM.
+    No intermediate Python heap allocation.
+
+    Args:
+        path: Path to the Arrow IPC mmap file
+        table_name: Target DuckDB table name
+        conn: DuckDB connection
+        source: Human-readable origin for log messages
+
+    Returns:
+        Number of rows ingested on success, -1 on failure.
+    """
+    path_obj = Path(path) if isinstance(path, str) else path
+
+    if not path_obj.exists():
+        _logging.getLogger("duckdb_store").debug(
+            "[NEXTGEN-02] %s: mmap file not found: %s", source, path
+        )
+        return -1
+
+    try:
+        # DuckDB COPY FROM reads directly from mmap file
+        # DuckDB supports FORMAT AUTO which auto-detects Arrow IPC
+        # Also supports FORMAT PARQUET, FORMAT CSV, etc.
+        safe_path = str(path_obj).replace("'", "''")
+        
+        # Auto-detect format based on file extension or use ARROW for .arrow files
+        suffix = path_obj.suffix.lower()
+        if suffix == ".parquet":
+            fmt = "PARQUET"
+        elif suffix in (".csv", ".tsv"):
+            fmt = "CSV"
+        elif suffix == ".json":
+            fmt = "JSON"
+        elif suffix == ".arrow" or suffix == ".arrow.ipc":
+            # Try ARROW IPC format first for Arrow files
+            try:
+                result = conn.execute(f"""
+                    COPY {table_name} FROM '{safe_path}' (FORMAT ARROW)
+                """)
+                return result.fetchone()[0] if result else 0
+            except Exception:
+                # Fallback to AUTO detection if ARROW format fails
+                fmt = "AUTO"
+        else:
+            fmt = "AUTO"  # Let DuckDB detect the format
+        
+        # Execute COPY with detected format
+        result = conn.execute(f"""
+            COPY {table_name} FROM '{safe_path}' (FORMAT {fmt})
+        """)
+        return result.fetchone()[0] if result else 0
+    except Exception as _exc:  # noqa: BLE001
+        _logging.getLogger("duckdb_store").debug(
+            "[NEXTGEN-02] %s: DuckDB mmap ingest failed: %s", source, _exc
+        )
+        return -1
 
 
 # ---------------------------------------------------------------------------
@@ -768,7 +938,8 @@ def _get_rust_batch_ioc_extract_python():
 
 # R18 FIX: parquet_reader functions were imported but NEVER called.
 # Parquet row-group pagination was prepared but never wired in duckdb_store.py.
-# These remain in rust_extensions/src/parquet_reader.rs for future use if needed.
+# FILE DELETED (2026-08-14): rust_extensions/src/parquet_reader.rs removed.
+# DuckDB native reader is sufficient for all parquet use cases.
 # _RUST_PARQUET_AVAILABLE = False  # hardcoded — no callers exist
 
 def extract_iocs_from_texts(texts: list[str]):
@@ -3072,12 +3243,11 @@ class DuckDBShadowStore:
         is caught and logged - semantic buffering failure never blocks storage.
         Delegated to SemanticStoreBuffer.
         """
-        import asyncio
         try:
-            loop = asyncio.get_running_loop()
-            # Schedule async call as fire-and-forget task
-            asyncio.create_task(
-                self._semantic_buffer.buffer_findings(findings)
+            # Schedule async call as fire-and-forget task with safe wrapper
+            safe_create_task(
+                self._semantic_buffer.buffer_findings(findings),
+                name="duckdb:semantic_buffer",
             )
         except RuntimeError:
             # No running loop - skip buffering
@@ -9513,23 +9683,15 @@ class DuckDBShadowStore:
             ledger = get_ledger()
             # DuckDB ingest is always CRITICAL - affects sprint data integrity
             severity = FailureSeverity.CRITICAL
-            task = asyncio.create_task(ledger.record_failure(
-                component="duckdb.ingest",  # Use dot notation for consistency
-                severity=severity,
-                error=error,
-                context=context or {},
-            ))
-
-            # Best-effort error handling for fire-and-forget task
-            def _log_failure(t: asyncio.Task) -> None:
-                try:
-                    t.result()
-                except Exception as recorded_exc:
-                    _FAILURE_LOGGER.warning(
-                        "[RESILIENCE] Failed to record DuckDB ingest failure: %s",
-                        recorded_exc,
-                    )
-            task.add_done_callback(_log_failure)
+            safe_create_task(
+                ledger.record_failure(
+                    component="duckdb.ingest",  # Use dot notation for consistency
+                    severity=severity,
+                    error=error,
+                    context=context or {},
+                ),
+                name="duckdb:ingest_failure",
+            )
 
         except RuntimeError:
             # No active sprint ledger

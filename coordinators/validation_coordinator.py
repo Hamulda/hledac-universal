@@ -105,35 +105,69 @@ def _extract_html_text_fast(html: str) -> dict[str, Any] | None:
         logger.warning('html_text_fast failed, falling back to bs4: %s', e)
         return None
 
-def _extract_bs4(html: str, output_format: str) -> dict[str, Any] | None:
-    """Tier 3: BeautifulSoup extraction. Returns result dict or None on failure."""
+def _extract_selectolax(html: str, output_format: str) -> dict[str, Any] | None:
+    """Tier 3: selectolax extraction (G1 FIX: replaces beautifulsoup4).
+
+    Returns result dict or None on failure.
+    """
     try:
-        from bs4 import BeautifulSoup
-        soup = BeautifulSoup(html, 'html.parser')
-        for tag in soup(['script', 'style', 'nav', 'footer', 'header', 'aside']):
+        from selectolax.parser import HTMLParser as _Parser
+        tree = _Parser(html)
+        for tag in tree.css('script, style, nav, footer, header, aside'):
             tag.decompose()
 
         if output_format == 'text':
-            content = soup.get_text(separator=' ', strip=True)
+            body = tree.css_first('body')
+            content = (body.text(separator=' ', strip=True) if body 
+                      else tree.text(separator=' ', strip=True))
         elif output_format == 'markdown':
-            content = _format_markdown_lines(soup.find_all(['h1', 'h2', 'h3', 'p', 'li']))
+            # Extract headings and paragraphs for markdown
+            elements = []
+            for node in tree.css('h1, h2, h3, p, li'):
+                text = node.text(strip=True)
+                if text:
+                    tag_name = node.tag
+                    if tag_name == 'h1':
+                        elements.append(f'# {text}')
+                    elif tag_name == 'h2':
+                        elements.append(f'## {text}')
+                    elif tag_name == 'h3':
+                        elements.append(f'### {text}')
+                    elif tag_name == 'p':
+                        elements.append(text)
+                    elif tag_name == 'li':
+                        elements.append(f'- {text}')
+            content = '\n\n'.join(elements)
         else:
-            content = soup.get_text(separator=' ', strip=True)
+            body = tree.css_first('body')
+            content = (body.text(separator=' ', strip=True) if body 
+                      else tree.text(separator=' ', strip=True))
 
         return {
             'success': True,
             'content': content,
             'format': output_format,
-            'metadata': {'method': 'bs4_html_parser_fallback'},
+            'metadata': {'method': 'selectolax'},
             'error': None,
         }
     except Exception:
         return None
 
 def _extract_regex_fallback(html: str, output_format: str) -> dict[str, Any]:
-    """Tier 4: Regex fallback extraction. Always succeeds."""
+    """Tier 4: Regex fallback extraction. Always succeeds.
+
+    G1 FIX: This is now the final fallback instead of beautifulsoup4.
+    """
     import re
-    text = re.sub('<[^>]+>', ' ', html)
+    # Remove unwanted tags
+    text = re.sub(r'<script[^>]*>.*?</script>', '', html, flags=re.DOTALL | re.IGNORECASE)
+    text = re.sub(r'<style[^>]*>.*?</style>', '', text, flags=re.DOTALL | re.IGNORECASE)
+    text = re.sub(r'<nav[^>]*>.*?</nav>', '', text, flags=re.DOTALL | re.IGNORECASE)
+    text = re.sub(r'<footer[^>]*>.*?</footer>', '', text, flags=re.DOTALL | re.IGNORECASE)
+    text = re.sub(r'<header[^>]*>.*?</header>', '', text, flags=re.DOTALL | re.IGNORECASE)
+    text = re.sub(r'<aside[^>]*>.*?</aside>', '', text, flags=re.DOTALL | re.IGNORECASE)
+    # Strip remaining tags
+    text = re.sub(r'<[^>]+>', ' ', text)
     text = re.sub(r'\s+', ' ', text).strip()
     return {
         'success': True,
@@ -380,8 +414,8 @@ class UniversalValidationCoordinator(UniversalCoordinator):
             if result is not None:
                 return result
 
-        # Tier 3: bs4
-        result = _extract_bs4(html, output_format)
+        # Tier 3: selectolax (G1 FIX: replaces beautifulsoup4)
+        result = _extract_selectolax(html, output_format)
         if result is not None:
             return result
 

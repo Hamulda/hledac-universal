@@ -29,6 +29,7 @@ import psutil
 
 from .async_helpers import parallel_ok, parallel
 from .lru_cache import LRUCache
+from hledac.universal.utils.asyncx import safe_wait_for
 
 # MODERN-33: Try to import Rust darwin_affinity extension
 try:
@@ -175,7 +176,8 @@ class _ConcurrencyController:
             if new_limit < old_limit:
                 for _ in range(old_limit - new_limit):
                     try:
-                        await asyncio.wait_for(self._available.acquire(), timeout=30.0)
+                        # D5 FIX: safe_wait_for for correct TaskGroup composition
+                        await safe_wait_for(self._available.acquire(), timeout=30.0)
                     except asyncio.TimeoutError:
                         # Timeout acquiring semaphore - skip this adjustment
                         logger.warning('_monitor_loop: timeout acquiring semaphore for limit decrease')
@@ -303,9 +305,23 @@ class ParallelExecutionOptimizer:
         return default_config
 
     def _init_predictor(self):
-        """Initialize execution time predictor - lazy import to avoid eager sklearn load."""
-        from sklearn.ensemble import RandomForestRegressor
-        return RandomForestRegressor(n_estimators=100, random_state=42, max_depth=10)
+        """Initialize execution time predictor - lazy import to avoid eager sklearn load.
+
+        G2 FIX: scikit-learn is in [ml] extra. Without it, predictor returns None
+        and execution falls back to simple heuristic-based estimation.
+        Install: pip install hledac-universal[ml]
+        """
+        try:
+            from sklearn.ensemble import RandomForestRegressor
+            return RandomForestRegressor(n_estimators=100, random_state=42, max_depth=10)
+        except ImportError as e:
+            if "sklearn" in str(e) or "scikit-learn" in str(e):
+                import logging
+                logging.getLogger(__name__).debug(
+                    "Execution predictor unavailable: scikit-learn not installed. "
+                    "Install with: pip install hledac-universal[ml]"
+                )
+            return None
 
     def _init_execution_pools(self):
         """Initialize execution pools"""

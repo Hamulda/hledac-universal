@@ -368,7 +368,7 @@ def report_entity_discovery(entity_value: str, ioc_type: str = "") -> None:
         ioc_type: Optional IOC type string for debugging/logging.
 
     Example:
-        from runtime.cognitive_saturation_detector import report_entity_discovery
+        from hledac.universal.runtime.cognitive_saturation_detector import report_entity_discovery
         report_entity_discovery("evil.com", "domain")
     """
     detector = _CSD_REGISTRY

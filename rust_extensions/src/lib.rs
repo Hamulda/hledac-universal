@@ -202,6 +202,32 @@ pub mod arti_bridge; // HEIST-02: In-process Tor via Arti (PyO3 bindings)
 #[cfg(feature = "p2p_harvest")]
 pub mod p2p_harvest;
 
+// NEXTGEN-01: Swarm Fabric — Unified Tokio Zero-GIL Network Pipeline
+// Feature-gated: ~5MB additional compile, M1 8GB safe
+//
+// Provides native Tokio pipeline for all network transports:
+//   - Clearnet HTTP/1.1-3 via reqwest
+//   - Tor via arti-client
+//   - I2P SAMv3
+//   - DoH via hickory-resolver
+//   - S3 object storage
+//   - Git packfile fetch
+//   - CT Log streaming
+//
+// Benefits:
+//   - Zero GIL during TCP/TLS/HTTP/decompression (only 1× acquire at result return)
+//   - Per-transport connection pools (max 20 connections)
+//   - Native circuit breaker per domain
+//   - Arrow IPC headers (no Python dict allocations)
+//
+// Python usage:
+//   fabric = rust.swarm_fabric.SwarmFabric()
+//   resp = await fabric.execute_async(url="https://example.com/", method="GET", ...)
+//   resp = await fabric.get_async("https://example.com/")  # Convenience
+//   resp = await fabric.tor_get_async("http://example.onion/")  # Tor convenience
+#[cfg(feature = "p2p_harvest")]
+pub mod swarm_fabric;
+
 // ============================================================================
 // Text Processing
 // ============================================================================
@@ -236,6 +262,10 @@ pub mod rate_limit; // ISSUE-016: NVD API rate limiter
 pub mod signal_batch; // ARM NEON signal aggregation
 #[cfg(feature = "advanced")]
 pub mod simd_similarity; // SIMD cosine similarity
+
+// NEXTGEN-04: 1-Bit Binary Matryoshka + Raw NEON Brute-Force Hamming Scanner.
+// Zero-overhead ANN: no USEARCH, no HNSW — pure brute-force with mmap binary DB.
+pub mod binary_matryoshka;
 pub mod simhash_ext; // SimHash near-duplicate detection
 pub mod sprint_policies;
 pub mod telemetry_agg; // Real-time metrics aggregation // RL sprint policy layer
@@ -263,11 +293,12 @@ pub mod swarm_dag; // SILICON-07: Work-stealing DAG // ISSUE-023: Federated Q-ta
 pub mod arrow_batch_builder; // Arrow ArrayBuilder batch construction
 #[cfg(feature = "data")]
 pub mod arrow_c_data; // MODERN-24: Arrow C Data Interface zero-copy export
-// [M7-FIX] REMOVED: parquet_reader was a zombie module - declared but never registered
-// (registration commented out at line ~1337 due to zero Python callers).
-// If needed in future, uncomment the declaration and add `parquet_reader::register(m)?;`
-// #[cfg(feature = "data")]
-// pub mod parquet_reader; // F320+: Lazy parquet reader
+// NEXTGEN-02: Arrow IPC zero-copy via mmap — writes Arrow IPC directly to disk
+#[cfg(feature = "data")]
+pub mod arrow_ipc_mmap;
+// [M7-FIX] REMOVED: parquet_reader.rs DELETED (2026-08-14) - confirmed dead, no Python callers.
+// File deleted to save compile time on M1. DuckDB native reader is sufficient.
+// If needed in future, restore from git history.
 
 #[cfg(feature = "data")]
 pub mod aimd_controller; // ISSUE-2.2: AIMD controller
@@ -1248,6 +1279,15 @@ fn hledac_rust_extensions(m: &Bound<'_, PyModule>) -> PyResult<()> {
     #[cfg(feature = "p2p_harvest")]
     p2p_harvest::register(m)?;
 
+    // NEXTGEN-01: Swarm Fabric — Unified Tokio Zero-GIL Network Pipeline
+    // rust.swarm_fabric.SwarmFabric: Native async HTTP/Tor/I2P/DoH/S3/Git/CT pipeline
+    // Note: Uses #[pyclass] on PySwarmFabric with module="hledac_rust_extensions"
+    // so class is registered via swarm_fabric::register()
+    #[cfg(feature = "p2p_harvest")]
+    {
+        swarm_fabric::register(m)?;
+    }
+
     // F275: CommonCrypto SHA-256 hardware acceleration on Apple Silicon (~3× vs sha2 crate).
     crypto_accelerate::register_functions(m)?;
 
@@ -1330,6 +1370,8 @@ fn hledac_rust_extensions(m: &Bound<'_, PyModule>) -> PyResult<()> {
     // DEEP-GIT: Git forensics crate for packfile analysis
     // Extracts author/committer emails, PGP keyIDs, timestamps, SSH keys
     // Uses mmap, streaming zlib, delta chains — <500ms target for 500MB packfiles
+    // NOTE (2026-08-14): ORPHANED — no Python callers found.
+    // Python's exposed_service_hunter.py has its own Git packfile analysis.
     #[cfg(feature = "deep_git")]
     git_forensics::register_module(m)?;
 
@@ -1390,6 +1432,10 @@ fn hledac_rust_extensions(m: &Bound<'_, PyModule>) -> PyResult<()> {
     #[cfg(feature = "advanced")]
     simd_similarity::register_functions(m)?;
 
+    // NEXTGEN-04: 1-Bit Binary Matryoshka + Raw NEON Brute-Force Hamming Scanner.
+    // Provides: quantize_to_binary(), bruteforce_hamming_search(), matryoshka_search()
+    binary_matryoshka::register_functions(m)?;
+
     // Zero-copy PyO3 batch utilities — Py<PyList> iteration without Vec<String> allocation.
     // PyO3 0.28 API: Bound<'py, PyList> for borrowed iteration.
     // See zero_copy.rs for rationale and PyO3 0.29+ upgrade path.
@@ -1427,18 +1473,21 @@ fn hledac_rust_extensions(m: &Bound<'_, PyModule>) -> PyResult<()> {
     #[cfg(feature = "data")]
     arrow_batch_builder::register(m)?;
 
+    // NEXTGEN-02: Arrow IPC zero-copy via mmap — writes Arrow IPC directly to disk
+    // No intermediate Vec<u8> allocation. Python reads via pa.ipc.open_stream(mmap.mmap(path)).
+    #[cfg(feature = "data")]
+    arrow_ipc_mmap::add_module(m)?;
+
     // R17 FIX: regex_lz4::register(m) COMMENTED OUT — PyRegexLz4Store class registered
     // but ZERO Python callers exist. No production path creates or uses this store.
     // To re-enable: uncomment below (requires HLEDAC_BUILD=advanced).
     // #[cfg(feature = "advanced")]
     // regex_lz4::register(m)?;
 
-    // R18 FIX: parquet_reader::register(m) COMMENTED OUT — 5 functions registered
-    // (parquet_get_metadata, parquet_row_group_stats, parquet_read_row_group_ipc,
-    // parquet_iter_all_row_groups, parquet_read_table) but ZERO Python call sites.
-    // Python-side getter functions (_get_parquet_*) existed but were never invoked.
-    // To re-enable: uncomment below (always compiled, no feature gate needed).
-    // parquet_reader::register(m)?;
+    // R18 FIX: parquet_reader::register(m) REMOVED — 5 functions were registered
+    // but ZERO Python call sites existed. File parquet_reader.rs DELETED (2026-08-14).
+    // DuckDB native reader is sufficient for all parquet use cases.
+    // To re-enable: restore parquet_reader.rs from git history and uncomment below.
 
     // R4.1 + R2: Rayon pool runners — GIL wrappers (cpu/io/mixed_pool_run)
     // + channel-based dispatch (rayon_submit_channel/join_channel/abort_channel).
@@ -1536,7 +1585,9 @@ fn hledac_rust_extensions(m: &Bound<'_, PyModule>) -> PyResult<()> {
     #[cfg(feature = "metal_shared")]
     metal_shared_buf::register(m)?;
 
-    // SILICON-01: Metal GPU opportunistic hash cracking — GPU during I/O wait
+    // SILICON-01: Metal GPU hash cracking — DEPRECATED per D6 (2026-08-14).
+    // metal_hashcrack has NO Python callers (confirmed by audit).
+    // Module kept as dormant asset; CPU NEON + Rayon fallback is sufficient.
     #[cfg(feature = "metal")]
     metal_hashcrack::register(m)?;
 

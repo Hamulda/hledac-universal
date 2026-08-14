@@ -32,6 +32,7 @@ from typing import Any
 import msgspec
 from hledac.universal.compat.msgspec_gc_compat import Struct
 from hledac.universal.compat.msgspec_gc_compat import Struct
+from tenacity import retry, retry_if_exception_type, stop_after_attempt, wait_exponential_jitter
 
 from hledac.universal.utils.asyncx import parallel
 
@@ -177,24 +178,34 @@ class AgentCoordinationEngine:
 
         Returns:
             Task execution result
+        G6: Uses tenacity @retry with exponential backoff + jitter.
         """
         selected_agent = self._select_agent(request)
         if not selected_agent:
             return TaskResult(task_id=request.id, agent_type=AgentType.GENERAL, success=False, error='No suitable agent found')
-        for attempt in range(request.max_retries + 1):
-            try:
-                result = await self._execute_with_agent(request, selected_agent)
-                self._update_performance(selected_agent, result)
-                self._record_operation(request, result)
-                return result
-            except Exception as e:
-                logger.warning(f'Task {request.id} failed (attempt {attempt + 1}): {e}')
-                if attempt == request.max_retries:
-                    error_result = TaskResult(task_id=request.id, agent_type=selected_agent, success=False, error=str(e), duration=0.0)
-                    self._update_performance(selected_agent, error_result)
-                    return error_result
-                await asyncio.sleep(0.5 * (attempt + 1))
-        return TaskResult(task_id=request.id, agent_type=selected_agent, success=False, error='Max retries exceeded')
+
+        # G6: Use tenacity for retry with exponential backoff + jitter
+        _task_retry = retry(
+            wait=wait_exponential_jitter(base=0.5, max=8.0),
+            stop=stop_after_attempt(request.max_retries + 1),
+            retry=retry_if_exception_type(Exception),
+            reraise=True,
+        )
+
+        async def _execute_once() -> TaskResult:
+            result = await self._execute_with_agent(request, selected_agent)
+            self._update_performance(selected_agent, result)
+            self._record_operation(request, result)
+            return result
+
+        try:
+            result = await _task_retry(_execute_once)
+            return result
+        except Exception as e:
+            logger.warning(f'Task {request.id} failed after all retries: {e}')
+            error_result = TaskResult(task_id=request.id, agent_type=selected_agent, success=False, error=str(e), duration=0.0)
+            self._update_performance(selected_agent, error_result)
+            return error_result
 
     async def execute_parallel(self, requests: list[TaskRequest], strategy: CoordinationStrategy | None=None) -> list[TaskResult]:
         """

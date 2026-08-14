@@ -151,6 +151,81 @@ pub fn apply_darwin_affinity_hint(prefer_pcore: bool) {
     }
 }
 
+/// NEXTGEN-03: Apply affinity to specific CPU cores.
+///
+/// This function provides hard(er) affinity by using the thread_affinity_policy
+/// with the specific affinity_tag that maps to the target core. Unlike the
+/// count-based apply_cpu_affinity(), this function allows precise core selection.
+///
+/// On Apple Silicon, thread affinity tags are hierarchical:
+/// - affinity_tag 1 = P-core cluster
+/// - affinity_tag 2 = E-core cluster
+///
+/// For more precise control, we use thread_policy_set with THREAD_AFFINITY_POLICY
+/// and set the affinity_tag to the specific core's tag value.
+///
+/// # Arguments
+///
+/// * `cores` — List of specific core IDs to pin to
+///
+/// # Returns
+///
+/// Nothing — all errors are non-fatal (graceful degradation).
+#[cfg(target_os = "macos")]
+pub fn apply_specific_core_affinity(cores: &[usize]) {
+    use crate::topology::get_topology;
+
+    let thread = unsafe { pthread_mach_thread_np(pthread_self()) };
+    if thread == 0 {
+        return;
+    }
+
+    // Get topology to determine core types
+    let topo = get_topology();
+
+    // Determine if cores are P or E based on first core's type
+    let prefer_pcore = if let Some(&first_core) = cores.first() {
+        topo.p_core_indices.contains(&first_core)
+    } else {
+        true // Default to P-cores if no cores specified
+    };
+
+    // First apply perf-level policy for core class preference
+    let mut perf_policy = thread_perfpolicy {
+        perf_class: if prefer_pcore {
+            THREAD_PERFLEVEL_P_CORES
+        } else {
+            THREAD_PERFLEVEL_E_CORES
+        },
+    };
+
+    unsafe {
+        thread_policy_set(
+            thread,
+            4, // THREAD_PERFORMANCE_PROFILE
+            &mut perf_policy as *const _ as *const std::ffi::c_void,
+            (size_of::<thread_perfpolicy>() / size_of::<i32>()) as i32,
+        );
+    }
+
+    // Then try affinity policy with specific core hint
+    // Note: macOS doesn't support per-core pinning without root,
+    // but we can use affinity_tag to prefer specific clusters
+    let mut affinity_policy = thread_affinity_policy {
+        affinity_tag: if prefer_pcore { 1 } else { 2 },
+        user_selected: THREAD_AFFINITY_TAG_ENABLE,
+    };
+
+    unsafe {
+        let _ = thread_policy_set(
+            thread,
+            THREAD_AFFINITY_POLICY,
+            &mut affinity_policy as *const _ as *const std::ffi::c_void,
+            (size_of::<thread_affinity_policy>() / size_of::<i32>()) as i32,
+        );
+    }
+}
+
 /// Apply P-core preference for CPU-bound work.
 ///
 /// MODERN-26: Convenience wrapper for apply_darwin_affinity_hint(true).

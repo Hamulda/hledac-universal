@@ -212,7 +212,7 @@ class StealthBrowser:
                     pass
 
     async def _fetch_httpx(self, url: str, extract_structured: bool=True) -> dict[str, Any]:
-        """Fallback fetch using httpx + BeautifulSoup.
+        """Fallback fetch using httpx + selectolax/regex.
 
         ISSUE-043 FIX: Uses async httpx.AsyncClient via session_pool.
         Circuit breaker protection via domain_breaker_check/record_*.
@@ -221,10 +221,12 @@ class StealthBrowser:
         Sprint F263: when curl_cffi is available, prefer it for clearnet
         fetches — JA3/H2 fingerprint rotation makes the request look like
         a real browser (vs httpx's well-known Python fingerprint).
+
+        G1 FIX: beautifulsoup4 REMOVED — uses selectolax or regex fallback.
         """
         _ = extract_structured
         import httpx
-        from bs4 import BeautifulSoup
+        import re
         from urllib.parse import urlparse
         ua, _impersonate = _pick_fingerprint_pair()
         headers = {'User-Agent': ua}
@@ -246,13 +248,8 @@ class StealthBrowser:
                 status = response.status_code
                 html = response.text
                 domain_breaker_record_success(domain)
-            soup = BeautifulSoup(html, 'html.parser')
-            title = soup.title.string if soup.title else ''
-            links = []
-            for a in soup.find_all('a', href=True):
-                href = a['href']
-                if href.startswith('http'):
-                    links.append(href)
+            # Extract title and links using selectolax or regex
+            title, links = self._extract_title_and_links(html)
             result: dict[str, Any] = {'url': url, 'content': html, 'title': title or '', 'links': links, 'status': status, 'js_rendered': False}
             if extract_structured:
                 _attach_structured(result, html, url)
@@ -261,6 +258,35 @@ class StealthBrowser:
             domain_breaker_record_failure(domain, failure_kind=f'{type(e).__name__}')
             logger.warning(f'httpx fetch failed for {url}: {e}')
             return self._error_result(url, str(e))
+
+    def _extract_title_and_links(self, html: str) -> tuple[str, list[str]]:
+        """Extract title and http links from HTML.
+
+        G1 FIX: Replaces beautifulsoup4 with selectolax or regex.
+        Returns (title, list of http links).
+        """
+        import re
+        title = ''
+        links: list[str] = []
+        # Try selectolax first
+        try:
+            from selectolax.parser import HTMLParser as _Parser
+            tree = _Parser(html)
+            title_tag = tree.css_first('title')
+            title = title_tag.text(strip=True) if title_tag else ''
+            for a in tree.css('a[href]'):
+                href = a.attributes.get('href', '')
+                if isinstance(href, str) and href.startswith('http'):
+                    links.append(href)
+            return title, links
+        except ImportError:
+            pass
+        # Fallback: regex-only (stdlib)
+        title_match = re.search(r'<title[^>]*>([^<]+)</title>', html, re.IGNORECASE)
+        title = title_match.group(1).strip() if title_match else ''
+        link_pattern = re.compile(r'<a[^>]+href=["\'](https?://[^"\']+)["\']', re.IGNORECASE)
+        links = list(set(link_pattern.findall(html)))
+        return title, links
 
     async def _extract_links(self, tab: Any, base_url: str) -> list[str]:
         """Extract same-domain links from nodriver tab."""
