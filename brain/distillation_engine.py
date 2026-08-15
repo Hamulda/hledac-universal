@@ -44,7 +44,7 @@ logger = logging.getLogger(__name__)
 # M1-OPT: Use shared domain executor instead of per-module TPE
 # embed preset = 1 worker (MLX embed sync bridge)
 from hledac.universal.utils.domain_executors import get_or_create
-from core import aclose
+from _core import aclose
 
 
 def _get_embed_executor() -> ThreadPoolExecutor:

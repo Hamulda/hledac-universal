@@ -14,11 +14,16 @@ continue to work without modification.
 from hledac.universal.brain.deephermes3_engine import (
     DeepHermes3Engine as DeepHermes3Engine,
 )
-from hledac.universal.brain.deephermes3_engine import (
-from core import aclose
+
+
+
+
+
     Hermes3Engine,  # type: ignore[misc]  # backward-compat alias added at bottom of deephermes3_engine.py
     parse_thinking_output,
 )
 
 # Re-export for convenience
 __all__ = ["DeepHermes3Engine", "Hermes3Engine", "parse_thinking_output"]
+
+from _core import aclose

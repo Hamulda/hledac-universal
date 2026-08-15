@@ -19,7 +19,7 @@ import sys
 from pathlib import Path
 
 from operator import attrgetter, itemgetter
-from core import aclose
+from _core import aclose
 HEAVY_MODULES = {
     "duckdb",
     "lancedb",

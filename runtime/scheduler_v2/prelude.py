@@ -35,15 +35,19 @@ import msgspec
 from typing import Any
 
 from hledac.universal.utils.asyncx import first_completed  # ISSUE-15
-from hledac.universal.runtime.scheduler_v2._task_registry import (
-from core import aclose
+
+
+
+
+
     TaskScope,
     safe_create_task_tracked,
 )
 
 # ─── Module-level lazy import cache ───────────────────────────────────────────
 # Pattern: import at first use, cache in module globals for subsequent calls.
-# This avoids the overhead of importing on EVERY function call while still
+
+from _core import aclose# This avoids the overhead of importing on EVERY function call while still
 # keeping imports out of module __init__ (which would trigger M1 Metal init).
 #
 # Usage: call _lazy_import(name) to get the cached module/class.

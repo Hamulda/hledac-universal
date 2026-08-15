@@ -49,7 +49,7 @@ from hledac.universal.utils.query_expansion import DomainSpecificExpansionStrate
 from hledac.universal.utils.asyncx import parallel_ok
 from hledac.universal.utils.two_pass_pipeline import TwoPassPipeline, TwoPassPipelineConfig, consumer_fn_to_thread
 from operator import attrgetter, itemgetter
-from core import aclose
+from _core import aclose
 logger = logging.getLogger(__name__)
 
 class ResultType(Enum):
@@ -640,7 +640,7 @@ class AcademicSearchEngine:
         adapters_to_use = self.source_adapters
         if sources:
             adapters_to_use = {name: adapter for name, adapter in self.source_adapters.items() if name in sources}
-        from hledac.universal.core.concurrency_registry import ConcurrencyCategory, ConcurrencyBudgetRegistry
+        from hledac.universal._core.concurrency_registry import ConcurrencyCategory, ConcurrencyBudgetRegistry
         registry = await ConcurrencyBudgetRegistry.get_instance_async()
         semaphore = registry.get(ConcurrencyCategory.ACADEMIC_SEARCH)
 

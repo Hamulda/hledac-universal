@@ -31,7 +31,7 @@ from __future__ import annotations
 
 from collections.abc import AsyncIterator
 from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
-from core import aclose
+from _core import aclose
 
 if TYPE_CHECKING:
     from pathlib import Path

@@ -21,7 +21,7 @@ import time
 from typing import TYPE_CHECKING
 
 from .base import DiscoveryBatchResult, DiscoveryHit
-from core import aclose
+from _core import aclose
 
 if TYPE_CHECKING:
     from dht.kademlia_node import KademliaNode
@@ -66,7 +66,7 @@ async def _get_dht_node() -> KademliaNode | None:
             return _node_instance
 
         try:
-            from hledac.universal.core.resource_governor import ResourceGovernor
+            from hledac.universal._core.resource_governor import ResourceGovernor
             from dht.kademlia_node import KademliaNode
             from dht.local_graph import LocalGraphStore
 

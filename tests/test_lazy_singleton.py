@@ -28,7 +28,7 @@ import time
 import pytest
 
 from utils.lazy_singleton import AsyncLazySingleton, LazySingleton
-from core import aclose
+from _core import aclose
 
 # ---------------------------------------------------------------------------
 # Sync LazySingleton tests

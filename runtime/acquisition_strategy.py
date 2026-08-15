@@ -97,8 +97,11 @@ from hledac.universal.runtime.acquisition_strategy_planner import (
 )
 
 # Re-export async runner symbols (RUNNER section)
-from hledac.universal.runtime.acquisition_strategy_runner import (
-from core import aclose
+
+
+
+
+
     run_enabled_acquisition_lanes,
     _get_ct_adapter,
 )
@@ -106,7 +109,8 @@ from core import aclose
 # Keep legacy module-level constants for backward compatibility
 __all__ = [
     # From planner
-    'AcquisitionLane',
+
+from _core import aclose    'AcquisitionLane',
     'AcquisitionProfile',
     'AcquisitionContext',
     'AcquisitionLanePlan',

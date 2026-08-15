@@ -22,8 +22,11 @@ from typing import Any
 
 import pytest
 
-from hledac.universal.runtime.finding_pipeline import (
-from core import aclose
+
+
+
+
+
     FindingPipeline,
     create_finding_pipeline,
     _QUEUE_CAPACITY,
@@ -32,7 +35,8 @@ from core import aclose
 try:
     from hledac.universal.knowledge.duckdb_store import CanonicalFinding
 except ImportError:
-    CanonicalFinding = None  # type: ignore[assignment,unused-ignore]
+
+from _core import aclose    CanonicalFinding = None  # type: ignore[assignment,unused-ignore]
 
 
 def _make_finding(i: int) -> CanonicalFinding:

@@ -47,14 +47,14 @@ _LAZY_EXPORT_MAP: dict[str, str] = {
     # graph_attachment — lightweight (no heavy deps)
     "GraphAttachmentStore": "knowledge.graph_attachment",
 
-    # rag_engine — heavy: numpy (3x), hledac.universal.core.mlx_embeddings, duckdb
+    # rag_engine — heavy: numpy (3x), hledac.universal._core.mlx_embeddings, duckdb
     "RAGEngine": "knowledge.rag_engine",
     "RAGConfig": "knowledge.rag_engine",
     "Document": "knowledge.rag_engine",
     "RetrievedChunk": "knowledge.rag_engine",
     "BM25Index": "knowledge.rag_engine",
     "HNSWVectorIndex": "knowledge.rag_engine",
-    # graph_rag — heavy: numpy (2x), hledac.universal.core.mlx_embeddings, duckdb
+    # graph_rag — heavy: numpy (2x), hledac.universal._core.mlx_embeddings, duckdb
     "GraphRAGOrchestrator": "knowledge.graph_rag",
     "CentralityScores": "knowledge.graph_rag",
     "Community": "knowledge.graph_rag",
@@ -103,7 +103,7 @@ _LEGACY_NAMES: frozenset[str] = frozenset(
 )
 
 import warnings as _warnings  # noqa: E402
-from core import aclose
+from _core import aclose
 
 # Sprint 8VC: atomic_storage and persistent_layer moved to legacy/
 # Legacy imports are LAZY (deferred) to prevent import-time coupling.

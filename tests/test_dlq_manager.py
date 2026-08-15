@@ -17,7 +17,7 @@ from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from core import aclose
+from _core import aclose
 
 
 @pytest.fixture
@@ -32,7 +32,7 @@ class TestDLQPayload:
 
     def test_dlq_payload_creation(self) -> None:
         """DLQPayload must be created with correct fields."""
-        from hledac.universal.core.dlq_manager import DLQPayload
+        from hledac.universal._core.dlq_manager import DLQPayload
         from datetime import datetime, timezone
 
         payload = DLQPayload(
@@ -55,7 +55,7 @@ class TestDLQPayload:
 
     def test_dlq_payload_to_dict(self) -> None:
         """DLQPayload.to_dict() must return serializable dict."""
-        from hledac.universal.core.dlq_manager import DLQPayload
+        from hledac.universal._core.dlq_manager import DLQPayload
 
         payload = DLQPayload(
             payload_id="test123",
@@ -76,7 +76,7 @@ class TestDLQPayload:
 
     def test_dlq_payload_frozen(self) -> None:
         """DLQPayload must be immutable (frozen=True)."""
-        from hledac.universal.core.dlq_manager import DLQPayload
+        from hledac.universal._core.dlq_manager import DLQPayload
 
         payload = DLQPayload(
             payload_id="test",
@@ -97,7 +97,7 @@ class TestDLQManagerBasics:
     @pytest.mark.asyncio
     async def test_manager_creation(self, temp_db_path: str) -> None:
         """DLQManager must initialize with database path."""
-        from hledac.universal.core.dlq_manager import DLQManager
+        from hledac.universal._core.dlq_manager import DLQManager
 
         manager = DLQManager(db_path=temp_db_path)
 
@@ -107,7 +107,7 @@ class TestDLQManagerBasics:
     @pytest.mark.asyncio
     async def test_manager_initializes_database(self, temp_db_path: str) -> None:
         """DLQManager must create database schema on first use."""
-        from hledac.universal.core.dlq_manager import DLQManager
+        from hledac.universal._core.dlq_manager import DLQManager
 
         manager = DLQManager(db_path=temp_db_path)
 
@@ -119,7 +119,7 @@ class TestDLQManagerBasics:
     @pytest.mark.asyncio
     async def test_manager_lifecycle(self, temp_db_path: str) -> None:
         """DLQManager must properly open and close connection."""
-        from hledac.universal.core.dlq_manager import DLQManager
+        from hledac.universal._core.dlq_manager import DLQManager
 
         manager = DLQManager(db_path=temp_db_path)
 
@@ -136,7 +136,7 @@ class TestStorePayload:
     @pytest.mark.asyncio
     async def test_store_payload_basic(self, temp_db_path: str) -> None:
         """store_payload() must store payload with metadata."""
-        from hledac.universal.core.dlq_manager import DLQManager
+        from hledac.universal._core.dlq_manager import DLQManager
 
         manager = DLQManager(db_path=temp_db_path)
 
@@ -157,7 +157,7 @@ class TestStorePayload:
     @pytest.mark.asyncio
     async def test_store_payload_generates_id(self, temp_db_path: str) -> None:
         """store_payload() must generate unique SHA256 ID."""
-        from hledac.universal.core.dlq_manager import DLQManager
+        from hledac.universal._core.dlq_manager import DLQManager
 
         manager = DLQManager(db_path=temp_db_path)
 
@@ -183,7 +183,7 @@ class TestStorePayload:
     @pytest.mark.asyncio
     async def test_store_payload_different_content_different_id(self, temp_db_path: str) -> None:
         """Different payloads must have different IDs."""
-        from hledac.universal.core.dlq_manager import DLQManager
+        from hledac.universal._core.dlq_manager import DLQManager
 
         manager = DLQManager(db_path=temp_db_path)
 
@@ -210,7 +210,7 @@ class TestGetPayloads:
     @pytest.mark.asyncio
     async def test_get_payloads_empty(self, temp_db_path: str) -> None:
         """get_payloads() must return empty list for empty queue."""
-        from hledac.universal.core.dlq_manager import DLQManager
+        from hledac.universal._core.dlq_manager import DLQManager
 
         manager = DLQManager(db_path=temp_db_path)
 
@@ -221,7 +221,7 @@ class TestGetPayloads:
     @pytest.mark.asyncio
     async def test_get_payloads_by_sprint(self, temp_db_path: str) -> None:
         """get_payloads() must filter by sprint_id."""
-        from hledac.universal.core.dlq_manager import DLQManager
+        from hledac.universal._core.dlq_manager import DLQManager
 
         manager = DLQManager(db_path=temp_db_path)
 
@@ -252,7 +252,7 @@ class TestGetPayloads:
     @pytest.mark.asyncio
     async def test_get_payloads_by_source(self, temp_db_path: str) -> None:
         """get_payloads() must filter by source."""
-        from hledac.universal.core.dlq_manager import DLQManager
+        from hledac.universal._core.dlq_manager import DLQManager
 
         manager = DLQManager(db_path=temp_db_path)
 
@@ -282,7 +282,7 @@ class TestCleanup:
     @pytest.mark.asyncio
     async def test_cleanup_removes_old_entries(self, temp_db_path: str) -> None:
         """cleanup() must remove entries older than retention period."""
-        from hledac.universal.core.dlq_manager import DLQManager
+        from hledac.universal._core.dlq_manager import DLQManager
 
         manager = DLQManager(db_path=temp_db_path)
 
@@ -313,7 +313,7 @@ class TestCleanup:
     @pytest.mark.asyncio
     async def test_cleanup_preserves_recent_entries(self, temp_db_path: str) -> None:
         """cleanup() must preserve entries within retention period."""
-        from hledac.universal.core.dlq_manager import DLQManager
+        from hledac.universal._core.dlq_manager import DLQManager
 
         manager = DLQManager(db_path=temp_db_path)
 
@@ -339,7 +339,7 @@ class TestRetryPayload:
     @pytest.mark.asyncio
     async def test_retry_increments_count(self, temp_db_path: str) -> None:
         """retry_payload() must increment attempt_count."""
-        from hledac.universal.core.dlq_manager import DLQManager
+        from hledac.universal._core.dlq_manager import DLQManager
 
         manager = DLQManager(db_path=temp_db_path)
 
@@ -364,7 +364,7 @@ class TestRetryPayload:
     @pytest.mark.asyncio
     async def test_retry_updates_timestamp(self, temp_db_path: str) -> None:
         """retry_payload() must update last_attempt_at."""
-        from hledac.universal.core.dlq_manager import DLQManager
+        from hledac.universal._core.dlq_manager import DLQManager
 
         manager = DLQManager(db_path=temp_db_path)
 
@@ -394,19 +394,19 @@ class TestDLQCatchDecorator:
     @pytest.mark.asyncio
     async def test_dlq_catch_decorator_exists(self) -> None:
         """dlq_catch decorator must be available."""
-        from hledac.universal.core.dlq_manager import dlq_catch
+        from hledac.universal._core.dlq_manager import dlq_catch
 
         assert callable(dlq_catch)
 
     @pytest.mark.asyncio
     async def test_dlq_catch_captures_exception(self, temp_db_path: str) -> None:
         """dlq_catch must capture exceptions to DLQ."""
-        from hledac.universal.core.dlq_manager import DLQManager, dlq_catch
+        from hledac.universal._core.dlq_manager import DLQManager, dlq_catch
 
         manager = DLQManager(db_path=temp_db_path)
 
         # Patch global manager
-        with patch("hledac.universal.core.dlq_manager.get_dlq_manager", return_value=manager):
+        with patch("hledac.universal._core.dlq_manager.get_dlq_manager", return_value=manager):
             @dlq_catch(source="test_decorator")
             async def failing_function() -> str:
                 raise ValueError("Captured by DLQ")

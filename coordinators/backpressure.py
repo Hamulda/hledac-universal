@@ -25,10 +25,10 @@ warnings.warn(
 
 # Re-export from new location for backwards compatibility
 from hledac.universal.coordinators.resource.resource_coordinator import (
-from core import aclose
     BackpressureDecision,
     BackpressureMonitor,
 )
+from _core import aclose
 
 __all__ = [
     "BackpressureDecision",

@@ -59,7 +59,7 @@ __all__ = [
 # ---------------------------------------------------------------------------
 # Rust backend — centralized access via core.rust_backend (F265C refactor)
 # ---------------------------------------------------------------------------
-from hledac.universal.core.rust_backend import rust as _rust_backend
+from hledac.universal._core.rust_backend import rust as _rust_backend
 
 # Convenience flags — LAZY, resolved on every call.
 # Previously set at import time (False even if Rust became available later).
@@ -314,7 +314,7 @@ class QualityRejectionRecord(Struct, frozen=True):
 
 # Sprint 8AG §6.17: Persistent dedup config
 from hledac.universal.config.dedup_config import DEDUP_HOT_CACHE_MAX, DEDUP_LMDB_MAP_SIZE  # noqa: E402
-from core import aclose
+from _core import aclose
 
 # Backward compatibility: module-level aliases (DEPRECATED — use config.dedup_config)
 _DEDUP_LMDB_MAP_SIZE: int = DEDUP_LMDB_MAP_SIZE

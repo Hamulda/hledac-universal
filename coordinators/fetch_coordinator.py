@@ -47,7 +47,7 @@ _DOMAIN_PATTERN = re.compile(r'\b(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z
 _SHA256_PATTERN = re.compile(r'\b[a-fA-F0-9]{64}\b')
 _URL_PATTERN = re.compile(r'https?://[^\s<>"{}|\\^`\[\]]+')
 
-from hledac.universal.core.capabilities import (
+from hledac.universal._core.capabilities import (
     AIOHTTP,
     CAPS,
     DARKNET_CONNECTOR,
@@ -60,8 +60,8 @@ from hledac.universal.core.capabilities import (
     ZERO_ATTR,
     ZSTD,
 )
-from hledac.universal.core.constants import NETWORK
-from hledac.universal.core.feature_flags import FeatureFlag, FeatureFlags
+from hledac.universal._core.constants import NETWORK
+from hledac.universal._core.feature_flags import FeatureFlag, FeatureFlags
 from hledac.universal.runtime.logging_setup import get_logger
 from hledac.universal.runtime.privacy_budget import PrivacyBudgetAllocator, make_privacy_allocator
 from hledac.universal.tools.file_cache import apply_fcntl_nocache as _apply_fcntl_nocache
@@ -116,8 +116,8 @@ def get_cognitive_saturation_detector() -> Any:
 from ..utils.robots_parser import RobotsDocument
 
 # R6: Centralized Rust access
-from hledac.universal.core.rust_backend import rust
-from core import aclose
+from hledac.universal._core.rust_backend import rust
+from _core import aclose
 
 PyAIMDController = rust.raw.PyAIMDController  # type: ignore[assignment]  # None if N/A
 
@@ -1538,7 +1538,7 @@ class FetchCoordinator(UniversalCoordinator):
     async def _apply_governor_backpressure(self, bp_clearing: float | None, bp_uma_state: str) -> tuple[float | None, str]:
         """Apply governor-based backpressure if available."""
         try:
-            from hledac.universal.core.protocols import get_governor
+            from hledac.universal._core.protocols import get_governor
             gov = get_governor()
             if gov is not None:
                 gov_decision = await gov.evaluate()
@@ -2007,7 +2007,7 @@ class FetchCoordinator(UniversalCoordinator):
         """
         # F350M-R: Runtime feature flag — can disable even if built with quic feature
         # SWARM-010: Use FeatureFlags for registry compliance
-        from hledac.universal.core.feature_flags import FeatureFlags, FeatureFlag
+        from hledac.universal._core.feature_flags import FeatureFlags, FeatureFlag
         if not FeatureFlags.get(FeatureFlag.ENABLE_QUIC):
             logger.debug('[QUINN] Disabled via HLEDAC_ENABLE_QUIC=0')
             return None
@@ -3140,7 +3140,7 @@ class FetchCoordinator(UniversalCoordinator):
     async def _check_governor_early_exit(self, url: str) -> str | None:
         """F360-R: Governor io_only and can_afford checks. Returns skip reason or None."""
         try:
-            from hledac.universal.core.protocols import get_governor
+            from hledac.universal._core.protocols import get_governor
             gov = get_governor()
             if gov is not None:
                 try:

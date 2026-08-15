@@ -49,8 +49,8 @@ import dns.resolver  # E3 FIX: dns.asyncresolver removed in dnspython 3.x; use d
 import httpx
 from hledac.universal.transport.session_pool import session_pool
 from hledac.universal.utils.asyncx import parallel_ok, parallel
-from hledac.universal.core.concurrency_registry import ConcurrencyCategory, ConcurrencyBudgetRegistry
-from core import aclose
+from hledac.universal._core.concurrency_registry import ConcurrencyCategory, ConcurrencyBudgetRegistry
+from _core import aclose
 logger = logging.getLogger(__name__)
 
 class RecordType(Enum):
@@ -251,7 +251,7 @@ class DNSEnumerator:
             for sep in separators:
                 permutations.add(f'{w1}{sep}{w2}')
         found = []
-        from hledac.universal.core.concurrency import ConcurrencyCategory, get_semaphore
+        from hledac.universal._core.concurrency import ConcurrencyCategory, get_semaphore
         semaphore = get_semaphore(ConcurrencyCategory.DNS_BRUTE)
 
         async def check_perm(perm: str):
@@ -471,7 +471,7 @@ class SSLAnalyzer:
             # NOTE: Requires rust.tls with tls13 feature enabled in Cargo.toml
             # Build: `maturin develop --features tls13` or use --features full
             try:
-                from hledac.universal.core.rust_backend import rust as _rust
+                from hledac.universal._core.rust_backend import rust as _rust
                 if hasattr(_rust, 'tls') and _rust.TLS13_AVAILABLE:
                     result = _rust.tls.connect_and_ja4(hostname, port, timeout_ms=timeout_ms)
                     result['host'] = hostname
@@ -560,7 +560,7 @@ class NetworkReconnaissance:
         """Lazy load Rust batch_ip_classify, fail-soft if unavailable."""
         if cls._rust_batch_classify is None:
             try:
-                from hledac.universal.core.rust_backend import rust as _rust_backend
+                from hledac.universal._core.rust_backend import rust as _rust_backend
                 if _rust_backend.is_available and _rust_backend.ip is not None:
                     cls._rust_batch_classify = _rust_backend.ip.batch_ip_classify
                 else:

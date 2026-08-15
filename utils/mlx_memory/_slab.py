@@ -34,7 +34,7 @@ from dataclasses import dataclass, field
 import msgspec
 from typing import Any
 from operator import attrgetter, itemgetter
-from core import aclose
+from _core import aclose
 logger = logging.getLogger(__name__)
 
 # MODERN-43: Try to load Rust atomic facade for allocation ledger and cache metrics
@@ -44,7 +44,7 @@ _mlx_alloc_bytes_sub: Any = None
 _mlx_alloc_bytes_get: Any = None
 
 try:
-    from hledac.universal.core.rust_backend import rust
+    from hledac.universal._core.rust_backend import rust
     mlx_alloc_bytes_add = rust.raw.mlx_alloc_bytes_add  # None if unavailable
     mlx_alloc_bytes_sub = rust.raw.mlx_alloc_bytes_sub  # None if unavailable
     mlx_alloc_bytes_get = rust.raw.mlx_alloc_bytes_get  # None if unavailable    _RUST_ALLOC_AVAILABLE = True

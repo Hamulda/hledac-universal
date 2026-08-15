@@ -27,7 +27,7 @@ import msgspec
 from dataclasses import dataclass
 from enum import Enum, auto
 from msgspec import field
-from core import aclose
+from _core import aclose
 
 if TYPE_CHECKING:
     pass
@@ -278,7 +278,7 @@ class SprintLifecycleManager(msgspec.Struct, gc=False):
     def _transition_to_degraded_if_critical(self, now: float) -> None:
         """Transition to DEGRADED if governor is critical/emergency."""
         try:
-            from hledac.universal.core.resource_governor import _is_governor_critical_or_emergency
+            from hledac.universal._core.resource_governor import _is_governor_critical_or_emergency
             if _is_governor_critical_or_emergency():
                 self._degraded = True
                 self._degraded_reason = "governor_critical_or_emergency"
@@ -291,7 +291,7 @@ class SprintLifecycleManager(msgspec.Struct, gc=False):
         """Check and handle governor recovery to OK."""
         recovered = False
         try:
-            from hledac.universal.core.resource_governor import _is_governor_critical_or_emergency
+            from hledac.universal._core.resource_governor import _is_governor_critical_or_emergency
             recovered = not _is_governor_critical_or_emergency()
         except Exception:
             pass
@@ -305,7 +305,7 @@ class SprintLifecycleManager(msgspec.Struct, gc=False):
     def _notify_governor_degraded(self, degraded: bool) -> None:
         """Notify governor of degraded state change."""
         try:
-            from hledac.universal.core.resource_governor import get_governor
+            from hledac.universal._core.resource_governor import get_governor
             reason = self._degraded_reason if degraded else "governor_recovered"
             get_governor().set_degraded_mode(degraded, reason)
         except Exception:
@@ -355,7 +355,7 @@ class SprintLifecycleManager(msgspec.Struct, gc=False):
         """Execute transition to WINDUP phase."""
         self._transition_to_unlocked(SprintPhase.WINDUP, now)
         try:
-            from hledac.universal.core.resource_governor import get_governor
+            from hledac.universal._core.resource_governor import get_governor
             gov = get_governor()
             gov.set_windup_mode(True)
             if not self._governor_degraded_lowered:
@@ -370,7 +370,7 @@ class SprintLifecycleManager(msgspec.Struct, gc=False):
         """Lower governor from WINDUP when sprint ends (EXPORT phase)."""
         if self._current_phase == SprintPhase.EXPORT and not self._governor_windup_lowered:
             try:
-                from hledac.universal.core.resource_governor import get_governor
+                from hledac.universal._core.resource_governor import get_governor
                 get_governor().set_windup_mode(False)
                 self._governor_windup_lowered = True
             except Exception:

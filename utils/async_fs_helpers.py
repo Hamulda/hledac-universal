@@ -23,7 +23,7 @@ import asyncio
 import logging
 import os
 from typing import Literal
-from core import aclose
+from _core import aclose
 
 logger = logging.getLogger(__name__)
 

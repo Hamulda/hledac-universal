@@ -27,7 +27,7 @@ from hledac.universal.network.session_runtime import async_get_httpx_session
 from hledac.universal.transport.circuit_breaker import checked_aiohttp_get, domain_breaker_check
 from .base import DiscoveryBatchResult, DiscoveryHit
 from hledac.universal.discovery.base import BaseDiscoveryMixin, DiscoveryResult
-from core import aclose
+from _core import aclose
 __all__ = ['call_crtsh', 'CTOutcome', 'CTProviderStatus']
 
 
@@ -555,7 +555,7 @@ async def _search_wildcards(
     strong_tag: CTProviderStatus = CTProviderStatus.DISABLED
     search_start = time.monotonic()
 
-    from hledac.universal.core.concurrency import ConcurrencyCategory, get_semaphore
+    from hledac.universal._core.concurrency import ConcurrencyCategory, get_semaphore
     sem = get_semaphore(ConcurrencyCategory.SCRAPE_GENERAL)
 
     async def _fetch_one(url: str) -> tuple[list[DiscoveryHit], str | None, CTProviderStatus]:

@@ -227,7 +227,7 @@ def expand_query(query: str, domain: str | None=None, max_variations: int=20) ->
     expander = QueryExpander(config)
     return expander.expand(query)
 from abc import ABC, abstractmethod
-from core import aclose
+from _core import aclose
 
 class ExpansionStrategy(ABC):
     """Abstract base class for query expansion strategies (from MSQES)."""

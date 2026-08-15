@@ -44,7 +44,7 @@ from .scraper import (
 )
 
 from .monitor import StreamingMonitor
-from core import aclose
+from _core import aclose
 
 __all__ = [
     # Models

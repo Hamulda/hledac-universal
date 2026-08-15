@@ -20,7 +20,7 @@ _RUST_AVAILABLE = False
 _IocDedupStore: Any = None
 _ioc_dedup_from_bytes: Any = None
 # R6: Centralized Rust access via core.rust_backend
-from hledac.universal.core.rust_backend import rust
+from hledac.universal._core.rust_backend import rust
 if rust.is_available:
     _IocDedupStore = rust.raw.IocDedupStore
     _ioc_dedup_from_bytes = rust.raw.ioc_dedup_from_bytes
@@ -212,7 +212,7 @@ class _PythonIocDedupStore:
 # Singleton factory (F320: Refactored to use centralized pattern)
 # ---------------------------------------------------------------------------
 from hledac.universal.utils._patterns import module_singleton_getter
-from core import aclose
+from _core import aclose
 
 
 def _make_global_manager(persist_path: str | None) -> IocDedupManager:

@@ -34,7 +34,7 @@ import msgspec
 from typing import Any
 from collections.abc import Callable, Awaitable
 from hledac.universal.utils.uuid7 import new_runtime_id
-from core import aclose
+from _core import aclose
 __all__ = ['PivotExecutionRequest', 'PivotExecutionResult', 'AutonomousPivotExecutor', 'MAX_ACTIVE_PIVOTS', 'MAX_PIVOTS_PER_SPRINT', 'PIVOT_TIMEOUT_S', 'MAX_PIVOT_FINDINGS']
 logger = logging.getLogger(__name__)
 MAX_ACTIVE_PIVOTS: int = 3
@@ -150,7 +150,7 @@ class AutonomousPivotExecutor:
         _pivot_jitter_s = float(os.environ.get('HLEDAC_PIVOT_EXEC_JITTER_S', '0.2'))
         if _pivot_jitter_s > 0:
             try:
-                from hledac.universal.core.telemetry.context_state import is_blitz_mode
+                from hledac.universal._core.telemetry.context_state import is_blitz_mode
                 if not is_blitz_mode():
                     await asyncio.sleep(abs(_rng.gauss(0.0, _pivot_jitter_s)))
             except Exception:  # noqa: BLE001

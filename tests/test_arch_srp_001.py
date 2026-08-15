@@ -13,7 +13,7 @@ These tests verify that:
 
 import pytest
 from unittest.mock import AsyncMock, MagicMock
-from core import aclose
+from _core import aclose
 
 
 class TestLLMEngineProtocol:

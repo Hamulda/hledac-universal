@@ -37,7 +37,7 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any
 from hledac.universal.utils._patterns import elapsed_ms  # F320: DRY elapsed_ms helper
-from core import aclose
+from _core import aclose
 _OTEL_AVAILABLE: bool | None = None
 TELEMETRY_EVENT_FIELDS = frozenset(['session_id', 'phase', 'component', 'event', 'elapsed_ms'])
 

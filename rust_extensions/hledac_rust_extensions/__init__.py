@@ -27,7 +27,7 @@ import os
 import sys
 import threading
 from typing import ClassVar
-from core import aclose
+from _core import aclose
 
 __version__ = "0.1.0"
 

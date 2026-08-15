@@ -25,7 +25,7 @@ if TYPE_CHECKING:
 # C1-X FIX: Import from SSOT instead of duplicate detection
 # Uses importlib.metadata.version("mlx") — no mlx.core import at module load
 from hledac.universal.utils.mlx_memory import MLX_AVAILABLE
-from core import aclose
+from _core import aclose
 
 # C1-X FIX: Remove duplicate _MLX_AVAILABLE_GLOBAL and _check_mlx_availability()
 # Now uses SSOT MLX_AVAILABLE from utils.mlx_memory (zero-import detection)

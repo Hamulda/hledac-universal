@@ -12,7 +12,7 @@ Rules:
 """
 
 from __future__ import annotations
-from core import aclose
+from _core import aclose
 
 
 def clamp_confidence(value: object, default: float = 0.5) -> float:

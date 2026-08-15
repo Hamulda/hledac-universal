@@ -20,8 +20,8 @@ Monitoruje:
 import logging
 from collections.abc import Callable
 from enum import Enum
-from hledac.universal.core.psutil_shim import psutil
-from core import aclose
+from hledac.universal._core.psutil_shim import psutil
+from _core import aclose
 logger = logging.getLogger(__name__)
 
 class SystemState(Enum):

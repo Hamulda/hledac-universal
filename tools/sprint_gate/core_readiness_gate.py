@@ -23,7 +23,7 @@ from datetime import UTC, datetime
 from enum import Enum
 from pathlib import Path
 from typing import NamedTuple
-from core import aclose
+from _core import aclose
 
 # ------------------------------------------------------------------ #
 # Self-configure Python path so hledac.universal imports resolve.

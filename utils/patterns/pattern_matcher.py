@@ -23,7 +23,7 @@ import time
 from typing import NamedTuple, cast
 
 from operator import attrgetter, itemgetter
-from core import aclose
+from _core import aclose
 logger = logging.getLogger(__name__)
 
 __all__ = [
@@ -48,7 +48,7 @@ _RUST_STRUCTURED_EXTRACTOR_AVAILABLE = False
 _RUST_IMPORT_ERROR: str | None = None
 try:
     # R6: Centralized Rust access via core.rust_backend
-    from hledac.universal.core.rust_backend import rust
+    from hledac.universal._core.rust_backend import rust
 
     # Expose Rust classes as RustAhoCorasickMatcher for API compatibility
     RustAhoCorasickMatcher = rust.raw.AhoCorasickMatcher

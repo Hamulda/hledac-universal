@@ -15,8 +15,8 @@ from dataclasses import dataclass
 from enum import StrEnum
 import msgspec
 from hledac.universal.utils.import_resolver import lazy
-from core import aclose
-_sample_uma_status = lazy('hledac.universal.core.resource_governor.sample_uma_status', fallback=None)
+from _core import aclose
+_sample_uma_status = lazy('hledac.universal._core.resource_governor.sample_uma_status', fallback=None)
 
 class FailureKind(str):
     LOAD_ERROR = 'load_error'

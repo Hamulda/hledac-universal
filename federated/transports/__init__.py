@@ -77,7 +77,7 @@ from .lane_dispatch import (  # noqa: E402
     LaneDispatchTransport,
 )
 from .peer_node import (  # noqa: E402
-from core import aclose
+from _core import aclose
     PEER_NODE_HANDSHAKE_TIMEOUT_S,
     PEER_NODE_MAX_PEERS,
     PEER_NODE_MSG_MAX_BYTES,

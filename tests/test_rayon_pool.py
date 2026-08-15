@@ -14,8 +14,11 @@ from typing import Any
 import pytest
 
 # Import the module under test
-from utils.rayon_pool import (
-from core import aclose
+
+
+
+
+
     RayonPoolsAvailable,
     run_in_cpu_pool,
     run_in_io_pool,
@@ -27,7 +30,8 @@ from core import aclose
 
 
 # ---------------------------------------------------------------------------
-# Test helpers
+
+from _core import aclose# Test helpers
 # ---------------------------------------------------------------------------
 
 def cpu_bound_hash(data: bytes) -> str:

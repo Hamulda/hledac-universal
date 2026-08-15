@@ -47,7 +47,7 @@ import time as _time
 from typing import TYPE_CHECKING, Any
 
 from hledac.universal.utils.asyncx import safe_create_task
-from core import aclose
+from _core import aclose
 
 if TYPE_CHECKING:
     from hledac.universal.knowledge.duckdb_store import CanonicalFinding
@@ -119,7 +119,7 @@ class FindingPipeline:
         """Initialize Rust MPSCPool. Falls back to no-op on import error."""
         try:
             # R6: Centralized Rust access via core.rust_backend
-            from hledac.universal.core.rust_backend import rust
+            from hledac.universal._core.rust_backend import rust
             MPSCPool = rust.raw.MPSCPool  # type: ignore[assignment]
 
             pool = MPSCPool(capacity=capacity)  # type: ignore[attr-defined]

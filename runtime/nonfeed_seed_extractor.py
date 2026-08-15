@@ -30,7 +30,7 @@ Publisher domains (feed aggregators — excluded as seeds unless real indicators
 import re
 
 import msgspec
-from core import aclose
+from _core import aclose
 __all__ = ['NonfeedSeed', 'SeedQuality', 'classify_seed_quality', 'extract_nonfeed_seeds_from_text', 'extract_nonfeed_seeds_from_findings', 'compute_lane_unlocks', 'PUBLISHER_DOMAINS']
 PUBLISHER_DOMAINS: frozenset[str] = frozenset(['krebsonsecurity.com', 'thehackernews.com', 'bleepingcomputer.com', 'welivesecurity.com', 'sans.edu', 'darkreading.com', 'zdnet.com', 'theregister.com', 'arstechnica.com', 'securityweek.com', 'infoworld.com', 'threatpost.com', 'darknet.com.au', 'journalofcloudsecurity.com'])
 'Publisher/aggregator domains filtered from seed extraction.'

@@ -42,8 +42,8 @@ import threading
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 
-from hledac.universal.core.locks import LockCategory
-from core import aclose
+from hledac.universal._core.locks import LockCategory
+from _core import aclose
 
 if TYPE_CHECKING:
     pass

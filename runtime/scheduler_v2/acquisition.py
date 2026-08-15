@@ -29,7 +29,7 @@ from collections.abc import Sequence
 
 import msgspec
 
-from hledac.universal.core.env_config import ENV
+from hledac.universal._core.env_config import ENV
 from hledac.universal.utils.asyncx import (
     safe_create_task,
     parallel,
@@ -1584,7 +1584,7 @@ class AcquisitionOrchestrator:
 
         # Import SynthesisRunner
         try:
-            from hledac.universal.core.model_runtime import ModelLifecycle
+            from hledac.universal._core.model_runtime import ModelLifecycle
             from hledac.universal.brain.synthesis_runner import SynthesisRunner
         except ImportError as e:
             log.debug("[F259] SynthesisRunner import failed: %s", e)
@@ -1868,7 +1868,7 @@ class AcquisitionOrchestrator:
     def _get_adaptive_concurrency(self) -> int:
         """Get adaptive concurrency from Rust adaptive_scheduler. Default 5."""
         # R6: Centralized Rust access via core.rust_backend
-        from hledac.universal.core.rust_backend import rust
+        from hledac.universal._core.rust_backend import rust
         fn = rust.raw.get_adaptive_mixed_threshold
         if fn is not None:
             try:
@@ -1976,7 +1976,7 @@ class AcquisitionOrchestrator:
 # ── Protocol re-export ────────────────────────────────────────────────────────
 
 from hledac.universal.runtime.scheduler_v2.protocol import AcquisitionPhaseResult  # noqa: E402
-from core import aclose
+from _core import aclose
 
 __all__ = [
     "AcquisitionOrchestrator",

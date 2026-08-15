@@ -30,15 +30,19 @@ from unittest.mock import patch
 
 from hledac.universal.knowledge.duckdb_store import DuckDBShadowStore
 from hledac.universal.utils.patterns.pattern_matcher import PatternHit
-from hledac.universal.pipeline.live_feed_pipeline import (
-from core import aclose
+
+
+
+
+
     FeedPipelineRunResult,
     async_run_live_feed_pipeline,
 )
 
 # ---------------------------------------------------------------------------
 # Module-level sentinel for store injection (bypasses scheduler's broken wiring)
-# _canned_store_ref is set by test_canonical_run_sprint_persists_and_exports_findings
+
+from _core import aclose# _canned_store_ref is set by test_canonical_run_sprint_persists_and_exports_findings
 # before scheduler.run() is called.  _canned_live_feed_pipeline reads it when store=None.
 # ---------------------------------------------------------------------------
 _canned_store_ref: Any = None

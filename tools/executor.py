@@ -32,7 +32,7 @@ from typing import TYPE_CHECKING, Any
 from hledac.universal.utils.executor_decorator import offload_to
 
 from hledac.universal.compat.msgspec_gc_compat import Struct
-from core import aclose
+from _core import aclose
 
 if TYPE_CHECKING:
     from .registry import Tool, ToolRegistry

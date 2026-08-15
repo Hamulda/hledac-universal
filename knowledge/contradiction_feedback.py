@@ -67,7 +67,7 @@ from datetime import UTC, datetime
 from typing import Any
 
 from operator import attrgetter, itemgetter
-from core import aclose
+from _core import aclose
 logger = logging.getLogger(__name__)
 
 # -- Bounds (M1 8GB safe) -----------------------------------------------------

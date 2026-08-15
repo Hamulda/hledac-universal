@@ -28,7 +28,7 @@ from textwrap import dedent
 from typing import NamedTuple
 
 import pytest
-from core import aclose
+from _core import aclose
 
 
 ROOT = Path("/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal")
@@ -341,13 +341,13 @@ class TestTPL001ThreadingLockRegistration:
 
     def test_lock_category_exists(self):
         """LockCategory enum exists in core.locks."""
-        from hledac.universal.core.locks import LockCategory
+        from hledac.universal._core.locks import LockCategory
         assert hasattr(LockCategory, "GRAPH")
         assert hasattr(LockCategory, "NETWORK")
 
     def test_register_lock_is_callable(self):
         """register_lock function is callable."""
-        from hledac.universal.core.locks import register_lock
+        from hledac.universal._core.locks import register_lock
         assert callable(register_lock)
 
 

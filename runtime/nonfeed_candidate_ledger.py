@@ -49,7 +49,7 @@ from collections import deque
 from dataclasses import field
 import msgspec
 from typing import Any, Final
-from core import aclose
+from _core import aclose
 
 try:
     import orjson

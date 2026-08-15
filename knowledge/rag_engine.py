@@ -36,10 +36,10 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 from hledac.universal.utils.msgspec_json import dumps_str as _msgspec_dumps_str, loads as _msgspec_loads
 from hledac.universal.utils.asyncx import parallel
-from hledac.universal.core.lazy_imports import lazy
+from hledac.universal._core.lazy_imports import lazy
 from operator import attrgetter, itemgetter
 # SWARM-010: Feature flag imports for registry compliance
-from hledac.universal.core.feature_flags import FeatureFlags, FeatureFlag
+from hledac.universal._core.feature_flags import FeatureFlags, FeatureFlag
 if TYPE_CHECKING:
     pass
 _dd_int: defaultdict[str, int] = defaultdict(int)
@@ -185,8 +185,8 @@ class BM25Index:
 # ImportError triggers the Python BM25Index fallback transparently.
 _RUST_FULLTEXT: Any = None
 # R6: Centralized Rust access via core.rust_backend
-from hledac.universal.core.rust_backend import rust
-from core import aclose
+from hledac.universal._core.rust_backend import rust
+from _core import aclose
 
 _RUST_FULLTEXT = rust.fulltext
 _RUST_FULLTEXT_AVAILABLE: bool = False
@@ -380,7 +380,7 @@ class TantivyFulltextIndex:
         # UNIFIED-001: Acquire admission from peak load coordinator
         peak_guard = None
         try:
-            from hledac.universal.core.peak_load_coordinator import (
+            from hledac.universal._core.peak_load_coordinator import (
                 ResourceClass,
                 TaskPriority,
                 get_peak_coordinator,

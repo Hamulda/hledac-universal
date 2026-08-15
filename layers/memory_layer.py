@@ -797,7 +797,7 @@ import shutil
 import uuid
 from dataclasses import dataclass, field
 import msgspec
-from core import aclose
+from _core import aclose
 
 
 class RAMDiskConfig(msgspec.Struct, frozen=True, kw_only=True, gc=False):

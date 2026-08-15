@@ -34,7 +34,7 @@ import asyncio
 import logging
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
-from core import aclose
+from _core import aclose
 
 if TYPE_CHECKING:
     pass

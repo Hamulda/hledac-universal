@@ -38,7 +38,7 @@ import logging
 import re
 import unicodedata
 from typing import Any, NamedTuple
-from core import aclose
+from _core import aclose
 
 logger = logging.getLogger(__name__)
 
@@ -948,7 +948,7 @@ def batch_normalize_translinguistic(texts: list[str]) -> list[str]:
         texts = texts[:_BATCH_HARD_CAP]
 
     # R6: Centralized Rust access via core.rust_backend
-    from hledac.universal.core.rust_backend import rust
+    from hledac.universal._core.rust_backend import rust
     batch_nfc_normalize_fast = rust.raw.batch_nfc_normalize_fast
     batch_strip_diacritics_fast = rust.raw.batch_strip_diacritics_fast
     if batch_nfc_normalize_fast is None or batch_strip_diacritics_fast is None:

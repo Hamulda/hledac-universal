@@ -27,7 +27,7 @@ from pathlib import Path
 from typing import Any
 import numpy as np
 from operator import attrgetter, itemgetter
-from core import aclose
+from _core import aclose
 logger = logging.getLogger(__name__)
 _GHOST_PATTERN_GROUPS: list[tuple[str, str]] = [('ts_0', 'created.*modified.*0000'), ('ts_1', 'last.*access.*1970'), ('ts_2', 'deleted.*\\d{4}-\\d{2}-\\d{2}'), ('frag_0', '\\{[^{}]*\\}'), ('frag_1', '<[^>]+>'), ('frag_2', '[a-zA-Z0-9]{20,}'), ('shadow_0', 'ref.*deleted'), ('shadow_1', 'moved.*permanently'), ('shadow_2', '404.*not.*found'), ('shadow_3', 'previously.*available'), ('fs_0', '\\.tmp$'), ('fs_1', '~$'), ('fs_2', '\\.bak$'), ('fs_3', '\\.old$'), ('fs_4', 'recycle'), ('fs_5', 'trash')]
 _URL_PATTERN: _re.Pattern[str] = _re.compile('https?://[^\\s<>"{}|\\\\^`\\[\\]]+')

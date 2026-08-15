@@ -90,7 +90,7 @@ Architecture (Issue 3.5 consolidation):
 """
 
 from __future__ import annotations
-from core import aclose  # F350M-R: Type-4 clone elimination
+from _core import aclose  # F350M-R: Type-4 clone elimination
 
 from dataclasses import dataclass, field
 
@@ -112,10 +112,10 @@ from contextlib import aclosing
 from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 from collections.abc import Awaitable
 
-from hledac.universal.core.constants import M1_BOUNDS
+from hledac.universal._core.constants import M1_BOUNDS
 from hledac.universal.utils.locks import LazyAsyncioLock
-from hledac.universal.core.env_config import ENV
-from hledac.universal.core.locks import LockCategory, register_lock
+from hledac.universal._core.env_config import ENV
+from hledac.universal._core.locks import LockCategory, register_lock
 
 # Issue 10.2: canonical UA — injects JA3-consistent User-Agent header
 from hledac.universal.layers.ua_rotator import get_ua_for_profile

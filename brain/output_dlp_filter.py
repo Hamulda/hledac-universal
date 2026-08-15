@@ -22,7 +22,7 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 from typing import Any
-from core import aclose
+from _core import aclose
 
 __all__ = ['OutputDLPFilter', 'mask_secret', 'DLP_STATS']
 

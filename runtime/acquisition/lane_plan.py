@@ -19,7 +19,7 @@ from collections.abc import Callable
 from typing import Any
 import msgspec
 from hledac.universal.runtime.acquisition.lane_constants import AcquisitionLane, RiskLevel
-from core import aclose
+from _core import aclose
 logger = logging.getLogger(__name__)
 
 class LaneSpec(msgspec.Struct, frozen=True, gc=False):

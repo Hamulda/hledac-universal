@@ -16,7 +16,7 @@ Lazy module loading (PEP 562) pro M1 8GB UMA cold start:
 
 import importlib
 from typing import TYPE_CHECKING
-from core import aclose
+from _core import aclose
 
 if TYPE_CHECKING:
     # Stub pro pyright — runtime využívá __getattr__ níže.

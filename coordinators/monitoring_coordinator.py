@@ -38,11 +38,11 @@ from typing import Any
 import msgspec
 from hledac.universal.compat.msgspec_gc_compat import Struct
 
-from hledac.universal.core.system_metrics import get_system_snapshot
+from hledac.universal._core.system_metrics import get_system_snapshot
 from hledac.universal.utils.asyncx import safe_create_task
 
 from .base import DecisionResponse, ExecutionResult, MemoryPressureLevel, OperationResult, OperationType, UniversalCoordinator
-from core import aclose
+from _core import aclose
 
 logger = logging.getLogger(__name__)
 

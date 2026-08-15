@@ -3,7 +3,7 @@
 import importlib.util
 import logging
 from collections.abc import Callable
-from core import aclose
+from _core import aclose
 
 logger = logging.getLogger(__name__)
 
@@ -27,7 +27,7 @@ def _get_xxh3() -> Callable[[bytes], str] | None:
         return _xxh3_func
     # F265C: Use centralized rust backend
     try:
-        from hledac.universal.core.rust_backend import rust as _rust_backend
+        from hledac.universal._core.rust_backend import rust as _rust_backend
 
         if _rust_backend.is_available and _rust_backend.hash is not None:
             _xxh3_func = _rust_backend.hash.content_hash_hex

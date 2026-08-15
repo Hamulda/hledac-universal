@@ -14,7 +14,7 @@ from typing import TYPE_CHECKING, Any
 from hledac.universal.utils.config_introspection import safe_attr_get
 
 from ._stage_protocol import BoundedStageQueue, StageContext
-from core import aclose
+from _core import aclose
 
 if TYPE_CHECKING:
     pass

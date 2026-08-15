@@ -14,8 +14,11 @@ import aiofiles
 from .base import Transport, TransportConfig, TransportResult
 logger = logging.getLogger(__name__)
 from hledac.universal.utils.safe_swallow import safe_swallow
-from hledac.universal.transport.resource_admission import (
-from core import aclose
+
+
+
+
+
     TransportAdmission,
     cleanup_child_process,
     cleanup_process_tree,
@@ -24,6 +27,7 @@ from core import aclose
 MAX_CIRCUIT_REQUESTS: int = 3
 _TOR_TRANSPORT_SINGLETON: 'TorTransport | None' = None
 
+from _core import aclose
 def get_tor_transport_singleton() -> 'TorTransport | None':
     """Return the module-level TorTransport singleton or None."""
     return _TOR_TRANSPORT_SINGLETON

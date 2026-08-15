@@ -18,7 +18,7 @@ and the MLX array — no copy, no L2 cache eviction.
 from typing import TYPE_CHECKING, Any, Optional
 
 import numpy as np
-from core import aclose
+from _core import aclose
 
 if TYPE_CHECKING:
     import mlx.core as mx
@@ -43,7 +43,7 @@ def _get_shared_buf():
     """Lazy import of SharedMetalBuffer from Rust extensions (SILICON-04)."""
     try:
         # R6: Centralized Rust access via core.rust_backend
-        from hledac.universal.core.rust_backend import rust
+        from hledac.universal._core.rust_backend import rust
         SharedMetalBuffer = rust.raw.SharedMetalBuffer
         return SharedMetalBuffer
     except ImportError:

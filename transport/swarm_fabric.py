@@ -84,7 +84,7 @@ from typing import TYPE_CHECKING, Any, Self
 from collections.abc import AsyncIterator
 
 import msgspec
-from core import aclose
+from _core import aclose
 
 if TYPE_CHECKING:
     import rust

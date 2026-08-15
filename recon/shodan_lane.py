@@ -31,8 +31,11 @@ from hledac.universal.utils.rate_limiters import get_limiter
 from hledac.universal.security.secrets_scrubber import redact_shodan_key, safe_error_log
 
 # DRY: Shared search lane utilities (DRY-2026-08-07)
-from hledac.universal.recon.search_lane_utils import (
-from core import aclose
+
+
+
+
+
     apply_jitter,
     circuit_breaker_check,
     http_status_to_failure_kind,
@@ -43,7 +46,8 @@ from core import aclose
 logger = logging.getLogger(__name__)
 
 SHODAN_SEARCH_API = "https://api.shodan.io/shodan/host/search"
-RATE_LIMIT_KEY = "shodan_api"
+
+from _core import acloseRATE_LIMIT_KEY = "shodan_api"
 
 # [FINAL]-019: Anti-correlation jitter for SIEM fingerprint defense.
 # Gaussian sigma = 0.8s gives decorrelated inter-request intervals.

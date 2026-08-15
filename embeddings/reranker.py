@@ -27,7 +27,7 @@ from typing import Any
 
 from operator import attrgetter, itemgetter
 import numpy as np
-from core import aclose
+from _core import aclose
 
 logger = logging.getLogger(__name__)
 
@@ -47,7 +47,7 @@ _rust_topk_fn: Callable[..., Any] | None = None
 
 try:
     # R6: Centralized Rust access via core.rust_backend
-    from hledac.universal.core.rust_backend import rust
+    from hledac.universal._core.rust_backend import rust
     _rust_mod = rust.raw.module
 
     # Prefer zero-copy npy path (ISSUE-001 fix).

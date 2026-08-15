@@ -68,7 +68,7 @@ import os
 from dataclasses import dataclass, field
 import msgspec
 from typing import TYPE_CHECKING, Any, ClassVar
-from core import aclose
+from _core import aclose
 if TYPE_CHECKING:
     from hledac.universal.project_types import AnalyzerResult, ExportHandoff
     from hledac.universal.runtime.sprint_lifecycle import SprintLifecycleManager

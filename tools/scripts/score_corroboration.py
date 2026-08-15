@@ -32,13 +32,13 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from hledac.universal.runtime.evidence_corroboration import (
-from core import aclose
     CorroborationScore,
     build_recommended_pivots,
     build_top_indicators,
     build_weak_unverified,
     score_indicators_by_corroboration,
 )
+from _core import aclose
 
 
 def load_report(path: str) -> list[dict]:
@@ -106,7 +106,7 @@ def main() -> None:
         scores = _score_seeds(seeds)
     elif args.duckdb:
         # ISSUE-04: Use canonical duckdb_pool instead of raw duckdb.connect()
-        from hledac.universal.core.duckdb_pool import duckdb_ro_connection
+        from hledac.universal._core.duckdb_pool import duckdb_ro_connection
         if not args.query:
             print("ERROR: --query required with --duckdb", file=sys.stderr)
             sys.exit(1)

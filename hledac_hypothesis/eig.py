@@ -20,7 +20,7 @@ import math
 from typing import Any
 
 from hledac_hypothesis.dempster_shafer import DempsterShafer
-from core import aclose
+from _core import aclose
 
 
 class EIGCalculator:

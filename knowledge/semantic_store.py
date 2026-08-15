@@ -50,8 +50,8 @@ _TABLE_NAME = "semantic_ioc_v1"
 _TABLE_NAME_MULTILINGUAL = "semantic_ioc_multilingual_v1"  # SWARM-002
 
 # Sprint F228B: CPU executor for embed (never block event loop)
-from hledac.universal.core.concurrency import ConcurrencyCategory, get_semaphore  # noqa: E402
-from core import aclose
+from hledac.universal._core.concurrency import ConcurrencyCategory, get_semaphore  # noqa: E402
+from _core import aclose
 
 CPU_EXECUTOR = get_semaphore(ConcurrencyCategory.MLX_INFERENCE)
 
@@ -83,7 +83,7 @@ _lang_detector: Any = None
 _bge_m3_embedder: Any = None
 
 try:
-    from hledac.universal.core.multilingual import (
+    from hledac.universal._core.multilingual import (
         LangDetector,
         detect_language,
         get_lang_detector,
@@ -222,7 +222,7 @@ class SemanticStore:
         # This uses mlx_embeddings package via compat/core_mlx_embeddings shim
         self._mlx_embedder = None
         try:
-            from hledac.universal.core.mlx_embeddings import get_embedding_manager
+            from hledac.universal._core.mlx_embeddings import get_embedding_manager
 
             self._mlx_embedder = get_embedding_manager()
             # Ensure loaded

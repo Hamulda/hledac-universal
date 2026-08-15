@@ -22,7 +22,7 @@ import asyncio
 import logging
 
 import pytest
-from core import aclose
+from _core import aclose
 
 # ---------------------------------------------------------------------------
 # Config field

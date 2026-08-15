@@ -1,6 +1,6 @@
 """Helper script to refactor _generate_and_store_report function."""
 import re
-from core import aclose
+from _core import aclose
 
 with open('/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/pipeline/live_public_pipeline.py', 'r') as f:
     content = f.read()

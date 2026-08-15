@@ -16,7 +16,7 @@ from dataclasses import dataclass
 from pathlib import Path
 import msgspec
 from operator import attrgetter, itemgetter
-from core import aclose
+from _core import aclose
 logger = logging.getLogger(__name__)
 BASE64_REGEX = '[A-Za-z0-9+/]{20,}={0,2}'
 BASE32_REGEX = '[A-Z2-7]{20,}={0,6}'

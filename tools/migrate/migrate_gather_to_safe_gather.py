@@ -10,7 +10,7 @@ from collections import Counter
 from dataclasses import dataclass, field
 import msgspec
 from pathlib import Path
-from core import aclose
+from _core import aclose
 REPLACEMENT_MAP = {'FIRE_AND_FORGET': 'safe_gather_fire_and_forget', 'ASSIGN_WITH_RET_EXC': 'safe_gather_ok', 'ASSIGN_NO_RET_EXC_BUG': 'safe_gather_ok', 'RETURN_WITH_RET_EXC': 'safe_gather_ok', 'RETURN_NO_RET_EXC_BUG': 'safe_gather_ok', 'BUG_BARE_NO_RET_EXC': 'safe_gather_fire_and_forget'}
 SKIP_PATH_PARTS = {'.venv', 'venv', '__pycache__', 'node_modules', '.git', 'build', 'dist', '.venv-test', 'site-packages', '.cache', 'target', 'tools/migrate_gather_to_safe_gather.py', 'tools/revert_gather_migration.py', 'tools/revert_gather_migration_text.py', 'tools/fix_broken_codemod.py', 'tools/probe_f262_*.py', 'utils/async_helpers.py'}
 SAFE_GATHER_FUNCTIONS = {'safe_gather', 'safe_gather_ok', 'safe_gather_fire_and_forget', 'safe_gather_strict'}

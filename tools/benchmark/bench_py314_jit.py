@@ -23,7 +23,7 @@ import textwrap
 import time
 from pathlib import Path
 from typing import NamedTuple
-from core import aclose
+from _core import aclose
 
 
 class JTStatus(NamedTuple):

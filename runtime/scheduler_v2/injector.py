@@ -22,7 +22,7 @@ from __future__ import annotations
 
 import asyncio
 from typing import TYPE_CHECKING, Any
-from core import aclose
+from _core import aclose
 
 if TYPE_CHECKING:
     pass

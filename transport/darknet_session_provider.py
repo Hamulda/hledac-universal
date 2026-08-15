@@ -30,7 +30,7 @@ import asyncio
 import logging
 import time
 from typing import Any
-from core import aclose
+from _core import aclose
 
 logger = logging.getLogger("hledac.universal.transport.darknet_session_provider")
 

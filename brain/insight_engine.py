@@ -34,7 +34,7 @@ from typing import Any
 from operator import attrgetter, itemgetter
 import msgspec
 import numpy as np
-from core import aclose
+from _core import aclose
 
 logger = logging.getLogger(__name__)
 

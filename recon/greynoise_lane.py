@@ -35,7 +35,7 @@ from hledac.universal.utils.asyncx import bounded_parallel_map
 from hledac.universal.utils.rate_limiters import get_limiter
 
 from hledac.universal.security.secrets_scrubber import redact_greynoise_key, safe_error_log
-from core import aclose
+from _core import aclose
 
 logger = logging.getLogger(__name__)
 
@@ -136,7 +136,7 @@ async def query_greynoise_ip(
     _sigma = _GREYNOISE_JITTER_SIGMA_S
     if _sigma > 0:
         try:
-            from hledac.universal.core.telemetry.context_state import is_blitz_mode
+            from hledac.universal._core.telemetry.context_state import is_blitz_mode
             if not is_blitz_mode():
                 import random as _rng
                 await asyncio.sleep(abs(_rng.gauss(0.0, _sigma)))

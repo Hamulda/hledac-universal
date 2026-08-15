@@ -185,7 +185,7 @@ from hledac_hypothesis.adversarial import AdversarialVerifier
 from hledac_hypothesis.causal import CausalReasoner
 from hledac_hypothesis.explainer import SimpleNodeAblationExplainer, explain_with_mlx
 from hledac_hypothesis.packs import HypothesisPack, SourceHint
-from core import aclose
+from _core import aclose
 
 class HypothesisEngine:
     """

@@ -12,7 +12,7 @@ Issue E2: Pipeline overlap — eliminates 4-stage Python pipeline overhead.
 from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
-from core import aclose
+from _core import aclose
 
 # Lazy import to avoid hard dependency at module load
 _RUST_FEED_PIPELINE: Any | None = None
@@ -27,7 +27,7 @@ def _try_import_rust_feed_pipeline() -> bool:
     
     try:
         # R6: Centralized Rust access via core.rust_backend
-        from hledac.universal.core.rust_backend import rust
+        from hledac.universal._core.rust_backend import rust
         feed_entry_pipeline = rust.raw.feed_entry_pipeline
         feed_batch_pipeline = rust.raw.feed_batch_pipeline
         _RUST_FEED_PIPELINE = feed_entry_pipeline

@@ -16,7 +16,7 @@ import logging
 from typing import TYPE_CHECKING, Any
 
 from hledac.universal.pipeline._soa_types import FeedEntryBatch
-from core import aclose
+from _core import aclose
 
 logger = logging.getLogger(__name__)
 

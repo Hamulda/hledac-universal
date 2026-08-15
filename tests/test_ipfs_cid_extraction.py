@@ -3,7 +3,7 @@ from unittest.mock import patch
 import pytest
 
 from hledac.universal.network.ipfs_client import extract_cids_from_text
-from core import aclose
+from _core import aclose
 
 
 def test_extract_ipfs_cid_from_finding_content():

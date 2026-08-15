@@ -540,7 +540,7 @@ class DomainReputationService:
 # Singleton factory (F320: Refactored to use centralized pattern)
 # ---------------------------------------------------------------------------
 from hledac.universal.utils._patterns import module_singleton_getter
-from core import aclose
+from _core import aclose
 
 
 def _make_reputation_service(store: DuckDBShadowStore | None) -> DomainReputationService:

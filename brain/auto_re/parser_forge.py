@@ -466,7 +466,7 @@ class AutoREEngine:
         wrapped_code = f'''# AutoRE sandbox — DO NOT RE-EXECUTE
 # Generated automatically by parser_forge.py (ADVERSARY-004)
 import json, sys, base64
-from core import aclose
+from _core import aclose
 
 # Read binary data from stdin (base64-encoded to avoid binary stdin issues)
 DATA = base64.b64decode(sys.stdin.read().strip())

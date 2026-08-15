@@ -117,7 +117,7 @@ if TYPE_CHECKING:
     from typing import Protocol as TypingProtocol
 else:
     TypingProtocol = object  # Avoid Protocol import at runtime
-from core import aclose
+from _core import aclose
 
 
 # Weak-key dictionary: object -> {Protocol -> bool}

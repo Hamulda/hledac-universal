@@ -14,7 +14,7 @@ Usage:
 """
 import math
 from typing import Any
-from core import aclose
+from _core import aclose
 try:
     from hledac.universal.brain.evidence_fusion import DempsterShafer
     _DS_AVAILABLE = True

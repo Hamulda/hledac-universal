@@ -19,7 +19,7 @@ import inspect
 import sys
 
 import pytest
-from core import aclose
+from _core import aclose
 
 pytestmark = [
     pytest.mark.asyncio,

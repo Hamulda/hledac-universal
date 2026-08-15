@@ -534,7 +534,7 @@ async def _run_academic_lane(store: Any, query: str) -> int:
             if academic_enabled or has_academic_keywords or deep_research:
                 from hledac.universal.discovery.academic import ACADEMIC_ENABLED, search_all_academic
                 if ACADEMIC_ENABLED:
-                    from hledac.universal.core.concurrency import ConcurrencyCategory, get_semaphore
+                    from hledac.universal._core.concurrency import ConcurrencyCategory, get_semaphore
                     academic_semaphore = get_semaphore(ConcurrencyCategory.ACADEMIC_SEARCH)
                     async def limited_academic_search():
                         async with academic_semaphore:
@@ -1761,7 +1761,7 @@ class PipelineRunResult(Struct, frozen=True):
 from dataclasses import dataclass, field
 from collections import Counter
 from typing import TYPE_CHECKING
-from core import aclose
+from _core import aclose
 
 if TYPE_CHECKING:
     from hledac.universal.knowledge.duckdb_store import DuckDBShadowStore
@@ -1875,7 +1875,7 @@ class Phase2_ResourceGovernance:
 
     async def run(self, ctx: PipelineContext) -> PipelineContext:
         """Check UMA state and determine effective fetch concurrency."""
-        from hledac.universal.core.resource_governor import (
+        from hledac.universal._core.resource_governor import (
             UMA_STATE_CRITICAL,
             UMA_STATE_EMERGENCY,
             UMA_STATE_OK,
@@ -2679,7 +2679,7 @@ class Phase7_SynthesisRunner:
             pass
 
         try:
-            from hledac.universal.core.model_runtime import ModelLifecycle
+            from hledac.universal._core.model_runtime import ModelLifecycle
             from hledac.universal.brain.synthesis_runner import SynthesisRunner
 
             findings_for_synth = []
@@ -3093,7 +3093,7 @@ async def _get_uma_state() -> tuple[str, bool]:
     to avoid blocking the event loop with threading.RLock in _record_transition().
     """
     # Sprint 8AB surface — lazy import to avoid module-level side effects
-    from hledac.universal.core.resource_governor import (
+    from hledac.universal._core.resource_governor import (
         evaluate_uma_state,
         sample_uma_status_async,
     )
@@ -3119,7 +3119,7 @@ def _make_finding_id(
     # xxhash — non-cryptographic, 10-20× faster than sha256 for dedup keys
     # F265C: Use centralized rust backend
     try:
-        from hledac.universal.core.rust_backend import rust as _rust_backend
+        from hledac.universal._core.rust_backend import rust as _rust_backend
 
         if _rust_backend.is_available and _rust_backend.hash is not None:
             return _rust_backend.hash.content_hash_hex(key)

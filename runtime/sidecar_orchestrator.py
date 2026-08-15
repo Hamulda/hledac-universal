@@ -80,7 +80,7 @@ from hledac.universal.runtime.sidecar_dispatcher import (
     SidecarDispatcher,
 )
 from hledac.universal.runtime.sidecar_protocol import SchedulerAdvisory
-from core import aclose
+from _core import aclose
 
 log = logging.getLogger(__name__)
 
@@ -151,11 +151,11 @@ def _get_peak_coordinator():
     """
     try:
         # Try co-scheduler first (UNIFIED-003)
-        from hledac.universal.core.global_co_scheduler import (
+        from hledac.universal._core.global_co_scheduler import (
             get_co_scheduler,
             Subsystem,
         )
-        from hledac.universal.core.peak_load_coordinator import (
+        from hledac.universal._core.peak_load_coordinator import (
             ResourceClass,
             TaskPriority,
         )
@@ -163,7 +163,7 @@ def _get_peak_coordinator():
     except ImportError:  # noqa: BLE001
         pass
     try:
-        from hledac.universal.core.peak_load_coordinator import (
+        from hledac.universal._core.peak_load_coordinator import (
             ResourceClass,
             TaskPriority,
             get_peak_coordinator,
@@ -311,7 +311,7 @@ async def _run_bounded_plugin_sidecar(coro, sidecar_id: str) -> None:
     # UNIFIED-002: Reserve memory budget via AsyncUMAGuard
     guard = None
     try:
-        from hledac.universal.core.resource_governor import get_uma_guard, Priority
+        from hledac.universal._core.resource_governor import get_uma_guard, Priority
         guard = get_uma_guard()
     except Exception:
         guard = None
@@ -570,7 +570,7 @@ class SidecarOrchestrator:
         # be skipped during WINDUP/BATTERY/EMERGENCY modes — the governor already
         # sets sidecars_ok=False in QoSProfile for these levels.
         try:
-            from hledac.universal.core.resource_governor import get_current_degradation_level, QoSLevel
+            from hledac.universal._core.resource_governor import get_current_degradation_level, QoSLevel
             level = get_current_degradation_level()
             if level in (QoSLevel.EMERGENCY, QoSLevel.BATTERY, QoSLevel.WINDUP):
                 # [NEW-M13]: Acknowledge QoS change - sidecars are suppressed
@@ -990,7 +990,7 @@ class SidecarOrchestrator:
             reason:     Human-readable reason for the ack
         """
         try:
-            from hledac.universal.core.resource_governor import get_qos_subscription_registry
+            from hledac.universal._core.resource_governor import get_qos_subscription_registry
             registry = get_qos_subscription_registry()
             await registry.acknowledge(capability, success, reason)
         except Exception:  # noqa: BLE001
@@ -1013,7 +1013,7 @@ class SidecarOrchestrator:
             return
         
         try:
-            from hledac.universal.core.resource_governor import get_qos_subscription_registry
+            from hledac.universal._core.resource_governor import get_qos_subscription_registry
             import asyncio
             
             registry = get_qos_subscription_registry()
@@ -1242,7 +1242,7 @@ class SidecarOrchestrator:
         if hasattr(self, "_qos_subscribed") and self._qos_subscribed:
             try:
                 import asyncio
-                from hledac.universal.core.resource_governor import get_qos_subscription_registry
+                from hledac.universal._core.resource_governor import get_qos_subscription_registry
                 registry = get_qos_subscription_registry()
                 # [NEW-M13-FIX]: Use safe pattern for task creation in sync context
                 # This handles both async and sync teardown contexts

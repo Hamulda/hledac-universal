@@ -32,7 +32,7 @@ import re
 import sys
 from pathlib import Path
 from typing import NamedTuple
-from core import aclose
+from _core import aclose
 
 
 ROOT = Path("/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal")

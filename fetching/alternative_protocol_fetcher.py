@@ -34,7 +34,7 @@ try:
 except ImportError:
     SourceType = None
 from hledac.universal.knowledge.duckdb_store import CanonicalFinding
-from core import aclose
+from _core import aclose
 logger = logging.getLogger(__name__)
 ALT_PROTOCOLS_ENABLED: bool = os.getenv('HLEDAC_ENABLE_ALT_PROTOCOLS', '0').lower() in ('1', 'true', 'yes', 'on')
 
@@ -448,7 +448,7 @@ async def fetch_fediverse_only(query: str) -> list:
     Returns:
         list[CanonicalFinding]
     """
-    from hledac.universal.core.concurrency import ConcurrencyCategory, get_semaphore
+    from hledac.universal._core.concurrency import ConcurrencyCategory, get_semaphore
     sem = get_semaphore(ConcurrencyCategory.SCRAPE_GENERAL)
     findings, _ = await _fetch_from_fediverse(query, sem)
     return findings
@@ -463,7 +463,7 @@ async def fetch_matrix_only(query: str) -> list:
     Returns:
         list[CanonicalFinding]
     """
-    from hledac.universal.core.concurrency import ConcurrencyCategory, get_semaphore
+    from hledac.universal._core.concurrency import ConcurrencyCategory, get_semaphore
     sem = get_semaphore(ConcurrencyCategory.SCRAPE_GENERAL)
     findings, _ = await _fetch_from_matrix(query, sem)
     return findings
@@ -478,7 +478,7 @@ async def fetch_ipfs_only(query: str) -> list:
     Returns:
         list[CanonicalFinding]
     """
-    from hledac.universal.core.concurrency import ConcurrencyCategory, get_semaphore
+    from hledac.universal._core.concurrency import ConcurrencyCategory, get_semaphore
     sem = get_semaphore(ConcurrencyCategory.SCRAPE_GENERAL)
     findings, _ = await _fetch_from_ipfs(query, sem)
     return findings
@@ -493,7 +493,7 @@ async def fetch_gopher_only(query: str) -> list:
     Returns:
         list[CanonicalFinding]
     """
-    from hledac.universal.core.concurrency import ConcurrencyCategory, get_semaphore
+    from hledac.universal._core.concurrency import ConcurrencyCategory, get_semaphore
     sem = get_semaphore(ConcurrencyCategory.SCRAPE_GENERAL)
     findings, _ = await _fetch_from_gopher(query, sem)
     return findings
@@ -508,7 +508,7 @@ async def fetch_gemini_only(query: str) -> list:
     Returns:
         list[CanonicalFinding]
     """
-    from hledac.universal.core.concurrency import ConcurrencyCategory, get_semaphore
+    from hledac.universal._core.concurrency import ConcurrencyCategory, get_semaphore
     sem = get_semaphore(ConcurrencyCategory.SCRAPE_GENERAL)
     findings, _ = await _fetch_from_gemini(query, sem)
     return findings
@@ -523,7 +523,7 @@ async def fetch_i2p_only(query: str) -> list:
     Returns:
         list[CanonicalFinding]
     """
-    from hledac.universal.core.concurrency import ConcurrencyCategory, get_semaphore
+    from hledac.universal._core.concurrency import ConcurrencyCategory, get_semaphore
     sem = get_semaphore(ConcurrencyCategory.SCRAPE_GENERAL)
     findings, _ = await _fetch_from_i2p(query, sem)
     return findings
@@ -538,7 +538,7 @@ async def fetch_zeronet_only(query: str) -> list:
     Returns:
         list[CanonicalFinding]
     """
-    from hledac.universal.core.concurrency import ConcurrencyCategory, get_semaphore
+    from hledac.universal._core.concurrency import ConcurrencyCategory, get_semaphore
     sem = get_semaphore(ConcurrencyCategory.ZERONET_FETCH)
     findings, _ = await _fetch_from_zeronet(query, sem)
     return findings
@@ -553,7 +553,7 @@ async def fetch_freenet_only(query: str) -> list:
     Returns:
         list[CanonicalFinding]
     """
-    from hledac.universal.core.concurrency import ConcurrencyCategory, get_semaphore
+    from hledac.universal._core.concurrency import ConcurrencyCategory, get_semaphore
     sem = get_semaphore(ConcurrencyCategory.FREENET_FETCH)
     findings, _ = await _fetch_from_freenet(query, sem)
     return findings

@@ -27,7 +27,7 @@ from typing import TYPE_CHECKING
 import httpx
 
 from hledac.universal.discovery.base import BaseDiscoveryMixin, DiscoveryBatchResult, DiscoveryHit, DiscoveryResult
-from hledac.universal.core.feature_flags import FeatureFlags, FeatureFlag
+from hledac.universal._core.feature_flags import FeatureFlags, FeatureFlag
 from hledac.universal.network.session_runtime import async_get_httpx_session
 from hledac.universal.tools.discovery_replay import (
     read_cassette,
@@ -777,7 +777,7 @@ def _build_query_variants(query: str, dspy_variants: list | None = None) -> list
 
 from dataclasses import dataclass, field
 from enum import Enum, auto
-from core import aclose
+from _core import aclose
 
 
 class SearchStage(Enum):

@@ -43,7 +43,7 @@ def _json_dumps(data: Any, **kwargs: Any) -> str:
 
 
 from hledac.universal.security.pq_crypto import (  # noqa: E402
-from core import aclose
+from _core import aclose
     PostQuantumBackend,
     PQAvailability,
     PQSignature,

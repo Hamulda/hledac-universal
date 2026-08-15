@@ -1001,3 +1001,12 @@ dimension = 384
 max_results = 20
 index_audit = true
 
+
+[tool.uv.sources]
+ruff-ext = { workspace = true }
+
+[tool.uv.overrides]
+whispercpp = "==0.0.17"
+
+[tool.uv]
+override-dependencies = ["whispercpp==0.0.17"]

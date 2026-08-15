@@ -48,7 +48,7 @@ if TYPE_CHECKING:
     from hledac_rust_extensions import MmapBloomFilter as _MmapBloomFilterT
 else:
     _MmapBloomFilterT = object  # type: ignore[assignment,misc]  # runtime sentinel
-from core import aclose
+from _core import aclose
 
 # ---------------------------------------------------------------------------
 # Conditional imports — every symbol below has an explicit type annotation
@@ -98,7 +98,7 @@ def PROBABLES_AVAILABLE() -> bool:  # noqa: N802
 # ---------------------------------------------------------------------------
 # F265C: Rust backend — centralized access via core.rust_backend
 # ---------------------------------------------------------------------------
-from hledac.universal.core.rust_backend import rust as _rust_backend
+from hledac.universal._core.rust_backend import rust as _rust_backend
 
 # Convenience availability flags for backward compatibility
 _RUST_XXHASH_AVAILABLE: bool = _rust_backend.is_available and _rust_backend.hash is not None
@@ -121,7 +121,7 @@ import os as _os  # noqa: E402
 _home_at_import = _os.environ.get("HOME", "")
 
 # R6: Centralized Rust access — single entry point for all hledac_rust_extensions symbols
-from hledac.universal.core.rust_backend import rust
+from hledac.universal._core.rust_backend import rust
 
 # Rust extension import guard — BloomFilter exposed as
 # RustRotatingBloomFilter for API compatibility with probables.

@@ -17,7 +17,7 @@ Fallback chain: ``msgspec`` → ``orjson`` → ``json``.
 """
 
 from hledac.universal.utils.codec import *  # noqa: F403, E402
-from core import aclose
+from _core import aclose
 
 # Re-export everything from the canonical codec module.
 # This file is kept for backwards compatibility — ~55 call sites

@@ -13,7 +13,7 @@ import time
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 import msgspec
-from hledac.universal.core.resource_governor import Priority, ResourceGovernor
+from hledac.universal._core.resource_governor import Priority, ResourceGovernor
 from hledac.universal.utils.asyncx import parallel_ok
 if TYPE_CHECKING:
     from hledac.universal.utils.sprint_lifecycle import SprintLifecycleManager
@@ -21,7 +21,7 @@ from hledac.universal.planning.cost_model import AdaptiveCostModel
 from hledac.universal.planning.search import anytime_beam_search
 from hledac.universal.planning.slm_decomposer import SLMDecomposer
 from hledac.universal.utils._patterns import async_cleanup  # F320: DRY cleanup pattern
-from core import aclose
+from _core import aclose
 logger = logging.getLogger(__name__)
 
 class PlannerRuntimeRequest(msgspec.Struct, frozen=True, gc=False):

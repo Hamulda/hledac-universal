@@ -23,8 +23,7 @@ warnings.warn(
     stacklevel=2,
 )
 
-from hledac.universal.core.locks import (
-from core import aclose
+from hledac.universal._core.locks import (
     LockCategory,
     LockInfo,
     register_lock,
@@ -34,3 +33,4 @@ from core import aclose
     AsyncLockDCLP,
     make_counter,
 )
+from _core import aclose

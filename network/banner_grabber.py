@@ -48,7 +48,7 @@ from dataclasses import dataclass
 import msgspec
 from typing import TYPE_CHECKING
 from hledac.universal.utils.asyncx import parallel_ok, safe_wait_for
-from core import aclose
+from _core import aclose
 if TYPE_CHECKING:
     from hledac.universal.knowledge.duckdb_store import CanonicalFinding
 logger = logging.getLogger(__name__)
@@ -329,7 +329,7 @@ async def grab_batch_as_findings(targets: list[tuple[str, int]], timeout: int=10
         def _get_xxh3_hex():
             """Lazy-load Rust content_hash_hex (xxh3-64). Cached after first call."""
             try:
-                from hledac.universal.core.rust_backend import rust as _rust_backend
+                from hledac.universal._core.rust_backend import rust as _rust_backend
                 if _rust_backend.is_available and _rust_backend.hash is not None:
                     return _rust_backend.hash.content_hash_hex
                 raise ImportError('Rust hash not available')
@@ -379,7 +379,7 @@ async def banner_grab_to_canonical(host: str, ports: list[int], query: str) -> l
         ports = ports[:5]
     grabber = BannerGrabber()
     findings = []
-    from hledac.universal.core.concurrency import ConcurrencyCategory, get_semaphore
+    from hledac.universal._core.concurrency import ConcurrencyCategory, get_semaphore
     sem = get_semaphore(ConcurrencyCategory.BANNER_GRAB)
 
     async def _grab_one(port: int) -> BannerResult | None:

@@ -381,7 +381,7 @@ from dataclasses import dataclass
 import msgspec
 from enum import Enum
 import psutil
-from core import aclose
+from _core import aclose
 
 class VMThreatLevel(Enum):
     """VM threat levels"""

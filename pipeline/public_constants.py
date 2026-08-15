@@ -11,7 +11,7 @@ No I/O, no async, no external dependencies except stdlib + urllib.parse.
 import re
 import urllib.parse
 from typing import TYPE_CHECKING
-from core import aclose
+from _core import aclose
 
 if TYPE_CHECKING:
     pass

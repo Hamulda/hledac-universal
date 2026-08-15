@@ -30,7 +30,7 @@ import msgspec
 from enum import Enum
 from typing import Any
 from hledac.universal.utils.serialization import _safe_dataclass_to_dict
-from core import aclose
+from _core import aclose
 
 class DepCategory(Enum):
     """Mirror of platform_info.DepCategory for self-contained diagnostics."""

@@ -20,7 +20,7 @@ import os
 import sys
 from pathlib import Path
 from typing import Any
-from core import aclose
+from _core import aclose
 
 
 SKIP_PARTS = {

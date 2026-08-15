@@ -16,7 +16,7 @@ from hledac.universal.layers.communication_layer import CommunicationLayer
 from hledac.universal.project_types import CommunicationConfig
 from hledac.universal.tools.osint_frameworks import OSINTFrameworkRunner
 from hledac.universal.utils.asyncx import parallel_ok, safe_gather_fire_and_forget
-from core import aclose
+from _core import aclose
 
 class TestSprint47(unittest.IsolatedAsyncioTestCase):
     """Tests for Sprint 47 - Performance + Entity Resolution."""

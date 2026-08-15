@@ -10,7 +10,7 @@ import asyncio
 import logging
 import os
 from pathlib import Path
-from core import aclose
+from _core import aclose
 
 logger = logging.getLogger(__name__)
 

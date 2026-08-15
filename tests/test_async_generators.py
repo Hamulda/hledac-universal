@@ -10,8 +10,11 @@ from collections.abc import AsyncIterator
 
 import pytest
 
-from hledac.universal.utils.async_generators import (
-from core import aclose
+
+
+
+
+
     BackpressureMonitor,
     aclose_safe,
     async_iter_context,
@@ -24,7 +27,8 @@ from core import aclose
 )
 
 # ============================================================================
-# Fixtures
+
+from _core import aclose# Fixtures
 # ============================================================================
 
 

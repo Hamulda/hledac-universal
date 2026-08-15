@@ -21,7 +21,7 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING, Any, TypeVar
 from collections.abc import Callable
-from core import aclose
+from _core import aclose
 
 if TYPE_CHECKING:
     pass
@@ -49,7 +49,7 @@ def try_get_domain() -> Any | None:
 
     try:
         # R6: Centralized Rust access via core.rust_backend
-        from hledac.universal.core.rust_backend import rust
+        from hledac.universal._core.rust_backend import rust
         _ext = rust.raw.module
 
         # Probe for pipeline_map symbol

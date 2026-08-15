@@ -19,7 +19,7 @@ GHOST_INVARIANTS:
 from enum import Enum
 
 from .profile import is_mission_profile as _is_mission_profile_ssot
-from core import aclose
+from _core import aclose
 
 
 # ── Lane family map ─────────────────────────────────────────────────────────────────

@@ -18,7 +18,7 @@ import asyncio
 import time
 import unittest
 from unittest.mock import AsyncMock, patch, MagicMock
-from core import aclose
+from _core import aclose
 
 
 class TestMoELoadAsync(unittest.IsolatedAsyncioTestCase):
@@ -34,7 +34,7 @@ class TestMoELoadAsync(unittest.IsolatedAsyncioTestCase):
         run_sync správně offloaduje sync blocking do worker thread,
         event loop zůstává volný.
         """
-        from hledac.universal.core.mlx_inference_lock import MLXWorker
+        from hledac.universal._core.mlx_inference_lock import MLXWorker
 
         # Flags shared across threads
         load_started = asyncio.Event()
@@ -94,7 +94,7 @@ class TestMoELoadAsync(unittest.IsolatedAsyncioTestCase):
         Na M1 Metal single-stream: max 1 souběžná operace.
         Správný test používá SHARED worker (singleton), ne dva oddělené workery.
         """
-        from hledac.universal.core.mlx_inference_lock import MLXWorker, _get_mlx_worker
+        from hledac.universal._core.mlx_inference_lock import MLXWorker, _get_mlx_worker
 
         # NOTE: run_sync expects a sync function, not an async coroutine.
         # We use a sync wrapper that simulates blocking MLX operation.
@@ -131,7 +131,7 @@ class TestMoELoadAsync(unittest.IsolatedAsyncioTestCase):
 
     async def test_run_in_mlx_worker_api(self):
         """Test module-level run_in_mlx_worker convenience function with sync callable."""
-        from hledac.universal.core.mlx_inference_lock import run_in_mlx_worker
+        from hledac.universal._core.mlx_inference_lock import run_in_mlx_worker
 
         # Use sync function — run_in_mlx_worker is for sync blocking operations
         def dummy_sync_op(x: int, y: int) -> int:
@@ -149,7 +149,7 @@ class TestMoELoadAsync(unittest.IsolatedAsyncioTestCase):
 
     async def test_mlx_worker_is_active(self):
         """Test MLXWorker.is_active() and shutdown()."""
-        from hledac.universal.core.mlx_inference_lock import MLXWorker
+        from hledac.universal._core.mlx_inference_lock import MLXWorker
 
         worker = MLXWorker(name="test-mlx-worker", max_active_experts=1)
         self.assertFalse(worker.is_active())  # Not started yet

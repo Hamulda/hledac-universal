@@ -130,7 +130,7 @@ def __getattr__(name: str):
 # local variable that resolves to the runner's function at runtime via
 # sys.modules lookup, avoiding Python's lexical scoping shadowing).
 import sys
-from core import aclose
+from _core import aclose
 
 
 async def run_enabled_acquisition_lanes(

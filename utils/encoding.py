@@ -24,7 +24,7 @@ M1 8GB-safe: pure-Python paths only, no heavy ML models, no streaming.
 
 import logging
 from typing import Final
-from core import aclose
+from _core import aclose
 
 logger = logging.getLogger(__name__)
 

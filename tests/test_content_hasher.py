@@ -21,7 +21,7 @@ import os
 import time
 
 import pytest
-from core import aclose
+from _core import aclose
 
 # ── Module availability ───────────────────────────────────────────────────
 # The Rust extension is built via `maturin develop` in `rust_extensions/`.

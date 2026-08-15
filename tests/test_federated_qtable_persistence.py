@@ -12,7 +12,7 @@ import os
 import shutil
 import tempfile
 import pytest
-from core import aclose
+from _core import aclose
 
 
 class TestFederatedQTablePersistence:

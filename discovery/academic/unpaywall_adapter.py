@@ -24,7 +24,7 @@ from typing import NamedTuple
 import orjson
 from hledac.universal.knowledge.duckdb_store import CanonicalFinding
 from hledac.universal.utils.asyncx import parallel_ok
-from core import aclose
+from _core import aclose
 logger = logging.getLogger(__name__)
 UNPAYWALL_BASE = 'https://api.unpaywall.org/v2'
 RATE_LIMIT = 10
@@ -62,7 +62,7 @@ class UnpaywallAdapter:
 
     def __init__(self) -> None:
         self._email = _get_email()
-        from hledac.universal.core.concurrency import ConcurrencyCategory, get_semaphore
+        from hledac.universal._core.concurrency import ConcurrencyCategory, get_semaphore
         self._semaphore = get_semaphore(ConcurrencyCategory.ACADEMIC_SEARCH)
         self._cache: dict[str, tuple[float, OAPaper]] = {}
         self._cache_ttl = 86400.0

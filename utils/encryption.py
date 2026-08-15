@@ -11,7 +11,7 @@ import os
 import secrets
 from dataclasses import dataclass
 import msgspec
-from core import aclose
+from _core import aclose
 logger = logging.getLogger(__name__)
 
 class EncryptionResult(msgspec.Struct, gc=False):

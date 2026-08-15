@@ -41,9 +41,9 @@ from hledac.universal.coordinators.memory.context_optimizer import (
     ContextOptimizationManager,
 )
 from hledac.universal.coordinators.memory.multi_level_cache import (
-from core import aclose
     MultiLevelContextCache,
 )
+from core import aclose
 
 __all__ = [
     # Types (from _core.py)

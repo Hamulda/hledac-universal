@@ -36,7 +36,7 @@ from typing import Any
 import httpx
 from hledac.universal.transport.session_pool import session_pool
 from hledac.universal.utils.asyncx import parallel_ok
-from core import aclose
+from _core import aclose
 try:
     from hledac.universal.knowledge.duckdb_store import CanonicalFinding
 except ImportError:

@@ -14,7 +14,7 @@ import logging
 from typing import Any
 
 from hledac.universal.network.session_runtime import async_get_httpx_session
-from core import aclose
+from _core import aclose
 
 logger = logging.getLogger(__name__)
 

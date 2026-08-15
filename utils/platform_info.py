@@ -17,7 +17,7 @@ Designed to be:
 from dataclasses import dataclass
 import msgspec
 from enum import Enum
-from core import aclose
+from _core import aclose
 
 
 class DepCategory(Enum):

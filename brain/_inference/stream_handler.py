@@ -23,7 +23,7 @@ import logging
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 from collections.abc import AsyncIterator
-from core import aclose
+from _core import aclose
 
 if TYPE_CHECKING:
     from collections.abc import Callable

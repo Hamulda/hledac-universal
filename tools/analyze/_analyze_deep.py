@@ -18,7 +18,7 @@ import json
 import sys
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
-from core import aclose
+from _core import aclose
 
 if TYPE_CHECKING:
     from collections.abc import Sequence

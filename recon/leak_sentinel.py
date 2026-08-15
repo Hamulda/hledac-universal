@@ -39,7 +39,7 @@ import msgspec
 from enum import StrEnum
 from typing import TYPE_CHECKING, Any
 from hledac.universal.utils.asyncx import safe_create_task, safe_gather_fire_and_forget
-from core import aclose
+from _core import aclose
 
 class LeakSentinelError(StrEnum):
     """String-based error codes for fail-soft error reporting."""
@@ -365,7 +365,7 @@ class LeakSentinelAdapter:
 
     def __init__(self) -> None:
         self._stats = LeakSentinelStats()
-        from hledac.universal.core.concurrency import ConcurrencyCategory, get_semaphore
+        from hledac.universal._core.concurrency import ConcurrencyCategory, get_semaphore
         self._semaphore = get_semaphore(ConcurrencyCategory.SCRAPE_GENERAL)
 
     def get_stats(self) -> LeakSentinelStats:

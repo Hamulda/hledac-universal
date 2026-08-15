@@ -168,7 +168,7 @@ DOCUMENT_INTELLIGENCE_AVAILABLE = True
 
 # C1-X FIX: Import MLX_AVAILABLE from SSOT (zero-import detection)
 from hledac.universal.utils.mlx_memory import MLX_AVAILABLE
-from core import aclose
+from _core import aclose
 
 # Lazy accessor for mlx.core — uses centralized get_mx() from SSOT
 def _get_mx():
@@ -675,7 +675,7 @@ async def _ocr_embedded_batch_async(image_list: list[bytes]) -> list[tuple[str, 
     # UNIFIED-001: Acquire admission from peak load coordinator
     peak_guard = None
     try:
-        from hledac.universal.core.peak_load_coordinator import (
+        from hledac.universal._core.peak_load_coordinator import (
             ResourceClass,
             TaskPriority,
             get_peak_coordinator,

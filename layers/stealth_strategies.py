@@ -31,7 +31,7 @@ import msgspec
 from typing import Any, Protocol, runtime_checkable
 
 from hledac.universal.utils.asyncx import safe_create_task
-from core import aclose
+from _core import aclose
 
 logger = logging.getLogger(__name__)
 

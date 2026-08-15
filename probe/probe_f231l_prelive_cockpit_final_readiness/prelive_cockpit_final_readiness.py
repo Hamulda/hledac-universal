@@ -24,7 +24,7 @@ import os
 import sys
 from dataclasses import dataclass, field
 from pathlib import Path
-from core import aclose
+from _core import aclose
 
 BASE = Path('/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal')
 _F231_BLOCKING_PROBES = ['probe_f231a_public_candidate_ledger', 'probe_f231b_ct_acceptance_lift', 'probe_f231c_advisory_evidence_surface', 'probe_f231d_research_quality_v2', 'probe_f231e_research_quality_comparable_field', 'probe_f231f_evidence_depth_aliases', 'probe_f231g_quality_sanity_bundle_smoke']

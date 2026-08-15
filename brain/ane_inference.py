@@ -82,8 +82,8 @@ _MODEL_CONFIGS: dict[str, dict[str, Any]] = {
 }
 
 # ─── Lazy capability detection ───────────────────────────────────────────────
-from hledac.universal.core.feature_flags import FeatureFlag, FeatureFlags
-from core import aclose
+from hledac.universal._core.feature_flags import FeatureFlag, FeatureFlags
+from _core import aclose
 
 _coremltools_available: bool | None = None
 _coremltools: Any = None

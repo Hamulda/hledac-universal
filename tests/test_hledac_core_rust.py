@@ -778,7 +778,7 @@ class TestBatchNfcNormalize:
 # =============================================================================
 
 import sys
-from core import aclose
+from _core import aclose
 
 
 class TestBufferEntropy:

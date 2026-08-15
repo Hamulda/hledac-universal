@@ -49,12 +49,12 @@ from typing import TYPE_CHECKING, Any, TypeVar
 
 import asyncio
 
-from hledac.universal.core.locks import LockCategory, make_lock
+from hledac.universal._core.locks import LockCategory, make_lock
 from hledac.universal.utils.asyncx import safe_wait_for
 from hledac.universal.runtime._shared.lmdb_pool_helpers import _LMDB_WORKERS
 
 import lmdb  # required project dependency — no lazy import needed here
-from core import aclose
+from _core import aclose
 
 logger = logging.getLogger(__name__)
 

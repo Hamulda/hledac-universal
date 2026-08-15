@@ -18,7 +18,7 @@ from hledac.universal.tools.lightpanda_manager import LightpandaManager
 from hledac.universal.tools.lightpanda_pool import LightpandaPool
 from hledac.universal.recon.document_intelligence import StegdetectServer
 from hledac.universal.intel.relationship_discovery import LSHLinkPredictor
-from core import aclose
+from _core import aclose
 
 
 class TestSprint45(unittest.IsolatedAsyncioTestCase):

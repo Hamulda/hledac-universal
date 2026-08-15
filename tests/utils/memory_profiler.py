@@ -35,7 +35,7 @@ from typing import Any
 
 from operator import attrgetter, itemgetter
 import psutil
-from core import aclose
+from _core import aclose
 
 __all__ = [
     "get_rss_mb",
@@ -117,7 +117,7 @@ def _domain_in_traceback(traceback_str: str, domains: tuple[str, ...]) -> bool:
     Matches three formats tracemalloc can produce:
     1. Absolute paths:  /Users/.../hledac/brain/engine.py:123
     2. Relative paths:  core/resource_governor.py:200, tests/utils/memory_profiler.py:160
-    3. Dot-notation:    hledac.universal.core.resource_governor:42
+    3. Dot-notation:    hledac.universal._core.resource_governor:42
 
     Filters noisy third-party allocations (psutil, tracemalloc internals, etc.)
     while keeping only allocations from the project's modules.

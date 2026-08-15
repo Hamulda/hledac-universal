@@ -1,6 +1,6 @@
 """Wayback Machine adapter pro archivní data."""
 import logging
-from core import aclose
+from _core import aclose
 logger = logging.getLogger(__name__)
 
 

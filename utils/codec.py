@@ -54,7 +54,7 @@ from typing import Any
 
 import msgspec
 import msgspec.json
-from core import aclose
+from _core import aclose
 
 logger = logging.getLogger(__name__)
 
@@ -192,7 +192,7 @@ def _ensure_rust_json() -> Any:
         return _rust_json
     _RUST_JSON_PROBED = True
     try:
-        from hledac.universal.core.rust_backend import rust as _rust_backend
+        from hledac.universal._core.rust_backend import rust as _rust_backend
 
         if _rust_backend.is_available:
             _rust_json = _rust_backend.json

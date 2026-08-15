@@ -33,7 +33,7 @@ import importlib
 import sys
 from typing import Any, TypeVar
 from collections.abc import Callable
-from core import aclose
+from _core import aclose
 
 __all__ = ["lazy", "lazy_callable"]
 

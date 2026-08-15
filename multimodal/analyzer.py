@@ -37,8 +37,8 @@ import msgspec
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 from hledac.universal.utils.asyncx import parallel
-from hledac.universal.core.concurrency import ConcurrencyCategory, get_semaphore
-from core import aclose
+from hledac.universal._core.concurrency import ConcurrencyCategory, get_semaphore
+from _core import aclose
 if TYPE_CHECKING:
     from hledac.universal.knowledge.duckdb_store import CanonicalFinding
 log = logging.getLogger(__name__)

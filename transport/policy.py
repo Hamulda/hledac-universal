@@ -36,7 +36,7 @@ INVARIANTS:
 import os
 from dataclasses import dataclass
 import msgspec
-from hledac.universal.core.env_config import ENV
+from hledac.universal._core.env_config import ENV
 from enum import Enum
 from typing import Literal
 from hledac.universal.fetching.memory_budget_gate import BrowserDecision, _rss_gib
@@ -45,8 +45,11 @@ from hledac.universal.transport.http3_lane import is_enabled as _http3_lane_enab
 from hledac.universal.transport.httpx_client import is_httpx_h2_enabled
 
 # MODERN-36 Fix: Import from SSOT instead of hardcoding
-from hledac.universal.utils.uma_budget import (
-from core import aclose
+
+
+
+
+
     UmaBudget,
     MISSION_PEAK_RSS_GIB,
     ORCHESTRATOR_GIB,
@@ -54,7 +57,8 @@ from core import aclose
 
 class TransportTier(Enum):
     """Explicit tier labels — mirrors policy.py decision tree."""
-    T0 = 'T0_curl_cffi'
+
+from _core import aclose    T0 = 'T0_curl_cffi'
     T1 = 'T1_httpx_h2'
     T2 = 'T2_httpx_h3'
     T3 = 'T3_js_renderer'

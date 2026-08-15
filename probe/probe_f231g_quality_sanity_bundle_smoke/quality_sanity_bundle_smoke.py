@@ -30,7 +30,7 @@ _REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, _REPO_ROOT)
 
 from tools.live_result_sanity import parse_quality
-from core import aclose
+from _core import aclose
 
 # ---------------------------------------------------------------------------
 # TASK 1: Synthetic benchmark JSON fixture — live format

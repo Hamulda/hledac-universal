@@ -64,13 +64,13 @@ _PYMUPDF_AVAILABLE = importlib.util.find_spec("fitz") is not None
 
 
 try:
-    from hledac.universal.core.resource_governor import sample_uma_status
+    from hledac.universal._core.resource_governor import sample_uma_status
     _GOVERNOR_AVAILABLE = True
 except ImportError:
     _GOVERNOR_AVAILABLE = False
 
 from hledac.universal.utils.asyncx import _check_gathered
-from core import aclose
+from _core import aclose
 class PDFProcessingResult:
     """Result of processing a single PDF."""
     doc_id: str  # SHA256 hash of file path

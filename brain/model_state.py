@@ -30,7 +30,7 @@ from dataclasses import dataclass, field
 from typing import Protocol
 from collections.abc import Callable
 from enum import Enum
-from core import aclose
+from _core import aclose
 
 
 # ---------------------------------------------------------------------------

@@ -6,7 +6,7 @@ PEP 562 lazy loading — adapters loaded only when first accessed.
 Adapters: BGP, BannerGrab, TIFeed.
 """
 from __future__ import annotations
-from core import aclose
+from _core import aclose
 
 __all__ = [
     "BGPEnrichmentSidecarAdapter",

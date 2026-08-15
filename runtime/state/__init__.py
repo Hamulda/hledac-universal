@@ -46,7 +46,7 @@ from __future__ import annotations
 import contextvars
 import msgspec
 from typing import Any
-from core import aclose
+from _core import aclose
 
 
 # ─────────────────────────────────────────────────────────────────────────────

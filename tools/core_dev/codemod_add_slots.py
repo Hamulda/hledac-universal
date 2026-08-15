@@ -20,7 +20,7 @@ import traceback
 from collections import defaultdict
 from dataclasses import field
 from typing import Any
-from core import aclose
+from _core import aclose
 
 def is_project_file(filepath: str) -> bool:
     venv_patterns = ('.venv', '.venv-test', 'site-packages', 'deps')

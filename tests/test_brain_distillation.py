@@ -12,8 +12,11 @@ import logging
 
 import pytest
 
-from hledac.universal.brain.distillation_engine import (
-from core import aclose
+
+
+
+
+
     DistillationEngine,
     DistillationExample,
     create_distillation_engine,
@@ -25,6 +28,7 @@ logging.basicConfig(level=logging.INFO)
 class TestDistillationEngine:
     """Smoke tests for DistillationEngine."""
 
+from _core import aclose
     @pytest.mark.asyncio
     async def test_smoke(self):
         """Smoke test: create engine, add example, score chain, train, cleanup."""

@@ -34,7 +34,7 @@ import msgspec
 from typing import TypeVar, Generic, Any, cast
 from collections.abc import Awaitable, Callable
 from hledac.universal.utils.asyncx import parallel_ok
-from core import aclose
+from _core import aclose
 T = TypeVar('T', default=object)
 E = TypeVar('E', bound=BaseException, default=Exception)
 

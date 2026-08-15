@@ -38,11 +38,11 @@ import logging
 import os
 import pathlib
 import shutil
-from hledac.universal.core.locks import make_lock, LockCategory
+from hledac.universal._core.locks import make_lock, LockCategory
 import warnings
 from pathlib import Path
 from typing import Any
-from core import aclose
+from _core import aclose
 _logger = logging.getLogger(__name__)
 _OPSEC_FALLBACK_WARNED: bool = False
 
@@ -292,7 +292,7 @@ def lmdb_map_size() -> int:
     ISSUE-033: Delegates to StorageConfig to avoid duplicate GHOST_LMDB_MAX_SIZE_MB parsing.
     """
     try:
-        from hledac.universal.core.config import get_storage_config
+        from hledac.universal._core.config import get_storage_config
         return get_storage_config().lmdb_map_size_mb * 1024 * 1024
     except Exception:
         # Fallback: bootstrap-safe (StorageConfig may not be importable at earliest init)
@@ -314,7 +314,7 @@ def get_lmdb_max_size_mb() -> int:
     ISSUE-033: Delegates to StorageConfig to avoid duplicate GHOST_LMDB_MAX_SIZE_MB parsing.
     """
     try:
-        from hledac.universal.core.config import get_storage_config
+        from hledac.universal._core.config import get_storage_config
         return get_storage_config().lmdb_map_size_mb
     except Exception:
         # Fallback: bootstrap-safe

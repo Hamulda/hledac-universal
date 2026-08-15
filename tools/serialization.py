@@ -20,7 +20,7 @@ from typing import TYPE_CHECKING, Any
 
 import orjson
 import numpy as np
-from core import aclose
+from _core import aclose
 
 
 # ============================================================================

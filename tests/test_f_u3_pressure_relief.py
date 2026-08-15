@@ -17,21 +17,21 @@ import asyncio
 import sys
 
 import pytest
-from core import aclose
+from _core import aclose
 
 
 class TestMallocZonePressureRelief:
     """Direct tests for the syscall wrapper."""
 
     def test_returns_int(self) -> None:
-        from hledac.universal.core.memory_cycle import malloc_zone_pressure_relief  # type: ignore[import-not-found]
+        from hledac.universal._core.memory_cycle import malloc_zone_pressure_relief  # type: ignore[import-not-found]
 
         result = malloc_zone_pressure_relief()
         assert isinstance(result, int)
         assert result >= 0
 
     def test_noop_on_non_darwin(self) -> None:
-        from hledac.universal.core.memory_cycle import malloc_zone_pressure_relief  # type: ignore[import-not-found]
+        from hledac.universal._core.memory_cycle import malloc_zone_pressure_relief  # type: ignore[import-not-found]
 
         if sys.platform == "darwin":
             pytest.skip("Darwin — real syscall path, not no-op")
@@ -41,7 +41,7 @@ class TestMallocZonePressureRelief:
 
     def test_does_not_raise_on_darwin_io_error(self, monkeypatch) -> None:
         """Even on Darwin, ctypes can fail. Must not raise."""
-        from hledac.universal.core import memory_cycle  # type: ignore[import-not-found]
+        from hledac.universal._core import memory_cycle  # type: ignore[import-not-found]
 
         if sys.platform != "darwin":
             pytest.skip("Not on Darwin — skipping Darwin-specific failure path")
@@ -65,7 +65,7 @@ class TestPressureReliefLoop:
 
     @pytest.mark.asyncio
     async def test_start_inside_event_loop(self) -> None:
-        from hledac.universal.core import memory_cycle  # type: ignore[import-not-found]
+        from hledac.universal._core import memory_cycle  # type: ignore[import-not-found]
 
         task = memory_cycle.start_pressure_relief_loop(interval_s=300.0)
         # Either returns a Task (loop running) or None (no loop — shouldn't
@@ -81,7 +81,7 @@ class TestPressureReliefLoop:
 
     @pytest.mark.asyncio
     async def test_start_is_idempotent(self) -> None:
-        from hledac.universal.core import memory_cycle  # type: ignore[import-not-found]
+        from hledac.universal._core import memory_cycle  # type: ignore[import-not-found]
 
         t1 = memory_cycle.start_pressure_relief_loop(interval_s=300.0)
         t2 = memory_cycle.start_pressure_relief_loop(interval_s=300.0)
@@ -93,7 +93,7 @@ class TestPressureReliefLoop:
 
     @pytest.mark.asyncio
     async def test_stop_is_idempotent(self) -> None:
-        from hledac.universal.core import memory_cycle  # type: ignore[import-not-found]
+        from hledac.universal._core import memory_cycle  # type: ignore[import-not-found]
 
         # No start at all — stop must be a no-op, not raise.
         await memory_cycle.stop_pressure_relief_loop()
@@ -107,7 +107,7 @@ class TestPressureReliefLoop:
     async def test_loop_runs_one_tick(self) -> None:
         """Verify the loop actually invokes malloc_zone_pressure_relief at
         least once within a short interval."""
-        from hledac.universal.core import memory_cycle  # type: ignore[import-not-found]
+        from hledac.universal._core import memory_cycle  # type: ignore[import-not-found]
 
         runs_before = memory_cycle.get_stats()["pressure_relief_runs"]
         # Use the minimum allowed interval so the test completes quickly.
@@ -127,7 +127,7 @@ class TestPressureReliefLoop:
     @pytest.mark.asyncio
     async def test_min_interval_enforced(self) -> None:
         """Interval below 60s must be clamped up to 60s."""
-        from hledac.universal.core import memory_cycle  # type: ignore[import-not-found]
+        from hledac.universal._core import memory_cycle  # type: ignore[import-not-found]
 
         # Start with tiny interval — internal clamp should raise it to 60s.
         task = memory_cycle.start_pressure_relief_loop(interval_s=0.1)
@@ -142,7 +142,7 @@ class TestPressureReliefLoop:
     @pytest.mark.asyncio
     async def test_stats_bytes_released_accumulate(self) -> None:
         """The bytes_released counter must be a non-decreasing sum across ticks."""
-        from hledac.universal.core import memory_cycle  # type: ignore[import-not-found]
+        from hledac.universal._core import memory_cycle  # type: ignore[import-not-found]
 
         task = memory_cycle.start_pressure_relief_loop(interval_s=60.0)
         if task is None:

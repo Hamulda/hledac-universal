@@ -54,7 +54,7 @@ except ImportError:
 
 # [FINAL]-019-07: Capability cost registration for QoS ladder triage.
 # GraphRAGOrchestrator: rss_mb=400, peak_mb=600 (embedding + k-hop traversal)
-from hledac.universal.core.capability_cost import register_capability_cost
+from hledac.universal._core.capability_cost import register_capability_cost
 register_capability_cost("graphragorchestrator", rss_mb=400, peak_mb=600, tier="heavy", tags=("graph", "rag", "embedding"))
 
 def _get_numpy():
@@ -62,7 +62,7 @@ def _get_numpy():
     return np
 logger = logging.getLogger(__name__)
 from hledac.universal.utils.graph_utils import lazy_ig
-from core import aclose
+from _core import aclose
 
 def _check_ram_for_igraph() -> bool:
     """M1 8GB: skip igraph if RAM headroom < 500MB."""
@@ -95,7 +95,7 @@ def get_degradation_safe_max_hops(requested_hops: int = 2) -> int:
     module-level _last_qos_profile cache updated by apply_decision().
     """
     try:
-        from hledac.universal.core.resource_governor import QoSLevel, get_current_degradation_level
+        from hledac.universal._core.resource_governor import QoSLevel, get_current_degradation_level
         level = get_current_degradation_level()
         if level is QoSLevel.EMERGENCY or level is QoSLevel.BATTERY:
             return 1
@@ -179,7 +179,7 @@ class GraphRAGOrchestrator:
             async with self._embedder_lock:
                 if self._embedder is None:
                     try:
-                        from hledac.universal.core.mlx_embeddings import get_mlx_embedder
+                        from hledac.universal._core.mlx_embeddings import get_mlx_embedder
                         self._embedder = get_mlx_embedder()
                         logger.debug('[EMBEDDER] graph_rag using shared MLXEmbeddingManager singleton')
                     except Exception as e:
@@ -194,7 +194,7 @@ class GraphRAGOrchestrator:
                 self._score_semaphore_lock = asyncio.Lock()
             async with self._score_semaphore_lock:
                 if self._score_semaphore is None:
-                    from hledac.universal.core.concurrency import ConcurrencyCategory, get_semaphore
+                    from hledac.universal._core.concurrency import ConcurrencyCategory, get_semaphore
                     self._score_semaphore = get_semaphore(ConcurrencyCategory.GRAPH_RAG)
         return self._score_semaphore
 
@@ -942,7 +942,7 @@ class GraphRAGOrchestrator:
         """
         try:
             # R6: Centralized Rust access via core.rust_backend
-            from hledac.universal.core.rust_backend import rust
+            from hledac.universal._core.rust_backend import rust
             _rust_ext = rust.raw.module
             adj_list: list[tuple[str, list[str]]] = [(node_id, list(neighbors)) for node_id, neighbors in adjacency.items()]
             rust_result = _rust_ext.batch_centrality_all(adj_list)

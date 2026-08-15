@@ -17,7 +17,7 @@ import asyncio
 from typing import Any
 
 from hledac.universal.runtime.protocols.fetch_protocol import FetchProtocol
-from core import aclose
+from _core import aclose
 
 
 class FetchCoordinatorAdapter(FetchProtocol):
@@ -57,7 +57,7 @@ class FetchCoordinatorAdapter(FetchProtocol):
         try:
             return self._coordinator.get_semaphore()
         except Exception:
-            from hledac.universal.core.concurrency import ConcurrencyCategory, get_semaphore
+            from hledac.universal._core.concurrency import ConcurrencyCategory, get_semaphore
             return get_semaphore(ConcurrencyCategory.HTTP_LANE)
 
     def get_backpressure(self) -> float | None:

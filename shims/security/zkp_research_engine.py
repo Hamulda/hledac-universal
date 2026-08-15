@@ -14,7 +14,7 @@ Gated by HLEDAC_ENABLE_ZKP=1 (shows warning instead of crashing).
 
 import logging
 import os
-from core import aclose
+from _core import aclose
 
 logger = logging.getLogger(__name__)
 
@@ -40,7 +40,7 @@ class ZKPResearchEngine:
     name: str = "zkp_stub"
 
     def __init__(self) -> None:
-        from hledac.universal.core.feature_flags import FeatureFlag, FeatureFlags
+        from hledac.universal._core.feature_flags import FeatureFlag, FeatureFlags
         if FeatureFlags.get(FeatureFlag.ZKP):
             logger.warning(
                 "ZKP not implemented — HLEDAC_ENABLE_ZKP=1 is set but "

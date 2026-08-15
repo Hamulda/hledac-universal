@@ -16,7 +16,7 @@ imports, not via registry/catalog routing.
 import re
 import unittest
 from pathlib import Path
-from core import aclose
+from _core import aclose
 
 # Paths that are allowed to import the legacy routing chain
 EXEMPT_PREFIXES = frozenset([

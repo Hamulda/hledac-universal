@@ -29,7 +29,6 @@ from typing import Any
 
 from ._dto import CoordinatorCapabilities, DecisionResponse, ExecutionResult, OperationResult, OperationType
 from .components import (
-from core import aclose
     LoadFactorCalculator,
     MemoryPressureLevel,
     MemoryPressureMonitor,
@@ -38,6 +37,7 @@ from core import aclose
     NullOperationTracker,
     OperationTracker,
 )
+from _core import aclose
 
 logger = logging.getLogger(__name__)
 

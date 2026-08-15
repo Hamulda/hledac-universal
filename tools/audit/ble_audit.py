@@ -25,7 +25,7 @@ import json
 import sys
 from pathlib import Path
 from typing import NamedTuple
-from core import aclose
+from _core import aclose
 
 # TOML config — lazy import to avoid hard dependency
 try:

@@ -9,7 +9,7 @@ import unittest.mock
 
 # Import the module under test
 from hledac.universal.runtime import acquisition_strategy as _acq_mod
-from core import aclose
+from _core import aclose
 
 build_acquisition_report = _acq_mod.build_acquisition_report
 AcquisitionProfile = _acq_mod.AcquisitionProfile

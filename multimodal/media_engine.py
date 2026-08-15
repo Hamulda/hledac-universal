@@ -57,7 +57,7 @@ from pathlib import Path
 from typing import Any
 
 import msgspec
-from core import aclose
+from _core import aclose
 
 log = logging.getLogger(__name__)
 
@@ -1174,7 +1174,7 @@ class MediaDecoder:
         facenet_loaded = False
         if use_facenet:
             try:
-                from hledac.universal.core.rust_backend import rust
+                from hledac.universal._core.rust_backend import rust
                 if hasattr(rust, 'ane') and hasattr(rust.ane, 'facenet_is_registered'):
                     facenet_loaded = rust.ane.facenet_is_registered()
                     if not facenet_loaded:
@@ -1695,7 +1695,7 @@ class MediaDecoder:
             MLX array (zero-copy from IOSurface) or None on failure.
         """
         try:
-            from hledac.universal.core.rust_backend import rust
+            from hledac.universal._core.rust_backend import rust
 
             # Get dimensions
             pb_width = int(pixel_buffer.pixelWidth()) if hasattr(pixel_buffer, 'pixelWidth') else 0
@@ -1878,7 +1878,7 @@ def is_iosurface_bridge_available() -> bool:
         return _iosurface_bridge_available
 
     try:
-        from hledac.universal.core.rust_backend import rust
+        from hledac.universal._core.rust_backend import rust
         available, device_name = rust.iosurface_bridge.is_iosurface_bridge_available()
         _iosurface_bridge_available = available
         if available:
@@ -1914,7 +1914,7 @@ def extract_iosurface_from_pixelbuffer(pixel_buffer: Any) -> dict[str, Any] | No
         return None
 
     try:
-        from hledac.universal.core.rust_backend import rust
+        from hledac.universal._core.rust_backend import rust
         desc = rust.iosurface_bridge.get_iosurface_from_pixelbuffer(int(pixel_buffer))
         if desc is not None:
             return {
@@ -1953,7 +1953,7 @@ def create_shared_buffer_from_pixelbuffer(pixel_buffer: Any) -> Any | None:
         return None
 
     try:
-        from hledac.universal.core.rust_backend import rust
+        from hledac.universal._core.rust_backend import rust
         SharedMetalBuffer = rust.raw.SharedMetalBuffer
         buf = SharedMetalBuffer.from_iosurface(
             iosurface_info['iosurface_ptr'],

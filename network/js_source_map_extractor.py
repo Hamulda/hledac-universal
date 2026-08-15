@@ -7,7 +7,7 @@ import logging  # noqa: E402
 import msgspec.json as _json  # noqa: E402
 
 from hledac.universal.network.session_runtime import async_get_httpx_session  # noqa: E402
-from core import aclose
+from _core import aclose
 
 logger = logging.getLogger(__name__)
 

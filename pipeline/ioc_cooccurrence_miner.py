@@ -70,7 +70,7 @@ def _try_import_rust_engine() -> bool:
         return True
     try:
         # R6: Centralized Rust access via core.rust_backend
-        from hledac.universal.core.rust_backend import rust
+        from hledac.universal._core.rust_backend import rust
         compute_cooccurrence_edges_py = rust.raw.compute_cooccurrence_edges_py
         batch_cooccurrence_edges_py = rust.raw.batch_cooccurrence_edges_py
         _compute_cooccurrence_edges_py = compute_cooccurrence_edges_py
@@ -147,7 +147,7 @@ class IOCooccurrenceMiner:
         """
         try:
             # R6: Centralized Rust access via core.rust_backend
-            from hledac.universal.core.rust_backend import rust
+            from hledac.universal._core.rust_backend import rust
             _extract_iocs_rust = rust.raw.extract_iocs
             return _extract_iocs_rust(finding.payload_text or "")
         except ImportError:  # noqa: BLE001
@@ -292,7 +292,7 @@ class IOCooccurrenceMiner:
         """No-op: no ProcessPoolExecutor to shutdown."""
         pass
 import re
-from core import aclose
+from _core import aclose
 _DOMAIN_PATTERN = re.compile("\\b(?:[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?\\.)+[a-zA-Z]{2,}\\b")
 _IPV4_PATTERN = re.compile("\\b(?:(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\\.){3}(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\\b")
 _IPV6_PATTERN = re.compile("\\b(?:[0-9a-fA-F]{1,4}:){7}[0-9a-fA-F]{1,4}\\b")

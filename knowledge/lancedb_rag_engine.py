@@ -41,7 +41,7 @@ from typing import Any
 import numpy as np
 from context_optimization.mmr import maximal_marginal_relevance
 from hledac.universal.utils.executor_decorator import offload_to
-from core import aclose
+from _core import aclose
 logger = logging.getLogger(__name__)
 _DEFAULT_URI = Path(__file__).parent.parent.parent / 'data' / 'rag.lance'
 _MAX_BATCH_SIZE = 32
@@ -136,7 +136,7 @@ class LanceDBRAGEngine:
             async with self._embedder_lock:
                 if self._embedder is None:
                     try:
-                        from hledac.universal.core.mlx_embeddings import get_embedding_manager
+                        from hledac.universal._core.mlx_embeddings import get_embedding_manager
                         self._embedder = get_embedding_manager()
                     except Exception as e:
                         logger.debug(f'[LANCEDB:RAG] embedder init failed: {e}')

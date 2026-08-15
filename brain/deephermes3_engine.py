@@ -42,7 +42,7 @@ import msgspec
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, TypeVar
 from hledac.universal.utils.asyncx import parallel_ok, safe_wait_for
-from hledac.universal.core.sync_bridge import stream_via_queue
+from hledac.universal._core.sync_bridge import stream_via_queue
 
 # MODERN-35 Fix: Import CPU affinity utilities for MLX Metal operations
 from hledac.universal.utils.cpu_affinity import (
@@ -76,22 +76,22 @@ if TYPE_CHECKING:
     from mlx_lm import TokenizerWrapper as MLXTokenizer
     from hledac.universal.brain.mlx_batched_executor import MLXBatchedExecutor
     from hledac.universal.brain.mlx_worker_thread import MLXWorkerThread
-    from hledac.universal.core.mlx_unified_scheduler import MLXUnifiedScheduler
+    from hledac.universal._core.mlx_unified_scheduler import MLXUnifiedScheduler
     from hledac.universal.brain.inference_pipeline import BoundedInferencePipeline
     from hledac.universal.brain._inference.generate import GenerationFacade
 
 # [FINAL]-019-07: Capability cost registration for QoS ladder triage.
 # Hermes3 (4bit): rss_mb=2000, peak_mb=2200 (model weights + KV cache)
 # Hermes3 is the heaviest single capability — always CRITICAL tier.
-from hledac.universal.core.capability_cost import register_capability_cost
+from hledac.universal._core.capability_cost import register_capability_cost
 register_capability_cost("deephermes3engine", rss_mb=2000, peak_mb=2200, tier="critical", tags=("llm", "mlx", "gpu"))
 register_capability_cost("hermes3engine", rss_mb=2000, peak_mb=2200, tier="critical", tags=("llm", "mlx", "gpu"))
 
 # R3: Hermes executor pools via centralized R1 resource pool (lazy import)
-_get_hermes_prep_exec = lazy_callable('hledac.universal.core.resource_pool.get_hermes_prep_executor')
-_get_hermes_post_exec = lazy_callable('hledac.universal.core.resource_pool.get_hermes_post_executor')
-_get_hermes_inference_exec = lazy_callable('hledac.universal.core.resource_pool.get_hermes_inference_executor')
-_get_hermes_compile_exec = lazy_callable('hledac.universal.core.resource_pool.get_hermes_compile_executor')
+_get_hermes_prep_exec = lazy_callable('hledac.universal._core.resource_pool.get_hermes_prep_executor')
+_get_hermes_post_exec = lazy_callable('hledac.universal._core.resource_pool.get_hermes_post_executor')
+_get_hermes_inference_exec = lazy_callable('hledac.universal._core.resource_pool.get_hermes_inference_executor')
+_get_hermes_compile_exec = lazy_callable('hledac.universal._core.resource_pool.get_hermes_compile_executor')
 _xxh3_func: Callable[[str], str] | None = None
 _xxh3_func_batch: Callable[..., list[str]] | None = None
 
@@ -100,7 +100,7 @@ def _get_xxh3_hex(data: str) -> str:
     global _xxh3_func
     if _xxh3_func is None:
         try:
-            from hledac.universal.core.rust_backend import rust
+            from hledac.universal._core.rust_backend import rust
             _xxh3_func = rust.hash.ContentHasher.xxh3_64_hex
         except Exception:
             return hashlib.blake2b(data.encode(), digest_size=8).hexdigest()
@@ -118,7 +118,7 @@ def _get_xxh3_hex_batch(items: list[str]) -> list[str]:
     global _xxh3_func_batch
     if _xxh3_func_batch is None:
         try:
-            from hledac.universal.core.rust_backend import rust
+            from hledac.universal._core.rust_backend import rust
             _xxh3_func_batch = rust.hash.batch_xxh3_64_hex
         except Exception:
             _xxh3_func_batch = None
@@ -243,7 +243,7 @@ check_model_allowed = lazy_callable('hledac.universal.brain.model_inference_guar
 classify_failure_kind = lazy('hledac.universal.brain.model_inference_guard.classify_failure_kind')
 record_model_failure = lazy('hledac.universal.brain.model_inference_guard.record_model_failure')
 record_model_success = lazy('hledac.universal.brain.model_inference_guard.record_model_success')
-_lane_priority_resolver = lazy('hledac.universal.core.mlx_unified_scheduler.LanePriority')
+_lane_priority_resolver = lazy('hledac.universal._core.mlx_unified_scheduler.LanePriority')
 _get_thermal_generation_params = lazy('hledac.universal.brain.adaptive_context_policy.get_thermal_generation_params')
 logger = logging.getLogger(__name__)
 _outlines_resolver = lazy('outlines')
@@ -308,8 +308,8 @@ except ImportError:
 HLEDAC_ENABLE_DSPY = os.environ.get('HLEDAC_ENABLE_DSPY', '0') == '1' and _DSPY_AVAILABLE
 
 # SWARM-010: Use FeatureFlags for MLX prewarm
-from hledac.universal.core.feature_flags import FeatureFlags, FeatureFlag
-from core import aclose
+from hledac.universal._core.feature_flags import FeatureFlags, FeatureFlag
+from _core import aclose
 _MLX_PREWARM_ENABLED = FeatureFlags.get(FeatureFlag.MLX_PREWARM)
 _MLX_PREWARM_LAST_UNLOAD_TIME: float | None = None
 _MLX_PREWARM_SKIP_THRESHOLD_S = 60.0
@@ -569,7 +569,7 @@ class DeepHermes3Engine:
             self._post_executor = get_hermes_post_fallback_executor()
             _executors_shared = True
         self._executors_shared = _executors_shared
-        from hledac.universal.core.concurrency import ConcurrencyCategory, get_semaphore
+        from hledac.universal._core.concurrency import ConcurrencyCategory, get_semaphore
         self._inference_semaphore = get_semaphore(ConcurrencyCategory.MLX_INFERENCE)
         self._mlx_batcher: Any = None
         self._mlx_worker_thread: Any = None
@@ -1601,7 +1601,7 @@ class DeepHermes3Engine:
                     self._outlines_model = None
             _skip_draft = False
             # SWARM-010: Use FeatureFlags for spec decode disable
-            from hledac.universal.core.feature_flags import FeatureFlags, FeatureFlag
+            from hledac.universal._core.feature_flags import FeatureFlags, FeatureFlag
             if FeatureFlags.get(FeatureFlag.DISABLE_SPEC_DECODE):
                 logger.info('[HERMES] Speculative decoding disabled by default on M1 8GB (HLEDAC_DISABLE_SPEC_DECODE=1)')
                 _skip_draft = True
@@ -1610,7 +1610,7 @@ class DeepHermes3Engine:
                 _skip_draft = True
             if not _skip_draft:
                 try:
-                    from hledac.universal.core.resource_governor import sample_uma_status_async
+                    from hledac.universal._core.resource_governor import sample_uma_status_async
                     _uma = await sample_uma_status_async()
                     _uma_state = getattr(_uma, 'state', None)
                     if _uma_state in ('critical', 'emergency'):
@@ -1650,7 +1650,7 @@ class DeepHermes3Engine:
         # Independent of speculative decoding — the model slot is repurposed.
         _blitz_triage = False
         try:
-            from hledac.universal.core.telemetry.context_state import is_blitz_mode as _is_blitz
+            from hledac.universal._core.telemetry.context_state import is_blitz_mode as _is_blitz
             if _is_blitz() and os.environ.get('HLEDAC_ENABLE_BLITZ_TRIAGE', '0') == '1':
                 _blitz_triage = True
         except Exception:  # noqa: BLE001
@@ -1658,7 +1658,7 @@ class DeepHermes3Engine:
 
         # Check if speculative decoding is explicitly enabled
         # SWARM-010: Use FeatureFlags for spec decode enable
-        from hledac.universal.core.feature_flags import FeatureFlags, FeatureFlag
+        from hledac.universal._core.feature_flags import FeatureFlags, FeatureFlag
         enable_spec = FeatureFlags.get(FeatureFlag.ENABLE_SPEC_DECODE)
 
         # Neither spec decode nor blitz triage — skip model load entirely
@@ -2043,7 +2043,7 @@ class DeepHermes3Engine:
             if self._supports_stream_generate:
                 import mlx_lm
                 from hledac.universal.utils.mlx_memory import get_metal_stream_context
-                from hledac.universal.core.mlx_inference_lock import _get_mlx_inference_lock
+                from hledac.universal._core.mlx_inference_lock import _get_mlx_inference_lock
 
                 def _prefill():
                     _mlx_lock = _get_mlx_inference_lock()
@@ -2665,7 +2665,7 @@ class DeepHermes3Engine:
 
         uma_state = "ok"
         try:
-            from hledac.universal.core.resource_governor import sample_uma_status
+            from hledac.universal._core.resource_governor import sample_uma_status
 
             _uma = sample_uma_status()
             uma_state = getattr(_uma, "state", "ok")
@@ -2716,7 +2716,7 @@ class DeepHermes3Engine:
 
         uma_state = "ok"
         try:
-            from hledac.universal.core.resource_governor import sample_uma_status
+            from hledac.universal._core.resource_governor import sample_uma_status
 
             _uma = sample_uma_status()
             uma_state = getattr(_uma, "state", "ok")
@@ -2906,7 +2906,7 @@ class DeepHermes3Engine:
                 # 'ok', 'soft_warn', 'warn', 'critical', 'emergency'
                 # CRITICAL (94%) and EMERGENCY (98%) require immediate relief
                 try:
-                    from hledac.universal.core.resource_governor import sample_uma_status
+                    from hledac.universal._core.resource_governor import sample_uma_status
                     _uma = sample_uma_status()
                     _uma_state = getattr(_uma, 'state', 'ok')
                     if _uma_state in ('critical', 'emergency'):
@@ -3101,7 +3101,7 @@ class DeepHermes3Engine:
         """
         from mlx_lm import generate as mlx_generate
         # L-01: Globální MLX Metal lock — serializuje všechny mlx_lm.generate() volání
-        from hledac.universal.core.mlx_inference_lock import _get_mlx_inference_lock
+        from hledac.universal._core.mlx_inference_lock import _get_mlx_inference_lock
 
         generate_kwargs = self._build_generate_kwargs(formatted_prompt, temp, max_tok, prefix_cache, adapter_path=adapter_path, prompt_tokens=prompt_tokens)
         # M-10: Add logits_processors for constrained JSON generation (xgrammar)
@@ -3201,7 +3201,7 @@ class DeepHermes3Engine:
         if self._mlx_scheduler is not None:
             return self._mlx_scheduler
         try:
-            from hledac.universal.core.mlx_unified_scheduler import MLXUnifiedScheduler
+            from hledac.universal._core.mlx_unified_scheduler import MLXUnifiedScheduler
             worker = self._ensure_mlx_worker_thread()
             batcher = await self._ensure_mlx_batcher()
             self._mlx_scheduler = MLXUnifiedScheduler(llm_engine=self, worker_thread=worker, batcher=batcher)
@@ -4308,7 +4308,7 @@ class DeepHermes3Engine:
         Runs in thread pool. Fail-safe: returns all findings on any error.
         Gated by HLEDAC_TRIAGE_DISABLED=1 env var.
         """
-        from hledac.universal.core.feature_flags import FeatureFlags, FeatureFlag
+        from hledac.universal._core.feature_flags import FeatureFlags, FeatureFlag
         if FeatureFlags.get(FeatureFlag.TRIAGE_DISABLED):
             return findings
         if len(findings) <= 3:

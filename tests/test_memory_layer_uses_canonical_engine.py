@@ -14,7 +14,7 @@ from unittest.mock import MagicMock, AsyncMock, patch
 import pytest
 
 from hledac.universal.layers.memory_layer import MemoryLayer, MemoryConfig
-from core import aclose
+from _core import aclose
 
 
 class TestMemoryLayerUsesCanonicalEngine:

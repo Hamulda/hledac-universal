@@ -39,7 +39,7 @@ except ImportError:
 
 import msgspec
 import xxhash
-from core import aclose
+from _core import aclose
 
 
 # ---------------------------------------------------------------------------
@@ -195,7 +195,7 @@ def _sanitize_xml(raw: str) -> str:
     """
     # Fast path: try Rust backend first
     try:
-        from hledac.universal.core.rust_backend import rust
+        from hledac.universal._core.rust_backend import rust
 
         if rust.is_available:
             return rust.xml.sanitize_xml(raw)
@@ -741,7 +741,7 @@ def parse_feed(text: str, feed_url: str = "") -> list[FeedEntry]:
 
 _RUST_SANITIZE_AVAILABLE: bool = False
 try:
-    from hledac.universal.core.rust_backend import rust
+    from hledac.universal._core.rust_backend import rust
 
     if rust.is_available:
         _batch_sanitize_xml = rust.xml.batch_sanitize_xml

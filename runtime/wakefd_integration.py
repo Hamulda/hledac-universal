@@ -24,7 +24,7 @@ import asyncio
 import logging
 from typing import TYPE_CHECKING, Any
 from collections.abc import Callable
-from core import aclose
+from _core import aclose
 
 if TYPE_CHECKING:
     pass
@@ -135,7 +135,7 @@ async def create_mpsc_notifier(
     # Lazy import - MPSCPool je v rust_extensions
     try:
         # R6: Centralized Rust access via core.rust_backend
-        from hledac.universal.core.rust_backend import rust
+        from hledac.universal._core.rust_backend import rust
         MPSCPool = rust.raw.MPSCPool
     except ImportError:
         logger.error("[create_mpsc_notifier] hledac_rust_extensions not available")

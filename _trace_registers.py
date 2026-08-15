@@ -6,7 +6,7 @@ import os
 sys.path.insert(0, os.getcwd())
 
 # Pre-import locks module and patch
-import hledac.universal.core.locks as locks_mod
+import hledac.universal._core.locks as locks_mod
 
 _orig = locks_mod._register_lock
 _registrations = []
@@ -18,7 +18,7 @@ def tracer(category, lock, name, frame_info):
 locks_mod._register_lock = tracer
 
 import pytest
-from core import aclose
+from _core import aclose
 exit_code = pytest.main(["-x", "tests/test_sprint_scheduler.py", "-q", "--tb=short"])
 
 # Write registrations to file

@@ -39,7 +39,7 @@ Python 3.14+: attribute assignment is GIL-atomic, lock-free fast path.
 
 import importlib
 from typing import Any
-from core import aclose
+from _core import aclose
 
 __all__ = ["optional", "lazy_decorator"]
 

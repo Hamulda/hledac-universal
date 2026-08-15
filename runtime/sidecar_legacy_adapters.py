@@ -38,7 +38,7 @@ from hledac.universal.runtime.sidecars import (  # noqa: F401
 
 # Backward-compatibility shim: bind_scheduler delegates to the new location
 from hledac.universal.runtime.sidecars._base import bind_scheduler as _bind_scheduler
-from core import aclose
+from _core import aclose
 
 # Re-export ensure_legacy_adapters_registered as a no-op (adapters auto-register)
 def ensure_legacy_adapters_registered() -> None:

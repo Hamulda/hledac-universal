@@ -21,7 +21,7 @@ import sys
 from unittest.mock import patch
 
 import pytest
-from core import aclose
+from _core import aclose
 
 # Ensure the universal package is importable when pytest is invoked from
 # the repo root (matches the project's existing test bootstrap).

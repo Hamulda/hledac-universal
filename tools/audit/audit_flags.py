@@ -9,7 +9,7 @@ import json
 import re
 import sys
 from pathlib import Path
-from core import aclose
+from _core import aclose
 
 # Root folder = hledac/universal
 ROOT = Path(__file__).parent.parent

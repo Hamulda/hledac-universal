@@ -41,7 +41,7 @@ from __future__ import annotations
 
 import logging
 from typing import Any
-from core import aclose
+from _core import aclose
 
 logger = logging.getLogger(__name__)
 
@@ -92,14 +92,14 @@ def _simhash_single_sync(text: str) -> int:
     """Sync SimHash — called on rayon cpu_pool thread."""
     try:
         # R6: Centralized Rust access via core.rust_backend
-        from hledac.universal.core.rust_backend import rust
+        from hledac.universal._core.rust_backend import rust
         compute_simhash = rust.raw.compute_simhash  # type: ignore[assignment]
         return compute_simhash(text)
     except ImportError:  # noqa: BLE001
         pass
     # Pure Python fallback
     try:
-        from hledac.universal.core.rust_backend.simhash import _python_compute_simhash
+        from hledac.universal._core.rust_backend.simhash import _python_compute_simhash
         return _python_compute_simhash(text)
     except Exception:
         return 0
@@ -144,13 +144,13 @@ def _simhash_batch_sync(texts: list[str]) -> list[int]:
     """Sync simhash batch — called on rayon cpu_pool thread."""
     try:
         # R6: Centralized Rust access via core.rust_backend
-        from hledac.universal.core.rust_backend import rust
+        from hledac.universal._core.rust_backend import rust
         batch_compute_simhash = rust.raw.batch_compute_simhash  # type: ignore[assignment]
         return batch_compute_simhash(texts)
     except ImportError:  # noqa: BLE001
         pass
     try:
-        from hledac.universal.core.rust_backend.simhash import _python_compute_simhash
+        from hledac.universal._core.rust_backend.simhash import _python_compute_simhash
         return [_python_compute_simhash(t) for t in texts]
     except Exception:
         return [0] * len(texts)
@@ -412,7 +412,7 @@ def _fingerprints_sync(texts: list[str]) -> list[tuple[int, int]]:
 
     try:
         # R6: Centralized Rust access via core.rust_backend
-        from hledac.universal.core.rust_backend import rust
+        from hledac.universal._core.rust_backend import rust
         compute_simhash = rust.raw.compute_simhash  # type: ignore[assignment]
         _simhash_rust = True
     except ImportError:
@@ -430,7 +430,7 @@ def _fingerprints_sync(texts: list[str]) -> list[tuple[int, int]]:
             s = compute_simhash(t)
         else:
             try:
-                from hledac.universal.core.rust_backend.simhash import _python_compute_simhash
+                from hledac.universal._core.rust_backend.simhash import _python_compute_simhash
                 s = _python_compute_simhash(t)
             except Exception:
                 s = 0

@@ -150,8 +150,8 @@ _TRACKED_PREFIXES = frozenset(
         "hledac.universal.fetching",
         "hledac.universal.fetching.public_fetcher",
         "hledac.universal.transport",
-        "hledac.universal.core",
-        "hledac.universal.core.resource_governor",
+        "hledac.universal._core",
+        "hledac.universal._core.resource_governor",
         "hledac.universal.pipeline",
         "hledac.universal.pipeline.live_public_pipeline",
         "hledac.universal.layers",
@@ -476,7 +476,7 @@ def session_otel_tracer():
 # ---------------------------------------------------------------------------
 
 import gc  # noqa: E402
-from core import aclose
+from _core import aclose
 
 # Import mock cleanup utilities (lazy, fail-soft)
 try:
@@ -602,7 +602,7 @@ def _env_config_cache_clear() -> None:
     Order: runs BEFORE _gc_and_close_loops (alphabetical: _e < _g).
     """
     try:
-        from hledac.universal.core.env_config import _get_cached
+        from hledac.universal._core.env_config import _get_cached
         # @functools.cache stores in func.__wrapped__.__dict__ or func.__dict__
         _get_cached.cache_clear()
     except Exception:  # noqa: BLE001
@@ -1376,7 +1376,7 @@ def _duckdb_pool_cleanup() -> None:
     """
     yield
     try:
-        from hledac.universal.core.rust_backend.query import _pool_close_all
+        from hledac.universal._core.rust_backend.query import _pool_close_all
 
         _pool_close_all()
     except Exception:  # noqa: BLE001
@@ -1445,7 +1445,7 @@ def isolated_lmdb_store():
 
     temp_dir = tempfile.mkdtemp(prefix="test_lmdb_isolated_")
     try:
-        from hledac.universal.core.lmdb_unified import UnifiedLMDB
+        from hledac.universal._core.lmdb_unified import UnifiedLMDB
 
         store = UnifiedLMDB(temp_dir, lazy=False)
         yield store
@@ -1521,7 +1521,7 @@ def _reset_lock_registry() -> None:
     imports circuit_breaker again, it re-executes the module, creates a NEW lock,
     and tries to register it → ValueError (stale entry from collection).
 
-    CRITICAL: circuit_breaker imports 'hledac.universal.core.locks' but conftest's
+    CRITICAL: circuit_breaker imports 'hledac.universal._core.locks' but conftest's
     _force_load may register the lock in a DIFFERENT module namespace. Therefore
     this fixture clears ALL _LockRegistry instances across all modules, not just
     the 'core.locks' stub.

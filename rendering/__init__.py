@@ -17,8 +17,11 @@ Invariant: max 1 concurrent render via module-level semaphore.
 
 
 
-from hledac.universal.rendering.macos_webkit_renderer import (
-from core import aclose
+
+
+
+
+
     MACOS_WEBKIT_REASONS,
     WebKitRenderResult,
     fetch_with_macos_webkit,
@@ -29,5 +32,6 @@ __all__ = [
     "WebKitRenderResult",
     "is_macos_webkit_available",
     "fetch_with_macos_webkit",
-    "MACOS_WEBKIT_REASONS",
+
+from _core import aclose    "MACOS_WEBKIT_REASONS",
 ]

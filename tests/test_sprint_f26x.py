@@ -16,7 +16,7 @@ import time
 from unittest.mock import patch
 
 import pytest
-from core import aclose
+from _core import aclose
 
 # ---------------------------------------------------------------------------
 # Fixtures

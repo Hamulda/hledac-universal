@@ -9,7 +9,7 @@ All DSPy calls are fail-soft: sprint continues even if DSPy is unavailable.
 
 import os
 import sys
-from core import aclose
+from _core import aclose
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 

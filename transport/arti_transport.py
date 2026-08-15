@@ -60,9 +60,9 @@ if TYPE_CHECKING:
     pass
 
 # M1 Resource Ledger imports
-from hledac.universal.core.resource_ledger import get_resource_ledger
+from hledac.universal._core.resource_ledger import get_resource_ledger
 from hledac.universal.transport.resource_admission import TransportAdmission
-from core import aclose
+from _core import aclose
 
 # NEXTGEN-06: Rust embedded Tor detection
 _RUST: object | None = None
@@ -1282,5 +1282,5 @@ def is_arti_enabled() -> bool:
 
     Returns True if HLEDAC_ENABLE_ARTI=1 in environment.
     """
-    from hledac.universal.core.env_config import ENV
+    from hledac.universal._core.env_config import ENV
     return ENV.get_bool('HLEDAC_ENABLE_ARTI', False)

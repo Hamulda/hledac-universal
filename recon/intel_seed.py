@@ -31,7 +31,7 @@ from pathlib import Path
 from typing import Any
 
 from hledac.universal.utils.lazy_singleton import LazySingleton
-from core import aclose
+from _core import aclose
 
 log = logging.getLogger(__name__)
 

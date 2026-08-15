@@ -20,7 +20,7 @@ from typing import Any
 # Re-exported here for convenience (profile.lanes is the canonical access point).
 
 from hledac.universal.runtime.lane_registry import LaneRegistry as _LR
-from core import aclose
+from _core import aclose
 
 # Valid research/academic/geopolitical profiles that enable ACADEMIC lane
 # F266-U1: threat_intel added to enable ACADEMIC lane for threat intelligence queries

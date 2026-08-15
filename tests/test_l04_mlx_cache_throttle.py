@@ -17,7 +17,7 @@ from __future__ import annotations
 from unittest.mock import MagicMock, patch
 
 import pytest
-from core import aclose
+from _core import aclose
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -84,7 +84,7 @@ class TestGenerationCounter:
         engine = _make_engine()
         engine._generation_since_clear = 19
 
-        with patch("hledac.universal.core.resource_governor.sample_uma_status") as mock_uma:
+        with patch("hledac.universal._core.resource_governor.sample_uma_status") as mock_uma:
             mock_uma.return_value = MagicMock(state="ok")
             engine._mlx_clear_and_timestamp()
 
@@ -122,7 +122,7 @@ class TestClearInterval:
             nonlocal clear_called
             clear_called = True
 
-        with patch("hledac.universal.core.resource_governor.sample_uma_status") as mock_uma, \
+        with patch("hledac.universal._core.resource_governor.sample_uma_status") as mock_uma, \
              patch("mlx.core") as mock_mx:
 
             mock_uma.return_value = MagicMock(state="ok")
@@ -151,7 +151,7 @@ class TestClearInterval:
             nonlocal clear_called
             clear_called = True
 
-        with patch("hledac.universal.core.resource_governor.sample_uma_status") as mock_uma, \
+        with patch("hledac.universal._core.resource_governor.sample_uma_status") as mock_uma, \
              patch("mlx.core") as mock_mx:
 
             mock_uma.return_value = MagicMock(state="ok")
@@ -180,7 +180,7 @@ class TestClearInterval:
 
         call_count = 0
 
-        with patch("hledac.universal.core.resource_governor.sample_uma_status") as mock_uma, \
+        with patch("hledac.universal._core.resource_governor.sample_uma_status") as mock_uma, \
              patch("mlx.core") as mock_mx:
 
             mock_uma.return_value = MagicMock(state="ok")
@@ -206,7 +206,7 @@ class TestClearInterval:
         engine = _make_engine()
         before = time.monotonic()
 
-        with patch("hledac.universal.core.resource_governor.sample_uma_status") as mock_uma, \
+        with patch("hledac.universal._core.resource_governor.sample_uma_status") as mock_uma, \
              patch("mlx.core") as mock_mx:
 
             mock_uma.return_value = MagicMock(state="ok")
@@ -247,7 +247,7 @@ class TestPressureTriggers:
             nonlocal clear_called
             clear_called = True
 
-        with patch("hledac.universal.core.resource_governor.sample_uma_status") as mock_uma, \
+        with patch("hledac.universal._core.resource_governor.sample_uma_status") as mock_uma, \
              patch("mlx.core") as mock_mx:
 
             mock_uma.return_value = MagicMock(state=pressure_state)
@@ -278,7 +278,7 @@ class TestPressureTriggers:
             nonlocal clear_called
             clear_called = True
 
-        with patch("hledac.universal.core.resource_governor.sample_uma_status") as mock_uma, \
+        with patch("hledac.universal._core.resource_governor.sample_uma_status") as mock_uma, \
              patch("mlx.core") as mock_mx:
 
             mock_uma.return_value = MagicMock(state=pressure_state)
@@ -308,7 +308,7 @@ class TestPressureTriggers:
             nonlocal clear_called
             clear_called = True
 
-        with patch("hledac.universal.core.resource_governor.sample_uma_status") as mock_uma, \
+        with patch("hledac.universal._core.resource_governor.sample_uma_status") as mock_uma, \
              patch("mlx.core") as mock_mx:
 
             mock_uma.side_effect = RuntimeError("UMA sampling unavailable")
@@ -344,7 +344,7 @@ class TestForceClear:
             nonlocal clear_called
             clear_called = True
 
-        with patch("hledac.universal.core.resource_governor.sample_uma_status") as mock_uma, \
+        with patch("hledac.universal._core.resource_governor.sample_uma_status") as mock_uma, \
              patch("mlx.core") as mock_mx:
 
             mock_uma.return_value = MagicMock(state="ok")

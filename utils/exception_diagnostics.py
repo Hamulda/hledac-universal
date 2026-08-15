@@ -41,9 +41,9 @@ from collections import defaultdict, deque
 from dataclasses import dataclass, field
 from typing import Any
 
-from hledac.universal.core.locks import LockCategory, make_lock
+from hledac.universal._core.locks import LockCategory, make_lock
 from hledac.universal.utils.exception_severity import Severity, ExceptionEvent
-from core import aclose
+from _core import aclose
 
 __all__ = [
     "ExceptionDiagnostics",

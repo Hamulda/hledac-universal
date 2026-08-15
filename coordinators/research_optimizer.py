@@ -27,7 +27,7 @@ from operator import attrgetter, itemgetter
 import msgspec
 
 from hledac.universal.utils.asyncx import parallel_ok
-from core import aclose
+from _core import aclose
 
 logger = logging.getLogger(__name__)
 
@@ -96,7 +96,7 @@ class ResearchOptimizer:
         self._query_metrics: dict[str, QueryMetrics] = {}
         self._in_flight: dict[str, asyncio.Future] = {}
         self._active_requests = 0
-        from hledac.universal.core.concurrency import ConcurrencyCategory, get_semaphore
+        from hledac.universal._core.concurrency import ConcurrencyCategory, get_semaphore
         self._request_semaphore = get_semaphore(ConcurrencyCategory.SCRAPE_GENERAL)
         self._execution_times: list[float] = []
         self._max_history = 1000

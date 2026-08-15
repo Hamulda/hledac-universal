@@ -32,7 +32,7 @@ import sys
 from contextlib import contextmanager
 from typing import TYPE_CHECKING, TypeVar
 from collections.abc import Callable
-from core import aclose
+from _core import aclose
 
 if TYPE_CHECKING:
     from typing import ParamSpec

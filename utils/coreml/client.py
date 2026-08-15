@@ -18,7 +18,7 @@ from tenacity import (
 
 from .service import BatchPredictRequest, BatchPredictResult, ComputeUnit, ConvertRequest, ConvertResult, HealthResult, PredictRequest, PredictResult
 from hledac.universal.utils.sync_bridge import run_sync_async
-from core import aclose
+from _core import aclose
 logger = logging.getLogger('coreml-client')
 
 

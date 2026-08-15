@@ -10,7 +10,7 @@ Obsahuje:
 # Full system (for advanced use)
 from .stealth_manager import StealthManager
 from .stealth_session import StealthResponse, StealthSession
-from core import aclose
+from _core import aclose
 
 __all__ = [
     # Canonical

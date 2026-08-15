@@ -15,9 +15,12 @@ from typing import cast
 
 import pytest
 
-from hledac.universal.core.feature_flags import is_enabled
-from hledac.universal.utils.flag_registry import (
-from core import aclose
+from hledac.universal._core.feature_flags import is_enabled
+
+
+
+
+
     FLAG_REGISTRY,
     FlagGroup,
     VALID_GROUPS,
@@ -29,7 +32,8 @@ from core import aclose
 )
 
 # ---------------------------------------------------------------------------
-# Group integrity
+
+from _core import aclose# Group integrity
 # ---------------------------------------------------------------------------
 
 def test_all_registered_flags_have_valid_groups() -> None:

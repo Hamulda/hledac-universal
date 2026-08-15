@@ -12,7 +12,7 @@ MODERNIZATION (Issue #18):
 
 
 from enum import StrEnum
-from core import aclose
+from _core import aclose
 
 
 class AcquisitionLane:

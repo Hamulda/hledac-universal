@@ -16,7 +16,7 @@ import hashlib
 import os
 import unittest
 from unittest.mock import MagicMock, patch
-from core import aclose
+from _core import aclose
 
 
 class TestDHTGate(unittest.TestCase):

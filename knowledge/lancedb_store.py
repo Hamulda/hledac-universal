@@ -69,7 +69,7 @@ def _get_uma_budget():
 
 # C1-X FIX: Import MLX_AVAILABLE from SSOT (zero-import detection)
 from hledac.universal.utils.mlx_memory import MLX_AVAILABLE
-from core import aclose
+from _core import aclose
 
 # Lazy accessor for mlx.core — uses centralized get_mx() from SSOT
 def _get_mx():
@@ -508,7 +508,7 @@ class LanceDBIdentityStore:
             10_000 if state == "ok" / "soft_warn" / error (default, safe)
         """
         try:
-            from hledac.universal.core.resource_governor import sample_uma_status
+            from hledac.universal._core.resource_governor import sample_uma_status
             uma = sample_uma_status()
             if uma.swap_detected:
                 return 1000
@@ -582,7 +582,7 @@ class LanceDBIdentityStore:
     async def _initialize_embedder(self) -> bool:
         """Initialize embedder: MLX/GPU → CoreML/ANE → Numpy fallback."""
         try:
-            from hledac.universal.core.mlx_embeddings import get_embedding_manager
+            from hledac.universal._core.mlx_embeddings import get_embedding_manager
             self._mlx_embed_manager = get_embedding_manager()
             self._embedder = self._mlx_embed_manager
             self._embedder_type = 'mlx_gpu'
@@ -1027,7 +1027,7 @@ class LanceDBIdentityStore:
             id_to_idx_global: dict[str, int] = {}
             for offset in range(0, total_count, chunk_size):
                 try:
-                    from hledac.universal.core.resource_governor import sample_uma_status
+                    from hledac.universal._core.resource_governor import sample_uma_status
                     uma = sample_uma_status()
                     if uma.swap_detected:
                         logger.debug(f'[LANCEDB_MLX] Aborting load at chunk offset {offset} — swap detected mid-load (used {uma.swap_used_gib:.1f}GiB)')
@@ -1949,7 +1949,7 @@ class SqliteVecIdentityStore:
     async def _get_embedding_manager(self):
         """Lazily get MLX embedding manager."""
         if self._embedding_manager is None:
-            from hledac.universal.core.mlx_embeddings import get_embedding_manager
+            from hledac.universal._core.mlx_embeddings import get_embedding_manager
             self._embedding_manager = get_embedding_manager()
         return self._embedding_manager
 
@@ -2198,7 +2198,7 @@ class LanceDBAcademicStore:
         """
         try:
             import mlx.core
-            from hledac.universal.core.mlx_embeddings import get_mlx_embedder
+            from hledac.universal._core.mlx_embeddings import get_mlx_embedder
             self._embedder = get_mlx_embedder()
             self._embedder_backend = 'mlx'
             return

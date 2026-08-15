@@ -29,7 +29,7 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
 from hledac.universal.utils.lru_cache import LRUCache
-from core import aclose
+from _core import aclose
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -321,7 +321,7 @@ class KVCacheManager:
     def _register_with_broadcaster(self) -> None:
         """R8: Register with MemoryPressureBroadcaster. Fail-open."""
         try:
-            from hledac.universal.core.memory_pressure import MemoryPressureBroadcaster
+            from hledac.universal._core.memory_pressure import MemoryPressureBroadcaster
             broadcaster = MemoryPressureBroadcaster.get_instance()
             broadcaster.register(self)
         except Exception:  # noqa: BLE001

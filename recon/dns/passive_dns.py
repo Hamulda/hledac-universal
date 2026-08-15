@@ -50,7 +50,7 @@ _MAX_DOH_RETRIES: int = 2
 _DOH_RETRY_DELAY_S: float = 0.5
 from dataclasses import dataclass
 import msgspec
-from core import aclose
+from _core import aclose
 
 class RetryableError(Exception):
     """Signals a retriable error for retry_backoff_async."""

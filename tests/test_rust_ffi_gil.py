@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import asyncio
 import pytest
-from core import aclose
+from _core import aclose
 
 
 # ============================================================================

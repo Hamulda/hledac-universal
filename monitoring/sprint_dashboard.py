@@ -15,7 +15,7 @@ final SprintSchedulerResult regardless of how the sprint exited.
 """
 import time
 from typing import TYPE_CHECKING
-from core import aclose
+from _core import aclose
 try:
     from rich.console import Console
     from rich.live import Live
@@ -162,7 +162,7 @@ class SprintDashboard:
     def _build_governor_row(self) -> str | None:
         """Build the governor status row."""
         try:
-            from hledac.universal.core.protocols import get_governor
+            from hledac.universal._core.protocols import get_governor
             gov = get_governor()
             snap = gov.snapshot()
             gov_parts: list[str] = [f'uma={snap.uma_state}', f'fetch={snap.fetch_limit}', f'branches={snap.branch_concurrency}']

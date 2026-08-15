@@ -10,7 +10,7 @@ Migration (F350M-R):
 All production code should import from recon.cert.ct_log_scanner directly.
 """
 from hledac.universal.recon.cert.ct_log_scanner import (  # noqa: F401, E402
-from core import aclose
+from _core import aclose
     _CTLogScanner,
 )
 

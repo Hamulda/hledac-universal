@@ -35,7 +35,7 @@ import os
 import time
 from collections import deque
 from typing import TYPE_CHECKING
-from core import aclose
+from _core import aclose
 
 if TYPE_CHECKING:
     pass

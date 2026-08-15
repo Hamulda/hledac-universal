@@ -31,7 +31,7 @@ import re
 import sys
 from pathlib import Path
 from typing import NamedTuple
-from core import aclose
+from _core import aclose
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Mapping: mock variable patterns → spec class
@@ -43,15 +43,15 @@ MOCK_SPEC_MAP: dict[str, tuple[str, str]] = {
     # NOTE: mock_lmdb uses put/delete but LMDBStoreProtocol only has put_many/get
     # Use make_lmdb_mock() helper instead
     "_duckdb_store": (
-        "from hledac.universal.core.protocols import DuckDBStoreProtocol",
+        "from hledac.universal._core.protocols import DuckDBStoreProtocol",
         "DuckDBStoreProtocol",
     ),
     "duckdb_store": (
-        "from hledac.universal.core.protocols import DuckDBStoreProtocol",
+        "from hledac.universal._core.protocols import DuckDBStoreProtocol",
         "DuckDBStoreProtocol",
     ),
     "store": (
-        "from hledac.universal.core.protocols import DuckDBStoreProtocol",
+        "from hledac.universal._core.protocols import DuckDBStoreProtocol",
         "DuckDBStoreProtocol",
     ),
 }

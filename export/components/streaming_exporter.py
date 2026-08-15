@@ -38,7 +38,7 @@ except (ImportError, AttributeError):
     HAS_ASYNCIO_STREAM = False
 import sys as _sys
 from contextlib import aclosing as _aclose
-from core import aclose
+from _core import aclose
 
 async def stream_to_thread(source: AsyncGenerator[Any], func: Callable[[Any], Any], *, max_concurrent: int=4) -> AsyncGenerator[Any]:
     """Offload blocking sync func to thread pool while consuming async generator.

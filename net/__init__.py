@@ -27,7 +27,7 @@ import re
 import struct
 from dataclasses import dataclass
 from collections.abc import Iterator
-from core import aclose
+from _core import aclose
 
 
 # --- IP Utilities ---

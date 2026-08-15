@@ -12,7 +12,7 @@ NOT a single class. The actual "tick" surface is TemporalSignalLayer.observe().
 import sys
 import time
 from pathlib import Path
-from core import aclose
+from _core import aclose
 
 REPO_ROOT = Path("/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal")
 sys.path.insert(0, str(REPO_ROOT))

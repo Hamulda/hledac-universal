@@ -19,7 +19,7 @@ import gc
 import sys
 
 import pytest
-from core import aclose
+from _core import aclose
 
 
 class TestGcCycleMaintain:
@@ -36,13 +36,13 @@ class TestGcCycleMaintain:
         gc.collect()
 
     def test_returns_bool(self) -> None:
-        from hledac.universal.core.memory_cycle import gc_cycle_maintain  # type: ignore[import-not-found]
+        from hledac.universal._core.memory_cycle import gc_cycle_maintain  # type: ignore[import-not-found]
 
         result = gc_cycle_maintain(force=True)
         assert isinstance(result, bool)
 
     def test_force_always_freezes(self) -> None:
-        from hledac.universal.core.memory_cycle import gc_cycle_maintain  # type: ignore[import-not-found]
+        from hledac.universal._core.memory_cycle import gc_cycle_maintain  # type: ignore[import-not-found]
 
         if not hasattr(gc, "freeze"):
             pytest.skip("gc.freeze not available on this Python build")
@@ -53,7 +53,7 @@ class TestGcCycleMaintain:
         assert isinstance(result, bool)
 
     def test_cooldown_skips_refreeze(self) -> None:
-        from hledac.universal.core.memory_cycle import (  # type: ignore[import-not-found]
+        from hledac.universal._core.memory_cycle import (  # type: ignore[import-not-found]
             gc_cycle_maintain,
         )
 
@@ -67,7 +67,7 @@ class TestGcCycleMaintain:
         assert result is False
 
     def test_get_stats_returns_dict(self) -> None:
-        from hledac.universal.core.memory_cycle import get_stats  # type: ignore[import-not-found]
+        from hledac.universal._core.memory_cycle import get_stats  # type: ignore[import-not-found]
 
         stats = get_stats()
         assert isinstance(stats, dict)
@@ -90,7 +90,7 @@ class TestGcCycleMaintain:
         assert stats["platform"] == sys.platform
 
     def test_refreeze_count_increments(self) -> None:
-        from hledac.universal.core.memory_cycle import (  # type: ignore[import-not-found]
+        from hledac.universal._core.memory_cycle import (  # type: ignore[import-not-found]
             gc_cycle_maintain,
             get_stats,
         )
@@ -107,7 +107,7 @@ class TestGcCycleMaintain:
 
     def test_does_not_raise_on_no_generations(self, monkeypatch) -> None:
         """Edge: gc.get_stats() returning empty list (e.g. disabled GC) — must fail-soft."""
-        from hledac.universal.core import memory_cycle  # type: ignore[import-not-found]
+        from hledac.universal._core import memory_cycle  # type: ignore[import-not-found]
 
         # Force the function into a degraded state by patching get_stats.
         monkeypatch.setattr(gc, "get_stats", lambda: [])
@@ -116,7 +116,7 @@ class TestGcCycleMaintain:
         assert isinstance(result, bool)
 
     def test_does_not_raise_on_get_stats_failure(self, monkeypatch) -> None:
-        from hledac.universal.core import memory_cycle  # type: ignore[import-not-found]
+        from hledac.universal._core import memory_cycle  # type: ignore[import-not-found]
 
         def _boom():
             raise RuntimeError("simulated")

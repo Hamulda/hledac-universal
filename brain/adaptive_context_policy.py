@@ -19,7 +19,7 @@ This module is stdlib-first with optional psutil support.
 """
 from dataclasses import dataclass
 import msgspec
-from core import aclose
+from _core import aclose
 _MEMORY_THRESHOLD_REDUCED = 2048
 _MEMORY_THRESHOLD_MINIMAL = 1332
 _MEMORY_THRESHOLD_REJECT = 1024
@@ -55,7 +55,7 @@ def _get_governor_uma_state() -> tuple[str | None, float | None]:
         (None, None) when Governor unavailable or sample fails.
     """
     try:
-        from hledac.universal.core.protocols import get_governor
+        from hledac.universal._core.protocols import get_governor
         gov = get_governor()
         snap = gov.snapshot()
         free_miB = getattr(snap, 'free_uma_gib', None)
@@ -229,7 +229,7 @@ async def get_thermal_generation_params() -> ThermalGenerationParams:
         Returns defaults (None, 0.0) when Governor unavailable or not throttled.
     """
     try:
-        from hledac.universal.core.protocols import get_governor
+        from hledac.universal._core.protocols import get_governor
         gov = get_governor()
         decision = await gov.evaluate()
         return ThermalGenerationParams(

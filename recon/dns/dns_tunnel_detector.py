@@ -57,8 +57,8 @@ except ImportError:
     HAS_MLX = False
 
 # R6: Centralized Rust access via core.rust_backend
-from hledac.universal.core.rust_backend import rust
-from core import aclose
+from hledac.universal._core.rust_backend import rust
+from _core import aclose
 
 HAS_RUST_ENCODING = rust.is_available
 

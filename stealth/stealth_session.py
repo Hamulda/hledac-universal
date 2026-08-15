@@ -15,7 +15,7 @@ import asyncio
 import secrets
 from dataclasses import dataclass, field
 import msgspec
-from core import aclose
+from _core import aclose
 
 # Crypto-safe jitter + UA selection — F350M-R
 _JITTER_RNG = secrets.SystemRandom()
@@ -88,7 +88,7 @@ class StealthSession:
         Returns:
             Actual seconds slept (0.0 when blitz mode, for testing variance verification).
         """
-        from hledac.universal.core.telemetry.context_state import is_blitz_mode as _is_blitz
+        from hledac.universal._core.telemetry.context_state import is_blitz_mode as _is_blitz
         if _is_blitz():
             return 0.0
         delay = _JITTER_RNG.uniform(self._jitter_min, self._jitter_max)

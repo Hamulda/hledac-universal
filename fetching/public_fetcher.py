@@ -35,7 +35,7 @@ from typing import TYPE_CHECKING, Any, Final, cast
 
 import msgspec
 
-from hledac.universal.core.env_config import ENV
+from hledac.universal._core.env_config import ENV
 from hledac.universal.utils.asyncx import safe_wait_for
 from hledac.universal.utils.logging_config import get_logger
 
@@ -272,7 +272,7 @@ def _get_content_hasher() -> object | None:
     if _RUST_CONTENT_HASHER:
         return _ContentHasher
     try:
-        from hledac.universal.core.rust_backend import rust
+        from hledac.universal._core.rust_backend import rust
         _ContentHasher = rust.hash
         _RUST_CONTENT_HASHER = True
     except Exception:  # noqa: BLE001 — best-effort; Rust backend unavailable, fallback to Python
@@ -886,7 +886,7 @@ async def _maybe_renew_tor_circuit() -> None:
     In a 30-min sprint with 50 Tor requests, this saves ~15s of latency.
     """
     # BLITZ-14: Skip Tor circuit renewal in blitz mode
-    from hledac.universal.core.telemetry.context_state import is_blitz_mode as _is_blitz
+    from hledac.universal._core.telemetry.context_state import is_blitz_mode as _is_blitz
     if _is_blitz():
         return
 
@@ -909,7 +909,7 @@ async def _jitter_delay() -> None:
     NOTE: As of BLITZ-12 analysis, this function has zero callers across the
     codebase. It is kept for API stability and exported in __all__.
     """
-    from hledac.universal.core.telemetry.context_state import is_blitz_mode as _is_blitz
+    from hledac.universal._core.telemetry.context_state import is_blitz_mode as _is_blitz
     if _is_blitz():
         return
     await asyncio.sleep(_JITTER_RNG.uniform(JITTER_MIN_S, JITTER_MAX_S))
@@ -1373,7 +1373,7 @@ def _blitz_aware_stop(retry_state: _TenacityRetryCallState) -> bool:
     Returns:
         True if retries should stop, False to continue retrying.
     """
-    from hledac.universal.core.telemetry.context_state import is_blitz_mode as _is_blitz
+    from hledac.universal._core.telemetry.context_state import is_blitz_mode as _is_blitz
 
     max_attempts = 2 if _is_blitz() else MAX_RETRIES + 1
     return retry_state.attempt_number >= max_attempts
@@ -1714,7 +1714,7 @@ async def async_fetch_public_text(
         # (1.0 s vs 8.0 s) and attempt count (2 vs 3) already differentiate.
         _host = _extract_domain_from_url(url)
         if _host:
-            from hledac.universal.core.telemetry.context_state import is_blitz_mode as _is_blitz_cs
+            from hledac.universal._core.telemetry.context_state import is_blitz_mode as _is_blitz_cs
             if _is_blitz_cs():
                 mark_blitz_host_dead(_host)
         return FetchResult(
@@ -1963,7 +1963,7 @@ async def async_fetch_public_text_batch(
     # concurrency=int → explicit override (preserves legacy caller behavior).
     _concurrency = concurrency
     if _concurrency is None:
-        from hledac.universal.core.concurrency_registry import ConcurrencyCategory, concurrency_budget
+        from hledac.universal._core.concurrency_registry import ConcurrencyCategory, concurrency_budget
 
         _concurrency = await concurrency_budget(ConcurrencyCategory.HTTP_LANE)
 
@@ -2314,7 +2314,7 @@ async def _record_fetch_outcome(
     await _record_route_outcome(result, domain)
     await _record_anti_bot_observations(result, domain)
 from hledac.universal.utils.html_text_fast import extract_html_metadata, html_to_text_fast
-from core import aclose
+from _core import aclose
 
 
 # _sync_process_html imported from _html_processor
@@ -2335,7 +2335,7 @@ def _batch_sync_extract_links(items: list[tuple[str, str]]) -> list[list[str]]:
     if not items:
         return []
     try:
-        from hledac.universal.core.rust_backend import rust as _rust_backend
+        from hledac.universal._core.rust_backend import rust as _rust_backend
         return _rust_backend.html.batch_extract_links(items)
     except Exception:  # noqa: BLE001 — best-effort; Rust batch link failure returns empty lists
         return [[] for _ in items]
@@ -2385,7 +2385,7 @@ def _batch_sync_process_html(items: list[tuple[str, str]]) -> list[tuple[str, li
     if len(items) > 1000:
         items = items[:1000]
     try:
-        from hledac.universal.core.rust_backend import rust as _rust_backend
+        from hledac.universal._core.rust_backend import rust as _rust_backend
         htmls = [html for html, _ in items]
         base_urls = [base_url for _, base_url in items]
         # Rayon parallel: batch_extract_html_text + batch_extract_links + batch_extract_titles

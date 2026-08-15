@@ -32,7 +32,7 @@ import json
 import sys
 from pathlib import Path
 from typing import Any
-from core import aclose
+from _core import aclose
 
 # --------------------------------------------------------------------------
 # Constants
@@ -48,7 +48,7 @@ KPI_MODULE = BENCHMARKS / "live_measurement_kpi.py"
 # Runtime module prefixes that KPI module must NOT import
 RUNTIME_IMPORT_PREFIXES = frozenset([
     "hledac.universal.runtime",
-    "hledac.universal.core",
+    "hledac.universal._core",
     "hledac.universal.pipeline",
     "hledac.universal.discovery",
     "hledac.universal.fetching",

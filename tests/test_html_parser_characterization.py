@@ -9,7 +9,7 @@ No network calls. All HTML is inline.
 
 
 import pytest
-from core import aclose
+from _core import aclose
 
 # ---------------------------------------------------------------------------
 # Fixtures

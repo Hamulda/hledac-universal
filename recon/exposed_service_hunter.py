@@ -41,11 +41,11 @@ from enum import Enum
 from typing import Any
 from urllib.parse import urlparse
 import httpx
-from hledac.universal.core.concurrency import ConcurrencyCategory, get_semaphore
+from hledac.universal._core.concurrency import ConcurrencyCategory, get_semaphore
 from hledac.universal.transport.session_pool import session_pool
 from hledac.universal.utils.asyncx import parallel_ok, safe_wait_for
 from hledac.universal.utils._patterns import scan_parallel
-from core import aclose
+from _core import aclose
 logger = logging.getLogger(__name__)
 
 class ServiceType(Enum):
@@ -1052,7 +1052,7 @@ class DatabasePortScanner:
         """
         # ISSUE-014: Route through core.rust_backend wrapper for ABI checking,
         # capability scoring, and container-based force override.
-        from hledac.universal.core.rust_backend import rust
+        from hledac.universal._core.rust_backend import rust
         MongoDumper = rust.raw.MongoDumper
         if MongoDumper is None:
             logger.debug(
@@ -1105,7 +1105,7 @@ class DatabasePortScanner:
         """
         # ISSUE-014: Route through core.rust_backend wrapper for ABI checking,
         # capability scoring, and container-based force override.
-        from hledac.universal.core.rust_backend import rust
+        from hledac.universal._core.rust_backend import rust
         RedisDumper = rust.raw.RedisDumper
         if RedisDumper is None:
             logger.debug(
@@ -1158,7 +1158,7 @@ class DatabasePortScanner:
         # First try Rust native_db path
         # ISSUE-014: Route through core.rust_backend wrapper for ABI checking,
         # capability scoring, and container-based force override.
-        from hledac.universal.core.rust_backend import rust
+        from hledac.universal._core.rust_backend import rust
         ElasticsearchDumper = rust.raw.ElasticsearchDumper
         if ElasticsearchDumper is not None:
             try:

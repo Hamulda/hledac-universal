@@ -18,7 +18,7 @@ import msgspec
 from enum import StrEnum
 from pathlib import Path
 from hledac.universal.utils.serialization import _safe_dataclass_to_dict
-from core import aclose
+from _core import aclose
 
 class Grade(StrEnum):
     FEED_ONLY = 'FEED_ONLY'

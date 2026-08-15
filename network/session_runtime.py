@@ -108,7 +108,7 @@ TOR_READ_TIMEOUT_S: float = 75.0
 import contextvars  # noqa: E402
 
 from typing import TYPE_CHECKING  # noqa: E402
-from core import aclose
+from _core import aclose
 
 if TYPE_CHECKING:
     pass  # httpx is always available — no TYPE_CHECKING guard needed

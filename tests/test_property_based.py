@@ -29,15 +29,19 @@ from hledac.universal.coordinators.fetch_coordinator import (
     AIMD_MIN_CONCURRENCY,
     AIMD_DECREASE_BY_STATE,
 )
-from hledac.universal.tools.url_dedup import (
-from core import aclose
+
+
+
+
+
     create_rotating_bloom_filter,
     dedupe_url_list,
 )
 
 
 # ---------------------------------------------------------------------------
-# AIMD Controller — convergence + bound invariants
+
+from _core import aclose# AIMD Controller — convergence + bound invariants
 # ---------------------------------------------------------------------------
 
 class TestAIMDPropertyBased:
@@ -190,7 +194,7 @@ class TestIOCExtractionPropertyBased:
         extract_iocs_flat returns consistent results and never crashes.
         Property: determinism — same input gives same output.
         """
-        from hledac.universal.core.rust_backend import rust
+        from hledac.universal._core.rust_backend import rust
 
         # Build text with realistic IOC formats
         text_parts = []
@@ -213,7 +217,7 @@ class TestIOCExtractionPropertyBased:
     @settings(verbosity=Verbosity.verbose, max_examples=50, deadline=None)
     def test_ioc_extract_no_crash(self, text_content):
         """extract_iocs_flat never crashes on arbitrary text."""
-        from hledac.universal.core.rust_backend import rust
+        from hledac.universal._core.rust_backend import rust
 
         # Should not raise any exception
         result = rust.ioc.extract_iocs_flat(text_content)
@@ -238,7 +242,7 @@ class TestMemoryPressureHysteresis:
         This tests the ConcurrencyPreset.from_state() mapping is correct
         and that pressure transitions follow strict adjacency rules.
         """
-        from hledac.universal.core.resource_governor import ConcurrencyPreset
+        from hledac.universal._core.resource_governor import ConcurrencyPreset
 
         states = ["ok", "soft_warn", "warn", "critical", "emergency"]
         state_to_idx = {s: i for i, s in enumerate(states)}
@@ -261,7 +265,7 @@ class TestMemoryPressureHysteresis:
     @settings(verbosity=Verbosity.verbose, max_examples=30)
     def test_preset_values_for_all_states(self, state):
         """Each state produces a valid ConcurrencyPreset with positive fetch_limit."""
-        from hledac.universal.core.resource_governor import ConcurrencyPreset
+        from hledac.universal._core.resource_governor import ConcurrencyPreset
 
         preset = ConcurrencyPreset.from_state(state)
         assert preset.max_workers >= 0
@@ -275,7 +279,7 @@ class TestMemoryPressureHysteresis:
         Entry to warn happens at higher threshold than exit from warn.
         This is the core hysteresis property: system doesn't flap.
         """
-        from hledac.universal.core.resource_governor import (
+        from hledac.universal._core.resource_governor import (
             _THRESHOLD_WARN_GIB,
             _HYSTERESIS_EXIT_GIB,
         )
@@ -286,7 +290,7 @@ class TestMemoryPressureHysteresis:
 
     def test_critical_is_more_restrictive_than_warn(self):
         """Critical preset has strictly fewer workers and lower fetch limit than warn."""
-        from hledac.universal.core.resource_governor import ConcurrencyPreset
+        from hledac.universal._core.resource_governor import ConcurrencyPreset
 
         warn_preset = ConcurrencyPreset.from_state("warn")
         crit_preset = ConcurrencyPreset.from_state("critical")
@@ -296,7 +300,7 @@ class TestMemoryPressureHysteresis:
 
     def test_emergency_is_most_restrictive(self):
         """Emergency preset has max_workers=0 and minimal fetch_limit."""
-        from hledac.universal.core.resource_governor import ConcurrencyPreset
+        from hledac.universal._core.resource_governor import ConcurrencyPreset
 
         emg_preset = ConcurrencyPreset.from_state("emergency")
         assert emg_preset.max_workers == 0

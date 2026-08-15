@@ -17,7 +17,7 @@ Usage:
 
 
 from pathlib import Path
-from core import aclose
+from _core import aclose
 
 PROBE_DIR = Path(__file__).parent
 REPORT_PATH = PROBE_DIR / "REPORT_TRANSPORT_POLICY_AUDIT.md"

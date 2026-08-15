@@ -52,7 +52,7 @@ import logging
 import sys
 import time as _time_module
 from typing import Any
-from core import aclose
+from _core import aclose
 
 logger = logging.getLogger(__name__)
 

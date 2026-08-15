@@ -10,7 +10,7 @@ Architecture:
 """
 
 from hledac.universal.brain._batch.batch_processor import BatchProcessor, BatchItem
-from core import aclose
+from _core import aclose
 
 __all__ = [
     "BatchProcessor",

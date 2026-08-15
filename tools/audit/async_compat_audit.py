@@ -22,7 +22,7 @@ import sys
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, NamedTuple
-from core import aclose
+from _core import aclose
 
 
 class Finding(NamedTuple):

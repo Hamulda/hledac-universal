@@ -218,7 +218,7 @@ class UniversalConfig(msgspec.Struct, frozen=True, gc=False):
 
     def _apply_m1_optimizations(self) -> None:
         # ISSUE-7.1: circuit_breaker_threshold from M1AirConfig (=5, not M1Presets=3)
-        from hledac.universal.core.config.m1_air_config import M1AirConfig
+        from hledac.universal._core.config.m1_air_config import M1AirConfig
         self.memory.memory_limit_mb = M1Presets.MEMORY_LIMIT_MB
         self.memory.thermal_threshold_c = M1Presets.THERMAL_THRESHOLD_C
         self.research.hermes_model = M1Presets.HERMES_MODEL
@@ -316,7 +316,7 @@ def load_config_from_file(path: str | Path) -> UniversalConfig:
 __all__ = ['settings', 'Settings', 'FetchSettings', 'MLXSettings', 'DuckDBSettings', 'DedupSettings', 'TransportSettings', 'MemorySettings', 'SprintSettings', 'GraphSettings', 'SynthesisSettings', 'CooldownSettings', 'FeatureGates', 'UniversalConfig', 'create_config', 'load_config_from_file', 'M1Presets', 'ResearchPresets', 'SecurityConfig', 'StealthConfig', 'PrivacyConfig', 'DeepResearchConfig', 'ResearchMode', 'ResearchConfig', 'MemoryConfig', 'GhostConfig', 'CoordinationConfig', 'AgentManagerConfig', 'CommunicationConfig']
 import threading
 from typing import Final
-from core import aclose
+from _core import aclose
 _adaptive_patches: dict[tuple[str, str], int | float | str] = {}
 _adaptive_patches_lock = threading.Lock()
 

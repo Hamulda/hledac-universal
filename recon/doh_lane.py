@@ -22,7 +22,7 @@ if TYPE_CHECKING:
     import httpx
 else:
     import httpx
-from core import aclose
+from _core import aclose
 logger = logging.getLogger(__name__)
 
 class RecordType(StrEnum):
@@ -36,7 +36,7 @@ class RecordType(StrEnum):
     SOA = 'SOA'
     PTR = 'PTR'
 DOH_PROVIDERS: dict[str, str] = {'cloudflare': 'https://cloudflare-dns.com/dns-query', 'google': 'https://dns.google/resolve'}
-from hledac.universal.core.concurrency import ConcurrencyCategory, get_semaphore
+from hledac.universal._core.concurrency import ConcurrencyCategory, get_semaphore
 _DOH_SEMAPHORE = get_semaphore(ConcurrencyCategory.DNS_BRUTE)
 COMMON_SUBDOMAINS: list[str] = ['www', 'mail', 'ftp', 'vpn', 'api', 'admin', 'dev', 'staging', 'beta', 'internal', 'corp', 'git', 'jira', 'confluence', 'jenkins', 'gitlab']
 

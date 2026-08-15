@@ -28,7 +28,7 @@ from coremltools.models import MLModel
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import JSONResponse, PlainTextResponse
 from pydantic import BaseModel
-from core import aclose
+from _core import aclose
 
 class ComputeUnit(StrEnum):
     CPU = 'cpu'

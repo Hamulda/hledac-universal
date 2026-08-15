@@ -79,7 +79,7 @@ import warnings
 from concurrent.futures import ThreadPoolExecutor
 from typing import TYPE_CHECKING, Any, Literal, TypeVar
 
-from hledac.universal.core.isolated_executors import (
+from hledac.universal._core.isolated_executors import (
     IsolatedDuckDBExecutor,
     IsolatedMLXExecutor,
     get_duckdb_executor,
@@ -116,7 +116,7 @@ _DUCKDB_FALLBACK_WORKERS: int = 4  # DuckDB fallback pool (when PEP 734 unavaila
 
 # LMDB pool configuration — shared with runtime.lmdb_pool
 from hledac.universal.runtime._shared.lmdb_pool_helpers import _LMDB_WORKERS
-from core import aclose
+from _core import aclose
 
 
 class RAMBudgetExceeded(Exception):

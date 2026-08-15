@@ -51,7 +51,7 @@ from otel._exporter_ring import RingBufferExporter
 from otel._exporter_stdout import StdoutJSONExporter
 from otel._instrumentation import _filter_attrs
 from otel._noop import _NOOP_TRACER, _NoOpSpan
-from core import aclose
+from _core import aclose
 
 # ── Reset module state between tests ──────────────────────────────────────
 

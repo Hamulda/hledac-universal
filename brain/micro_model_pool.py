@@ -99,8 +99,11 @@ def _get_mlx_lm() -> Any:  # type: ignore[type-arg]
 
 
 # MODERN-35 Fix: Import CPU affinity utilities
-from hledac.universal.utils.cpu_affinity import (
-from core import aclose
+
+
+
+
+
     set_mlx_affinity,
     is_apple_silicon,
 )
@@ -108,7 +111,8 @@ from core import aclose
 # Type aliases for clarity
 ModelT = Any  # type: ignore[type-arg]
 TokenizerT = Any  # type: ignore[type-arg]
-EmbeddingT = list[float]
+
+from _core import acloseEmbeddingT = list[float]
 
 
 # =============================================================================

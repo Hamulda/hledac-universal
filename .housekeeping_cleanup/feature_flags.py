@@ -16,7 +16,7 @@ Design rules (GHOST_INVARIANTS):
 
 import os
 from typing import Final
-from core import aclose
+from _core import aclose
 
 # ---------------------------------------------------------------------------
 # Internal helpers

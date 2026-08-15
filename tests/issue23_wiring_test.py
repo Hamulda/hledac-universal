@@ -16,7 +16,7 @@ import sys
 from unittest.mock import AsyncMock
 
 import pytest
-from core import aclose
+from _core import aclose
 
 # Ensure universal package is importable when pytest runs from repo root.
 _HERE = __file__.rsplit("/", 2)[0]

@@ -10,7 +10,7 @@ Verifies HLEDAC_ENABLE_BGP gate behavior:
 
 
 import pytest
-from core import aclose
+from _core import aclose
 
 
 def sidecar_should_run() -> bool:

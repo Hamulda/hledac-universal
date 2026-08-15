@@ -12,7 +12,7 @@ from collections.abc import AsyncIterator
 import pytest
 
 from hledac.universal.brain._inference.stream_handler import StreamHandler, StreamConfig
-from core import aclose
+from _core import aclose
 
 
 # ============================================================================

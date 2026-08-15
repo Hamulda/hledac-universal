@@ -25,7 +25,7 @@ import subprocess
 import sys
 from dataclasses import dataclass, field
 import msgspec
-from core import aclose
+from _core import aclose
 __all__ = ['apple_fm_probe', 'is_afm_available', 'AFMProbeResult']
 _AFM_MIN_MACOS_VERSION = (26, 0)
 

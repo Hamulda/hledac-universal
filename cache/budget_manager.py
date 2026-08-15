@@ -27,7 +27,7 @@ import msgspec
 import numpy as np
 from ..tools.url_dedup import create_rotating_bloom_filter
 from ..utils.deduplication import SimHash
-from core import aclose
+from _core import aclose
 logger = logging.getLogger(__name__)
 
 class StopReason(Enum):

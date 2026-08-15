@@ -23,8 +23,11 @@ GHOST_INVARIANTS:
 from __future__ import annotations
 
 # Re-export everything from the new types/ subpackage
-from hledac_hypothesis.types import (
-from core import aclose
+
+
+
+
+
     # Enums
     HypothesisType,
     HypothesisStatus,
@@ -65,7 +68,8 @@ __all__ = [
     # Enums
     "HypothesisType",
     "HypothesisStatus",
-    "TestType",
+
+from _core import aclose    "TestType",
     "DarkQueryType",
     # Core dataclasses
     "Evidence",

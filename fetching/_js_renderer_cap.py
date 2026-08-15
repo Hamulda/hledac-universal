@@ -14,7 +14,7 @@ Cached after first check — use reset() to force re-check.
 
 import os
 import threading
-from core import aclose
+from _core import aclose
 
 # =============================================================================
 # CHROME BINARY CHECK (separate to avoid import cycles)
@@ -108,7 +108,7 @@ class JSRendererCapability:
         """Check playwright availability (must hold lock)."""
         if self._capability["playwright"] is not None:
             return
-        from hledac.universal.core.feature_flags import FeatureFlag, FeatureFlags
+        from hledac.universal._core.feature_flags import FeatureFlag, FeatureFlags
         heavy_browser_enabled = FeatureFlags.get(FeatureFlag.HEAVY_BROWSER)
         if not heavy_browser_enabled:
             self._capability["playwright"] = "heavy_browser_disabled"

@@ -61,7 +61,7 @@ import logging
 import sys
 import typing
 from typing import Final
-from core import aclose
+from _core import aclose
 
 # Lazy import to avoid circular dependency - Severity is only loaded when accessed
 _Severity: type | None = None

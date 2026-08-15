@@ -51,7 +51,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal, cast
 
 import numpy as np
-from core import aclose
+from _core import aclose
 
 if TYPE_CHECKING:
     import lancedb
@@ -137,7 +137,7 @@ def _resolve_backend() -> VectorBackend:
     
     SWARM-010: Use FeatureFlags.get_str() for registry compliance.
     """
-    from hledac.universal.core.feature_flags import FeatureFlags, FeatureFlag
+    from hledac.universal._core.feature_flags import FeatureFlags, FeatureFlag
     backend = FeatureFlags.get_str(FeatureFlag.VECTOR_BACKEND, "auto").lower()
     if backend not in ("sqlite-vec", "lancedb", "auto"):
         logger.warning(

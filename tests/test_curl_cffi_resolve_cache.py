@@ -15,8 +15,11 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from hledac.universal.transport.curl_cffi_fetch import (
-from core import aclose
+
+
+
+
+
     _MAX_RESOLVED_SESSIONS,
     _RESOLVED_SESSION_TTL_S,
     _resolved_sessions,
@@ -28,7 +31,8 @@ from core import aclose
 @pytest.fixture(autouse=True)
 def clear_resolved_sessions():
     """Clear resolved session cache before each test."""
-    _resolved_sessions.clear()
+
+from _core import aclose    _resolved_sessions.clear()
     _resolved_sessions_order.clear()
     yield
     _resolved_sessions.clear()

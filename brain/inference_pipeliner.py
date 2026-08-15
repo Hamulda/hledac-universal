@@ -23,7 +23,7 @@ from collections import deque
 from dataclasses import dataclass
 import msgspec
 from typing import TYPE_CHECKING, Any, Final
-from core import aclose
+from _core import aclose
 if TYPE_CHECKING:
     from .deephermes3_engine import DeepHermes3Engine
 logger = logging.getLogger(__name__)

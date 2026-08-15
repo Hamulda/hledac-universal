@@ -46,11 +46,11 @@ from hledac.universal.compat.msgspec_gc_compat import Struct
 from typing import TYPE_CHECKING, Any, Final
 
 from datasketch import MinHash, MinHashLSH
-from core import aclose
+from _core import aclose
 
 if TYPE_CHECKING:
     from hledac.universal.knowledge.duckdb_store import CanonicalFinding
-    from hledac.universal.core.rust_backend import AccelBackend
+    from hledac.universal._core.rust_backend import AccelBackend
 
 __all__ = [
     "SemanticDeduplicator",
@@ -108,7 +108,7 @@ def _get_rust_simhash() -> Any:
     global _rust_simhash
     if _rust_simhash is None:
         try:
-            from hledac.universal.core.rust_backend import get_accel
+            from hledac.universal._core.rust_backend import get_accel
 
             accel = get_accel()
             if accel.is_available:

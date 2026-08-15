@@ -9,7 +9,7 @@ import signal
 import subprocess
 import threading
 import weakref
-from core import aclose
+from _core import aclose
 logger = logging.getLogger(__name__)
 _vault_registry: dict[str, RamDiskVault] = {}
 _atexit_registered: bool = False

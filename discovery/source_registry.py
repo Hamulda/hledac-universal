@@ -16,7 +16,7 @@ from dataclasses import dataclass, field
 import msgspec
 from typing import Any
 from hledac.universal.utils.cache import PyCacheDict
-from core import aclose
+from _core import aclose
 
 class SourceEntry(msgspec.Struct, gc=False):
     """F229: Named source with tier and acquisition lane."""

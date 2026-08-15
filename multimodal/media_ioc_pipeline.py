@@ -47,7 +47,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 import msgspec
-from core import aclose
+from _core import aclose
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -98,7 +98,7 @@ def _ensure_ioc_scanner() -> Any | None:
     if _IocStreamScanner is not None:
         return _IocStreamScanner
     try:
-        from hledac.universal.core.rust_backend.ioc_stream import IocStreamScanner as _ISS
+        from hledac.universal._core.rust_backend.ioc_stream import IocStreamScanner as _ISS
         _IocStreamScanner = _ISS
         _IocStreamScannerAvailable = True
         return _ISS

@@ -28,6 +28,6 @@ from hledac.universal.utils.cache import AsyncLRUCache
 from hledac.universal.utils.cache import AsyncCacheError
 from hledac.universal.utils.cache import async_cached
 from hledac.universal.utils.cache import cached_awaitable
-from core import aclose
+from _core import aclose
 
 __all__ = ["AsyncLRUCache", "AsyncCacheError", "async_cached", "cached_awaitable"]

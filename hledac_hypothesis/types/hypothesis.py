@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from enum import Enum
 from typing import TYPE_CHECKING, Any, Protocol
-from core import aclose
+from _core import aclose
 
 if TYPE_CHECKING:
     # Hypothesis lives in brain.research_hypothesis_engine (carries engine-specific

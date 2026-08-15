@@ -20,7 +20,7 @@ import pytest
 
 from hledac.universal.coordinators.fetch_coordinator import FetchCoordinator
 from hledac.universal.tools.url_dedup import dedupe_url_list
-from core import aclose
+from _core import aclose
 
 # ---------------------------------------------------------------------------
 # _host_ips_cache attribute

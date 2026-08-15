@@ -34,7 +34,7 @@ import re
 import time
 from dataclasses import dataclass
 import msgspec
-from core import aclose
+from _core import aclose
 logger = logging.getLogger(__name__)
 MAX_RESPONSE_BYTES: int = 50 * 1024 * 1024
 TIMEOUT_S: float = 30.0
@@ -304,7 +304,7 @@ class GopherTransport:
         seen_urls: set[str] = set()
         queue: list[tuple[str, int, str, int]] = [(start_host, start_port, start_selector, 0)]
         start_time = _time.monotonic()
-        from hledac.universal.core.concurrency import ConcurrencyCategory, get_semaphore
+        from hledac.universal._core.concurrency import ConcurrencyCategory, get_semaphore
         sem = get_semaphore(ConcurrencyCategory.GOPHER_LANE)
         while queue and _time.monotonic() - start_time < max_time:
             host, port, selector, depth = queue.pop(0)

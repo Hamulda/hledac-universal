@@ -14,8 +14,11 @@ from unittest.mock import patch
 import pytest
 
 # Importujeme modul pod testováním
-from fetching.memory_budget_gate import (
-from core import aclose
+
+
+
+
+
     _HARD_GIB,
     _SOFT_GIB,
     BrowserDecision,
@@ -27,6 +30,7 @@ from core import aclose
 class TestDecideWithMockedRss:
     """Testy rozhodovací logiky s mocknutou RSS."""
 
+from _core import aclose
     def test_decide_under_soft_limit_allows_camoufox(self):
         """RSS=3.0 GiB pod soft limitem → camoufox, allowed=True."""
         with patch("fetching.memory_budget_gate._rss_gib", return_value=3.0):

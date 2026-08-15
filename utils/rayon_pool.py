@@ -115,7 +115,7 @@ def _check_rayon_availability() -> bool:
     if _RAYON_AVAILABLE is not None:
         return _RAYON_AVAILABLE
     # R6: Centralized Rust access via core.rust_backend
-    from hledac.universal.core.rust_backend import rust
+    from hledac.universal._core.rust_backend import rust
     raw = rust.raw
     if raw.cpu_pool_run is not None and raw.io_pool_run is not None and raw.mixed_pool_run is not None:
         _RAYON_AVAILABLE = True
@@ -184,7 +184,7 @@ def run_in_cpu_pool[T](fn: Callable[..., T], *args: Any, **kwargs: Any) -> T | N
 
     try:
         # R6: Centralized Rust access via core.rust_backend
-        from hledac.universal.core.rust_backend import rust
+        from hledac.universal._core.rust_backend import rust
         cpu_pool_run = rust.raw.cpu_pool_run
 
         return cpu_pool_run(fn, *args, **kwargs)
@@ -251,7 +251,7 @@ def run_in_io_pool[T](fn: Callable[..., T], *args: Any, **kwargs: Any) -> T | No
 
     try:
         # R6: Centralized Rust access via core.rust_backend
-        from hledac.universal.core.rust_backend import rust
+        from hledac.universal._core.rust_backend import rust
         io_pool_run = rust.raw.io_pool_run
 
         return io_pool_run(fn, *args, **kwargs)
@@ -323,7 +323,7 @@ def run_in_mixed_pool[T](n_items: int, fn: Callable[..., T], *args: Any, **kwarg
 
     try:
         # R6: Centralized Rust access via core.rust_backend
-        from hledac.universal.core.rust_backend import rust
+        from hledac.universal._core.rust_backend import rust
         mixed_pool_run = rust.raw.mixed_pool_run
 
         return mixed_pool_run(n_items, fn, *args, **kwargs)
@@ -348,7 +348,7 @@ def run_in_mixed_pool[T](n_items: int, fn: Callable[..., T], *args: Any, **kwarg
 
 import asyncio  # noqa: E402
 import warnings as _warnings  # noqa: E402
-from core import aclose
+from _core import aclose
 
 
 async def run_in_cpu_pool_async(

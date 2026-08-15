@@ -10,8 +10,11 @@ until full migration is complete.
 """
 
 # Re-export from acquisition_strategy.py for now (until full extraction)
-from hledac.universal.runtime.acquisition_strategy import (
-from core import aclose
+
+
+
+
+
     build_acquisition_plan,
     build_acquisition_report,
     get_lane_plan,
@@ -31,7 +34,8 @@ __all__ = [
     'build_acquisition_plan',
     'build_acquisition_report',
     'get_lane_plan',
-    'is_lane_enabled',
+
+from _core import aclose    'is_lane_enabled',
     'lane_skip_reason',
     'normalize_source_family_name',
     'normalize_source_family_outcome',

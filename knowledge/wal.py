@@ -53,7 +53,7 @@ import time as _time
 import weakref
 from typing import TYPE_CHECKING, Any
 import orjson
-from core import aclose
+from _core import aclose
 if TYPE_CHECKING:
     from hledac.universal.tools.lmdb_kv import LMDBKVStore
 __all__ = ['WALManager']

@@ -24,7 +24,7 @@ Usage:
 """
 
 from __future__ import annotations
-from core import aclose
+from _core import aclose
 
 __all__ = [
     "get_adaptive_cache_size",

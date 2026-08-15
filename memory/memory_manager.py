@@ -36,7 +36,7 @@ import time
 from pathlib import Path
 from typing import Any
 from hledac.universal.utils.msgspec_json import dumps_str as _msgspec_dumps_str, loads as _msgspec_loads
-from core import aclose
+from _core import aclose
 try:
     import orjson
     ORJSON_AVAILABLE = True
@@ -55,7 +55,7 @@ except ImportError:
 
 # S-01: Import UnifiedLMDB for memory manager migration
 try:
-    from hledac.universal.core.lmdb_unified import get_unified_lmdb, SubDB
+    from hledac.universal._core.lmdb_unified import get_unified_lmdb, SubDB
 except ImportError:
     get_unified_lmdb = None
     SubDB = None  # type: ignore[assignment]

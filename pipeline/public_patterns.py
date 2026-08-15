@@ -13,7 +13,7 @@ import hashlib
 import html.parser
 import re
 from typing import TYPE_CHECKING, Any
-from core import aclose
+from _core import aclose
 
 if TYPE_CHECKING:
     pass
@@ -168,7 +168,7 @@ def _html_to_text(
     # Fast path: try Rust lol_html backend (zero-allocation, ~2-3× faster)
     try:
         # R6: Centralized Rust access via core.rust_backend
-        from hledac.universal.core.rust_backend import rust
+        from hledac.universal._core.rust_backend import rust
         extract_html_text = rust.raw.extract_html_text
 
         return extract_html_text(html_content)
@@ -210,7 +210,7 @@ def _batch_html_to_text(html_contents: list[str]) -> list[str]:
     # Fast path: try Rust batch backend (4 P-cores, rayon)
     try:
         # R6: Centralized Rust access via core.rust_backend
-        from hledac.universal.core.rust_backend import rust
+        from hledac.universal._core.rust_backend import rust
         batch_extract_html_text = rust.raw.batch_extract_html_text
 
         return batch_extract_html_text(truncated)
@@ -234,7 +234,7 @@ def _make_finding_id(
     """
     key = f"{query}\x00{url}\x00{label}\x00{pattern}\x00{value}"
     try:
-        from hledac.universal.core.rust_backend import rust as _rust_backend
+        from hledac.universal._core.rust_backend import rust as _rust_backend
 
         if _rust_backend.is_available and _rust_backend.hash is not None:
             return _rust_backend.hash.content_hash_hex(key)
@@ -544,7 +544,7 @@ def _deobfuscate_text(text: str) -> tuple[list[str], int]:
     if not _is_deobfuscate_enabled():
         return ([], 0)
     try:
-        from hledac.universal.core.rust_backend import rust as _rust_backend
+        from hledac.universal._core.rust_backend import rust as _rust_backend
 
         if not _rust_backend.is_available or not hasattr(_rust_backend, "ioc"):
             return ([], 0)
@@ -576,7 +576,7 @@ def _extract_from_deobfuscated_candidates(candidates: list[str]) -> set[tuple[st
     if not candidates:
         return results
     try:
-        from hledac.universal.core.rust_backend import rust as _rust_backend
+        from hledac.universal._core.rust_backend import rust as _rust_backend
 
         if not _rust_backend.is_available or not hasattr(_rust_backend, "ioc"):
             return results
@@ -605,7 +605,7 @@ def extract_iocs_from_text(text: str) -> list[Any]:
     Fail-safe: returns empty list on any error.
     """
     try:
-        from hledac.universal.core.rust_backend import rust as _rust_backend
+        from hledac.universal._core.rust_backend import rust as _rust_backend
         if _rust_backend.is_available and hasattr(_rust_backend, "ioc"):
             ioc = _rust_backend.ioc
 
@@ -775,7 +775,7 @@ def extract_iocs_from_texts(
 
     # Small batch: per-text SIMD path (avoids rayon overhead)
     if _is_batch_large_enough(texts):
-        from hledac.universal.core.rust_backend import rust as _rust_backend
+        from hledac.universal._core.rust_backend import rust as _rust_backend
 
         if not _rust_backend.is_available or not hasattr(_rust_backend, "ioc"):
             return [extract_iocs_from_text(t) for t in texts]
@@ -890,7 +890,7 @@ def _get_uma_state() -> tuple[str, bool]:
 
     Returns (state_str, io_only_hint).
     """
-    from hledac.universal.core.resource_governor import (
+    from hledac.universal._core.resource_governor import (
         evaluate_uma_state,
         sample_uma_status,
     )

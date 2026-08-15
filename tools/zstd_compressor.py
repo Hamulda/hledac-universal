@@ -13,7 +13,7 @@ registry from a pre-trained dictionary file (e.g., zstd_osint.dict).
 """
 from collections import deque
 from typing import Any
-from core import aclose
+from _core import aclose
 try:
     import zstandard as zstd
     ZSTD_AVAILABLE = True

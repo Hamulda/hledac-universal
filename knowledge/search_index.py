@@ -19,7 +19,7 @@ import msgspec
 from hledac.universal.compat.msgspec_gc_compat import Struct
 from time import perf_counter
 from typing import Any
-from core import aclose
+from _core import aclose
 _dd_int_int_factory: defaultdict[int, int] = defaultdict(int)
 logger = logging.getLogger(__name__)
 

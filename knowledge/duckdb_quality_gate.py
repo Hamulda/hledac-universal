@@ -37,7 +37,7 @@ if TYPE_CHECKING:
 # duckdb_store holds the canonical _quality_state from quality_assessment.
 # duckdb_quality_gate holds its own lightweight state for per-finding gate logic.
 from dataclasses import dataclass, field
-from core import aclose
+from _core import aclose
 
 
 _logger = logging.getLogger(__name__)
@@ -151,7 +151,7 @@ class DuckDBQualityGate:
         """Return True if Rust quality batch assessor is available."""
         if self._rust_assess_quality_batch is None:
             # R6: Centralized Rust access via core.rust_backend
-            from hledac.universal.core.rust_backend import rust
+            from hledac.universal._core.rust_backend import rust
             self._rust_assess_quality_batch = rust.raw.assess_findings_quality_batch
             self._quality_gate_available = self._rust_assess_quality_batch is not None
         return self._quality_gate_available

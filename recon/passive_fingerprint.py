@@ -53,7 +53,7 @@ from hledac.universal.utils.msgspec_json import encode as _msgspec_encode
 from hledac.universal.transport.session_pool import session_pool
 from hledac.universal.network.favicon_hasher import _FaviconHasher
 from hledac.universal.utils.asyncx import _check_gathered
-from core import aclose
+from _core import aclose
 if TYPE_CHECKING:
     from hledac.universal.knowledge.duckdb_store import CanonicalFinding
 logger = logging.getLogger(__name__)
@@ -696,53 +696,39 @@ def _match_http_headers(headers_list: list[str]) -> list[ServiceFingerprint]:
             _stats['patterns_matched'] += 1
     return fingerprints
 
-def _match_tls_cert(texts: list[str]) -> list[ServiceFingerprint]:
-    """Match TLS/certificate text against known patterns."""
+def _match_patterns(texts: list[str], patterns: list[tuple[str, Any, str, str]], source: str, confidence: float) -> list[ServiceFingerprint]:
+    """Generic pattern matcher for service fingerprinting."""
     fingerprints: list[ServiceFingerprint] = []
     if not texts:
         return fingerprints
     combined_text = ' '.join((str(t) for t in texts))[:MAX_PATTERN_BYTES]
     matched: set[str] = set()
-    for service_name, pattern, product, version_hint in _TLS_CERT_PATTERNS:
+    for service_name, pattern, product, version_hint in patterns:
         if service_name in matched:
             continue
         if pattern.search(combined_text):
-            fingerprints.append(ServiceFingerprint(finding_id='', service_name=service_name, product=product, version=version_hint, confidence=0.85, evidence_ids=(), facets={'source': 'tls_cert', 'matched_on': service_name}))
+            fingerprints.append(ServiceFingerprint(
+                finding_id='', service_name=service_name, product=product, version=version_hint,
+                confidence=confidence, evidence_ids=(), facets={'source': source, 'matched_on': service_name}
+            ))
             matched.add(service_name)
             _stats['patterns_matched'] += 1
     return fingerprints
+
+
+def _match_tls_cert(texts: list[str]) -> list[ServiceFingerprint]:
+    """Match TLS/certificate text against known patterns."""
+    return _match_patterns(texts, _TLS_CERT_PATTERNS, 'tls_cert', 0.85)
+
 
 def _match_ct_metadata(texts: list[str]) -> list[ServiceFingerprint]:
     """Match CT metadata against known service patterns."""
-    fingerprints: list[ServiceFingerprint] = []
-    if not texts:
-        return fingerprints
-    combined_text = ' '.join((str(t) for t in texts))[:MAX_PATTERN_BYTES]
-    matched: set[str] = set()
-    for service_name, pattern, product, version_hint in _CT_CERT_PATTERNS:
-        if service_name in matched:
-            continue
-        if pattern.search(combined_text):
-            fingerprints.append(ServiceFingerprint(finding_id='', service_name=service_name, product=product, version=version_hint, confidence=0.8, evidence_ids=(), facets={'source': 'ct_metadata', 'matched_on': service_name}))
-            matched.add(service_name)
-            _stats['patterns_matched'] += 1
-    return fingerprints
+    return _match_patterns(texts, _CT_CERT_PATTERNS, 'ct_metadata', 0.8)
+
 
 def _match_html_content(texts: list[str]) -> list[ServiceFingerprint]:
     """Match HTML content against known service patterns."""
-    fingerprints: list[ServiceFingerprint] = []
-    if not texts:
-        return fingerprints
-    combined_text = ' '.join((str(t) for t in texts))[:MAX_PATTERN_BYTES]
-    matched: set[str] = set()
-    for service_name, pattern, product, version_hint in _HTML_PATTERNS:
-        if service_name in matched:
-            continue
-        if pattern.search(combined_text):
-            fingerprints.append(ServiceFingerprint(finding_id='', service_name=service_name, product=product, version=version_hint, confidence=0.7, evidence_ids=(), facets={'source': 'html_content', 'matched_on': service_name}))
-            matched.add(service_name)
-            _stats['patterns_matched'] += 1
-    return fingerprints
+    return _match_patterns(texts, _HTML_PATTERNS, 'html_content', 0.7)
 
 def extract_fingerprints(finding: CanonicalFinding) -> list[ServiceFingerprint]:
     """

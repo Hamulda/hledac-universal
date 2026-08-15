@@ -48,9 +48,9 @@ from hledac.universal.compat.msgspec_gc_compat import Struct
 from typing import TYPE_CHECKING, Any
 if TYPE_CHECKING:
     from hledac.universal.knowledge.evidence_chain import EvidenceChain
-from hledac.universal.core.protocols import safe_get_finding_field
+from hledac.universal._core.protocols import safe_get_finding_field
 from hledac.universal.utils.sync_bridge import run_sync_async
-from core import aclose
+from _core import aclose
 __all__ = ['AnalystWorkbench', 'AnalystAnswer', 'AnalystBrief', 'EvidencePointer', 'RelatedEntity', 'create_analyst_workbench', 'get_evidence_chain', 'MAX_CORROBORATION_SUMMARY']
 MAX_CONTEXT_BYTES: int = 8192
 MAX_TOP_K: int = 20

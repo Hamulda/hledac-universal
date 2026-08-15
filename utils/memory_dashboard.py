@@ -23,7 +23,7 @@ except ImportError:
 
 # C1-X FIX: Import MLX_AVAILABLE from SSOT (zero-import detection)
 from hledac.universal.utils.mlx_memory import MLX_AVAILABLE
-from core import aclose
+from _core import aclose
 
 # Lazy accessor for mlx.core — uses centralized get_mx() from SSOT
 def _get_mx() -> Any | None:

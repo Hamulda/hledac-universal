@@ -12,7 +12,7 @@
 import ast
 import re
 import sys
-from core import aclose
+from _core import aclose
 
 REVERT_FUNCS = {"safe_gather", "safe_gather_ok", "safe_gather_fire_and_forget", "safe_gather_strict"}
 

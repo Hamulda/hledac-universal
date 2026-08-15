@@ -28,8 +28,12 @@ from typing import Final
 
 import httpx
 from hledac.universal.knowledge.duckdb_store import CanonicalFinding
+from hledac.universal.network.freenet_client import (
+    filter_sites_by_keyword,
+    get_enumeration_semaphore,
+)
 from hledac.universal.utils.asyncx import parallel_ok
-from core import aclose
+from _core import aclose
 
 logger = logging.getLogger(__name__)
 
@@ -249,19 +253,8 @@ class ZeroNetSiteEnumerator:
         """
         results: list[dict] = []
 
-        seed_sites = KNOWN_ZERONET_SITES
-        if keyword:
-            kw = keyword.lower()
-            seed_sites = [
-                s for s in KNOWN_ZERONET_SITES
-                if kw in s["name"].lower() or kw in s.get("description", "").lower()
-            ]
-
-        from hledac.universal.core.concurrency import (
-            ConcurrencyCategory,
-            get_semaphore,
-        )
-        sem = get_semaphore(ConcurrencyCategory.SCRAPE_GENERAL)
+        seed_sites = filter_sites_by_keyword(KNOWN_ZERONET_SITES, keyword)
+        sem = get_enumeration_semaphore()
 
         async def _probe_site(site: dict) -> dict | None:
             async with sem:

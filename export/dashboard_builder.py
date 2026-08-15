@@ -70,8 +70,8 @@ logger = logging.getLogger(__name__)
 
 # [FINAL]-019-07: Capability cost registration for QoS ladder triage.
 # WASMDashboardBuilder: rss_mb=200, peak_mb=400 (template rendering + Canvas graph)
-from hledac.universal.core.capability_cost import register_capability_cost
-from core import aclose
+from hledac.universal._core.capability_cost import register_capability_cost
+from _core import aclose
 register_capability_cost("wasmdashboardbuilder", rss_mb=200, peak_mb=400, tier="light", tags=("export", "ui"))
 
 # ── Size bounds (M1 8GB safe) ─────────────────────────────────────────────────

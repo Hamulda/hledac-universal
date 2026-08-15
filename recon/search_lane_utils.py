@@ -20,8 +20,11 @@ import asyncio
 import logging
 from typing import Any
 
-from hledac.universal.transport.circuit_breaker import (
-from core import aclose
+
+
+
+
+
     domain_breaker_check,
     domain_breaker_record_failure,
     domain_breaker_record_success,
@@ -32,6 +35,7 @@ logger = logging.getLogger(__name__)
 
 # ── Circuit Breaker Integration ─────────────────────────────────────────────────
 
+from _core import aclose
 
 def circuit_breaker_check(domain: str) -> Any | None:
     """
@@ -101,7 +105,7 @@ async def apply_jitter(sigma_s: float, service_name: str = "API") -> None:
         return
 
     try:
-        from hledac.universal.core.telemetry.context_state import is_blitz_mode
+        from hledac.universal._core.telemetry.context_state import is_blitz_mode
 
         if is_blitz_mode():
             return  # Skip jitter in BLITZ mode

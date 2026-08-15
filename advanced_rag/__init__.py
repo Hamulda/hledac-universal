@@ -10,6 +10,6 @@ which wraps the implementation to provide research_and_answer() interface.
 
 
 from .rag_orchestrator import RAGOrchestrator
-from core import aclose
+from _core import aclose
 
 __all__ = ["RAGOrchestrator"]

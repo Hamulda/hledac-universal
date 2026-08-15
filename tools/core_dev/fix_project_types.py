@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Direct migration of project_types.py @dataclass → msgspec.Struct"""
 import re
-from core import aclose
+from _core import aclose
 
 root = "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal"
 filepath = f"{root}/project_types.py"

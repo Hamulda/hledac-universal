@@ -36,7 +36,7 @@ from hledac.universal.utils.resilience.circuit_breaker import (
 )
 from hledac.universal.utils.resilience.degradation_modes import FailureSeverity
 from hledac.universal.utils.sync_bridge import run_sync_async
-from core import aclose
+from _core import aclose
 
 logger = logging.getLogger(__name__)
 

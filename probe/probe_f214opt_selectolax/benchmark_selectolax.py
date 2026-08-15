@@ -123,7 +123,7 @@ def legacy_regex_extract(html: str) -> str:
 # ---------------------------------------------------------------------------
 
 from hledac.universal.utils.html_text_fast import html_to_text_fast
-from core import aclose
+from _core import aclose
 
 
 # ---------------------------------------------------------------------------

@@ -45,7 +45,7 @@ from collections.abc import Callable, Generator, Sequence
 from contextlib import contextmanager
 from typing import TYPE_CHECKING, Any
 from unittest.mock import AsyncMock, MagicMock
-from core import aclose
+from _core import aclose
 
 if TYPE_CHECKING:
     pass
@@ -81,7 +81,7 @@ def make_storage_mock(
         mock_backend = make_storage_mock(get_return={"key": "value"})
         mock_backend.put.assert_called_once()
     """
-    from hledac.universal.core.storage_router import StorageRouter
+    from hledac.universal._core.storage_router import StorageRouter
 
     mock = MagicMock(spec=StorageRouter)
 

@@ -54,8 +54,8 @@ def joinable_threads(
 
 
 # Import the module under test
-from core.inference_coordinator import ModelPool, get_model_pool
-from core import aclose
+from _core.inference_coordinator import ModelPool, get_model_pool
+from _core import aclose
 
 
 class TestModelPoolLRU:

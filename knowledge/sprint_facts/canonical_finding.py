@@ -214,7 +214,7 @@ class CanonicalFinding(Struct, frozen=True):
 # FindingQualityDecision is defined in knowledge/_quality_types.py.
 # Re-exported here for backward compatibility with code that imports it from this module.
 from .._quality_types import FindingQualityDecision
-from core import aclose
+from _core import aclose
 
 
 class ActivationResult(Struct, frozen=True):

@@ -7,7 +7,7 @@ M1 8GB: weasyprint uses cairo/pango which are system libraries — acceptable RA
 import tempfile
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
-from core import aclose
+from _core import aclose
 if TYPE_CHECKING:
     pass
 __all__ = ['PDFRenderer', 'WEASYPRINT_AVAILABLE']

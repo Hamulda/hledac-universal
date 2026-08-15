@@ -22,7 +22,7 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     pass
 from hledac.universal.utils.ioc_extract import classify_ioc
-from core import aclose
+from _core import aclose
 logger = logging.getLogger(__name__)
 
 class SprintGraphAccumulator:

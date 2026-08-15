@@ -24,7 +24,7 @@ from typing import Any
 from hledac.universal.utils.msgspec_json import dumps_str, loads as _msgspec_loads
 from hledac.universal.utils.uuid7 import new_runtime_id
 from hledac.universal.utils.asyncx import safe_create_task, safe_gather_fire_and_forget
-from core import aclose
+from _core import aclose
 
 class WebIntelligenceError(StrEnum):
     """String-based error codes for web intelligence operations."""

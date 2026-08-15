@@ -24,7 +24,7 @@ if TYPE_CHECKING:
     from xml.etree.ElementTree import Element
 from hledac.universal.knowledge.duckdb_store import CanonicalFinding
 import httpx
-from core import aclose
+from _core import aclose
 logger = logging.getLogger(__name__)
 OAI_PMH_ENDPOINT = 'http://export.arxiv.org/oai2'
 MAX_RESULTS = 20
@@ -204,7 +204,7 @@ class ArxivAdapter:
     __slots__ = tuple(('_cache', '_cache_ttl', '_semaphore'))
 
     def __init__(self) -> None:
-        from hledac.universal.core.concurrency import ConcurrencyCategory, get_semaphore
+        from hledac.universal._core.concurrency import ConcurrencyCategory, get_semaphore
         self._semaphore = get_semaphore(ConcurrencyCategory.ACADEMIC_SEARCH)
         self._cache: dict[str, tuple[float, list[ArxivPaper]]] = {}
         self._cache_ttl = 900.0

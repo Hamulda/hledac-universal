@@ -18,7 +18,7 @@ from collections import deque
 from dataclasses import dataclass, field
 import msgspec
 from typing import Any
-from core import aclose
+from _core import aclose
 MAX_NODES: int = 5000
 MAX_EDGES: int = 20000
 

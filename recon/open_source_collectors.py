@@ -149,7 +149,7 @@ _RE_BEARER = re.compile('\\bBearer\\s+[A-Za-z0-9_\\.\\-]{20,}\\b', re.IGNORECASE
 _RE_PKEY = re.compile('-----BEGIN (?:RSA |EC |DSA |OPENSSH )?PRIVATE KEY-----', re.IGNORECASE)
 _RE_TOKEN = re.compile('\\b(?:token|key|secret|password|passwd|pwd|auth|credential)[\'\\"]?[:=]?\\s*[\'\\"]?([A-Za-z0-9_\\-]{16,64})[\'\\"]?\\b', re.IGNORECASE)
 from hledac.universal.brain.output_dlp_filter import mask_secret as _mask_secret_impl
-from core import aclose
+from _core import aclose
 _SECRET_REDACT_LEN = 4
 
 def _mask_secret(value: str) -> str:
@@ -854,7 +854,7 @@ class OpenSourceCollectors:
         """Lazy load governor singleton to avoid circular imports and ensure consistent state."""
         if self._governor is None:
             try:
-                from hledac.universal.core.protocols import get_governor
+                from hledac.universal._core.protocols import get_governor
                 self._governor = get_governor()
             except Exception:  # noqa: BLE001
                 pass

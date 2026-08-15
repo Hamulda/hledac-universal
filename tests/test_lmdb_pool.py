@@ -11,7 +11,7 @@ import asyncio
 import threading
 
 import pytest
-from core import aclose
+from _core import aclose
 
 
 class TestLmdbPool:

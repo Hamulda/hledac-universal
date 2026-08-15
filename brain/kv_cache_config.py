@@ -31,7 +31,7 @@ import time
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import TYPE_CHECKING, Any
-from core import aclose
+from _core import aclose
 
 if TYPE_CHECKING:
     pass
@@ -226,7 +226,7 @@ def probe_uma_state() -> tuple[str, float]:
             return state, rss_x100 / 100.0
 
     try:
-        from hledac.universal.core.resource_governor import sample_uma_status
+        from hledac.universal._core.resource_governor import sample_uma_status
 
         status = sample_uma_status()
         state = getattr(status, "state", "ok")

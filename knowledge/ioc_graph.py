@@ -39,8 +39,8 @@ from hledac.universal.brain.jtms import JTMS, Justification, apply_temporal_deca
 
 # [FINAL]-019-07: Capability cost registration for QoS ladder triage.
 # IOCGraph: rss_mb=150, peak_mb=400 (Kuzu DB + in-memory buffers)
-from hledac.universal.core.capability_cost import register_capability_cost
-from core import aclose
+from hledac.universal._core.capability_cost import register_capability_cost
+from _core import aclose
 register_capability_cost("iocgraph", rss_mb=150, peak_mb=400, tier="heavy", tags=("graph", "kuzu"))
 _KUZU_AVAILABLE: bool = False
 _kuzu = None
@@ -781,7 +781,7 @@ class IOCGraph:
     def _store_crossmodal_face(self, face_id: str, embedding: list[float]) -> None:
         """Store face embedding in Rust cross-modal index."""
         try:
-            from hledac.universal.core.rust_backend import rust
+            from hledac.universal._core.rust_backend import rust
             rust.ane.crossmodal_store_face(face_id, embedding)
         except Exception:
             pass  # Non-critical: Rust index is optional
@@ -789,7 +789,7 @@ class IOCGraph:
     def _store_crossmodal_voice(self, voice_id: str, embedding: list[float]) -> None:
         """Store voiceprint embedding in Rust cross-modal index."""
         try:
-            from hledac.universal.core.rust_backend import rust
+            from hledac.universal._core.rust_backend import rust
             rust.ane.crossmodal_store_voice(voice_id, embedding)
         except Exception:
             pass  # Non-critical: Rust index is optional
@@ -2140,7 +2140,7 @@ class IOCGraph:
     def _get_communities_rust(self, nodes, edges):
         """Try Rust Louvain community detection."""
         try:
-            from hledac.universal.core.rust_backend import rust
+            from hledac.universal._core.rust_backend import rust
             result = rust.raw.module.rust_graph_analytics_all(nodes, edges, 0.85, 1.0)
             if result and isinstance(result, dict):
                 communities = result.get('communities')
@@ -2240,7 +2240,7 @@ class IOCGraph:
 
         # Try Rust petgraph first (GRAPH-01)
         try:
-            from hledac.universal.core.rust_backend import rust
+            from hledac.universal._core.rust_backend import rust
             _rust_ext = rust.raw.module
             result = _rust_ext.rust_graph_analytics_all(nodes, edges, 0.85, 1.0)
             if result and isinstance(result, dict):
@@ -2415,7 +2415,7 @@ class IOCGraph:
         """Try Rust enrichment for communities."""
         if len(set(communities.values())) <= 1 and edges:
             try:
-                from hledac.universal.core.rust_backend import rust
+                from hledac.universal._core.rust_backend import rust
                 nodes_compact = [(i + 1, node_map[nid]['value'], node_map[nid]['ioc_type']) for i, nid in enumerate(node_map)]
                 edges_compact = [(id_to_idx[e['source']] + 1, id_to_idx[e['target']] + 1, e['confidence']) for e in edges
                                 if e['source'] in id_to_idx and e['target'] in id_to_idx]
@@ -2721,7 +2721,7 @@ class IOCGraph:
         """Try Rust petgraph for centrality (GRAPH-01)."""
         try:
             # B8-fix: Use batch_centrality_all with adjacency-list builder (matches graph_rag.py:945)
-            from hledac.universal.core.rust_backend import rust
+            from hledac.universal._core.rust_backend import rust
             _rust_ext = rust.raw.module
             # Build adjacency list: {node_id: [neighbor_ids]}
             adjacency: dict[int, list[int]] = {value_to_id[nid]: [] for nid in node_ids}
@@ -2838,7 +2838,7 @@ class IOCGraph:
     def _get_rust_pagerank(self, nodes, edges, target_id) -> float:
         """Try Rust PageRank."""
         try:
-            from hledac.universal.core.rust_backend import rust
+            from hledac.universal._core.rust_backend import rust
             result = rust.raw.module.rust_graph_analytics_all(nodes, edges, 0.85, 1.0)
             if result and isinstance(result, dict):
                 pagerank = result.get('pagerank')

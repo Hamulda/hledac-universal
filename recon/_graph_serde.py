@@ -39,7 +39,7 @@ import orjson
 # numpy in the envelope). Read path keeps orjson (fast parse, no schema
 # benefit on decode).
 from hledac.universal.utils.msgspec_json import encode as _msgspec_encode
-from core import aclose
+from _core import aclose
 
 logger = logging.getLogger(__name__)
 

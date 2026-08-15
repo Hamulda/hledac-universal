@@ -29,7 +29,7 @@ from typing import Any
 logger = logging.getLogger(__name__)
 from hledac.universal.runtime.lane_registry import LANE_REGISTRY
 from hledac.universal.utils._patterns import lazy_property
-from core import aclose
+from _core import aclose
 RAM_THRESHOLD = 0.7
 
 class HypothesisResult(msgspec.Struct, gc=False):

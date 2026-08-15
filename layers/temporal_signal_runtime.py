@@ -20,7 +20,7 @@ import time
 from typing import TYPE_CHECKING, Any
 
 from operator import attrgetter, itemgetter
-from core import aclose
+from _core import aclose
 # Lazy import only — no module-level heavy deps
 # Types imported under TYPE_CHECKING to satisfy static type checkers (mypy/pyright).
 # Runtime lazy import still used inside functions to avoid heavy deps in hot-path.
@@ -40,7 +40,7 @@ def is_temporal_store_enabled() -> bool:
     """Return True when HLEDAC_ENABLE_TEMPORAL_STORE=1 is set."""
     global _store_enabled
     if _store_enabled is None:
-        from hledac.universal.core.feature_flags import FeatureFlag, FeatureFlags
+        from hledac.universal._core.feature_flags import FeatureFlag, FeatureFlags
         _store_enabled = FeatureFlags.get(FeatureFlag.TEMPORAL_STORE)
     return _store_enabled
 

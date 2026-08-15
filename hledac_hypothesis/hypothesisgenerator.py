@@ -14,7 +14,7 @@ import re
 from dataclasses import dataclass, field
 import msgspec
 from typing import TYPE_CHECKING, Any
-from core import aclose
+from _core import aclose
 if TYPE_CHECKING:
     from hledac.universal.knowledge.graph_service import DuckPGQGraph
 logger = logging.getLogger(__name__)

@@ -22,7 +22,7 @@ REAL IMPLEMENTATION:
   If DHT is in stub mode, no real DHT crawling occurs.
 """
 from hledac.universal.runtime.sidecars._darknet_base import DarknetSidecarAdapter
-from core import aclose
+from _core import aclose
 
 
 class DHTDiscoverySidecarAdapter(DarknetSidecarAdapter):

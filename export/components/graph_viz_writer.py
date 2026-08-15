@@ -5,7 +5,7 @@ Yields Mermaid diagram chunks — bounded by MAX_NODES/MAX_EDGES, fail-soft.
 
 import asyncio
 from collections.abc import AsyncGenerator
-from core import aclose
+from _core import aclose
 __all__ = ['stream_graph_viz_section', 'GraphVizSection']
 
 class GraphVizSection:

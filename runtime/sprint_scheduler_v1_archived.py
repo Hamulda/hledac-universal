@@ -25,7 +25,7 @@ import importlib
 import importlib.util
 import os
 import sys
-from core import aclose
+from _core import aclose
 
 # Absolute path to the archived module
 _ARCHIVE_DIR = os.path.join(

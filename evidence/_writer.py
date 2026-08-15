@@ -29,7 +29,7 @@ import msgspec
 import orjson
 
 from hledac.universal.utils.asyncx import safe_create_task, safe_wait_for
-from core import aclose
+from _core import aclose
 
 logger = logging.getLogger(__name__)
 
@@ -161,7 +161,7 @@ class _RustMPSCBytes:
     def _init_rust(self, capacity: int, asyncio_fallback: bool) -> None:
         """Try to initialize Rust MPSC."""
         try:
-            from hledac.universal.core.rust_backend import rust
+            from hledac.universal._core.rust_backend import rust
             _MPSC = rust.raw.MPSCPool  # type: ignore[import]
             pool = _MPSC(capacity=capacity)
             sender_ptr = pool.add_sender()

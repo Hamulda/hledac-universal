@@ -31,8 +31,11 @@ if TYPE_CHECKING:
     from hledac.universal.brain._cache.kv_cache_manager import KVCacheManager
 
 # MODERN-35 Fix: Import CPU affinity utilities for MLX Metal operations
-from hledac.universal.utils.cpu_affinity import (
-from core import aclose
+
+
+
+
+
     set_mlx_affinity,
     is_apple_silicon,
 )
@@ -41,7 +44,8 @@ logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True, slots=True)
-class GenerateConfig:
+
+from _core import acloseclass GenerateConfig:
     """Configuration for inference generation."""
     max_tokens: int = 512
     temperature: float = 0.7
@@ -133,7 +137,7 @@ class GenerationFacade:
         # UNIFIED-001: Acquire admission from peak load coordinator
         peak_guard = None
         try:
-            from hledac.universal.core.peak_load_coordinator import (
+            from hledac.universal._core.peak_load_coordinator import (
                 ResourceClass,
                 TaskPriority,
                 get_peak_coordinator,

@@ -7,7 +7,7 @@ Run: pytest tests/test_graph_service_smoke.py -v
 import asyncio
 
 from hledac.universal.graph.quantum_pathfinder import DuckPGQGraph
-from core import aclose
+from _core import aclose
 
 
 class TestDuckPGQGraphPersistence:

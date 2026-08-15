@@ -82,8 +82,8 @@ class ReadinessResult(msgspec.Struct, frozen=True, gc=False):
     def to_dict(self) -> dict:
         out = {'sprint': 'F232C', 'report_type': 'final_prelive_readiness', 'verdict': self.verdict.value, 'live_allowed': self.live_allowed, 'next_action': self.next_action.value, 'next_action_detail': self.next_action_detail, 'blockers': [asdict(b) for b in self.blockers], 'f231_inventory_verdict': self.f231_inventory_verdict, 'f231_inventory_present': self.f231_inventory_present, 'f231_inventory_missing': self.f231_inventory_missing, 'f231h_gate_verdict': self.f231h_gate_verdict, 'f231h_gate_status': self.f231h_gate_status, 'swap_used_gib': self.swap_used_gib, 'uma_state': self.uma_state, 'swap_policy_tier': self.swap_policy_tier, 'swap_gate_reason': self.swap_gate_reason, 'hardware_constrained': self.hardware_constrained, 'gate_decision': self.gate_decision, 'gate_live_allowed': self.gate_live_allowed, 'gate_reasons': self.gate_reasons, 'gate_warnings': self.gate_warnings, 'f224_core_ready': self.f224_core_ready, 'f224_blocking': self.f224_blocking, 'f231_core_ready': self.f231_core_ready, 'f231_blocking': self.f231_blocking, 'provider_surface_ok': self.provider_surface_ok, 'post_restart_command': self.post_restart_command, 'merge_log': self.merge_log}
         return out
-from hledac.universal.core.resource_governor import CLEAN_SWAP_MAX_GIB, DIAGNOSTIC_SWAP_MAX_GIB, HARD_BLOCK_SWAP_GIB
-from core import aclose
+from hledac.universal._core.resource_governor import CLEAN_SWAP_MAX_GIB, DIAGNOSTIC_SWAP_MAX_GIB, HARD_BLOCK_SWAP_GIB
+from _core import aclose
 _F224_BLOCKING_PROFILES = ('active300', 'nonfeed_diagnostic')
 _F224_BLOCKING_PROBES = [('probe_f224a_worker_pool_import_seal', 'worker_pool_import_seal.json'), ('probe_f224c_discovery_provider_gap', 'discovery_provider_gap.json'), ('probe_f224d_sprint_id_collision', 'sprint_id_collision.json'), ('probe_f224d_confidence_policy', 'confidence_policy.json')]
 _F231_BLOCKING_PROFILES = ('active300', 'nonfeed_diagnostic')

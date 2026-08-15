@@ -34,7 +34,7 @@ from cachetools import TTLCache
 from hledac.universal.knowledge.duckdb_store import CanonicalFinding
 from hledac.universal.utils.asyncx import parallel_ok
 from hledac.universal.utils.source_types import SourceType
-from core import aclose
+from _core import aclose
 
 if TYPE_CHECKING:
     from hledac.universal.dht.metadata_fetcher import (
@@ -85,7 +85,7 @@ async def harvest_torrent_metadata(
 
     # Memory governor check
     try:
-        from hledac.universal.core.protocols import get_governor
+        from hledac.universal._core.protocols import get_governor
         governor = get_governor()
         decision = await governor.evaluate()
         if decision.uma_state in ("critical", "emergency"):
@@ -209,7 +209,7 @@ async def _get_peers_for_hash(info_hash_hex: str) -> list[tuple[str, int]]:
             KademliaNode,
             DHT_REAL_UDP,
         )
-        from hledac.universal.core.resource_governor import ResourceGovernor
+        from hledac.universal._core.resource_governor import ResourceGovernor
 
         if not DHT_REAL_UDP:
             return []
@@ -408,7 +408,7 @@ def _call_ioc_extractor(text: str) -> list[tuple[str, str]]:
     """
     # Try Rust SIMD extractor (fastest on M1)
     try:
-        from hledac.universal.core.rust_backend.ioc import (
+        from hledac.universal._core.rust_backend.ioc import (
             _python_extract_iocs_simd_single,
         )
         return _python_extract_iocs_simd_single(text)

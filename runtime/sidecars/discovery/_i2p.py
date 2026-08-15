@@ -18,7 +18,7 @@ REAL IMPLEMENTATION:
   If I2P SAM is unavailable, falls back to SOCKS5 if available.
 """
 from hledac.universal.runtime.sidecars._darknet_base import DarknetSidecarAdapter
-from core import aclose
+from _core import aclose
 
 
 class I2PDiscoverySidecarAdapter(DarknetSidecarAdapter):

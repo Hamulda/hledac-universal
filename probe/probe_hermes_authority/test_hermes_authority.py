@@ -20,7 +20,7 @@ import ast
 from pathlib import Path
 
 import pytest
-from core import aclose
+from _core import aclose
 
 # Project root: probe_hermes_authority/ -> universal/ -> Hledac/ -> project root
 PROJECT_ROOT = Path(__file__).resolve().parents[2]

@@ -42,11 +42,11 @@ except ImportError:
     import json as _json
 from hledac.universal.recon._http_helpers import get_intelligence_session
 # S-01: Use UnifiedLMDB via get_unified_lmdb + SubDB
-from hledac.universal.core.lmdb_unified import get_unified_lmdb, SubDB
+from hledac.universal._core.lmdb_unified import get_unified_lmdb, SubDB
 from hledac.universal.utils.msgspec_json import decode, encode
 from hledac.universal.utils.asyncx import parallel
 from hledac.universal.utils.domain_executors import get_exposure_db_executor
-from core import aclose
+from _core import aclose
 logger = logging.getLogger(__name__)
 
 async def _aclose_stream(stream):
@@ -563,7 +563,7 @@ class CVIntelligenceClient:
         # ISSUE #016: Rust token bucket — precision bez GIL overhead
         has_api_key = bool(os.environ.get('NVD_API_KEY'))
         # R6: Centralized Rust access via core.rust_backend
-        from hledac.universal.core.rust_backend import rust
+        from hledac.universal._core.rust_backend import rust
         create_nvd_limiter = rust.raw.create_nvd_limiter
         if create_nvd_limiter is not None:
             self._nvd_limiter = create_nvd_limiter(has_api_key=has_api_key)

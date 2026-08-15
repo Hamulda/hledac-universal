@@ -24,7 +24,7 @@ import sys
 import time
 
 import pytest
-from core import aclose
+from _core import aclose
 
 
 # Force the package to be importable; conftest already does this in CI.

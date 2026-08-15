@@ -31,7 +31,7 @@ import time
 from unittest.mock import MagicMock, patch
 
 import pytest
-from core import aclose
+from _core import aclose
 
 
 class TestRemoteParquetSourceAsyncConnect:

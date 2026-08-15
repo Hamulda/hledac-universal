@@ -41,7 +41,7 @@ import hashlib
 import logging
 import time
 from hledac.universal.utils.lru_cache import LRUCache
-from core import aclose
+from _core import aclose
 logger = logging.getLogger(__name__)
 _COREML_AVAILABLE = False
 _VN_AVAILABLE = False
@@ -169,6 +169,18 @@ class VisionCaptchaSolver:
         """Generate cache key from data hash."""
         return hashlib.sha256(data).hexdigest()[:16]
 
+    def _check_cache(self, image_bytes: bytes) -> tuple[bool, object | None, str]:
+        """Check cache for image_bytes.
+
+        Returns:
+            Tuple of (is_cached, cached_value_or_None, cache_key).
+            If is_cached is True, use cached_value directly.
+            Otherwise, compute result and call _set_cached_result with cache_key.
+        """
+        cache_key = self._get_cache_key(image_bytes)
+        cached = self._get_cached_result(cache_key)
+        return (True, cached, cache_key) if cached is not None else (False, None, cache_key)
+
     def _get_cached_result(self, cache_key: str) -> object | None:
         """Get cached result if not expired."""
         if cache_key not in self._result_cache:
@@ -203,18 +215,19 @@ class VisionCaptchaSolver:
         Returns:
             List of selected grid indices
         """
-        cache_key = self._get_cache_key(image_bytes)
-        cached = self._get_cached_result(cache_key)
-        if cached is not None:
+        is_cached, cached, cache_key = self._check_cache(image_bytes)
+        if is_cached:
             return cached
         result: list[int] = []
         if not _VN_AVAILABLE or self._model is None:
             logger.warning('Vision framework or model not available')
+            self._set_cached_result(cache_key, result)
             return result
         try:
             self._load_model()
             if self._vn_model is None:
                 logger.warning('VNCoreMLModel not available')
+                self._set_cached_result(cache_key, result)
                 return result
             logger.debug('Grid solving not fully implemented')
         except Exception as e:
@@ -232,13 +245,13 @@ class VisionCaptchaSolver:
         Returns:
             Recognized text string
         """
-        cache_key = self._get_cache_key(image_bytes)
-        cached = self._get_cached_result(cache_key)
-        if cached is not None:
+        is_cached, cached, cache_key = self._check_cache(image_bytes)
+        if is_cached:
             return cached
         result = ''
         if not _VN_AVAILABLE:
             logger.warning('Vision framework not available')
+            self._set_cached_result(cache_key, result)
             return result
         try:
             self._load_model()
@@ -336,9 +349,8 @@ class VisionCaptchaSolver:
         Returns:
             Solved CAPTCHA text or None if unsolved
         """
-        cache_key = self._get_cache_key(image_bytes)
-        cached = self._get_cached_result(cache_key)
-        if cached is not None:
+        is_cached, cached, cache_key = self._check_cache(image_bytes)
+        if is_cached:
             return cached
         result = await self.solve_image_captcha(image_bytes)
         if result:

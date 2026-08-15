@@ -38,7 +38,7 @@ from typing import TYPE_CHECKING, Any
 from hledac.universal.utils.msgspec_json import dumps_str as _msgspec_dumps_str
 import httpx
 from hledac.universal.utils.asyncx import parallel_ok
-from core import aclose
+from _core import aclose
 if TYPE_CHECKING:
     from hledac.universal.knowledge.duckdb_store import CanonicalFinding
 logger = logging.getLogger(__name__)

@@ -38,7 +38,7 @@ __all__ = [
 # Sprint F232C: JSONFormatter extracted to export/_formatters.py
 # Keep this module as a stable re-export surface for backward compatibility
 from hledac.universal.export._formatters import JSONFormatter  # noqa: E402, F401
-from core import aclose
+from _core import aclose
 
 
 class ExportFormatter(ABC):

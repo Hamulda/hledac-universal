@@ -34,7 +34,7 @@ from collections import OrderedDict
 import msgspec
 from pathlib import Path
 from typing import Any, cast
-from core import aclose
+from _core import aclose
 logger = logging.getLogger(__name__)
 MAX_HASH_CACHE_SIZE = 10000
 try:
@@ -47,7 +47,7 @@ _RustBloomFilter: type | None = None
 _RUST_BLOOM_AVAILABLE = False
 try:
     # R6: Centralized Rust access via core.rust_backend
-    from hledac.universal.core.rust_backend import rust
+    from hledac.universal._core.rust_backend import rust
     _rust = rust.raw.module
     _RustBloomFilter = getattr(_rust, 'BloomFilter', None)
     _RUST_BLOOM_AVAILABLE = _RustBloomFilter is not None

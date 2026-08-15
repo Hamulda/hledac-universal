@@ -8,7 +8,7 @@ Optimized for M1 Mac with fail-safe handling.
 import asyncio
 import logging
 import os
-from core import aclose
+from _core import aclose
 
 logger = logging.getLogger(__name__)
 

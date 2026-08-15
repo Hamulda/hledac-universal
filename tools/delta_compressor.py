@@ -13,7 +13,7 @@ import logging
 import re
 import struct
 import zlib
-from core import aclose
+from _core import aclose
 logger = logging.getLogger(__name__)
 DELTA_MAGIC = b'DELT'
 VERSION = 1

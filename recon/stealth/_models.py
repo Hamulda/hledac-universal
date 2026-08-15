@@ -42,7 +42,7 @@ _CRAWL_BLOOM: Any | None = None
 
 # Bloom filter paths (expanduser paths for portability)
 import os
-from core import aclose
+from _core import aclose
 
 _CRAWL_BLOOM_PATH_A = "~/.cache/hledac/stealth_crawl_a.mmap"
 _CRAWL_BLOOM_PATH_B = "~/.cache/hledac/stealth_crawl_b.mmap"

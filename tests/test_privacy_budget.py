@@ -16,7 +16,7 @@ from typing import Any
 from unittest.mock import patch
 
 import pytest
-from core import aclose
+from _core import aclose
 
 
 class TestPrivacyLaneConfig:

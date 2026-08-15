@@ -27,7 +27,7 @@ import msgspec
 from typing import Any
 from hledac.universal.transport.gopher_transport import GopherItem, GopherTransport, get_gopher_transport
 from hledac.universal.utils.asyncx import parallel_ok
-from core import aclose
+from _core import aclose
 MAX_CRAWL_DEPTH: int = 5
 MAX_ITEMS_PER_HOST: int = 500
 MAX_TEXT_SIZE: int = 256 * 1024
@@ -82,7 +82,7 @@ class GopherCrawler:
         self._max_items_per_host = max_items_per_host
         self._max_text_size = max_text_size
         self._timeout_s = timeout_s
-        from hledac.universal.core.concurrency import ConcurrencyCategory, get_semaphore
+        from hledac.universal._core.concurrency import ConcurrencyCategory, get_semaphore
         self._semaphore = get_semaphore(ConcurrencyCategory.GOPHER_LANE)
         self._visited: dict[str, frozenset[str]] = {}
         self._item_counts: dict[str, int] = {}

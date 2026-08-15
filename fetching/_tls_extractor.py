@@ -6,7 +6,7 @@ Optimized for M1 8GB with Rust acceleration for SAN/issuer processing.
 from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
-from core import aclose
+from _core import aclose
 
 if TYPE_CHECKING:
     pass
@@ -25,7 +25,7 @@ def extract_tls_metadata_from_response(resp) -> dict:
         - Server header: plain Python (no Rust needed)
     Memory bounds: all collections are bounded, fail-safe throughout.
     """
-    from hledac.universal.core.rust_backend import rust as _rust_backend
+    from hledac.universal._core.rust_backend import rust as _rust_backend
 
     result: dict = {
         'tls_cert_san': (),

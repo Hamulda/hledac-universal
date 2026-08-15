@@ -51,7 +51,7 @@ from collections import Counter
 from typing import TYPE_CHECKING, Any
 
 from operator import attrgetter, itemgetter
-from hledac.universal.core.rust_backend import get_accel
+from hledac.universal._core.rust_backend import get_accel
 
 import httpx
 import msgspec
@@ -96,7 +96,7 @@ from hledac.universal.pipeline._feed_dtos import (
 
 
 # R6: Centralized Rust access via core.rust_backend
-from hledac.universal.core.rust_backend import rust
+from hledac.universal._core.rust_backend import rust
 
 _rust_extract_payload_context = rust.raw.extract_payload_context
 _rust_scan_query_context = rust.raw.scan_query_context
@@ -1158,10 +1158,10 @@ def _make_feed_finding_id(
 from hledac.universal.utils.asyncx import parallel  # noqa: E402
 from hledac.universal.utils.patterns.pattern_matcher import match_text  # noqa: E402
 from hledac.universal.utils.patterns.feed_pipeline_wrapper import (  # noqa: E402
-from core import aclose
     feed_entry_pipeline_fast,
     is_feed_pipeline_available,
 )
+from _core import aclose
 
 # ---------------------------------------------------------------------------
 # Pattern scan — offloaded, bounded concurrency
@@ -1918,7 +1918,7 @@ async def _check_uma_emergency() -> bool:
     yielding control back to the event loop during the blocking wait.
     """
     try:
-        from hledac.universal.core.resource_governor import sample_uma_status_async
+        from hledac.universal._core.resource_governor import sample_uma_status_async
 
         uma = await sample_uma_status_async()
         return uma.state == "emergency"
@@ -2973,7 +2973,7 @@ def compute_feed_dominance_score(
     # compute_dominance returns feed_dominance_ratio = feed/total.
     # We re-use the same 60/40 weighted formula in Python but with Rust ratio.
     try:
-        from hledac.universal.core.rust_backend import rust as _rust
+        from hledac.universal._core.rust_backend import rust as _rust
         if _rust.is_available:
             _feed_accepted = int(total_feed_findings * dominant_feed_share_pct / 100.0)
             _nonfeed_accepted = total_feed_findings - _feed_accepted
@@ -3083,7 +3083,7 @@ async def async_run_feed_source_batch(
     emergency_abort = False
     critical_clamp = False
     try:
-        from hledac.universal.core.resource_governor import sample_uma_status_async
+        from hledac.universal._core.resource_governor import sample_uma_status_async
 
         uma = await sample_uma_status_async()
         if uma.state == "emergency":

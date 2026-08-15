@@ -8,6 +8,6 @@ Obsahuje:
 
 
 from .ghost_executor import ActionType, GhostExecutor
-from core import aclose
+from _core import aclose
 
 __all__ = ["GhostExecutor", "ActionType"]

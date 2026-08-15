@@ -37,7 +37,7 @@ from typing import Any
 from hledac.universal.runtime.hermes_pivot_contract import MAX_INFERENCE_ITEMS, HermesInferenceOutput
 from hledac.universal.utils.confidence import normalize_source_quality
 from operator import attrgetter, itemgetter
-from core import aclose
+from _core import aclose
 __all__ = ['Pivot', 'PivotStats', 'PivotType', 'PivotPlanner', 'MAX_PIVOTS', 'MAX_PIVOT_CANDIDATES', 'generate_pivot_candidates_from_query', 'score_pivot_for_mission', 'estimate_pivot_cost', 'explain_pivot_score', 'apply_scoring_metadata', 'HermesInferenceOutput', 'MAX_INFERENCE_ITEMS']
 try:
     from hledac.universal.runtime.hypothesis_feedback import HypothesisFeedbackSummary

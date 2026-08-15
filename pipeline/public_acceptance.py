@@ -12,7 +12,7 @@ Depends on:
 
 import time
 from typing import Any
-from core import aclose
+from _core import aclose
 
 # ----------------------------------------------------------------------
 # Constants (re-exported from public_constants for convenience)

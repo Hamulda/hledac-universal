@@ -38,7 +38,7 @@ import msgspec
 from enum import Enum
 from pathlib import Path
 from typing import Any
-from core import aclose
+from _core import aclose
 logger = logging.getLogger(__name__)
 
 class PluginStatus(Enum):

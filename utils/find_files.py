@@ -2,7 +2,7 @@
 
 import fnmatch
 from pathlib import Path
-from core import aclose
+from _core import aclose
 
 
 def find_files(

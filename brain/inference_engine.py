@@ -57,7 +57,7 @@ from hledac.universal.utils.lru_cache import LRUCache
 from hledac.universal.utils.exceptions import InferenceLoopExceeded
 from hledac.universal.utils._patterns import compound_confidence_from_objects  # F320: DRY compound confidence
 import numpy as np
-from core import aclose
+from _core import aclose
 try:
     from hledac.universal.utils.eig import EIGCalculator
     EIG_AVAILABLE = True

@@ -44,7 +44,7 @@ import time as _time
 from collections.abc import Callable
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
-from hledac.universal.core.protocols import safe_get_finding_field, safe_get_payload_text
+from hledac.universal._core.protocols import safe_get_finding_field, safe_get_payload_text
 from hledac.universal.runtime.sidecar_runner_decorator import _store_ingest_and_count
 from hledac.universal.utils.asyncx import safe_create_task, safe_gather_fire_and_forget, parallel
 if TYPE_CHECKING:
@@ -61,7 +61,7 @@ def _is_cancelled_tree(e: BaseException) -> bool:
 
 def _safe_payload_json(obj: Any) -> str:
     """Serialize obj to canonical JSON string, fail-soft."""
-    from hledac.universal.core.result import try_or
+    from hledac.universal._core.result import try_or
 
     def _encode_orjson() -> str:
         import orjson
@@ -479,7 +479,7 @@ async def _query_runner(
                 async def _run_one(target: str) -> list:
                     return await adapter.query(target)
 
-            from hledac.universal.core.concurrency_registry import concurrency_budget, ConcurrencyCategory
+            from hledac.universal._core.concurrency_registry import concurrency_budget, ConcurrencyCategory
             result = await parallel(
                 [_run_one(t) for t in targets],
                 policy="log",
@@ -599,7 +599,7 @@ async def _gopher_crawl_runner(findings: list, store: DuckDBShadowStore, query: 
     except Exception:
         return 0
 from hledac.universal.runtime.sidecar_runner_decorator import sidecar_runner, sidecar_runner_await
-from core import aclose
+from _core import aclose
 _ExposureCorrelatorRunner = sidecar_runner(name='exposure_correlator', module_path='hledac.universal.intel.exposure_correlator', factory_name='create_exposure_correlator_adapter', correlate_method='correlate')
 _LeakSentinelRunner = sidecar_runner(name='leak_sentinel', module_path='hledac.universal.intel.leak_sentinel', factory_name='create_leak_sentinel_adapter', correlate_method='scan')
 _TemporalArchaeologyRunner = sidecar_runner(name='temporal_archaeology', module_path='hledac.universal.intel.temporal_archaeologist_adapter', factory_name='create_temporal_archaeologist_adapter', correlate_method='synthesize_timeline')

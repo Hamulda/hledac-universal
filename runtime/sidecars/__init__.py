@@ -17,7 +17,7 @@ from __future__ import annotations
 
 # Re-export SidecarRegistry for convenience
 from hledac.universal.runtime.sidecar_protocol import SidecarRegistry  # noqa: F401
-from core import aclose
+from _core import aclose
 
 __all__ = [
     # discovery

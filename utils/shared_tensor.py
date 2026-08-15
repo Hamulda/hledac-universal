@@ -13,6 +13,6 @@ _warnings.warn(
 )
 
 from hledac.universal.utils.mlx_memory._tensor import SharedTensor
-from core import aclose
+from _core import aclose
 
 __all__ = ["SharedTensor"]

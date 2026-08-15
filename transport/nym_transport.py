@@ -35,7 +35,7 @@ from hledac.universal.utils.asyncx import safe_create_task
 import os
 import shutil
 import time
-from hledac.universal.core.env_config import ENV
+from hledac.universal._core.env_config import ENV
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
@@ -50,9 +50,9 @@ from .base import Transport
 logger = logging.getLogger(__name__)
 
 # M1 Resource Ledger imports
-from hledac.universal.core.resource_ledger import get_resource_ledger
+from hledac.universal._core.resource_ledger import get_resource_ledger
 from hledac.universal.transport.resource_admission import TransportAdmission
-from core import aclose
+from _core import aclose
 
 
 def _nym_json_dumps(obj: Any) -> str:

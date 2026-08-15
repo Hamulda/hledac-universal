@@ -11,7 +11,7 @@ import sqlite3
 from pathlib import Path
 from typing import Any
 import psutil
-from core import aclose
+from _core import aclose
 _vec0_available: bool | None = None
 
 def _check_vec0_available() -> bool:

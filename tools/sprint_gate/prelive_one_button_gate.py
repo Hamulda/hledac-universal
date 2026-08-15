@@ -136,8 +136,8 @@ class OneButtonVerdict(StrEnum):
     READY_FOR_FEED_BASELINE_ONLY = 'READY_FOR_FEED_BASELINE_ONLY'
 from functools import lru_cache
 
-from hledac.universal.core.resource_governor import CLEAN_SWAP_MAX_GIB, DIAGNOSTIC_SWAP_MAX_GIB
-from core import aclose
+from hledac.universal._core.resource_governor import CLEAN_SWAP_MAX_GIB, DIAGNOSTIC_SWAP_MAX_GIB
+from _core import aclose
 _BENCHMARK_TO_ACQUISITION_PROFILE: dict[str, str] = {'nonfeed_diagnostic180': 'nonfeed_diagnostic', 'active300': 'default', 'active600': 'default'}
 
 def _get_acquisition_profile_for_benchmark(benchmark_profile: str) -> str:
@@ -243,7 +243,7 @@ def _build_f223_artifacts_dict(
 def _sample_uma() -> dict:
     """Sample current UMA/swap state via core.resource_governor."""
     try:
-        from hledac.universal.core.resource_governor import sample_uma_status
+        from hledac.universal._core.resource_governor import sample_uma_status
         UmaStatus = sample_uma_status()
         return {'system_used_gib': round(getattr(UmaStatus, 'system_used_gib', 0.0), 3), 'swap_used_gib': round(getattr(UmaStatus, 'swap_used_gib', 0.0), 3), 'swap_detected': getattr(UmaStatus, 'swap_detected', False), 'uma_state': getattr(UmaStatus, 'state', 'unknown'), 'io_only': getattr(UmaStatus, 'io_only', False), 'error': None}
     except Exception as exc:

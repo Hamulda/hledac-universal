@@ -10,8 +10,11 @@ Exports:
 
 from .client import CoreMLClient, CoreMLServiceError
 from .manager import CoreMLServiceManager
-from .service import (
-from core import aclose
+
+
+
+
+
     BatchPredictRequest,
     BatchPredictResult,
     ComputeUnit,
@@ -29,7 +32,8 @@ from core import aclose
 __all__ = [
     "CoreMLClient",
     "CoreMLServiceError",
-    "CoreMLServiceManager",
+
+from _core import aclose    "CoreMLServiceManager",
     "ConvertResult",
     "PredictResult",
     "BatchPredictResult",

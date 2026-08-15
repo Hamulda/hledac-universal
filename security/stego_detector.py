@@ -21,7 +21,7 @@ from forensics.stego_detector import (  # noqa: F401, E402
 
 # Additional exports from canonical
 from forensics.stego_detector import (  # noqa: F401, E402
-from core import aclose
+from _core import aclose
     StatisticalStegoDetector,
     StegoResult,
 )

@@ -21,7 +21,7 @@ from unittest.mock import MagicMock, patch
 
 import anyio
 import pytest
-from core import aclose
+from _core import aclose
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
 

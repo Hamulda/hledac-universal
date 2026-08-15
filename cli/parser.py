@@ -24,8 +24,8 @@ from typing import TYPE_CHECKING
 # CI benchmarks this; now enabled in production
 os.environ.setdefault("PYTHON_JIT", "1")
 
-from hledac.universal.core.cli.args import build_parser, resolve_rl_args  # noqa: E402
-from core import aclose
+from hledac.universal._core.cli.args import build_parser, resolve_rl_args  # noqa: E402
+from _core import aclose
 
 if TYPE_CHECKING:
     pass
@@ -121,7 +121,7 @@ async def dispatch_async(args: argparse.Namespace) -> int:
 
 async def _dispatch_sprint_async(args: argparse.Namespace) -> int:
     """Run canonical sprint via ``core.__main__.run_sprint()``."""
-    from hledac.universal.core.__main__ import run_sprint
+    from hledac.universal._core.__main__ import run_sprint
     from hledac.universal.runtime.sprint_entrypoint import SprintFlags, dry_run_sprint
 
     logger = logging.getLogger(__name__)

@@ -17,7 +17,7 @@ class TestCanonicalOwner:
         from hledac.universal.runtime_authority_manifest import (
             CANONICAL_SPRINT_OWNER,
         )
-        assert CANONICAL_SPRINT_OWNER == "hledac.universal.core.__main__.run_sprint"
+        assert CANONICAL_SPRINT_OWNER == "hledac.universal._core.__main__.run_sprint"
 
     def test_legacy_autonomous_orchestrator_not_in_active_runtime(self):
         from hledac.universal.runtime_authority_manifest import (

@@ -33,7 +33,7 @@ import time
 from pathlib import Path
 
 from operator import attrgetter, itemgetter
-from core import aclose
+from _core import aclose
 class WorkloadResult:
     """Single workload benchmark result."""
     __slots__ = tuple(('cprofile_top', 'findings', 'main_bottleneck', 'median_ms', 'memory_delta_mib', 'name', 'p95_ms', 'samples_ms', 'skip_reason', 'status'))

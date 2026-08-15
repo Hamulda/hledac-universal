@@ -37,12 +37,12 @@ from pathlib import Path
 from typing import Any
 from collections.abc import Callable
 
-from hledac.universal.core.locks import LockCategory, register_lock
+from hledac.universal._core.locks import LockCategory, register_lock
 from hledac.universal.utils.asyncx import parallel_ok, safe_wait_for
 import msgspec
 from msgspec import field
 import numpy as np
-from core import aclose
+from _core import aclose
 
 logger = logging.getLogger(__name__)
 PRIORITY_HIGH: int = 1

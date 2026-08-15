@@ -26,8 +26,8 @@ import asyncio
 import hashlib
 import pytest
 
-from hledac.universal.core.sync_bridge import stream_via_queue
-from core import aclose
+from hledac.universal._core.sync_bridge import stream_via_queue
+from _core import aclose
 
 
 # ---------------------------------------------------------------------------

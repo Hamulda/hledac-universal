@@ -13,12 +13,12 @@ import time as time_module
 from typing import TYPE_CHECKING
 from collections.abc import Awaitable, Callable
 import numpy as np
-from hledac.universal.core.embeddings.manager import AdaptiveEmbeddingBatcher
+from hledac.universal._core.embeddings.manager import AdaptiveEmbeddingBatcher
 logger = logging.getLogger(__name__)
 
 # C1-X FIX: Import MLX_AVAILABLE from SSOT (zero-import detection)
 from hledac.universal.utils.mlx_memory import MLX_AVAILABLE
-from core import aclose
+from _core import aclose
 
 # Lazy accessor for mlx.core - only used for Metal memory queries
 def _get_mlx():

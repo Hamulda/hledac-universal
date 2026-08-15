@@ -43,9 +43,9 @@ from typing import TYPE_CHECKING, Any
 
 import msgspec
 
-from hledac.universal.core.env_config import ENV
+from hledac.universal._core.env_config import ENV
 from hledac.universal.utils._patterns import module_singleton_getter
-from core import aclose
+from _core import aclose
 
 if TYPE_CHECKING:
     import duckdb

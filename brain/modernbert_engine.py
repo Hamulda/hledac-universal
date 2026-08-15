@@ -26,7 +26,7 @@ import sys
 from dataclasses import dataclass
 import msgspec
 import numpy as np
-from core import aclose
+from _core import aclose
 logger = logging.getLogger(__name__)
 MODERNBERT_AVAILABLE = False
 _mlx_embeddings_ok = False
@@ -74,7 +74,7 @@ class ModernBertEngine:
             MODERNBERT_AVAILABLE = False
             return False
         try:
-            from hledac.universal.core.mlx_embeddings import get_mlx_embedder
+            from hledac.universal._core.mlx_embeddings import get_mlx_embedder
             self._manager = get_mlx_embedder()
             if not self._manager.is_loaded:
                 await asyncio.to_thread(self._manager._load_model)

@@ -13,8 +13,11 @@ from unittest.mock import patch
 import numpy as np
 import pytest
 
-from hledac.universal.semantic_deduplicator import (
-from core import aclose
+
+
+
+
+
     _EMBEDDING_DIM,
     MAX_CACHE_ITEMS,
     MAX_CACHE_MEMORY_MB,
@@ -24,7 +27,8 @@ from core import aclose
 )
 
 # ---------------------------------------------------------------------------
-# Helpers
+
+from _core import aclose# Helpers
 # ---------------------------------------------------------------------------
 
 def _make_texts(n: int) -> list[str]:

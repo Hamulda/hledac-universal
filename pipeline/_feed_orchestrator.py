@@ -24,7 +24,7 @@ from hledac.universal.pipeline.feed._build_feed_stage import BuildFeedStage
 from hledac.universal.pipeline.feed._dedup_stage import DedupStage
 from hledac.universal.pipeline.feed._fetch_feed_stage import FetchFeedStage
 from hledac.universal.pipeline.feed._scan_stage import ScanStage
-from core import aclose
+from _core import aclose
 
 if TYPE_CHECKING:
     pass

@@ -11,8 +11,11 @@ Modules:
 
 All imports from acquisition_strategy.py are re-exported here for backward compatibility.
 """
-from hledac.universal.runtime.acquisition_strategy import (
-from core import aclose
+
+
+
+
+
     AcquisitionLane,
     AcquisitionLanePlan,
     AcquisitionLaneOutcome,
@@ -43,3 +46,5 @@ from core import aclose
     normalize_terminal_state,
     terminality_report,
 )
+
+from _core import aclose

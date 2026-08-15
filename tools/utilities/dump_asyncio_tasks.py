@@ -19,7 +19,7 @@ import subprocess
 import sys
 import time
 from pathlib import Path
-from core import aclose
+from _core import aclose
 
 
 def _run_asyncio_command(pid: int, subcommand: str, timeout: float = 10.0) -> tuple[str, str, int]:

@@ -13,7 +13,7 @@ Probe tests for Safari WebKit HTTP/2 SETTINGS preset:
 """
 
 import pytest
-from core import aclose
+from _core import aclose
 
 
 class TestH2SafariPresetRustExtension:

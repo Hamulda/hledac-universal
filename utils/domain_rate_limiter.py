@@ -276,7 +276,7 @@ except ImportError:  # pragma: no cover
     _LMDB_AVAILABLE = False
 
 import typing  # noqa: E402
-from core import aclose
+from _core import aclose
 if typing.TYPE_CHECKING:
     import lmdb
     import orjson

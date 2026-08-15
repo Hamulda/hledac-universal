@@ -66,7 +66,7 @@ from hledac.universal.utils.asyncx import parallel_ok
 from hledac.universal.transport.session_pool import session_pool
 from hledac.universal.utils.rate_limiter import RateLimitConfig, RateLimiter
 from operator import attrgetter, itemgetter
-from core import aclose
+from _core import aclose
 logger = logging.getLogger(__name__)
 
 # NEW-MEM-005: Archive content cap for M1 8GB safety
@@ -313,7 +313,7 @@ class TemporalArchaeologist:
         recovered_versions: list[ArchivedVersion] = []
         errors: list[str] = []
         sources_succeeded = 0
-        from hledac.universal.core.concurrency import ConcurrencyCategory, get_semaphore
+        from hledac.universal._core.concurrency import ConcurrencyCategory, get_semaphore
         semaphore = get_semaphore(ConcurrencyCategory.SCRAPE_GENERAL)
 
         async def check_source(source: str) -> tuple[list[ArchivedVersion], str | None]:
@@ -563,7 +563,7 @@ class TemporalArchaeologist:
                 if not cdx_entries:
                     return versions
                 if include_content:
-                    from hledac.universal.core.concurrency import ConcurrencyCategory, get_semaphore
+                    from hledac.universal._core.concurrency import ConcurrencyCategory, get_semaphore
                     semaphore = get_semaphore(ConcurrencyCategory.SCRAPE_GENERAL)
 
                     async def fetch_snapshot(entry: tuple[datetime, str, dict[str, str]]) -> ArchivedVersion | None:
@@ -900,7 +900,7 @@ class TemporalArchaeologist:
         if not snapshots:
             return []
         # R6: Centralized Rust access via core.rust_backend
-        from hledac.universal.core.rust_backend import rust
+        from hledac.universal._core.rust_backend import rust
         group_similar_texts = rust.raw.group_similar_texts
         if group_similar_texts is None:
             groups: list[list[ArchivedVersion]] = []

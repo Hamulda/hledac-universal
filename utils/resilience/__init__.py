@@ -63,8 +63,11 @@ from hledac.universal.utils.resilience.circuit_breaker import (
     CircuitBreakers,
     CircuitBreakerConfig,
 )
-from hledac.universal.utils.resilience.health_indicators import (
-from core import aclose
+
+
+
+
+
     HealthScore,
     HealthReporter,
     format_health_status,
@@ -76,7 +79,8 @@ from core import aclose
 try:
     from hledac.universal.utils.resilience.decorators import (
         with_circuit_breaker,
-        circuit_protected,
+
+from _core import aclose        circuit_protected,
         degradation_aware,
         get_circuit,
         register_circuit,

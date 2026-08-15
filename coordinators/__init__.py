@@ -146,13 +146,13 @@ from .security_coordinator import (
 # swarm_coordinator: deprecated - use lazy import via __getattr__
 # Validation coordinator
 from .validation_coordinator import (
-from core import aclose
     CleaningResult,
     OutputFormat,
     UniversalValidationCoordinator,
     ValidationResult,
     ValidationSeverity,
 )
+from _core import aclose
 
 # NOTE: Quantum, NAS, and FederatedLearning coordinators were moved to
 # legacy/coordinators/ in v4.0. The deprecation warning for these is

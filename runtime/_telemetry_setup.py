@@ -36,7 +36,7 @@ import os
 import sys
 import threading
 from typing import Any
-from core import aclose
+from _core import aclose
 
 _OTEL_ENABLED = os.environ.get("HLEDAC_OTEL_ENABLED", "1").strip() == "1"
 _CONFIGURED = False
@@ -129,7 +129,7 @@ def _configure_rust_otel_bridge() -> bool:
     try:
         import os as _os
         interval_ms = int(_os.environ.get("HLEDAC_OTEL_EXPORT_INTERVAL", "5000").strip())
-        from hledac.universal.core.python_otel_bridge import configure_otel_bridge
+        from hledac.universal._core.python_otel_bridge import configure_otel_bridge
         bridge = configure_otel_bridge(interval_ms=interval_ms)
         bridge.start()
         sys.stderr.write(f"[telemetry] Rust OTel bridge started (interval={interval_ms}ms)\n")

@@ -424,7 +424,7 @@ def compute_feed_branch_verdict_python(
 # === Try to import Rust-accelerated versions ===
 try:
     # R6: Centralized Rust access via core.rust_backend
-    from hledac.universal.core.rust_backend import rust
+    from hledac.universal._core.rust_backend import rust
     _rust = rust.raw.module
 
     if hasattr(_rust, "feed_decision_classify"):
@@ -436,7 +436,7 @@ except Exception:
 
 
 import sys as _sys
-from core import aclose
+from _core import aclose
 
 
 def _make_rust_wrapper(rust_fn_name: str) -> Any:

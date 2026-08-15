@@ -53,7 +53,7 @@ from pathlib import Path
 from typing import Any, Literal
 
 import msgspec
-from core import aclose
+from _core import aclose
 
 logger = logging.getLogger(__name__)
 
@@ -238,7 +238,7 @@ class TranscriptionRouter:
             # Probe Rust whisper (CoreML/ANE acceleration) - PRIORITY PATH
             # SILICON-02: Rust whisper.cpp with CoreML/ANE backend
             try:
-                from hledac.universal.core.rust_backend import rust
+                from hledac.universal._core.rust_backend import rust
                 self._rust_whisper_available = rust.whisper.is_available()
                 if self._rust_whisper_available:
                     logger.info("[TranscriptionRouter] Rust whisper (CoreML/ANE) available")
@@ -634,7 +634,7 @@ class TranscriptionRouter:
         # SILICON-02: Rust whisper.cpp with dedicated ANE memory, M1 8GB safe
         if self._rust_whisper_available:
             try:
-                from hledac.universal.core.rust_backend import rust
+                from hledac.universal._core.rust_backend import rust
 
                 # Run Rust whisper in thread pool (CPU-bound decoder)
                 raw = await asyncio.to_thread(
@@ -850,7 +850,7 @@ async def extract_voiceprint(
         return {"error": f"File not found: {source}"}
 
     try:
-        from hledac.universal.core.rust_backend import rust
+        from hledac.universal._core.rust_backend import rust
         if not hasattr(rust, "whisper"):
             return {"error": "Rust whisper module not available"}
 

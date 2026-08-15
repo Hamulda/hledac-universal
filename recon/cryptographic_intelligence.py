@@ -60,8 +60,8 @@ except ImportError:
 # SILICON-01: Metal GPU hash cracking — opportunistic during I/O wait
 # Feature flag: HLEDAC_ENABLE_METAL_HASHCRACK=1 to enable Metal GPU path
 # Default: 0 (disabled) — Metal crate must be compiled in (maturin develop --features "metal")
-from hledac.universal.core.feature_flags import FeatureFlag, FeatureFlags
-from core import aclose
+from hledac.universal._core.feature_flags import FeatureFlag, FeatureFlags
+from _core import aclose
 _METAL_HASHCRACK_ENABLED: bool = FeatureFlags.get(FeatureFlag.METAL_HASHCRACK)
 
 @cache
@@ -74,7 +74,7 @@ def _get_metal_cracker():
     if not _METAL_HASHCRACK_ENABLED:
         return None
     # R6: Centralized Rust access via core.rust_backend
-    from hledac.universal.core.rust_backend import rust
+    from hledac.universal._core.rust_backend import rust
     MetalHashCracker = rust.raw.MetalHashCracker
     if MetalHashCracker is None:
         logger.warning("MetalHashCracker not available in Rust extension")

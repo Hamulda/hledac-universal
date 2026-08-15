@@ -29,7 +29,7 @@ from hledac.universal.utils.asyncx import parallel_ok
 from hledac.universal.runtime.acquisition.profile import AcquisitionProfile
 logger = logging.getLogger(__name__)
 from hledac.universal.runtime.acquisition_strategy_planner import AcquisitionLane, AcquisitionLanePlan, AcquisitionLaneOutcome, AcquisitionStrategySnapshot, NonfeedSeedContext
-from core import aclose
+from _core import aclose
 
 # Module-level constant — canonical lane→family mapping (F360M dedup).
 _LANE_TO_FAMILY: dict[str, str] = {

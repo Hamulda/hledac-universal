@@ -38,8 +38,8 @@ from dataclasses import dataclass
 import msgspec
 from typing import Any
 import httpx
-from hledac.universal.core.concurrency import ConcurrencyCategory, get_semaphore
-from core import aclose
+from hledac.universal._core.concurrency import ConcurrencyCategory, get_semaphore
+from _core import aclose
 logger = logging.getLogger(__name__)
 _CanonicalFinding = None
 try:

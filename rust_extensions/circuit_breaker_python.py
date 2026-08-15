@@ -25,7 +25,7 @@ If import fails, we fall back to Python-only implementation.
 from __future__ import annotations
 
 from typing import Final
-from core import aclose
+from _core import aclose
 
 # ---------------------------------------------------------------------------
 # Rust Import (lazy, fail-safe)

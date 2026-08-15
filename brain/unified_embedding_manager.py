@@ -27,7 +27,7 @@ import numpy as np
 import msgspec
 
 from hledac.universal.utils.cache import PyCacheDict
-from core import aclose
+from _core import aclose
 
 logger = logging.getLogger(__name__)
 
@@ -146,7 +146,7 @@ class UnifiedEmbeddingManager:
                 # F6: Use singleton via get_mlx_embedder() — single Metal command queue,
                 # no double-loads on M1 8GB. Custom model_path is handled by the
                 # singleton's prewarm() during sprint pre-flight.
-                from hledac.universal.core.mlx_embeddings import get_mlx_embedder
+                from hledac.universal._core.mlx_embeddings import get_mlx_embedder
                 self._mlx_manager = get_mlx_embedder()
                 if not self._mlx_manager._is_loaded:
                     self._mlx_manager._load_model()

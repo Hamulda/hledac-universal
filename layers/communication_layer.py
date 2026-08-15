@@ -32,7 +32,7 @@ from operator import attrgetter, itemgetter
 logger = logging.getLogger(__name__)
 import itertools
 from hledac.universal.utils.asyncx import parallel_ok
-from core import aclose
+from _core import aclose
 _counter = itertools.count()
 
 class _Subscriber(msgspec.Struct, gc=False):

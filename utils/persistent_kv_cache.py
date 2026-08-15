@@ -51,7 +51,7 @@ from typing import TYPE_CHECKING, Any
 from hledac.universal.utils.lru_cache import LRUCache  # noqa: I001
 
 import msgspec  # noqa: E402 (lazy, ok at module level for msgpack encode/decode)
-from core import aclose
+from _core import aclose
 
 if TYPE_CHECKING:
     pass
@@ -68,7 +68,7 @@ def _get_lmdb_async() -> Any:
     global _lmdb_async
     if _lmdb_async is None:
         try:
-            from hledac.universal.core.lmdb_async import (
+            from hledac.universal._core.lmdb_async import (
                 lmdb_async_delete,
                 lmdb_async_put,
                 lmdb_async_scan_prefix,

@@ -19,7 +19,7 @@ if not os.getenv('HLEDAC_ENABLE_NEURO_CRYPTO'):
 import base64
 import hashlib
 import logging
-from core import aclose
+from _core import aclose
 logger = logging.getLogger(__name__)
 
 class SpikingNeuralNetwork:

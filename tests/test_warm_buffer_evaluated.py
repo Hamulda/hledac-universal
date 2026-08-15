@@ -6,7 +6,7 @@ Test verifies mx.metal.get_peak_memory() increases after mx.eval(_warm_buffer).
 from __future__ import annotations
 
 import pytest
-from core import aclose
+from _core import aclose
 
 try:
     import mlx.core as mx

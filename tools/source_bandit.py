@@ -12,7 +12,7 @@ import math
 from pathlib import Path
 from typing import Any
 import numpy as np
-from core import aclose
+from _core import aclose
 
 try:
     import orjson as _json

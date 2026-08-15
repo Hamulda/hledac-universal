@@ -37,7 +37,7 @@ from hledac.universal.utils.asyncx import _check_gathered
 
 # [FINAL]-019-07: Capability cost registration for QoS ladder triage.
 # DuckPGQGraph: rss_mb=200, peak_mb=400 (DuckDB + PGQ graph analytics)
-from hledac.universal.core.capability_cost import register_capability_cost
+from hledac.universal._core.capability_cost import register_capability_cost
 register_capability_cost("duckpgqgraph", rss_mb=200, peak_mb=400, tier="heavy", tags=("graph", "sql"))
 
 logger = logging.getLogger(__name__)
@@ -916,7 +916,7 @@ class QuantumInspiredPathFinder:
             entropy = float(-np_mod.sum(probs * np_mod.log(probs + 1e-10)))
         return {'total_probability': prob_sum, 'max_probability': max_prob, 'entropy': entropy, 'n_nodes': self.n_nodes}
 import hashlib as _hashlib
-from core import aclose
+from _core import aclose
 _DUCKPGQ_AVAILABLE = False
 _duckpgq_checked = False
 
@@ -1066,7 +1066,7 @@ class DuckPGQGraph:
         # R12: Flush LRU cache and drop thread-local DuckDB connections in Rust
         try:
             # R6: Centralized Rust access via core.rust_backend
-            from hledac.universal.core.rust_backend import rust
+            from hledac.universal._core.rust_backend import rust
             _rust_drop_connections = rust.raw.drop_connections
             _rust_drop_connections()
         except Exception:  # noqa: BLE001
@@ -1500,7 +1500,7 @@ class DuckPGQGraph:
         try:
             # Try Rust implementation first
             try:
-                from hledac.universal.core.rust_backend import rust as _rust
+                from hledac.universal._core.rust_backend import rust as _rust
                 if _rust is not None and _rust.is_available and _rust.link_predictor is not None:
                     result = _rust.link_predictor.predict_links(
                         self.db_path,
@@ -1654,7 +1654,7 @@ class DuckPGQGraph:
             # Call Rust rayon-parallel centrality
             try:
                 # BUG-F FIX: Use hasattr pattern (matches graph_rag.py:945) instead of _rust.graph_centrality is not None
-                from hledac.universal.core.rust_backend import rust as _rust
+                from hledac.universal._core.rust_backend import rust as _rust
                 _rust_ext = _rust.raw.module
                 if _rust is not None and _rust.is_available and hasattr(_rust_ext, 'batch_centrality_all'):
                     raw = _rust_ext.batch_centrality_all(adjacency)
@@ -2009,7 +2009,7 @@ class DuckPGQGraph:
         # R12: Try Rust rayon path first — thread-local DuckDB conn, no GIL
         try:
             # R6: Centralized Rust access via core.rust_backend
-            from hledac.universal.core.rust_backend import rust
+            from hledac.universal._core.rust_backend import rust
             _rust_traverse = rust.raw.graph_traverse_single
             result = _rust_traverse(self.db_path, value, max_hops)
             if result is not None and len(result) > 0:
@@ -2209,7 +2209,7 @@ def _graph_stats(db_path: str, con) -> dict:
     # R12: Try Rust path first — thread-local DuckDB conn, rayon parallel
     try:
         # R6: Centralized Rust access via core.rust_backend
-        from hledac.universal.core.rust_backend import rust
+        from hledac.universal._core.rust_backend import rust
         _rust_stats = rust.raw.graph_stats
 
         result = _rust_stats(db_path, 20)

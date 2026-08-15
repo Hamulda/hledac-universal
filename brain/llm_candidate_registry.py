@@ -7,7 +7,7 @@ See IMPLEMENTATION_ROADMAP.md for implementation priority.
 
 import logging
 from typing import Any
-from core import aclose
+from _core import aclose
 
 logger = logging.getLogger(__name__)
 __all__: list[str] = []

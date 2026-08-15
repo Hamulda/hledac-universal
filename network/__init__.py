@@ -37,7 +37,7 @@ from __future__ import annotations
 import importlib
 import importlib.util
 from importlib import import_module
-from core import aclose
+from _core import aclose
 
 
 # ── Lazy OSINT re-exports via __getattr__ ─────────────────────────────────────

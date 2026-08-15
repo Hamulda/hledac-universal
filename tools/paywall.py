@@ -13,7 +13,7 @@ import asyncio
 import logging
 import re
 import httpx
-from core import aclose
+from _core import aclose
 
 __all__ = ['PaywallBypass']
 

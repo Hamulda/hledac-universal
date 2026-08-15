@@ -4,7 +4,7 @@ P0: Validates SPSC queue initialization and stats.
 """
 
 import pytest
-from core import aclose
+from _core import aclose
 
 
 class TestSPSCIntegration:
@@ -32,7 +32,7 @@ class TestSPSCIntegration:
     def test_spsc_submit_returns_false_when_full(self):
         """When SPSC queue is full, sender should return False on send."""
         try:
-            from core.rust_backend import rust
+            from _core.rust_backend import rust
             if not rust.is_available:
                 pytest.skip("Rust backend not available")
 
@@ -53,7 +53,7 @@ class TestSPSCIntegration:
     def test_spsc_receiver_taken_once(self):
         """take_receiver() must be called exactly once per pair."""
         try:
-            from core.rust_backend import rust
+            from _core.rust_backend import rust
             if not rust.is_available:
                 pytest.skip("Rust backend not available")
 

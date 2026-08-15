@@ -23,7 +23,7 @@ These tests do NOT touch network, MLX, or any other heavy dep.
 from pathlib import Path
 
 import pytest
-from core import aclose
+from _core import aclose
 
 # ---------------------------------------------------------------------------
 # Skip helpers — fail fast if Rust extension not built (CI fresh checkouts).

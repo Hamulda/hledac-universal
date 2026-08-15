@@ -13,7 +13,7 @@ M1 8GB: No model load, pure I/O with bounded results.
 import asyncio
 import logging
 from typing import TYPE_CHECKING
-from core import aclose
+from _core import aclose
 
 if TYPE_CHECKING:
     from hledac.universal.runtime.scheduler_result import SprintSchedulerResult

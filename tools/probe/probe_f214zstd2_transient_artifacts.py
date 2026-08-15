@@ -29,7 +29,7 @@ import time
 import tracemalloc
 from dataclasses import dataclass, field
 from pathlib import Path
-from core import aclose
+from _core import aclose
 REPO_ROOT = Path(__file__).parent.parent
 PROBE_DIR = REPO_ROOT / 'tools' / 'probe_f214zstd2_transient_artifacts'
 PROBE_DIR.mkdir(parents=True, exist_ok=True)

@@ -360,7 +360,7 @@ class UmaBudget:
                   kv_cache, mlx_metal, system_used, total_tracked, process_rss
         """
         # Get current MLX Metal memory
-        from hledac.universal.core.memory import get_metal_active_memory_bytes
+        from hledac.universal._core.memory import get_metal_active_memory_bytes
         try:
             mlx_active_bytes = get_metal_active_memory_bytes()
             mlx_active_mib = mlx_active_bytes / (1024 * 1024)
@@ -659,7 +659,7 @@ _SOFT_RSS_GIB: float = UmaBudget.UMA_HARD_CEILING_GIB * 0.6  # 3.75 GiB — SSOT
 _HARD_RSS_GIB: float = UmaBudget.THRESHOLD_CRITICAL_GIB  # 6.191 GiB — SSOT derived
 
 try:
-    from hledac.universal.core.memory import set_memory_pressure_thresholds as _set_rust_thresholds
+    from hledac.universal._core.memory import set_memory_pressure_thresholds as _set_rust_thresholds
     _set_rust_thresholds(soft_gib=_SOFT_RSS_GIB, hard_gib=_HARD_RSS_GIB)
 except Exception as _e:
     # MODERN-44 FIX: Raise instead of silent pass.
@@ -690,9 +690,9 @@ except Exception as _e:
     ) from _e
 
 MAX_L2_CACHE_SIZE_MB: int = 50
-from hledac.universal.core.memory import get_memory_snapshot as _rust_snapshot
-from hledac.universal.core.psutil_shim import psutil_module as _psutil_mod
-from core import aclose
+from hledac.universal._core.memory import get_memory_snapshot as _rust_snapshot
+from hledac.universal._core.psutil_shim import psutil_module as _psutil_mod
+from _core import aclose
 
 def _get_mlx_core():
     """Lazy MLX import for memory metrics."""
@@ -750,7 +750,7 @@ def get_mlx_memory_mb() -> tuple[int, int, int]:
     Issue #38 SSOT: Delegates to core.memory (Rust MLX probe).
     Falls back to direct mlx.core inspection for peak/cache unavailable in Rust.
     """
-    from hledac.universal.core.memory import get_metal_active_memory_bytes
+    from hledac.universal._core.memory import get_metal_active_memory_bytes
     try:
         active_bytes = get_metal_active_memory_bytes()
         active_mb = int(active_bytes / 1024 ** 2)
@@ -938,7 +938,7 @@ class DefaultUmaWatchdogCallbacks(UmaWatchdogCallbacks):
         except (ImportError, AttributeError) as e:
             logger.error(f'[UMA-AUTO] Lightweight GC failed: {e}')
         try:
-            from hledac.universal.core.memory_cycle import malloc_zone_pressure_relief
+            from hledac.universal._core.memory_cycle import malloc_zone_pressure_relief
             released = malloc_zone_pressure_relief()
             if released > 0:
                 logger.debug('[UMA-AUTO] malloc_zone_pressure_relief released %d bytes', released)
@@ -955,7 +955,7 @@ class DefaultUmaWatchdogCallbacks(UmaWatchdogCallbacks):
         except (ImportError, AttributeError) as e:
             logger.error(f'[UMA-AUTO] MLX cache cleanup failed: {e}')
         try:
-            from hledac.universal.core.memory_cycle import malloc_zone_pressure_relief
+            from hledac.universal._core.memory_cycle import malloc_zone_pressure_relief
             from hledac.universal.utils import mlx_cache as mlx_cache_mod
             released = malloc_zone_pressure_relief()
             mlx_cache_mod.reconfigure_metal_cache_limit('critical')
@@ -974,7 +974,7 @@ class DefaultUmaWatchdogCallbacks(UmaWatchdogCallbacks):
         except (ImportError, AttributeError) as e:
             logger.error(f'[UMA-AUTO] Aggressive cleanup failed: {e}')
         try:
-            from hledac.universal.core.memory_cycle import malloc_zone_pressure_relief
+            from hledac.universal._core.memory_cycle import malloc_zone_pressure_relief
             from hledac.universal.utils import mlx_cache as mlx_cache_mod
             released = malloc_zone_pressure_relief()
             mlx_cache_mod.reconfigure_metal_cache_limit('emergency')

@@ -16,8 +16,11 @@ import re
 import time
 from typing import TYPE_CHECKING, Any
 
-from hledac.universal.recon.lane import (
-from core import aclose
+
+
+
+
+
     BTC_ADDRESS_PATTERN,
     XMR_ADDRESS_PATTERN,
     BaseIntelligenceLane,
@@ -33,6 +36,7 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+from _core import aclose
 # Compiled regex patterns (module-level for reuse)
 _ONION_V3_PATTERN = re.compile(r"[a-z2-7]{56}\.onion")
 _ONION_V2_PATTERN = re.compile(r"[a-z2-7]{16}\.onion")

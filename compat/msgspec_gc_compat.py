@@ -25,7 +25,7 @@ msgspec.Struct(gc=False) usages are migrated incrementally.
 from __future__ import annotations
 
 import msgspec
-from core import aclose
+from _core import aclose
 
 __all__ = ["struct", "Struct"]
 

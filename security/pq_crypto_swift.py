@@ -28,7 +28,7 @@ from typing import Any
 
 # Types from parent module — needed for msgspec.Struct field annotations (evaluated at class def time)
 from .pq_crypto import PQAvailability, PQSignature, PQStatus, PostQuantumError
-from core import aclose
+from _core import aclose
 
 logger = logging.getLogger(__name__)
 HELPER_MISSING = 'HELPER_MISSING'

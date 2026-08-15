@@ -29,7 +29,7 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 import msgspec
 from typing import Any, cast
-from hledac.universal.core.concurrency import ConcurrencyCategory, get_semaphore
+from hledac.universal._core.concurrency import ConcurrencyCategory, get_semaphore
 from hledac.universal.transport.session_pool import session_pool
 import httpx
 from typing import TYPE_CHECKING
@@ -42,7 +42,7 @@ try:
 except ImportError:  # noqa: BLE001
     pass
 from hledac.universal.utils.asyncx import parallel, ParallelResult
-from core import aclose
+from _core import aclose
 logger = logging.getLogger(__name__)
 MAX_ASN_RESULTS: int = 500
 RATE_LIMIT_S: float = 2.0

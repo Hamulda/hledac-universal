@@ -31,7 +31,7 @@ import msgspec
 from hledac.universal.compat.msgspec_gc_compat import Struct
 
 from .base import DecisionResponse, ExecutionResult, OperationResult, OperationType, UniversalCoordinator
-from core import aclose
+from _core import aclose
 
 logger = logging.getLogger(__name__)
 
@@ -502,7 +502,7 @@ class OpsECCoordinator(UniversalCoordinator):
         start_time = time.time()
         delay: float = 0.0  # BLITZ-12: default to 0 (no jitter) when blitz mode active
         try:
-            from hledac.universal.core.telemetry.context_state import is_blitz_mode as _is_blitz
+            from hledac.universal._core.telemetry.context_state import is_blitz_mode as _is_blitz
             if not _is_blitz():
                 try:
                     import numpy as np

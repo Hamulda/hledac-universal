@@ -26,8 +26,8 @@ from enum import IntEnum
 from typing import Any, Generic, TypeVar
 from collections.abc import Callable
 
-from hledac.universal.core.locks import make_lock, LockCategory
-from core import aclose
+from hledac.universal._core.locks import make_lock, LockCategory
+from _core import aclose
 
 logger = logging.getLogger(__name__)
 

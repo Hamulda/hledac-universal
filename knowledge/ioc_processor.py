@@ -29,7 +29,7 @@ from urllib.parse import parse_qsl as _parse_qsl, urlencode as _urlencode, urlpa
 
 # ─── AccelBackend facade (properly lazy, single probe) ────────────────────────
 
-from hledac.universal.core.rust_backend import get_accel as _get_accel
+from hledac.universal._core.rust_backend import get_accel as _get_accel
 
 # ─── Python fallback regexes (pre-compiled, module-level) ──────────────────────
 
@@ -477,7 +477,7 @@ ioc_extract_to_canonical_findings_bulk = extract_to_findings_bulk
 # ─── Backward-compatibility re-exports ─────────────────────────────────────────
 # forensics/ioc_extractor.py imports these from here — must be present
 from forensics.ioc_patterns_generated import (  # noqa: F401,E402,F811
-from core import aclose
+from _core import aclose
     _IOC_PATTERNS,
     _IOC_COMBINED,
     _HASH_VALIDATORS,

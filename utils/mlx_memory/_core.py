@@ -35,8 +35,8 @@ from typing import TYPE_CHECKING, Any, TypeVar
 
 from hledac.universal.utils.locks import LazyAsyncioLock
 
-from hledac.universal.core.locks import LockCategory, register_lock
-from core import aclose
+from hledac.universal._core.locks import LockCategory, register_lock
+from _core import aclose
 
 if TYPE_CHECKING:
     from collections.abc import Awaitable
@@ -764,7 +764,7 @@ def get_semaphore_for_testing(category: str) -> asyncio.Semaphore:
 
     This was a test hook that always returned ``asyncio.Semaphore(1)`` regardless
     of category. For production concurrency, use:
-        from hledac.universal.core.concurrency import get_semaphore
+        from hledac.universal._core.concurrency import get_semaphore
     """
     return asyncio.Semaphore(1)
 
@@ -788,7 +788,7 @@ _RUST_AVAILABLE: bool = False
 
 # Try to load Rust atomic facade
 try:
-    from hledac.universal.core.rust_backend import rust
+    from hledac.universal._core.rust_backend import rust
     mlx_cache_hit = rust.raw.mlx_cache_hit  # None if unavailable
     mlx_cache_miss = rust.raw.mlx_cache_miss  # None if unavailable
     mlx_cache_stats = rust.raw.mlx_cache_stats  # None if unavailable
@@ -851,41 +851,12 @@ def _reset_cache_stats() -> None:
         _CACHE_MISSES = 0
 
 
-async def get_mlx_model(model_name: str) -> tuple[Any, Any]:
-    """
-    DEPRECATED — M-11: Use brain._hermes_cache.hermes_cache() instead.
+# Re-use the deprecated wrapper from core.embeddings.pool for backward compatibility
+# M-11: Use brain._hermes_cache.hermes_cache() instead.
+from hledac.universal._core.embeddings.pool import get_mlx_model
 
-    This function is kept for backward compatibility only.
-    Delegates to the HermesModelCache singleton.
-
-    LRU eviction when cache exceeds max 2 models.
-    """
-    import warnings
-
-    warnings.warn(
-        "get_mlx_model() is deprecated — use brain._hermes_cache.hermes_cache() instead. "
-        "This function will be removed in a future release.",
-        DeprecationWarning,
-        stacklevel=2,
-    )
-    # Lazy import to avoid circular dependency
-    from hledac.universal.brain._hermes_cache import hermes_cache
-
-    cache = hermes_cache()
-    result = cache.get_model(model_name)
-    if result is not None:
-        return result
-
-    # Not cached — load and put
-    try:
-        from mlx_lm import load as mlx_load
-
-        model, tokenizer, *_ = await asyncio.to_thread(mlx_load, model_name)
-        cache.put_model(model_name, model, tokenizer)
-        return model, tokenizer
-    except Exception as e:
-        logger.warning(f"Failed to load MLX model {model_name}: {e}")
-        return None, None
+# Re-export for backward compatibility with existing imports
+__all__ = ['get_mlx_model']
 
 
 # ── MLX Utilities (from mlx_utils.py) ─────────────────────────────────────────

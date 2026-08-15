@@ -48,8 +48,8 @@ from collections.abc import Callable
 
 import msgspec
 
-from hledac.universal.core.env_config import ENV
-from core import aclose
+from hledac.universal._core.env_config import ENV
+from _core import aclose
 
 __all__ = [
     "Settings",
@@ -590,6 +590,6 @@ def settings() -> Settings:
 def __getattr__(name: str) -> Any:
     """Route missing attrs to ENV for backward compat."""
     if name == "ENV":
-        from hledac.universal.core.env_config import ENV as _ENV
+        from hledac.universal._core.env_config import ENV as _ENV
         return _ENV
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

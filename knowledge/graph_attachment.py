@@ -34,7 +34,7 @@ F320 CHANGES:
     - truth_write_graph_supports_buffered_writes: DuckPGQGraph now returns True (F272)
 """
 from typing import Any
-from core import aclose
+from _core import aclose
 __all__ = ['GraphAttachmentStore']
 
 class GraphAttachmentStore:

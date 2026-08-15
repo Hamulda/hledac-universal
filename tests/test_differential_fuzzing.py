@@ -185,17 +185,17 @@ def _is_numeric_hostname(url: str) -> bool:
 
 
 # _Python*Domain classes live in submodules, not in the package __init__
-from core.rust_backend.bloom import _PythonBloomDomain
-from core.rust_backend.url import _PythonUrlDomain
-from core.rust_backend.hash import _PythonHashDomain
-from core.rust_backend.rolling_hash import _PythonRollingHashDomain
-from core.rust_backend.simhash import _PythonSimhashDomain
-from core.rust_backend.quality import _PythonQualityDomain
-from core.rust_backend.ioc import _PythonIocDomain
-from core.rust_backend.misc import _PythonTextDomain, _PythonHtmlDomain
-from core.rust_backend.ip import _PythonIpDomain
-from core.rust_backend.misc import _PythonSimdDomain
-from core import aclose
+from _core.rust_backend.bloom import _PythonBloomDomain
+from _core.rust_backend.url import _PythonUrlDomain
+from _core.rust_backend.hash import _PythonHashDomain
+from _core.rust_backend.rolling_hash import _PythonRollingHashDomain
+from _core.rust_backend.simhash import _PythonSimhashDomain
+from _core.rust_backend.quality import _PythonQualityDomain
+from _core.rust_backend.ioc import _PythonIocDomain
+from _core.rust_backend.misc import _PythonTextDomain, _PythonHtmlDomain
+from _core.rust_backend.ip import _PythonIpDomain
+from _core.rust_backend.misc import _PythonSimdDomain
+from _core import aclose
 
 _PYTHON_DOMAINS = {
     "bloom": _PythonBloomDomain,
@@ -226,7 +226,7 @@ def _get_python_domain(domain_name: str):
 
 def _get_rust_domain(domain_name: str):
     """Get Rust domain instance for differential testing."""
-    from core.rust_backend import rust
+    from _core.rust_backend import rust
 
     domain_map = {
         "bloom": rust.bloom,

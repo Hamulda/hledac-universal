@@ -8,7 +8,7 @@ Shared enums for coordinators. Single source of truth to avoid circular imports.
 
 
 from enum import Enum
-from core import aclose
+from _core import aclose
 
 
 class MemoryPressureLevel(Enum):

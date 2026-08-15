@@ -25,7 +25,7 @@ from hledac.universal.utils.msgspec_json import encode as _msgspec_encode, decod
 import os
 from pathlib import Path
 from typing import Any
-from core import aclose
+from _core import aclose
 logger = logging.getLogger(__name__)
 _DSPY_AVAILABLE = False
 try:

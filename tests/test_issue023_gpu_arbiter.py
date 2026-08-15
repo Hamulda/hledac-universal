@@ -16,7 +16,7 @@ import time
 from unittest.mock import patch
 
 import pytest
-from core import aclose
+from _core import aclose
 
 
 class TestGPUArbiterUnit:
@@ -24,14 +24,14 @@ class TestGPUArbiterUnit:
 
     def test_arbiter_singleton(self):
         """get_gpu_arbiter() returns the same instance on repeated calls."""
-        from core.embeddings.manager import get_gpu_arbiter
+        from _core.embeddings.manager import get_gpu_arbiter
         a = get_gpu_arbiter()
         b = get_gpu_arbiter()
         assert a is b
 
     def test_should_defer_idle(self):
         """When MLX unavailable, _probe_gpu_fraction returns 0.0 → should_defer=False."""
-        from core.embeddings.manager import GPUArbiter
+        from _core.embeddings.manager import GPUArbiter
         arbiter = GPUArbiter()
         # Mock _probe_gpu_fraction to return 0.5 (normal, not > 0.85)
         with patch('core.embeddings.manager._probe_gpu_fraction', return_value=0.5):
@@ -41,7 +41,7 @@ class TestGPUArbiterUnit:
 
     def test_should_defer_pressure(self):
         """When GPU fraction > 0.85, should_defer returns True."""
-        from core.embeddings.manager import GPUArbiter
+        from _core.embeddings.manager import GPUArbiter
         arbiter = GPUArbiter()
         with patch('core.embeddings.manager._probe_gpu_fraction', return_value=0.95):
             result = arbiter.should_defer()
@@ -51,7 +51,7 @@ class TestGPUArbiterUnit:
 
     def test_should_defer_boundary_idle(self):
         """Fraction exactly 0.85 is NOT deferred (threshold is exclusive)."""
-        from core.embeddings.manager import GPUArbiter
+        from _core.embeddings.manager import GPUArbiter
         arbiter = GPUArbiter()
         with patch('core.embeddings.manager._probe_gpu_fraction', return_value=0.85):
             result = arbiter.should_defer()
@@ -59,7 +59,7 @@ class TestGPUArbiterUnit:
 
     def test_should_defer_boundary_pressure(self):
         """Fraction exactly 0.86 IS deferred (> threshold)."""
-        from core.embeddings.manager import GPUArbiter
+        from _core.embeddings.manager import GPUArbiter
         arbiter = GPUArbiter()
         with patch('core.embeddings.manager._probe_gpu_fraction', return_value=0.86):
             result = arbiter.should_defer()
@@ -68,7 +68,7 @@ class TestGPUArbiterUnit:
     @pytest.mark.asyncio
     async def test_wait_until_free_returns_true_when_idle(self):
         """wait_until_free returns True immediately when GPU is free."""
-        from core.embeddings.manager import GPUArbiter
+        from _core.embeddings.manager import GPUArbiter
         arbiter = GPUArbiter()
         with patch('core.embeddings.manager._probe_gpu_fraction', return_value=0.5):
             result = await arbiter.wait_until_free(timeout=2.0)
@@ -78,7 +78,7 @@ class TestGPUArbiterUnit:
     @pytest.mark.asyncio
     async def test_wait_until_free_returns_false_on_timeout(self):
         """wait_until_free returns False when GPU stays saturated past timeout."""
-        from core.embeddings.manager import GPUArbiter
+        from _core.embeddings.manager import GPUArbiter
         arbiter = GPUArbiter()
         # Always return 0.95 (> 0.85)
         with patch('core.embeddings.manager._probe_gpu_fraction', return_value=0.95):
@@ -90,7 +90,7 @@ class TestGPUArbiterUnit:
     @pytest.mark.asyncio
     async def test_wait_until_free_polls_until_recovered(self):
         """wait_until_free polls until GPU pressure drops, then returns True."""
-        from core.embeddings.manager import GPUArbiter
+        from _core.embeddings.manager import GPUArbiter
         arbiter = GPUArbiter()
         call_count = [0]
 
@@ -111,7 +111,7 @@ class TestGPUArbiterUnit:
     @pytest.mark.asyncio
     async def test_wait_until_free_zero_timeout_no_wait(self):
         """timeout=0 returns immediately with current defer state."""
-        from core.embeddings.manager import GPUArbiter
+        from _core.embeddings.manager import GPUArbiter
         arbiter = GPUArbiter()
         with patch('core.embeddings.manager._probe_gpu_fraction', return_value=0.95):
             t0 = time.monotonic()
@@ -122,7 +122,7 @@ class TestGPUArbiterUnit:
 
     def test_stats(self):
         """stats returns defer_count, poll_count, last_gpu_fraction."""
-        from core.embeddings.manager import GPUArbiter
+        from _core.embeddings.manager import GPUArbiter
         arbiter = GPUArbiter()
         with patch('core.embeddings.manager._probe_gpu_fraction', return_value=0.6):
             arbiter.should_defer()  # False
@@ -151,7 +151,7 @@ class TestGPUArbiterEncodeAsyncIntegration:
         with patch('core.embeddings.manager.MLX_AVAILABLE', True):
             with patch('core.embeddings.manager.GPUArbiter.should_defer', tracking_should_defer):
                 with patch('core.embeddings.manager.get_gpu_arbiter') as mock_get_arbiter:
-                    from core.embeddings.manager import GPUArbiter, MLXEmbeddingManager
+                    from _core.embeddings.manager import GPUArbiter, MLXEmbeddingManager
                     arbiter_instance = GPUArbiter()
                     mock_get_arbiter.return_value = arbiter_instance
                     mgr = MLXEmbeddingManager(lazy_load=True)
@@ -168,7 +168,7 @@ class TestProbeGpuFractionFailSafe:
 
     def test_should_defer_catches_exceptions(self):
         """should_defer returns False on any exception from _probe_gpu_fraction."""
-        from core.embeddings.manager import GPUArbiter
+        from _core.embeddings.manager import GPUArbiter
         arbiter = GPUArbiter()
         with patch('core.embeddings.manager._probe_gpu_fraction', side_effect=RuntimeError("mock")):
             result = arbiter.should_defer()

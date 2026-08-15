@@ -11,8 +11,8 @@ from hledac.universal.utils.mlx_memory import MLX_AVAILABLE
 mx = None
 nn = None
 
-from hledac.universal.core.resource_governor import Priority, ResourceGovernor
-from core import aclose
+from hledac.universal._core.resource_governor import Priority, ResourceGovernor
+from _core import aclose
 logger = logging.getLogger(__name__)
 try:
     import mlx_graphs as mxg

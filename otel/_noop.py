@@ -4,7 +4,7 @@
 import contextlib
 from collections.abc import Iterator
 from typing import Any
-from core import aclose
+from _core import aclose
 
 
 class _NoOpSpan:

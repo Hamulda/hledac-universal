@@ -31,7 +31,7 @@ RUNTIME A — ACTIVE (canonical sprint truth owner)
 # Sole canonical sprint owner — all report truth, timing truth,
 # export truth, and SprintSchedulerResult flow from here.
 # -------------------------------------------------------------------
-CANONICAL_SPRINT_OWNER: str = "hledac.universal.core.__main__.run_sprint"
+CANONICAL_SPRINT_OWNER: str = "hledac.universal._core.__main__.run_sprint"
 
 # -------------------------------------------------------------------
 # ACTIVE RUNTIME A files — may contribute to canonical sprint truth

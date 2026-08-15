@@ -33,7 +33,7 @@ from __future__ import annotations
 import warnings
 from importlib import import_module
 from typing import Final
-from core import aclose
+from _core import aclose
 
 __all__ = [
     "INTEL_RECON_MAP",

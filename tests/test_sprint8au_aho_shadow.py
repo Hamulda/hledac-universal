@@ -21,8 +21,11 @@ import pytest
 
 # Import the shadow module directly (not via hledac package path)
 sys.path.insert(0, "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal")
-from hledac.universal.utils.aho_extractor import (
-from core import aclose
+
+
+
+
+
     PILOT_PATTERNS,
     aho_scan_text,
     compare_aho_vs_regex,
@@ -34,6 +37,7 @@ from core import aclose
 # Module reference for cache manipulation in benchmark
 aho_module = sys.modules["hledac.universal.utils.aho_extractor"]
 
+from _core import aclose
 
 # ---------------------------------------------------------------------------
 # Test 1: singleton automaton — built once, reused

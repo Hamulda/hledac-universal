@@ -22,7 +22,7 @@ from typing import TYPE_CHECKING
 from hledac.universal.paths import LMDB_ROOT
 from hledac.universal.tools.file_cache import apply_nocache_to_path, madv_nocache_on_path  # R-03: was madv_free_reusable_on_path (broken)
 from hledac.universal.utils.msgspec_json import decode, encode
-from core import aclose
+from _core import aclose
 
 if TYPE_CHECKING:
     pass

@@ -43,7 +43,7 @@ import os
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
-from core import aclose
+from _core import aclose
 
 if TYPE_CHECKING:
     import lmdb
@@ -94,7 +94,7 @@ def _init_rust_crypto() -> bool:
     global _RUST_CRYPTO_AVAILABLE
     try:
         # R6: Centralized Rust access via core.rust_backend
-        from hledac.universal.core.rust_backend import rust
+        from hledac.universal._core.rust_backend import rust
 
         _ = rust.batch_encrypt_aes_gcm
         _ = rust.batch_decrypt_aes_gcm
@@ -111,7 +111,7 @@ def _rust_batch_encrypt(password: str, salt: bytes, items: list[str]) -> list[by
         return []
     try:
         # R6: Centralized Rust access via core.rust_backend
-        from hledac.universal.core.rust_backend import rust
+        from hledac.universal._core.rust_backend import rust
 
         result = rust.batch_encrypt_aes_gcm(password, salt, items)
         return [bytes(b) for b in result]
@@ -125,7 +125,7 @@ def _rust_batch_decrypt(password: str, salt: bytes, items: list[bytes]) -> list[
         return [None] * len(items)
     try:
         # R6: Centralized Rust access via core.rust_backend
-        from hledac.universal.core.rust_backend import rust
+        from hledac.universal._core.rust_backend import rust
 
         # PyO3 Vec<Vec<u8>> accepts bytes directly — no list() conversion needed
         result = rust.batch_decrypt_aes_gcm(password, salt, items)

@@ -38,9 +38,9 @@ import weakref
 import pytest
 
 # Importujeme testované komponenty
-from hledac.universal.core.lmdb_unified import SubDB, UnifiedLMDB, get_unified_lmdb
+from hledac.universal._core.lmdb_unified import SubDB, UnifiedLMDB, get_unified_lmdb
 from hledac.universal.knowledge.duckdb_store import DuckDBShadowStore
-from core import aclose
+from _core import aclose
 
 
 # =============================================================================
@@ -122,7 +122,7 @@ def mock_oom_condition():
     Mockuje psutil.virtual_memory tak, aby available ~= 1MB.
     """
     mock_vm = MockVirtualMemory(available_mb=1)
-    with patch('hledac.universal.core.psutil_shim.psutil.virtual_memory', return_value=mock_vm):
+    with patch('hledac.universal._core.psutil_shim.psutil.virtual_memory', return_value=mock_vm):
         yield mock_vm
 
 
@@ -159,7 +159,7 @@ def mock_high_memory_pressure():
     graceful degradation.
     """
     mock_vm = MockVirtualMemoryHighPressure()
-    with patch('hledac.universal.core.psutil_shim.psutil.virtual_memory', return_value=mock_vm):
+    with patch('hledac.universal._core.psutil_shim.psutil.virtual_memory', return_value=mock_vm):
         yield mock_vm
 
 
@@ -249,7 +249,7 @@ def chaos_monkey():
 
     # LMDB patches - lazy import
     try:
-        from hledac.universal.core import lmdb_unified as _lmdb_unified
+        from hledac.universal._core import lmdb_unified as _lmdb_unified
         if hasattr(_lmdb_unified.UnifiedLMDB, 'put'):
             monkey.patch_module(_lmdb_unified.UnifiedLMDB, 'put')
         if hasattr(_lmdb_unified.UnifiedLMDB, 'get'):
@@ -340,7 +340,7 @@ class TestLMDBChaosResilience:
         SPRÁVNÉ CHOVÁNÍ: OOMError by měla být zachycena internally
         a put() by měl vrátit False. Výjimka NESMÍ propagovat.
         """
-        from hledac.universal.core.lmdb_unified import SubDB
+        from hledac.universal._core.lmdb_unified import SubDB
 
         # SubDB je pouze konstanta (bez __init__)
         assert SubDB.TASK_CACHE == 12  # Verify constants exist

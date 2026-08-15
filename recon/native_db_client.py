@@ -44,7 +44,7 @@ def _probe_native_db() -> bool:
         return _native_db_available
 
     # R6: Centralized Rust access via core.rust_backend
-    from hledac.universal.core.rust_backend import rust
+    from hledac.universal._core.rust_backend import rust
     _rust = rust.raw.module
     if _rust is not None:
         _MongoDumper = getattr(_rust, "MongoDumper", None)
@@ -426,7 +426,7 @@ async def _dump_elasticsearch_python(
 # ---------------------------------------------------------------------------
 
 import re as _re
-from core import aclose
+from _core import aclose
 
 # Compiled once at module level for O(1) reuse
 _VERSION_RE = _re.compile(r'"version"\s*:\s*"([^"]+)"')

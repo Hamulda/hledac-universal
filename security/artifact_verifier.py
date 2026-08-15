@@ -38,8 +38,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Literal
 
-from hledac.universal.core.feature_flags import FeatureFlag, FeatureFlags
-from core import aclose
+from hledac.universal._core.feature_flags import FeatureFlag, FeatureFlags
+from _core import aclose
 
 logger = logging.getLogger(__name__)
 

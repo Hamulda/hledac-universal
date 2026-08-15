@@ -2,8 +2,11 @@
 
 import unittest
 
-from hledac.universal.runtime.sprint_scheduler import (
-from core import aclose
+
+
+
+
+
     SPRINT_TIERS,
     SprintSchedulerConfig,
     SprintTooShortError,
@@ -14,6 +17,7 @@ from core import aclose
 class TestF253SprintTiers(unittest.TestCase):
     """Verify sprint tier detection and SPRINT_TIERS definitions."""
 
+from _core import aclose
     def test_quick_tier_duration_range_60_to_179(self):
         """60-179s sprint → tier='quick'."""
         self.assertEqual(detect_sprint_tier(60), "quick")

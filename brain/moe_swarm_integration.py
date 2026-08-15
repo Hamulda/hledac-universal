@@ -55,8 +55,11 @@ from .micro_model_pool import (
     TaskType,
 )
 from .micro_model_swarm import create_micro_model_pool  # P3-1 FIX: was importing from micro_model_pool (wrong module)
-from .micro_model_swarm import (
-from core import aclose
+
+
+
+
+
     MicroModelSwarmRouter,
     create_swarm_router,
 )
@@ -65,6 +68,7 @@ if TYPE_CHECKING:
     import mlx.core as mx
     import mlx.nn as mlx_nn
 
+from _core import aclose
 logger = logging.getLogger(__name__)
 
 

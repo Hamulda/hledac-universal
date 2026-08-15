@@ -108,7 +108,7 @@ _TRANSCRIBE_TIMEOUT_S = 600.0    # 10 min max per transcription
 _MODEL_DOWNLOAD_TIMEOUT_S = 300.0  # 5 min max for model download
 
 # Runtime feature flags
-from hledac.universal.core.feature_flags import FeatureFlag, FeatureFlags
+from hledac.universal._core.feature_flags import FeatureFlag, FeatureFlags
 _WHISPER_ENABLED_BY_ENV = FeatureFlags.get(FeatureFlag.WHISPER)
 _WHISPER_DISABLED_BY_ENV = FeatureFlags.get(FeatureFlag.DISABLE_WHISPER)
 
@@ -143,8 +143,8 @@ class TranscriptionResult(msgspec.Struct, frozen=True, gc=False):
 # [FINAL]-019-07: Capability cost registration for QoS ladder triage.
 # whisper (tiny model): rss_mb=70, peak_mb=114 (CoreML encoder + runtime)
 # whisper (base model): rss_mb=114, peak_mb=154
-from hledac.universal.core.capability_cost import register_capability_cost
-from core import aclose
+from hledac.universal._core.capability_cost import register_capability_cost
+from _core import aclose
 register_capability_cost("whisperengine", rss_mb=70, peak_mb=114, tier="medium", tags=("speech", "gpu", "ane"))
 
 # ─── Lazy capability detection ───────────────────────────────────────────────
@@ -225,7 +225,7 @@ def is_whisper_available() -> bool:
     # Lazy import avoids circular dependency; fail-open so governor unavailability
     # never blocks whisper (the governor sets whisper_ok=False explicitly in those modes).
     try:
-        from hledac.universal.core.resource_governor import QoSLevel, get_current_degradation_level
+        from hledac.universal._core.resource_governor import QoSLevel, get_current_degradation_level
         level = get_current_degradation_level()
         if level is QoSLevel.EMERGENCY or level is QoSLevel.BATTERY:
             return False

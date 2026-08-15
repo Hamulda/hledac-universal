@@ -8,7 +8,7 @@ Submodules:
     discovery.py  — URL/IP/regex patterns for discovery
 """
 from __future__ import annotations
-from core import aclose
+from _core import aclose
 
 __all__: list[str] = []
 

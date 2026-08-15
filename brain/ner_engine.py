@@ -1037,7 +1037,7 @@ def get_extraction_status() -> dict:
 import math as _math
 import re as _re
 from hledac.universal.utils.asyncx import safe_wait_for
-from core import aclose
+from _core import aclose
 
 # OSINT-01 FIX: Use `regex` module (linear-time guarantees) instead of `re` for
 # domain pattern. The `re` module's Python engine suffers catastrophic backtracking

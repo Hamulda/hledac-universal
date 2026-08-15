@@ -19,7 +19,7 @@ import os
 from typing import Any
 
 from hledac.universal.utils._patterns import LazyLockDescriptor  # F320-REFACTOR-2
-from core import aclose
+from _core import aclose
 
 logger = logging.getLogger(__name__)
 _MOBILECLIP_ENV_GATE = 'HLEDAC_ENABLE_MOBILECLIP'
@@ -446,7 +446,7 @@ class IdentityFusion:
     def _init_crossmodal_store(self) -> None:
         """Initialize Rust-backed cross-modal LSH store."""
         try:
-            from hledac.universal.core.rust_backend import rust
+            from hledac.universal._core.rust_backend import rust
             if hasattr(rust.ane, 'crossmodal_store_face'):
                 self._crossmodal_store = rust.ane
                 self._lsh_available = True

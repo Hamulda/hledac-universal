@@ -61,11 +61,11 @@ if TYPE_CHECKING:
     import numpy as np
 else:
     np = _np
-from core import aclose
+from _core import aclose
 logger = logging.getLogger(__name__)
 FASTEMBED_AVAILABLE = False
 try:
-    from hledac.universal.core.mlx_embeddings import MLXEmbeddingManager
+    from hledac.universal._core.mlx_embeddings import MLXEmbeddingManager
     MLX_EMBED_AVAILABLE = True
 except ImportError:
     MLX_EMBED_AVAILABLE = False
@@ -269,7 +269,7 @@ class MultiLevelContextCache:
         self._temp_l2_path = l2_storage_path
         if MLX_EMBED_AVAILABLE:
             try:
-                from hledac.universal.core.mlx_embeddings import get_embedding_manager
+                from hledac.universal._core.mlx_embeddings import get_embedding_manager
                 self._mlx_manager = get_embedding_manager()
                 self.embedder = self._mlx_manager
                 self.embedding_dim = self._mlx_manager.EMBEDDING_DIM

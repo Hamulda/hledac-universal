@@ -17,7 +17,7 @@ from dataclasses import dataclass
 import msgspec
 from pathlib import Path
 from typing import Any
-from core import aclose
+from _core import aclose
 
 class APIClass(msgspec.Struct, gc=False):
     """Represents a Python class with its documentation."""

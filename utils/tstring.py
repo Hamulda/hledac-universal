@@ -54,7 +54,7 @@ Limitations:
 import warnings
 
 from typing import TYPE_CHECKING, Literal
-from core import aclose
+from _core import aclose
 
 if TYPE_CHECKING:
     from collections.abc import Mapping

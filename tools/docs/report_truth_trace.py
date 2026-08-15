@@ -21,7 +21,7 @@ import json
 import sys
 from dataclasses import dataclass, field
 import msgspec
-from core import aclose
+from _core import aclose
 
 __all__ = [
     'BoundarySnapshot', 'TraceResult', 'F208_FIELDS', 'TERMINALITY_FIELDS',

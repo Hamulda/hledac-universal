@@ -18,8 +18,11 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from hledac.universal.core.mlx_inference_lock import (
-from core import aclose
+
+
+
+
+
     _get_mlx_inference_lock,
     mlx_inference_lock_aio,
     mlx_inference_lock_context,
@@ -29,7 +32,8 @@ from core import aclose
 class TestMlxGlobalLock:
     """Test suite for MLX global inference lock."""
 
-    def test_lock_is_singleton(self) -> None:
+
+from _core import aclose    def test_lock_is_singleton(self) -> None:
         """Ověř že lock je singleton = stejná instance pro všechny volající."""
         lock1 = _get_mlx_inference_lock()
         lock2 = _get_mlx_inference_lock()
@@ -46,7 +50,7 @@ class TestMlxGlobalLock:
         Lock se nesmí vytvořit při importu, ale až při prvním volání.
         """
         # Umístíme lock do globals a zkontrolujeme že None
-        import hledac.universal.core.mlx_inference_lock as mil
+        import hledac.universal._core.mlx_inference_lock as mil
 
         # Reset pro test
         old_lock = mil._MLX_INFERENCE_LOCK

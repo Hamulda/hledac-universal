@@ -8,7 +8,7 @@ Yields markdown sections as IOC rows are processed — O(1) memory for large set
 
 import asyncio
 from collections.abc import AsyncGenerator
-from core import aclose
+from _core import aclose
 
 __all__ = ["stream_ioc_table_section"]
 

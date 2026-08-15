@@ -8,7 +8,7 @@ Provides a bounded pool of LightpandaManager instances.
 import asyncio
 import logging
 from typing import TYPE_CHECKING
-from core import aclose
+from _core import aclose
 if TYPE_CHECKING:
     from hledac.universal.tools.lightpanda_manager import LightpandaManager
 logger = logging.getLogger(__name__)

@@ -11,7 +11,7 @@ from typing import TYPE_CHECKING, Any, Final, cast
 from hledac.universal.utils.cache import PyCacheDict
 
 if TYPE_CHECKING:
-    from hledac.universal.core.rust_backend import rust as _rust_backend
+    from hledac.universal._core.rust_backend import rust as _rust_backend
 
 # Module-level Rust backend reference (lazy)
 _rust_backend: Any = None
@@ -21,7 +21,7 @@ def _get_rust_backend() -> Any:
     """Lazy load Rust backend to avoid circular imports at module load time."""
     global _rust_backend
     if _rust_backend is None:
-        from hledac.universal.core.rust_backend import rust
+        from hledac.universal._core.rust_backend import rust
         _rust_backend = rust
     return _rust_backend
 
@@ -294,4 +294,4 @@ def looks_like_feed_url(url: str) -> bool:
 
 
 import functools
-from core import aclose
+from _core import aclose

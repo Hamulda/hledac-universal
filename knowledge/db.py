@@ -42,7 +42,7 @@ from hledac.universal.compat.msgspec_gc_compat import Struct
 from functools import cached_property
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
-from core import aclose
+from _core import aclose
 
 if TYPE_CHECKING:
     pass  # DuckDBShadowStore loaded lazily to avoid circular imports
@@ -464,7 +464,7 @@ class UnifiedDatabaseFacade:
         """
         try:
             # R6: Centralized Rust access via core.rust_backend
-            from hledac.universal.core.rust_backend import rust
+            from hledac.universal._core.rust_backend import rust
             validate_batch = rust.raw.validate_batch
             validate_batch(arrow_batch, schema)
         except ImportError:

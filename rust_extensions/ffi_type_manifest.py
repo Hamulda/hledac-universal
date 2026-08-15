@@ -896,7 +896,7 @@ def generate_pyi_header() -> str:
 
 from collections.abc import Callable
 from typing import Any, overload
-from core import aclose
+from _core import aclose
 
 # PyO3 classes (#[pyclass])
 

@@ -29,19 +29,23 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-from hledac.universal.core.capabilities import CAPS, CURL_CFFI
+from hledac.universal._core.capabilities import CAPS, CURL_CFFI
 
 # Re-export all public symbols from canonical implementation
 # This maintains backward compatibility while adding CAPS enforcement
 # E2 FIX: All curl_cffi access goes through this layer
-from hledac.universal.transport.curl_cffi_fetch import (
-from core import aclose
+
+
+
+
+
     # Core fetch functions
     fetch_via_curl_cffi,  # E2: canonical entry point
     fetch_via_curl_cffi_cached,  # GET with conditional-GET (304) shortcut
     fetch_via_tor_curl_cffi,  # E2: darknet Tor SOCKS5H fetch
     fetch_via_i2p_curl_cffi,  # darknet I2P SOCKS5H fetch
-    # Capability checks
+
+from _core import aclose    # Capability checks
     is_curl_cffi_available,
     async_get_curl_cffi_session,
     async_get_curl_cffi_session_for_host,

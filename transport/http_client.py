@@ -90,7 +90,7 @@ from enum import Enum, auto
 from typing import TYPE_CHECKING, Any, Literal, Self
 
 import msgspec
-from core import aclose
+from _core import aclose
 
 if TYPE_CHECKING:
     import httpx
@@ -222,7 +222,7 @@ class _SemaphoreManager:
     async def _get_global_limit(self) -> int:
         """Get current global concurrency limit from registry (UMA-aware)."""
         try:
-            from hledac.universal.core.concurrency_registry import (
+            from hledac.universal._core.concurrency_registry import (
                 ConcurrencyCategory,
                 concurrency_budget,
             )
@@ -811,7 +811,7 @@ class HttpTransport:
         headers: dict[str, str], t0: float,
     ) -> HttpResult:
         """Execute fetch via curl_cffi AsyncSession."""
-        from hledac.universal.core.env_config import ENV
+        from hledac.universal._core.env_config import ENV
         from hledac.universal.transport.unified_transport import (
             TransportKind,
             _I2P_PROXY,
@@ -1013,7 +1013,7 @@ class HttpTransport:
         # Resolve concurrency
         if concurrency is None:
             try:
-                from hledac.universal.core.concurrency_registry import (
+                from hledac.universal._core.concurrency_registry import (
                     ConcurrencyCategory,
                     concurrency_budget,
                 )

@@ -3,7 +3,7 @@ import pytest
 from unittest.mock import MagicMock
 
 from runtime.scorecard import ScorecardBuilder
-from core import aclose
+from _core import aclose
 
 
 class MockFinding:

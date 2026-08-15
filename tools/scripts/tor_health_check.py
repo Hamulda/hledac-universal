@@ -11,7 +11,7 @@ Exit: 0 = healthy, 1 = Tor unreachable, 2 = other error
 
 import os
 import sys
-from core import aclose
+from _core import aclose
 
 SOCKS_PROXY = os.environ.get("TOR_SOCKS_PROXY_URL", "socks5h://127.0.0.1:9050")
 CHECK_URL = "https://check.torproject.org"

@@ -15,8 +15,8 @@ from typing import TYPE_CHECKING, Any, Final
 if TYPE_CHECKING:
     pass
 
-from hledac.universal.core.env_config import ENV
-from core import aclose
+from hledac.universal._core.env_config import ENV
+from _core import aclose
 
 # --- Camoufox lock (lazy initialization) ---
 _CAMOUFOX_LOCK: asyncio.Lock | None = None
@@ -63,7 +63,7 @@ def _get_js_renderer_semaphore() -> asyncio.Semaphore:
     global _JS_RENDERER_SEMAPHORE
     if _JS_RENDERER_SEMAPHORE is not None:
         return _JS_RENDERER_SEMAPHORE
-    from hledac.universal.core.concurrency import ConcurrencyCategory, get_semaphore
+    from hledac.universal._core.concurrency import ConcurrencyCategory, get_semaphore
     _JS_RENDERER_SEMAPHORE = get_semaphore(ConcurrencyCategory.JS_RENDERER)
     return _JS_RENDERER_SEMAPHORE
 

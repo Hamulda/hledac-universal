@@ -31,7 +31,7 @@ from dataclasses import dataclass, field
 from enum import IntEnum
 from typing import Optional
 from collections.abc import Callable
-from core import aclose
+from _core import aclose
 
 
 class DegradedMode(IntEnum):

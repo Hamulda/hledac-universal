@@ -16,8 +16,11 @@ from .path_discovery import (
     SequentialPathPattern,
     ShadowWalkerAlgorithm,
 )
-from .utils import (
-from core import aclose
+
+
+
+
+
     Harvester,
     LinkCheckResult,
     LinkRotDetector,
@@ -34,7 +37,8 @@ from core import aclose
 __all__ = [
     # Path Discovery
     "ShadowWalkerAlgorithm",
-    "PathPatternAnalyzer",
+
+from _core import aclose    "PathPatternAnalyzer",
     "DatePathPattern",
     "SequentialPathPattern",
     "FilePathPattern",

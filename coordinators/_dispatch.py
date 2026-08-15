@@ -36,7 +36,7 @@ import time
 from collections.abc import Awaitable, Callable
 from hledac.universal.compat.msgspec_gc_compat import Struct
 from typing import TYPE_CHECKING, Any
-from core import aclose
+from _core import aclose
 
 if TYPE_CHECKING:
     from ._dto import DecisionResponse, OperationResult

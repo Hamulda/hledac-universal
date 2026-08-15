@@ -22,7 +22,7 @@ import ast
 import argparse
 import sys
 from pathlib import Path
-from core import aclose
+from _core import aclose
 
 
 def find_violations(root: Path, fix: bool = False) -> list[tuple[Path, int, str]]:

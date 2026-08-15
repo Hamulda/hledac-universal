@@ -44,7 +44,7 @@ from typing import Any, TYPE_CHECKING
 
 import msgspec
 
-from hledac.universal.core.feature_flags import FeatureFlag, FeatureFlags
+from hledac.universal._core.feature_flags import FeatureFlag, FeatureFlags
 from hledac.universal.utils.asyncx import safe_wait_for
 
 logger = logging.getLogger(__name__)
@@ -530,7 +530,7 @@ if str(_PROJECT_ROOT) not in sys.path:
 def try_rust_whisper(audio_path: str, model_size: str, language: str | None) -> dict | None:
     """Try Rust whisper (CoreML/ANE acceleration) first."""
     try:
-        from hledac.universal.core.rust_backend import rust
+        from hledac.universal._core.rust_backend import rust
         
         if not rust.whisper.is_available():
             return None
@@ -1030,7 +1030,7 @@ class MediaSandboxCoordinator:
         # ── Priority 1: Rust whisper (CoreML/ANE acceleration) ──────────────────
         # SILICON-02: Rust whisper.cpp with dedicated ANE memory, M1 8GB safe
         try:
-            from hledac.universal.core.rust_backend import rust
+            from hledac.universal._core.rust_backend import rust
 
             if rust.whisper.is_available():
                 # D5 FIX: safe_wait_for for correct TaskGroup composition
@@ -1439,7 +1439,7 @@ class MediaSandboxCoordinator:
         # Build analysis script
         analysis_script = f"""
 import sys, os
-from core import aclose
+from _core import aclose
 for k in list(os.environ):
     if any(p in k for p in ('API','KEY','TOKEN','SECRET','HLEDAC')):
         del os.environ[k]

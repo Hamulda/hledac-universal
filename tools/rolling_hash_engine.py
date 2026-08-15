@@ -18,8 +18,8 @@ from typing import Any
 # -----------------------------------------------------------------------------
 _RUST_RH_AVAILABLE = False
 # R6: Centralized Rust access via core.rust_backend
-from hledac.universal.core.rust_backend import rust
-from core import aclose
+from hledac.universal._core.rust_backend import rust
+from _core import aclose
 if rust.is_available:
     _RustRhEngine = rust.raw.RollingHashEngine
     _RUST_RH_AVAILABLE = _RustRhEngine is not None

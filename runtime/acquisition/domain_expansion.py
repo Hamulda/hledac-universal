@@ -19,7 +19,7 @@ GHOST_INVARIANTS:
 
 import re
 from typing import TYPE_CHECKING, Any
-from core import aclose
+from _core import aclose
 
 if TYPE_CHECKING:
     # Lazy import only for type checking — not executed at runtime

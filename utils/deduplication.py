@@ -57,7 +57,7 @@ except ImportError:
 _rust_lsh_available = False
 _rust_lsh = None
 try:
-    from hledac.universal.core.rust_backend import rust
+    from hledac.universal._core.rust_backend import rust
     _rust_lsh = rust.lsh
     _rust_lsh_available = True  # Always available (Rust or Python fallback)
 except ImportError:
@@ -66,7 +66,7 @@ except ImportError:
 # ISSUE-008: Two-layer embedding cache — float16 L1 + np.memmap L2 (M1 8GB safe)
 _embedding_cache = None
 try:
-    from hledac.universal.core.embedding_cache import EmbeddingCache
+    from hledac.universal._core.embedding_cache import EmbeddingCache
     _embedding_cache = EmbeddingCache
 except ImportError:
     _embedding_cache = None
@@ -362,7 +362,7 @@ class SemanticDeduplicator(BaseDeduplicator):
     async def _load_model(self):
         """Load MLXEmbeddingManager first, then sentence-transformers fallback, then hash-based."""
         try:
-            from hledac.universal.core.mlx_embeddings import get_embedding_manager
+            from hledac.universal._core.mlx_embeddings import get_embedding_manager
             self._embedding_model = get_embedding_manager()
             self._model_loaded = True
             self.logger.info(f'[DEDUP] Using shared MLXEmbeddingManager: {self._embedding_model.model_path}')
@@ -1035,8 +1035,8 @@ _TOKEN_HASH_CACHE: dict[tuple[str, int], int] = {}
 _TOKEN_HASH_CACHE_LOCK = threading.Lock()
 _MAX_TOKEN_CACHE = 10000
 # R6: Centralized Rust access via core.rust_backend
-from hledac.universal.core.rust_backend import rust
-from core import aclose
+from hledac.universal._core.rust_backend import rust
+from _core import aclose
 _rust_hamming_dist: Callable[[int, int], int] | None = rust.raw.hamming_dist
 
 class TopKBucketIndex:

@@ -31,7 +31,7 @@ from dataclasses import dataclass
 import msgspec
 from enum import Enum
 from typing import Protocol, runtime_checkable
-from core import aclose
+from _core import aclose
 logger = logging.getLogger(__name__)
 
 class HPKEAvailability(Enum):

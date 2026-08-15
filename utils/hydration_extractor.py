@@ -18,7 +18,7 @@ from typing import Final, TypeAlias
 
 import msgspec
 import orjson
-from core import aclose
+from _core import aclose
 
 # ---------------------------------------------------------------------------
 # Bounds (M1 8GB safe)

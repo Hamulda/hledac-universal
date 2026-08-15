@@ -31,7 +31,7 @@ from hledac.universal.compat.msgspec_gc_compat import Struct
 from hledac.universal.utils.asyncx import first_completed, parallel, safe_create_task  # ISSUE-15
 
 from .base import DecisionResponse, ExecutionResult, OperationResult, OperationType, UniversalCoordinator
-from core import aclose
+from _core import aclose
 
 logger = logging.getLogger(__name__)
 
@@ -614,7 +614,7 @@ class UniversalExecutionCoordinator(UniversalCoordinator):
             return {'success': True, 'steps_executed': 0, 'successful_steps': 0, 'failed_steps': 0, 'results': []}
         step_coros = [self.execute_action(s.get('action', 'search'), s.get('payload', {})) for s in plan]
         # F1 FIX: execution steps use SCRAPE_GENERAL for dynamic UMA-aware concurrency
-        from hledac.universal.core.concurrency_registry import ConcurrencyCategory, concurrency_budget
+        from hledac.universal._core.concurrency_registry import ConcurrencyCategory, concurrency_budget
         exec_concurrency = await concurrency_budget(ConcurrencyCategory.SCRAPE_GENERAL)
         result = await parallel(step_coros, concurrency=exec_concurrency, policy="collect", ctx='execution_coordinator.execute_plan')
         results = result.ok

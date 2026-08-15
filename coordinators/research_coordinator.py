@@ -46,7 +46,7 @@ from hledac.universal.utils.asyncx import ParallelResult, parallel, safe_create_
 from hledac.universal.utils.msgspec_json import encode as _msgspec_encode
 
 from .base import DecisionResponse, ExecutionResult, OperationResult, OperationType, UniversalCoordinator
-from core import aclose
+from _core import aclose
 
 _level_stats_factory: defaultdict[str, dict[str, int]] = defaultdict(lambda: {'explored': 0, 'relevant': 0})
 logger = logging.getLogger(__name__)

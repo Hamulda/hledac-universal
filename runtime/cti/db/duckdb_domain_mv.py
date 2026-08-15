@@ -27,8 +27,8 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from hledac.universal.core.locks import LockCategory, make_lock
-from core import aclose
+from hledac.universal._core.locks import LockCategory, make_lock
+from _core import aclose
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator

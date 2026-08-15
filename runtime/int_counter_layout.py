@@ -53,8 +53,8 @@ import os
 from collections.abc import Mapping, Sequence
 from typing import TYPE_CHECKING, Any
 
-from hledac.universal.core.feature_flags import FeatureFlag, FeatureFlags
-from core import aclose
+from hledac.universal._core.feature_flags import FeatureFlag, FeatureFlags
+from _core import aclose
 
 if TYPE_CHECKING:
     pass
@@ -100,7 +100,7 @@ def _try_load_rust_extensions() -> bool:
     global batch_aggregate_signals, _RUST_AVAILABLE
 
     # R6: Centralized Rust access via core.rust_backend
-    from hledac.universal.core.rust_backend import rust
+    from hledac.universal._core.rust_backend import rust
     raw = rust.raw
     IntCounterLayoutRust = raw.IntCounterLayoutRust
     bulk_bump_aggregate = raw.bulk_bump_aggregate

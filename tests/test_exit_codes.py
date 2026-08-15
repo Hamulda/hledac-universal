@@ -22,7 +22,7 @@ import subprocess
 import sys
 import textwrap
 from pathlib import Path
-from core import aclose
+from _core import aclose
 
 REPO_ROOT = Path("/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal")
 HLEDAC_PARENT = "/Users/vojtechhamada/PycharmProjects/Hledac"
@@ -93,7 +93,7 @@ def test_nameerror_in_run_sprint_exits_3() -> None:
         # Patch the canonical sprint owner: __main__.py does
         #   from .core.__main__ import run_sprint as _core_run_sprint
         # so we must patch `core.__main__.run_sprint`, not `core.run_sprint`.
-        from hledac.universal.core import __main__ as _core_main
+        from hledac.universal._core import __main__ as _core_main
         def _boom(*_a, **_kw):
             raise NameError("exit_code_probe: mocked regression")
         _core_main.run_sprint = _boom
@@ -122,7 +122,7 @@ def test_importerror_in_run_sprint_exits_3() -> None:
             "hledac.universal",
             "--sprint", "exit_code_probe", "--duration", "300",
         ]
-        from hledac.universal.core import __main__ as _core_main
+        from hledac.universal._core import __main__ as _core_main
         def _boom(*_a, **_kw):
             raise ImportError("exit_code_probe: missing optional dep")
         _core_main.run_sprint = _boom
@@ -210,7 +210,7 @@ def test_keyboardinterrupt_exits_130() -> None:
             "hledac.universal",
             "--sprint", "exit_code_probe", "--duration", "300",
         ]
-        from hledac.universal.core import __main__ as _core_main
+        from hledac.universal._core import __main__ as _core_main
         def _boom(*_a, **_kw):
             raise KeyboardInterrupt()
         _core_main.run_sprint = _boom
@@ -238,7 +238,7 @@ def test_systemexit_not_swallowed_by_catchall() -> None:
             "hledac.universal",
             "--sprint", "exit_code_probe", "--duration", "300",
         ]
-        from hledac.universal.core import __main__ as _core_main
+        from hledac.universal._core import __main__ as _core_main
         def _boom(*_a, **_kw):
             sys.exit(2)
         _core_main.run_sprint = _boom

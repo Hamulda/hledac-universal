@@ -30,19 +30,84 @@ class TestMLXImportHardening(unittest.IsolatedAsyncioTestCase):
         )
         return result.returncode, result.stdout, result.stderr
 
-    def test_ssm_reranker_imports_without_mlx(self):
-        """ssm_reranker.py imports successfully when mlx unavailable."""
-        code = '''
-from hledac.universal.prefetch import ssm_reranker
-print("MLX_AVAILABLE:", ssm_reranker.MLX_AVAILABLE)
-print("mx_none:", ssm_reranker.mx is None)
-print("nn_none:", ssm_reranker.nn is None)
+    def _assert_mlx_unavailable(
+        self,
+        module_name: str,
+        extra_assertions: list[str] | None = None,
+    ) -> tuple[int, str, str]:
+        """Run import test and assert mlx is unavailable.
+
+        Args:
+            module_name: Full import path, e.g. 'prefetch.ssm_reranker'
+            extra_assertions: List of extra assertions like 'nn_none: True'
+
+        Returns:
+            Tuple of (returncode, stdout, stderr) from the subprocess.
+        """
+        # Build assertions based on module
+        assertions = [
+            '"MLX_AVAILABLE: False\\n"',
+            '"mx_none: True\\n"',
+        ]
+        if extra_assertions:
+            assertions.extend(extra_assertions)
+
+        code = f'''
+from hledac.universal.{module_name} import {module_name.split(".")[-1]}
+print("MLX_AVAILABLE:", {module_name.split(".")[-1]}.MLX_AVAILABLE)
+print("mx_none:", {module_name.split(".")[-1]}.mx is None)
 '''
+        if extra_assertions:
+            module_var = module_name.split(".")[-1]
+            for extra in extra_assertions:
+                attr = extra.split(":")[0].strip()
+                code += f'print("{attr}:", {module_var}.{attr} is None)\\n'
+
+        rc, stdout, stderr = self._run_blocked(code)
+        self.assertEqual(rc, 0, f"Import failed: {stderr}")
+        for assertion in assertions:
+            self.assertIn(assertion, stdout)
+        return rc, stdout, stderr
+
+    def _assert_module_imports_without_mlx(
+        self,
+        module_path: str,
+        attr_name: str,
+        extra_attrs: list[str] | None = None,
+    ) -> tuple[int, str, str]:
+        """Helper: assert a module imports successfully when mlx is unavailable.
+
+        Args:
+            module_path: Full import path e.g. 'prefetch.ssm_reranker'
+            attr_name: Module attribute name e.g. 'ssm_reranker'
+            extra_attrs: Additional attributes to check (beyond MLX_AVAILABLE and mx)
+
+        Returns:
+            Tuple of (rc, stdout, stderr) for additional assertions.
+        """
+        code = f'''
+from hledac.universal.{module_path} import {attr_name}
+print("MLX_AVAILABLE:", {attr_name}.MLX_AVAILABLE)
+print("mx_none:", {attr_name}.mx is None)
+'''
+        if extra_attrs:
+            for attr in extra_attrs:
+                code += f'print("{attr}_none:", {attr_name}.{attr} is None)\n'
+
         rc, stdout, stderr = self._run_blocked(code)
         self.assertEqual(rc, 0, f"Import failed: {stderr}")
         self.assertIn("MLX_AVAILABLE: False\n", stdout)
         self.assertIn("mx_none: True\n", stdout)
-        self.assertIn("nn_none: True\n", stdout)
+        if extra_attrs:
+            for attr in extra_attrs:
+                self.assertIn(f"{attr}_none: True\n", stdout)
+        return rc, stdout, stderr
+
+    def test_ssm_reranker_imports_without_mlx(self):
+        """ssm_reranker.py imports successfully when mlx unavailable."""
+        self._assert_module_imports_without_mlx(
+            "prefetch.ssm_reranker", "ssm_reranker", extra_attrs=["nn"]
+        )
 
     def test_ssm_reranker_stub_raises_on_instantiation(self):
         """SSMReranker stub raises ImportError when instantiated without mlx."""
@@ -60,15 +125,7 @@ except ImportError as e:
 
     def test_prefetch_oracle_imports_without_mlx(self):
         """prefetch_oracle.py imports successfully when mlx unavailable."""
-        code = '''
-from hledac.universal.prefetch import prefetch_oracle
-print("MLX_AVAILABLE:", prefetch_oracle.MLX_AVAILABLE)
-print("mx_none:", prefetch_oracle.mx is None)
-'''
-        rc, stdout, stderr = self._run_blocked(code)
-        self.assertEqual(rc, 0, f"Import failed: {stderr}")
-        self.assertIn("MLX_AVAILABLE: False\n", stdout)
-        self.assertIn("mx_none: True\n", stdout)
+        self._assert_module_imports_without_mlx("prefetch.prefetch_oracle", "prefetch_oracle")
 
     def test_prefetch_oracle_methods_fail_soft(self):
         """prefetch_oracle.py methods degrade gracefully without mlx."""
@@ -100,15 +157,7 @@ print("features_is_numpy:", isinstance(features, np.ndarray))
 
     def test_qmix_imports_without_mlx(self):
         """qmix.py imports successfully when mlx unavailable."""
-        code = '''
-from hledac.universal.rl import qmix
-print("MLX_AVAILABLE:", qmix.MLX_AVAILABLE)
-print("mx_none:", qmix.mx is None)
-'''
-        rc, stdout, stderr = self._run_blocked(code)
-        self.assertEqual(rc, 0, f"Import failed: {stderr}")
-        self.assertIn("MLX_AVAILABLE: False\n", stdout)
-        self.assertIn("mx_none: True\n", stdout)
+        self._assert_module_imports_without_mlx("rl.qmix", "qmix")
 
     def test_qmix_stubs_raise_on_instantiation(self):
         """qmix stubs raise ImportError when instantiated without mlx."""
@@ -187,15 +236,7 @@ print("result_numpy:", isinstance(result, np.ndarray))
 
     def test_task_prioritizer_imports_without_mlx(self):
         """task_prioritizer.py imports successfully when mlx unavailable."""
-        code = '''
-from hledac.universal.research import task_prioritizer
-print("MLX_AVAILABLE:", task_prioritizer.MLX_AVAILABLE)
-print("mx_none:", task_prioritizer.mx is None)
-'''
-        rc, stdout, stderr = self._run_blocked(code)
-        self.assertEqual(rc, 0, f"Import failed: {stderr}")
-        self.assertIn("MLX_AVAILABLE: False\n", stdout)
-        self.assertIn("mx_none: True\n", stdout)
+        self._assert_module_imports_without_mlx("research.task_prioritizer", "task_prioritizer")
 
     def test_task_prioritizer_stub_raises_on_instantiation(self):
         """TaskPrioritizer stub raises ImportError when instantiated without mlx."""
@@ -221,7 +262,7 @@ except ImportError as e:
 from hledac.universal.prefetch import ssm_reranker, prefetch_oracle
 from hledac.universal.rl import qmix, replay_buffer, state_extractor
 from hledac.universal.research import task_prioritizer
-from core import aclose
+from _core import aclose
 
 # Check no REAL (non-None) mlx modules loaded
 real_mlx_keys = [m for m in sys.modules

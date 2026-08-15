@@ -20,7 +20,7 @@ import asyncio
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from core import aclose
+from _core import aclose
 
 
 class TestDeepProbeInvariants:
@@ -252,7 +252,7 @@ class TestDeepProbeExportNonBlocking:
         mock_store = AsyncMock()
         mock_store.async_healthcheck = AsyncMock(return_value=True)
 
-        with patch("hledac.universal.core.__main__.export_sprint", mock_export):
+        with patch("hledac.universal._core.__main__.export_sprint", mock_export):
             with patch("hledac.universal.deep_research.probe_runner.run_deep_probe_if_enabled", mock_probe):
                 # Simulate the sequential flow in run_sprint
                 await mock_export()  # First: await export

@@ -12,7 +12,7 @@ Output: actionable diagnosis string + per-phase timing breakdown.
 """
 
 from typing import Any
-from core import aclose
+from _core import aclose
 
 
 def _compute_runtime_diagnosis(signals: Any) -> dict:

@@ -11,7 +11,7 @@ from dataclasses import dataclass
 import msgspec
 from typing import Any
 from hledac.universal.utils.asyncx import parallel_ok
-from core import aclose
+from _core import aclose
 logger = logging.getLogger(__name__)
 
 class LinkCheckResult(msgspec.Struct, gc=False):
@@ -120,7 +120,7 @@ class LinkRotDetector:
         Returns:
             List of LinkCheckResult
         """
-        from hledac.universal.core.concurrency import ConcurrencyCategory, get_semaphore
+        from hledac.universal._core.concurrency import ConcurrencyCategory, get_semaphore
         semaphore = get_semaphore(ConcurrencyCategory.SCRAPE_GENERAL)
 
         async def check_with_limit(url: str) -> LinkCheckResult:

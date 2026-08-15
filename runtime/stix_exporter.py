@@ -34,7 +34,7 @@ import uuid
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from typing import Any
-from core import aclose
+from _core import aclose
 
 logger = logging.getLogger(__name__)
 
@@ -48,7 +48,7 @@ def _get_rust_stix():
     global _RUST_STIX
     if _RUST_STIX is None:
         # R6: Centralized Rust access via core.rust_backend
-        from hledac.universal.core.rust_backend import rust
+        from hledac.universal._core.rust_backend import rust
         _rust = rust.stix
         if _rust is not None and hasattr(_rust, "encode_finding"):
             _RUST_STIX = _rust

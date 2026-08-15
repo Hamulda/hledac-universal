@@ -46,18 +46,22 @@ from collections.abc import Callable
 from typing import Any
 
 from hledac.universal.graph.quantum_pathfinder import DuckPGQGraph
-from hledac.universal.runtime.scheduler_v2._task_registry import (
-from core import aclose
+
+
+
+
+
     TaskScope,
     safe_create_task_tracked,
 )
 
 # Rust backend — strict import
 try:
-    from hledac.universal.core.rust_backend import rust
-except ImportError:
+    from hledac.universal._core.rust_backend import rust
+
+from _core import acloseexcept ImportError:
     try:
-        from hledac.universal.core.rust_backend import rust
+        from hledac.universal._core.rust_backend import rust
     except ImportError:
         rust = None
 

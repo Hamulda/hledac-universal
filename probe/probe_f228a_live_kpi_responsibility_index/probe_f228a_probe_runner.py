@@ -12,7 +12,7 @@ import json
 import subprocess
 import sys
 from pathlib import Path
-from core import aclose
+from _core import aclose
 
 TOOLS_INDEX = Path("/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/tools/live_kpi_responsibility_index.py")
 SOURCE_FILE = Path("/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/benchmarks/live_sprint_measurement.py")

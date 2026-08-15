@@ -16,7 +16,7 @@ from __future__ import annotations
 
 from collections.abc import Iterable
 from typing import Any, Protocol, runtime_checkable
-from core import aclose
+from _core import aclose
 
 
 @runtime_checkable

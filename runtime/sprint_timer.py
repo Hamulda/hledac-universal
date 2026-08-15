@@ -26,7 +26,7 @@ from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 
 from operator import attrgetter, itemgetter
-from core import aclose
+from _core import aclose
 if TYPE_CHECKING:
     pass
 

@@ -19,7 +19,7 @@ except ImportError:
     ORJSON_AVAILABLE = False
     import json as _json
 from hledac.universal.utils.msgspec_json import encode as _msgspec_encode, decode as _msgspec_decode
-from core import aclose
+from _core import aclose
 logger = logging.getLogger(__name__)
 
 def _check_dspy_version() -> tuple[bool, str]:

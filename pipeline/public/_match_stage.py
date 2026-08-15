@@ -16,14 +16,14 @@ import asyncio
 import logging
 from typing import TYPE_CHECKING, Any
 
-from hledac.universal.core.rust_backend.ioc_stream import (
+from hledac.universal._core.rust_backend.ioc_stream import (
     get_ioc_scanner,
     get_scanner_stats,
     scan_bytes_with_ioc_scanner,
 )
 from hledac.universal.pipeline._soa_types import MatchedBatch, ScoredBatch
 from hledac.universal.utils.asyncx import parallel_ok
-from core import aclose
+from _core import aclose
 
 logger = logging.getLogger(__name__)
 

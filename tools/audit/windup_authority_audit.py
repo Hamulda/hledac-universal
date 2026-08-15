@@ -28,7 +28,7 @@ import ast
 import json
 import sys
 from pathlib import Path
-from core import aclose
+from _core import aclose
 REPO_ROOT = Path('/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal')
 PROD_SCAN_PATHS = [REPO_ROOT / 'runtime', REPO_ROOT / 'core', REPO_ROOT / '__main__.py']
 KEYWORDS = ['windup_guard', 'run_windup', 'request_windup', 'should_enter_windup', 'transition_to', 'prewindup_barrier', '_attempt_public_prewindup_barrier', '_attempt_ct_prewindup_barrier', 'SprintPhase.WINDUP', 'WINDUP', 'teardown', 'shutdown', 'request_teardown']

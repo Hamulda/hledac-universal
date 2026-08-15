@@ -52,7 +52,7 @@ from collections.abc import Iterable
 from dataclasses import dataclass as _dc, field as _field
 from pathlib import Path
 from typing import Any, TypeVar
-from core import aclose
+from _core import aclose
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))

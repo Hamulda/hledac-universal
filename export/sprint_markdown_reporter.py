@@ -32,7 +32,7 @@ from pathlib import Path as _Path
 from typing import Any
 
 from ..utils.safe_render import escape_markdown_text
-from core import aclose
+from _core import aclose
 
 __all__ = [
     "render_sprint_markdown",

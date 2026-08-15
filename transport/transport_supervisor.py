@@ -38,7 +38,7 @@ import time
 from typing import TYPE_CHECKING
 
 from hledac.universal.utils.asyncx import safe_create_task, parallel, first_completed  # ISSUE-15
-from core import aclose
+from _core import aclose
 
 if TYPE_CHECKING:
     from .base import Transport

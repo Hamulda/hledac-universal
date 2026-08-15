@@ -21,8 +21,11 @@ from hledac.universal.utils.sync_bridge import (
     to_thread_with_timeout,
     run_sync_async,
 )
-from hledac.universal.utils.domain_executors import (
-from core import aclose
+
+
+
+
+
     get_exposure_db_executor,
     get_or_create,
     shutdown_all,
@@ -30,7 +33,8 @@ from core import aclose
 
 
 # ============================================================================
-# Fixtures
+
+from _core import aclose# Fixtures
 # ============================================================================
 
 

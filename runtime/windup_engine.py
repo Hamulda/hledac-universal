@@ -49,8 +49,8 @@ def _get_gnn_predictor():
         from hledac.universal.brain import gnn_predictor as _mod
         _gnn_predictor_impl = _mod
     return _gnn_predictor_impl
-from hledac.universal.core.mlx_embeddings import get_embedding_manager
-from core import aclose
+from hledac.universal._core.mlx_embeddings import get_embedding_manager
+from _core import aclose
 
 if TYPE_CHECKING:
     from .sprint_scheduler import SprintScheduler
@@ -183,7 +183,7 @@ async def _run_synthesis_phase(
 
         memory_level = "nominal"
         try:
-            from hledac.universal.core.resource_governor import sample_uma_status
+            from hledac.universal._core.resource_governor import sample_uma_status
             status = sample_uma_status()
             memory_level = getattr(status, "state", "nominal")
         except Exception:  # noqa: BLE001
@@ -203,7 +203,7 @@ async def _run_synthesis_phase(
         scheduler._synthesis_engine = "failed"
         return {}, "failed"
 
-    from hledac.universal.core.model_runtime import ModelLifecycle
+    from hledac.universal._core.model_runtime import ModelLifecycle
     from hledac.universal.brain.synthesis_runner import SynthesisRunner
 
     runner: SynthesisRunner | None = None

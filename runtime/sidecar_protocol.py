@@ -27,7 +27,7 @@ from collections.abc import Callable
 import msgspec
 
 from hledac.universal.runtime.lane_registry import LANE_REGISTRY
-from core import aclose
+from _core import aclose
 
 logger = logging.getLogger(__name__)
 

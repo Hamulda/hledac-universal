@@ -46,7 +46,7 @@ logger = logging.getLogger(__name__)
 
 # [SAFE-3] FFI Circuit Breaker
 try:
-    from hledac.universal.core.ffi_circuit_breaker import (
+    from hledac.universal._core.ffi_circuit_breaker import (
         FFI_MODULE_MLX_INFERENCE,
         get_ffi_circuit_breaker,
     )
@@ -93,7 +93,7 @@ _init_lock = threading.Lock()
 # C1-X FIX: Import MLX_AVAILABLE from SSOT (zero-import detection)
 # Uses importlib.metadata.version("mlx") — no mlx.core import at module load
 from hledac.universal.utils.mlx_memory import MLX_AVAILABLE
-from core import aclose
+from _core import aclose
 
 
 def is_mlx_available() -> bool:

@@ -53,7 +53,7 @@ from concurrent.futures import ThreadPoolExecutor
 from typing import Any
 
 import pytest
-from core import aclose
+from _core import aclose
 
 # -------------------------------------------------------------------------------------------------
 # Helpers
@@ -102,7 +102,7 @@ class TestModuleAvailability:
     def test_import_via_rust_backend(self) -> None:
         """decode_ioc_candidates available via core.rust_backend.ioc."""
         try:
-            from hledac.universal.core.rust_backend import rust
+            from hledac.universal._core.rust_backend import rust
 
             if not rust.is_available:
                 pytest.skip("Rust extension not available")
@@ -116,7 +116,7 @@ class TestModuleAvailability:
     def test_import_batch(self) -> None:
         """batch_decode_ioc_candidates available."""
         try:
-            from hledac.universal.core.rust_backend import rust
+            from hledac.universal._core.rust_backend import rust
 
             if not rust.is_available:
                 pytest.skip("Rust extension not available")
@@ -130,7 +130,7 @@ class TestModuleAvailability:
     def test_telemetry_functions(self) -> None:
         """deobfuscate_telemetry and reset available."""
         try:
-            from hledac.universal.core.rust_backend import rust
+            from hledac.universal._core.rust_backend import rust
 
             if not rust.is_available:
                 pytest.skip("Rust extension not available")
@@ -142,7 +142,7 @@ class TestModuleAvailability:
     def test_python_fallback_when_unavailable(self) -> None:
         """Python fallback returns empty list when Rust unavailable."""
         try:
-            from hledac.universal.core.rust_backend.ioc import _PythonIocDomain
+            from hledac.universal._core.rust_backend.ioc import _PythonIocDomain
 
             domain = _PythonIocDomain.__new__(_PythonIocDomain)
             result = domain.decode_ioc_candidates("any text")
@@ -162,7 +162,7 @@ class TestSingleLayer:
     def test_base64_wrapped_btc_address(self) -> None:
         """Single-pass Base64-wrapped BTC address: YjEya2V5MTIzNDU2Nzg5MA== → b12key1234567890"""
         try:
-            from hledac.universal.core.rust_backend import rust
+            from hledac.universal._core.rust_backend import rust
 
             if not rust.is_available:
                 pytest.skip("Rust extension not available")
@@ -180,7 +180,7 @@ class TestSingleLayer:
     def test_hex_wrapped_email(self) -> None:
         """Single-pass hex: 61646d696e406578616d706c652e636f6d → admin@example.com"""
         try:
-            from hledac.universal.core.rust_backend import rust
+            from hledac.universal._core.rust_backend import rust
 
             if not rust.is_available:
                 pytest.skip("Rust extension not available")
@@ -198,7 +198,7 @@ class TestSingleLayer:
     def test_rot13(self) -> None:
         """ROT13: uryyb jbeyq → hello world"""
         try:
-            from hledac.universal.core.rust_backend import rust
+            from hledac.universal._core.rust_backend import rust
 
             if not rust.is_available:
                 pytest.skip("Rust extension not available")
@@ -216,7 +216,7 @@ class TestSingleLayer:
     def test_url_encoding(self) -> None:
         """URL encoding: example.com → %65%78%61%6D%70%6C%65%2E%63%6F%6D"""
         try:
-            from hledac.universal.core.rust_backend import rust
+            from hledac.universal._core.rust_backend import rust
 
             if not rust.is_available:
                 pytest.skip("Rust extension not available")
@@ -234,7 +234,7 @@ class TestSingleLayer:
     def test_base58_btc_address(self) -> None:
         """Base58 BTC address: bc1qar0srrr7xfkvy5l643lydnw9re59gtzzwf5mdq"""
         try:
-            from hledac.universal.core.rust_backend import rust
+            from hledac.universal._core.rust_backend import rust
 
             if not rust.is_available:
                 pytest.skip("Rust extension not available")
@@ -250,7 +250,7 @@ class TestSingleLayer:
     def test_xor1_recovery(self) -> None:
         """Single-byte XOR: 0xAA key → recover original text."""
         try:
-            from hledac.universal.core.rust_backend import rust
+            from hledac.universal._core.rust_backend import rust
 
             if not rust.is_available:
                 pytest.skip("Rust extension not available")
@@ -276,7 +276,7 @@ class TestNestedLayers:
     def test_base64_hex_two_layer(self) -> None:
         """2-layer: Base64(Hex("biocind")) = NjI2OWY2MzY5NmU2ZDNi"""
         try:
-            from hledac.universal.core.rust_backend import rust
+            from hledac.universal._core.rust_backend import rust
 
             if not rust.is_available:
                 pytest.skip("Rust extension not available")
@@ -295,7 +295,7 @@ class TestNestedLayers:
     def test_three_layer_base64_hex_rot13(self) -> None:
         """3-layer: Base64(Hex(ROT13("sensitive")))"""
         try:
-            from hledac.universal.core.rust_backend import rust
+            from hledac.universal._core.rust_backend import rust
 
             if not rust.is_available:
                 pytest.skip("Rust extension not available")
@@ -312,7 +312,7 @@ class TestNestedLayers:
     def test_max_depth_1_only_one_layer(self) -> None:
         """max_depth=1 should only peel one layer."""
         try:
-            from hledac.universal.core.rust_backend import rust
+            from hledac.universal._core.rust_backend import rust
 
             if not rust.is_available:
                 pytest.skip("Rust extension not available")
@@ -339,7 +339,7 @@ class TestFalsePositiveGuard:
     def test_normal_paragraph_no_decode(self) -> None:
         """Normal English paragraph should not trigger decode."""
         try:
-            from hledac.universal.core.rust_backend import rust
+            from hledac.universal._core.rust_backend import rust
 
             if not rust.is_available:
                 pytest.skip("Rust extension not available")
@@ -361,7 +361,7 @@ class TestFalsePositiveGuard:
     def test_code_snippet_no_decode(self) -> None:
         """Code snippets should not trigger decode."""
         try:
-            from hledac.universal.core.rust_backend import rust
+            from hledac.universal._core.rust_backend import rust
 
             if not rust.is_available:
                 pytest.skip("Rust extension not available")
@@ -396,7 +396,7 @@ class TestAdversarialInputs:
     def test_homogeneous_aaaa_entropy_trap(self) -> None:
         """Homogeneous AAAA... should be detected as high-entropy but not decoded."""
         try:
-            from hledac.universal.core.rust_backend import rust
+            from hledac.universal._core.rust_backend import rust
 
             if not rust.is_available:
                 pytest.skip("Rust extension not available")
@@ -414,7 +414,7 @@ class TestAdversarialInputs:
     def test_large_1mb_text_memory_guard(self) -> None:
         """1MB of A's should return quickly (no high-entropy regions)."""
         try:
-            from hledac.universal.core.rust_backend import rust
+            from hledac.universal._core.rust_backend import rust
 
             if not rust.is_available:
                 pytest.skip("Rust extension not available")
@@ -433,7 +433,7 @@ class TestAdversarialInputs:
     def test_empty_text(self) -> None:
         """Empty string returns empty result."""
         try:
-            from hledac.universal.core.rust_backend import rust
+            from hledac.universal._core.rust_backend import rust
 
             if not rust.is_available:
                 pytest.skip("Rust extension not available")
@@ -447,7 +447,7 @@ class TestAdversarialInputs:
     def test_text_truncation_16mb(self) -> None:
         """Text >16MB should be truncated, not crash."""
         try:
-            from hledac.universal.core.rust_backend import rust
+            from hledac.universal._core.rust_backend import rust
 
             if not rust.is_available:
                 pytest.skip("Rust extension not available")
@@ -505,7 +505,7 @@ class TestBatchPath:
     def test_batch_decode_two_texts(self) -> None:
         """Batch of 2 texts — both decoded."""
         try:
-            from hledac.universal.core.rust_backend import rust
+            from hledac.universal._core.rust_backend import rust
 
             if not rust.is_available:
                 pytest.skip("Rust extension not available")
@@ -523,7 +523,7 @@ class TestBatchPath:
     def test_batch_decode_empty_list(self) -> None:
         """Empty list returns empty list."""
         try:
-            from hledac.universal.core.rust_backend import rust
+            from hledac.universal._core.rust_backend import rust
 
             if not rust.is_available:
                 pytest.skip("Rust extension not available")
@@ -536,7 +536,7 @@ class TestBatchPath:
     def test_batch_decode_large_batch_1000(self) -> None:
         """1000 texts — should cap at 1000."""
         try:
-            from hledac.universal.core.rust_backend import rust
+            from hledac.universal._core.rust_backend import rust
 
             if not rust.is_available:
                 pytest.skip("Rust extension not available")
@@ -559,7 +559,7 @@ class TestTelemetry:
     def test_telemetry_reset(self) -> None:
         """Reset clears all counters."""
         try:
-            from hledac.universal.core.rust_backend import rust
+            from hledac.universal._core.rust_backend import rust
 
             if not rust.is_available:
                 pytest.skip("Rust extension not available")
@@ -575,7 +575,7 @@ class TestTelemetry:
     def test_telemetry_incremented_after_call(self) -> None:
         """Telemetry counters increment after calls."""
         try:
-            from hledac.universal.core.rust_backend import rust
+            from hledac.universal._core.rust_backend import rust
 
             if not rust.is_available:
                 pytest.skip("Rust extension not available")
@@ -592,7 +592,7 @@ class TestTelemetry:
     def test_deobfuscate_result_attributes(self) -> None:
         """DeobfuscateResult has expected attributes."""
         try:
-            from hledac.universal.core.rust_backend import rust
+            from hledac.universal._core.rust_backend import rust
 
             if not rust.is_available:
                 pytest.skip("Rust extension not available")
@@ -624,7 +624,7 @@ class TestTolerance:
     def test_base64_with_whitespace(self) -> None:
         """Base64 with spaces/newlines between blocks."""
         try:
-            from hledac.universal.core.rust_backend import rust
+            from hledac.universal._core.rust_backend import rust
 
             if not rust.is_available:
                 pytest.skip("Rust extension not available")
@@ -640,7 +640,7 @@ class TestTolerance:
     def test_hex_lowercase(self) -> None:
         """Hex lowercase accepted."""
         try:
-            from hledac.universal.core.rust_backend import rust
+            from hledac.universal._core.rust_backend import rust
 
             if not rust.is_available:
                 pytest.skip("Rust extension not available")
@@ -664,7 +664,7 @@ class TestMultipleRegions:
     def test_two_regions_in_one_text(self) -> None:
         """Text with two Base64 regions — both decoded."""
         try:
-            from hledac.universal.core.rust_backend import rust
+            from hledac.universal._core.rust_backend import rust
 
             if not rust.is_available:
                 pytest.skip("Rust extension not available")
@@ -692,7 +692,7 @@ class TestDepthBoundary:
     def test_depth_5_max_allowed(self) -> None:
         """max_depth=5 is accepted (internal clamp to 5)."""
         try:
-            from hledac.universal.core.rust_backend import rust
+            from hledac.universal._core.rust_backend import rust
 
             if not rust.is_available:
                 pytest.skip("Rust extension not available")
@@ -707,7 +707,7 @@ class TestDepthBoundary:
     def test_depth_0_clamped_to_1(self) -> None:
         """max_depth=0 is clamped to 1 (minimum)."""
         try:
-            from hledac.universal.core.rust_backend import rust
+            from hledac.universal._core.rust_backend import rust
 
             if not rust.is_available:
                 pytest.skip("Rust extension not available")
@@ -731,7 +731,7 @@ class TestConcurrency:
     def test_concurrent_calls_threadpool(self) -> None:
         """ThreadPoolExecutor with 4 workers — no races."""
         try:
-            from hledac.universal.core.rust_backend import rust
+            from hledac.universal._core.rust_backend import rust
 
             if not rust.is_available:
                 pytest.skip("Rust extension not available")
@@ -766,7 +766,7 @@ class TestM1Budget:
     def test_100kb_text_under_25ms(self) -> None:
         """100 KB text processes in ≤ 25 ms (M1 budget)."""
         try:
-            from hledac.universal.core.rust_backend import rust
+            from hledac.universal._core.rust_backend import rust
 
             if not rust.is_available:
                 pytest.skip("Rust extension not available")

@@ -48,7 +48,7 @@ from typing import Any
 import msgspec.json as _json
 
 from hledac.universal.utils.asyncx import safe_wait_for
-from core import aclose
+from _core import aclose
 
 logger = logging.getLogger(__name__)
 

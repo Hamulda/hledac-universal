@@ -128,7 +128,7 @@ _COLUMN_DISPATCH: dict[str, tuple[str, type | None]] = {
 # ---------------------------------------------------------------------------
 
 # ISSUE-04: Use canonical duckdb_pool instead of raw duckdb.connect()
-from hledac.universal.core.duckdb_pool import duckdb_ro_connection
+from hledac.universal._core.duckdb_pool import duckdb_ro_connection
 
 
 def _safe_table_name(name: str) -> str | None:
@@ -210,7 +210,7 @@ def _get_table_schema(conn: Any, table_name: str) -> TableSchema | None:
 
 import re
 from contextlib import contextmanager
-from core import aclose
+from _core import aclose
 
 # Safe identifier validation: alphanumeric + underscore only, no dots, no dashes
 _SAFE_IDENTIFIER_RE = re.compile(r'^[a-zA-Z_][a-zA-Z0-9_]*$')

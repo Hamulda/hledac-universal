@@ -47,10 +47,10 @@ import msgspec
 from hledac.universal.compat.msgspec_gc_compat import Struct
 import yaml
 
-from hledac.universal.core.psutil_shim import psutil
+from hledac.universal._core.psutil_shim import psutil
 from hledac.universal.utils.asyncx import safe_create_task, _check_gathered
 from hledac.universal.utils.msgspec_json import dumps_str as _msgspec_dumps_str
-from core import aclose
+from _core import aclose
 
 SKLEARN_AVAILABLE = True
 logger = logging.getLogger(__name__)

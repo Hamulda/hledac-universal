@@ -43,7 +43,7 @@ logger = logging.getLogger(__name__)
 
 # Env gate
 import os
-from core import aclose
+from _core import aclose
 _ENABLED = (
     os.environ.get("HLEDAC_ENABLE_CONSISTENCY_VERIFIER", "1").lower()
     in ("1", "true", "yes", "on")
@@ -354,7 +354,7 @@ class PropositionalConsistencyBridge:
 
     def _get_consistency_domain(self):
         """Get consistency domain (lazy import)."""
-        from hledac.universal.core.rust_backend.consistency import get_consistency_domain
+        from hledac.universal._core.rust_backend.consistency import get_consistency_domain
         return get_consistency_domain()
 
     def get_stats(self) -> dict[str, Any]:

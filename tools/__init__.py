@@ -26,7 +26,7 @@ from .url_dedup import DeduplicationStrategy, PersistentSetAdapter, RotatingBloo
 
 # Sprint 45 refactor: Extracted from coordinators/fetch_coordinator.py
 from .zstd_compressor import ZstdCompressor
-from core import aclose
+from _core import aclose
 
 __all__ = [
     # Reranker

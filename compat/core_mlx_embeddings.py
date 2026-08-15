@@ -26,8 +26,7 @@ warnings.warn(
     stacklevel=2,
 )
 
-from hledac.universal.core.mlx_embeddings import (
-from core import aclose
+from hledac.universal._core.mlx_embeddings import (
     MLXEmbeddingManager,
     get_mlx_embedder,
     get_embedding_manager,
@@ -39,3 +38,4 @@ from core import aclose
     prewarm_embedding_model,
     is_embedding_model_prewarmed,
 )
+from _core import aclose

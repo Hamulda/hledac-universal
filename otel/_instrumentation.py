@@ -13,7 +13,7 @@ from typing import Any, TypeVar
 
 from otel._noop import _NOOP_SPAN, _NOOP_TRACER
 from otel._setup import is_initialized
-from core import aclose
+from _core import aclose
 
 F = TypeVar("F", bound=Callable[..., Any], default=Callable[..., Any])
 

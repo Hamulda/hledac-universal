@@ -17,8 +17,11 @@ Usage:
 
 from __future__ import annotations
 
-from hledac.universal.brain.adversarial.cognitive_tarpit import (
-from core import aclose
+
+
+
+
+
     CognitiveTarpitVerdict,
     cognitive_tarpit_score,
     invalidate_smollm_cache,
@@ -28,4 +31,5 @@ __all__ = [
     "CognitiveTarpitVerdict",
     "cognitive_tarpit_score",
     "invalidate_smollm_cache",
-]
+
+from _core import aclose]

@@ -42,7 +42,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 import numpy as np
-from core import aclose
+from _core import aclose
 
 if TYPE_CHECKING:
     from hledac.universal.coordinators.meta_reasoning_coordinator import ThoughtNode
@@ -319,7 +319,7 @@ class PRMInference:
     PyO3 GIL Release Pattern (per project constraint):
         In hot paths calling Rust, use py.detach() to release GIL:
             import sys
-            from hledac.universal.core.rust_backend import rust
+            from hledac.universal._core.rust_backend import rust
             py = sys.modules.get('builtins')
             # ... Rust call with GIL held ...
             # py.detach() releases GIL after Rust call
@@ -362,7 +362,7 @@ class PRMInference:
             return
 
         try:
-            from hledac.universal.core.rust_backend import rust
+            from hledac.universal._core.rust_backend import rust
             raw = rust.raw
             if raw is not None and hasattr(raw, 'ane'):
                 self._rust_ane_available = True
@@ -487,7 +487,7 @@ class PRMInference:
         - Telemetry tracking
         """
         try:
-            from hledac.universal.core.rust_backend import rust
+            from hledac.universal._core.rust_backend import rust
             raw = rust.raw
             if raw is None or not hasattr(raw, 'ane'):
                 return False
@@ -613,7 +613,7 @@ class PRMInference:
         self._telemetry['rust_ane_calls'] += 1
         try:
             import sys
-            from hledac.universal.core.rust_backend import rust
+            from hledac.universal._core.rust_backend import rust
 
             raw = rust.raw
             if raw is None or not hasattr(raw.ane, 'validate_batch'):
@@ -970,7 +970,7 @@ class RustPRMScorer:
         Returns True if rust.raw.ane.load_prm_model() is available.
         """
         try:
-            from hledac.universal.core.rust_backend import rust
+            from hledac.universal._core.rust_backend import rust
             raw = rust.raw
             if raw is not None and hasattr(raw, 'ane'):
                 # Check for Rust-native CoreML functions
@@ -1008,7 +1008,7 @@ class RustPRMScorer:
             return False
 
         try:
-            from hledac.universal.core.rust_backend import rust
+            from hledac.universal._core.rust_backend import rust
             raw = rust.raw
 
             # Load model into Rust CoreML cache
@@ -1051,7 +1051,7 @@ class RustPRMScorer:
                 return self._numpy_inference(features.features, weights)
 
         try:
-            from hledac.universal.core.rust_backend import rust
+            from hledac.universal._core.rust_backend import rust
             raw = rust.raw
 
             # Call Rust-native CoreML inference
@@ -1092,7 +1092,7 @@ class RustPRMScorer:
                 return self._numpy_batch_inference(batch_matrix, weights)
 
         try:
-            from hledac.universal.core.rust_backend import rust
+            from hledac.universal._core.rust_backend import rust
             raw = rust.raw
 
             # Call Rust-native CoreML batch inference
@@ -1162,7 +1162,7 @@ class RustPRMScorer:
             return
 
         try:
-            from hledac.universal.core.rust_backend import rust
+            from hledac.universal._core.rust_backend import rust
             raw = rust.raw
             raw.ane.unload_prm_model(self._model_id)
             self._loaded = False
@@ -1176,7 +1176,7 @@ class RustPRMScorer:
             return {'status': 'unavailable'}
 
         try:
-            from hledac.universal.core.rust_backend import rust
+            from hledac.universal._core.rust_backend import rust
             raw = rust.raw
             return dict(raw.ane.get_coreml_cache_status())
         except Exception:

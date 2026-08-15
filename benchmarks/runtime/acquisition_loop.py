@@ -32,7 +32,7 @@ import asyncio
 import time as _time
 import statistics as _statistics
 from typing import Any
-from core import aclose
+from _core import aclose
 
 # ── Synthetic SprintContext helpers ──────────────────────────────────────────────
 

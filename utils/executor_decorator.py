@@ -46,8 +46,8 @@ from concurrent.futures import ThreadPoolExecutor
 from typing import Any, overload
 from collections.abc import Callable, Awaitable
 
-from hledac.universal.core.config.m1_air_config import M1AirConfig
-from core import aclose
+from hledac.universal._core.config.m1_air_config import M1AirConfig
+from _core import aclose
 
 __all__ = [
     "offload_to",

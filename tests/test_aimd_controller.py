@@ -9,7 +9,7 @@ import asyncio
 import pytest
 
 from hledac.universal.coordinators.fetch_coordinator import AIMDWindow
-from core import aclose
+from _core import aclose
 
 
 class TestAIMDWindow:

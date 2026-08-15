@@ -22,7 +22,7 @@ import msgspec
 from hledac.universal.compat.msgspec_gc_compat import Struct
 from enum import Enum
 from typing import TYPE_CHECKING, Any
-from core import aclose
+from _core import aclose
 
 # Deferred: loaded on first access via _get_scipy_sparse() / _get_np()
 _scipy_sparse_module: Any = None

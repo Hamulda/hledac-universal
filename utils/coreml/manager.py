@@ -12,7 +12,7 @@ import subprocess
 import time
 from pathlib import Path
 from typing import Any
-from core import aclose
+from _core import aclose
 
 # Cached lazy import — httpx loaded once on first call, cached thereafter.
 # Avoids repeated module-lookup cost inside polling loops (~20 calls per startup).

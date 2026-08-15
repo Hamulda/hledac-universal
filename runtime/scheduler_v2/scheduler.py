@@ -33,7 +33,7 @@ from hledac.universal.runtime.scheduler_v2._task_registry import (
 from hledac.universal.utils.asyncx import parallel
 from hledac.universal.runtime.scheduler_v2.protocol import InitResult, SprintContext
 from hledac.universal.utils.asyncx import safe_wait_for
-from core import aclose
+from _core import aclose
 
 
 class SprintSchedulerV2(msgspec.Struct, frozen=False, gc=True):
@@ -343,7 +343,7 @@ class SprintSchedulerV2(msgspec.Struct, frozen=False, gc=True):
     def _init_rayon_pool_manager(self) -> None:
         """Initialize the RayonPoolManager singleton (called at sprint start)."""
         if self._rayon_manager is None:
-            from hledac.universal.core.isolated_executors import get_rayon_pool_manager
+            from hledac.universal._core.isolated_executors import get_rayon_pool_manager
             self._rayon_manager = get_rayon_pool_manager()
             self._set_pool_phase("BOOT")
 
@@ -504,7 +504,7 @@ class SprintSchedulerV2(msgspec.Struct, frozen=False, gc=True):
             
             # Reset isolated executor pools (Python refs only, not Rust pools)
             try:
-                from hledac.universal.core import isolated_executors
+                from hledac.universal._core import isolated_executors
                 isolated_executors.reset_pools_sprint()
             except Exception:  # noqa: BLE001
                 pass

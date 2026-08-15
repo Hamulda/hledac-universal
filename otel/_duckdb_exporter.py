@@ -33,7 +33,7 @@ from typing import TYPE_CHECKING, Any
 from opentelemetry.sdk.trace import Span
 from opentelemetry.sdk.trace.export import SpanExporter, SpanExportResult
 from opentelemetry.trace import Status, StatusCode
-from core import aclose
+from _core import aclose
 
 if TYPE_CHECKING:
     pass

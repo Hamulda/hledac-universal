@@ -12,8 +12,11 @@ _warnings.warn(
     stacklevel=2,
 )
 
-from hledac.universal.utils.mlx_memory import (
-from core import aclose
+
+
+
+
+
     MLX_AVAILABLE,
     init_mlx_buffers,
     configure_mlx_limits,
@@ -55,7 +58,8 @@ __all__ = [
     "MLX_AVAILABLE",
     "init_mlx_buffers",
     "configure_mlx_limits",
-    "get_mlx_active_memory_mb",
+
+from _core import aclose    "get_mlx_active_memory_mb",
     "get_mlx_peak_memory_mb",
     "get_mlx_cache_memory_mb",
     "get_mlx_memory_pressure",

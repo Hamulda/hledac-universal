@@ -14,9 +14,9 @@ from collections import OrderedDict, deque
 from collections.abc import Callable
 from functools import cached_property
 from typing import TYPE_CHECKING, Any
-from core import aclose
+from _core import aclose
 if TYPE_CHECKING:
-    from hledac.universal.core.system_detector import HardwareCapabilities
+    from hledac.universal._core.system_detector import HardwareCapabilities
 logger = logging.getLogger(__name__)
 _MAX_CACHE_SIZE = 128
 _MAX_STATS_MISSED = 100
@@ -211,7 +211,7 @@ class CapabilityProber:
 
         Lazy import to avoid circular dependencies.
         """
-        from hledac.universal.core.system_detector import get_hardware_capabilities
+        from hledac.universal._core.system_detector import get_hardware_capabilities
         return get_hardware_capabilities()
 
     @cached_property

@@ -37,7 +37,7 @@ def _get_hf_cache_path(model_id: str) -> Path:
                 return onnx_files[0].parent
     return None
 import psutil
-from core import aclose
+from _core import aclose
 
 def _check_ram_before_export() -> None:
     """F218A: Verify sufficient RAM before export to avoid crash on M1 8GB."""

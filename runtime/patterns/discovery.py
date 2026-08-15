@@ -26,8 +26,11 @@ _TRAILING_DOT_RE: Final[re.Pattern[str]] = re.compile(r"\.$")
 _IP_LIKE_RE: Final[re.Pattern[str]] = re.compile(r"^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$")
 
 # IPFS CID functions imported from canonical cid_detection module
-from hledac.universal.runtime.acquisition.cid_detection import (
-from core import aclose
+
+
+
+
+
     _has_explicit_ipfs_cid as has_explicit_cid,
     _extract_cids_from_text as extract_cids_from_text,
 )
@@ -37,6 +40,7 @@ def strip_url_scheme(value: str) -> str:
     """Remove https?:// prefix."""
     return _URL_SCHEME_RE.sub("", value)
 
+from _core import aclose
 
 def strip_trailing_slash(value: str) -> str:
     """Remove trailing slashes."""

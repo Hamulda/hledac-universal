@@ -34,7 +34,7 @@ from typing import TYPE_CHECKING, Any
 import orjson
 
 from hledac.universal.utils.asyncx import _check_gathered
-from core import aclose
+from _core import aclose
 
 _logger = logging.getLogger(__name__)
 

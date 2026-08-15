@@ -17,14 +17,18 @@ from brain.causal_engine import (
 )
 from export.hypothesis_builder import HypothesisBuilder
 from runtime.lane_registry import LANE_REGISTRY
-from graph.hypothesis_graph import (
-from core import aclose
+
+
+
+
+
     HypothesisEdge,
     HypothesisGraph,
 )
 
 # =============================================================================
-# Fixtures
+
+from _core import aclose# Fixtures
 # =============================================================================
 
 @dataclass

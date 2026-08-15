@@ -52,7 +52,7 @@ import asyncio
 import logging
 from dataclasses import dataclass, field
 from typing import Any
-from core import aclose
+from _core import aclose
 
 logger = logging.getLogger(__name__)
 

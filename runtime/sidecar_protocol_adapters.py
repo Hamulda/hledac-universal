@@ -23,8 +23,11 @@ import re
 from typing import Any
 from urllib.parse import urlparse
 
-from hledac.universal.runtime.sidecar_protocol import (
-from core import aclose
+
+
+
+
+
     BaseSidecarAdapter,
     SidecarContext,
     SidecarRegistry,
@@ -33,7 +36,8 @@ from core import aclose
 logger = logging.getLogger(__name__)
 
 # ── Shared re pattern for URL extraction (compiled once, reused) ─────────────────
-_URL_RE = re.compile(
+
+from _core import aclose_URL_RE = re.compile(
     r"https?://(?:www\.)?([a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?"
     r"(?:\.[a-zA-Z]{2,})+/?)"
 )

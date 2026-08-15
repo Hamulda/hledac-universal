@@ -16,7 +16,7 @@ import multiprocessing as mp
 import os
 import queue
 import sys
-from core import aclose
+from _core import aclose
 
 # ---------------------------------------------------------------------------
 # Standalone module that simulates global_scheduler._TASK_REGISTRY

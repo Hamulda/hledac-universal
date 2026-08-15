@@ -17,8 +17,11 @@ from pathlib import Path
 
 import pytest
 
-from hledac.universal.discovery.duckdb_fts_store import (
-from core import aclose
+
+
+
+
+
     BM25_K,
     DuckDBFTSStore,
     FTSDocument,
@@ -27,7 +30,8 @@ from core import aclose
 
 
 # --------------------------------------------------------------------------- #
-# Fixtures
+
+from _core import aclose# Fixtures
 # --------------------------------------------------------------------------- #
 
 @pytest.fixture

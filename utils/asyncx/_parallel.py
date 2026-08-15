@@ -67,7 +67,7 @@ _SAFE_GATHER_SAMPLE_CAP = 5
 # overhead per task in scatter/gather patterns. Degrades gracefully on
 # <3.12 (no eager_start kwarg passed).
 import sys
-from core import aclose
+from _core import aclose
 
 _PY_312_PLUS: bool = sys.version_info >= (3, 12)
 
@@ -872,7 +872,7 @@ async def bounded_parallel_map[T, R](
         if concurrency < 1:
             concurrency = 1
     else:
-        from hledac.universal.core.concurrency_registry import ConcurrencyCategory, concurrency_budget
+        from hledac.universal._core.concurrency_registry import ConcurrencyCategory, concurrency_budget
         concurrency = await concurrency_budget(ConcurrencyCategory.SCRAPE_GENERAL)
 
     sem = asyncio.Semaphore(concurrency)
@@ -881,7 +881,7 @@ async def bounded_parallel_map[T, R](
         try:
             _bpm_jitter = jitter_sigma_s
             if _bpm_jitter > 0:
-                from hledac.universal.core.telemetry.context_state import is_blitz_mode
+                from hledac.universal._core.telemetry.context_state import is_blitz_mode
                 if not is_blitz_mode():
                     import random as _rng
                     await asyncio.sleep(min(abs(_rng.gauss(0.0, _bpm_jitter)), jitter_max_s))
@@ -1020,7 +1020,7 @@ async def chunked_taskgroup[T, R](
         if concurrency < 1:
             concurrency = 1
     else:
-        from hledac.universal.core.concurrency_registry import ConcurrencyCategory, concurrency_budget
+        from hledac.universal._core.concurrency_registry import ConcurrencyCategory, concurrency_budget
         concurrency = await concurrency_budget(ConcurrencyCategory.SCRAPE_GENERAL)
 
     all_results: list[R] = []

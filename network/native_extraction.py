@@ -55,7 +55,7 @@ import os
 from typing import Any
 
 import msgspec
-from core import aclose
+from _core import aclose
 
 logger = logging.getLogger(__name__)
 
@@ -129,7 +129,7 @@ def _get_rust_native_db() -> Any | None:
     _native_db_checked = True
     try:
         # R6: Centralized Rust access via core.rust_backend
-        from hledac.universal.core.rust_backend import rust
+        from hledac.universal._core.rust_backend import rust
         _rust = rust.raw.module  # type: ignore[assignment]
 
         MongoDumper = getattr(_rust, "MongoDumper", None)
@@ -504,7 +504,7 @@ def is_native_extraction_enabled() -> bool:
 
     Set HLEDAC_ENABLE_NATIVE_EXTRACTION=1 for internal/CI deployments only.
     """
-    from hledac.universal.core.feature_flags import FeatureFlag, FeatureFlags
+    from hledac.universal._core.feature_flags import FeatureFlag, FeatureFlags
     return FeatureFlags.get(FeatureFlag.NATIVE_EXTRACTION)
 
 

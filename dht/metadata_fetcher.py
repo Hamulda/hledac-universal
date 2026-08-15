@@ -15,7 +15,7 @@ import struct
 from dataclasses import dataclass, field
 import msgspec
 from typing import Any
-from core import aclose
+from _core import aclose
 logger = logging.getLogger(__name__)
 UT_METADATA_ID = 1
 METADATA_PIECE_SIZE = 16384

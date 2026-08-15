@@ -32,7 +32,7 @@ from collections.abc import Callable
 
 from hledac.universal.utils.asyncx import safe_create_task
 from hledac.universal.utils.memory_tier import get_lora_cache_max, get_model_cache_max
-from core import aclose
+from _core import aclose
 
 if TYPE_CHECKING:
     pass
@@ -392,7 +392,7 @@ class HermesModelMonitor:
             return
         self._monitor_task = safe_create_task(self.pressure_check_loop(), name="hermes_cache:monitor")
         try:
-            from hledac.universal.core.memory_pressure import get_broadcaster
+            from hledac.universal._core.memory_pressure import get_broadcaster
             bc = get_broadcaster()
             safe_create_task(bc.start(), name="memory_pressure:start")
         except Exception:  # noqa: BLE001:

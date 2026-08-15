@@ -14,7 +14,7 @@ GHOST_INVARIANTS:
 
 from collections.abc import Iterator
 from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
-from core import aclose
+from _core import aclose
 
 if TYPE_CHECKING:
     pass

@@ -34,7 +34,7 @@ import logging
 import os
 from dataclasses import dataclass, field
 import msgspec
-from core import aclose
+from _core import aclose
 logger = logging.getLogger(__name__)
 PRIVACY_BUDGET_RATIO = 0.15
 DEFAULT_TOR_WORKERS = 2

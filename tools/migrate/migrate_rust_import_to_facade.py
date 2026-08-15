@@ -16,7 +16,7 @@ Migration patterns:
            _VAR = None
    
    TO:
-       from hledac.universal.core.rust_backend import rust
+       from hledac.universal._core.rust_backend import rust
        _VAR = getattr(rust.raw, 'symbol', None)
 
 2. Specific function imports:
@@ -24,7 +24,7 @@ Migration patterns:
        from hledac_rust_extensions import func1, func2
    
    TO:
-       from hledac.universal.core.rust_backend import rust
+       from hledac.universal._core.rust_backend import rust
        func1 = rust.raw.func1
        func2 = rust.raw.func2
 
@@ -52,7 +52,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 from collections.abc import Iterator
-from core import aclose
+from _core import aclose
 
 
 # Directory names to skip entirely
@@ -304,7 +304,7 @@ def _generate_migration(site: ImportSite) -> tuple[str, list[str]]:
         # Pattern: import hledac_rust_extensions [as alias]
         alias = site.names[0][1] or "hledac_rust_extensions"
         return (
-            "from hledac.universal.core.rust_backend import rust",
+            "from hledac.universal._core.rust_backend import rust",
             [f"rust raw access via rust.raw (replaces: {alias})"]
         )
     
@@ -320,20 +320,20 @@ def _generate_migration(site: ImportSite) -> tuple[str, list[str]]:
             submodule = module_name.split(".", 1)[1]
             # Submodule import like: from hledac_rust_extensions import dns
             if submodule in KNOWN_SUBMODULES:
-                parts.append("from hledac.universal.core.rust_backend import rust")
+                parts.append("from hledac.universal._core.rust_backend import rust")
                 parts.append(f"{submodule} = rust.{submodule}  # None if unavailable")
                 notes.append(f"submodule accessor for {submodule}")
             else:
                 # Other submodule attribute
                 names_str = ", ".join(name for name, _ in site.names)
-                parts.append("from hledac.universal.core.rust_backend import rust")
+                parts.append("from hledac.universal._core.rust_backend import rust")
                 for name, alias in site.names:
                     parts.append(f"{alias or name} = rust.raw.{submodule}.{name}  # None if unavailable")
                 notes.append(f"submodule {submodule}.{names_str}")
         else:
             # Direct import from hledac_rust_extensions
             names_str = ", ".join(name for name, _ in site.names)
-            parts.append("from hledac.universal.core.rust_backend import rust")
+            parts.append("from hledac.universal._core.rust_backend import rust")
             for name, alias in site.names:
                 parts.append(f"{alias or name} = rust.raw.{name}  # None if unavailable")
             notes.append(f"symbols: {names_str}")

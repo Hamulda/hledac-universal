@@ -59,7 +59,7 @@ except ImportError:
     VoidRegion = None  # type: ignore[assignment,misc]
 
 from .base import DecisionResponse, ExecutionResult, OperationResult, OperationType, UniversalCoordinator
-from core import aclose
+from _core import aclose
 
 # BREAKTHROUGH #3: Step-Level PRM imports (lazy-loaded for M1 8GB compatibility)
 # NEXTGEN-05: Prefer RustPRMScorer for Rust-native CoreML ANE inference

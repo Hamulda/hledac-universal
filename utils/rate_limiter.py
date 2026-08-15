@@ -10,8 +10,11 @@ SSOT moved to rate_limiters.py (Sprint 7C).
 
 
 # Re-export everything from the canonical implementation
-from .rate_limiters import (
-from core import aclose
+
+
+
+
+
     QOS_CLASS_BACKGROUND,
     QOS_CLASS_USER_INITIATED,
     QOS_CLASS_USER_INTERACTIVE,
@@ -19,7 +22,8 @@ from core import aclose
     RATE_LIMITERS,
     RateLimitConfig,  # backward compat alias (old class)
     RateLimiter,  # backward compat alias (old class)
-    RateLimitExceeded,  # backward compat alias (old class)
+
+from _core import aclose    RateLimitExceeded,  # backward compat alias (old class)
     TokenBucket,
     get_limiter,
     with_rate_limit,  # backward compat

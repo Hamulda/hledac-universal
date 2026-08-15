@@ -4,7 +4,7 @@ Reputation scoring for domains based on corroboration/contradiction.
 
 import logging
 from collections import defaultdict
-from core import aclose
+from _core import aclose
 
 logger = logging.getLogger(__name__)
 

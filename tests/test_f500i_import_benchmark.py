@@ -1,7 +1,7 @@
 """
 F500I: Import Benchmark — pre-sprint import bottleneck regression test.
 
-Measures the wall-clock time for `from core.__main__ import run_sprint`.
+Measures the wall-clock time for `from _core.__main__ import run_sprint`.
 This is the critical path for --help / --version / short-circuit invocations.
 
 Target: < 1.0 s on M1 8GB (measured on 2020 M1 8GB baseline: ~3.3 s).
@@ -21,12 +21,12 @@ To update baseline after intentional changes:
 import subprocess
 import sys
 import time
-from core import aclose
+from _core import aclose
 
 
 def test_import_run_sprint_time():
     """
-    Regression test: from core.__main__ import run_sprint must be < 1.0 s.
+    Regression test: from _core.__main__ import run_sprint must be < 1.0 s.
 
     Runs in a fresh Python subprocess to measure cold-import time
     without pytest's import overhead polluting the measurement.
@@ -38,13 +38,13 @@ def test_import_run_sprint_time():
 
     start = time.perf_counter()
     result = subprocess.run(
-        [python_exec, "-c", "from core.__main__ import run_sprint"],
+        [python_exec, "-c", "from _core.__main__ import run_sprint"],
         capture_output=True,
         text=True,
     )
     elapsed_ms = (time.perf_counter() - start) * 1000
 
-    print(f"\n[F500I] from core.__main__ import run_sprint: {elapsed_ms:.1f} ms (threshold: {threshold_ms} ms)")
+    print(f"\n[F500I] from _core.__main__ import run_sprint: {elapsed_ms:.1f} ms (threshold: {threshold_ms} ms)")
 
     if result.returncode != 0:
         print(f"[F500I] STDERR: {result.stderr}")
@@ -54,13 +54,13 @@ def test_import_run_sprint_time():
     assert elapsed_ms < threshold_ms, (
         f"F500I import regression: {elapsed_ms:.1f} ms > {threshold_ms} ms. "
         f"A recent change introduced an import bottleneck. "
-        f"Run: python3 -X importtime -c \"from core.__main__ import run_sprint\" 2>&1 | sort -t'|' -k3 -rn | head -20"
+        f"Run: python3 -X importtime -c \"from _core.__main__ import run_sprint\" 2>&1 | sort -t'|' -k3 -rn | head -20"
     )
 
 
 def test_help_flag_time():
     """
-    Regression test: python -m hledac.universal.core --help must be < 5.0 s.
+    Regression test: python -m hledac.universal._core --help must be < 5.0 s.
 
     This includes Python interpreter startup + all import costs.
     M1 8GB baseline: ~3.3 s (without uv overhead).
@@ -70,14 +70,14 @@ def test_help_flag_time():
 
     start = time.perf_counter()
     result = subprocess.run(
-        [python_exec, "-m", "hledac.universal.core", "--help"],
+        [python_exec, "-m", "hledac.universal._core", "--help"],
         capture_output=True,
         text=True,
         env={**__import__("os").environ, "NO_COLOR": "1"},
     )
     elapsed_ms = (time.perf_counter() - start) * 1000
 
-    print(f"\n[F500I] python -m hledac.universal.core --help: {elapsed_ms:.1f} ms (threshold: {threshold_ms} ms)")
+    print(f"\n[F500I] python -m hledac.universal._core --help: {elapsed_ms:.1f} ms (threshold: {threshold_ms} ms)")
 
     if result.returncode != 0:
         print(f"[F500I] STDERR: {result.stderr}")

@@ -537,7 +537,7 @@ def test_safe_to_json_api() -> None:
 # ---------------------------------------------------------------------------
 
 import re
-from core import aclose
+from _core import aclose
 
 ALLOWED_MEASUREMENT_FILES = [
     "benchmarks/live_measurement_schema.py",

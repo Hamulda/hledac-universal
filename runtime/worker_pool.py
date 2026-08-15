@@ -43,9 +43,9 @@ import warnings
 from concurrent.futures import ThreadPoolExecutor
 from typing import TYPE_CHECKING, Any, Literal, TypeVar
 
-from hledac.universal.core.locks import LockCategory, make_lock
+from hledac.universal._core.locks import LockCategory, make_lock
 from hledac.universal.utils.asyncx import safe_wait_for
-from core import aclose
+from _core import aclose
 
 # TEL-02: Lazy import — OTel context capture for trace propagation across Rust boundary.
 # Falls back to a no-op when OTel is not installed (safe for all code paths).
@@ -58,7 +58,7 @@ except ImportError:
 
 # ISSUE #014: Memory-aware — uses sample_uma_status() + ConcurrencyPreset at runtime
 try:
-    from hledac.universal.core.resource_governor import (
+    from hledac.universal._core.resource_governor import (
         ConcurrencyPreset,
         sample_uma_status,
     )
@@ -79,6 +79,42 @@ __all__ = [
 ]
 
 T = TypeVar("T", default=object)
+
+# ── Rayon channel access ───────────────────────────────────────────────────────
+
+from dataclasses import dataclass
+
+
+@dataclass(frozen=True, slots=True)
+class RayonChannels:
+    """Immutable holder for rayon channel handles.
+
+    R6: Centralized Rust access via core.rust_backend.
+    P0-4 FIX: rayon_drop_channel for explicit Arc release to prevent UAF/double-free.
+    """
+    submit: Any
+    join: Any
+    abort: Any
+    drop: Any
+
+
+def get_rayon_channels() -> RayonChannels:
+    """Get the rayon channel handles from the Rust backend.
+
+    Returns:
+        RayonChannels with submit, join, abort, and drop handles.
+
+    Note:
+        Handles must be released via drop channel after use to prevent memory leaks.
+    """
+    from hledac.universal._core.rust_backend import rust
+    return RayonChannels(
+        submit=rust.raw.rayon_submit_channel,
+        join=rust.raw.rayon_join_channel,
+        abort=rust.raw.rayon_abort_channel,
+        drop=rust.raw.rayon_drop_channel,
+    )
+
 
 # Module-level singletons — initialised on first use (lazy).
 _pool: "SharedWorkerPool | None" = None
@@ -179,7 +215,7 @@ class SharedWorkerPool:
             return max(2, min(6, cpu_count - 4))
         # Use sample_uma_status() — canonical UMA sampling API
         try:
-            from hledac.universal.core.resource_governor import sample_uma_status
+            from hledac.universal._core.resource_governor import sample_uma_status
 
             uma = sample_uma_status()
             preset = ConcurrencyPreset.from_state(uma.state)
@@ -296,7 +332,7 @@ def _check_rust_rayon_available() -> bool:
     if _RUST_AVAILABLE is not None:
         return _RUST_AVAILABLE
     # R6: Centralized Rust access via core.rust_backend
-    from hledac.universal.core.rust_backend import rust
+    from hledac.universal._core.rust_backend import rust
     raw = rust.raw
     if raw.rayon_submit_channel is not None and raw.rayon_join_channel is not None and raw.rayon_abort_channel is not None:
         _RUST_AVAILABLE = True
@@ -390,12 +426,11 @@ class RustWorkerPool:
             return await get_shared_pool().run(fn, *args, timeout=timeout, **kwargs)
 
         # R6: Centralized Rust access via core.rust_backend
-        from hledac.universal.core.rust_backend import rust
-        rayon_submit_channel = rust.raw.rayon_submit_channel
-        rayon_join_channel = rust.raw.rayon_join_channel
-        rayon_abort_channel = rust.raw.rayon_abort_channel
-        # P0-4 FIX: Explicit Arc release to prevent UAF/double-free
-        rayon_drop_channel = rust.raw.rayon_drop_channel
+        channels = get_rayon_channels()
+        rayon_submit_channel = channels.submit
+        rayon_join_channel = channels.join
+        rayon_abort_channel = channels.abort
+        rayon_drop_channel = channels.drop
 
         async_lock = await self._get_async_lock()
         async with async_lock:
@@ -494,12 +529,11 @@ class RustWorkerPool:
                 return None
 
         # R6: Centralized Rust access via core.rust_backend
-        from hledac.universal.core.rust_backend import rust
-        rayon_submit_channel = rust.raw.rayon_submit_channel
-        rayon_join_channel = rust.raw.rayon_join_channel
-        rayon_abort_channel = rust.raw.rayon_abort_channel
-        # P0-4 FIX: Explicit Arc release to prevent UAF/double-free
-        rayon_drop_channel = rust.raw.rayon_drop_channel
+        channels = get_rayon_channels()
+        rayon_submit_channel = channels.submit
+        rayon_join_channel = channels.join
+        rayon_abort_channel = channels.abort
+        rayon_drop_channel = channels.drop
 
         handle = rayon_submit_channel(self._pool_type, n_items, fn, args)
         try:

@@ -19,7 +19,7 @@ Invariant M-08:
 
 import pytest
 from unittest.mock import MagicMock
-from core import aclose
+from _core import aclose
 
 
 class TestModelSwapCacheInvalidation:

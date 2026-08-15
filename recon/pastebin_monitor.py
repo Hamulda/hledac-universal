@@ -37,7 +37,7 @@ logger = logging.getLogger(__name__)
 _TIMEOUT_10 = httpx.Timeout(10.0)
 _TIMEOUT_15 = httpx.Timeout(15.0)
 from hledac.universal.brain.output_dlp_filter import mask_secret as _mask_secret_impl
-from core import aclose
+from _core import aclose
 _SECRET_REDACT_LEN = 4
 
 def _mask_secret(value: str) -> str:

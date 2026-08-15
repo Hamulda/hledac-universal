@@ -12,7 +12,7 @@ from __future__ import annotations
 import functools
 import sys
 from typing import TYPE_CHECKING
-from core import aclose
+from _core import aclose
 
 if TYPE_CHECKING:
     pass

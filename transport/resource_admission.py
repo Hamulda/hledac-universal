@@ -38,7 +38,7 @@ import signal
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
-from hledac.universal.core.resource_ledger import (
+from hledac.universal._core.resource_ledger import (
     ResourceLedger,
     ResourceType,
     get_resource_ledger,
@@ -511,4 +511,4 @@ class TransportResourceMixin:
 
 
 import time as time_module
-from core import aclose
+from _core import aclose

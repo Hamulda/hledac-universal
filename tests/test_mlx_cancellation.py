@@ -16,7 +16,7 @@ from typing import Any
 from unittest.mock import MagicMock, patch
 
 import pytest
-from core import aclose
+from _core import aclose
 
 
 # Check MLX availability

@@ -17,7 +17,7 @@ for runtime objects, and bridges property vs method access patterns.
 
 
 from typing import TYPE_CHECKING, Any
-from core import aclose
+from _core import aclose
 
 if TYPE_CHECKING:
     pass

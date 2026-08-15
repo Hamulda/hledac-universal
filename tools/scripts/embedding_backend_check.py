@@ -16,7 +16,7 @@ import time
 from pathlib import Path
 
 import psutil
-from core import aclose
+from _core import aclose
 
 # Add project root to path
 sys.path.insert(0, str(Path(__file__).parent.parent))

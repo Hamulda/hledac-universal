@@ -26,7 +26,7 @@ from dataclasses import dataclass, field
 import msgspec
 from typing import Any
 from operator import attrgetter, itemgetter
-from core import aclose
+from _core import aclose
 DEFAULT_MAX_KEYS = 4096
 DEFAULT_RING_SIZE = 32
 DEFAULT_HALF_LIFE_S = 900.0

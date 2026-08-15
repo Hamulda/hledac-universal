@@ -44,7 +44,7 @@ import os
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal, cast
-from core import aclose
+from _core import aclose
 
 logger = logging.getLogger(__name__)
 
@@ -533,7 +533,7 @@ class ParquetExporter:
             # Uses rayon parallel column build (n >= 64 items) — ~3× faster than Python loops
             try:
                 # R6: Centralized Rust access via core.rust_backend
-                from hledac.universal.core.rust_backend import rust
+                from hledac.universal._core.rust_backend import rust
                 build_arrow_batch_from_findings = rust.raw.build_arrow_batch_from_findings
                 rust_result = build_arrow_batch_from_findings(findings_dicts)
                 if rust_result is None or len(rust_result) == 0:

@@ -71,7 +71,7 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 # Feature gate — canonical constant, importable by integration points
 # ---------------------------------------------------------------------------
-from hledac.universal.core.feature_flags import FeatureFlag, FeatureFlags
+from hledac.universal._core.feature_flags import FeatureFlag, FeatureFlags
 
 METAL_HNSW_ENABLED: bool = FeatureFlags.get(FeatureFlag.METAL_HNSW)
 
@@ -108,8 +108,8 @@ def _mlx_available() -> bool:
 # [FINAL]-019-07: Capability cost registration for QoS ladder triage.
 # MetalHNSWBuilder: rss_mb=256, peak_mb=512 (GPU buffers + USearch graph)
 # Note: MetalHNSWEnabled is the feature flag, MetalHNSWBuilder is the class
-from hledac.universal.core.capability_cost import register_capability_cost
-from core import aclose
+from hledac.universal._core.capability_cost import register_capability_cost
+from _core import aclose
 register_capability_cost("metalhnswbuilder", rss_mb=256, peak_mb=512, tier="heavy", tags=("gpu", "index", "mlx"))
 
 

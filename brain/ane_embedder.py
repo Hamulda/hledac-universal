@@ -34,7 +34,7 @@ logger = logging.getLogger(__name__)
 
 # [FINAL]-019-07: Capability cost registration for QoS ladder triage.
 # ANE embedder: rss_mb=90, peak_mb=200 (CoreML model + ANE buffer)
-from hledac.universal.core.capability_cost import register_capability_cost
+from hledac.universal._core.capability_cost import register_capability_cost
 register_capability_cost("aneembedder", rss_mb=90, peak_mb=200, tier="medium", tags=("embedding", "gpu", "ane"))
 register_capability_cost("modernbert", rss_mb=400, peak_mb=600, tier="heavy", tags=("embedding", "gpu"))
 
@@ -296,7 +296,7 @@ except ImportError:
 _RUST_ANE_AVAILABLE = False
 try:
     # R6: Centralized Rust access via core.rust_backend
-    from hledac.universal.core.rust_backend import rust
+    from hledac.universal._core.rust_backend import rust
     _rust = rust.raw.module
     if hasattr(_rust, 'ane'):
         _RUST_ANE_AVAILABLE = True
@@ -932,7 +932,7 @@ async def semantic_dedup_findings(findings: list[dict], threshold: float=0.92) -
     Hash fallback: url+title hash (zero RAM, always works).
     """
     try:
-        from hledac.universal.core.embeddings.legacy import get_embedding_manager
+        from hledac.universal._core.embeddings.legacy import get_embedding_manager
         mgr = get_embedding_manager()
     except Exception:
         mgr = None
@@ -978,7 +978,7 @@ def rerank_findings_cosine(findings: list[dict], query: str, top_k: int=20) -> l
     Fallback: embeddings.reranker batch_rerank_topk() → Rust SIMD → top-k extraction.
     """
     try:
-        from hledac.universal.core.embeddings.legacy import get_embedding_manager
+        from hledac.universal._core.embeddings.legacy import get_embedding_manager
         mgr = get_embedding_manager()
         if mgr is None or not mgr.is_loaded:
             raise RuntimeError('MLXEmbeddingManager unavailable')
@@ -1046,7 +1046,7 @@ def rerank_findings_crossencoder(query: str, findings: list[dict], top_k: int=20
         logger.warning('[RERANK:A] CrossEncoder failed (%s) — cosine fallback', e)
         return rerank_findings_cosine(findings, query, top_k)
 import re as _re
-from core import aclose
+from _core import aclose
 _IOC_PATTERNS: list[tuple[str, str]] = [('ipv4', '\\b(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)(?:\\.(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)){3}\\b'), ('ipv6', '\\b(?:[0-9a-fA-F]{1,4}:){7}[0-9a-fA-F]{1,4}\\b'), ('cve', '\\bCVE-\\d{4}-\\d{4,7}\\b'), ('sha256', '\\b[a-fA-F0-9]{64}\\b'), ('sha1', '\\b[a-fA-F0-9]{40}\\b'), ('md5', '\\b[a-fA-F0-9]{32}\\b'), ('url', '\\bhttps?://[^\\s<>\\"\']+'), ('email', '\\b[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\\.[a-zA-Z]{2,}\\b'), ('domain', '\\b(?:[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?\\.)+[a-zA-Z]{2,}\\b')]
 _DOMAIN_TLD_DENYLIST: frozenset[str] = frozenset({'exe', 'dll', 'bin', 'so', 'dylib', 'lib', 'o', 'a', 'obj', 'deb', 'rpm', 'dmg', 'pkg', 'apk', 'ipa', 'jar', 'war', 'ear', 'class', 'cab', 'msi', 'lnk', 'tar', 'gz', 'zip', 'rar', '7z', 'iso', 'img', 'dat', 'tmp', 'bak', 'log', 'conf', 'cfg', 'ini', 'env', 'py', 'js', 'ts', 'html', 'htm', 'json', 'xml', 'yaml', 'yml', 'toml', 'md', 'txt', 'csv', 'sh', 'bat', 'ps1', 'pdf', 'doc', 'docx', 'xls', 'xlsx', 'ppt', 'pptx'})
 

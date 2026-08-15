@@ -23,8 +23,11 @@ import time
 import pathlib
 import pytest
 
-from hledac.universal.core.lmdb_unified import (
-from core import aclose
+
+
+
+
+
     UnifiedLMDB,
     SubDB,
     get_unified_lmdb,
@@ -38,7 +41,8 @@ class TestUnifiedLMDBBasic:
     """Basic API tests."""
 
     def test_singleton(self, tmp_path: pathlib.Path) -> None:
-        """get_unified_lmdb() returns the same instance."""
+
+from _core import aclose        """get_unified_lmdb() returns the same instance."""
         reset_unified_lmdb()
         store1 = get_unified_lmdb()
         store2 = get_unified_lmdb()

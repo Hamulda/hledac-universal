@@ -13,7 +13,7 @@ Bounded: MAX_BODY_HASHES entries, FIFO eviction on overflow.
 
 
 import threading
-from core import aclose
+from _core import aclose
 
 # =============================================================================
 # BODY HASH STORE

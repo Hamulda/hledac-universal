@@ -25,7 +25,7 @@ Why these tests exist
 
 import re
 from pathlib import Path
-from core import aclose
+from _core import aclose
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 

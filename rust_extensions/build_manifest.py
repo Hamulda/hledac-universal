@@ -36,7 +36,7 @@ import platform
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
-from core import aclose
+from _core import aclose
 
 # rust_extensions/ → project root
 _REPO_ROOT = Path(__file__).resolve().parent

@@ -19,7 +19,7 @@ import tarfile
 from datetime import datetime
 from pathlib import Path
 from typing import Any
-from core import aclose
+from _core import aclose
 
 
 def _decompress_bundle(bundle_path: Path) -> bytes:

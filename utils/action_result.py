@@ -12,7 +12,7 @@ from __future__ import annotations
 
 
 import msgspec
-from core import aclose
+from _core import aclose
 
 
 class ActionResult(msgspec.Struct, gc=False):

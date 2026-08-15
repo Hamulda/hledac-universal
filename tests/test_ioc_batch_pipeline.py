@@ -20,7 +20,7 @@ import concurrent.futures
 from unittest import mock
 
 import pytest
-from core import aclose
+from _core import aclose
 
 # ---------------------------------------------------------------------------
 # Sample data
@@ -157,7 +157,7 @@ class TestBatchSyncProcessHtml:
 
     def test_links_resolved_correctly(self):
         """Rust batch path: relative links resolved to absolute via lol_html urljoin."""
-        from core.rust_backend import rust
+        from _core.rust_backend import rust
         if not rust.is_available:
             pytest.skip("Rust extension not available")
         from hledac.universal.fetching.public_fetcher import _batch_sync_process_html
@@ -169,7 +169,7 @@ class TestBatchSyncProcessHtml:
 
     def test_relative_links_not_duplicated(self):
         """Rust batch path: relative links resolved to absolute, no http/https duplication."""
-        from core.rust_backend import rust
+        from _core.rust_backend import rust
         if not rust.is_available:
             pytest.skip("Rust extension not available")
         from hledac.universal.fetching.public_fetcher import _batch_sync_process_html

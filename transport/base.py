@@ -51,7 +51,7 @@ from abc import ABC, abstractmethod
 from typing import TYPE_CHECKING
 
 import msgspec
-from core import aclose
+from _core import aclose
 
 if TYPE_CHECKING:
     from .circuit_breaker import CircuitBreaker, CircuitDecision, get_breaker

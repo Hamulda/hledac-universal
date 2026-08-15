@@ -27,7 +27,7 @@ import argparse
 import shutil
 import sys
 from pathlib import Path
-from core import aclose
+from _core import aclose
 
 # F218A fix: ensure 'hledac' parent is on sys.path so 'hledac.universal' imports resolve
 # When run from inside universal/ (cwd), parent of cwd = hledac/

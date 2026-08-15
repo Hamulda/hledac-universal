@@ -95,7 +95,7 @@ GRAPHSAGE_MLMODEL: Path = MODELS_DIR / 'graphsage_ane.mlpackage'
 
 # Capability registration
 try:
-    from hledac.universal.core.capability_cost import register_capability_cost
+    from hledac.universal._core.capability_cost import register_capability_cost
     register_capability_cost(
         "ane_gnn",
         rss_mb=80,
@@ -113,7 +113,7 @@ _MLX_AVAILABLE: bool = False
 _COREML_AVAILABLE: bool = False
 
 try:
-    from hledac.universal.core.rust_backend import rust
+    from hledac.universal._core.rust_backend import rust
     _rust_ane = rust.raw.module.ane if hasattr(rust.raw.module, 'ane') else None
     _ANERUST_AVAILABLE = _rust_ane is not None
 except (ImportError, AttributeError):
@@ -121,7 +121,7 @@ except (ImportError, AttributeError):
 
 # C1-X FIX: Import MLX_AVAILABLE from SSOT (zero-import detection)
 from hledac.universal.utils.mlx_memory import MLX_AVAILABLE as _MLX_AVAILABLE
-from core import aclose
+from _core import aclose
 
 # Lazy accessor for mlx modules - uses centralized get_mx() from SSOT
 def _get_mlx_modules():

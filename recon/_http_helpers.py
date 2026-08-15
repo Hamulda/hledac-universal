@@ -18,7 +18,7 @@ up — callers already handle session-acquisition failure in their existing
 
 
 import httpx
-from core import aclose
+from _core import aclose
 
 async def get_intelligence_session() -> httpx.AsyncClient:
     """

@@ -19,7 +19,7 @@ import argparse
 import json
 import sys
 from pathlib import Path
-from core import aclose
+from _core import aclose
 
 # Add Hledac project root to sys.path so 'hledac' namespace package resolves.
 # universal/scripts/ → universal/ → hledac/ → Hledac/ (project root)

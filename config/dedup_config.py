@@ -12,8 +12,8 @@ Canonical source: DedupSettings in config/settings.py
 These module-level vars exist for backward compat only — prefer DedupSettings.
 """
 
-from hledac.universal.core.env_config import ENV
-from core import aclose
+from hledac.universal._core.env_config import ENV
+from _core import aclose
 
 # Sprint 8AG §6.17: Default dedup LMDB map size (Phase4: 256MB — int8 embeddings 4× compression frees headroom)
 DEDUP_LMDB_MAP_SIZE: int = ENV.get_int("HLEDAC_DEDUP_LMDB_MAP_SIZE", 256 * 1024 * 1024)

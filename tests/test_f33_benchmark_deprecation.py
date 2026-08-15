@@ -7,7 +7,7 @@ Superseded by: benchmarks/ scripts (benchmarks/live_measurement_kpi.py, etc.)
 import warnings
 
 import pytest
-from core import aclose
+from _core import aclose
 
 
 class TestF33BenchmarkDeprecation:

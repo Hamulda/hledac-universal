@@ -61,7 +61,7 @@ import functools
 import logging
 from collections.abc import Callable, Iterator
 from typing import ParamSpec, TypeVar
-from core import aclose
+from _core import aclose
 
 # Module-level cache: name → logger
 _LOGGER_CACHE: dict[str, logging.Logger] = {}

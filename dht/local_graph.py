@@ -21,7 +21,7 @@ from hledac.universal.security import decrypt_aes_gcm, encrypt_aes_gcm
 from hledac.universal.security.key_manager import KeyManager
 from hledac.universal.utils.lmdb_bulk import putmulti_bounded
 from hledac.universal.utils.msgspec_json import decode, encode
-from core import aclose
+from _core import aclose
 
 if TYPE_CHECKING:
     import mlx.core as mx
@@ -39,7 +39,7 @@ def _get_lmdb_dht() -> Any:
     if _lmdb_dht is None:
         try:
             # R6: Centralized Rust access via core.rust_backend
-            from hledac.universal.core.rust_backend import rust
+            from hledac.universal._core.rust_backend import rust
             ext = rust.raw.module
 
             _lmdb_dht = ext

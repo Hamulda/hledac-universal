@@ -53,7 +53,7 @@ def _ensure_utc_aware(value: datetime) -> datetime:
         return value.replace(tzinfo=UTC)
     return value.astimezone(UTC)
 from hledac.universal.network.session_runtime import async_get_httpx_session
-from core import aclose
+from _core import aclose
 rapidfuzz = None
 try:
     from rapidfuzz import fuzz, process

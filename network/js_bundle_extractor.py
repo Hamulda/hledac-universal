@@ -3,7 +3,7 @@
 
 import logging  # noqa: E402
 import re  # noqa: E402
-from core import aclose
+from _core import aclose
 
 logger = logging.getLogger(__name__)
 

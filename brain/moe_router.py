@@ -49,7 +49,7 @@ MAX_LLM_PROMPT_CHARS = 8192
 
 # C1-X FIX: Import MLX_AVAILABLE from SSOT (zero-import detection)
 from hledac.universal.utils.mlx_memory import MLX_AVAILABLE
-from core import aclose
+from _core import aclose
 
 # Lazy accessor for mlx modules - uses centralized get_mx() from SSOT
 def _get_mlx():
@@ -89,7 +89,7 @@ except ImportError:
 # SWARM-002: Optional multilingual embedding support
 _MULTILINGUAL_AVAILABLE = False
 try:
-    from hledac.universal.core.multilingual import (
+    from hledac.universal._core.multilingual import (
         detect_language,
         get_lang_detector,
         get_bge_m3_embedder,
@@ -409,7 +409,7 @@ class MoERouter:
             await self._evict_lru_expert()
         try:
             from mlx_lm import load
-            from hledac.universal.core.mlx_inference_lock import run_in_mlx_worker
+            from hledac.universal._core.mlx_inference_lock import run_in_mlx_worker
 
             model_path = self.config.model_paths.get(expert_name)
             if not model_path:
@@ -754,7 +754,7 @@ class MoERouter:
             
             # Standard path: use loaded model
             from mlx_lm import generate
-            from hledac.universal.core.mlx_inference_lock import run_in_mlx_worker
+            from hledac.universal._core.mlx_inference_lock import run_in_mlx_worker
 
             model, tokenizer = model_or_ref, tokenizer_or_task
             

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Direct migration of runtime/sprint_scheduler.py @dataclass → msgspec.Struct"""
 import re
-from core import aclose
+from _core import aclose
 
 root = "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal"
 filepath = f"{root}/runtime/sprint_scheduler.py"

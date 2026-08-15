@@ -13,7 +13,7 @@ import re
 from typing import Any
 import httpx
 from hledac.universal.paths import DB_ROOT
-from core import aclose
+from _core import aclose
 logger = logging.getLogger(__name__)
 _NODRIVER_AVAILABLE: bool | None = None
 

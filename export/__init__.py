@@ -63,7 +63,7 @@ from hledac.universal.export.sprint_bundler import (
 from hledac.universal.export.sprint_viewer import (
     view_bundle,
 )
-from core import aclose
+from _core import aclose
 
 __all__ = [
     # New unified engine (Issue 12.1)

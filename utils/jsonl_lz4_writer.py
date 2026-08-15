@@ -11,7 +11,7 @@ from typing import TYPE_CHECKING, Any
 if TYPE_CHECKING:
     import lz4.frame
 import msgspec.json as _json
-from core import aclose
+from _core import aclose
 _lz4_fn: Any | None = None
 
 def _init_lz4() -> bool:
@@ -20,7 +20,7 @@ def _init_lz4() -> bool:
     if _lz4_fn is not None:
         return True
     try:
-        from hledac.universal.core import rust_backend
+        from hledac.universal._core import rust_backend
         be = rust_backend.rust
         if be.is_available:
             domain = getattr(be, 'hot_edges', None)

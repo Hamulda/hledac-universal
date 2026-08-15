@@ -20,7 +20,7 @@ from functools import lru_cache
 from typing import Optional
 
 from .micro_model_pool import MICRO_MODELS, TaskType
-from core import aclose
+from _core import aclose
 
 
 # =============================================================================

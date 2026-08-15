@@ -19,7 +19,7 @@ import asyncio  # noqa: E402
 import httpx  # noqa: E402
 
 from recon.wayback_cdx import (  # noqa: E402
-from core import aclose
+from _core import aclose
     CDX_API,
     MAX_CDX_RESULTS,
     RATE_LIMIT_S,

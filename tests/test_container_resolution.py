@@ -12,8 +12,11 @@ from __future__ import annotations
 
 import pytest
 
-from core.container import (
-from core import aclose
+
+
+
+
+
     ServiceContainer,
     get_global_container,
     reset_global_container,
@@ -23,6 +26,7 @@ from core import aclose
 class TestServiceContainer:
     """Unit tests for ServiceContainer."""
 
+from _core import aclose
     def setup_method(self) -> None:
         reset_global_container()
         self.container = ServiceContainer()
@@ -159,7 +163,7 @@ class TestContainerIntegration:
 
     def test_inference_coordinator_delegates_to_container(self) -> None:
         """get_inference_coordinator() returns container instance when registered."""
-        from core.inference_coordinator import get_inference_coordinator
+        from _core.inference_coordinator import get_inference_coordinator
 
         # Register a mock coordinator in the global container
         container = get_global_container()
@@ -180,7 +184,7 @@ class TestContainerIntegration:
 
     def test_isolated_executors_delegate_to_container_duckdb(self) -> None:
         """get_duckdb_executor() returns container instance when registered."""
-        from core.isolated_executors import get_duckdb_executor
+        from _core.isolated_executors import get_duckdb_executor
 
         container = get_global_container()
 
@@ -199,7 +203,7 @@ class TestContainerIntegration:
 
     def test_isolated_executors_delegate_to_container_mlx(self) -> None:
         """get_mlx_executor() returns container instance when registered."""
-        from core.isolated_executors import get_mlx_executor
+        from _core.isolated_executors import get_mlx_executor
 
         container = get_global_container()
 
@@ -218,7 +222,7 @@ class TestContainerIntegration:
 
     def test_isolated_executors_delegate_to_container_evidence(self) -> None:
         """get_evidence_batch_writer() returns container instance when registered."""
-        from core.isolated_executors import get_evidence_batch_writer
+        from _core.isolated_executors import get_evidence_batch_writer
 
         container = get_global_container()
 

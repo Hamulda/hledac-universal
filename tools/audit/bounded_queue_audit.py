@@ -16,7 +16,7 @@ import re
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
-from core import aclose
+from _core import aclose
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 OUTPUT_DIR = REPO_ROOT / "probe_f207n_bounded_queue"

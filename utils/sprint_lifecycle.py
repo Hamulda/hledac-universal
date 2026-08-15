@@ -41,7 +41,7 @@ from enum import Enum
 from typing import Any
 from .uma_budget import UmaWatchdog
 from .async_helpers import safe_create_task
-from core import aclose
+from _core import aclose
 logger = logging.getLogger(__name__)
 
 class SprintLifecycleState(Enum):

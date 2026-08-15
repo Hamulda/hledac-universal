@@ -27,7 +27,7 @@ import msgspec
 from datetime import datetime
 from typing import Any
 from operator import attrgetter, itemgetter
-from core import aclose
+from _core import aclose
 logger = logging.getLogger(__name__)
 MAX_TIMELINE_EVENTS: int = 200
 MAX_EVENT_AGE_DAYS: int = 365 * 5

@@ -26,7 +26,7 @@ from typing import TYPE_CHECKING, Any
 if TYPE_CHECKING:
     from mlx_lm import Model as MLXModel
     from mlx_lm import TokenizerWrapper as MLXTokenizer
-from core import aclose
+from _core import aclose
 logger = logging.getLogger(__name__)
 _mlx: Any | None = None  # type: ignore[assignment]
 

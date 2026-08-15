@@ -29,8 +29,8 @@ class Decision(StrEnum):
     BLOCKED_BY_CONTRACT = 'BLOCKED_BY_CONTRACT'
     BLOCKED_BY_MEMORY = 'BLOCKED_BY_MEMORY'
     BLOCKED_BY_UNKNOWN = 'BLOCKED_BY_UNKNOWN'
-from hledac.universal.core.resource_governor import get_swap_policy_tier
-from core import aclose
+from hledac.universal._core.resource_governor import get_swap_policy_tier
+from _core import aclose
 
 def _check_uma() -> dict:
     """
@@ -38,7 +38,7 @@ def _check_uma() -> dict:
     This is a one-shot local read — no live sprint, no model load.
     """
     try:
-        from hledac.universal.core.resource_governor import sample_uma_status
+        from hledac.universal._core.resource_governor import sample_uma_status
     except Exception as exc:
         return {'error': str(exc), 'system_used_gib': 0.0, 'swap_used_gib': 0.0, 'swap_detected': False, 'uma_state': 'unknown', 'io_only': False, 'last_error': str(exc)}
     try:

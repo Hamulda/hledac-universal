@@ -6,7 +6,7 @@ from itertools import combinations
 
 import re
 import time
-from core import aclose
+from _core import aclose
 
 
 def normalize_text(text: str) -> str:

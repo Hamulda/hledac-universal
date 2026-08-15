@@ -25,7 +25,7 @@ if TYPE_CHECKING:
 # Uses importlib.metadata.version("mlx") — no mlx.core import at module load
 # --------------------------------------------------------------------------- #
 from hledac.universal.utils.mlx_memory import MLX_AVAILABLE
-from core import aclose
+from _core import aclose
 
 # --------------------------------------------------------------------------- #
 # Optional CoreML — fail-soft (imported lazily in methods, not at module level)

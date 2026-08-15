@@ -15,7 +15,7 @@ import time
 from typing import Literal
 
 import msgspec
-from hledac.universal.core.psutil_shim import psutil
+from hledac.universal._core.psutil_shim import psutil
 
 logger = logging.getLogger(__name__)
 
@@ -46,8 +46,8 @@ class BrowserDecision(msgspec.Struct, frozen=True, gc=False):
 
 # ISSUE-014 FIX: asyncio.Lock() removed — was unused, caused "no running event loop" on macOS import
 # ISSUE-018: RSS cache — 10s TTL for M1 battery optimization (updated from 5s)
-from hledac.universal.core.locks import LockCategory, make_lock
-from core import aclose
+from hledac.universal._core.locks import LockCategory, make_lock
+from _core import aclose
 
 _RSS_CACHE_TTL_S: float = 10.0
 _RSS_CACHE: tuple[float, float] | None = None  # (timestamp, rss_gib)
@@ -81,7 +81,7 @@ def _rss_gib() -> float:
     # Priority 0: Rust extension via sysinfo (no subprocess, cross-platform).
     # F265C: Use centralized core.memory (A5-04: canonical path)
     try:
-        from hledac.universal.core.memory import get_process_rss_gib
+        from hledac.universal._core.memory import get_process_rss_gib
 
         val = get_process_rss_gib()
         if val > 0.0:

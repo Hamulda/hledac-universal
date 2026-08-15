@@ -30,7 +30,7 @@ import msgspec
 from pathlib import Path
 from typing import Any
 from operator import attrgetter, itemgetter
-from core import aclose
+from _core import aclose
 logger = logging.getLogger(__name__)
 MAGIC_BYTES = {'jpeg': (b'\xff\xd8\xff',), 'png': (b'\x89PNG\r\n\x1a\n',), 'pdf': (b'%PDF',), 'zip': (b'PK\x03\x04', b'PK\x05\x06', b'PK\x07\x08'), 'pcap': (b'\xa1\xb2\xc3\xd4', b'\xd4\xc3\xb2\xa1'), 'gif': (b'GIF87a', b'GIF89a'), 'bmp': (b'BM',), 'tiff': (b'II*\x00', b'MM\x00*'), 'webp': (b'RIFF',), 'mp3': (b'ID3', b'\xff\xfb', b'\xff\xf3', b'\xff\xf2'), 'wav': (b'RIFF',), 'mp4': (b'ftyp',), 'elf': (b'\x7fELF',), 'macho': (b'\xcf\xfa\xed\xfe', b'\xca\xfe\xba\xbe')}
 HASH_PATTERN = '\\b[0-9a-fA-F]{32,128}\\b'

@@ -35,7 +35,7 @@ import logging
 import random as _random
 from typing import TYPE_CHECKING, Any, TypeVar
 from collections.abc import Awaitable, Callable
-from core import aclose
+from _core import aclose
 
 if TYPE_CHECKING:
     from collections.abc import Sequence

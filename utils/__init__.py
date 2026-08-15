@@ -25,7 +25,7 @@ Obsahuje:
 """
 
 from typing import TYPE_CHECKING
-from core import aclose
+from _core import aclose
 
 # Lazy submodule registry — maps name → (module, names to expose)
 # Loaded on demand to eliminate ~3300ms import overhead for callers that only

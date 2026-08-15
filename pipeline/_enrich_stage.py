@@ -19,7 +19,7 @@ from typing import TYPE_CHECKING, Any
 
 from ._stage_protocol import BoundedStageQueue, Stage, StageContext
 from hledac.universal.utils.asyncx import parallel, safe_create_task  # ISSUE-006, E4: parallel() + OTel trace context
-from core import aclose
+from _core import aclose
 
 if TYPE_CHECKING:
     pass

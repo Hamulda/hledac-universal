@@ -13,7 +13,7 @@ For persistent knowledge graph storage, use:
 """
 import msgspec.json as _json
 from typing import Any
-from core import aclose
+from _core import aclose
 
 class ContextGraph:
     """

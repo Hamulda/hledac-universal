@@ -40,7 +40,7 @@ from typing import Any
 
 from hledac.universal.runtime.watchdog import StuckTaskDetector
 from hledac.universal.utils.asyncx import parallel, _check_gathered
-from core import aclose
+from _core import aclose
 
 _CancelledError: type = asyncio.CancelledError  # type: ignore[misc,assignment] — Python 3.14+: builtin
 

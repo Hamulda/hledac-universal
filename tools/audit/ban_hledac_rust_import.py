@@ -7,9 +7,9 @@ Direct imports skip ABI/capability scoring, force-override, and the prober —
 so a broken/nonexistent extension crashes instead of falling back.
 
 Allowed patterns:
-  ✅ from hledac.universal.core.rust_backend import rust
-  ✅ from hledac.universal.core.rust_backend import rust; rust.raw.X
-  ✅ from hledac.universal.core.rust_backend import get_accel
+  ✅ from hledac.universal._core.rust_backend import rust
+  ✅ from hledac.universal._core.rust_backend import rust; rust.raw.X
+  ✅ from hledac.universal._core.rust_backend import get_accel
   ✅ from hledac_rust_extensions import hledac_rust_extensions  (TYPE_CHECKING only in rust_backend/)
   ✅ rust_extensions/ (benchmarks/verify_build.py)
   ✅ tests/ (test files need direct access for compatibility testing)
@@ -19,7 +19,7 @@ Violation: `from hledac_rust_extensions import X` or `import hledac_rust_extensi
 outside allowed directories without going through the facade.
 
 Fix: Replace with:
-    from hledac.universal.core.rust_backend import rust
+    from hledac.universal._core.rust_backend import rust
     X = rust.raw.X  # None if unavailable
 
 Run: python tools/audit/ban_hledac_rust_import.py [--fix]
@@ -33,7 +33,7 @@ import sys
 from pathlib import Path
 from dataclasses import dataclass
 from collections.abc import Iterator
-from core import aclose
+from _core import aclose
 
 
 # Directories/files that are always allowed to import hledac_rust_extensions directly
@@ -203,7 +203,7 @@ def generate_fix(import_type: str, names: tuple[str, ...], alias: str | None = N
     """
     if import_type == "import":
         return (
-            "from hledac.universal.core.rust_backend import rust",
+            "from hledac.universal._core.rust_backend import rust",
             f"  # Replace: import hledac_rust_extensions → use rust.raw"
         )
     else:
@@ -211,13 +211,13 @@ def generate_fix(import_type: str, names: tuple[str, ...], alias: str | None = N
         if len(names) == 1:
             symbol = names[0]
             return (
-                f"from hledac.universal.core.rust_backend import rust\n"
+                f"from hledac.universal._core.rust_backend import rust\n"
                 f"{symbol} = rust.raw.{symbol}  # None if unavailable",
                 f"  # Replace: {symbol} = rust.raw.{symbol}"
             )
         else:
             # Multiple imports - need multiple lines
-            lines = ["from hledac.universal.core.rust_backend import rust"]
+            lines = ["from hledac.universal._core.rust_backend import rust"]
             for name in names:
                 lines.append(f"{name} = rust.raw.{name}  # None if unavailable")
             return ("\n".join(lines), "  # Multiple symbols migrated to rust.raw")
@@ -282,12 +282,12 @@ def main() -> None:
 
     print("\n" + "=" * 60)
     print("Fix: Replace direct imports with facade pattern:")
-    print("  from hledac.universal.core.rust_backend import rust")
+    print("  from hledac.universal._core.rust_backend import rust")
     print("  X = rust.raw.X  # None if unavailable")
     print("")
     print("For module-level imports (TYPE_CHECKING), use:")
     print("  if TYPE_CHECKING:")
-    print("      from hledac.universal.core.rust_backend import rust")
+    print("      from hledac.universal._core.rust_backend import rust")
     print("      # type alias: MyType = rust.raw.MyClass")
     print("=" * 60)
 

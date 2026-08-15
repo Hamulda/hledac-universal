@@ -18,7 +18,7 @@ import logging
 import sqlite3
 from pathlib import Path
 from typing import Any
-from core import aclose
+from _core import aclose
 logger = logging.getLogger(__name__)
 SCHEMA_SQL = '\nCREATE TABLE IF NOT EXISTS temporal_snapshot (\n    id          INTEGER PRIMARY KEY CHECK (id = 1),\n    snapshot    TEXT NOT NULL,\n    updated_at  REAL NOT NULL\n);\nPRAGMA journal_mode=WAL;\nPRAGMA synchronous=NORMAL;\n'
 DEFAULT_STORE_PATH = Path(__file__).parent.parent / '.temporal_store' / 'temporal_signal.db'

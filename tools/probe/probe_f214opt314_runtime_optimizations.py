@@ -23,7 +23,7 @@ import tracemalloc
 from collections.abc import Callable
 from dataclasses import dataclass
 import psutil
-from core import aclose
+from _core import aclose
 MIN_VERSION = (3, 14)
 if sys.version_info < MIN_VERSION:
     raise SystemExit(f'Requires Python {MIN_VERSION[0]}.{MIN_VERSION[1]}+')

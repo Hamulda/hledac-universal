@@ -29,16 +29,16 @@ from typing import Any, cast
 from hledac.universal.compat.msgspec_gc_compat import Struct
 
 
-from hledac.universal.core.feature_flags import FeatureFlag, FeatureFlags
+from hledac.universal._core.feature_flags import FeatureFlag, FeatureFlags
 from hledac.universal.utils.asyncx import parallel
 
 from .services import (
-from core import aclose
     FetchOptions,
     FetchResult,
     FetchServiceConfig,
     FetchServiceRegistry,
 )
+from _core import aclose
 
 logger = logging.getLogger(__name__)
 

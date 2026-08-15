@@ -9,7 +9,7 @@ import json
 import logging
 import psutil
 from hledac.universal.utils.asyncx import parallel_ok, safe_wait_for
-from core import aclose
+from _core import aclose
 logger = logging.getLogger(__name__)
 MLX_LM_AVAILABLE = True
 try:

@@ -11,7 +11,7 @@ import logging
 import re
 from abc import ABC, abstractmethod
 from urllib.parse import urljoin
-from core import aclose
+from _core import aclose
 logger = logging.getLogger(__name__)
 
 class PathPattern(ABC):

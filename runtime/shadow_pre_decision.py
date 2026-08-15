@@ -69,7 +69,7 @@ Outputs: PreDecisionSummary (diagnostic artifact)
 import msgspec  # noqa: E402
 from enum import Enum, auto  # noqa: E402
 from typing import TYPE_CHECKING, Any  # noqa: E402
-from core import aclose
+from _core import aclose
 
 # =============================================================================
 # Diff Taxonomy — categorizace pre-decision mismatch reasons

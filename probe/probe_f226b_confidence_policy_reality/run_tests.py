@@ -16,7 +16,7 @@ sys.path.insert(0, str(_root))
 import recon.confidence_policy
 import recon.social_identity_miner
 import coordinators.claims_coordinator
-from core import aclose
+from _core import aclose
 
 def run_tests():
     from recon.confidence_policy import (

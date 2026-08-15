@@ -22,7 +22,7 @@ import msgspec
 from enum import Enum
 from pathlib import Path
 from typing import Any
-from core import aclose
+from _core import aclose
 
 class GuardVerdict(Enum):
     PASS = 'CODEHEALTH_PASS'

@@ -15,7 +15,7 @@ import logging
 import secrets
 import string
 import zipfile
-from core import aclose
+from _core import aclose
 logger = logging.getLogger(__name__)
 
 # Crypto-safe RNG — F350M-R

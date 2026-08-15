@@ -54,7 +54,7 @@ import msgspec
 from msgspec import field
 
 if TYPE_CHECKING:
-    from hledac.universal.core.resource_governor import GovernorDecision
+    from hledac.universal._core.resource_governor import GovernorDecision
 
 
 @runtime_checkable
@@ -73,13 +73,13 @@ logger = logging.getLogger(__name__)
 # During active sprint, GC is disabled entirely; explicit gen-0 ticks
 # replace involuntary collections. Boot thresholds are applied once at import.
 from hledac.universal.coordinators.resource.blitz_gc import (
-from core import aclose
     BLITZ_THRESHOLD,
     BOOT_THRESHOLD,
     POST_TEARDOWN_THRESHOLD,
     _GC_FREEZE_NATIVE as _BLITZ_GC_FREEZE_NATIVE,
     blitz_gc as _blitz_gc,
 )
+from _core import aclose
 
 # Legacy threshold constant — kept for backward compat, but BlitzGCStrategy
 # is the canonical source of truth for sprint GC lifecycle.
@@ -108,7 +108,7 @@ def _get_system_memory_percent() -> float:
     # Cache miss or expired — measure
     percent: float = 0.0
     try:
-        from hledac.universal.core.psutil_shim import psutil as _psutil
+        from hledac.universal._core.psutil_shim import psutil as _psutil
         if _psutil is not None:
             percent = float(_psutil.virtual_memory().percent)
     except Exception:  # noqa: BLE001
@@ -474,7 +474,7 @@ class BackpressureMonitor:
         """
         now = _time_module.monotonic()
         try:
-            from hledac.universal.core.resource_governor import ConcurrencyPreset
+            from hledac.universal._core.resource_governor import ConcurrencyPreset
             cache_ttl = ConcurrencyPreset.from_state(self._decision.uma_state).cache_ttl_seconds
         except Exception:
             cache_ttl = 5.0  # safe default
@@ -522,7 +522,7 @@ class BackpressureMonitor:
                 # F1 FIX: propagate UMA state to ConcurrencyBudgetRegistry so all
                 # parallel() call sites globally respect the same memory pressure limits.
                 try:
-                    from hledac.universal.core.concurrency_registry import ConcurrencyBudgetRegistry
+                    from hledac.universal._core.concurrency_registry import ConcurrencyBudgetRegistry
                     registry = await ConcurrencyBudgetRegistry.get_instance_async()
                     await registry.adjust_for_state(new_decision.uma_state)
                 except Exception:  # noqa: BLE001
@@ -615,7 +615,7 @@ class _CapacitySampler:
         MUST be called via asyncio.to_thread, never directly from event loop.
         Returns (cpu_percent, gpu_memory, gpu_usage).
         """
-        from hledac.universal.core.psutil_shim import psutil as _ps
+        from hledac.universal._core.psutil_shim import psutil as _ps
 
         assert _ps is not None
         ps = _ps
@@ -777,7 +777,7 @@ class M1ResourceCoordinator:
     def get_stats(self) -> dict[str, Any]:
         """Return resource stats for telemetry."""
         try:
-            from hledac.universal.core.psutil_shim import psutil as _ps
+            from hledac.universal._core.psutil_shim import psutil as _ps
 
             assert _ps is not None
             ps = _ps

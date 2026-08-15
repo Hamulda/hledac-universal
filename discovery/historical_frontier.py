@@ -18,8 +18,8 @@ import asyncio
 import time
 
 from hledac.universal.discovery.base import DiscoveryBatchResult, DiscoveryHit
-from hledac.universal.core.resource_pool import PoolKind, with_resource
-from core import aclose
+from hledac.universal._core.resource_pool import PoolKind, with_resource
+from _core import aclose
 
 # DuckDB store interface for historical query
 _HISTORICAL_STORE_PATH = "~/.hledac/hledac.duckdb"

@@ -33,7 +33,7 @@ from re import Pattern
 from threading import Lock
 from typing import NamedTuple
 from operator import attrgetter, itemgetter
-from core import aclose
+from _core import aclose
 _REGEX_CACHE: OrderedDict[str, Pattern] = OrderedDict()
 _REGEX_CACHE_LOCK = Lock()
 _REGEX_CACHE_MAXSIZE = 200

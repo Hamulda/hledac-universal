@@ -9,8 +9,11 @@ Verifies:
 probe_f214q/.
 """
 
-from hledac_hypothesis.hypothesisgenerator import (
-from core import aclose
+
+
+
+
+
     HLEDAC_ENABLE_DSPY,
     HypothesisGenerator,
     ResearchHypothesis,
@@ -21,7 +24,8 @@ from core import aclose
 
 class MockFinding:
     def __init__(self, finding_id: str, payload_text: str):
-        self.finding_id = finding_id
+
+from _core import aclose        self.finding_id = finding_id
         self.payload_text = payload_text
 
 

@@ -8,7 +8,7 @@ import threading
 import time
 from collections import OrderedDict
 from pathlib import Path
-from core import aclose
+from _core import aclose
 try:
     import xxhash
     XXHASH_AVAILABLE = True

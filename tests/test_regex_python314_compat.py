@@ -27,8 +27,11 @@ import threading
 
 import pytest
 
-from hledac.universal.tools.regex_cache import (
-from core import aclose
+
+
+
+
+
     MultiPatternCache,
     check_btc_address,
     check_cve,
@@ -55,7 +58,8 @@ from core import aclose
 )
 
 # ==============================================================================
-# Invariant tests: get_compiled_pattern returns cached Pattern
+
+from _core import aclose# Invariant tests: get_compiled_pattern returns cached Pattern
 # ==============================================================================
 
 

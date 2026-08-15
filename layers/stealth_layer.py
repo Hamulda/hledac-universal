@@ -1383,7 +1383,7 @@ class StealthLayer:
 import ctypes
 import ctypes.util
 import os
-from core import aclose
+from _core import aclose
 
 class Chameleon:
     """

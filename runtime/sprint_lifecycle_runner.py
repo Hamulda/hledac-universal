@@ -44,7 +44,7 @@ import logging
 import time as _time
 from collections.abc import Callable
 from typing import Any
-from core import aclose
+from _core import aclose
 
 __all__ = ["SprintLifecycleRunner"]
 

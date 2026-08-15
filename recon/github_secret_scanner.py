@@ -23,7 +23,7 @@ from hledac.universal.transport.circuit_breaker import checked_httpx_get as chec
 from hledac.universal.utils.asyncx import parallel
 logger = logging.getLogger(__name__)
 from hledac.universal.brain.output_dlp_filter import mask_secret as _mask_secret_impl
-from core import aclose
+from _core import aclose
 
 _SECRET_REDACT_LEN = 4
 
@@ -239,7 +239,7 @@ async def scan_repo(repo_full_name: str) -> list[SecretFinding]:
         for pattern_label, compiled_re in _API_PATTERNS:
             query_str = f'{repo_q}{pattern_label}'
             items = await _gh_search(query_str, session, max_results=30)
-            from hledac.universal.core.concurrency import ConcurrencyCategory, get_semaphore
+            from hledac.universal._core.concurrency import ConcurrencyCategory, get_semaphore
             _fetch_sem = get_semaphore(ConcurrencyCategory.SCRAPE_GENERAL)
 
             async def _fetch_one(item: dict) -> tuple[dict, str | None]:

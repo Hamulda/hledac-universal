@@ -26,7 +26,7 @@ from __future__ import annotations
 import json as _json
 import logging
 from typing import Any
-from core import aclose
+from _core import aclose
 
 logger = logging.getLogger(__name__)
 
@@ -58,7 +58,7 @@ class FindingCollapserWithConsistency:
         """Lazy initialization of dependencies."""
         # Try to import finding_collapser
         try:
-            from hledac.universal.core.rust_backend import rust
+            from hledac.universal._core.rust_backend import rust
             raw = rust.raw
             if hasattr(raw, "collapse_findings"):
                 self._collapser_available = True
@@ -124,7 +124,7 @@ class FindingCollapserWithConsistency:
         markdown = ""
         if self._collapser_available and clean_for_collapse:
             try:
-                from hledac.universal.core.rust_backend import rust
+                from hledac.universal._core.rust_backend import rust
                 findings_json = _json.dumps(clean_for_collapse).encode("utf-8")
                 result = rust.raw.collapse_findings(
                     findings_json,

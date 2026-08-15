@@ -23,7 +23,7 @@ import msgspec
 import os
 import platform
 import unittest
-from core import aclose
+from _core import aclose
 
 # ---------------------------------------------------------------------------
 # Test infra: import the modules we need (no pytest fixtures, hermetic)
@@ -476,12 +476,12 @@ class TestF273GMallocPressureRelief(unittest.TestCase):
     """F273G: _maybe_call_pressure_relief wired into pre-windup barrier."""
 
     def test_malloc_zone_pressure_relief_importable(self):
-        from hledac.universal.core.memory_cycle import malloc_zone_pressure_relief
+        from hledac.universal._core.memory_cycle import malloc_zone_pressure_relief
 
         self.assertTrue(callable(malloc_zone_pressure_relief))
 
     def test_malloc_zone_pressure_relief_returns_int(self):
-        from hledac.universal.core.memory_cycle import malloc_zone_pressure_relief
+        from hledac.universal._core.memory_cycle import malloc_zone_pressure_relief
 
         rc = malloc_zone_pressure_relief()
         self.assertIsInstance(rc, int)

@@ -49,7 +49,7 @@ from collections.abc import AsyncIterator, Callable
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
-from core import aclose
+from _core import aclose
 
 # ── paths ────────────────────────────────────────────────────────────────────────
 BENCH_FILE = Path(__file__).resolve()

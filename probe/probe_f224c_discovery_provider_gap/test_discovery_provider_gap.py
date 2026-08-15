@@ -29,15 +29,19 @@ from hledac.universal.discovery.discovery_planner import (
     get_provider_state,
     reset_discovery_planner,
 )
-from hledac.universal.discovery.provider_stats import (
-from core import aclose
+
+
+
+
+
     ProviderStatsRegistry,
     get_provider_stats_registry,
 )
 
 
 # ---------------------------------------------------------------------------
-# Fixtures
+
+from _core import aclose# Fixtures
 # ---------------------------------------------------------------------------
 
 @pytest.fixture

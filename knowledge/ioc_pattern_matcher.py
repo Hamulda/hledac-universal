@@ -42,7 +42,7 @@ from hledac.universal.compat.msgspec_gc_compat import Struct
 from typing import Final
 
 from operator import attrgetter, itemgetter
-from core import aclose
+from _core import aclose
 __all__ = [
     "IOCPatternMatcher",
     "get_ioc_pattern_matcher",

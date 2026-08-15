@@ -22,7 +22,7 @@ Always-on, bounded, fail-safe. No feature flags.
 """
 
 from typing import TYPE_CHECKING
-from core import aclose
+from _core import aclose
 
 if TYPE_CHECKING:
     pass
@@ -42,7 +42,7 @@ def _get_rust() -> object:
     """Lazy Rust backend access — avoids import-time crash on malformed extensions."""
     try:
         # Inline import per PEP 810 — avoids aiohttp.ClientSession removal cascade
-        from hledac.universal.core import rust_backend
+        from hledac.universal._core import rust_backend
 
         return rust_backend.rust
     except Exception:

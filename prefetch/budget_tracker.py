@@ -4,7 +4,7 @@ BudgetTracker – sleduje spotřebu network, CPU, storage (jednoduchý klouzavý
 import time
 
 from collections import deque
-from core import aclose
+from _core import aclose
 
 class BudgetTracker:
     __slots__ = tuple(('cpu_budget', 'cpu_usage', 'network_budget', 'network_usage'))

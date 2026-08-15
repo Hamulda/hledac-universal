@@ -37,8 +37,11 @@ if TYPE_CHECKING:
 import logging as _logging
 
 # MODERN-20: Import canonical schema as single source of truth
-from hledac.universal.core.canonical_schema import (
-from core import aclose
+
+
+
+
+
     CANONICAL_FINDINGS_ARITY,
     CANONICAL_FINDINGS_COLUMNS,
     get_duckdb_temp_table_ddl,
@@ -52,6 +55,7 @@ class DuckDBQueryExecutor:
     """
     Private SQL construction and execution engine for DuckDBShadowStore.
 
+from _core import aclose
     NOT part of the public API - exists solely to concentrate SQL string
     templates and transaction patterns that were previously copy-pasted
     across 38 _sync_* methods.
@@ -354,7 +358,7 @@ class DuckDBQueryExecutor:
     def _claims_enabled(self) -> bool:
         """Check if claims extraction is enabled."""
         try:
-            from hledac.universal.core.env_config import ENV
+            from hledac.universal._core.env_config import ENV
 
             return ENV.get_bool("HLEDAC_ENABLE_CLAIMS_EXTRACTION")
         except Exception:
@@ -393,7 +397,7 @@ class DuckDBQueryExecutor:
         try:
             # Lazy import — claims_extraction loaded only when needed
             # R6: Centralized Rust access via core.rust_backend
-            from hledac.universal.core.rust_backend import rust
+            from hledac.universal._core.rust_backend import rust
             batch_extract_claims_python = rust.raw.batch_extract_claims_python  # type: ignore[assignment]
 
             # PyO3 zero-copy: single GIL acquisition for entire batch

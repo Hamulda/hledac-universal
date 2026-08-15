@@ -42,8 +42,8 @@ from enum import Enum, auto
 from typing import Any
 from urllib.parse import urlparse
 
-from hledac.universal.core.constants import M1_BOUNDS
-from hledac.universal.core.env_config import ENV
+from hledac.universal._core.constants import M1_BOUNDS
+from hledac.universal._core.env_config import ENV
 from hledac.universal.utils.asyncx import safe_create_task, safe_wait_for, parallel
 
 if __name__ == '__main__':
@@ -262,7 +262,7 @@ _init_lock = LazyAsyncioLock()
 
 # DNS cache — extracted to dns_cache.py (F350M-R refactor)
 from .dns_cache import get_dns_cache
-from core import aclose
+from _core import aclose
 
 _dns_cache = get_dns_cache()
 

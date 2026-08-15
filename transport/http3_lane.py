@@ -94,8 +94,8 @@ from urllib.parse import urlparse
 logger = logging.getLogger(__name__)
 
 # F270: Canonical constants — single source of truth for M1 8GB bounds
-from hledac.universal.core.constants import M1_BOUNDS  # noqa: E402
-from hledac.universal.core.env_config import ENV  # noqa: E402
+from hledac.universal._core.constants import M1_BOUNDS  # noqa: E402
+from hledac.universal._core.env_config import ENV  # noqa: E402
 from hledac.universal.utils.asyncx import safe_wait_for
 
 # Backward-compatible local aliases (these names are used throughout the module)
@@ -108,7 +108,7 @@ _H3_RSS_BLOCK_GIB: float = M1_BOUNDS().fetch_soft_ceiling_gb
 _H3_RSS_PROBE_TIMEOUT_S: float = M1_BOUNDS().rss_probe_timeout_s
 
 # Issue #17: psutil Process singleton from centralized psutil_shim.
-from hledac.universal.core.psutil_shim import process as _psutil_proc
+from hledac.universal._core.psutil_shim import process as _psutil_proc
 
 
 # ---------------------------------------------------------------------------
@@ -134,8 +134,8 @@ _lru_cache: LRUCache[str, tuple[float, bool]] = LRUCache(max_size=_H3_CACHE_MAX)
 _semaphore: asyncio.Semaphore | None = None
 # PATCH 4: throttle speculative Alt-Svc probes (max 16 concurrent via _probe_semaphore)
 # Uses ConcurrencyCategory.HTTP_LANE from concurrency_registry (shared semaphore).
-from hledac.universal.core.concurrency import ConcurrencyCategory, get_semaphore  # noqa: E402
-from core import aclose
+from hledac.universal._core.concurrency import ConcurrencyCategory, get_semaphore  # noqa: E402
+from _core import aclose
 
 _probe_semaphore: asyncio.Semaphore = get_semaphore(ConcurrencyCategory.HTTP_LANE)
 _neqo_checked: bool = False

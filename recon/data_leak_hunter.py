@@ -35,7 +35,7 @@ try:
 except ImportError:
     HTTP_CLIENT_AVAILABLE = False
 from hledac.universal.transport.session_pool import session_pool
-from core import aclose
+from _core import aclose
 try:
     from hledac.universal.security.temporal_anonymizer import TemporalAnonymizer
     from hledac.universal.security.zero_attribution_engine import ZeroAttributionEngine

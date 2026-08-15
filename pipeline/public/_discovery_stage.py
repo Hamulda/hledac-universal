@@ -21,7 +21,7 @@ if TYPE_CHECKING:
 
 from hledac.universal.discovery.duckduckgo_adapter import async_search_public_web
 from hledac.universal.pipeline._soa_types import PageBatch
-from core import aclose
+from _core import aclose
 
 logger = logging.getLogger(__name__)
 

@@ -73,14 +73,18 @@ __all__ = ['AcquisitionLane', 'AcquisitionProfile', 'AcquisitionLanePlan', 'Acqu
 ACQUISITION_REPORT_SCHEMA_VERSION = 'f208.v1'
 
 # IPFS CID functions imported from canonical cid_detection module
-from hledac.universal.runtime.acquisition.cid_detection import (
-from core import aclose
+
+
+
+
+
     _has_explicit_ipfs_cid,
     _extract_cids_from_text,
 )
 
 _MISSION_FEED_CAP_THRESHOLDS: dict[str, int] = {'cve_recon': 100, 'wallet_recon': 15, 'domain_recon': 20, 'infra_recon': 20, 'person_recon': 20, 'unknown': 0, 'org_recon': 0}
-_NONFEED_PROFILE_FEED_CAP_THRESHOLDS: dict[str, int] = {'cve_recon': 100, 'wallet_recon': 15, 'domain_recon': 20, 'infra_recon': 20, 'person_recon': 20, 'unknown': 0, 'org_recon': 0}
+
+from _core import aclose_NONFEED_PROFILE_FEED_CAP_THRESHOLDS: dict[str, int] = {'cve_recon': 100, 'wallet_recon': 15, 'domain_recon': 20, 'infra_recon': 20, 'person_recon': 20, 'unknown': 0, 'org_recon': 0}
 
 class RiskLevel(StrEnum):
     """Risk levels for acquisition lane planning.

@@ -15,7 +15,7 @@ from transport.http3_lane import _stats as h3_stats  # noqa: E402
 print(f"http3_lane: _stats={type(h3_stats).__name__}")
 
 from intelligence.exposure_correlator import _stats as ec_stats  # noqa: E402
-from core import aclose
+from _core import aclose
 print(f"exposure_correlator: _stats={type(ec_stats).__name__}")
 
 # Test methods exist

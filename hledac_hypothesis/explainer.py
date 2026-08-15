@@ -30,7 +30,7 @@ GHOST_INVARIANTS:
 import asyncio
 import hashlib
 import logging
-from core import aclose
+from _core import aclose
 logger = logging.getLogger(__name__)
 
 class SimpleNodeAblationExplainer:

@@ -12,7 +12,7 @@ from dataclasses import dataclass, field
 import msgspec
 from typing import Any, Final
 from collections.abc import Callable
-from core import aclose
+from _core import aclose
 
 class OwnedResource(msgspec.Struct, gc=False):
     """Explicit lifecycle: acquire → use → release. Zero weakref.

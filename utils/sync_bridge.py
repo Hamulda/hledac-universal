@@ -38,7 +38,7 @@ import functools
 from concurrent.futures import ThreadPoolExecutor
 from typing import Any, TypeVar, cast
 from collections.abc import Awaitable, Callable, Coroutine
-from core import aclose
+from _core import aclose
 T = TypeVar('T')
 
 def run_sync_async(coro: Awaitable[T]) -> T:
@@ -174,7 +174,7 @@ def _get_rayon_breaker():
     global _rayon_breaker
     if _rayon_breaker is None:
         try:
-            from hledac.universal.core.circuit_breaker_service import (
+            from hledac.universal._core.circuit_breaker_service import (
                 circuit_breaker_registry,
                 DEFAULT_MLX_CONFIG,
             )
@@ -211,7 +211,7 @@ async def _rayon_join_async(handle: int, timeout: float | None = None) -> Any:
 
     try:
         # R6: Centralized Rust access via core.rust_backend
-        from hledac.universal.core.rust_backend import rust
+        from hledac.universal._core.rust_backend import rust
         rayon_join_channel = rust.raw.rayon_join_channel
     except ImportError:
         # Fallback: rayon not compiled — propagate the import error as RuntimeError
@@ -296,7 +296,7 @@ async def to_thread_rayon(
     """
     try:
         # R6: Centralized Rust access via core.rust_backend
-        from hledac.universal.core.rust_backend import rust
+        from hledac.universal._core.rust_backend import rust
         rayon_submit_channel = rust.raw.rayon_submit_channel
         rayon_join_channel = rust.raw.rayon_join_channel
     except ImportError:
@@ -314,7 +314,7 @@ async def to_thread_rayon(
         # On any exit (timeout, error, cancellation), abort the rayon task
         try:
             # R6: Centralized Rust access via core.rust_backend
-            from hledac.universal.core.rust_backend import rust
+            from hledac.universal._core.rust_backend import rust
             rayon_abort_channel = rust.raw.rayon_abort_channel
             if rayon_abort_channel is not None:
                 rayon_abort_channel(handle)
@@ -327,7 +327,7 @@ async def to_thread_rayon(
         # if another caller reuses the handle after the first call completes.
         try:
             # R6: Centralized Rust access via core.rust_backend
-            from hledac.universal.core.rust_backend import rust
+            from hledac.universal._core.rust_backend import rust
             rayon_drop_channel = rust.raw.rayon_drop_channel
             if rayon_drop_channel is not None:
                 rayon_drop_channel(handle)

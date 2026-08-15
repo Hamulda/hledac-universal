@@ -41,7 +41,7 @@ import msgspec
 from pathlib import Path
 from typing import Any
 from hledac.universal.utils.asyncx import parallel
-from core import aclose
+from _core import aclose
 log = logging.getLogger(__name__)
 _EXTERNAL_LOOKUP_TIMEOUT: float = 5.0
 _MetadataExtractor: type | None = None
@@ -483,7 +483,7 @@ class ForensicsEnricher:
         """
         if not findings:
             return {}
-        from hledac.universal.core.concurrency import ConcurrencyCategory, get_semaphore
+        from hledac.universal._core.concurrency import ConcurrencyCategory, get_semaphore
         semaphore = get_semaphore(ConcurrencyCategory.GRAPH_RAG)
 
         async def enrich_one(finding: Any) -> tuple[str, dict[str, Any] | None]:

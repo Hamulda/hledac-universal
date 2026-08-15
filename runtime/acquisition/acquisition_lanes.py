@@ -14,7 +14,7 @@ accepted_findings after the gather).
 
 from typing import Any
 from collections.abc import AsyncIterator
-from core import aclose
+from _core import aclose
 
 _scheduler_lanes = None
 

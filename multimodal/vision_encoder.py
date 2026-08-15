@@ -6,7 +6,7 @@ from concurrent.futures import ThreadPoolExecutor
 from hledac.universal.utils.domain_executors import get_vision_executor
 from pathlib import Path
 import numpy as np
-from hledac.universal.core.resource_governor import Priority, ResourceGovernor
+from hledac.universal._core.resource_governor import Priority, ResourceGovernor
 logger = logging.getLogger(__name__)
 _mlx_core_mod = None
 _MLX_CORE_AVAILABLE = False
@@ -56,8 +56,8 @@ _IMAGENET_MEAN = [0.485, 0.456, 0.406]
 _IMAGENET_STD = [0.229, 0.224, 0.225]
 _MODEL_CACHE_DIR = Path('~/.hledac/models').expanduser()
 _MOBILE_NET_MODEL_PATH = _MODEL_CACHE_DIR / 'vision_encoder.mlpackage'
-from hledac.universal.core.concurrency import ConcurrencyCategory, get_semaphore
-from core import aclose
+from hledac.universal._core.concurrency import ConcurrencyCategory, get_semaphore
+from _core import aclose
 _IMAGE_SEMAPHORE = get_semaphore(ConcurrencyCategory.GRAPH_RAG)
 _COREML_EXECUTOR: ThreadPoolExecutor | None = None
 

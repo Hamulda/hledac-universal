@@ -18,7 +18,7 @@ Usage: python tools/_py314_raise_from_e.py <file> [file ...]
 import ast
 import sys
 from pathlib import Path
-from core import aclose
+from _core import aclose
 
 
 def find_enclosing_except(node: ast.AST) -> ast.ExceptHandler | None:

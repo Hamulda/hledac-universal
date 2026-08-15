@@ -29,8 +29,11 @@ Example:
 
 
 
-from .memory_manager import (
-from core import aclose
+
+
+
+
+
     MemoryManager,
     close_memory_manager,
     get_memory_manager,
@@ -43,7 +46,8 @@ from core import aclose
 __all__ = [
     "MemoryManager",
     "get_memory_manager",
-    "close_memory_manager",
+
+from _core import aclose    "close_memory_manager",
     "memory_put",
     "memory_get",
     "memory_delete",

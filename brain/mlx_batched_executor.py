@@ -55,7 +55,7 @@ import threading
 import time
 import weakref
 from typing import TYPE_CHECKING, Any
-from core import aclose
+from _core import aclose
 if TYPE_CHECKING:
     from hledac.universal.brain.batch_scheduler import BatchScheduler
     from hledac.universal.brain.deephermes3_engine import DeepHermes3Engine
@@ -289,8 +289,8 @@ class MLXBatchedExecutor:
         """
         # ── 1. Read psutil (fail-soft → allow batching) ─────────────────
         try:
-            from hledac.universal.core.resource_governor import _get_cached_psutil
-            from hledac.universal.core.resource_governor import _read_virtual_memory_sync
+            from hledac.universal._core.resource_governor import _get_cached_psutil
+            from hledac.universal._core.resource_governor import _read_virtual_memory_sync
             vm = _get_cached_psutil('virtual_memory', _read_virtual_memory_sync)
             if vm is None:
                 raise RuntimeError('psutil unavailable')

@@ -39,7 +39,7 @@ import sys
 import warnings
 from collections.abc import Callable
 from typing import Any, TypeVar
-from core import aclose
+from _core import aclose
 
 __all__ = ["deprecated", "HAS_NATIVE_DEPRECATED"]
 

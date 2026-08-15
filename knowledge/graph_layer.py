@@ -14,7 +14,7 @@ This module may be removed in a future sprint.
 import logging
 from pathlib import Path
 from typing import Any
-from core import aclose
+from _core import aclose
 logger = logging.getLogger(__name__)
 
 class KnowledgeGraphLayer:

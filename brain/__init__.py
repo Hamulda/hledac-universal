@@ -44,7 +44,7 @@ class DecisionType(Enum):
     COMPLETE = "complete"
 
 from .deephermes3_engine import DeepHermes3Engine, parse_thinking_output  # noqa: E402
-from core import aclose
+from _core import aclose
 
 # ─── Phase 2 Modular Brain Components (PEP 698) ───────────────────────────────
 # Extracted from DeepHermes3Engine God Class refactoring.

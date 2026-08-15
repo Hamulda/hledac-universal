@@ -60,7 +60,7 @@ import time
 from collections import OrderedDict
 
 from .async_helpers import async_getaddrinfo, safe_gather, safe_wait_for
-from core import aclose
+from _core import aclose
 
 logger = logging.getLogger(__name__)
 
@@ -255,7 +255,7 @@ class BatchDNSResolver:
         (rare in this codebase, but cheap to support).
         """
         if self._semaphore is None:
-            from hledac.universal.core.concurrency import ConcurrencyCategory, get_semaphore
+            from hledac.universal._core.concurrency import ConcurrencyCategory, get_semaphore
             self._semaphore = get_semaphore(ConcurrencyCategory.DNS_BRUTE)
         if self._lock is None:
             self._lock = asyncio.Lock()

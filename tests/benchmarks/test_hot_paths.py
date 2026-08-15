@@ -8,7 +8,7 @@ M1 8GB budget: each benchmark target <5ms for the hot-path input size.
 """
 
 import pytest
-from core import aclose
+from _core import aclose
 
 
 class TestIOCCanonical:
@@ -16,7 +16,7 @@ class TestIOCCanonical:
 
     def test_ioc_extract_10kb(self, benchmark):
         """Rust fast_ioc_extract on 10KB HTML snippet."""
-        from hledac.universal.core.rust_backend import rust
+        from hledac.universal._core.rust_backend import rust
 
         text = (
             "<html><body>"
@@ -31,7 +31,7 @@ class TestIOCCanonical:
 
     def test_ioc_extract_100kb(self, benchmark):
         """Rust fast_ioc_extract on 100KB text block."""
-        from hledac.universal.core.rust_backend import rust
+        from hledac.universal._core.rust_backend import rust
 
         chunk = (
             "Contact info@example.com | https://test.org/path | "
@@ -123,7 +123,7 @@ class TestEntropy:
 
     def test_entropy_small_text(self, benchmark):
         """Entropy of ~1KB text."""
-        from hledac.universal.core.rust_backend import rust
+        from hledac.universal._core.rust_backend import rust
 
         text = "Hello world! This is a test string with numbers 12345 and symbols !@#$%." * 20
         result = benchmark(rust.quality.compute_entropy, text)
@@ -132,7 +132,7 @@ class TestEntropy:
 
     def test_entropy_large_text(self, benchmark):
         """Entropy of ~100KB random-ish text."""
-        from hledac.universal.core.rust_backend import rust
+        from hledac.universal._core.rust_backend import rust
 
         chunk = "The quick brown fox jumps over the lazy dog. 0123456789. " * 20
         text = chunk * 500  # ~100KB
@@ -145,7 +145,7 @@ class TestHashing:
 
     def test_xxhash3_64(self, benchmark):
         """xxhash3-64 of canonical URL (as bytes)."""
-        from hledac.universal.core.rust_backend import rust
+        from hledac.universal._core.rust_backend import rust
 
         data = b"https://www.example.com/path/to/resource?query=value"
         result = benchmark(rust.hash.xxh3_64_hex, data)
@@ -153,7 +153,7 @@ class TestHashing:
 
     def test_xxhash3_64_batch_100(self, benchmark):
         """Batch xxhash3-64: 100 byte strings."""
-        from hledac.universal.core.rust_backend import rust
+        from hledac.universal._core.rust_backend import rust
 
         items = [f"https://www.example{i}.com/path?query={i}".encode() for i in range(100)]
         result = benchmark(rust.hash.batch_xxh3_64_hex, items)

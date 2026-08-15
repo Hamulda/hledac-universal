@@ -88,7 +88,7 @@ from hledac.universal.export.components.narrative_builder import (  # noqa: F401
     _get_branch_value,
 )
 
-from hledac.universal.core.feature_flags import FeatureFlags, FeatureFlag  # noqa: E402
+from hledac.universal._core.feature_flags import FeatureFlags, FeatureFlag  # noqa: E402
 
 
 def _json_dumps(obj: Any, *, indent: int | None = None, default: Any = None) -> str:
@@ -149,7 +149,7 @@ from hledac.universal.runtime.investigation_planner import (  # noqa: E402
 )
 
 import itertools  # for JSONFormatter.render_investigation_packet_markdown
-from core import aclose
+from _core import aclose
 
 # ---------------------------------------------------------------------------
 # Sprint F214Z: JSONFormatter  --  moved from formatters.py to break circular import
@@ -2390,67 +2390,47 @@ def _get_corrob_outcomes(scorecard: dict) -> dict:
         return {}
 
 
+# ---------------------------------------------------------------------------
+# Corroboration helpers  --  shared logic extracted to eliminate clone
+# ---------------------------------------------------------------------------
+
+from hledac.universal.runtime.corroboration_score import score_from_result
+
+
+class _CorrobResult:
+    """Lightweight result wrapper for corroboration scoring."""
+    __slots__ = ("src_family_outcomes", "seed_context_available")
+
+    def __init__(self, outcomes: dict) -> None:
+        self.src_family_outcomes = outcomes
+        self.seed_context_available = False
+
+
+def _get_corrob_score_result(scorecard: dict) -> object | None:
+    """Get the corroboration Score object from a scorecard, or None on failure."""
+    outcomes = _get_corrob_outcomes(scorecard)
+    try:
+        return score_from_result(_CorrobResult(outcomes))
+    except Exception:
+        return None
+
+
 def _corroboration_score_value(scorecard: dict) -> float:
     """Compute corroboration score (0.0-1.0) from src_family_outcomes or source_family_outcomes."""
-    from hledac.universal.runtime.corroboration_score import score_from_result
-
-    outcomes = _get_corrob_outcomes(scorecard)
-
-    class _Result:
-        __slots__ = ("src_family_outcomes", "seed_context_available")
-
-        def __init__(self, outcomes):
-            self.src_family_outcomes = outcomes
-            self.seed_context_available = False
-
-    result = _Result(outcomes)
-    try:
-        sc = score_from_result(result)
-        return sc.corroboration_score
-    except Exception:
-        return 0.0
+    sc = _get_corrob_score_result(scorecard)
+    return sc.corroboration_score if sc else 0.0
 
 
 def _corroborating_families(scorecard: dict) -> tuple:
     """Return tuple of families that contributed to corroboration."""
-    from hledac.universal.runtime.corroboration_score import score_from_result
-
-    outcomes = _get_corrob_outcomes(scorecard)
-
-    class _Result:
-        __slots__ = ("src_family_outcomes", "seed_context_available")
-
-        def __init__(self, outcomes):
-            self.src_family_outcomes = outcomes
-            self.seed_context_available = False
-
-    result = _Result(outcomes)
-    try:
-        sc = score_from_result(result)
-        return sc.corroborating_families
-    except Exception:
-        return ()
+    sc = _get_corrob_score_result(scorecard)
+    return sc.corroborating_families if sc else ()
 
 
 def _corroboration_reason_str(scorecard: dict) -> str:
     """Return human-readable corroboration reason."""
-    from hledac.universal.runtime.corroboration_score import score_from_result
-
-    outcomes = _get_corrob_outcomes(scorecard)
-
-    class _Result:
-        __slots__ = ("src_family_outcomes", "seed_context_available")
-
-        def __init__(self, outcomes):
-            self.src_family_outcomes = outcomes
-            self.seed_context_available = False
-
-    result = _Result(outcomes)
-    try:
-        sc = score_from_result(result)
-        return sc.corroboration_reason
-    except Exception:
-        return "corroboration unavailable"
+    sc = _get_corrob_score_result(scorecard)
+    return sc.corroboration_reason if sc else "corroboration unavailable"
 
 
 def _corroboration_penalties_list(scorecard: dict) -> list:
@@ -2727,6 +2707,28 @@ def _get_hypothesis_pack(eh: ExportHandoff) -> dict[str, Any] | None:  # type: i
     return None
 
 
+def _get_handoff_field(eh: ExportHandoff, field_name: str) -> dict[str, Any] | None:  # type: ignore[name-defined]
+    """
+    Sprint F150P/F157: Generic handoff-first field extractor with scorecard fallback.
+
+    Truth order (priority):
+      1. eh.<field_name>  --  primary canonical surface
+      2. eh.scorecard["<field_name>"]  --  fallback pro scorecard-only builds
+
+    Fail-soft: returns None when not present.
+    """
+    # Priority 1: top-level canonical surface
+    value = getattr(eh, field_name, None)
+    if value and isinstance(value, dict):
+        return value
+    # Priority 2: scorecard fallback (legacy / scorecard-only builds)
+    scorecard = eh.scorecard if eh.scorecard else {}
+    value = scorecard.get(field_name)
+    if value and isinstance(value, dict):
+        return value
+    return None
+
+
 def _get_canonical_run_summary(eh: ExportHandoff) -> dict[str, Any] | None:  # type: ignore[name-defined]
     """
     Sprint F150P Section  2 + F157: canonical_run_summary  --  handoff-first truth order.
@@ -2741,16 +2743,7 @@ def _get_canonical_run_summary(eh: ExportHandoff) -> dict[str, Any] | None:  # t
 
     Fail-soft: returns None when not present (older sprints).
     """
-    # Priority 1: top-level canonical surface
-    crs = eh.canonical_run_summary if eh.canonical_run_summary else None
-    if crs and isinstance(crs, dict):
-        return crs
-    # Priority 2: scorecard fallback (legacy / scorecard-only builds)
-    scorecard = eh.scorecard if eh.scorecard else {}
-    crs = scorecard.get("canonical_run_summary")
-    if crs and isinstance(crs, dict):
-        return crs
-    return None
+    return _get_handoff_field(eh, "canonical_run_summary")
 
 
 def _get_sprint_verdict(eh: ExportHandoff) -> dict[str, Any] | None:  # type: ignore[name-defined]
@@ -2766,16 +2759,7 @@ def _get_sprint_verdict(eh: ExportHandoff) -> dict[str, Any] | None:  # type: ig
 
     Fail-soft: returns None when not present.
     """
-    # Priority 1: top-level canonical surface
-    sv = eh.sprint_verdict if eh.sprint_verdict else None
-    if sv and isinstance(sv, dict):
-        return sv
-    # Priority 2: scorecard fallback (legacy / scorecard-only builds)
-    scorecard = eh.scorecard if eh.scorecard else {}
-    sv = scorecard.get("sprint_verdict")
-    if sv and isinstance(sv, dict):
-        return sv
-    return None
+    return _get_handoff_field(eh, "sprint_verdict")
 
 
 def _get_synthesis_outcome_payload(eh: ExportHandoff) -> dict[str, Any] | None:  # type: ignore[name-defined]
@@ -2789,16 +2773,7 @@ def _get_synthesis_outcome_payload(eh: ExportHandoff) -> dict[str, Any] | None: 
     Serialized SynthesisOutcome seam from synthesis_runner.
     Fail-soft: returns None when not present (synthesis not run, or older builds).
     """
-    # Priority 1: top-level canonical surface
-    sop = eh.synthesis_outcome_payload if eh.synthesis_outcome_payload else None
-    if sop and isinstance(sop, dict):
-        return sop
-    # Priority 2: scorecard fallback (legacy / scorecard-only builds)
-    scorecard = eh.scorecard if eh.scorecard else {}
-    sop = scorecard.get("synthesis_outcome_payload")
-    if sop and isinstance(sop, dict):
-        return sop
-    return None
+    return _get_handoff_field(eh, "synthesis_outcome_payload")
 
 
 # Sprint F192H: Research Depth Metric

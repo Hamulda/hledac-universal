@@ -11,7 +11,7 @@ import importlib.util
 import os
 from dataclasses import dataclass
 import msgspec
-from core import aclose
+from _core import aclose
 
 class CapabilityRegistration(msgspec.Struct, frozen=True, gc=False):
     """Immutable registration record for a single capability."""

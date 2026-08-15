@@ -37,7 +37,7 @@ from hledac.universal.recon.stealth import HeaderConfig, HeaderSpoofer
 from ..layers.stealth_layer import BrowserProfile, FingerprintConfig, FingerprintRandomizer
 from ..utils.rate_limiter import RateLimitConfig, RateLimiter, RateLimitExceeded
 from ..utils.lru_cache import LRUCache
-from core import aclose
+from _core import aclose
 logger = logging.getLogger(__name__)
 
 # Crypto-safe jitter — F350M-R
@@ -623,7 +623,7 @@ class StealthSession:
             raise SkipFetch(f'circuit_breaker_open:{reason}')
 
         # Blitz mode check (cached at function entry)
-        from hledac.universal.core.telemetry.context_state import is_blitz_mode as _is_blitz
+        from hledac.universal._core.telemetry.context_state import is_blitz_mode as _is_blitz
         is_blitz = _is_blitz()
 
         for attempt in range(MAX_RETRY_ATTEMPTS):

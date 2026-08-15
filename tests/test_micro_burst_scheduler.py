@@ -17,7 +17,7 @@ from typing import Final
 from unittest.mock import patch
 
 import pytest
-from core import aclose
+from _core import aclose
 
 
 class TestBurstPhase:
@@ -25,21 +25,21 @@ class TestBurstPhase:
 
     def test_burst_phase_enum_values(self) -> None:
         """BurstPhase must have correct enum values."""
-        from hledac.universal.core.micro_burst_scheduler import BurstPhase
+        from hledac.universal._core.micro_burst_scheduler import BurstPhase
 
         assert BurstPhase.GPU_HEAVY is not None
         assert BurstPhase.IO_HEAVY is not None
 
     def test_burst_phase_repr(self) -> None:
         """BurstPhase.__repr__ must return the enum name."""
-        from hledac.universal.core.micro_burst_scheduler import BurstPhase
+        from hledac.universal._core.micro_burst_scheduler import BurstPhase
 
         assert repr(BurstPhase.GPU_HEAVY) == "GPU_HEAVY"
         assert repr(BurstPhase.IO_HEAVY) == "IO_HEAVY"
 
     def test_burst_phase_is_enum(self) -> None:
         """BurstPhase must be a proper enum."""
-        from hledac.universal.core.micro_burst_scheduler import BurstPhase
+        from hledac.universal._core.micro_burst_scheduler import BurstPhase
 
         assert hasattr(BurstPhase, "value")
         assert BurstPhase.GPU_HEAVY.value == 1
@@ -51,7 +51,7 @@ class TestMicroBurstScheduler:
 
     def test_scheduler_initialization(self) -> None:
         """Scheduler must initialize with correct default state."""
-        from hledac.universal.core.micro_burst_scheduler import (
+        from hledac.universal._core.micro_burst_scheduler import (
             BurstPhase,
             MicroBurstScheduler,
         )
@@ -64,7 +64,7 @@ class TestMicroBurstScheduler:
 
     def test_scheduler_not_started_by_default(self) -> None:
         """Scheduler must not be started until start() is called."""
-        from hledac.universal.core.micro_burst_scheduler import MicroBurstScheduler
+        from hledac.universal._core.micro_burst_scheduler import MicroBurstScheduler
 
         scheduler = MicroBurstScheduler()
         
@@ -73,7 +73,7 @@ class TestMicroBurstScheduler:
 
     def test_start_is_idempotent(self) -> None:
         """start() must be idempotent - multiple calls must not error."""
-        from hledac.universal.core.micro_burst_scheduler import MicroBurstScheduler
+        from hledac.universal._core.micro_burst_scheduler import MicroBurstScheduler
 
         scheduler = MicroBurstScheduler()
         
@@ -85,7 +85,7 @@ class TestMicroBurstScheduler:
 
     def test_get_phase_initial(self) -> None:
         """get_phase() must return initial phase (GPU_HEAVY)."""
-        from hledac.universal.core.micro_burst_scheduler import (
+        from hledac.universal._core.micro_burst_scheduler import (
             BurstPhase,
             MicroBurstScheduler,
         )
@@ -98,7 +98,7 @@ class TestMicroBurstScheduler:
 
     def test_step_triggers_phase_transition(self) -> None:
         """step() must transition from GPU_HEAVY to IO_HEAVY after GPU window."""
-        from hledac.universal.core.micro_burst_scheduler import (
+        from hledac.universal._core.micro_burst_scheduler import (
             BurstPhase,
             MicroBurstScheduler,
             _BURST_GPU_MS,
@@ -120,7 +120,7 @@ class TestMicroBurstScheduler:
 
     def test_full_cycle_transitions(self) -> None:
         """Scheduler must cycle through GPU_HEAVY and IO_HEAVY phases."""
-        from hledac.universal.core.micro_burst_scheduler import (
+        from hledac.universal._core.micro_burst_scheduler import (
             BurstPhase,
             MicroBurstScheduler,
             _BURST_GPU_MS,
@@ -146,7 +146,7 @@ class TestMicroBurstScheduler:
 
     def test_phase_transition_count(self) -> None:
         """phase_transition_count must increment on each transition."""
-        from hledac.universal.core.micro_burst_scheduler import (
+        from hledac.universal._core.micro_burst_scheduler import (
             MicroBurstScheduler,
             _BURST_GPU_MS,
             _BURST_IO_MS,
@@ -168,7 +168,7 @@ class TestMicroBurstScheduler:
 
     def test_step_rate_limits_checks(self) -> None:
         """step() must rate-limit phase evaluation checks."""
-        from hledac.universal.core.micro_burst_scheduler import (
+        from hledac.universal._core.micro_burst_scheduler import (
             MicroBurstScheduler,
             _PHASE_CHECK_INTERVAL_S,
         )
@@ -185,7 +185,7 @@ class TestMicroBurstScheduler:
 
     def test_concurrent_access(self) -> None:
         """Scheduler must handle concurrent access safely."""
-        from hledac.universal.core.micro_burst_scheduler import (
+        from hledac.universal._core.micro_burst_scheduler import (
             BurstPhase,
             MicroBurstScheduler,
         )
@@ -227,7 +227,7 @@ class TestMicroBurstScheduler:
 
     def test_thread_safety_of_phase(self) -> None:
         """get_phase() must be safe to call from multiple threads."""
-        from hledac.universal.core.micro_burst_scheduler import MicroBurstScheduler
+        from hledac.universal._core.micro_burst_scheduler import MicroBurstScheduler
 
         scheduler = MicroBurstScheduler()
         scheduler.start()
@@ -259,7 +259,7 @@ class TestConstants:
 
     def test_burst_timing_constants(self) -> None:
         """Burst timing constants must have correct values."""
-        from hledac.universal.core.micro_burst_scheduler import (
+        from hledac.universal._core.micro_burst_scheduler import (
             _BURST_GPU_MS,
             _BURST_IO_MS,
             _BURST_CYCLE_MS,
@@ -280,7 +280,7 @@ class TestConstants:
 
     def test_phase_check_interval(self) -> None:
         """Phase check interval must be 50ms."""
-        from hledac.universal.core.micro_burst_scheduler import _PHASE_CHECK_INTERVAL_S
+        from hledac.universal._core.micro_burst_scheduler import _PHASE_CHECK_INTERVAL_S
 
         assert _PHASE_CHECK_INTERVAL_S == 0.05  # 50ms
 
@@ -290,7 +290,7 @@ class TestSingletonPattern:
 
     def test_get_scheduler_returns_singleton(self) -> None:
         """get_scheduler() must return the same instance."""
-        from hledac.universal.core.micro_burst_scheduler import (
+        from hledac.universal._core.micro_burst_scheduler import (
             get_scheduler,
             MicroBurstScheduler,
         )

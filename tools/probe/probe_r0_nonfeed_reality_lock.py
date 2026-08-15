@@ -46,7 +46,7 @@ import time
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
-from core import aclose
+from _core import aclose
 
 # ── Configuration ────────────────────────────────────────────────────────────
 
@@ -127,7 +127,7 @@ def check_q1_canonical_owner() -> CheckResult:
         sys.path.insert(0, str(REPO_ROOT))
         from runtime_authority_manifest import CANONICAL_SPRINT_OWNER  # noqa: PLC0415
 
-        expected = "hledac.universal.core.__main__.run_sprint"
+        expected = "hledac.universal._core.__main__.run_sprint"
         passed = CANONICAL_SPRINT_OWNER == expected
         return CheckResult(
             question="Q1",

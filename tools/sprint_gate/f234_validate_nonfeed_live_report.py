@@ -21,7 +21,7 @@ Exit codes:
 import json
 import sys
 from typing import Any, cast
-from core import aclose
+from _core import aclose
 
 __all__ = ["validate_report", "main"]
 
@@ -36,6 +36,46 @@ def _get(data: dict, *keys: str, default: Any = None) -> Any:
             return default
         d = d.get(k, default)
     return d
+
+
+def _collect_issues(*items: tuple[bool, str]) -> tuple[list[str], bool]:
+    """Collect issues from validation checks and determine severity.
+
+    Returns:
+        Tuple of (issues_list, has_contradiction).
+        Use has_contradiction=True to force FAIL (exit code 1).
+    """
+    issues = []
+    has_contradiction = False
+    for passed, msg in items:
+        if not passed:
+            issues.append(msg)
+            if "contradiction" in msg.lower():
+                has_contradiction = True
+    return issues, has_contradiction
+
+
+def _format_validation_result(
+    issues: list[str],
+    has_contradiction: bool,
+    ok_msg: str,
+) -> tuple[bool, str]:
+    """Format validation result from collected issues.
+
+    Args:
+        issues: List of issue messages
+        has_contradiction: If True, return FAIL regardless of issue count
+        ok_msg: Message to return when no issues
+
+    Returns:
+        Tuple of (passed, message).
+    """
+    if not issues:
+        return True, ok_msg
+    msg = " | ".join(issues)
+    if has_contradiction:
+        return False, msg
+    return True, msg
 
 
 def _gate(data: dict) -> str:
@@ -749,9 +789,9 @@ def _check_live_kpi_integrity(data: dict) -> tuple[bool, str]:
         # soft warn — může být legitimní (filtered pre-acceptance)
         # intentionally not flagged unless > total
 
-    if issues:
-        return False, " | ".join(issues)
-    return True, f"live_kpi integrity OK verdict={verdict} total={total}"
+    return _format_validation_result(
+        issues, has_contradiction=False, ok_msg=f"live_kpi integrity OK verdict={verdict} total={total}"
+    )
 
 
 def _check_runtime_truth_termination(data: dict) -> tuple[bool, str]:
@@ -785,11 +825,11 @@ def _check_runtime_truth_termination(data: dict) -> tuple[bool, str]:
     if timeout_count > 4:
         issues.append(f"branch_timeout_count={timeout_count} > 2")
 
-    if any("contradiction" in i for i in issues):
-        return False, " | ".join(issues)
-    if issues:
-        return True, " | ".join(issues)
-    return True, "runtime_truth termination flags OK"
+    return _format_validation_result(
+        issues,
+        has_contradiction=any("contradiction" in i for i in issues),
+        ok_msg="runtime_truth termination flags OK",
+    )
 
 
 def _check_return_guard(data: dict) -> tuple[bool, str]:
@@ -814,6 +854,57 @@ def _check_return_guard(data: dict) -> tuple[bool, str]:
     if checked and satisfied is False:
         return True, "return_guard not satisfied (no block_reason)"
     return True, "return_guard OK"
+
+
+def _check_live_kpi_integrity(data: dict) -> tuple[bool, str]:
+    """
+    Validates live_kpi consistency:
+    - total_findings == accepted_findings + rejected_findings
+    - run_quality_verdict in VALID_VERDICTS
+    - findings_per_min >= 0
+
+    live_kpi is only stamped by benchmarks/live_sprint_measurement.py (live measurement
+    harness). Canonical nonfeed/diagnostic runs go through core.__main__.run_sprint()
+    and do NOT produce live_kpi — this is legitimate absence for non-live modes.
+    """
+    VALID_VERDICTS = {"GOOD", "ACCEPTABLE", "POOR", "EMPTY", "ERROR", "UNKNOWN"}  # noqa: N806
+
+    # Sprint mode gate — live_kpi only present for live-measurement harness runs.
+    # Canonical run_sprint() does NOT stamp live_kpi, so absence is legitimate for
+    # any sprint_mode != "live" (including None / undefined = non-live diagnostic).
+    sprint_mode = _get(data, "runtime_truth", "sprint_mode", default=None)
+    if sprint_mode != "live":
+        return True, f"live_kpi N/A for sprint_mode={sprint_mode!r}"
+
+    kpi = _get(data, "live_kpi", default=None)
+    if kpi is None:
+        return False, "live_kpi absent — required field"
+
+    total = _get(kpi, "total_findings", default=None)
+    accepted = _get(kpi, "accepted_findings", default=None)
+    verdict = _get(kpi, "run_quality_verdict", default=None)
+    fpm = _get(kpi, "findings_per_min", default=None)
+
+    issues = []
+    if verdict is not None and verdict not in VALID_VERDICTS:
+        issues.append(f"run_quality_verdict={verdict!r} not in {VALID_VERDICTS}")
+    if fpm is not None and fpm < 0:
+        issues.append(f"findings_per_min={fpm} < 0")
+    if total is not None and accepted is not None:
+        if total < accepted:
+            issues.append(f"total_findings={total} < accepted_findings={accepted}")
+        # rejected může být None nebo absent — použij 0 jako fallback
+        rejected = _get(kpi, "rejected_findings", default=None)
+        if rejected is not None and (accepted + rejected) > total:
+            issues.append(
+                f"total_findings={total} < accepted({accepted})+rejected({rejected})"
+            )
+        # soft warn — může být legitimní (filtered pre-acceptance)
+        # intentionally not flagged unless > total
+
+    return _format_validation_result(
+        issues, has_contradiction=False, ok_msg=f"live_kpi integrity OK verdict={verdict} total={total}"
+    )
 
 
 def _check_quality_gate_not_zeroed(data: dict) -> tuple[bool, str]:

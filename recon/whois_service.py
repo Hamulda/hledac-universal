@@ -46,7 +46,7 @@ from enum import StrEnum
 from typing import Any
 logger = logging.getLogger(__name__)
 import httpx
-from core import aclose
+from _core import aclose
 
 class WhoisError(StrEnum):
     """String-based error codes for WHOIS/RDAP operations."""
@@ -631,7 +631,7 @@ class WhoisService:
         """
         self._historical_api = historical_api
         self._historical_api_key = historical_api_key
-        from hledac.universal.core.concurrency import ConcurrencyCategory, get_semaphore
+        from hledac.universal._core.concurrency import ConcurrencyCategory, get_semaphore
         self._semaphore = get_semaphore(ConcurrencyCategory.IP_QUERY)
         self._stats = {'rdap': 0, 'whois': 0, 'ipwhois': 0, 'historical': 0, 'cache_hit': 0}
 

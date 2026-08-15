@@ -36,7 +36,7 @@ import logging
 import os
 import time
 from typing import Any
-from core import aclose
+from _core import aclose
 logger = logging.getLogger(__name__)
 _MAX_SOURCES = 20
 _MAX_QUERY_CHARS = 1024
@@ -284,7 +284,7 @@ class RAGOrchestrator:
         Uses the canonical MLX embedder from core/mlx_embeddings.py.
         """
         try:
-            from hledac.universal.core.mlx_embeddings import get_embedding_manager
+            from hledac.universal._core.mlx_embeddings import get_embedding_manager
             mgr = get_embedding_manager()
             emb = mgr.embed_query(text)
             try:

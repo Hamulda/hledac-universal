@@ -15,7 +15,7 @@ from dataclasses import dataclass
 import msgspec
 
 from hledac.universal.utils.asyncx import parallel_ok
-from core import aclose
+from _core import aclose
 
 T = typing.TypeVar("T", default=object)
 R = typing.TypeVar("R", default=object)
@@ -74,7 +74,7 @@ async def async_transform[T, R](
                 result = transform(item)
             yield result
     else:
-        from hledac.universal.core.concurrency import ConcurrencyCategory, get_semaphore
+        from hledac.universal._core.concurrency import ConcurrencyCategory, get_semaphore
 
         semaphore = get_semaphore(ConcurrencyCategory.SCRAPE_GENERAL)
         pending: set[asyncio.Task[typing.Any]] = set()

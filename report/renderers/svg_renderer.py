@@ -8,7 +8,7 @@ Fails gracefully if graphviz is not installed.
 import shutil
 import subprocess
 from typing import TYPE_CHECKING, Any
-from core import aclose
+from _core import aclose
 if TYPE_CHECKING:
     from pathlib import Path
 __all__ = ['SVGRenderer', 'GRAPHVIZ_AVAILABLE']

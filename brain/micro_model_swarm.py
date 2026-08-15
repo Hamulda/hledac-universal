@@ -80,8 +80,11 @@ from .content_router import (
     get_preferred_model,
     route_content,
 )
-from .micro_model_pool import (
-from core import aclose
+
+
+
+
+
     MICRO_MODELS,
     IMicroModelPool,
     LoadedMicroModel,
@@ -93,7 +96,8 @@ from core import aclose
 # Type aliases for clarity
 ModelT = Any
 TokenizerT = Any
-EmbeddingT = list[float]
+
+from _core import acloseEmbeddingT = list[float]
 
 
 # =============================================================================

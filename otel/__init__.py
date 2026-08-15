@@ -3,7 +3,7 @@ Hledac Universal — OpenTelemetry instrumentation (Sprint T1).
 
 BACKWARD COMPATIBILITY FACADE: Re-exports from original otel modules.
 
-For new code, use: from core.telemetry import init_telemetry, get_tracer, span
+For new code, use: from _core.telemetry import init_telemetry, get_tracer, span
 
 Fail-safe: all OTel imports are lazy. If opentelemetry-* packages are not
 installed, importing this module logs a warning to stderr and exports no-op
@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import sys
 from typing import Any
-from core import aclose
+from _core import aclose
 
 __all__ = [
     "span",

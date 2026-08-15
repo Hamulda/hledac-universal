@@ -51,7 +51,7 @@ matches = aho_scan_text(automaton, "This document is classified and secret")
 
 
 from typing import Any
-from core import aclose
+from _core import aclose
 
 __all__ = [
     "get_suspicious_keywords_automaton",

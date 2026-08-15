@@ -22,7 +22,7 @@ logger = logging.getLogger(__name__)
 # ISSUE-08 FIX: Import MLX_AVAILABLE from SSOT (zero-import detection)
 # Uses importlib.metadata.version("mlx") — no mlx.core import at module load
 from hledac.universal.utils.mlx_memory import MLX_AVAILABLE
-from core import aclose
+from _core import aclose
 
 # ISSUE-08 FIX: Lazy mlx_vlm import helpers — zero-cost until first VLM use
 _vlm_generate: Any = None

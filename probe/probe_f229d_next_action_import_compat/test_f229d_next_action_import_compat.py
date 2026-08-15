@@ -19,7 +19,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-from core import aclose
+from _core import aclose
 
 # test file: hledac/universal/tests/probe_f229d_next_action_import_compat/test_*.py
 # parent chain: test_f229d... -> tests/probe_f229d... -> tests -> hledac/universal

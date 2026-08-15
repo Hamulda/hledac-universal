@@ -58,7 +58,7 @@ from typing import TYPE_CHECKING, Any
 if TYPE_CHECKING:
     from queue import Queue
 from hledac.universal.utils.asyncx import parallel_ok, safe_gather_fire_and_forget
-from core import aclose
+from _core import aclose
 if TYPE_CHECKING:
     from collections.abc import Coroutine
 logger = logging.getLogger(__name__)
@@ -157,7 +157,7 @@ class MLXWorkerThread:
         Falls back silently if Rust extension unavailable.
         """
         try:
-            from hledac.universal.core.rust_backend import rust
+            from hledac.universal._core.rust_backend import rust
             if not rust.is_available:
                 return
             pair = rust.spsc.SPSCQueuePair()
@@ -210,7 +210,7 @@ class MLXWorkerThread:
         Falls back to slow asyncio path if SPSC init fails.
         """
         import json as _json
-        from hledac.universal.core.rust_backend import rust as _rust
+        from hledac.universal._core.rust_backend import rust as _rust
 
         class _ResultSignal:
             __slots__ = ('value', 'exc')

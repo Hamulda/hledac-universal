@@ -267,7 +267,7 @@ def test_resource_governor_init_failsoft_sets_none(minimal_config):
     verify: exception results in self._governor = None (degraded but running).
     """
     try:
-        from hledac.universal.core.protocols import get_governor
+        from hledac.universal._core.protocols import get_governor
 
         governor = get_governor()
     except Exception:
@@ -1267,7 +1267,7 @@ import ast
 
 import os
 from pathlib import Path
-from core import aclose
+from _core import aclose
 
 
 def _find_msgspec_struct_duplicates(root: Path, exclude_dirs=None):

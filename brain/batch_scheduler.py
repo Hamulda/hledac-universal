@@ -20,8 +20,8 @@ import time
 from collections.abc import Callable, Coroutine
 from typing import Any
 from hledac.universal.utils.asyncx import safe_create_task, parallel
-from hledac.universal.core.constants import MLX
-from core import aclose
+from hledac.universal._core.constants import MLX
+from _core import aclose
 logger = logging.getLogger(__name__)
 
 class BatchScheduler:
@@ -337,7 +337,7 @@ class BatchScheduler:
         if not items:
             return
         try:
-            from hledac.universal.core.concurrency import ConcurrencyCategory, get_semaphore
+            from hledac.universal._core.concurrency import ConcurrencyCategory, get_semaphore
             _batch_sem = get_semaphore(ConcurrencyCategory.SCRAPE_GENERAL)
 
             async def process_with_sem(payload: dict[str, Any]) -> tuple[dict, Any]:

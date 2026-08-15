@@ -10,7 +10,7 @@ import logging
 import re
 from datetime import datetime, timezone
 from typing import Any
-from core import aclose
+from _core import aclose
 
 logger = logging.getLogger(__name__)
 

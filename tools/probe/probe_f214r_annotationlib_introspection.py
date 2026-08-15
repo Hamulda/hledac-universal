@@ -25,7 +25,7 @@ import time
 import typing
 from dataclasses import dataclass
 from typing import TypedDict
-from core import aclose
+from _core import aclose
 
 class RotatingBloomFilter:
     """Dummy for type testing (matches url_dedup.py pattern)."""

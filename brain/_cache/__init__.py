@@ -17,7 +17,7 @@ from hledac.universal.brain._cache.kv_cache_manager import (
     get_kv_cache_manager,
 )
 from hledac.universal.brain._cache.warmup import WarmupManager
-from core import aclose
+from _core import aclose
 
 __all__ = [
     "KVCacheManager",

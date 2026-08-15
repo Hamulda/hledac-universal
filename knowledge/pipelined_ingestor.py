@@ -33,7 +33,7 @@ import threading
 from hledac.universal.utils.asyncx import parallel
 import logging
 from typing import TYPE_CHECKING, Any
-from core import aclose
+from _core import aclose
 if TYPE_CHECKING:
     from .duckdb_store import DuckDBShadowStore
 __all__ = ['PipelinedIngestor']

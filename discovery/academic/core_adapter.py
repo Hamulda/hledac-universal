@@ -24,7 +24,7 @@ from dataclasses import dataclass
 import msgspec
 from typing import NamedTuple
 from hledac.universal.knowledge.duckdb_store import CanonicalFinding
-from core import aclose
+from _core import aclose
 logger = logging.getLogger(__name__)
 CORE_API_BASE = 'https://api.core.ac.uk/v3'
 RATE_LIMIT = 5
@@ -69,7 +69,7 @@ class COREAdapter:
 
     def __init__(self) -> None:
         self._api_key = _get_api_key()
-        from hledac.universal.core.concurrency import ConcurrencyCategory, get_semaphore
+        from hledac.universal._core.concurrency import ConcurrencyCategory, get_semaphore
         self._semaphore = get_semaphore(ConcurrencyCategory.ACADEMIC_SEARCH)
         self._cache: dict[str, tuple[float, list[COREWork]]] = {}
         self._cache_ttl = 1800.0

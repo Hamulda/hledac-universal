@@ -17,7 +17,7 @@ from __future__ import annotations
 
 from functools import lru_cache
 from typing import TYPE_CHECKING
-from core import aclose
+from _core import aclose
 
 if TYPE_CHECKING:
     pass
@@ -32,7 +32,7 @@ def _get_rust() -> object | None:
     global _rust_backend, _rust_available
     if _rust_backend is None:
         try:
-            from hledac.universal.core.rust_backend import rust as _rust_mod
+            from hledac.universal._core.rust_backend import rust as _rust_mod
             _rust_backend = _rust_mod
             _rust_available = True
         except Exception:  # noqa: BLE001

@@ -2,7 +2,7 @@
 
 import subprocess
 import sys
-from core import aclose
+from _core import aclose
 
 
 def check_import(module_path: str, name: str) -> bool:

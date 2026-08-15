@@ -11,7 +11,7 @@ Pozadí:
 
 Použití:
     # Místo:
-    #   from core.rust_backend import get_accel
+    #   from _core.rust_backend import get_accel
     # Staré callery mohou použít:
     from compat.rust_backend_legacy_v1 import get_legacy_backend
 
@@ -20,8 +20,8 @@ Použití:
         backend.ioc.extract_iocs_flat(text)
     else:
         # Graceful degradation — použij čistě Python fallback
-        from hledac.universal.core.optional_imports import optional
-        rust = optional("hledac.universal.core.rust_backend")
+        from hledac.universal._core.optional_imports import optional
+        rust = optional("hledac.universal._core.rust_backend")
         if rust is not None:
             accel = rust.get_accel()
         else:
@@ -40,7 +40,7 @@ from __future__ import annotations
 
 import logging
 from typing import TYPE_CHECKING
-from core import aclose
+from _core import aclose
 
 if TYPE_CHECKING:
     from typing import Any
@@ -80,7 +80,7 @@ class _LegacyRustBackend:
     __slots__ = ("_probe_result", "_accel")
 
     def __init__(self) -> None:
-        from hledac.universal.core.rust_backend._prober import probe as _rust_probe
+        from hledac.universal._core.rust_backend._prober import probe as _rust_probe
 
         # Probe se provádí pouze jednou — modul _prober.py cachuje výsledek
         self._probe_result = _rust_probe()
@@ -131,7 +131,7 @@ class _LegacyRustBackend:
     def _get_accel(self) -> Any:
         """Lazy getter pro AccelBackend — načítá se až při prvním volání."""
         if self._accel is None:
-            from hledac.universal.core.rust_backend import get_accel
+            from hledac.universal._core.rust_backend import get_accel
 
             self._accel = get_accel()
         return self._accel

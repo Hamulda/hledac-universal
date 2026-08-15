@@ -31,7 +31,7 @@ from collections.abc import Awaitable, Callable
 import logging
 
 from collections.abc import Sequence
-from core import aclose
+from _core import aclose
 
 __all__ = [
     # Singleton
@@ -1042,7 +1042,7 @@ def memory_cleanup_fallback(
         except (ImportError, AttributeError) as e:
             logger.debug(f'Cleanup failed: {e}')
         try:
-            from hledac.universal.core.memory_cycle import malloc_zone_pressure_relief
+            from hledac.universal._core.memory_cycle import malloc_zone_pressure_relief
             released = malloc_zone_pressure_relief()
         except (ImportError, AttributeError, OSError) as e:
             logger.debug(f'malloc relief failed: {e}')
@@ -1068,7 +1068,7 @@ def memory_cleanup_fallback(
 
     if malloc_relief:
         try:
-            from hledac.universal.core.memory_cycle import malloc_zone_pressure_relief
+            from hledac.universal._core.memory_cycle import malloc_zone_pressure_relief
 
             released = malloc_zone_pressure_relief()
             if released > 0 and logger:
@@ -1527,7 +1527,7 @@ async def scan_parallel(
     if not check_args:
         return []
 
-    from hledac.universal.core.concurrency import ConcurrencyCategory, get_semaphore
+    from hledac.universal._core.concurrency import ConcurrencyCategory, get_semaphore
     from hledac.universal.utils.asyncx import parallel_ok
 
     if semaphore is None:

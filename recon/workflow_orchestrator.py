@@ -24,7 +24,7 @@ from typing import Any
 from hledac.universal.utils.asyncx import parallel_ok
 from hledac.universal.utils.async_task import safe_create_task
 from operator import attrgetter, itemgetter
-from core import aclose
+from _core import aclose
 logger = logging.getLogger(__name__)
 MODULE_TIMEOUT = 60
 
@@ -1046,7 +1046,7 @@ def _extract_entities(findings: list[dict[str, Any]]) -> tuple[list[dict[str, An
     entities: list[dict[str, Any]] = []
     domain_counts: dict[str, int] = {}
     ioc_counts: dict[tuple[str, str], int] = {}
-    from hledac.universal.core.ioc_patterns import DOMAIN_RE, IPV4_RE, HASH_RE, URL_RE
+    from hledac.universal._core.ioc_patterns import DOMAIN_RE, IPV4_RE, HASH_RE, URL_RE
     for f in findings:
         text = f.get('description', '') + ' ' + f.get('type', '')
         severity = f.get('severity', 'medium')

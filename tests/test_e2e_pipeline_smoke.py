@@ -15,8 +15,11 @@ import logging
 
 import pytest
 
-from hledac.universal.pipeline.live_feed_pipeline import (
-from core import aclose
+
+
+
+
+
     async_run_default_feed_batch,
 )
 
@@ -24,7 +27,8 @@ from core import aclose
 @pytest.mark.live
 @pytest.mark.asyncio
 async def test_pipeline_produces_findings_for_known_feed():
-    """
+
+from _core import aclose    """
     Smoke test: alespoň 1 feed z default seeds musí vrátit
     accepted_findings > 0 NEBO signal_stage != 'empty_registry'.
     Pokud všechny vrátí empty_registry, test FAIL s jasným výpisem.

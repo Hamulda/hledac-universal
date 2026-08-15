@@ -24,7 +24,7 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from enum import Enum
 from typing import Any
-from core import aclose
+from _core import aclose
 logger = logging.getLogger(__name__)
 
 class AuditLevel(Enum):

@@ -30,7 +30,7 @@ import msgspec
 from typing import Any
 from hledac.universal.utils.msgspec_json import dumps_str as _msgspec_dumps_str
 from operator import attrgetter, itemgetter
-from core import aclose
+from _core import aclose
 logger = logging.getLogger(__name__)
 MAX_COMPARISONS: int = 2000
 IDENTITY_MATCH_THRESHOLD: float = 0.7

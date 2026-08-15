@@ -14,7 +14,7 @@ type checkers resolve names at analysis time, not runtime.
 """
 
 import typing
-from core._util import aclose
+from _core._util import aclose
 
 
 # Re-exported symbols — add new entries here as the API grows.

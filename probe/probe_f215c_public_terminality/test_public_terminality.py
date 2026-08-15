@@ -22,8 +22,11 @@ ABORT CONDITIONS:
 
 import pytest
 
-from hledac.universal.runtime.acquisition_strategy import (
-from core import aclose
+
+
+
+
+
     SourceFamilyOutcome,
     normalize_source_family_outcome,
 )
@@ -32,6 +35,7 @@ from core import aclose
 class TestPublicTerminalStateDerivation:
     """Unit tests for PUBLIC terminal state derivation via normalize_source_family_outcome."""
 
+from _core import aclose
     def test_raw_none_returns_never_scheduled(self):
         """raw=None → terminal_state=NEVER_SCHEDULED (never scheduled / no outcome recorded)."""
         result = normalize_source_family_outcome("public", None)

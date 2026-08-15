@@ -75,7 +75,7 @@ def reset_jitter_state() -> None:
 
 def _resolve_backoff_cap_s() -> float:
     """Return the current backoff cap: 1.0 s in blitz mode, 8.0 s otherwise."""
-    from hledac.universal.core.telemetry.context_state import is_blitz_mode as _is_blitz
+    from hledac.universal._core.telemetry.context_state import is_blitz_mode as _is_blitz
 
     return _BLITZ_BACKOFF_CAP_S if _is_blitz() else _DEFAULT_BACKOFF_CAP_S
 
@@ -239,7 +239,7 @@ TTFB_TIMEOUT_S: Final[float] = 1.5
 
 # --- Blitz mode dead host tracking ---
 import threading
-from core import aclose
+from _core import aclose
 
 _blitz_dead_hosts: set[str] = set()
 _blitz_dead_hosts_lock: threading.Lock = threading.Lock()
@@ -277,7 +277,7 @@ def _blitz_aware_stop(retry_state: _TenacityRetryCallState) -> bool:
     Returns:
         True if retries should stop, False to continue retrying.
     """
-    from hledac.universal.core.telemetry.context_state import is_blitz_mode as _is_blitz
+    from hledac.universal._core.telemetry.context_state import is_blitz_mode as _is_blitz
 
     max_attempts = 2 if _is_blitz() else MAX_RETRIES + 1
     return retry_state.attempt_number >= max_attempts

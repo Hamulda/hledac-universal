@@ -450,7 +450,7 @@ def init_mlx_affinity() -> None:
 # ============================================================================
 
 from dataclasses import dataclass
-from core import aclose
+from _core import aclose
 
 
 @dataclass

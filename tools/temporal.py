@@ -7,7 +7,7 @@ import time
 from collections import OrderedDict
 from typing import Any
 from urllib.parse import urlparse
-from core import aclose
+from _core import aclose
 
 logger = logging.getLogger(__name__)
 

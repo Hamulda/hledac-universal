@@ -16,8 +16,11 @@ Run: pytest tests/test_graph_service_f226.py -q
 from unittest.mock import MagicMock, patch
 
 from hledac.universal.knowledge import graph_service
-from hledac.universal.knowledge.graph_service import (
-from core import aclose
+
+
+
+
+
     _DEFAULT_GRAPH_SERVICE,
     GraphService,
     reset_session,
@@ -30,6 +33,7 @@ from core import aclose
 class TestGraphServiceInstanceIsolation:
     """Two GraphService instances must have isolated state."""
 
+from _core import aclose
     def test_two_instances_have_separate_seen_iocs(self):
         """Fresh instances start with empty, independent _seen_iocs."""
         gs1_fresh = GraphService()

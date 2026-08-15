@@ -63,7 +63,8 @@ from __future__ import annotations
 import asyncio
 import logging
 from typing import Any, TypeVar
-from core import aclose
+from _core import aclose
+from hledac.universal.runtime.worker_pool import get_rayon_channels
 
 logger = logging.getLogger(__name__)
 
@@ -107,7 +108,7 @@ class RayonHandle:
             return
 
         try:
-            from hledac.universal.core.rust_backend import rust
+            from hledac.universal._core.rust_backend import rust
             rust.raw.rayon_drop_channel(self._handle)
             self._dropped = True
         except Exception:  # noqa: BLE001
@@ -124,7 +125,7 @@ class RayonHandle:
         if self._dropped:
             return
         try:
-            from hledac.universal.core.rust_backend import rust
+            from hledac.universal._core.rust_backend import rust
             rust.raw.rayon_drop_channel(self._handle)
             self._dropped = True
         except Exception:  # noqa: BLE001
@@ -144,7 +145,7 @@ def _check_rayon_channel() -> bool:
     if _RAYON_CHANNEL_AVAILABLE is not None:
         return _RAYON_CHANNEL_AVAILABLE
     # R6: Centralized Rust access via core.rust_backend
-    from hledac.universal.core.rust_backend import rust
+    from hledac.universal._core.rust_backend import rust
     raw = rust.raw
     if raw.rayon_submit_channel is not None and raw.rayon_join_channel is not None and raw.rayon_abort_channel is not None:
         _RAYON_CHANNEL_AVAILABLE = True
@@ -197,12 +198,11 @@ async def dispatch_rayon(
     # The submit itself is ~5μs — negligible.
 
     # R6: Centralized Rust access via core.rust_backend
-    from hledac.universal.core.rust_backend import rust
-    rayon_submit_channel = rust.raw.rayon_submit_channel
-    rayon_join_channel = rust.raw.rayon_join_channel
-    rayon_abort_channel = rust.raw.rayon_abort_channel
-    # P0-4 FIX: Explicit Arc release after join/abort to prevent UAF/double-free
-    rayon_drop_channel = rust.raw.rayon_drop_channel
+    channels = get_rayon_channels()
+    rayon_submit_channel = channels.submit
+    rayon_join_channel = channels.join
+    rayon_abort_channel = channels.abort
+    rayon_drop_channel = channels.drop
 
     def _submit() -> int:
         return rayon_submit_channel(pool_type, n_items, fn, args)

@@ -18,7 +18,7 @@ from typing import Any, Iterator
 
 import msgspec
 import orjson
-from core import aclose
+from _core import aclose
 
 logger = logging.getLogger(__name__)
 

@@ -45,7 +45,7 @@ import sys
 import time
 from dataclasses import dataclass, field
 import msgspec
-from core import aclose
+from _core import aclose
 try:
     import psutil
 except ImportError:
@@ -130,7 +130,7 @@ async def _import_hledac_modules() -> tuple[list[str], list[str]]:
     """
     succeeded: list[str] = []
     failed: list[str] = []
-    modules = ['hledac.universal.knowledge.atomic_storage', 'hledac.universal.coordinators.fetch_coordinator', 'hledac.universal.core.brain', 'hledac.universal.tools.host_policies', 'hledac.universal.tools.checkpoint', 'hledac.universal.fetching.public_fetcher']
+    modules = ['hledac.universal.knowledge.atomic_storage', 'hledac.universal.coordinators.fetch_coordinator', 'hledac.universal._core.brain', 'hledac.universal.tools.host_policies', 'hledac.universal.tools.checkpoint', 'hledac.universal.fetching.public_fetcher']
     for mod in modules:
         try:
             __import__(mod)

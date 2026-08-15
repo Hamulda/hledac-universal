@@ -36,7 +36,7 @@ import msgspec
 from hledac.universal.compat.msgspec_gc_compat import Struct
 from typing import TYPE_CHECKING, Any
 from hledac.universal.paths import LMDB_ROOT
-from core import aclose
+from _core import aclose
 if TYPE_CHECKING:
     pass
 logger = logging.getLogger(__name__)
@@ -220,7 +220,7 @@ class IocDedupAdapter:
         self._load_attempted = False
         self._rust_available = False
         try:
-            from hledac.universal.core.rust_backend import rust as _rust_backend
+            from hledac.universal._core.rust_backend import rust as _rust_backend
             if _rust_backend.is_available and _rust_backend.ioc_dedup is not None:
                 self._store = _rust_backend.ioc_dedup.IocDedupStore(sprint_id=sprint_id)
                 self._rust_available = True
@@ -378,7 +378,7 @@ class IocDedupAdapter:
                 if data is None:
                     return False
             if self._rust_available:
-                from hledac.universal.core.rust_backend import rust as _rust_backend
+                from hledac.universal._core.rust_backend import rust as _rust_backend
                 ioc_dedup_from_bytes = getattr(_rust_backend.ioc_dedup, 'ioc_dedup_from_bytes', None)
                 if ioc_dedup_from_bytes:
                     self._store = ioc_dedup_from_bytes(data)

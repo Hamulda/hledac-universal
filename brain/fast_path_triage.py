@@ -46,8 +46,8 @@ _COSINE_LOW_THRESHOLD: float = 0.15    # below → noise even if Tier 1 borderli
 
 # ── Env overrides ────────────────────────────────────────────────────────────
 # SWARM-010: Use FeatureFlags for registry compliance
-from hledac.universal.core.feature_flags import FeatureFlags, FeatureFlag
-from core import aclose
+from hledac.universal._core.feature_flags import FeatureFlags, FeatureFlag
+from _core import aclose
 _HLEDAC_TRIAGE_DISABLED: bool = FeatureFlags.get(FeatureFlag.TRIAGE_DISABLED)
 _HLEDAC_TRIAGE_TIER2_ENABLED: bool = FeatureFlags.get(FeatureFlag.TRIAGE_TIER2)
 
@@ -55,7 +55,7 @@ _HLEDAC_TRIAGE_TIER2_ENABLED: bool = FeatureFlags.get(FeatureFlag.TRIAGE_TIER2)
 def _get_xxh3_hex(data: str) -> str:
     """Return 16-char xxh3-64 hex fingerprint via Rust backend (zero-copy safe)."""
     try:
-        from hledac.universal.core.rust_backend import rust
+        from hledac.universal._core.rust_backend import rust
         return rust.hash.ContentHasher.xxh3_64_hex(data.encode())
     except Exception:
         import hashlib
@@ -363,7 +363,7 @@ class FastPathTriage:
 
         # Priority 1: core/embeddings manager (canonical, always loaded for RAG)
         try:
-            from hledac.universal.core.embeddings import get_embedding_manager
+            from hledac.universal._core.embeddings import get_embedding_manager
             mgr = get_embedding_manager()
             if mgr is not None and hasattr(mgr, "encode_texts"):
                 self._embedder = mgr.encode_texts
@@ -396,7 +396,7 @@ class FastPathTriage:
 
         # Priority 4: core.mlx_embeddings (newer path)
         try:
-            from hledac.universal.core.mlx_embeddings import get_mlx_embedder
+            from hledac.universal._core.mlx_embeddings import get_mlx_embedder
             core_emb = get_mlx_embedder()
             if core_emb is not None:
                 if hasattr(core_emb, "encode"):

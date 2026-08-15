@@ -22,7 +22,7 @@ MIGRATION:
     await io_bound(io_heavy_fn, *args)
 
 For Rust rayon pools (NEON SIMD on M1):
-    from hledac.universal.core.rust_backend import rust
+    from hledac.universal._core.rust_backend import rust
     # cpu_pool_run (4 P-cores), io_pool_run (2 threads)
     rust.pool_run.cpu_pool_run(func, args)
 
@@ -43,7 +43,7 @@ from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor
 from dataclasses import dataclass
 import msgspec
 from typing import Any, TypeVar
-from core import aclose
+from _core import aclose
 
 logger = logging.getLogger(__name__)
 

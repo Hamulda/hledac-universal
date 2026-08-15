@@ -32,7 +32,7 @@ import argparse
 import json
 import sys
 from pathlib import Path
-from core import aclose
+from _core import aclose
 
 # ZSTD magic bytes (RFC 8478) — used to detect compressed state files
 ZSTD_MAGIC = b"\x28\xb5\x2f\xfd"

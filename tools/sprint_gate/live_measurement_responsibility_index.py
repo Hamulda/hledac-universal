@@ -13,7 +13,7 @@ import ast
 from dataclasses import dataclass, field
 import msgspec
 from typing import Any
-from core import aclose
+from _core import aclose
 
 class SectionIndex(msgspec.Struct, gc=False):
     name: str

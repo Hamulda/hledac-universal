@@ -32,8 +32,8 @@ from .lru_cache import LRUCache
 from hledac.universal.utils.asyncx import safe_wait_for
 
 # MODERN-33: Use facade for Rust darwin_affinity extension
-from hledac.universal.core.rust_backend import rust
-from core import aclose
+from hledac.universal._core.rust_backend import rust
+from _core import aclose
 
 _RUST_DARWIN_AFFINITY = getattr(rust.raw, 'darwin_affinity', None)
 _RUST_TOPOLOGY = getattr(rust.raw, 'topology', None)
@@ -105,7 +105,7 @@ class _ConcurrencyController:
     def __init__(self, max_memory_threshold_mb: int=1024):
         self._max_memory_threshold = max_memory_threshold_mb
         self._limit = 2
-        from hledac.universal.core.concurrency import ConcurrencyCategory, get_semaphore
+        from hledac.universal._core.concurrency import ConcurrencyCategory, get_semaphore
         self._available = get_semaphore(ConcurrencyCategory.SCRAPE_GENERAL)
         self._monitor_task: asyncio.Task | None = None
         self._lock: asyncio.Lock | None = None
@@ -214,7 +214,7 @@ class ParallelExecutionOptimizer:
         creating asyncio primitives outside a running loop.
         """
         if self._pending_semaphore is None:
-            from hledac.universal.core.concurrency import ConcurrencyCategory, get_semaphore
+            from hledac.universal._core.concurrency import ConcurrencyCategory, get_semaphore
             self._pending_semaphore = get_semaphore(ConcurrencyCategory.SCRAPE_GENERAL)
         return self._pending_semaphore
 
@@ -771,7 +771,7 @@ class ParallelExecutionOptimizer:
             else:
                 _start_time = group.created_at
             try:
-                from hledac.universal.core.system_metrics import get_system_snapshot
+                from hledac.universal._core.system_metrics import get_system_snapshot
                 snap = get_system_snapshot()
                 memory_usage = snap.memory_percent / 100.0
             except Exception:
@@ -837,7 +837,7 @@ class ResourceMonitor:
         no raw psutil syscalls in this hot path.
         """
         try:
-            from hledac.universal.core.system_metrics import get_system_snapshot
+            from hledac.universal._core.system_metrics import get_system_snapshot
             snap = get_system_snapshot()
             return {'cpu_usage': 0.0, 'memory_usage': snap.memory_percent / 100.0, 'available_memory_gb': snap.memory_available_gb, 'cpu_count': multiprocessing.cpu_count()}
         except Exception:
@@ -1332,7 +1332,7 @@ class MemoryAwareScheduler:
     def __init__(self, max_memory_percent: float=80.0):
         self.max_memory_percent = max_memory_percent
         self.active_tasks: dict[str, dict[str, Any]] = {}
-        from hledac.universal.core.concurrency import ConcurrencyCategory, get_semaphore
+        from hledac.universal._core.concurrency import ConcurrencyCategory, get_semaphore
         self._semaphore = get_semaphore(ConcurrencyCategory.SCRAPE_GENERAL)
 
     async def schedule(self, task_id: str, task_func: Callable, estimated_memory_mb: float=100):
@@ -1342,7 +1342,7 @@ class MemoryAwareScheduler:
         which was called on every scheduled task (hot path).
         """
         try:
-            from hledac.universal.core.system_metrics import get_system_snapshot
+            from hledac.universal._core.system_metrics import get_system_snapshot
             snap = get_system_snapshot()
             if snap.memory_percent > self.max_memory_percent:
                 logger.warning(f'Memory high ({snap.memory_percent:.1f}%), throttling task {task_id}')

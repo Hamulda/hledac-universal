@@ -21,7 +21,7 @@ import time
 from dataclasses import dataclass, field
 import msgspec
 from urllib.parse import urlparse
-from core import aclose
+from _core import aclose
 logger = logging.getLogger(__name__)
 _DEFAULT_TTL_SECONDS = 900
 _MAX_ROBOTS_SIZE = 512 * 1024

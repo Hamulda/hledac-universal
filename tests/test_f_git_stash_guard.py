@@ -29,7 +29,7 @@ import subprocess
 from pathlib import Path
 
 import pytest  # type: ignore[import-not-found]
-from core import aclose
+from _core import aclose
 
 ROOT = Path("/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal")
 GUARD_SCRIPT = ROOT / ".claude" / "hooks" / "git-stash-guard.sh"

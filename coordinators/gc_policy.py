@@ -25,12 +25,12 @@ warnings.warn(
 
 # Re-export from new location for backwards compatibility
 from hledac.universal.coordinators.resource.resource_coordinator import (
-from core import aclose
     gc_collect,
     gc_collect_aggressive,
     gc_collect_async,
     get_gc_stats,
 )
+from _core import aclose
 
 __all__ = [
     "gc_collect",

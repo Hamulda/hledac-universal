@@ -42,8 +42,8 @@ import threading
 from collections.abc import Callable
 from typing import Any, TypeVar
 
-from hledac.universal.core.locks import LockCategory, make_lock
-from core import aclose
+from hledac.universal._core.locks import LockCategory, make_lock
+from _core import aclose
 
 logger = logging.getLogger(__name__)
 
@@ -148,7 +148,7 @@ class LazyModel[T]:
         """
         try:
             # sample_uma_status is sync and lightweight (TTL-cached psutil reads)
-            from hledac.universal.core.resource_governor import sample_uma_status
+            from hledac.universal._core.resource_governor import sample_uma_status
             uma = sample_uma_status()
             match uma.state:
                 case "critical":

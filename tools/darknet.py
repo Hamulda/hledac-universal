@@ -10,7 +10,7 @@ import asyncio
 import logging
 from typing import TYPE_CHECKING, Any
 from urllib.parse import urlparse
-from core import aclose
+from _core import aclose
 
 if TYPE_CHECKING:
     import httpx

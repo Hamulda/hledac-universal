@@ -561,7 +561,7 @@ class BaseIntelligenceLane(ABC):
 
 # Shared regex patterns for IOC extraction (M1 8GB: compiled once, reused across lanes)
 import re as _re
-from core import aclose
+from _core import aclose
 
 BTC_ADDRESS_PATTERN = _re.compile(r"(bc1|[13])[a-zA-HJ-NP-Z0-9]{25,62}")
 """Bitcoin address regex: bc1 bech32, 1/3 Legacy P2PKH"""

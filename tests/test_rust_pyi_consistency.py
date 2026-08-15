@@ -20,7 +20,7 @@ import pytest
 
 pytest.importorskip("hledac_rust_extensions", reason="hledac_rust_extensions not built")
 import hledac_rust_extensions as _live_module  # noqa: E402
-from core import aclose
+from _core import aclose
 
 
 _PYI_PATH = Path(__file__).parent.parent / "rust_extensions" / "hledac_rust_extensions.pyi"

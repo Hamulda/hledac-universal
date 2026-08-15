@@ -28,7 +28,7 @@ Date: 2026-06-25
 from .duckdb_adapter import DuckDBStoreAdapter
 from .fetch_adapter import FetchCoordinatorAdapter
 from .graph_adapter import DuckPGQGraphAdapter, IOCGraphAdapter, GraphFacade
-from core import aclose
+from _core import aclose
 
 __all__ = [
     "DuckDBStoreAdapter",

@@ -14,7 +14,7 @@ import time
 from typing import TYPE_CHECKING, Any
 
 from ._stage_protocol import BoundedStageQueue, Stage, StageContext
-from core import aclose
+from _core import aclose
 
 if TYPE_CHECKING:
     pass

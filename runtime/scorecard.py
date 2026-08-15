@@ -30,7 +30,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from hledac.universal.runtime.scheduler_v2._task_registry import TaskScope, safe_create_task_tracked
-from core import aclose
+from _core import aclose
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -509,7 +509,7 @@ class ScorecardBuilder:
         """
         # Rust path
         try:
-            from hledac.universal.core.rust_backend import get_accel
+            from hledac.universal._core.rust_backend import get_accel
 
             accel = get_accel()
             rust_fn = getattr(accel.json, "dumps_compact_bytes", None)

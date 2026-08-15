@@ -25,7 +25,7 @@ if TYPE_CHECKING:
     pass
 logger = logging.getLogger(__name__)
 from .public_constants import _is_threat_query as _is_threat_query_impl
-from core import aclose
+from _core import aclose
 _async_discovery_search_var: contextvars.ContextVar[Any] = contextvars.ContextVar("_async_discovery_search_var", default=None)
 _async_search_multi_engine_var: contextvars.ContextVar[Any] = contextvars.ContextVar("_async_search_multi_engine_var", default=None)
 

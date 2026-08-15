@@ -29,7 +29,7 @@ import time
 from collections import deque
 from dataclasses import dataclass
 import msgspec
-from core import aclose
+from _core import aclose
 logger = logging.getLogger(__name__)
 MAX_NETWORKINTEL_TARGETS: int = 20
 NETWORKINTEL_TIMEOUT_S: float = 30.0

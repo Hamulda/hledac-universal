@@ -18,7 +18,7 @@ from hledac.universal.tools.darknet import DarknetConnector  # noqa: E402
 from hledac.universal.tools.osint_frameworks import OSINTFrameworkRunner  # noqa: E402
 from hledac.universal.tools.paywall import PaywallBypass  # noqa: E402
 from hledac.universal.tools.session_manager import SessionManager  # noqa: E402
-from core import aclose
+from _core import aclose
 
 
 class TestSprint46:

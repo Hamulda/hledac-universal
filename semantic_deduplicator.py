@@ -34,10 +34,10 @@ from pathlib import Path
 import numpy as np
 import psutil
 from hledac.universal.embedding_pipeline import generate_embeddings
-from core import aclose
+from _core import aclose
 try:
     # R6: Centralized Rust access via core.rust_backend
-    from hledac.universal.core.rust_backend import rust
+    from hledac.universal._core.rust_backend import rust
     _rust_simhash = rust.raw.compute_simhash
     _SIMHASH_AVAILABLE = True
 except ImportError:
@@ -432,10 +432,10 @@ def find_near_duplicates_in_batch(texts: list[str], threshold: int=3) -> list[tu
         return []
     try:
         # R6: Centralized Rust access via core.rust_backend
-        from hledac.universal.core.rust_backend import rust
+        from hledac.universal._core.rust_backend import rust
         _batch_simhash = rust.raw.batch_compute_simhash
         # R6: Centralized Rust access via core.rust_backend
-        from hledac.universal.core.rust_backend import rust
+        from hledac.universal._core.rust_backend import rust
         _find_near_dup = rust.raw.find_near_duplicates
         fps = _batch_simhash(texts)
         return _find_near_dup(fps, threshold)

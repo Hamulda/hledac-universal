@@ -12,7 +12,7 @@ Testy pro task-aware embedding layer v mlx_embeddings.py:
 """
 
 # Import z mlx_embeddings.py (single source of truth)
-# Správná cesta: hledac.universal.core (ne hledac.core)
+# Správná cesta: hledac.universal._core (ne hledac.core)
 import sys
 from pathlib import Path
 
@@ -20,8 +20,11 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).parent.parent.parent.parent.parent))
 
-from hledac.universal.core.mlx_embeddings import (
-from core import aclose
+
+
+
+
+
     EmbeddingTask,
     MLXEmbeddingManager,
     apply_task_prefix,
@@ -33,6 +36,7 @@ from core import aclose
 class TestEmbeddingTask:
     """Testy pro EmbeddingTask enum a helper funkce."""
 
+from _core import aclose
     def test_asymmetric_prefix_differ(self):
         """Asymetrické tasky musí mít různé prefixy."""
         text = "machine learning"

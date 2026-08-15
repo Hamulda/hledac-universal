@@ -16,8 +16,11 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from brain.evidence_fusion import DempsterShafer
-from hledac_hypothesis.hypothesisgenerator import (
-from core import aclose
+
+
+
+
+
     MAX_HYPOTHESES,
     HypothesisGenerator,
     ResearchHypothesis,
@@ -25,7 +28,8 @@ from core import aclose
 )
 
 # ---------------------------------------------------------------------------
-# Test fixtures
+
+from _core import aclose# Test fixtures
 # ---------------------------------------------------------------------------
 
 class MockFinding:

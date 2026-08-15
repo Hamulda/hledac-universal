@@ -20,7 +20,7 @@ import logging
 import weakref
 from pathlib import Path
 from hledac.universal.utils.msgspec_json import decode, encode
-from core import aclose
+from _core import aclose
 try:
     import lmdb
     LMDB_AVAILABLE = True

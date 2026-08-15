@@ -24,11 +24,11 @@ from hledac.universal.utils.msgspec_json import encode as _msgspec_encode
 from hledac.universal.utils.msgspec_json import decode as _msgspec_decode
 import numpy as np
 from hledac.universal.utils.asyncx import parallel_ok
-from core import aclose
+from _core import aclose
 logger = logging.getLogger(__name__)
 FASTEMBED_AVAILABLE = False
 try:
-    from hledac.universal.core.mlx_embeddings import MLXEmbeddingManager
+    from hledac.universal._core.mlx_embeddings import MLXEmbeddingManager
     MLX_EMBED_AVAILABLE = True
 except ImportError:
     MLX_EMBED_AVAILABLE = False
@@ -128,7 +128,7 @@ class ContextCompressor:
         self._embedder_type = None
         if MLX_EMBED_AVAILABLE:
             try:
-                from hledac.universal.core.mlx_embeddings import get_embedding_manager
+                from hledac.universal._core.mlx_embeddings import get_embedding_manager
                 self._mlx_manager = get_embedding_manager()
                 self.embedder = self._mlx_manager
                 self.embedding_dim = self._mlx_manager.EMBEDDING_DIM

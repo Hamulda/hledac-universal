@@ -17,7 +17,7 @@ import types
 from unittest.mock import AsyncMock, patch
 
 import pytest
-from core import aclose
+from _core import aclose
 
 # ---------------------------------------------------------------------------
 # A. BodyReadResult + CHUNKS_BUDGET — transport.body_limiter

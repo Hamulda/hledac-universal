@@ -24,7 +24,7 @@ from typing import NamedTuple
 import orjson
 from hledac.universal.knowledge.duckdb_store import CanonicalFinding
 from hledac.universal.utils.asyncx import parallel_ok
-from core import aclose
+from _core import aclose
 logger = logging.getLogger(__name__)
 S2AG_BASE = 'https://api.semanticscholar.org/graph/v1'
 S2AG_PAPER_FIELDS = 'paperId,title,authors,year,abstract,venue,citationCount,referenceCount,openAccessPdf,externalIds,influentialCitationCount'
@@ -64,7 +64,7 @@ class S2ORCAdapter:
     __slots__ = tuple(('_cache', '_cache_ttl', '_semaphore', '_tldr_semaphore'))
 
     def __init__(self) -> None:
-        from hledac.universal.core.concurrency import ConcurrencyCategory, get_semaphore
+        from hledac.universal._core.concurrency import ConcurrencyCategory, get_semaphore
         self._semaphore = get_semaphore(ConcurrencyCategory.ACADEMIC_SEARCH)
         self._tldr_semaphore = get_semaphore(ConcurrencyCategory.ACADEMIC_SEARCH)
         self._cache: dict[str, tuple[float, list[S2Paper]]] = {}

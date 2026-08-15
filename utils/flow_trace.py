@@ -901,7 +901,7 @@ def _merge_metadata(
 # ============================================================================
 
 import atexit  # noqa: E402
-from core import aclose
+from _core import aclose
 
 
 def _flush_atexit() -> None:

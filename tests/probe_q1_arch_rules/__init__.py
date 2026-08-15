@@ -17,4 +17,4 @@ M1 timeout budget: 30s per test.
 """
 
 from __future__ import annotations
-from core import aclose
+from _core import aclose

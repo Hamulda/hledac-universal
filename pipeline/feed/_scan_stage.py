@@ -16,7 +16,7 @@ from typing import TYPE_CHECKING, Any
 
 from hledac.universal.pipeline._soa_types import FeedAssembledBatch, FeedMatchedBatch
 from hledac.universal.utils.asyncx import parallel_ok
-from core import aclose
+from _core import aclose
 
 logger = logging.getLogger(__name__)
 
@@ -103,7 +103,7 @@ def _get_rust_feed_domain() -> Any | None:
     """Get Rust feed_pipeline domain if available."""
     try:
         # R6: Centralized Rust access via core.rust_backend
-        from hledac.universal.core.rust_backend import rust
+        from hledac.universal._core.rust_backend import rust
         _ext = rust.raw.module
 
         probe = getattr(_ext, "feed_entry_pipeline", None)

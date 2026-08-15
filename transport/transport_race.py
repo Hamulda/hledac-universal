@@ -63,7 +63,7 @@ from hledac.universal.transport.utils import (
 )
 from hledac.universal.utils.asyncx import safe_wait_for
 from hledac.universal.utils.asyncx import safe_wait_for
-from core import aclose
+from _core import aclose
 
 logger = logging.getLogger(__name__)
 

@@ -78,7 +78,7 @@ from ._adaptive import (
 # Using importlib.util to import from the file directly
 import importlib.util
 import sys
-from core import aclose
+from _core import aclose
 
 _legacy_cache_classes = frozenset({
     "PyCacheDict",

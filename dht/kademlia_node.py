@@ -98,7 +98,7 @@ import time
 import uuid
 from collections import OrderedDict
 from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
-from hledac.universal.core.resource_governor import ResourceGovernor
+from hledac.universal._core.resource_governor import ResourceGovernor
 from hledac.universal.dht.local_graph import LocalGraphStore
 from hledac.universal.utils.asyncx import parallel_ok, safe_create_task, safe_gather_fire_and_forget, safe_wait_for
 
@@ -139,8 +139,8 @@ DHT_SNAPSHOT_KEY = b'routing_table_v1'
 DHT_REAL_UDP = os.getenv('HLEDAC_ENABLE_DHT', '').lower() in ('1', 'true', 'yes', 'on')
 MAX_DHT_PROBE_DURATION_S = 120
 DHT_BOOTSTRAP_TIMEOUT_S = 8.0
-from hledac.universal.core.concurrency import ConcurrencyCategory, get_semaphore
-from core import aclose
+from hledac.universal._core.concurrency import ConcurrencyCategory, get_semaphore
+from _core import aclose
 DHT_BOOTSTRAP_SEMAPHORE = get_semaphore(ConcurrencyCategory.DHT_BOOTSTRAP)
 DHT_REQUEST_SEMAPHORE = get_semaphore(ConcurrencyCategory.DHT_REQUEST)
 DHT_REQUEST_TIMEOUT_S = 5.0

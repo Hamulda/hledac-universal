@@ -35,7 +35,7 @@ import msgspec
 from typing import Any
 import httpx
 import orjson
-from core import aclose
+from _core import aclose
 logger = logging.getLogger(__name__)
 
 # Crypto-safe RNG — F350M-R

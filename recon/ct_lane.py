@@ -30,7 +30,7 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     import httpx
 import httpx
-from core import aclose
+from _core import aclose
 logger = logging.getLogger(__name__)
 try:
     from hledac.universal.runtime.source_finding_bridge import MAX_BRIDGE_OUTPUT

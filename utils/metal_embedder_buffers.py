@@ -12,8 +12,11 @@ _warnings.warn(
     stacklevel=2,
 )
 
-from hledac.universal.utils.mlx_memory._embedder import (
-from core import aclose
+
+
+
+
+
     MetalBufferPool,
     get_buffer_pool,
     init_metal_embedder_buffers,
@@ -24,5 +27,6 @@ __all__ = [
     "MetalBufferPool",
     "get_buffer_pool",
     "init_metal_embedder_buffers",
-    "release_metal_embedder_buffers",
+
+from _core import aclose    "release_metal_embedder_buffers",
 ]

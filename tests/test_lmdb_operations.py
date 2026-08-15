@@ -44,8 +44,11 @@ from hledac.universal.utils.lmdb_bulk import (
     putmulti_bounded_str,
     putmulti_safe,
 )
-from hledac.universal.security.pii_gate import (
-from core import aclose
+
+
+
+
+
     PIICategory,
     PIIMatch,
     SanitizationResult,
@@ -54,7 +57,8 @@ from core import aclose
 
 
 # ---------------------------------------------------------------------------
-# Helpers
+
+from _core import aclose# Helpers
 # ---------------------------------------------------------------------------
 
 def _make_temp_dir() -> Path:
@@ -340,7 +344,7 @@ class TestUnifiedLMDBPropertyBased:
     @settings(verbosity=Verbosity.verbose, max_examples=20, deadline=None)
     def test_put_get_delete_roundtrip(self, n, sub_idx):
         """SubDB put→get→delete: value retrievable after put, gone after delete."""
-        from hledac.universal.core.lmdb_unified import UnifiedLMDB, SubDB
+        from hledac.universal._core.lmdb_unified import UnifiedLMDB, SubDB
 
         tmpdir = str(_make_temp_dir())
         store = UnifiedLMDB(path=tmpdir, lazy=False)
@@ -382,7 +386,7 @@ class TestUnifiedLMDBPropertyBased:
     @settings(verbosity=Verbosity.verbose, max_examples=15, deadline=None)
     def test_scan_prefix_exact(self, n, sub_idx):
         """scan_prefix returns all items matching the prefix."""
-        from hledac.universal.core.lmdb_unified import UnifiedLMDB
+        from hledac.universal._core.lmdb_unified import UnifiedLMDB
 
         tmpdir = str(_make_temp_dir())
         store = UnifiedLMDB(path=tmpdir, lazy=False)
@@ -413,7 +417,7 @@ class TestUnifiedLMDBPropertyBased:
     @settings(verbosity=Verbosity.verbose, max_examples=15, deadline=None)
     def test_put_batch_all_retrievable(self, n, sub_idx):
         """put_batch stores items that are then individually get-able."""
-        from hledac.universal.core.lmdb_unified import UnifiedLMDB
+        from hledac.universal._core.lmdb_unified import UnifiedLMDB
 
         tmpdir = str(_make_temp_dir())
         store = UnifiedLMDB(path=tmpdir, lazy=False)

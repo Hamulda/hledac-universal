@@ -23,7 +23,7 @@ import re
 from dataclasses import dataclass, field
 from functools import lru_cache
 from typing import TYPE_CHECKING, Any
-from core import aclose
+from _core import aclose
 
 try:
     import msgspec

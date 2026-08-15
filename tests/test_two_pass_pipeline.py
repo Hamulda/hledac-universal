@@ -15,8 +15,11 @@ from typing import Any
 
 import pytest
 
-from hledac.universal.utils.two_pass_pipeline import (
-from core import aclose
+
+
+
+
+
     PipelineStats,
     TwoPassPipeline,
     TwoPassPipelineConfig,
@@ -27,6 +30,7 @@ from core import aclose
 class TestTwoPassPipeline:
     """Test TwoPassPipeline: single TaskGroup with queue backpressure."""
 
+from _core import aclose
     @pytest.mark.asyncio
     async def test_basic_pipeline(self) -> None:
         """Producer items → consumer → results."""

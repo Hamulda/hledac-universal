@@ -14,7 +14,7 @@ import json
 import sys
 from argparse import ArgumentParser
 from pathlib import Path
-from core import aclose
+from _core import aclose
 
 # Legacy → v2.0 rename map
 _RENAME = {

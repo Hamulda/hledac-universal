@@ -15,7 +15,7 @@ DEPRECATION NOTICE (F350M-R):
         ↓ REPLACE WITH
         from hledac.universal.knowledge.ioc_processor import fast_ioc_extract
 
-F350M-R ISSUE: Replaced broken `from core.rust_backend import rust` pattern
+F350M-R ISSUE: Replaced broken `from _core.rust_backend import rust` pattern
 (which failed because rust.ioc is a domain object, not a module)
 with the canonical get_accel() facade.
 """
@@ -35,7 +35,7 @@ warnings.warn(
 
 # Re-export everything from the unified facade for backward compatibility
 from hledac.universal.knowledge.ioc_processor import (  # noqa: F401,E402,F811
-from core import aclose
+from _core import aclose
     # Note: forensics/ is part of hledac.universal package, so hledac.universal.* imports work
     # when the package is installed. This is the standard project import convention.
     fast_ioc_extract,

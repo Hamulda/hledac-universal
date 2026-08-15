@@ -15,7 +15,7 @@ import os
 from pathlib import Path
 
 import pytest
-from core import aclose
+from _core import aclose
 
 
 def _find_aiohttp_socks_imports(file_path: Path) -> list[str]:

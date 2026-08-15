@@ -46,7 +46,7 @@ from collections.abc import Callable
 from typing import Any
 
 import msgspec
-from core import aclose
+from _core import aclose
 
 logger = logging.getLogger(__name__)
 
@@ -357,7 +357,7 @@ class CertstreamWebSocketClient:
         Uses Rust Aho-Corasick if available, falls back to Python pyahocorasick.
         """
         try:
-            from hledac.universal.core.rust_backend import rust as _rust_backend
+            from hledac.universal._core.rust_backend import rust as _rust_backend
             if _rust_backend.is_available and _rust_backend.aho is not None:
                 self._aho_matcher = _rust_backend.aho.AhoCorasickMatcher(
                     self._watch_domains,

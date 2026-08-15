@@ -786,7 +786,7 @@ class MetadataExtractor:
         # Try Rust PDF extraction first (feature-gated, ~10× faster than Python pypdf)
         _rust_pdf_available = False
         # R6: Centralized Rust access via core.rust_backend
-        from hledac.universal.core.rust_backend import rust
+        from hledac.universal._core.rust_backend import rust
         if rust.is_available and rust.raw.pdf is not None:
             _rust_pdf_available = True
 
@@ -921,7 +921,7 @@ class MetadataExtractor:
         """
         # Try Rust office extraction first (feature-gated, ~5-10× faster than Python)
         _rust_office_available = False
-        from hledac.universal.core.rust_backend import rust
+        from hledac.universal._core.rust_backend import rust
         if rust.is_available and rust.raw.office is not None:
             _rust_office_available = True
 
@@ -978,7 +978,7 @@ class MetadataExtractor:
         2. Fallback to openpyxl if Rust is unavailable
         """
         _rust_office_available = False
-        from hledac.universal.core.rust_backend import rust
+        from hledac.universal._core.rust_backend import rust
         if rust.is_available and rust.raw.office is not None:
             _rust_office_available = True
 
@@ -1031,7 +1031,7 @@ class MetadataExtractor:
         2. Fallback to python-pptx if Rust is unavailable
         """
         _rust_office_available = False
-        from hledac.universal.core.rust_backend import rust
+        from hledac.universal._core.rust_backend import rust
         if rust.is_available and rust.raw.office is not None:
             _rust_office_available = True
 
@@ -1267,8 +1267,8 @@ def _read_prefix_bytes(path: str, n: int, errors: list[str], *, stat_result: os.
 _RUST_XXHASH_AVAILABLE = False
 _content_hash_64_rust: Callable[[bytes], int] | None = None
 # R6: Centralized Rust access via core.rust_backend
-from hledac.universal.core.rust_backend import rust
-from core import aclose
+from hledac.universal._core.rust_backend import rust
+from _core import aclose
 _content_hash_64_rust = rust.raw.content_hash_64
 _RUST_XXHASH_AVAILABLE = _content_hash_64_rust is not None
 

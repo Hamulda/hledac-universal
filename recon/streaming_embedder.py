@@ -68,7 +68,7 @@ import numpy as np
 
 from hledac.universal.runtime.worker_pool import run_in_pool
 from hledac.universal.utils.asyncx import first_completed  # ISSUE-15
-from core import aclose
+from _core import aclose
 
 if TYPE_CHECKING:
     from hledac.universal.knowledge.duckdb_store import CanonicalFinding
@@ -123,7 +123,7 @@ def _try_rust_text_norm(texts: list[str]) -> list[str] | None:
     Returns None if Rust pipeline unavailable.
     """
     # R6: Centralized Rust access via core.rust_backend
-    from hledac.universal.core.rust_backend import rust
+    from hledac.universal._core.rust_backend import rust
     batch_nfc_normalize = rust.raw.batch_nfc_normalize
     if batch_nfc_normalize is None:
         return texts  # No Rust available, return as-is
@@ -253,7 +253,7 @@ class StreamingEmbedder:
         Fail-soft: returns True if check fails (embedding proceeds).
         """
         try:
-            from hledac.universal.core.resource_governor import sample_uma_status
+            from hledac.universal._core.resource_governor import sample_uma_status
 
             uma = sample_uma_status()
             state = getattr(uma, "state", "ok")

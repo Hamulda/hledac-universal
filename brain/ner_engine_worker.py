@@ -18,7 +18,7 @@ import asyncio
 import orjson as json
 import os
 import sys
-from core import aclose
+from _core import aclose
 
 
 async def main() -> None:

@@ -29,9 +29,12 @@ from hypothesis.strategies import (
     tuples,
 )
 
-from hledac.universal.core.lmdb_unified import UnifiedLMDB, SubDB, get_unified_lmdb
-from hledac.universal.brain.prompt_injection_validator import (
-from core import aclose
+from hledac.universal._core.lmdb_unified import UnifiedLMDB, SubDB, get_unified_lmdb
+
+
+
+
+
     sanitize_prompt_injection_patterns,
     PromptInjectionValidationResult,
 )
@@ -39,7 +42,8 @@ from core import aclose
 
 # ---------------------------------------------------------------------------
 # LMDB — atomicity and consistency invariants
-# ---------------------------------------------------------------------------
+
+from _core import aclose# ---------------------------------------------------------------------------
 
 class TestLMDBPropertyBased:
     """LMDB operation invariants via Hypothesis."""

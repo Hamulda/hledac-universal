@@ -7,7 +7,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import numpy as np
 import pytest
-from core import aclose
+from _core import aclose
 
 # Testuje se pouze pokud je MLX dostupný
 np = pytest.importorskip("numpy")
@@ -19,7 +19,7 @@ class TestResourceGovernor:
 
     def test_priority_enum(self):
         """Test priority enum hodnot."""
-        from hledac.universal.core.resource_governor import Priority
+        from hledac.universal._core.resource_governor import Priority
 
         assert Priority.CRITICAL.value == "CRITICAL"
         assert Priority.HIGH.value == "HIGH"
@@ -28,7 +28,7 @@ class TestResourceGovernor:
 
     def test_governor_init(self):
         """Test inicializace ResourceGovernor."""
-        from hledac.universal.core.resource_governor import Priority, ResourceGovernor
+        from hledac.universal._core.resource_governor import Priority, ResourceGovernor
 
         gov = ResourceGovernor(memory_high_water_mb=5000, thermal_threshold=80.0)
         assert gov.high_water == 5000
@@ -38,11 +38,11 @@ class TestResourceGovernor:
 
     def test_can_afford_sync_no_resources(self):
         """Test can_afford_sync když nejsou dostupné zdroje."""
-        from hledac.universal.core.resource_governor import Priority, ResourceGovernor, reset_psutil_cache
+        from hledac.universal._core.resource_governor import Priority, ResourceGovernor, reset_psutil_cache
 
         reset_psutil_cache()
 
-        with patch("hledac.universal.core.resource_governor.psutil.virtual_memory") as mock_mem:
+        with patch("hledac.universal._core.resource_governor.psutil.virtual_memory") as mock_mem:
             mock_mem.return_value = MagicMock(used=7000 * 1024 * 1024)  # 7GB used
 
             gov = ResourceGovernor(memory_high_water_mb=6000)
@@ -51,11 +51,11 @@ class TestResourceGovernor:
 
     def test_can_afford_sync_with_resources(self):
         """Test can_afford_sync když jsou dostupné zdroje."""
-        from hledac.universal.core.resource_governor import Priority, ResourceGovernor, reset_psutil_cache
+        from hledac.universal._core.resource_governor import Priority, ResourceGovernor, reset_psutil_cache
 
         reset_psutil_cache()
 
-        with patch("hledac.universal.core.resource_governor.psutil.virtual_memory") as mock_mem:
+        with patch("hledac.universal._core.resource_governor.psutil.virtual_memory") as mock_mem:
             mock_mem.return_value = MagicMock(used=2000 * 1024 * 1024)  # 2GB used
 
             gov = ResourceGovernor(memory_high_water_mb=6000)
@@ -65,11 +65,11 @@ class TestResourceGovernor:
     @pytest.mark.asyncio
     async def test_reserve_context_manager(self):
         """Test async context manager pro rezervaci."""
-        from hledac.universal.core.resource_governor import Priority, ResourceGovernor, reset_psutil_cache
+        from hledac.universal._core.resource_governor import Priority, ResourceGovernor, reset_psutil_cache
 
         reset_psutil_cache()
 
-        with patch("hledac.universal.core.resource_governor.psutil.virtual_memory") as mock_mem:
+        with patch("hledac.universal._core.resource_governor.psutil.virtual_memory") as mock_mem:
             mock_mem.return_value = MagicMock(used=2000 * 1024 * 1024)
 
             gov = ResourceGovernor(memory_high_water_mb=6000)
@@ -219,7 +219,7 @@ class TestSearch:
 
     def test_anytime_beam_search_simple(self):
         """Test simple beam search."""
-        from hledac.universal.core.resource_governor import ResourceGovernor
+        from hledac.universal._core.resource_governor import ResourceGovernor
         from hledac.universal.planning.search import anytime_beam_search
 
         gov = ResourceGovernor(memory_high_water_mb=6000)
@@ -267,7 +267,7 @@ class TestHTNPlanner:
     @pytest.fixture
     def mock_components(self):
         """Vytvoří mock komponenty."""
-        from hledac.universal.core.resource_governor import ResourceGovernor
+        from hledac.universal._core.resource_governor import ResourceGovernor
         from hledac.universal.planning.cost_model import AdaptiveCostModel
         from hledac.universal.planning.slm_decomposer import SLMDecomposer
         from hledac.universal.planning.task_cache import TaskCache
@@ -386,7 +386,7 @@ class TestExplainer:
 
     def test_fast_explainer_init(self, mock_graph_rag):
         """Test inicializace FastExplainer."""
-        from hledac.universal.core.resource_governor import ResourceGovernor
+        from hledac.universal._core.resource_governor import ResourceGovernor
         from hledac.universal.knowledge.explainer.fast import FastExplainer
 
         gov = ResourceGovernor(memory_high_water_mb=6000)
@@ -398,7 +398,7 @@ class TestExplainer:
     @pytest.mark.asyncio
     async def test_fast_explainer_explain_path(self, mock_graph_rag):
         """Test explain_path."""
-        from hledac.universal.core.resource_governor import ResourceGovernor
+        from hledac.universal._core.resource_governor import ResourceGovernor
         from hledac.universal.knowledge.explainer.fast import FastExplainer
 
         gov = ResourceGovernor(memory_high_water_mb=6000)
@@ -410,7 +410,7 @@ class TestExplainer:
 
     def test_deep_explainer_init(self):
         """Test inicializace DeepExplainer."""
-        from hledac.universal.core.resource_governor import ResourceGovernor
+        from hledac.universal._core.resource_governor import ResourceGovernor
         from hledac.universal.knowledge.explainer.deep import DeepExplainer
 
         gov = ResourceGovernor(memory_high_water_mb=6000)
@@ -428,7 +428,7 @@ class TestSLMDecomposer:
     @pytest.fixture
     def decomposer(self):
         """Vytvoří SLMDecomposer."""
-        from hledac.universal.core.resource_governor import ResourceGovernor
+        from hledac.universal._core.resource_governor import ResourceGovernor
         from hledac.universal.planning.slm_decomposer import SLMDecomposer
         from hledac.universal.planning.task_cache import TaskCache
 

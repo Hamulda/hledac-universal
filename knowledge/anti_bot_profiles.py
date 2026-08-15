@@ -690,7 +690,7 @@ class AntiBotProfileService:
 # ---------------------------------------------------------------------------
 # F320: Refactored to use centralized singleton pattern
 from hledac.universal.utils._patterns import module_singleton_getter
-from core import aclose
+from _core import aclose
 
 
 def _make_anti_bot_service(store: DuckDBShadowStore | None) -> AntiBotProfileService:

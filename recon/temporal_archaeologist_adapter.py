@@ -26,7 +26,7 @@ from dataclasses import dataclass
 import msgspec
 from typing import Any
 from hledac.universal.utils.msgspec_json import dumps_str as _msgspec_dumps_str
-from core import aclose
+from _core import aclose
 logger = logging.getLogger(__name__)
 MAX_TIMELINE_FINDINGS: int = 20
 try:

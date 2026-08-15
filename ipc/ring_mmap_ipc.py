@@ -55,7 +55,7 @@ import uuid
 from typing import TYPE_CHECKING, Any, TypeVar
 
 import msgspec
-from core import aclose
+from _core import aclose
 
 if TYPE_CHECKING:
     pass

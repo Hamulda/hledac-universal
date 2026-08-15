@@ -48,7 +48,7 @@ else:
         from hledac.universal.knowledge.duckdb_store import CanonicalFinding
     except ImportError:
         CanonicalFinding = None
-from core import aclose
+from _core import aclose
 logger = logging.getLogger(__name__)
 MAX_CDX_SNAPSHOTS_PER_DOMAIN: int = 50
 MAX_DOMAINS_PER_SPRINT: int = 100
@@ -227,7 +227,7 @@ class WaybackDiffMiner:
     async def _ensure_semaphore(self) -> None:
         """Ensure semaphore is initialized."""
         if self._semaphore is None:
-            from hledac.universal.core.concurrency import ConcurrencyCategory, get_semaphore
+            from hledac.universal._core.concurrency import ConcurrencyCategory, get_semaphore
             self._semaphore = get_semaphore(ConcurrencyCategory.SCRAPE_GENERAL)
 
     async def _execute_pipeline(self, targets: list[str]) -> tuple[list[CDXDiffEvent], list[BaseException]]:

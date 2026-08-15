@@ -30,7 +30,7 @@ import ast
 import sys
 from pathlib import Path
 from typing import NamedTuple
-from core import aclose
+from _core import aclose
 
 
 class Violation(NamedTuple):
@@ -125,7 +125,7 @@ LEGACY_BARE_REMAP: dict[str, str] = {
     "prefilt": "hledac.universal.prefilt",
     "hledac": "hledac.universal.hledac",
     # Also banned: core/utils/recon/fetching/rl — dual-load with hledac.universal.*
-    "core": "hledac.universal.core",
+    "core": "hledac.universal._core",
     "utils": "hledac.universal.utils",
     "recon": "hledac.universal.recon",
     "fetching": "hledac.universal.fetching",

@@ -16,7 +16,7 @@ Architecture: M1 8GB optimized, Python 3.14+ compatible
 from __future__ import annotations
 
 import pytest
-from core import aclose
+from _core import aclose
 
 
 class TestDarknetURLDetection:

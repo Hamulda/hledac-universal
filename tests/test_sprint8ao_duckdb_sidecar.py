@@ -312,7 +312,7 @@ with tempfile.TemporaryDirectory() as tmpdir:
 import sys, json
 sys.path.insert(0, '.')
 from knowledge.duckdb_store import DuckDBShadowStore
-from core import aclose
+from _core import aclose
 
 store = DuckDBShadowStore()
 # Simulate _db_path = None by patching after init (no path resolution)

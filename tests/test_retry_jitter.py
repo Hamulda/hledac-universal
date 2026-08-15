@@ -16,7 +16,7 @@ import statistics
 import pytest
 
 from fetching.public_fetcher import _compute_backoff_seconds
-from core import aclose
+from _core import aclose
 
 
 class TestComputeBackoffJitter:

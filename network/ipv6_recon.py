@@ -35,7 +35,7 @@ from typing import Any
 import httpx
 from hledac.universal.network.session_runtime import async_get_httpx_session
 from hledac.universal.utils.asyncx import parallel_ok, parallel
-from core import aclose
+from _core import aclose
 logger = logging.getLogger(__name__)
 MAX_IPV6_TARGETS: int = 50
 RDAP_TIMEOUT_S: float = 8.0

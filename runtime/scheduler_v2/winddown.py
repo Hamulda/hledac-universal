@@ -25,7 +25,7 @@ from hledac.universal.runtime.scheduler_v2._task_registry import (
     safe_create_task_tracked,
 )
 from hledac.universal.utils.asyncx import parallel, safe_wait_for
-from core import aclose
+from _core import aclose
 
 try:
     import orjson
@@ -46,7 +46,7 @@ def _maybe_call_pressure_relief(ctx: Any) -> None:
     """
     try:
         import resource  # macOS/Unix malloc zone pressure relief
-        from hledac.universal.core.resource_governor import M1ResourceGovernor
+        from hledac.universal._core.resource_governor import M1ResourceGovernor
         _gov = getattr(ctx, '_resource_governor', None)
         if _gov and hasattr(_gov, 'maybe_pressure_relief'):
             _gov.maybe_pressure_relief()
@@ -386,7 +386,7 @@ class WinddownOrchestrator:
     async def _teardown_browser_pool(self, ctx: Any) -> None:
         """Teardown nodriver/camoufox lazy state at sprint winddown."""
         try:
-            from hledac.universal.core.env_config import ENV
+            from hledac.universal._core.env_config import ENV
             if ENV.get_bool('HLEDAC_ENABLE_NODRIVER'):
                 from hledac.universal.fetching.public_fetcher import _teardown_browser_pool
                 await _teardown_browser_pool()
@@ -490,7 +490,7 @@ class WinddownOrchestrator:
     async def _close_privacy_layer(self, ctx: Any) -> None:
         """Close privacy context at TEARDOWN."""
         try:
-            from hledac.universal.core.env_config import ENV
+            from hledac.universal._core.env_config import ENV
             if ENV.get_bool('HLEDAC_ENABLE_PRIVACY_LAYER'):
                 _privacy = getattr(ctx.cycle, 'privacy_layer', None)
                 if not _privacy and hasattr(ctx, 'layer_manager'):
@@ -650,18 +650,18 @@ class WinddownOrchestrator:
             pass
         # ADVERSARY-003: Reset deobfuscation telemetry counters at sprint boundary
         try:
-            from hledac.universal.core.rust_backend.ioc import get_domain
+            from hledac.universal._core.rust_backend.ioc import get_domain
             get_domain(None).deobfuscate_telemetry_reset()  # type: ignore[attr-defined]
         except Exception:  # noqa: BLE001
             pass
         try:
-            from hledac.universal.core.isolated_executors import clear_isolated_function_registry
+            from hledac.universal._core.isolated_executors import clear_isolated_function_registry
             clear_isolated_function_registry()
         except Exception:  # noqa: BLE001
             pass
         # Issue #16: GlobalCacheRegistry — clear all registered caches
         try:
-            from hledac.universal.core.global_cache_registry import clear_all_caches
+            from hledac.universal._core.global_cache_registry import clear_all_caches
             _sizes = clear_all_caches()
             # Log summary for telemetry
             import logging
@@ -677,7 +677,7 @@ class WinddownOrchestrator:
             pass
         # R8: Graceful shutdown of MemoryPressureBroadcaster monitor loop
         try:
-            from hledac.universal.core.memory_pressure import get_broadcaster
+            from hledac.universal._core.memory_pressure import get_broadcaster
             bc = get_broadcaster()
             # Use asyncio.ensure_future to stop asynchronously (non-blocking)
             import asyncio

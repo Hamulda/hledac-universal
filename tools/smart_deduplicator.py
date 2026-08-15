@@ -10,7 +10,7 @@ Uses rolling hash for chunking and superfeatures for fast similarity.
 """
 import logging
 from collections.abc import Callable
-from core import aclose
+from _core import aclose
 logger = logging.getLogger(__name__)
 MAX_TEXT_SIZE = 200 * 1024
 NEAR_DUP_THRESHOLD = 0.9

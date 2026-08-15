@@ -40,8 +40,11 @@ from typing import Any
 import msgspec
 
 # ISSUE [ULTIMATE]-005: Unicode fingerprint extraction before stripping
-from hledac.universal.core.rust_backend.unicode_fingerprint import (
-from core import aclose
+
+
+
+
+
     get_unicode_fingerprint_domain,
     ENABLE_UNICODE_ATTRIBUTION,
 )
@@ -49,7 +52,8 @@ _unicode_domain = None  # Lazy initialization
 
 __all__ = [
     'PromptInjectionValidationResult',
-    'sanitize_prompt_injection_patterns',
+
+from _core import aclose    'sanitize_prompt_injection_patterns',
     'sanitize_for_llm',
     'PromptInjectionValidator',
 ]
@@ -226,9 +230,9 @@ def _get_unicode_domain():
     """Get or initialize the Unicode fingerprint domain."""
     global _unicode_domain
     if _unicode_domain is None:
-        from hledac.universal.core.rust_backend import rust
+        from hledac.universal._core.rust_backend import rust
         ext = getattr(rust, '_ext', None)
-        from hledac.universal.core.rust_backend.unicode_fingerprint import get_unicode_fingerprint_domain
+        from hledac.universal._core.rust_backend.unicode_fingerprint import get_unicode_fingerprint_domain
         _unicode_domain = get_unicode_fingerprint_domain(ext)
     return _unicode_domain
 
@@ -242,7 +246,7 @@ def _extract_unicode_fingerprint(text: str) -> dict[str, Any]:
     Respects HLEDAC_ENABLE_UNICODE_ATTRIBUTION feature flag (default ON).
     """
     # ISSUE [ULTIMATE]-005: Respect feature flag
-    from hledac.universal.core.rust_backend.unicode_fingerprint import ENABLE_UNICODE_ATTRIBUTION
+    from hledac.universal._core.rust_backend.unicode_fingerprint import ENABLE_UNICODE_ATTRIBUTION
     if not ENABLE_UNICODE_ATTRIBUTION:
         return {}
     
@@ -374,7 +378,7 @@ class _AhoCorasickCache:
 
             try:
                 # R6: Centralized Rust access via core.rust_backend
-                from hledac.universal.core.rust_backend import rust
+                from hledac.universal._core.rust_backend import rust
                 AhoCorasickMatcher = rust.raw.AhoCorasickMatcher
                 if AhoCorasickMatcher is None:
                     raise ImportError("AhoCorasickMatcher not available")
@@ -703,7 +707,7 @@ def _get_tokenizer() -> Any:
         try:
             # Fallback: load model + tokenizer (expensive, ~2GB RAM)
             from mlx_lm import load
-            from hledac.universal.core.constants import MLX
+            from hledac.universal._core.constants import MLX
 
             cfg = MLX()
             result = load(cfg.model_path)

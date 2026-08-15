@@ -36,7 +36,7 @@ import sys
 import time
 from dataclasses import dataclass, field
 from collections.abc import Callable
-from core import aclose
+from _core import aclose
 
 # Type for benchmark functions
 AsyncFunc = Callable[[], asyncio.Future]

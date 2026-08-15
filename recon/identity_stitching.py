@@ -55,13 +55,13 @@ T = TypeVar('T', default=object)
 # --------------------------------------------------------------------------- #
 # LSH pre-filtering — O(1) candidate reduction instead of O(N²) brute-force  #
 # R6: Centralized Rust access via core.rust_backend
-from hledac.universal.core.rust_backend import rust
+from hledac.universal._core.rust_backend import rust
 lsh_index_new = rust.raw.lsh_index_new
 LSHIndex = rust.raw.LSHIndex
 LSH_AVAILABLE = lsh_index_new is not None and LSHIndex is not None
 
 # ISSUE [ULTIMATE]-005: Unicode attribution fingerprint
-from hledac.universal.core.rust_backend.unicode_fingerprint import (
+from hledac.universal._core.rust_backend.unicode_fingerprint import (
     UnicodeFingerprint,
     get_unicode_fingerprint_domain,
     ENABLE_UNICODE_ATTRIBUTION,
@@ -127,7 +127,7 @@ async def _bounded_gather_pairs(
     for cleaner API and proper GHOST I6/I7 exception routing.
     """
     from hledac.universal.utils.asyncx import parallel
-    from hledac.universal.core.concurrency_registry import concurrency_budget, ConcurrencyCategory
+    from hledac.universal._core.concurrency_registry import concurrency_budget, ConcurrencyCategory
 
     # F1 FIX: resolve dynamic concurrency before bounded_parallel_map call.
     if concurrency is None:
@@ -230,7 +230,7 @@ class _IdentityCache[T]:
             ),
         }
 import numpy as np
-from core import aclose
+from _core import aclose
 NETWORKX_AVAILABLE = True
 _nx = None
 IGRAPH_AVAILABLE = True
@@ -498,7 +498,7 @@ class CrossModalLSHMatcher:
     def _check_simhash_available(self) -> bool:
         """Check if Rust simhash backend is available."""
         try:
-            from hledac.universal.core.rust_backend import rust
+            from hledac.universal._core.rust_backend import rust
             return hasattr(rust.raw, 'compute_simhash')
         except Exception:
             return False
@@ -518,7 +518,7 @@ class CrossModalLSHMatcher:
         """
         if self._simhash_available:
             try:
-                from hledac.universal.core.rust_backend import rust
+                from hledac.universal._core.rust_backend import rust
                 return rust.raw.compute_simhash(embedding)
             except Exception:
                 pass
@@ -927,7 +927,7 @@ class IdentityStitchingEngine:
     def _init_crossmodal_indexes(self) -> None:
         """NEXTGEN-03: Initialize cross-modal LSH indexes for face and voice matching."""
         try:
-            from hledac.universal.core.rust_backend import rust
+            from hledac.universal._core.rust_backend import rust
             if hasattr(rust.ane, 'crossmodal_store_face'):
                 self._crossmodal_available = True
                 logger.info('Cross-modal LSH indexes available (Rust backend)')
@@ -1011,7 +1011,7 @@ class IdentityStitchingEngine:
             return
         
         try:
-            from hledac.universal.core.rust_backend import rust
+            from hledac.universal._core.rust_backend import rust
             ane = rust.ane
             
             # Register each face embedding
@@ -1035,7 +1035,7 @@ class IdentityStitchingEngine:
             return
         
         try:
-            from hledac.universal.core.rust_backend import rust
+            from hledac.universal._core.rust_backend import rust
             ane = rust.ane
             
             # Register each voiceprint embedding
@@ -1051,7 +1051,7 @@ class IdentityStitchingEngine:
     def _build_lsh_fingerprint(self, profile: IdentityProfile) -> int:
         """Build 64-bit SimHash fingerprint pro LSH candidate pre-filtering."""
         # R6: Centralized Rust access via core.rust_backend
-        from hledac.universal.core.rust_backend import rust
+        from hledac.universal._core.rust_backend import rust
         simhash = rust.raw.simhash
         if simhash is None:
             # Stable fallback: hash string content, NOT object identity.
@@ -1638,7 +1638,7 @@ class IdentityStitchingEngine:
             return signals, evidence
 
         try:
-            from hledac.universal.core.rust_backend import rust
+            from hledac.universal._core.rust_backend import rust
             ane = rust.ane
 
             # Find best face match between profiles via LSH
@@ -1726,7 +1726,7 @@ class IdentityStitchingEngine:
             return signals, evidence
 
         try:
-            from hledac.universal.core.rust_backend import rust
+            from hledac.universal._core.rust_backend import rust
             ane = rust.ane
 
             # Find best voice match between profiles via LSH

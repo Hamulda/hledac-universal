@@ -84,7 +84,7 @@ DEFAULT_MLX_BRIDGE_TIMEOUT_S: float = 30.0
 # MODERN-36 Fix: Import from SSOT instead of hardcoding
 # Old: _MAX_MEMORY_BYTES: int = 6_400 * 1024 * 1024  # 6.25 GiB in bytes
 from hledac.universal.utils.uma_budget import UmaBudget
-from core import aclose
+from _core import aclose
 
 _MAX_MEMORY_BYTES: int = int(UmaBudget.UMA_HARD_CEILING_GIB * 1024 * 1024 * 1024)  # 6.25 GiB in bytes
 
@@ -92,7 +92,7 @@ _MAX_MEMORY_BYTES: int = int(UmaBudget.UMA_HARD_CEILING_GIB * 1024 * 1024 * 1024
 def _get_mlx_bridge_config() -> dict[str, Any]:
     """Get MLX bridge configuration from Rust or Python fallback."""
     try:
-        from hledac.universal.core.rust_backend import rust
+        from hledac.universal._core.rust_backend import rust
 
         if rust.is_available:
             cfg = rust.mlx.MLXBridgeConfig(
@@ -123,7 +123,7 @@ def _get_mlx_bridge_config() -> dict[str, Any]:
 def _create_mlx_bridge(engine: Any, tokenizer: Any) -> Any:
     """Create MLX bridge from Rust or Python fallback."""
     try:
-        from hledac.universal.core.rust_backend import rust
+        from hledac.universal._core.rust_backend import rust
 
         if rust.is_available:
             return rust.mlx.MLXBridge(engine, tokenizer)
@@ -284,7 +284,7 @@ async def generate_stream_adaptive(
     # Create MLX bridge for memory feedback (MBridge.5)
     bridge = None
     try:
-        from hledac.universal.core.rust_backend import rust
+        from hledac.universal._core.rust_backend import rust
         if rust.is_available:
             bridge = rust.mlx.MLXBridge(engine, None)
     except Exception:  # noqa: BLE001

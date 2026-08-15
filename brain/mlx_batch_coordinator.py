@@ -26,7 +26,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from hledac.universal.utils.asyncx import safe_create_task
-from core import aclose
+from _core import aclose
 
 
 # ---------------------------------------------------------------------------

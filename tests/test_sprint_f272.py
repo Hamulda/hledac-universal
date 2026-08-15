@@ -16,7 +16,7 @@ from unittest.mock import MagicMock
 # sprint_scheduler.py is part of hledac.universal.runtime package; import via
 # the public re-export rather than a raw path load to keep Pyright happy.
 from hledac.universal.runtime.sprint_scheduler import (  # type: ignore
-from core import aclose
+from _core import aclose
     HealthReport,
     SprintSchedulerConfig,
     _advisory_log_stats,

@@ -22,7 +22,7 @@ import ast
 import argparse
 import sys
 from pathlib import Path
-from core import aclose
+from _core import aclose
 
 
 # Patterns that indicate a lock is registered or not module-level
@@ -146,10 +146,10 @@ def main() -> None:
         print(f"  {rel}:{lineno}: {msg}")
 
     print("\nFix: Use make_lock() factory for auto-registration:")
-    print("  from hledac.universal.core.locks import make_lock, LockCategory")
+    print("  from hledac.universal._core.locks import make_lock, LockCategory")
     print("  _my_lock = make_lock(LockCategory.CACHE, 'module._lock_name')")
     print("\nOr use explicit registration:")
-    print("  from hledac.universal.core.locks import register_lock, LockCategory")
+    print("  from hledac.universal._core.locks import register_lock, LockCategory")
     print("  _my_lock = threading.Lock()")
     print("  register_lock(LockCategory.CACHE, _my_lock, 'module._lock_name')")
     sys.exit(1)

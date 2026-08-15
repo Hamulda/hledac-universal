@@ -16,7 +16,7 @@ import asyncio
 import os
 
 import pytest
-from core import aclose
+from _core import aclose
 
 
 class TestHermesLazyGate:

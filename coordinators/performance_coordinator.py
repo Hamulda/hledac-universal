@@ -36,7 +36,7 @@ from hledac.universal.utils.asyncx import safe_create_task
 from hledac.universal.utils.executor_decorator import offload_to
 
 try:
-    from hledac.universal.core.resilience import AgentExecutionError, CircuitBreakerOpenError
+    from hledac.universal._core.resilience import AgentExecutionError, CircuitBreakerOpenError
 except ImportError:
 
     class AgentExecutionError(Exception):
@@ -46,9 +46,9 @@ except ImportError:
         """Raised when circuit breaker is open."""
 CircuitBreakerOpen = CircuitBreakerOpenError
 logger = logging.getLogger(__name__)
-from hledac.universal.core.sys_metrics import get_memory_usage_mb
+from hledac.universal._core.sys_metrics import get_memory_usage_mb
 from hledac.universal.utils.asyncx import safe_wait_for
-from core import aclose
+from _core import aclose
 
 
 class AgentMetrics(Struct):

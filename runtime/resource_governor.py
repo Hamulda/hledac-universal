@@ -52,11 +52,11 @@ import logging
 import threading
 from hledac.universal.utils.asyncx import safe_create_task
 import msgspec
-from hledac.universal.core.resource_governor import UMA_STATE_CRITICAL, UMA_STATE_EMERGENCY, UMA_STATE_WARN, sample_uma_status
-from hledac.universal.core.resource_governor import PressureState, uma_state_to_pressure_state
+from hledac.universal._core.resource_governor import UMA_STATE_CRITICAL, UMA_STATE_EMERGENCY, UMA_STATE_WARN, sample_uma_status
+from hledac.universal._core.resource_governor import PressureState, uma_state_to_pressure_state
 try:
     # R6: Centralized Rust access via core.rust_backend
-    from hledac.universal.core.rust_backend import rust
+    from hledac.universal._core.rust_backend import rust
     sync_adaptive_state = rust.raw.sync_adaptive_state
 except Exception:
     sync_adaptive_state = None
@@ -72,15 +72,19 @@ CRITICAL_ALLOW_RENDERER = False
 CRITICAL_ALLOW_MODEL_LOAD = False
 _EMA_ALPHA = 0.3
 # P7-3 SSOT: Import from UmaBudget SSOT, not local definition
-from hledac.universal.utils.uma_budget import (
-from core import aclose
+
+
+
+
+
     MISSION_PEAK_RSS_GIB as _UMA_BUDGET_MISSION_PEAK,
     UmaBudget,
 )
 MISSION_PEAK_RSS_GIB: float = _UMA_BUDGET_MISSION_PEAK
 
 # MODERN-39 Fix: SSOT threshold imports
-# These replace the hardcoded 6.85 magic number for near-emergency detection.
+
+from _core import aclose# These replace the hardcoded 6.85 magic number for near-emergency detection.
 # 6.85 was a magic number that bypassed the SSOT UmaBudget thresholds.
 # Derived from THRESHOLD_EMERGENCY_GIB (6.25 GiB) — represents near-ceiling pressure.
 NEAR_EMERGENCY_THRESHOLD_GIB: float = UmaBudget.THRESHOLD_EMERGENCY_GIB  # 6.25 GiB
@@ -104,7 +108,7 @@ MAX_BUDGET_EVENTS: int = 100
 # This migrates from hardcoded HEAVY_SIDECAR_COST_MB to the dynamic registry.
 # QoSLadderController queries these for optimal triage decisions.
 try:
-    from hledac.universal.core.capability_cost import register_capability_cost
+    from hledac.universal._core.capability_cost import register_capability_cost
     register_capability_cost("embedding", rss_mb=400, peak_mb=600, tier="heavy", tags=("mlx", "embedding"))
     register_capability_cost("wayback_diff", rss_mb=256, peak_mb=384, tier="medium", tags=("archive", "diff"))
     register_capability_cost("social_identity", rss_mb=192, peak_mb=256, tier="light", tags=("graph", "social"))
@@ -514,7 +518,7 @@ class M1ResourceGovernor:
         """
         # [FINAL]-019-07: Use registered cost if available
         try:
-            from hledac.universal.core.capability_cost import get_capability_cost
+            from hledac.universal._core.capability_cost import get_capability_cost
             cost = get_capability_cost(sidecar_name, default_rss_mb=estimated_mb)
             actual_mb = cost.rss_mb
         except Exception:

@@ -18,7 +18,7 @@ Přístup:
 import re
 import sys
 from pathlib import Path
-from core import aclose
+from _core import aclose
 
 
 def find_call_extent(lines: list[str], start: int) -> tuple[int, int] | None:

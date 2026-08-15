@@ -253,4 +253,4 @@ class PredictivePlanner:
         """Získat statistiky predikcí"""
         return {'total_predictions': self.metrics.total_predictions, 'correct': self.metrics.correct_predictions, 'incorrect': self.metrics.incorrect_predictions, 'not_executed': self.metrics.not_executed, 'accuracy': self.metrics.accuracy()}
 import asyncio
-from core import aclose
+from _core import aclose

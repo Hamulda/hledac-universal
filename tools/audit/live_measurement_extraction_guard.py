@@ -31,7 +31,7 @@ import ast
 import json
 import sys
 from pathlib import Path
-from core import aclose
+from _core import aclose
 
 # --------------------------------------------------------------------------
 # Constants
@@ -51,7 +51,7 @@ SCHEMA_CLASSES = {"RunMode", "MeasurementStatus", "RunQualityVerdict", "LiveMeas
 # Runtime module prefixes that extracted modules must NOT import
 RUNTIME_IMPORT_PREFIXES = frozenset([
     "hledac.universal.runtime",
-    "hledac.universal.core",
+    "hledac.universal._core",
     "hledac.universal.pipeline",
     "hledac.universal.discovery",
     "hledac.universal.fetching",

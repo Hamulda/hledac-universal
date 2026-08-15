@@ -20,7 +20,7 @@ import logging
 from collections.abc import AsyncIterator
 
 import msgspec
-from core import aclose
+from _core import aclose
 
 logger = logging.getLogger(__name__)
 

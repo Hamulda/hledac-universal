@@ -29,8 +29,11 @@ from hledac.universal.runtime.acquisition.nonfeed_eligibility import (
     _has_url,
 )
 from hledac.universal.runtime.acquisition.mission import infer_mission_intent
-from hledac.universal.runtime.acquisition.nonfeed_outcomes import (
-from core import aclose
+
+
+
+
+
     AcquisitionStrategySnapshot,
 )
 
@@ -38,6 +41,7 @@ from core import aclose
 # Stable canonical schema version for acquisition report (F208C)
 ACQUISITION_REPORT_SCHEMA_VERSION = "f208.v1"
 
+from _core import aclose
 
 # ── Query helpers ─────────────────────────────────────────────────────────────────
 

@@ -10,8 +10,11 @@ from typing import TYPE_CHECKING
 
 import msgspec.json as _json
 
-from hledac.universal.network.session_runtime import (
-from core import aclose
+
+
+
+
+
     CT_CONNECT_TIMEOUT_S,
     CT_READ_TIMEOUT_S,
     async_get_httpx_session,
@@ -22,6 +25,7 @@ logger = logging.getLogger(__name__)
 if TYPE_CHECKING:
     from hledac.universal.knowledge.duckdb_ct_cache_store import CTLogCacheStore
 
+from _core import aclose
 # ISSUE-001 Phase 2: SQLite3 → DuckDB Migration
 # CTLogCacheStore replaces local SQLite3 cache with DuckDB for better M1 performance.
 _DUCKDB_STORE: "CTLogCacheStore | None" = None

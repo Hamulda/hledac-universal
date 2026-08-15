@@ -35,7 +35,7 @@ from dataclasses import dataclass
 import msgspec
 from enum import Enum
 from typing import TYPE_CHECKING, Any
-from core import aclose
+from _core import aclose
 if TYPE_CHECKING:
     from hledac.universal.project_types import ExecutionRequest, ExecutionResult, RunCorrelation
 logger = logging.getLogger(__name__)

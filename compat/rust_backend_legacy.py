@@ -2,7 +2,7 @@
 compat/rust_backend_legacy — Legacy shim for rust_backend exports.
 
 Deprecated: import from ``core.rust_backend`` directly.
-This module provides backward compatibility for ``from core import rust_backend``.
+This module provides backward compatibility for ``from _core import rust_backend``.
 """
 import warnings
 
@@ -14,5 +14,5 @@ warnings.warn(
     stacklevel=2,
 )
 
-from hledac.universal.core.rust_backend import rust as rust_backend
-from core import aclose
+from hledac.universal._core.rust_backend import rust as rust_backend
+from _core import aclose

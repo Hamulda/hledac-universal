@@ -32,7 +32,7 @@ from typing import TYPE_CHECKING, Any
 from hledac.universal.utils.asyncx import parallel_ok
 from ._types import AdversarialReport, Contradiction, CrossReferenceResult, Event, Evidence, HypothesisType, SourceCredibility
 from operator import attrgetter, itemgetter
-from core import aclose
+from _core import aclose
 if TYPE_CHECKING:
     from hledac.universal.brain.research_hypothesis_engine import Hypothesis, HypothesisEngine
 logger = logging.getLogger(__name__)

@@ -58,7 +58,7 @@ from enum import Enum
 from typing import TYPE_CHECKING, Any
 
 from hledac.universal.utils.asyncx import safe_gather, safe_wait_for
-from core import aclose
+from _core import aclose
 
 if TYPE_CHECKING:
     from hledac.universal.brain.synthesis_runner import IOCEntity, OSINTReport

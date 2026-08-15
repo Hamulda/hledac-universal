@@ -41,7 +41,7 @@ checkpoint_zero_category, observed_run_tuple) flows from run_sprint().
 
 Usage:
     python -m hledac.universal.runtime.sprint_entrypoint --sprint --query "LockBit ransomware" --duration 1800
-    python -m hledac.universal.core --ct-pivot example.com
+    python -m hledac.universal._core --ct-pivot example.com
 """
 
 from __future__ import annotations
@@ -85,7 +85,7 @@ if TYPE_CHECKING:
 
 # Runtime imports — lightweight, fast-loading only
 from hledac.universal.evidence_log import EvidenceLog
-from hledac.universal.core import memory_cycle as _memory_cycle  # F266-U2/U3
+from hledac.universal._core import memory_cycle as _memory_cycle  # F266-U2/U3
 
 
 # =============================================================================
@@ -407,7 +407,7 @@ def set_current_sprint_context(ctx: "SprintContextManager | None") -> None:
     _current_sprint_context = ctx
 
 
-from hledac.universal.core.resource_governor import (
+from hledac.universal._core.resource_governor import (
     CLEAN_SWAP_MAX_GIB,
     HARD_BLOCK_SWAP_GIB,
     sample_uma_status,
@@ -447,7 +447,7 @@ from hledac.universal.utils.config_introspection import safe_attr_get
 # Rust rayon pools get this automatically (lib.rs:185-196 apply_qos_hint inside pool threads).
 # Python asyncio runs on the main thread which needs the same hint.
 from hledac.universal.utils.platform_info import apply_qos_to_main_thread
-from core import aclose
+from _core import aclose
 
 logger = logging.getLogger(__name__)
 
@@ -1862,7 +1862,7 @@ def _run_sprint_preflight_guards(
     Returns:
         tuple of (effective_windup_s, uma_pre_sprint)
     """
-    from hledac.universal.core.resource_governor import sample_uma_status
+    from hledac.universal._core.resource_governor import sample_uma_status
 
     # F221-ABORT: Pre-flight guard — enforce minimum active-window budget.
     # MUST run BEFORE DuckDB init to avoid orphaned lock files when the config
@@ -2020,7 +2020,7 @@ def run_pre_sprint_checks() -> bool:
     # D) PRE-FLIGHT 2s SELF-DIAGNOSTIC — runs 4 critical checks, sys.exit(2) on failure
     # Uses function-local import to avoid circular dependency (sprint_lifecycle.py:280/293 pattern)
     try:
-        from hledac.universal.core.preflight_diagnostics import run_preflight_diagnostics
+        from hledac.universal._core.preflight_diagnostics import run_preflight_diagnostics
 
         run_preflight_diagnostics(max_duration_ms=2000.0)
     except SystemExit:
@@ -2090,7 +2090,7 @@ def run_pre_sprint_checks() -> bool:
     # Validates: deprecated flags, implications, conflicts, RAM budget.
     # Runs at startup to catch configuration errors before sprint begins.
     try:
-        from hledac.universal.core.feature_flags import FeatureFlag, FeatureFlags
+        from hledac.universal._core.feature_flags import FeatureFlag, FeatureFlags
 
         flag_errors, flag_warnings = FeatureFlags.validate()
         for err in flag_errors:
@@ -2480,7 +2480,7 @@ def _cleanup_stale_locks(lock_dir: Path, logger: logging.Logger) -> int:
     """
     removed_count = 0
     try:
-        from hledac.universal.core.psutil_shim import psutil_module
+        from hledac.universal._core.psutil_shim import psutil_module
 
         _ps = psutil_module()
         if _ps is None:
@@ -2986,7 +2986,7 @@ async def _malloc_task_async(result: Any) -> None:
 
     Uses result container instead of nonlocal closure capture.
     """
-    from hledac.universal.core.memory_cycle import malloc_zone_pressure_relief
+    from hledac.universal._core.memory_cycle import malloc_zone_pressure_relief
 
     result.value = await asyncio.to_thread(malloc_zone_pressure_relief)
 
@@ -3134,7 +3134,7 @@ async def _run_sprint_boot(
                 ctx.power_assertion.method)
 
     # Sprint lock acquisition (F266-LOCK)
-    from hledac.universal.core.graph_lock_manager import GraphLockManager
+    from hledac.universal._core.graph_lock_manager import GraphLockManager
     from hledac.universal.paths import get_sprint_lock_path
     ctx.sprint_lock_path = get_sprint_lock_path(query)
     _janitor_removed = _cleanup_stale_locks(ctx.sprint_lock_path.parent, logger)
@@ -3322,7 +3322,7 @@ async def _execute_scheduler_setup(
     # Blitz mode (BLITZ-12)
     _blitz = getattr(flags, 'blitz_mode', False) if flags else False
     if _blitz:
-        from hledac.universal.core.telemetry.context_state import set_blitz_mode as _set_blitz
+        from hledac.universal._core.telemetry.context_state import set_blitz_mode as _set_blitz
         _set_blitz(True)
         logger.info("[BLITZ-12] Blitz mode enabled")
         from hledac.universal.fetching.public_fetcher import reset_blitz_dead_hosts
@@ -3952,7 +3952,7 @@ def _build_report_dict(inp: ReportBuildInput) -> dict:
 
     # Rust extensions
     try:
-        _ext_mod = __import__("hledac.universal.core.rust_backend", fromlist=["rust"]).rust.raw.module
+        _ext_mod = __import__("hledac.universal._core.rust_backend", fromlist=["rust"]).rust.raw.module
         if _ext_mod is not None:
             _stat_collector = __import__("core.rust_backend.stats", fromlist=[""]).StatCollector
             result_dict["rust_extensions"] = _stat_collector().collect(_ext_mod)
@@ -4622,7 +4622,7 @@ def _run_sprint_loop(args: argparse.Namespace) -> None:
     if _build_runtime is None:
         # A2: Lazy import to avoid circular dependency (composition_root imports
         # _cancel_all_tasks from this module at module level).
-        from hledac.universal.core.composition_root import (
+        from hledac.universal._core.composition_root import (
             build_runtime as _br,
             run_runtime as _rr,
         )
@@ -4935,8 +4935,8 @@ def _main_dispatch() -> None:
     else:
         print("Hledac Sprint 8RA Runner")
         print("  python -m hledac.universal.runtime.sprint_entrypoint --sprint --query '...' --duration 1800")
-        print("  python -m hledac.universal.core --ct-pivot example.com")
-        print("  python -m hledac.universal.core --pivot 'ransomware CVE' --pivot-k 10")
+        print("  python -m hledac.universal._core --ct-pivot example.com")
+        print("  python -m hledac.universal._core --pivot 'ransomware CVE' --pivot-k 10")
 
 
 if __name__ == "__main__":

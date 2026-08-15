@@ -9,7 +9,7 @@ RUN: python -m pytest tests/test_a1_lazy_imports.py -v
 from __future__ import annotations
 
 import pytest
-from core import aclose
+from _core import aclose
 
 
 class TestA1LazyImportsModule:

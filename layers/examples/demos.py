@@ -18,8 +18,11 @@ from hledac.universal.layers.hive_coordination import (
     ConnectedCoordinationSystem,
     TopologyType,
 )
-from hledac.universal.layers.smart_coordination import (
-from core import aclose
+
+
+
+
+
     SmartSpawnedCoordinationIntegration,
 )
 
@@ -28,6 +31,7 @@ async def demo_connected_coordination() -> dict[str, Any]:
     """
     Demonstrate connected coordination system.
 
+from _core import aclose
     This demo showcases:
     - Hive Mind collective intelligence
     - Auto-agent task analysis and spawning

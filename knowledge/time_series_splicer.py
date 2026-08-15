@@ -31,7 +31,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any, Protocol, TypeVar, runtime_checkable
 from collections.abc import Iterable
-from core import aclose
+from _core import aclose
 
 if TYPE_CHECKING:
     from ..knowledge.duckdb_store import DuckDBShadowStore

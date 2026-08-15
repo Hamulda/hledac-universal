@@ -87,10 +87,10 @@ logger = logging.getLogger(__name__)
 # storage redesign (key schema change from per-node lists to flat counters).
 # Rust backend — strict import
 try:
-    from hledac.universal.core.rust_backend import rust
+    from hledac.universal._core.rust_backend import rust
 except ImportError:
     try:
-        from hledac.universal.core.rust_backend import rust
+        from hledac.universal._core.rust_backend import rust
     except ImportError:
         rust = None
 
@@ -145,7 +145,7 @@ _KEY_PREFIX: bytes = b"hot:"
 MAX_HOT_NEIGHBORS_PER_NODE: int = 50
 MAX_HOT_NODES: int = 10_000
 # SWARM-010: Use FeatureFlags for hot edges enable
-from hledac.universal.core.feature_flags import FeatureFlags, FeatureFlag
+from hledac.universal._core.feature_flags import FeatureFlags, FeatureFlag
 HOT_EDGES_ENABLED: bool = FeatureFlags.get(FeatureFlag.HOT_EDGES)
 
 # P6-3 + MODERN-35: Denormalized edge buffer for batched writes.
@@ -472,8 +472,8 @@ def _dec_node_count(env) -> int:
 # Wire format: [marker=0x00/0x01/0x02][payload].
 # Opt-in via HLEDAC_HOT_EDGES_COMPRESS=1 (default ON when rust ext available).
 # SWARM-010: Use FeatureFlags for compression enable
-from hledac.universal.core.feature_flags import FeatureFlags, FeatureFlag
-from core import aclose
+from hledac.universal._core.feature_flags import FeatureFlags, FeatureFlag
+from _core import aclose
 _HOT_EDGES_COMPRESS = FeatureFlags.get(FeatureFlag.HOT_EDGES_COMPRESS)
 _compress_available = False
 _decompress_available = False
@@ -497,7 +497,7 @@ def _init_rust_compression() -> None:
         return
     _rust_init_done = True
     try:
-        from hledac.universal.core.rust_backend import rust
+        from hledac.universal._core.rust_backend import rust
         _rust_batch_compress = getattr(rust.raw, 'batch_compress_pages', None)
         _rust_batch_decompress = getattr(rust.raw, 'batch_decompress_pages', None)
         _rust_compress = getattr(rust.raw, 'compress_page', None)

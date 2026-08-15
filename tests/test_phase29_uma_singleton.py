@@ -18,7 +18,7 @@ import sys
 from typing import TYPE_CHECKING
 
 import pytest
-from core import aclose
+from _core import aclose
 
 if TYPE_CHECKING:
     pass
@@ -203,7 +203,7 @@ class TestRustSynchronization:
     def test_rust_set_thresholds_function_exists(self) -> None:
         """Rust should have set_memory_pressure_thresholds function."""
         try:
-            from core.memory import set_memory_pressure_thresholds
+            from _core.memory import set_memory_pressure_thresholds
 
             assert callable(set_memory_pressure_thresholds), (
                 "set_memory_pressure_thresholds should be callable"

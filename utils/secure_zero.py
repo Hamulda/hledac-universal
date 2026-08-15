@@ -21,7 +21,7 @@ from __future__ import annotations
 
 import logging
 from typing import Any
-from core import aclose
+from _core import aclose
 
 __all__ = [
     "secure_zero",

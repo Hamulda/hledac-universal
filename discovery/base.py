@@ -78,8 +78,8 @@ class DiscoveryResult(msgspec.Struct, frozen=True, gc=False):
 # -----------------------------------------------------------------------
 
 # R6: Centralized Rust access via core.rust_backend
-from hledac.universal.core.rust_backend import rust
-from core import aclose
+from hledac.universal._core.rust_backend import rust
+from _core import aclose
 
 _RustGeneralRateLimiter: type | None = None
 _rate_limit = rust.rate_limit

@@ -7,7 +7,7 @@ F350M-R: This module now re-exports from core.protocols to maintain
 backward compatibility while breaking the core ↔ runtime cycle.
 
 New code should import from:
-    from core.protocols import shutdown_aclose, DEFAULT_ACLOSE_TIMEOUT_S
+    from _core.protocols import shutdown_aclose, DEFAULT_ACLOSE_TIMEOUT_S
 
 This module will be removed in a future release.
 """
@@ -21,7 +21,7 @@ from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
 # Re-export from core.protocols — this breaks the cycle
 # runtime → core.protocols (no cycle, core doesn't import runtime.protocols)
-from core.protocols.cleanup_protocol import (
+from _core.protocols.cleanup_protocol import (
     shutdown_aclose as _core_shutdown_aclose,
     DEFAULT_ACLOSE_TIMEOUT_S,
 )

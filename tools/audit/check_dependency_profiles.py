@@ -34,7 +34,7 @@ import sys
 from dataclasses import dataclass, field
 import msgspec
 from pathlib import Path
-from core import aclose
+from _core import aclose
 _PROJECT_ROOT = Path(__file__).parent.parent.resolve()
 _VENV_PYTHON = _PROJECT_ROOT / '.venv/bin/python'
 

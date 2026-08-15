@@ -18,7 +18,7 @@ Run: pytest tests/test_mlx_bridge_prefetch_reusable.py -v
 import pytest
 from unittest.mock import MagicMock, patch
 import importlib
-from core import aclose
+from _core import aclose
 
 
 class TestMLXBridgePrefetchReusable:

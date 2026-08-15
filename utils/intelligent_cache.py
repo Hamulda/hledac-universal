@@ -24,8 +24,11 @@ All implementations have been moved to utils/cache/.
 from __future__ import annotations
 
 # Re-export from new location for backward compatibility
-from hledac.universal.utils.cache import (
-from core import aclose
+
+
+
+
+
     CacheConfig,
     CacheEntry,
     CacheStats,
@@ -39,7 +42,8 @@ __all__ = [
     "CacheConfig",
     "CacheEntry",
     "CacheStats",
-    "EvictionStrategy",
+
+from _core import aclose    "EvictionStrategy",
     "IntelligentCache",
     "MemoryOptimizedURLSet",
     "get_global_cache",

@@ -24,7 +24,7 @@ import tracemalloc
 from collections import OrderedDict
 from typing import Any
 from operator import attrgetter, itemgetter
-from core import aclose
+from _core import aclose
 ROOT = '/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal'
 
 def _read_prefix_bytes(path: str, n: int, errors: list) -> bytes:

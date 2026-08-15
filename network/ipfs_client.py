@@ -21,7 +21,7 @@ import httpx
 from hledac.universal.knowledge.duckdb_store import CanonicalFinding
 from hledac.universal.transport.circuit_breaker import domain_breaker_check, get_breaker
 from hledac.universal.utils.asyncx import parallel_ok
-from core import aclose
+from _core import aclose
 logger = logging.getLogger(__name__)
 CID_PATTERN = re.compile('\\b(Qm[1-9A-HJ-NP-Za-km-z]{44}|bafy[a-z2-7]{52,})\\b')
 MAX_POOL_SIZE: Final[int] = 8
@@ -734,7 +734,7 @@ async def fetch_findings_from_cids(cids: list[str], query: str, timeout_per_cid:
     if os.getenv('HLEDAC_ENABLE_IPFS', '0') != '1':
         return []
     try:
-        from hledac.universal.core.protocols import get_governor
+        from hledac.universal._core.protocols import get_governor
         governor = get_governor()
         decision = await governor.evaluate()
         if decision.uma_state in ('critical', 'emergency'):
@@ -745,7 +745,7 @@ async def fetch_findings_from_cids(cids: list[str], query: str, timeout_per_cid:
     if not cids:
         return []
     unique_cids = list(dict.fromkeys(cids))
-    from hledac.universal.core.concurrency import ConcurrencyCategory, get_semaphore
+    from hledac.universal._core.concurrency import ConcurrencyCategory, get_semaphore
     sem = get_semaphore(ConcurrencyCategory.SCRAPE_GENERAL)
 
     async def _fetch_one(cid: str):

@@ -9,6 +9,6 @@ from __future__ import annotations
 from .budget_tracker import BudgetTracker
 from .prefetch_cache import PrefetchCache
 from .temporal_predictor import TemporalIOCPredictor
-from core import aclose
+from _core import aclose
 
 __all__ = ['PrefetchCache', 'BudgetTracker', 'TemporalIOCPredictor']

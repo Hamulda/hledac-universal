@@ -27,7 +27,7 @@ All methods return safe defaults on any error. They never raise.
 """
 import logging
 from typing import Any
-from core import aclose
+from _core import aclose
 logger = logging.getLogger(__name__)
 __all__ = ['FederatedQTable', 'RustFederatedQTable', 'MAX_QTABLE_ENTRIES']
 MAX_QTABLE_ENTRIES: int = 1024
@@ -175,7 +175,7 @@ def _get_rust_qtable() -> Any | None:
         return _rust_qtable_class
     try:
         # R6: Centralized Rust access via core.rust_backend
-        from hledac.universal.core.rust_backend import rust
+        from hledac.universal._core.rust_backend import rust
         _cls = rust.raw.RustFederatedQTable  # type: ignore[assignment]
         _rust_qtable_class = _cls
         return _cls

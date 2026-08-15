@@ -51,7 +51,7 @@ import os
 import re
 import sys
 from pathlib import Path
-from core import aclose
+from _core import aclose
 
 # Authorized modules that may use duckdb.connect directly
 AUTHORIZED_MODULES: frozenset[str] = frozenset([

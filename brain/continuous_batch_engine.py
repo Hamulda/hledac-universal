@@ -42,7 +42,7 @@ from collections.abc import AsyncIterator, Awaitable
 from hledac.universal.utils.executor_decorator import offload_to
 from hledac.universal.utils.asyncx import parallel, parallel_ok
 from operator import attrgetter, itemgetter
-from core import aclose
+from _core import aclose
 if TYPE_CHECKING:
     from hledac.universal.brain.deephermes3_engine import DeepHermes3Engine
 logger = logging.getLogger(__name__)

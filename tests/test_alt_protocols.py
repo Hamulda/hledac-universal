@@ -11,7 +11,7 @@ import os
 import sys
 
 import pytest
-from core import aclose
+from _core import aclose
 
 # Add project root to path for imports
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))

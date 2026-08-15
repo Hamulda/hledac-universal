@@ -17,7 +17,7 @@ import msgspec
 from typing import Any
 import httpx
 from hledac.universal.utils._patterns import lazy_resource_property  # F320: Clone elimination
-from core import aclose
+from _core import aclose
 
 logger = logging.getLogger(__name__)
 MATRIX_HOMESERVER = 'https://matrix-client.matrix.org'

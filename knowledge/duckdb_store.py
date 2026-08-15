@@ -25,7 +25,7 @@ import time
 import weakref
 
 from operator import attrgetter, itemgetter
-from hledac.universal.core.env_config import ENV
+from hledac.universal._core.env_config import ENV
 from hledac.universal.runtime.protocols.cleanup_protocol import shutdown_aclose
 from hledac.universal.runtime.lifecycle_registry import ResourceLifecycleRegistry
 from hledac.universal.utils.asyncx import safe_create_task, safe_wait_for, _check_gathered
@@ -37,7 +37,7 @@ from hledac.universal.knowledge.duckdb_arrow_builder import DuckDBArrowBuilder, 
 
 # [FINAL]-019-07: Capability cost registration for QoS ladder triage.
 # DuckDBShadowStore: rss_mb=200, peak_mb=512 (connection pool + in-process mode)
-from hledac.universal.core.capability_cost import register_capability_cost
+from hledac.universal._core.capability_cost import register_capability_cost
 register_capability_cost("duckdbshadowstore", rss_mb=200, peak_mb=512, tier="heavy", tags=("storage", "sql"))
 
 # OTEL instrumentation — importlib chain, lookup cached once
@@ -854,10 +854,10 @@ def _get_QualityAssessmentState():
 
 # Rust backend — strict import
 try:
-    from hledac.universal.core.rust_backend import rust
+    from hledac.universal._core.rust_backend import rust
 except ImportError:
     try:
-        from hledac.universal.core.rust_backend import rust
+        from hledac.universal._core.rust_backend import rust
     except ImportError:
         rust = None
 
@@ -888,7 +888,7 @@ else:
 
 # R6: Centralized Rust access — all symbols route through core.rust_backend
 # This ensures ABI version checking, capability scoring, and graceful fallback.
-from hledac.universal.core.rust_backend import rust
+from hledac.universal._core.rust_backend import rust
 
 _rust_assess_quality_batch_func = rust.raw.assess_findings_quality_batch
 _RUST_ASSESS_QUALITY_BATCH_AVAILABLE = _rust_assess_quality_batch_func is not None
@@ -2269,7 +2269,7 @@ def _get_duckdb() -> Any:
     return duckdb
 
 
-from hledac.universal.core.env_config import ENV
+from hledac.universal._core.env_config import ENV
 
 _DUCKDB_MEMORY_LIMIT: str = ENV.get("GHOST_DUCKDB_MEMORY", default="1GB")
 _DUCKDB_MAX_TEMP: str = ENV.get("GHOST_DUCKDB_MAX_TEMP", default="1GB")
@@ -2596,8 +2596,8 @@ def shutdown_all_duckdb_stores() -> None:
     _duckdb_store_registry.release_all()
 
 
-from hledac.universal.core.feature_flags import FeatureFlag, FeatureFlags
-from core import aclose
+from hledac.universal._core.feature_flags import FeatureFlag, FeatureFlags
+from _core import aclose
 
 
 class DuckDBShadowStore:
@@ -2727,14 +2727,14 @@ class DuckDBShadowStore:
         # DuckDB uses FDs for database files, mmap regions for indexes,
         # and temp space for queries
         try:
-            from hledac.universal.core.resource_ledger import get_resource_ledger
+            from hledac.universal._core.resource_ledger import get_resource_ledger
             self._resource_ledger = get_resource_ledger()
             self._resource_active = False
         except Exception:
             self._resource_ledger = None
             self._resource_active = False
 
-        from hledac.universal.core.concurrency import ConcurrencyCategory, get_semaphore
+        from hledac.universal._core.concurrency import ConcurrencyCategory, get_semaphore
 
         self._executor_semaphore: asyncio.Semaphore = get_semaphore(ConcurrencyCategory.GRAPH_RAG)
         self._write_semaphore: asyncio.Semaphore = asyncio.Semaphore(4)  # F320M-R: was 2; match _max_workers
@@ -2874,7 +2874,7 @@ class DuckDBShadowStore:
         Lazy import of resource_governor to avoid circular deps and cold-start cost.
         """
         try:
-            from hledac.universal.core.resource_governor import sample_uma_status
+            from hledac.universal._core.resource_governor import sample_uma_status
 
             snap = sample_uma_status()
             state = snap.state if snap else "ok"
@@ -3125,7 +3125,7 @@ class DuckDBShadowStore:
             DLQManager instance or None if DLQ subsystem unavailable.
         """
         try:
-            from hledac.universal.core.dlq_manager import get_dlq_manager
+            from hledac.universal._core.dlq_manager import get_dlq_manager
 
             return get_dlq_manager()
         except Exception:  # noqa: BLE001 — best-effort; DLQ unavailable; non-critical
@@ -4769,7 +4769,7 @@ class DuckDBShadowStore:
             return False
         if self._initialized:
             return True
-        from hledac.universal.core.mlx_embeddings import MLXEmbeddingManager
+        from hledac.universal._core.mlx_embeddings import MLXEmbeddingManager
 
         _EMBEDDING_DIM = getattr(MLXEmbeddingManager, "EMBEDDING_DIM", 256)
         assert _EMBEDDING_DIM == 256, (

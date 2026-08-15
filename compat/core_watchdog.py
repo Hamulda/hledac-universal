@@ -16,4 +16,4 @@ warnings.warn(
 )
 
 from hledac.universal.utils.uma_budget import Watchdog
-from core import aclose
+from _core import aclose

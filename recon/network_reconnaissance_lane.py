@@ -18,8 +18,11 @@ from typing import TYPE_CHECKING, Any
 
 from hledac.universal.utils.asyncx import parallel
 
-from hledac.universal.recon.lane import (
-from core import aclose
+
+
+
+
+
     BaseIntelligenceLane,
     FetchResult,
     IPV4_PATTERN,
@@ -35,6 +38,7 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+from _core import aclose
 
 class NetworkReconnaissanceLane(BaseIntelligenceLane):
     """

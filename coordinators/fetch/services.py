@@ -47,9 +47,9 @@ from hledac.universal.compat.msgspec_gc_compat import Struct, field as msgspec_f
 
 from cachetools import TTLCache
 
-from hledac.universal.core.feature_flags import FeatureFlag, FeatureFlags
+from hledac.universal._core.feature_flags import FeatureFlag, FeatureFlags
 from hledac.universal.utils.asyncx import async_getaddrinfo, parallel
-from core import aclose
+from _core import aclose
 
 logger = logging.getLogger(__name__)
 

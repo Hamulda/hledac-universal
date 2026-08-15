@@ -66,7 +66,7 @@ if TYPE_CHECKING:
     import httpx
     from httpx import AsyncClient
 
-from core import aclose  # F350M-R: Type-4 clone elimination
+from _core import aclose  # F350M-R: Type-4 clone elimination
 
 logger = logging.getLogger(__name__)
 
@@ -78,7 +78,7 @@ def _get_ledger():
     global _resource_ledger
     if _resource_ledger is None:
         try:
-            from hledac.universal.core.resource_ledger import get_resource_ledger
+            from hledac.universal._core.resource_ledger import get_resource_ledger
             _resource_ledger = get_resource_ledger()
         except Exception:
             _resource_ledger = None
@@ -220,7 +220,7 @@ def _get_cached_uma_state() -> str:
 
     # Sample UMA status
     try:
-        from hledac.universal.core.resource_governor import sample_uma_status
+        from hledac.universal._core.resource_governor import sample_uma_status
 
         uma = sample_uma_status()
         state = uma.state
@@ -257,7 +257,7 @@ _pool_metrics_lock = asyncio.Lock()
 def _record_pool_metrics() -> None:
     """Record pool metrics to metrics registry (fail-soft)."""
     try:
-        from hledac.universal.core.metrics_registry import get_metrics_registry
+        from hledac.universal._core.metrics_registry import get_metrics_registry
 
         registry = get_metrics_registry()
         preset = _get_connection_preset()
@@ -409,7 +409,7 @@ async def httpx_client() -> httpx.AsyncClient:
             ledger = _get_ledger()
             if ledger is not None:
                 try:
-                    from hledac.universal.core.resource_ledger import ResourceType
+                    from hledac.universal._core.resource_ledger import ResourceType
                     # Track FDs: estimated max_connections FDs for the pool
                     for i in range(preset.max_connections):
                         ledger.allocate(
@@ -518,7 +518,7 @@ async def close_httpx() -> None:
     ledger = _get_ledger()
     if ledger is not None:
         try:
-            from hledac.universal.core.resource_ledger import ResourceType
+            from hledac.universal._core.resource_ledger import ResourceType
             # Release all session pool resources (tracked FDs will be released)
             ledger.release_all("session_pool")
             logger.debug("[SessionPool] Released session pool resources from ledger")

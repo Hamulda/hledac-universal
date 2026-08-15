@@ -71,7 +71,7 @@ import time
 from dataclasses import dataclass, field
 import msgspec
 from typing import TYPE_CHECKING, Any
-from core import aclose
+from _core import aclose
 if TYPE_CHECKING:
     from .shadow_inputs import GraphSummaryBundle, LifecycleSnapshotBundle, ModelControlFactsBundle
 

@@ -26,7 +26,7 @@ from typing import Any, Optional
 import msgspec
 
 from hledac.universal.utils._patterns import module_singleton_creator
-from core import aclose
+from _core import aclose
 
 logger = logging.getLogger(__name__)
 _MAX_BATCH_SIZE: int = 32
@@ -45,7 +45,7 @@ def _get_shared_buf_cls():
     """Lazy import of SharedMetalBuffer from Rust extensions (SILICON-04)."""
     try:
         # R6: Centralized Rust access via core.rust_backend
-        from hledac.universal.core.rust_backend import rust
+        from hledac.universal._core.rust_backend import rust
         SharedMetalBuffer = rust.raw.SharedMetalBuffer
         return SharedMetalBuffer
     except ImportError:

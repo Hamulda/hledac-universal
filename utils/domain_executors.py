@@ -115,7 +115,7 @@ import weakref
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
 from typing import Final
-from core import aclose
+from _core import aclose
 
 _log = logging.getLogger(__name__)
 
@@ -194,7 +194,7 @@ def _is_emergency() -> bool:
     cold-start cost. Returns False if governor unavailable (fail-open).
     """
     try:
-        from hledac.universal.core.resource_governor import sample_uma_status
+        from hledac.universal._core.resource_governor import sample_uma_status
         status = sample_uma_status()
         return status in ("CRITICAL", "EMERGENCY")
     except Exception:

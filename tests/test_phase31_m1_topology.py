@@ -22,7 +22,7 @@ import sys
 from typing import TYPE_CHECKING
 
 import pytest
-from core import aclose
+from _core import aclose
 
 if TYPE_CHECKING:
     pass
@@ -169,7 +169,7 @@ class TestMemoryPressureHandling:
 
     def test_memory_pressure_level_enum(self) -> None:
         """MemoryPressureLevel enum should have correct values."""
-        from core.memory_pressure import MemoryPressureLevel
+        from _core.memory_pressure import MemoryPressureLevel
 
         assert MemoryPressureLevel.NORMAL == 0
         assert MemoryPressureLevel.ELEVATED == 1
@@ -178,7 +178,7 @@ class TestMemoryPressureHandling:
 
     def test_memory_pressure_from_string(self) -> None:
         """Should parse pressure levels from strings."""
-        from core.memory_pressure import MemoryPressureLevel
+        from _core.memory_pressure import MemoryPressureLevel
 
         assert MemoryPressureLevel.from_string("normal") == MemoryPressureLevel.NORMAL
         assert MemoryPressureLevel.from_string("elevated") == MemoryPressureLevel.ELEVATED
@@ -189,7 +189,7 @@ class TestMemoryPressureHandling:
 
     def test_memory_pressure_broadcaster_singleton(self) -> None:
         """MemoryPressureBroadcaster should be a singleton."""
-        from core.memory_pressure import MemoryPressureBroadcaster
+        from _core.memory_pressure import MemoryPressureBroadcaster
 
         b1 = MemoryPressureBroadcaster.get_instance()
         b2 = MemoryPressureBroadcaster.get_instance()
@@ -197,7 +197,7 @@ class TestMemoryPressureHandling:
 
     def test_memory_pressure_listener_protocol(self) -> None:
         """Listener protocol should define required methods."""
-        from core.memory_pressure import MemoryPressureListener
+        from _core.memory_pressure import MemoryPressureListener
 
         # Protocol should define these
         assert hasattr(MemoryPressureListener, "listener_priority")

@@ -18,7 +18,7 @@ import time
 from unittest.mock import AsyncMock, patch
 
 import pytest
-from core import aclose
+from _core import aclose
 
 
 @pytest.mark.asyncio

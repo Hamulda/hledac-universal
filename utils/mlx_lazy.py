@@ -13,7 +13,7 @@ _warnings.warn(
 )
 
 from hledac.universal.utils.mlx_memory._core import MLX_AVAILABLE
-from core import aclose
+from _core import aclose
 
 __all__ = [
     "MLX_AVAILABLE",

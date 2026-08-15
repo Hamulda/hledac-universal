@@ -16,7 +16,7 @@ import logging
 import re
 import msgspec
 from typing import TypedDict, Any
-from core import aclose
+from _core import aclose
 
 logger = logging.getLogger(__name__)
 

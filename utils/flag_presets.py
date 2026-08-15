@@ -23,7 +23,7 @@ Source: docs/flag_analysis/FLAGS_TAXONOMY_AND_VALIDATION.md §5.1.
 
 import os
 from typing import Final
-from core import aclose
+from _core import aclose
 
 # ---------------------------------------------------------------------------
 # Preset definitions (Phase 3 spec)

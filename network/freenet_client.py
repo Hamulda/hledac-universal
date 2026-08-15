@@ -35,7 +35,7 @@ from typing import Final
 import httpx
 from hledac.universal.knowledge.duckdb_store import CanonicalFinding
 from hledac.universal.utils.asyncx import parallel_ok
-from core import aclose
+from _core import aclose
 
 logger = logging.getLogger(__name__)
 
@@ -256,6 +256,42 @@ async def fetch_freesite_json(
     return None
 
 
+# ── Shared enumeration helpers ───────────────────────────────────────────────
+
+from hledac.universal._core.concurrency import ConcurrencyCategory, get_semaphore
+
+
+def filter_sites_by_keyword(
+    seed_sites: list[dict],
+    keyword: str,
+) -> list[dict]:
+    """Filter a list of sites by keyword (case-insensitive name/description match).
+
+    Args:
+        seed_sites: List of site dicts with 'name' and optional 'description' keys.
+        keyword: Filter string; empty string returns all sites.
+
+    Returns:
+        Filtered list of sites. Returns original list if keyword is empty.
+    """
+    if not keyword:
+        return seed_sites
+    kw = keyword.lower()
+    return [
+        s for s in seed_sites
+        if kw in s["name"].lower() or kw in s.get("description", "").lower()
+    ]
+
+
+def get_enumeration_semaphore() -> object:
+    """Get the shared semaphore for site enumeration (rate-limiting).
+
+    Returns:
+        Semaphore instance for SCRAPE_GENERAL concurrency category.
+    """
+    return get_semaphore(ConcurrencyCategory.SCRAPE_GENERAL)
+
+
 # ── Freesite enumeration ──────────────────────────────────────────────────────
 
 
@@ -289,19 +325,8 @@ class FreenetSiteEnumerator:
         """
         results: list[dict] = []
 
-        seed_sites = KNOWN_FREESITES
-        if keyword:
-            kw = keyword.lower()
-            seed_sites = [
-                s for s in KNOWN_FREESITES
-                if kw in s["name"].lower() or kw in s.get("description", "").lower()
-            ]
-
-        from hledac.universal.core.concurrency import (
-            ConcurrencyCategory,
-            get_semaphore,
-        )
-        sem = get_semaphore(ConcurrencyCategory.SCRAPE_GENERAL)
+        seed_sites = filter_sites_by_keyword(KNOWN_FREESITES, keyword)
+        sem = get_enumeration_semaphore()
 
         async def _probe_site(site: dict) -> dict | None:
             async with sem:

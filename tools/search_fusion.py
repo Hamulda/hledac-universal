@@ -3,7 +3,7 @@ from urllib.parse import urlsplit, urlunsplit
 
 
 from operator import attrgetter, itemgetter
-from core import aclose
+from _core import aclose
 def normalize_url(url: str) -> str:
     if not url:
         return ""

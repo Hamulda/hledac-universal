@@ -52,7 +52,7 @@ import secrets
 import threading
 import time
 
-from hledac.universal.core.locks import LockCategory, register_lock
+from hledac.universal._core.locks import LockCategory, register_lock
 import dataclasses
 from dataclasses import field
 from enum import Enum
@@ -525,7 +525,7 @@ class CircuitBreaker:
 # E5 FIX: OrderedDict → PyCacheDict — replaces cachetools.LRUCache.
 # LRU-ordered registry: thread-safe via PyCacheDict RLock, eviction automatic.
 from hledac.universal.utils.cache import PyCacheDict
-from core import aclose
+from _core import aclose
 
 # ISSUE-41: Rust-backed lock-free circuit breaker — hot-path fast check
 # Lazy import to avoid early extension load
@@ -537,7 +537,7 @@ def _get_rust_cb():
     global _rust_cb
     if _rust_cb is None:
         # R6: Centralized Rust access via core.rust_backend
-        from hledac.universal.core.rust_backend import rust
+        from hledac.universal._core.rust_backend import rust
         raw = rust.raw
         circuit_breaker_is_open = raw.circuit_breaker_is_open
         circuit_breaker_record_success = raw.circuit_breaker_record_success

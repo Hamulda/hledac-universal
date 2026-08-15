@@ -12,8 +12,11 @@ _warnings.warn(
     stacklevel=2,
 )
 
-from hledac.universal.utils.mlx_memory._core import (
-from core import aclose
+
+
+
+
+
     mlx_managed,
     mlx_cleanup_after,
     get_mlx_memory_stats,
@@ -24,5 +27,6 @@ __all__ = [
     "mlx_managed",
     "mlx_cleanup_after",
     "get_mlx_memory_stats",
-    "reset_metal_peak",
+
+from _core import aclose    "reset_metal_peak",
 ]

@@ -126,7 +126,7 @@ _MATRYOSHKA_RERANK_TOP_K = 5  # Top-K for MLX exact cosine re-rank
 # C1-X FIX: Import MLX_AVAILABLE from SSOT (zero-import detection)
 # -----------------------------------------------------------------------
 from hledac.universal.utils.mlx_memory import MLX_AVAILABLE as _MLX_AVAILABLE
-from core import aclose
+from _core import aclose
 
 # Lazy accessor for mlx.core — uses centralized get_mx() from SSOT
 def _get_mx():
@@ -390,7 +390,7 @@ class _ANNIndex:
             # MRL-2: Initialize MRL truncator for multilingual embeddings
             # BGE-M3 1024d → truncate to 256d for USEARCH index compatibility
             try:
-                from hledac.universal.core.multilingual.mrl import MRLTruncator
+                from hledac.universal._core.multilingual.mrl import MRLTruncator
                 self._mrl_truncator = MRLTruncator(
                     source_dim=self._mrl_source_dim,
                     target_dim=self._mrl_target_dim,
@@ -399,7 +399,7 @@ class _ANNIndex:
                 logger.info(f"[ANN] MRL truncator initialized: {self._mrl_source_dim}d → {self._mrl_target_dim}d")
             except ImportError:
                 self._mrl_truncator = None
-                logger.warning("[ANN] MRL truncator unavailable (hledac.universal.core.multilingual.mrl not found)")
+                logger.warning("[ANN] MRL truncator unavailable (hledac.universal._core.multilingual.mrl not found)")
 
             # BREAKTHROUGH #1: Migration: Add bqv column to existing tables
             self._migrate_bqv_column()
@@ -1166,7 +1166,7 @@ class _ANNIndex:
             # Try to open existing database
             if self._binary_raw_path.exists():
                 try:
-                    from hledac.universal.core.rust_backend import rust
+                    from hledac.universal._core.rust_backend import rust
                     result = rust.binary_matryoshka.open_binary_database(str(self._binary_raw_path))
                     if result is not None and 'num_entries' in result:
                         self._binary_raw_n_entries = int(result['num_entries'])
@@ -1218,7 +1218,7 @@ class _ANNIndex:
             embeddings_flat = list(itertools.chain.from_iterable(embeddings))
 
             # Create binary database
-            from hledac.universal.core.rust_backend import rust
+            from hledac.universal._core.rust_backend import rust
             n_entries = rust.binary_matryoshka.create_binary_database(
                 str(self._binary_raw_path),
                 embeddings_flat,
@@ -1271,7 +1271,7 @@ class _ANNIndex:
             return {}
 
         try:
-            from hledac.universal.core.rust_backend import rust
+            from hledac.universal._core.rust_backend import rust
 
             # Use Rust to search (quantizes + searches in one call)
             # Set use_ml=True to quantize the query from float32

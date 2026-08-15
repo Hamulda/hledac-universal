@@ -19,7 +19,7 @@ Invariant (F234):
 from unittest.mock import AsyncMock, patch
 
 import pytest
-from core import aclose
+from _core import aclose
 
 
 # ── Fake httpx Response ─────────────────────────────────────────────────────────

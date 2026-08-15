@@ -11,8 +11,11 @@ Run: pytest tests/test_issue9_error_policy.py -x -q
 import asyncio
 import pytest
 
-from runtime.error_policy import (
-from core import aclose
+
+
+
+
+
     Ok,
     Err,
     Result,
@@ -30,7 +33,8 @@ from core import aclose
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Result monad tests
+
+from _core import aclose# Result monad tests
 # ─────────────────────────────────────────────────────────────────────────────
 
 

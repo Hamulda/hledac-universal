@@ -9,7 +9,7 @@ Tests verify:
 """
 
 import unittest
-from core import aclose
+from _core import aclose
 
 
 class TestAutonomousOrchestratorUntouched(unittest.TestCase):

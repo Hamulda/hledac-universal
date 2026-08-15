@@ -7,7 +7,7 @@ import pytest
 from pydantic import BaseModel, Field, ValidationError
 
 from hledac.universal.tool_registry import ToolRegistry
-from core import aclose
+from _core import aclose
 
 
 class WebSearchArgs(BaseModel):

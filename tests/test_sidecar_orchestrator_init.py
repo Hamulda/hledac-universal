@@ -17,7 +17,7 @@ from __future__ import annotations
 import pytest
 import asyncio
 from unittest.mock import MagicMock
-from core import aclose
+from _core import aclose
 
 
 class TestSidecarOrchestratorSignature:

@@ -31,7 +31,7 @@ from enum import Enum, IntEnum
 from pathlib import Path
 from typing import Any
 
-from hledac.universal.core.psutil_shim import psutil
+from hledac.universal._core.psutil_shim import psutil
 from hledac.universal.utils.asyncx import safe_create_task, safe_wait_for
 from hledac.universal.utils.lru_cache import LRUCache
 
@@ -62,8 +62,8 @@ if TYPE_CHECKING:
     from hledac.universal.knowledge.neuromorphic import NeuromorphicMemoryManager, NeuromorphicMemoryZone
 import contextlib
 
-from hledac.universal.core.resource_governor import PressureState
-from core import aclose
+from hledac.universal._core.resource_governor import PressureState
+from _core import aclose
 
 
 def _serialize_to_json(data: Any) -> bytes:

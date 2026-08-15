@@ -41,7 +41,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
-    from hledac.universal.core.model_runtime import ModelLifecycleProtocol
+    from hledac.universal._core.model_runtime import ModelLifecycleProtocol
     from hledac.universal.brain.deephermes3_engine import DeepHermes3Engine
     from hledac.universal.brain.research_hypothesis_engine import HypothesisEngine
     from hledac.universal.brain.collapser_with_consistency import CollapserWithConsistency
@@ -50,7 +50,7 @@ from hledac.universal.utils.asyncx import safe_create_task, parallel, first_comp
 from hledac.universal.utils.cache import PyCacheDict
 from hledac.universal.utils.msgspec_json import decode as _msgspec_decode
 from hledac.universal.utils.msgspec_json import encode as _msgspec_encode
-from hledac.universal.core.dlq_manager import dlq_catch  # DLQ-02
+from hledac.universal._core.dlq_manager import dlq_catch  # DLQ-02
 
 # Precompiled regex patterns — compile once, use repeatedly
 _MML_TAG_RE = re.compile(r"<\|system\|>(.*?)<\|user\|>(.*?)<\|assistant\|>", re.DOTALL)
@@ -132,7 +132,7 @@ except ImportError:
     _logger_msgspec.warning("msgspec not installed — JSON constrained generation disabled")
 
 if TYPE_CHECKING:
-    from hledac.universal.core.model_runtime import ModelLifecycle
+    from hledac.universal._core.model_runtime import ModelLifecycle
 
 logger = logging.getLogger(__name__)
 
@@ -944,7 +944,7 @@ OSINT_JSON_SCHEMA: str = _msgspec_encode({
 # ---------------------------------------------------------------------------
 
 from dataclasses import dataclass, field
-from core import aclose
+from _core import aclose
 
 
 @dataclass(slots=True)
@@ -1532,7 +1532,7 @@ class SynthesisRunner:
         Fail-safe: any error → returns all findings unfiltered (conservative).
         """
         from hledac.universal.brain.fast_path_triage import FastPathTriage
-        from hledac.universal.core.feature_flags import FeatureFlags, FeatureFlag
+        from hledac.universal._core.feature_flags import FeatureFlags, FeatureFlag
 
         if FeatureFlags.get(FeatureFlag.TRIAGE_DISABLED):
             return findings, {"total_triaged": len(findings), "filtered_out": 0}
@@ -1711,7 +1711,7 @@ class SynthesisRunner:
                 # - Preserves all IOCs (IPs, domains, hashes, CVEs, APT names)
                 # - Target: 30-50% token reduction, ~1.5x Hermes inference speedup
                 try:
-                    from hledac.universal.core.rust_backend import rust
+                    from hledac.universal._core.rust_backend import rust
                     compressed = rust.raw.compress_prompt(collapsed)
                     if compressed and len(compressed) < len(collapsed):
                         original_len = len(collapsed)
@@ -2897,7 +2897,7 @@ class SynthesisRunner:
             import mlx_lm
 
             # L-01: Globální MLX Metal lock — serializuje všechny mlx_lm.stream_generate() volání
-            from hledac.universal.core.mlx_inference_lock import _get_mlx_inference_lock
+            from hledac.universal._core.mlx_inference_lock import _get_mlx_inference_lock
 
             _mlx_lock = _get_mlx_inference_lock()
             accumulated = ""
@@ -3055,7 +3055,7 @@ class SynthesisRunner:
                 from hledac.universal.utils.mlx_memory import get_metal_stream_context
 
                 # L-01: Globální MLX Metal lock — serializuje všechny mlx_lm.generate() volání
-                from hledac.universal.core.mlx_inference_lock import _get_mlx_inference_lock
+                from hledac.universal._core.mlx_inference_lock import _get_mlx_inference_lock
 
                 _mlx_lock = _get_mlx_inference_lock()
 

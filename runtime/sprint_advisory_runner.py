@@ -46,8 +46,8 @@ try:
     from hledac.universal.utils.source_types import SourceType
 except ImportError:
     SourceType = None
-from hledac.universal.core.env_config import ENV
-from core import aclose
+from hledac.universal._core.env_config import ENV
+from _core import aclose
 MAX_PIVOTS: int = 20
 _ADVISORY_PARALLEL_SEMAPHORE_LIMIT: int = 4
 
@@ -217,7 +217,7 @@ class SprintAdvisoryRunner:
             outcome = await self._run_pivot_planner_advisory(outcome)
             outcome = await self._run_pivot_executor_advisory(outcome)
             if parallel_ok is not None:
-                from hledac.universal.core.concurrency import ConcurrencyCategory, get_semaphore
+                from hledac.universal._core.concurrency import ConcurrencyCategory, get_semaphore
                 sem = get_semaphore(ConcurrencyCategory.SCRAPE_GENERAL)
 
                 async def bounded_step(coro, step_name: str):
@@ -386,7 +386,7 @@ class SprintAdvisoryRunner:
         except Exception:  # noqa: BLE001
             pass
         try:
-            from hledac.universal.core.resource_governor import sample_uma_status
+            from hledac.universal._core.resource_governor import sample_uma_status
             from hledac.universal.runtime.resource_governor import MISSION_PEAK_RSS_GIB
             uma = sample_uma_status()
             if uma.system_used_gib > 0:

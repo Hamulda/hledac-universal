@@ -27,7 +27,7 @@ import re
 import struct
 from dataclasses import dataclass, field
 from typing import ClassVar
-from core import aclose
+from _core import aclose
 
 
 # ── Stage A: Magic-byte format catalog ─────────────────────────────────────────

@@ -369,5 +369,5 @@ def enrich_candidate_with_attribution(candidate: IdentityCandidate, score: Attri
                 new_evidence.append(ev)
     return IdentityCandidate(candidate_id=candidate.candidate_id, profile_ids=candidate.profile_ids, primary_name=candidate.primary_name, emails=candidate.emails, usernames=candidate.usernames, platforms=candidate.platforms, confidence=candidate.confidence, signals=new_signals, evidence=new_evidence, finding_ids=candidate.finding_ids)
 from hledac.universal.recon.identity_stitching_canonical import IdentityCandidate
-from core import aclose
+from _core import aclose
 __all__ = ['AttributionFactor', 'AttributionScore', 'AttributionConfidenceScorer', 'create_attribution_scorer', 'enrich_candidate_with_attribution']

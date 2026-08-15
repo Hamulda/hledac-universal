@@ -121,15 +121,19 @@ class _Injection(msgspec.Struct, frozen=True, gc=False):
 
 
 # EvidenceLog init from shared module (F350M-R)
-from hledac.universal.runtime._shared.evidence_log_shared import (
-from core import aclose
+
+
+
+
+
     evidence_log_init as _evidence_log_init,
 )
 
 
 def _policy_manager_factory(*, rl_train_mode: bool) -> Any:
     from hledac.universal.rl.sprint_policy_manager import SprintPolicyManager
-    return SprintPolicyManager(enabled=True, rl_train_mode=rl_train_mode)
+
+from _core import aclose    return SprintPolicyManager(enabled=True, rl_train_mode=rl_train_mode)
 
 
 def _duckdb_store_factory(*, duckdb_store: Any) -> Any:
@@ -406,7 +410,7 @@ class V2Init:
         # threads to reduce memory/thermal pressure. Callback fires even if
         # the rayon manager is not yet initialized (fail-soft).
         def _on_degraded_enter(from_phase, to_phase):
-            from hledac.universal.core.isolated_executors import get_rayon_pool_manager
+            from hledac.universal._core.isolated_executors import get_rayon_pool_manager
             try:
                 rm = get_rayon_pool_manager()
                 rm.set_phase("DEGRADED")

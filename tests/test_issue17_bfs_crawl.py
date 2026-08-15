@@ -15,7 +15,7 @@ import asyncio
 import inspect
 
 import pytest
-from core import aclose
+from _core import aclose
 
 
 class TestCrawlTaskDataclass:

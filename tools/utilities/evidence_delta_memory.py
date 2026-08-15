@@ -22,7 +22,7 @@ from dataclasses import dataclass, field
 import msgspec
 from enum import StrEnum
 from pathlib import Path
-from core import aclose
+from _core import aclose
 
 class Verdict(StrEnum):
     DELTA_NO_PRIOR = 'DELTA_NO_PRIOR'

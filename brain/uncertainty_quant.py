@@ -44,7 +44,7 @@ import time
 from dataclasses import dataclass, field
 from typing import Any
 from collections.abc import Callable
-from core import aclose
+from _core import aclose
 
 logger = logging.getLogger(__name__)
 
@@ -646,7 +646,7 @@ def calculate_entropy(
     # Try Rust extension first (NEON-accelerated on M1)
     if prefer_rust:
         try:
-            from hledac.universal.core.rust_backend import rust
+            from hledac.universal._core.rust_backend import rust
 
             rust_entropy: float = rust.quality.compute_entropy(data)  # type: ignore[assignment]
             if normalize:

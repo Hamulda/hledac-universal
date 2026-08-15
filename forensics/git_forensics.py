@@ -41,7 +41,7 @@ from pathlib import Path
 from typing import Any
 
 import msgspec
-from core import aclose
+from _core import aclose
 
 logger = logging.getLogger(__name__)
 
@@ -50,7 +50,7 @@ _GIT_FORENSICS_AVAILABLE = False
 _GitForensicsExtractor = None
 
 try:
-    from hledac.universal.core.rust_backend import rust
+    from hledac.universal._core.rust_backend import rust
     _GitForensicsExtractor = rust.raw.GitForensicsExtractor
     if _GitForensicsExtractor is not None:
         _GIT_FORENSICS_AVAILABLE = True

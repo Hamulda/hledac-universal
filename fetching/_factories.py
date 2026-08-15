@@ -12,7 +12,7 @@ Lazy import preserves M1 invariant (no eager imports).
 
 
 from typing import TYPE_CHECKING, Any
-from core import aclose
+from _core import aclose
 
 if TYPE_CHECKING:
     import psutil
@@ -84,7 +84,7 @@ def make_content_hasher_factory():
         if _RUST_CONTENT_HASHER:
             return _ContentHasher
         try:
-            from hledac.universal.core.rust_backend import rust
+            from hledac.universal._core.rust_backend import rust
 
             _ContentHasher = rust.hash
             _RUST_CONTENT_HASHER = True

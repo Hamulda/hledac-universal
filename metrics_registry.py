@@ -36,7 +36,7 @@ import msgspec
 
 from hledac.universal.utils._patterns import safe_close  # F320: DRY close helper
 from hledac.universal.utils.cache import LRUCache, TTLCache
-from core import aclose
+from _core import aclose
 
 logger = logging.getLogger(__name__)
 
@@ -447,7 +447,7 @@ class MetricsRegistry:
         by correlating stage timing metrics with memory pressure events.
         """
         try:
-            from hledac.universal.core.memory_pressure import MemoryPressureBroadcaster
+            from hledac.universal._core.memory_pressure import MemoryPressureBroadcaster
             broadcaster = MemoryPressureBroadcaster.get_instance()
             
             class _MetricsPressureListener:
@@ -840,7 +840,7 @@ class MetricsRegistry:
         FIX-13: Thread-safe - uses bridge's own locking internally.
         """
         try:
-            from hledac.universal.core.python_otel_bridge import get_otel_bridge
+            from hledac.universal._core.python_otel_bridge import get_otel_bridge
             bridge = get_otel_bridge()
             if bridge is None:
                 return
@@ -882,7 +882,7 @@ class MetricsRegistry:
             
             # FIX-10: Wire to OtelBridge properly via record_memory_pressure
             try:
-                from hledac.universal.core.python_otel_bridge import get_otel_bridge
+                from hledac.universal._core.python_otel_bridge import get_otel_bridge
                 bridge = get_otel_bridge()
                 if bridge is not None:
                     bridge.record_memory_pressure(pressure, available_gib, rss_gib)

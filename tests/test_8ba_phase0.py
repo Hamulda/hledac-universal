@@ -5,7 +5,7 @@ Dead code classification, BasePolicy ABC, lock/import/mutable-state safety verif
 import abc
 
 import pytest
-from core import aclose
+from _core import aclose
 
 
 class TestSprint8BAPhase0:

@@ -18,7 +18,7 @@ from typing import Any, Optional
 
 from hledac.universal.utils.resilience.degradation_modes import DegradedMode, FailureSeverity
 from hledac.universal.utils.resilience.failure_registry import SprintHealthLedger, get_ledger
-from core import aclose
+from _core import aclose
 
 logger = logging.getLogger(__name__)
 

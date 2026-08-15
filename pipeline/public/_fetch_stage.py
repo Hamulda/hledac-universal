@@ -21,7 +21,7 @@ import msgspec
 
 from hledac.universal.pipeline._soa_types import FetchedBatch, PageBatch
 from hledac.universal.utils.asyncx import parallel_ok
-from core import aclose
+from _core import aclose
 
 logger = logging.getLogger(__name__)
 

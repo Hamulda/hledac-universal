@@ -21,7 +21,7 @@ import os
 import subprocess
 import sys
 from pathlib import Path
-from core import aclose
+from _core import aclose
 
 # ---------------------------------------------------------------------------
 # Helpers

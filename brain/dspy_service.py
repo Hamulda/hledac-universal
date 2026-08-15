@@ -22,7 +22,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 from hledac.universal.brain.mlx_worker_thread import MLXWorkerThread
 from hledac.universal.utils.asyncx import safe_wait_for
-from core import aclose
+from _core import aclose
 try:
     import orjson
 except ImportError:

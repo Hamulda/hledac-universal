@@ -28,7 +28,7 @@ Canonical import: from hledac.universal.embeddings.ane import ane_embedder
 import logging
 import threading
 from typing import Any
-from core import aclose
+from _core import aclose
 logger = logging.getLogger(__name__)
 _UNIFIED_BUDGET_BYTES: int = int(3.5 * 1024 * 1024 * 1024)
 _LRU_MAX_ENTRIES: int = 4

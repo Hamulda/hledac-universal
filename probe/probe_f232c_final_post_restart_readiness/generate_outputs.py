@@ -2,7 +2,7 @@
 """Generate F232C output files."""
 
 import sys, importlib.util, json, os
-from core import aclose
+from _core import aclose
 
 spec = importlib.util.spec_from_file_location(
     'tools.final_prelive_readiness',

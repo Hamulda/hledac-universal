@@ -16,7 +16,7 @@ from hledac.universal.utils.lru_cache import LRUCache
 from hledac.universal.utils.mlx_memory import mlx_cleanup_decorator
 from typing import Any
 
-from hledac.universal.core.psutil_shim import psutil
+from hledac.universal._core.psutil_shim import psutil
 
 logger = logging.getLogger(__name__)
 
@@ -81,7 +81,7 @@ _RUST_AVAILABLE = False
 
 # Try to load Rust atomic facade
 try:
-    from hledac.universal.core.rust_backend import rust
+    from hledac.universal._core.rust_backend import rust
     mlx_cache_hit = rust.raw.mlx_cache_hit  # None if unavailable
     mlx_cache_miss = rust.raw.mlx_cache_miss  # None if unavailable
     mlx_cache_stats = rust.raw.mlx_cache_stats  # None if unavailable
@@ -144,7 +144,7 @@ def get_mlx_semaphore() -> asyncio.Semaphore:
     """
     global _MLX_SEMAPHORE
     if _MLX_SEMAPHORE is None:
-        from hledac.universal.core.concurrency import ConcurrencyCategory, get_semaphore
+        from hledac.universal._core.concurrency import ConcurrencyCategory, get_semaphore
         _MLX_SEMAPHORE = get_semaphore(ConcurrencyCategory.MLX_INFERENCE)
     return _MLX_SEMAPHORE
 
@@ -763,7 +763,7 @@ import os
 import sys
 import time as _time_module
 from collections.abc import Callable
-from core import aclose
+from _core import aclose
 
 # Rust atomic UMA state — 0=ok, 1=soft_warn, 2=warn, 3=critical, 4=emergency
 _rust_uma_state: Callable | None = None

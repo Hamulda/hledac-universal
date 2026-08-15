@@ -4,7 +4,7 @@ sys.path.insert(0, '/Users/vojtechhamada/PycharmProjects/Hledac')
 from unittest.mock import MagicMock, patch
 from hledac.universal.knowledge import graph_service
 from hledac.universal.knowledge.graph_service import GraphService
-from core import aclose
+from _core import aclose
 
 def _make_fake_graph():
     fake = MagicMock()

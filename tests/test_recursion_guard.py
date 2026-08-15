@@ -19,7 +19,7 @@ from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
-from core import aclose
+from _core import aclose
 
 # ── Helpers ──────────────────────────────────────────────────────────────────
 

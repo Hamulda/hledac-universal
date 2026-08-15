@@ -27,7 +27,7 @@ import tempfile
 from unittest.mock import MagicMock
 
 import pytest
-from core import aclose
+from _core import aclose
 
 # Make the package importable when pytest is launched from a worktree.
 _HERE = "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal"

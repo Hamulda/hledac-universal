@@ -19,7 +19,7 @@ from typing import Any
 from collections.abc import Iterator
 
 from hledac.universal.runtime.protocols.graph_protocol import GraphProtocol
-from core import aclose
+from _core import aclose
 
 
 class DuckPGQGraphAdapter(GraphProtocol):

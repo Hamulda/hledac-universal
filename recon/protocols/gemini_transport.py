@@ -25,7 +25,7 @@ import ssl
 import time
 import urllib.parse
 from typing import NamedTuple
-from core import aclose
+from _core import aclose
 
 logger = logging.getLogger(__name__)
 
@@ -347,7 +347,7 @@ async def crawl_capsule(
     to_visit: list[str] = [url]
     start_time = time.monotonic()
 
-    from hledac.universal.core.concurrency import ConcurrencyCategory, get_semaphore
+    from hledac.universal._core.concurrency import ConcurrencyCategory, get_semaphore
     sem = get_semaphore(ConcurrencyCategory.SCRAPE_GENERAL)
 
     while to_visit and len(findings) < max_pages:

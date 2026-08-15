@@ -9,10 +9,10 @@ try:
 except ImportError:
     pytest.skip("mlx not available", allow_module_level=True)
 
-from hledac.universal.core.resource_governor import ResourceGovernor
+from hledac.universal._core.resource_governor import ResourceGovernor
 from hledac.universal.multimodal.fusion import MambaFusion
 from hledac.universal.multimodal.vision_encoder import VisionEncoder
-from core import aclose
+from _core import aclose
 
 
 @pytest.fixture

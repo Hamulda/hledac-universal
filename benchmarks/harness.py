@@ -14,7 +14,7 @@ from math import sqrt
 from pathlib import Path
 from typing import Any
 import psutil
-from core import aclose
+from _core import aclose
 
 
 def _percentile(sorted_vals: list[float], p: float) -> float:
@@ -32,7 +32,7 @@ async def _run_single_sprint(query: str) -> dict[str, Any]:
     Execute one sprint iteration and return a result dict with at least
     'latency_s' (float) and 'findings_count' (int).
     """
-    from hledac.universal.core.__main__ import run_sprint
+    from hledac.universal._core.__main__ import run_sprint
     start = time.monotonic()
     await run_sprint(query=query, duration_s=10, aggressive_mode=False)
     latency_s = time.monotonic() - start

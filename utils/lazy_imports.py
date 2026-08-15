@@ -26,7 +26,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 import msgspec
 from typing import Any
-from core import aclose
+from _core import aclose
 logger = logging.getLogger(__name__)
 _ALLOWED_LAZY_MODULES: frozenset[str] = frozenset({'os', 'json', 'time', 're', 'sys', 'logging', 'asyncio', 'threading', 'pathlib', 'functools', 'collections', 'copy', 'inspect', 'traceback', 'warnings', 'weakref', 'types', 'gc', 'io', 'abc', 'contextlib', 'mlx', 'mlx.core', 'mlx_lm', 'numpy', 'pandas', 'scipy', 'aiohttp', 'httpx', 'curl_cffi', 'requests', 'duckdb', 'lancedb', 'lmdb', 'sqlite3', 'igraph', 'orjson', 'msgspec', 'pydantic', 'cryptography', 'hashlib', 'hmac', 'secrets', 'nodriver', 'playwright', 'arxiv', 'openalex', 'unpaywall', 'core', 'torch', 'transformers', 'sentence_transformers', 'zstandard', 'zlib', 'gzip', 'bz2', 'lz4', 'psutil', 'yara_python', 'hledac.universal', 'hledac.universal.brain', 'hledac.universal.knowledge', 'hledac.universal.fetching', 'hledac.universal.discovery', 'hledac.universal.coordinators'})
 

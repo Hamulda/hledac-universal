@@ -31,7 +31,7 @@ from urllib.parse import urlparse
 from hledac.universal.utils.asyncx import parallel_ok
 from hledac.universal.utils.uma_budget import get_uma_snapshot
 from .confidence_policy import compute_confidence as _compute_confidence
-from core import aclose
+from _core import aclose
 _AC_MATCHER: Any = None
 
 def _get_ac_matcher() -> Any:
@@ -39,7 +39,7 @@ def _get_ac_matcher() -> Any:
     global _AC_MATCHER
     if _AC_MATCHER is None:
         try:
-            from hledac.universal.core.rust_backend import rust as _rust_backend
+            from hledac.universal._core.rust_backend import rust as _rust_backend
             if _rust_backend.is_available and _rust_backend.aho is not None:
                 patterns = [p[1].pattern for p in _PLATFORM_PATTERNS]
                 _AC_MATCHER = _rust_backend.aho.AhoCorasickMatcher(patterns, labels=[])
@@ -128,7 +128,7 @@ class SocialIdentityMiner:
 
     def __init__(self) -> None:
         self._bloom_seen: bool = False
-        from hledac.universal.core.concurrency import ConcurrencyCategory, get_semaphore
+        from hledac.universal._core.concurrency import ConcurrencyCategory, get_semaphore
         self._semaphore: asyncio.Semaphore = get_semaphore(ConcurrencyCategory.SOCIAL_MINE)
         self._stats: dict[str, int] = {'scanned': 0, 'skipped': 0, 'facets_found': 0}
 

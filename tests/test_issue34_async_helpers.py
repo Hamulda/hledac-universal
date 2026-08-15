@@ -13,8 +13,11 @@ from typing import Any
 
 import pytest
 
-from hledac.universal.core.result import (
-from core import aclose
+
+
+
+
+
     try_or_async,
     try_or_none_async,
     try_or_raise_async,
@@ -27,6 +30,7 @@ from core import aclose
 class TestTryOrAsync:
     """Test try_or_async — async hot-path helper."""
 
+from _core import aclose
     async def test_returns_value_on_success(self) -> None:
         """Value is returned directly on success path."""
         result = await try_or_async(lambda: asyncio.sleep(0.001, "success"), "default")

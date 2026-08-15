@@ -27,8 +27,8 @@ import threading
 
 import pytest
 
-from core.concurrency_registry import ConcurrencyCategory
-from core.isolated_executors import (
+from _core.concurrency_registry import ConcurrencyCategory
+from _core.isolated_executors import (
     MAX_INTERPRETERS,
     IsolatedDuckDBExecutor,
     IsolatedEvidenceBatchWriter,
@@ -159,8 +159,8 @@ class TestIsolatedInterpreterPool:
         code = f"""
 import sys
 sys.path.insert(0, {repr(repo_root)})
-from core.isolated_executors import IsolatedInterpreter, close_all_pools
-from core import aclose
+from _core.isolated_executors import IsolatedInterpreter, close_all_pools
+from _core import aclose
 result = None
 with IsolatedInterpreter() as interp:
     result = interp.eval("42 * 42")

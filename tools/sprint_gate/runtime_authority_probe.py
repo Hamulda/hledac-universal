@@ -26,7 +26,7 @@ import json
 import sys
 from enum import Enum, StrEnum
 from pathlib import Path
-from core import aclose
+from _core import aclose
 
 # ------------------------------------------------------------------ #
 # Self-configure Python path

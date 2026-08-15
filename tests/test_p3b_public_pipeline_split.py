@@ -37,7 +37,7 @@ from pipeline.public_acceptance import (
 )
 
 from pipeline import PipelinePageResult, PipelineRunResult
-from core import aclose
+from _core import aclose
 
 
 class TestPublicConstants:

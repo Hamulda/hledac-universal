@@ -72,8 +72,8 @@ from collections import OrderedDict
 from pathlib import Path
 from typing import Any
 
-from hledac.universal.core.env_config import ENV
-from core import aclose
+from hledac.universal._core.env_config import ENV
+from _core import aclose
 
 logger = logging.getLogger('hledac.universal.transport.conditional_cache')
 _MAX_ENTRIES: int = 5000

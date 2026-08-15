@@ -27,7 +27,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 from typing import Any
 
 import pytest
-from core import aclose
+from _core import aclose
 
 # Add project root to path for imports
 sys.path.insert(0, '/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal')
@@ -92,7 +92,7 @@ async def test_dedup_lock_no_leak_on_early_return():
 
     test_url = "https://example.com/test"
 
-    with patch('hledac.universal.core.protocols.get_governor', return_value=mock_gov):
+    with patch('hledac.universal._core.protocols.get_governor', return_value=mock_gov):
         # Call _fetch_url directly - it should NOT deadlock
         # With the bug: lock acquired on line 1314, early return on line 1342
         # without releasing the lock → deadlock after 2nd call
@@ -137,7 +137,7 @@ async def test_dedup_lock_multiple_concurrent_calls():
 
     urls = [f"https://example.com/page{i}" for i in range(20)]
 
-    with patch('hledac.universal.core.protocols.get_governor', return_value=mock_gov):
+    with patch('hledac.universal._core.protocols.get_governor', return_value=mock_gov):
         # Run 20 concurrent fetches - should NOT deadlock
         try:
             async with asyncio.timeout(10.0):
@@ -395,7 +395,7 @@ async def test_fetch_url_full_integration_no_deadlock():
         "https://example.com/page5",
     ]
 
-    with patch('hledac.universal.core.protocols.get_governor', return_value=mock_gov):
+    with patch('hledac.universal._core.protocols.get_governor', return_value=mock_gov):
         try:
             async with asyncio.timeout(15.0):
                 results = await asyncio.gather(*[
@@ -448,7 +448,7 @@ async def test_deadlock_stress_1000_iterations():
 
     iteration_failures = []
 
-    with patch('hledac.universal.core.protocols.get_governor', return_value=mock_gov):
+    with patch('hledac.universal._core.protocols.get_governor', return_value=mock_gov):
         for i in range(1000):
             url = f"https://example.com/stress{i}"
 

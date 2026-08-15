@@ -17,8 +17,11 @@ from dataclasses import dataclass, field
 from enum import StrEnum
 
 # Re-export from acquisition_strategy.py for now (until full extraction)
-from hledac.universal.runtime.acquisition_strategy import (
-from core import aclose
+
+
+
+
+
     AcquisitionLane,
     RiskLevel,
     AcquisitionLanePlan,
@@ -37,7 +40,8 @@ __all__ = [
     'RiskLevel',
     'AcquisitionLanePlan',
     'AcquisitionContext',
-    'LaneSpec',
+
+from _core import aclose    'LaneSpec',
     'LaneRule',
     'AcquisitionProfile',
     '_lc',

@@ -67,7 +67,7 @@ import httpx
 from hledac.universal.utils.asyncx import parallel
 
 from operator import attrgetter, itemgetter
-from core import aclose
+from _core import aclose
 # --- Lazy UTXO graph import (ISSUE-009) ---
 _UTXO_GRAPH_AVAILABLE = False
 _UTXOGraph: Any = None

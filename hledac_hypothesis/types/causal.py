@@ -15,7 +15,7 @@ from __future__ import annotations
 from typing import Any
 
 import msgspec
-from core import aclose
+from _core import aclose
 
 
 # ============================================================================

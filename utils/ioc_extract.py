@@ -55,7 +55,7 @@ from __future__ import annotations
 
 import logging
 from typing import Any
-from core import aclose
+from _core import aclose
 
 logger = logging.getLogger(__name__)
 
@@ -91,7 +91,7 @@ def _resolve_deobfuscate() -> Any:
         return _decode_fn
     _decode_resolved = True
     try:
-        from hledac.universal.core.rust_backend import rust
+        from hledac.universal._core.rust_backend import rust
 
         if rust.is_available and hasattr(rust, "ioc"):
             _decode_fn = getattr(rust.ioc, "decode_ioc_candidates", None)
@@ -157,7 +157,7 @@ def _resolve_backends() -> None:
         return
     _resolved = True
     # R6: Centralized Rust access via core.rust_backend
-    from hledac.universal.core.rust_backend import rust
+    from hledac.universal._core.rust_backend import rust
     _tier1_func = rust.raw.batch_ioc_extract_unified_python
     _tier2_func = rust.raw.batch_ioc_extract_unified
     if _tier1_func is not None or _tier2_func is not None:

@@ -10,7 +10,7 @@ but does NOT govern sprint truth or own facts. See :ref:`evidence-ledger` for
 architecture overview, 3-tier hierarchy, and ledger boundary rules.
 """
 from __future__ import annotations
-from core import aclose  # F350M-R: Type-4 clone elimination
+from _core import aclose  # F350M-R: Type-4 clone elimination
 import asyncio
 import concurrent.futures
 import contextlib
@@ -36,7 +36,7 @@ from collections.abc import Iterator
 import aiosqlite
 import msgspec
 import orjson
-from hledac.universal.core.env_config import ENV
+from hledac.universal._core.env_config import ENV
 from hledac.universal.runtime.protocols.cleanup_protocol import shutdown_aclose
 from hledac.universal.utils.asyncx import safe_create_task, safe_wait_for
 
@@ -294,7 +294,7 @@ _arrow = None
 #         _ARROW_ENABLED is evaluated once at import; subsequent _get_arrow()
 #         calls skip the env lookup entirely (fast-path: _arrow cached).
 # SWARM-010: Use FeatureFlags for registry compliance
-from hledac.universal.core.feature_flags import FeatureFlags, FeatureFlag
+from hledac.universal._core.feature_flags import FeatureFlags, FeatureFlag
 _ARROW_ENABLED: bool = FeatureFlags.get(FeatureFlag.ARROW_EVIDENCE)
 
 
@@ -1462,7 +1462,7 @@ class _RustMPSCBytes:
     def _init_rust(self, capacity: int, asyncio_fallback: bool) -> None:
         try:
             # R6: Centralized Rust access via core.rust_backend
-            from hledac.universal.core.rust_backend import rust
+            from hledac.universal._core.rust_backend import rust
             _MPSC = rust.raw.MPSCPool
             pool = _MPSC(capacity=capacity)
             sender_ptr = pool.add_sender()
@@ -1581,7 +1581,7 @@ class _RustMPSCBytes:
 
         try:
             # R6: Centralized Rust access via core.rust_backend
-            from hledac.universal.core.rust_backend import rust
+            from hledac.universal._core.rust_backend import rust
             _MPSC = rust.raw.MPSCPool  # type: ignore[import]
             pool = _MPSC(capacity=self._capacity)
             sender_ptr = pool.add_sender()
@@ -1994,7 +1994,7 @@ class EvidenceLog:
                 setattr(self, f'_{task_name}', None)
         self._start_cancel_watcher()
         try:
-            from hledac.universal.core.dlq_manager import get_dlq_manager
+            from hledac.universal._core.dlq_manager import get_dlq_manager
             self._dlq_manager = get_dlq_manager()
         except Exception:  # noqa: BLE001
             self._dlq_manager = None

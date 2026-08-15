@@ -3,7 +3,7 @@
 import subprocess
 import sys
 from textwrap import dedent
-from core import aclose
+from _core import aclose
 
 
 def _run(script: str, _argv: list[str]) -> subprocess.CompletedProcess[bytes]:

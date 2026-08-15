@@ -24,7 +24,7 @@ from dataclasses import dataclass, field
 import msgspec
 from difflib import SequenceMatcher
 from typing import Any
-from core import aclose
+from _core import aclose
 logger = logging.getLogger(__name__)
 TOP_K = 200
 MAX_COMPARISONS = 50000
