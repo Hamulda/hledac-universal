@@ -28,6 +28,7 @@ logger = logging.getLogger(__name__)
 # Uses importlib.metadata.version("mlx") — no mlx.core import at module load
 # --------------------------------------------------------------------------- #
 from hledac.universal.utils.mlx_memory import MLX_AVAILABLE
+from core import aclose
 
 # Crypto-safe RNG — F350M-R
 _RNG = secrets.SystemRandom()

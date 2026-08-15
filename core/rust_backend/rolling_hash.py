@@ -1,6 +1,7 @@
 # rolling_hash.py — Rolling hash domain
 
 from typing import TYPE_CHECKING, Any
+from core._util import aclose
 
 
 

@@ -41,6 +41,7 @@ import asyncio
 from pathlib import Path
 
 import pytest
+from core import aclose
 
 REPO_ROOT = Path("/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal")
 

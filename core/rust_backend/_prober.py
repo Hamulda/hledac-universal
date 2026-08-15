@@ -50,6 +50,7 @@ from pathlib import Path as _Path
 
 # ISSUE-11: Import Rust extension exceptions for fail-closed behavior
 from ._exceptions import RustExtensionStale
+from core._util import aclose
 
 logger = logging.getLogger(__name__)
 

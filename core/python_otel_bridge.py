@@ -43,6 +43,7 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 import msgspec
 from typing import Any, TYPE_CHECKING
+from core._util import aclose
 
 # TYPE_CHECKING guards for type hints only — actual imports are lazy inside functions
 # to avoid loading OTel SDK at module import time (M1 8GB RAM budget)

@@ -23,6 +23,7 @@ from typing import TYPE_CHECKING, Any
 import numpy as np
 from hledac.universal.utils.msgspec_json import encode as _msgspec_encode
 from hledac.universal.utils.msgspec_json import decode as _msgspec_decode
+from core import aclose
 if TYPE_CHECKING:
     pass
 logger = logging.getLogger(__name__)

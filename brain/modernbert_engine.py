@@ -26,6 +26,7 @@ import sys
 from dataclasses import dataclass
 import msgspec
 import numpy as np
+from core import aclose
 logger = logging.getLogger(__name__)
 MODERNBERT_AVAILABLE = False
 _mlx_embeddings_ok = False

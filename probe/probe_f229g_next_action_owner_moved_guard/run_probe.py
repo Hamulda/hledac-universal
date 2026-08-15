@@ -76,6 +76,7 @@ def other_helper():
 
 SYMBOL_MISSING_FIXTURE = '''
 from dataclasses import dataclass
+from core import aclose
 
 def some_other_function():
     pass

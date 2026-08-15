@@ -40,6 +40,7 @@ from __future__ import annotations
 
 import logging
 from typing import TYPE_CHECKING
+from core import aclose
 
 if TYPE_CHECKING:
     from typing import Any

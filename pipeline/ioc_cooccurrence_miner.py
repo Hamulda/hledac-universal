@@ -292,6 +292,7 @@ class IOCooccurrenceMiner:
         """No-op: no ProcessPoolExecutor to shutdown."""
         pass
 import re
+from core import aclose
 _DOMAIN_PATTERN = re.compile("\\b(?:[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?\\.)+[a-zA-Z]{2,}\\b")
 _IPV4_PATTERN = re.compile("\\b(?:(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\\.){3}(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\\b")
 _IPV6_PATTERN = re.compile("\\b(?:[0-9a-fA-F]{1,4}:){7}[0-9a-fA-F]{1,4}\\b")

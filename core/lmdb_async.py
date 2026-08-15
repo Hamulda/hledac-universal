@@ -36,6 +36,7 @@ import asyncio
 import logging
 from collections.abc import Sequence
 from typing import TYPE_CHECKING, Any
+from core._util import aclose
 
 if TYPE_CHECKING:
     pass

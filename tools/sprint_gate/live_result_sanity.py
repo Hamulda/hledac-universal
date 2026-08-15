@@ -22,6 +22,7 @@ from enum import Enum
 from pathlib import Path
 from typing import Any
 from collections.abc import Callable
+from core import aclose
 
 class SanityVerdict(Enum):
     SANITY_PASS = 'SANITY_PASS'

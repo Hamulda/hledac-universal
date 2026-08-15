@@ -46,6 +46,7 @@ from hledac.universal.core.lmdb_unified import get_unified_lmdb, SubDB
 from hledac.universal.utils.msgspec_json import decode, encode
 from hledac.universal.utils.asyncx import parallel
 from hledac.universal.utils.domain_executors import get_exposure_db_executor
+from core import aclose
 logger = logging.getLogger(__name__)
 
 async def _aclose_stream(stream):

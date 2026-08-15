@@ -42,6 +42,7 @@ import os
 _DEDUP_LMDB_MAP_SIZE: int = int(os.environ.get('HLEDAC_DEDUP_LMDB_MAP_SIZE', str(256 * 1024 * 1024)))
 _DEDUP_HOT_CACHE_MAX: int = int(os.environ.get('HLEDAC_DEDUP_HOT_CACHE_MAX', '10000'))
 from hledac.universal.utils.import_resolver import lazy
+from core import aclose
 _rust_backend_resolver = lazy('core.rust_backend.rust')
 _RUST_MMAP_IOC_DEDUP_AVAILABLE = False
 RustMmapIocDedupStore: Any = None

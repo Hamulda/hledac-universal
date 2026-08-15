@@ -27,6 +27,7 @@ import threading
 from typing import Literal
 
 from hledac.universal.core.locks import LockCategory, register_lock
+from core import aclose
 
 # Crypto-safe RNG — F350M-R
 _RNG = secrets.SystemRandom()

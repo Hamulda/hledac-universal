@@ -55,6 +55,7 @@ import os
 from typing import Any
 
 import msgspec
+from core import aclose
 
 logger = logging.getLogger(__name__)
 

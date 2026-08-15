@@ -44,6 +44,7 @@ from typing import Any
 from collections.abc import Callable
 
 import msgspec
+from core import aclose
 
 logger = logging.getLogger(__name__)
 

@@ -38,6 +38,7 @@ import time
 import weakref
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Any, TypeVar
+from core._util import aclose
 
 if TYPE_CHECKING:
     from collections.abc import Coroutine

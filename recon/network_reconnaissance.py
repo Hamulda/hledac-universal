@@ -50,6 +50,7 @@ import httpx
 from hledac.universal.transport.session_pool import session_pool
 from hledac.universal.utils.asyncx import parallel_ok, parallel
 from hledac.universal.core.concurrency_registry import ConcurrencyCategory, ConcurrencyBudgetRegistry
+from core import aclose
 logger = logging.getLogger(__name__)
 
 class RecordType(Enum):

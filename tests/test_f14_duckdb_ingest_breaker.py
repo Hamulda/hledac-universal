@@ -15,6 +15,7 @@ import pytest
 
 from hledac.universal.knowledge.duckdb_store import DuckDBShadowStore
 from hledac.universal.transport.circuit_breaker import CBState
+from core import aclose
 
 
 @pytest.fixture

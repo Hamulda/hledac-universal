@@ -1,0 +1,21 @@
+[mcp_servers.pmb]
+url = "http://127.0.0.1:8765/mcp"
+
+[mcp_servers.pmb.http_headers]
+Authorization = "Bearer OJhz7DVyCYehojghJxxOFnUbRRF9-K2DCmBmBfG3ueM"
+
+[mcp_servers.pyscn-mcp]
+command = "uvx"
+args = ["pyscn-mcp"]
+
+[mcp_servers.pyscn-mcp.tools.get_health_score]
+approval_mode = "approve"
+
+[mcp_servers.codegraph]
+command = "codegraph"
+args = [
+    "serve",
+    "--mcp",
+    "--path",
+    "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal",
+]

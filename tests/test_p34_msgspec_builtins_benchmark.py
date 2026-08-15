@@ -19,6 +19,7 @@ import time
 import msgspec
 
 from runtime.scheduler_v2.acquisition import CycleResult
+from core import aclose
 
 
 def _normalize_value_old(value):

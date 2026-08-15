@@ -239,6 +239,7 @@ TTFB_TIMEOUT_S: Final[float] = 1.5
 
 # --- Blitz mode dead host tracking ---
 import threading
+from core import aclose
 
 _blitz_dead_hosts: set[str] = set()
 _blitz_dead_hosts_lock: threading.Lock = threading.Lock()

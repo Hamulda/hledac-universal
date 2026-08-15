@@ -28,6 +28,7 @@ import msgspec
 from datetime import UTC, datetime
 from enum import StrEnum
 from pathlib import Path
+from core import aclose
 
 class Verdict(StrEnum):
     PASS_MULTISOURCE_TERMINALITY = 'PASS_MULTISOURCE_TERMINALITY'

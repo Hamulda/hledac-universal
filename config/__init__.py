@@ -316,6 +316,7 @@ def load_config_from_file(path: str | Path) -> UniversalConfig:
 __all__ = ['settings', 'Settings', 'FetchSettings', 'MLXSettings', 'DuckDBSettings', 'DedupSettings', 'TransportSettings', 'MemorySettings', 'SprintSettings', 'GraphSettings', 'SynthesisSettings', 'CooldownSettings', 'FeatureGates', 'UniversalConfig', 'create_config', 'load_config_from_file', 'M1Presets', 'ResearchPresets', 'SecurityConfig', 'StealthConfig', 'PrivacyConfig', 'DeepResearchConfig', 'ResearchMode', 'ResearchConfig', 'MemoryConfig', 'GhostConfig', 'CoordinationConfig', 'AgentManagerConfig', 'CommunicationConfig']
 import threading
 from typing import Final
+from core import aclose
 _adaptive_patches: dict[tuple[str, str], int | float | str] = {}
 _adaptive_patches_lock = threading.Lock()
 

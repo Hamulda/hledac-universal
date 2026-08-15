@@ -19,6 +19,7 @@ import asyncio  # noqa: E402
 import aiohttp  # noqa: E402
 
 from recon.bgp_lane import (  # noqa: E402
+from core import aclose
     BGPVIEW_API,
     MAX_ASN_RESULTS,
     RATE_LIMIT_S,

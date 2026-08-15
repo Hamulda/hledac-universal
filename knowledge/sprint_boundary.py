@@ -20,6 +20,7 @@ Always-on, fail-safe invariants:
 from __future__ import annotations
 
 from typing import TYPE_CHECKING
+from core import aclose
 
 if TYPE_CHECKING:
     from ._query_cache import _DuckDBQueryCache

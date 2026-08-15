@@ -12,6 +12,7 @@ import logging
 import random
 import time
 from collections import OrderedDict
+from core import aclose
 logger = logging.getLogger(__name__)
 _COREML_AVAILABLE = False
 _VN_AVAILABLE = False

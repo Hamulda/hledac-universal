@@ -62,6 +62,7 @@ _LOCK_AGE_THRESHOLD_SECONDS: float = 10.0
 
 # Issue #17: psutil lazy import via centralized psutil_shim.
 from hledac.universal.core.psutil_shim import psutil_module as _psutil_mod
+from core import aclose
 
 
 def _is_process_alive(pid: int) -> bool:

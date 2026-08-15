@@ -83,10 +83,6 @@ from hledac.universal.utils.asyncx._rate_limit import (
     _TokenBucketState,
 )
 
-# Re-export for backward compatibility
-from hledac.universal.utils.asyncx._parallel import (
-    current_otel_context,
-)
 
 if TYPE_CHECKING:
     pass

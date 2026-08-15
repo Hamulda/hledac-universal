@@ -13,6 +13,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from multimodal.evidence_triage import EvidenceTriageCoordinator, TriageFacets
+from core import aclose
 
 
 class TestFOCATriageIntegration:

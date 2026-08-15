@@ -44,6 +44,7 @@ import diskcache
 if typing.TYPE_CHECKING:
     from diskcache import Cache
 from hledac.universal.core.feature_flags import FeatureFlag, FeatureFlags
+from core import aclose
 logger = logging.getLogger("hledac.universal.pipeline.deduper")
 _DEDUP_DISK: bool = FeatureFlags.get(FeatureFlag.DEDUP_DISK)
 _DEDUP_SIZE_MB: int = FeatureFlags.get_int(FeatureFlag.DEDUP_SIZE_MB, 64)

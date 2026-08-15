@@ -45,6 +45,7 @@ import sys
 import time
 from dataclasses import dataclass, field
 import msgspec
+from core import aclose
 try:
     import psutil
 except ImportError:

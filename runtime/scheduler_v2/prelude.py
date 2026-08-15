@@ -36,6 +36,7 @@ from typing import Any
 
 from hledac.universal.utils.asyncx import first_completed  # ISSUE-15
 from hledac.universal.runtime.scheduler_v2._task_registry import (
+from core import aclose
     TaskScope,
     safe_create_task_tracked,
 )

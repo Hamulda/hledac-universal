@@ -9,6 +9,7 @@ import asyncio
 from unittest.mock import MagicMock
 
 from hledac.universal.knowledge.lancedb_store import (
+from core import aclose
     _ensure_write_worker,
     _ensure_write_workers,
     _get_table_queue,

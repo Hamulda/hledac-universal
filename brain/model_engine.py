@@ -18,6 +18,7 @@ Callers use the protocol, not concrete classes.
 
 
 from typing import Any, TypeVar
+from core import aclose
 
 T = TypeVar('T')  # PEP 696: TypeVar with default
 

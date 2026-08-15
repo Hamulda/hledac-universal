@@ -46,6 +46,7 @@ from hledac.universal.transport.httpx_client import is_httpx_h2_enabled
 
 # MODERN-36 Fix: Import from SSOT instead of hardcoding
 from hledac.universal.utils.uma_budget import (
+from core import aclose
     UmaBudget,
     MISSION_PEAK_RSS_GIB,
     ORCHESTRATOR_GIB,

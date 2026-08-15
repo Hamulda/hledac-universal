@@ -27,6 +27,7 @@ import sys
 from pathlib import Path
 
 import pytest
+from core import aclose
 
 # Ensure hledac.universal importable
 _root = Path(__file__).parent.parent

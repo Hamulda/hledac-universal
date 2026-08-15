@@ -44,6 +44,7 @@ from collections.abc import AsyncGenerator
 from hledac.universal.utils.asyncx import safe_create_task
 
 from hledac.universal.utils.resilience.degradation_modes import (
+from core import aclose
     DegradationState,
     DegradedMode,
     DegradationThresholds,

@@ -23,6 +23,7 @@ import time
 import pytest
 
 import sys
+from core import aclose
 
 
 class TestLazyModelConcurrency:

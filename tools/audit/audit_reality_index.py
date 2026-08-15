@@ -22,6 +22,7 @@ from dataclasses import dataclass
 import msgspec
 from enum import Enum
 from pathlib import Path
+from core import aclose
 
 class ClaimStatus(Enum):
     OPEN = 'OPEN'

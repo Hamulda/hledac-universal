@@ -15,6 +15,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from core.storage_router import (
+from core import aclose
     _DECISION_MATRIX,
     _INVALIDATION_CHAIN,
     StorageKind,

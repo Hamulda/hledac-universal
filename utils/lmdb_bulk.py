@@ -47,6 +47,7 @@ from collections.abc import Mapping, Sequence
 from typing import Any
 
 from hledac.universal.utils.codec import encode as _msgspec_encode
+from core import aclose
 
 logger = logging.getLogger(__name__)
 

@@ -24,6 +24,7 @@ from typing import Any
 from urllib.parse import urlparse
 
 from hledac.universal.runtime.sidecar_protocol import (
+from core import aclose
     BaseSidecarAdapter,
     SidecarContext,
     SidecarRegistry,

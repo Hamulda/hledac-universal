@@ -69,6 +69,7 @@ from hledac.universal.runtime.patterns.discovery import (
     is_ip_like as _is_ip_like_pattern,
 )
 from hledac.universal.runtime.source_finding_config import (
+from core import aclose
     is_private_hostname,
     is_private_ip_prefix,
 )

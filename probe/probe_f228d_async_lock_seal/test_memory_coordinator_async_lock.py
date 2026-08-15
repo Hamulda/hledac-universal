@@ -6,6 +6,7 @@ not threading.RLock, and that all lock sites use async with.
 """
 
 import pytest
+from core import aclose
 
 
 class TestSemanticCacheAsyncLock:

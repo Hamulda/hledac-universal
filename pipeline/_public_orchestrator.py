@@ -32,6 +32,7 @@ from hledac.universal.pipeline.public._export_stage import ExportStage
 from hledac.universal.pipeline.public._extract_stage import ExtractStage
 from hledac.universal.pipeline.public._fetch_stage import FetchStage
 from hledac.universal.pipeline.public._match_stage import MatchStage
+from core import aclose
 
 if TYPE_CHECKING:
     pass

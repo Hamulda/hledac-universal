@@ -42,6 +42,7 @@ from hledac.universal.core.locks import make_lock, LockCategory
 import warnings
 from pathlib import Path
 from typing import Any
+from core import aclose
 _logger = logging.getLogger(__name__)
 _OPSEC_FALLBACK_WARNED: bool = False
 

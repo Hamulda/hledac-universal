@@ -19,6 +19,7 @@ NO PRODUCTION CALLERS — DO NOT USE IN NEW CODE.
 # that do ``from hledac.universal.runtime.memory_watchdog import PressureLevel``
 # get the real enum without modification.
 from hledac.universal.coordinators.enums import MemoryPressureLevel
+from core import aclose
 
 __all__ = ["MemoryWatchdog", "PressureLevel"]
 

@@ -67,6 +67,7 @@ _SAFE_GATHER_SAMPLE_CAP = 5
 # overhead per task in scatter/gather patterns. Degrades gracefully on
 # <3.12 (no eager_start kwarg passed).
 import sys
+from core import aclose
 
 _PY_312_PLUS: bool = sys.version_info >= (3, 12)
 

@@ -52,6 +52,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 from collections.abc import Iterator
+from core import aclose
 
 
 # Directory names to skip entirely

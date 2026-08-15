@@ -128,6 +128,7 @@ from hledac.universal.runtime.acquisition.report_builder import (
 
 # ── Acquisition lanes (shim during transition) ───────────────────────────────
 from hledac.universal.runtime.acquisition.acquisition_lanes import (
+from core import aclose
     run_enabled_acquisition_lanes,
     run_enabled_acquisition_lanes_streaming,
 )

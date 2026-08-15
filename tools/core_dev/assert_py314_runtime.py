@@ -16,6 +16,7 @@ Usage:
 """
 
 import sys
+from core import aclose
 
 
 def _check_annotationlib():

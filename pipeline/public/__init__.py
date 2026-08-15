@@ -17,6 +17,7 @@ from __future__ import annotations
 
 # Public API — re-export from live_public_pipeline for backwards compatibility
 from hledac.universal.pipeline.live_public_pipeline import (
+from core import aclose
     PipelinePageResult,
     PipelineRunResult,
     async_run_live_public_pipeline,

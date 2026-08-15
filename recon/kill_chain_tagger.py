@@ -16,6 +16,7 @@ import re
 from dataclasses import dataclass, field
 import msgspec
 from typing import TYPE_CHECKING, Any
+from core import aclose
 __all__ = ['KillChainTag', 'KillChainTagger', 'create_kill_chain_tagger', 'ioc_to_technique_ids']
 MAX_TAGS_PER_FINDING: int = 5
 MAX_TAGGED_FINDINGS: int = 1000

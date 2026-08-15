@@ -6,6 +6,7 @@ Supports streaming write for large reports.
 """
 from typing import TYPE_CHECKING, Any
 from pathlib import Path
+from core import aclose
 if TYPE_CHECKING:
     pass
 try:

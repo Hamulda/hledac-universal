@@ -26,6 +26,7 @@ import sys
 from pathlib import Path
 
 import pytest
+from core import aclose
 
 # Project root: universal/
 REPO_ROOT = Path(__file__).resolve().parents[2]

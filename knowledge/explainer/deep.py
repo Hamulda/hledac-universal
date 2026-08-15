@@ -12,6 +12,7 @@ mx = None
 nn = None
 
 from hledac.universal.core.resource_governor import Priority, ResourceGovernor
+from core import aclose
 logger = logging.getLogger(__name__)
 try:
     import mlx_graphs as mxg

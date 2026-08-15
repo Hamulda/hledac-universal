@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import asyncio
 from typing import Any
+from core._util import aclose
 
 
 def get_domain(ext: object | None = None) -> "AsyncQueryDomain | PythonFallbackAsyncQueryDomain":

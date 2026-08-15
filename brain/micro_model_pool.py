@@ -69,10 +69,10 @@ except ImportError:
 logger = logging.getLogger(__name__)
 
 # Module-level cached references (P3-03 pattern: O(1) access)
-_mx: Any = None
-_mlx_lm: Any = None
+_mx: Any = None  # type: ignore[assignment]
+_mlx_lm: Any = None  # type: ignore[assignment]
 
-def _get_mx() -> Any:
+def _get_mx() -> Any:  # type: ignore[type-arg]
     """Lazy accessor for mlx.core — cached after first import.
     
     MLX LAZY IMPORT FIX: Prevents M1 crash on memory-constrained systems.
@@ -83,7 +83,7 @@ def _get_mx() -> Any:
         _mx = get_mx()
     return _mx
 
-def _get_mlx_lm() -> Any:
+def _get_mlx_lm() -> Any:  # type: ignore[type-arg]
     """Lazy accessor for mlx_lm — cached after first import.
     
     MLX LAZY IMPORT FIX: Prevents M1 crash on memory-constrained systems.
@@ -100,13 +100,14 @@ def _get_mlx_lm() -> Any:
 
 # MODERN-35 Fix: Import CPU affinity utilities
 from hledac.universal.utils.cpu_affinity import (
+from core import aclose
     set_mlx_affinity,
     is_apple_silicon,
 )
 
 # Type aliases for clarity
-ModelT = Any
-TokenizerT = Any
+ModelT = Any  # type: ignore[type-arg]
+TokenizerT = Any  # type: ignore[type-arg]
 EmbeddingT = list[float]
 
 

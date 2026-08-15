@@ -24,6 +24,7 @@ import sys
 import tempfile
 import time
 import uuid
+from core._util import aclose
 
 __all__ = [
     "run_preflight_diagnostics",

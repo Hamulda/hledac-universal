@@ -13,6 +13,7 @@ import pytest
 from typing import Any
 
 from runtime.pivot_executor import (
+from core import aclose
     AutonomousPivotExecutor,
     PivotExecutionResult,
     PivotExecutionRequest,

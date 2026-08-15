@@ -69,7 +69,8 @@ def _ensure_bootstrap() -> None:
 # -----------------------------------------------------------------------------
 # Lazy index builder (extracted for maintainability)
 # -----------------------------------------------------------------------------
-from hledac.universal._lazy_index import build_module_index
+from _lazy_index import build_module_index
+from core._util import aclose
 
 
 # -----------------------------------------------------------------------------
@@ -85,9 +86,6 @@ _AUTO_MODULE_PATHS = [
     # Graph RAG
     "hledac.universal.knowledge.graph_rag",
     # Public fetcher
-    "hledac.universal.fetching.public_fetcher",
-    # Evidence network analyzer
-    "hledac.universal.advanced_web.evidence_network_analyzer",
     # Transport
     "hledac.universal.transport.transport_resolver",
     # Layers
@@ -136,11 +134,6 @@ _EXPLICIT_ATTRS_BY_MODULE: dict[str, frozenset[str]] = {
         "MAX_BYTES_DEFAULT", "MAX_BYTES_HARD", "MAX_RETRIES", "FetchResult",
     }),
     # Evidence network analyzer
-    "hledac.universal.advanced_web.evidence_network_analyzer": frozenset({
-        "EvidenceNetworkAnalyzer", "EvidenceGraphNode",
-        "EvidenceGraphEdge", "EvidenceGraph",
-    }),
-    # Transport
     "hledac.universal.transport.transport_resolver": frozenset({
         "TransportContext", "TransportResolver", "Transport",
     }),

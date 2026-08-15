@@ -31,6 +31,7 @@ from unittest.mock import patch
 from hledac.universal.knowledge.duckdb_store import DuckDBShadowStore
 from hledac.universal.utils.patterns.pattern_matcher import PatternHit
 from hledac.universal.pipeline.live_feed_pipeline import (
+from core import aclose
     FeedPipelineRunResult,
     async_run_live_feed_pipeline,
 )

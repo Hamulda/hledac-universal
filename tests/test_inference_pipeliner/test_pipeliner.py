@@ -8,6 +8,7 @@ import os
 import sys
 import types
 import unittest
+from core import aclose
 
 
 # Cleanup helper for sys.modules pollution

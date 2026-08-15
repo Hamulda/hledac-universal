@@ -4,6 +4,7 @@ P0: Validates SPSC queue initialization and stats.
 """
 
 import pytest
+from core import aclose
 
 
 class TestSPSCIntegration:

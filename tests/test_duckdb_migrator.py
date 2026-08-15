@@ -10,6 +10,7 @@ from pathlib import Path
 import pytest
 
 from hledac.universal.knowledge.duckdb_migrator import (
+from core import aclose
     SchemaMigrator,
     _CURRENT_SCHEMA_VERSION,
     _strip_leading_comments,

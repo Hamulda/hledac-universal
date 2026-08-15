@@ -29,6 +29,7 @@ import os
 import time
 from pathlib import Path
 from typing import TYPE_CHECKING
+from core import aclose
 
 if TYPE_CHECKING:
     from collections.abc import Callable

@@ -18,6 +18,7 @@ import re
 from dataclasses import dataclass, field
 
 from hledac.universal.compat.msgspec_gc_compat import Struct
+from core import aclose
 logger = logging.getLogger(__name__)
 # selectolax — fast CSS selectors, 5-10× faster than BeautifulSoup (M1 8GB friendly)
 try:

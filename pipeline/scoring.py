@@ -11,6 +11,7 @@ Invariant: scoring logic lives in ONE place. Tests for scoring live in one place
 
 import html
 import re
+from core import aclose
 
 # ---------------------------------------------------------------------------
 # Feed Entry Quality Signal

@@ -18,6 +18,7 @@ import os
 from urllib.parse import quote
 
 import httpx
+from core import aclose
 
 __all__ = ['wayback_cdx_lookup', 'rdap_lookup', 'urlscan_search']
 

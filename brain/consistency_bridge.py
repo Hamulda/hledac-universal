@@ -43,6 +43,7 @@ logger = logging.getLogger(__name__)
 
 # Env gate
 import os
+from core import aclose
 _ENABLED = (
     os.environ.get("HLEDAC_ENABLE_CONSISTENCY_VERIFIER", "1").lower()
     in ("1", "true", "yes", "on")
@@ -227,7 +228,7 @@ class PropositionalConsistencyBridge:
 
     async def check_batch(
         self,
-        findings: list[dict[str, Any]],
+        findings: list[dict[str, Any]],  # type: ignore[type-arg]
         emit_alerts: bool = True,
     ) -> ConsistencyCheckResult:
         """

@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import msgspec
 from hledac.universal.compat.msgspec_gc_compat import Struct
+from core import aclose
 
 # --------------------------------------------------------------------------- #
 # Constants

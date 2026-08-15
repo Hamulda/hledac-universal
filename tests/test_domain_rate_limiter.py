@@ -19,6 +19,7 @@ import asyncio
 import time
 
 import pytest
+from core import aclose
 
 
 class TestTokenBucketFastPath:

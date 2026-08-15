@@ -15,6 +15,7 @@ from hledac.universal.transport.circuit_breaker import (
     domain_breaker_record_success,
 )
 from hledac.universal.transport.session_pool import session_pool
+from core import aclose
 
 logger = logging.getLogger(__name__)
 

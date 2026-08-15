@@ -26,7 +26,7 @@ Key Features:
     - Evidence relationship analysis
     - Contradiction detection
 
-Extended from evidence_network_analyzer.py comments:
+DEPRECATED - source module deleted:
     - Centrality analysis (degree, betweenness, closeness, eigenvector, PageRank)
     - Community detection
     - Network metrics
@@ -62,6 +62,7 @@ def _get_numpy():
     return np
 logger = logging.getLogger(__name__)
 from hledac.universal.utils.graph_utils import lazy_ig
+from core import aclose
 
 def _check_ram_for_igraph() -> bool:
     """M1 8GB: skip igraph if RAM headroom < 500MB."""
@@ -773,7 +774,7 @@ class GraphRAGOrchestrator:
         """
         Find contradictions between nodes in the graph.
 
-        From evidence_network_analyzer.py comments:
+        DEPRECATED - source module deleted:
         "Step 5: Identify contradictions"
         "Find contradiction edges"
         "Assess severity"
@@ -808,7 +809,7 @@ class GraphRAGOrchestrator:
         """
         Analyze key paths between two nodes (async).
 
-        From evidence_network_analyzer.py comments:
+        DEPRECATED - source module deleted:
         "Step 6: Analyze key paths in the network"
         "Find shortest paths between central nodes"
         "Look for paths that might be important reasoning chains"
@@ -834,7 +835,7 @@ class GraphRAGOrchestrator:
         """
         Calculate comprehensive network metrics.
 
-        From evidence_network_analyzer.py comments:
+        DEPRECATED - source module deleted:
         "Step 7: Calculate network metrics"
         "Basic metrics"
         "Clustering metrics"

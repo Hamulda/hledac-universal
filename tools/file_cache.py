@@ -21,6 +21,7 @@ import ctypes.util
 import fcntl
 import os
 import platform
+from core import aclose
 
 NOCACHE_THRESHOLD_BYTES = 50 * 1024 * 1024  # 50MB
 F_NOCACHE: int | None = 48 if platform.system() == "Darwin" else None

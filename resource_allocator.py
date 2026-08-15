@@ -547,4 +547,5 @@ def clear_mlx_cache_if_needed(threshold_mb: float=500.0) -> bool:
         pass
     return False
 from hledac.universal.utils.concurrency import FETCH_SEMAPHORE, adjust_fetch_workers
+from core import aclose
 __all__ = ['FETCH_SEMAPHORE', 'adjust_fetch_workers', 'AdaptiveSemaphore']

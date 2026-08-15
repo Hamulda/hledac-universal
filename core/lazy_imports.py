@@ -27,6 +27,7 @@ import importlib
 import importlib.util
 import logging
 from typing import TYPE_CHECKING, Any
+from core._util import aclose
 
 if TYPE_CHECKING:
     from types import ModuleType

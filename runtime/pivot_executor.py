@@ -34,6 +34,7 @@ import msgspec
 from typing import Any
 from collections.abc import Callable, Awaitable
 from hledac.universal.utils.uuid7 import new_runtime_id
+from core import aclose
 __all__ = ['PivotExecutionRequest', 'PivotExecutionResult', 'AutonomousPivotExecutor', 'MAX_ACTIVE_PIVOTS', 'MAX_PIVOTS_PER_SPRINT', 'PIVOT_TIMEOUT_S', 'MAX_PIVOT_FINDINGS']
 logger = logging.getLogger(__name__)
 MAX_ACTIVE_PIVOTS: int = 3

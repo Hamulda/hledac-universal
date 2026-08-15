@@ -35,6 +35,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from hledac.universal.transport.circuit_breaker import (
+from core import aclose
     _CIRCUIT_BREAKER_TTL_S,
     BOOT_RECOVERY_TIMEOUT_S,
     CBState,

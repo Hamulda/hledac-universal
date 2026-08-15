@@ -18,6 +18,7 @@ from hledac.universal.compat.msgspec_gc_compat import Struct
 from typing import Any
 
 from operator import attrgetter, itemgetter
+from core import aclose
 # --------------------------------------------------------------------------- #
 # Datatypes
 # --------------------------------------------------------------------------- #

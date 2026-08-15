@@ -24,6 +24,7 @@ from __future__ import annotations
 import logging
 import re
 from typing import Any, Literal
+from core import aclose
 
 logger = logging.getLogger(__name__)
 

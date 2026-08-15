@@ -41,6 +41,7 @@ import msgspec
 from enum import Enum, auto
 from typing import Any, cast
 from hledac.universal.utils.cache import PyCacheDict
+from core import aclose
 logger = logging.getLogger(__name__)
 _extract_host_cache: PyCacheDict[str, str] = PyCacheDict(512, 300.0)
 _get_transport_cache: PyCacheDict[str, Transport] = PyCacheDict(512, 300.0)

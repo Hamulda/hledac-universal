@@ -160,6 +160,7 @@ class TestIsolatedInterpreterPool:
 import sys
 sys.path.insert(0, {repr(repo_root)})
 from core.isolated_executors import IsolatedInterpreter, close_all_pools
+from core import aclose
 result = None
 with IsolatedInterpreter() as interp:
     result = interp.eval("42 * 42")

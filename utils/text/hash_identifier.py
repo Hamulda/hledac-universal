@@ -14,6 +14,7 @@ from dataclasses import dataclass
 from pathlib import Path
 import msgspec
 from operator import attrgetter, itemgetter
+from core import aclose
 logger = logging.getLogger(__name__)
 LENGTH_HASHES: dict[int, list[str]] = {32: ['MD5', 'NTLM', 'MD4', 'RIPEMD128', 'HAVAL128', 'Tiger128'], 40: ['SHA1', 'RIPEMD160', 'HAVAL160', 'Tiger160', 'MySQL5'], 56: ['SHA224', 'SHA3-224', 'HAVAL224'], 64: ['SHA256', 'SHA3-256', 'BLAKE2s', 'RIPEMD256', 'HAVAL256', 'GOST'], 96: ['SHA384', 'SHA3-384'], 128: ['SHA512', 'SHA3-512', 'Whirlpool', 'BLAKE2b', 'RIPEMD320']}
 PATTERN_HASHES: dict[str, str] = {'^\\$1\\$': 'MD5 (Unix crypt)', '^\\$2a\\$': 'bcrypt', '^\\$2b\\$': 'bcrypt', '^\\$2y\\$': 'bcrypt', '^\\$5\\$': 'SHA256 (Unix crypt)', '^\\$6\\$': 'SHA512 (Unix crypt)', '^\\$scrypt\\$': 'scrypt', '^\\$argon2i\\$': 'Argon2i', '^\\$argon2d\\$': 'Argon2d', '^\\$argon2id\\$': 'Argon2id', '^pbkdf2_sha256\\$': 'PBKDF2-SHA256', '^pbkdf2_sha1\\$': 'PBKDF2-SHA1', '^\\$P\\$': 'phpBB3/WordPress MD5', '^\\$H\\$': 'phpBB3/WordPress MD5', '^\\*[A-F0-9]{40}$': 'MySQL5', '^sha1\\$': 'SHA1 (Django)', '^\\{SHA\\}': 'SHA1 (Base64)', '^\\{SSHA\\}': 'SSHA', '^\\{SSHA256\\}': 'SSHA256', '^\\{SSHA512\\}': 'SSHA512', '^\\{CRYPT\\}': 'CRYPT', '^\\$apr1\\$': 'Apache MD5', '^\\$md5\\$': 'Sun MD5', '^\\$sha1\\$': 'SHA1 (Cisco)'}

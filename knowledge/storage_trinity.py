@@ -52,6 +52,7 @@ import logging
 import time as _time
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
+from core import aclose
 
 if TYPE_CHECKING:
     from collections.abc import Sequence

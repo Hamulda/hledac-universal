@@ -26,6 +26,7 @@ if TYPE_CHECKING:
     from hledac.universal.core.resource_governor import GovernorDecision
 logger = logging.getLogger(__name__)
 from hledac.universal.core.psutil_shim import psutil
+from core import aclose
 
 class AtomicAdaptiveSemaphore:
     """

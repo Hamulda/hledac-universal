@@ -9,6 +9,7 @@ import unittest
 from unittest.mock import AsyncMock, MagicMock, patch
 
 from hledac.universal.utils.asyncx import safe_gather_fire_and_forget
+from core import aclose
 
 sys.path.insert(0, '/Users/vojtechhamada/PycharmProjects/Hledac')
 

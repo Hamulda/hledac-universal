@@ -48,6 +48,7 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
 from operator import attrgetter, itemgetter
+from core import aclose
 if TYPE_CHECKING:
     from hledac.universal.knowledge.duckdb_store import DuckDBShadowStore
 

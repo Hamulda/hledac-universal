@@ -14,6 +14,7 @@ and adds integration logic for the universal orchestrator.
 import logging
 from typing import Any
 from hledac.universal.project_types import DeepResearchConfig, ExplorationNode, ExplorationStrategy, GhostMission
+from core import aclose
 logger = logging.getLogger(__name__)
 
 class ResearchLayer:

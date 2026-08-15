@@ -30,6 +30,7 @@ from collections.abc import Generator
 import pytest
 
 from hledac.universal.core.locks import (
+from core import aclose
     AsyncLockDCLP,
     LockCategory,
     LockInfo,

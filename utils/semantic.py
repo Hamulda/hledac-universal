@@ -36,6 +36,7 @@ from dataclasses import dataclass
 import msgspec
 from typing import Any
 import numpy as np
+from core import aclose
 logger = logging.getLogger(__name__)
 
 class FilterResult(msgspec.Struct, gc=False):

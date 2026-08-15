@@ -20,6 +20,7 @@ warnings.warn(
 
 # Re-export everything from the canonical implementation.
 from hledac.universal.core.embeddings.legacy import (
+from core._util import aclose
     # Classes
     MLXEmbeddingManager,
     EmbeddingTask,

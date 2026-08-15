@@ -69,6 +69,7 @@ logger = logging.getLogger(__name__)
 
 # F320: DRY LMDB cleanup helpers
 from hledac.universal.utils._patterns import safe_lmdb_close  # noqa: E402
+from core._util import aclose
 
 # --------------------------------------------------------------------------- #
 # Sub-DB index constants

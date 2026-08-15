@@ -56,6 +56,7 @@ from typing import TYPE_CHECKING
 from hledac.universal.utils.asyncx import safe_wait_for
 
 from hledac.universal.core.locks import LockCategory, make_lock
+from core._util import aclose
 
 if TYPE_CHECKING:
     from hledac.universal.core.resource_governor import M1ResourceGovernor

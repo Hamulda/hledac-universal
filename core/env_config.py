@@ -53,6 +53,7 @@ __all__ = [
 import os
 from functools import cache
 from typing import Any
+from core._util import aclose
 
 
 @cache  # thread-safe, bounded by Python's cache implementation

@@ -51,6 +51,7 @@ from typing import Any
 import httpx
 
 from hledac.universal.core.env_config import ENV
+from core import aclose
 
 logger = logging.getLogger(__name__)
 

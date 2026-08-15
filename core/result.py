@@ -33,6 +33,7 @@ from typing import TypeVar, Generic
 from collections.abc import Awaitable
 from dataclasses import dataclass
 import msgspec
+from core._util import aclose
 
 T = TypeVar("T", default=object)
 F = TypeVar("F", default=object)

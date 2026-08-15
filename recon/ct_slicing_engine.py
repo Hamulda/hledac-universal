@@ -37,6 +37,7 @@ from enum import Enum
 from typing import Any, TypeVar
 
 import msgspec
+from core import aclose
 
 try:
     from rust_extensions import aho_corasick as _aho_rust

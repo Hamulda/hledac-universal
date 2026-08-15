@@ -14,6 +14,7 @@ from datetime import UTC, datetime
 from typing import Any
 
 import msgspec
+from core import aclose
 
 
 def _utc_now() -> datetime:

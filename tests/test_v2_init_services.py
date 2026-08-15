@@ -25,6 +25,7 @@ from hledac.universal.runtime.scheduler_v2._v2_init import (
     _hasattr_safe,
 )
 from hledac.universal.runtime.scheduler_v2.protocol import InitResult
+from core import aclose
 
 
 class TestInitFailureHelper:

@@ -10,6 +10,7 @@ but does NOT govern sprint truth or own facts. See :ref:`evidence-ledger` for
 architecture overview, 3-tier hierarchy, and ledger boundary rules.
 """
 from __future__ import annotations
+from core import aclose  # F350M-R: Type-4 clone elimination
 import asyncio
 import concurrent.futures
 import contextlib
@@ -38,6 +39,27 @@ import orjson
 from hledac.universal.core.env_config import ENV
 from hledac.universal.runtime.protocols.cleanup_protocol import shutdown_aclose
 from hledac.universal.utils.asyncx import safe_create_task, safe_wait_for
+
+# ─── Sprint Split-Brain: Import split components ───────────────────────────────
+# New components are available for migration. EvidenceLog currently maintains
+# its own implementations for backward compatibility. Migration to use these
+# components is tracked separately.
+try:
+    from hledac.universal.evidence import (
+        EvidenceWriter,
+        EvidenceQuery,
+        WARCArchiver,
+        WarcWriteResult,
+    )
+    from hledac.universal.evidence._writer import EvidenceEvent as _SplitEvidenceEvent
+    _HAS_SPLIT_COMPONENTS = True
+except ImportError:
+    EvidenceWriter = None
+    EvidenceQuery = None
+    WARCArchiver = None
+    WarcWriteResult = None
+    _SplitEvidenceEvent = None
+    _HAS_SPLIT_COMPONENTS = False
 
 # ISSUE-14: Structured logging via structlog
 # Lazy import to avoid early import overhead — structlog is optional
@@ -126,7 +148,7 @@ def _get_archive_http_elog() -> EvidenceLog | None:
         if _archive_http_elog is not None:
             return _archive_http_elog
         try:
-            from hledac.universal._lazy_imports import get_EvidenceLog
+            from _lazy_imports import get_EvidenceLog
             EvidenceLog = get_EvidenceLog()
             _archive_http_elog = EvidenceLog()
         except Exception:  # noqa: BLE001 — fail-safe; EvidenceLog unavailable
@@ -1746,7 +1768,7 @@ class EvidenceLog:
     - Dotazování podle typu a confidence
     - Shrnutí pro Hermes (ne celý raw log)
     """
-    __slots__ = ('_run_id', '_log', '_index_by_type', '_index_by_source', '_created_at', '_frozen', '_closed', '_total_count', '_dropped_count', '_seq', '_chain_head', '_genesis_hash', '_encrypt_at_rest', '_encryption_key', '_cipher', '_enable_persist', '_persist_path', '_persist_file', '_persist_path_str', '_mpsc', '_mpsc2', '_flush_task', '_async_write_queue', '_async_write_task', '_mpsc2_reader', '_db_path', '_db', '_initialized', '_arrow_path', '_arrow_writer', '_arrow_schema', '_closing', '_manifest_dirty', '_flush_shutdown', '_async_write_shutdown', '_cancel_event', '_cancel_watcher_task', '_loop', '_silent_failure', '_sample_rate', '_duckdb_conn', '_duckdb_enabled', '_dlq_manager', '_warc_writer', '_warc_enabled', '_warc_paths', '_warc_init_lock', '_warc_data_lock', '_blitz_mode', '_warc_provenance', '_warc_snippets')
+    __slots__ = ('_run_id', '_log', '_index_by_type', '_index_by_source', '_created_at', '_frozen', '_closed', '_total_count', '_dropped_count', '_seq', '_chain_head', '_genesis_hash', '_encrypt_at_rest', '_encryption_key', '_cipher', '_enable_persist', '_persist_path', '_persist_file', '_persist_path_str', '_mpsc', '_mpsc2', '_flush_task', '_async_write_queue', '_async_write_task', '_mpsc2_reader', '_db_path', '_db', '_initialized', '_arrow_path', '_arrow_writer', '_arrow_schema', '_closing', '_manifest_dirty', '_flush_shutdown', '_async_write_shutdown', '_cancel_event', '_cancel_watcher_task', '_loop', '_silent_failure', '_sample_rate', '_duckdb_conn', '_duckdb_enabled', '_dlq_manager', '_warc_writer', '_warc_enabled', '_warc_paths', '_warc_init_lock', '_warc_data_lock', '_warc_archiver', '_blitz_mode', '_warc_provenance', '_warc_snippets')
     MAX_RAM_EVENTS = 50
     MAX_PAYLOAD_PREVIEW = 200
     JSONL_ROTATE_SIZE = 10 * 1024 * 1024
@@ -1878,6 +1900,10 @@ class EvidenceLog:
         # from concurrent mutation when archive_http_response() is called from
         # thread pool via run_in_executor (async fetch path).
         self._warc_data_lock: threading.Lock = threading.Lock()
+        # Sprint Split-Brain: Use extracted WARCArchiver when available
+        self._warc_archiver: WARCArchiver | None = None
+        if _HAS_SPLIT_COMPONENTS and self._warc_enabled:
+            self._warc_archiver = WARCArchiver(enabled=True)
         # PHYSICS-09: Blitz mode — reduces per-batch flush syscall frequency
         self._blitz_mode: bool = blitz_mode
         # ISSUE [FINAL]-019-05: Clear stale globals from previous sprint
@@ -1972,8 +1998,13 @@ class EvidenceLog:
             self._dlq_manager = get_dlq_manager()
         except Exception:  # noqa: BLE001
             self._dlq_manager = None
-        if self._warc_enabled and self._warc_writer is None and self._persist_path is not None:
-            self._warc_writer = WARCWriter(self._persist_path)
+        if self._warc_enabled:
+            if self._persist_path is not None:
+                if self._warc_writer is None:
+                    self._warc_writer = WARCWriter(self._persist_path)
+                if self._warc_archiver is not None and self._warc_writer is not None:
+                    # Sprint Split-Brain: Initialize WARCArchiver with the same path
+                    self._warc_archiver.init_writer(self._persist_path)
 
     async def initialize(self) -> None:
         """Initialize async SQLite components. Idempotent."""
@@ -2308,10 +2339,7 @@ class EvidenceLog:
                     except asyncio.CancelledError: buf.clear(); raise
             if not self._mpsc2.has_async_queue and not self._mpsc2.is_empty(): continue
         await self._drain_and_flush(buf, afile)
-        if afile:
-            try: await afile.close()
-            except Exception:  # noqa: BLE001
-                pass
+        await aclose(afile)
     _ARROW_SUB_BATCH = 256
 
     async def _flush_batch_bytes(self, batch: list[bytes]) -> None:
@@ -3042,11 +3070,19 @@ class EvidenceLog:
 
         _ts = timestamp if timestamp is not None else datetime.now(UTC)
 
+        # Sprint Split-Brain: Use extracted WARCArchiver when available
         prov: WarcWriteResult | None
-        if http_request:
-            prov = self._warc_writer.write_response(url, _ts, http_request, http_response)
+        if self._warc_archiver is not None:
+            if http_request:
+                prov = self._warc_archiver.archive_http_response(url, _ts, http_request, http_response)
+            else:
+                prov = self._warc_archiver.archive_raw(url, _ts, http_response, content_type)
         else:
-            prov = self._warc_writer.write_raw(url, _ts, http_response, content_type)
+            # Fallback to direct WARCWriter
+            if http_request:
+                prov = self._warc_writer.write_response(url, _ts, http_request, http_response)
+            else:
+                prov = self._warc_writer.write_raw(url, _ts, http_response, content_type)
 
         # Store provenance for later extraction by sprint_exporter
         if prov is not None and prov.success:
@@ -4628,3 +4664,18 @@ class EvidenceLog:
             chain.append(event)
         traverse(event_id)
         return chain
+
+# ─── Evidence Architect Components ────────────────────────────────────────────────
+# Sprint Split-Brain: Delegation to split components
+
+from hledac.universal.evidence import (
+    WarcWriteResult,
+    WARCWriter,
+    WARCArchiver,
+    EvidenceEvent,
+    EvidenceWriter,
+    EvidenceQuery,
+    get_warc_paths,
+    get_warc_snippets,
+    _clear_warc_globals,
+)

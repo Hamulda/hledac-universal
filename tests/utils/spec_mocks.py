@@ -45,6 +45,7 @@ from collections.abc import Callable, Generator, Sequence
 from contextlib import contextmanager
 from typing import TYPE_CHECKING, Any
 from unittest.mock import AsyncMock, MagicMock
+from core import aclose
 
 if TYPE_CHECKING:
     pass

@@ -16,6 +16,7 @@ import asyncio
 import math
 import secrets
 import time
+from core import aclose
 
 # Crypto-safe RNG — F350M-R
 _RNG = secrets.SystemRandom()

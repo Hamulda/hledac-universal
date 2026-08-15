@@ -436,6 +436,7 @@ except Exception:
 
 
 import sys as _sys
+from core import aclose
 
 
 def _make_rust_wrapper(rust_fn_name: str) -> Any:

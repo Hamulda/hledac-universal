@@ -9,6 +9,7 @@ from os import fspath, PathLike
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING
+from core import aclose
 
 def _get_tempdir() -> str:
     """Return tempfile.gettempdir() - reads current value at call time."""

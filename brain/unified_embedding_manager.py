@@ -27,6 +27,7 @@ import numpy as np
 import msgspec
 
 from hledac.universal.utils.cache import PyCacheDict
+from core import aclose
 
 logger = logging.getLogger(__name__)
 

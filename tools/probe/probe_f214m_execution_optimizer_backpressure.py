@@ -21,6 +21,7 @@ from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
 from typing import Any
 from hledac.universal.utils.asyncx import parallel_ok
+from core import aclose
 IO_WORKLOAD_SIZES = [4, 8, 16, 32]
 CPU_WORKLOAD_SIZES = [4, 8, 16, 32]
 MEMORY_WORKLOAD_SIZES = [4, 8, 16, 32]

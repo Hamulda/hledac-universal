@@ -31,6 +31,7 @@ from unittest.mock import MagicMock
 import pytest
 
 from hledac.universal.export.sprint_exporter import (
+from core import aclose
     _SOURCE_TIER,
     _compute_research_depth,
 )

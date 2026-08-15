@@ -40,6 +40,7 @@ import logging
 from typing import TYPE_CHECKING
 
 from hledac.universal.utils.locks import LazyAsyncioLock
+from core import aclose
 
 if TYPE_CHECKING:
     import httpx  # used only in annotations — actual import is lazy

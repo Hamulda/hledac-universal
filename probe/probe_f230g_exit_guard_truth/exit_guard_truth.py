@@ -22,6 +22,7 @@ import ast
 import json
 import sys
 from pathlib import Path
+from core import aclose
 
 ROOT = Path("/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal")
 for _p in [str(ROOT), str(ROOT / "hledac" / "universal")]:

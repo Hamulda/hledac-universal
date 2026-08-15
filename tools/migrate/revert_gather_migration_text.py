@@ -6,6 +6,7 @@
 
 import re
 import sys
+from core import aclose
 
 REVERT_FUNCS = r"safe_gather(?:_dropin|_fire_and_forget|_strict)?"
 

@@ -15,6 +15,7 @@ import logging
 from typing import TYPE_CHECKING, Any
 
 from hledac.universal.pipeline._soa_types import FetchedBatch, ScoredBatch
+from core import aclose
 
 logger = logging.getLogger(__name__)
 

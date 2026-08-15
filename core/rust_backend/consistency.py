@@ -48,6 +48,7 @@ if TYPE_CHECKING:
     from hledac_rust_extensions import hledac_rust_extensions
 
 from hledac.universal.core.feature_flags import FeatureFlag, FeatureFlags
+from core._util import aclose
 
 logger = logging.getLogger(__name__)
 

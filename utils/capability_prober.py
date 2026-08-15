@@ -14,6 +14,7 @@ from collections import OrderedDict, deque
 from collections.abc import Callable
 from functools import cached_property
 from typing import TYPE_CHECKING, Any
+from core import aclose
 if TYPE_CHECKING:
     from hledac.universal.core.system_detector import HardwareCapabilities
 logger = logging.getLogger(__name__)

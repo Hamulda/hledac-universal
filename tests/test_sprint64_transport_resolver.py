@@ -8,6 +8,7 @@ import asyncio
 from unittest.mock import patch
 
 import pytest
+from core import aclose
 
 
 # Test transport import doesn't crash

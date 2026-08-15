@@ -18,6 +18,7 @@ import logging
 import sqlite3
 import struct
 from pathlib import Path
+from core import aclose
 
 logger = logging.getLogger(__name__)
 

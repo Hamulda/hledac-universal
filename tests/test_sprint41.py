@@ -22,6 +22,7 @@ from hledac.universal.coordinators.fetch_coordinator import FetchCoordinator, Zs
 # Import the modules under test
 from hledac.universal.layers.communication_layer import CommunicationLayer, _BatchItem
 from hledac.universal.project_types import CommunicationConfig
+from core import aclose
 
 
 class TestSprint41A_DynamicBatching(unittest.IsolatedAsyncioTestCase):  # noqa: N801

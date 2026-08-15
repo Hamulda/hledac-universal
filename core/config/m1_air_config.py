@@ -26,6 +26,7 @@ from typing import ClassVar
 
 # MODERN-41 Fix: Import SWAP_TIERS SSOT for swap thresholds
 from hledac.universal.utils.uma_budget import SWAP_TIERS
+from core._util import aclose
 
 
 # ─────────────────────────────────────────────────────────────────────────────

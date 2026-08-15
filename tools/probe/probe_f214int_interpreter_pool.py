@@ -41,6 +41,7 @@ import time
 from collections.abc import Callable
 from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor
 from dataclasses import dataclass
+from core import aclose
 
 @dataclass(slots=True)
 class CandidateResult:

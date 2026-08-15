@@ -56,6 +56,7 @@ I2P_SAM_PORT = 7656
 I2P_HTTP_PORT = 8888
 # Module-level imports for performance (avoid repeated imports in hot paths)
 import uuid
+from core import aclose
 SAM_MIN_VERSION = '3.0'
 SAM_MAX_VERSION = '3.2'
 SAM_OK = 'OK'

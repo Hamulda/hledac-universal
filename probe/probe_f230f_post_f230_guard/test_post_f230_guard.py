@@ -61,6 +61,7 @@ from hledac.universal.runtime.sprint_scheduler import (
     SprintSchedulerResult,
 )
 from hledac.universal.runtime.acquisition_strategy import (
+from core import aclose
     FeedDominanceBudget,
     AcquisitionProfile,
     _NONFEED_PROFILE_FEED_CAP_THRESHOLDS,

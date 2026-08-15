@@ -14,6 +14,7 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "benchmarks"))
 from benchmarks.harness import BenchmarkHarness, _percentile, _run_single_sprint_unsafe
 from benchmarks.migrate_schema import migrate_record
+from core import aclose
 
 # ---------------------------------------------------------------------------
 # _percentile

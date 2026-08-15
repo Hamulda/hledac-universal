@@ -64,6 +64,7 @@ from hledac.universal.utils.resilience.circuit_breaker import (
     CircuitBreakerConfig,
 )
 from hledac.universal.utils.resilience.health_indicators import (
+from core import aclose
     HealthScore,
     HealthReporter,
     format_health_status,

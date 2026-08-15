@@ -221,6 +221,7 @@ except ImportError as e:
 from hledac.universal.prefetch import ssm_reranker, prefetch_oracle
 from hledac.universal.rl import qmix, replay_buffer, state_extractor
 from hledac.universal.research import task_prioritizer
+from core import aclose
 
 # Check no REAL (non-None) mlx modules loaded
 real_mlx_keys = [m for m in sys.modules

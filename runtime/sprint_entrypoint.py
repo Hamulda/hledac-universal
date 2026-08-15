@@ -447,6 +447,7 @@ from hledac.universal.utils.config_introspection import safe_attr_get
 # Rust rayon pools get this automatically (lib.rs:185-196 apply_qos_hint inside pool threads).
 # Python asyncio runs on the main thread which needs the same hint.
 from hledac.universal.utils.platform_info import apply_qos_to_main_thread
+from core import aclose
 
 logger = logging.getLogger(__name__)
 

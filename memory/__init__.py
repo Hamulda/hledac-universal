@@ -30,6 +30,7 @@ Example:
 
 
 from .memory_manager import (
+from core import aclose
     MemoryManager,
     close_memory_manager,
     get_memory_manager,

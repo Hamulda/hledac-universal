@@ -19,6 +19,7 @@ from unittest.mock import patch, MagicMock
 import pytest
 
 from hledac.universal.cache.adaptive_cache import (
+from core import aclose
     AdaptiveCache,
     AdaptiveCacheConfig,
     CacheStats,

@@ -6,6 +6,7 @@ from hledac.universal.report.renderers.markdown_renderer import MarkdownRenderer
 from hledac.universal.report.renderers.html_renderer import HTMLRenderer
 from hledac.universal.report.renderers.svg_renderer import SVGRenderer
 from hledac.universal.report.renderers.pdf_renderer import PDFRenderer
+from core import aclose
 
 __all__ = [
     "JSONRenderer",

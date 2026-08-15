@@ -250,6 +250,7 @@ class TestF221F_PlanSemanticsSplit:  # noqa: N801
 import sys  # noqa: E402
 from collections import OrderedDict  # noqa: E402
 from typing import Any  # noqa: E402
+from core import aclose
 
 sys.path.insert(0, "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal")
 

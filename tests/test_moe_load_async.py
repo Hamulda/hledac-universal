@@ -18,6 +18,7 @@ import asyncio
 import time
 import unittest
 from unittest.mock import AsyncMock, patch, MagicMock
+from core import aclose
 
 
 class TestMoELoadAsync(unittest.IsolatedAsyncioTestCase):

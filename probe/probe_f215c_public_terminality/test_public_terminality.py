@@ -23,6 +23,7 @@ ABORT CONDITIONS:
 import pytest
 
 from hledac.universal.runtime.acquisition_strategy import (
+from core import aclose
     SourceFamilyOutcome,
     normalize_source_family_outcome,
 )

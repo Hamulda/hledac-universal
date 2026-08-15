@@ -18,6 +18,7 @@ Or via elapsed():
 """
 
 from time import monotonic as _monotonic, perf_counter as _perf_counter
+from core import aclose
 
 
 def monotonic() -> float:

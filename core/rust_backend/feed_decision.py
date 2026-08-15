@@ -17,6 +17,7 @@ M1 8GB: all functions are pure computation, no GIL contention.
 from __future__ import annotations
 
 from typing import Any
+from core._util import aclose
 
 
 def get_domain() -> "FeedDecisionDomain":

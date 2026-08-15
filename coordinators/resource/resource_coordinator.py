@@ -73,6 +73,7 @@ logger = logging.getLogger(__name__)
 # During active sprint, GC is disabled entirely; explicit gen-0 ticks
 # replace involuntary collections. Boot thresholds are applied once at import.
 from hledac.universal.coordinators.resource.blitz_gc import (
+from core import aclose
     BLITZ_THRESHOLD,
     BOOT_THRESHOLD,
     POST_TEARDOWN_THRESHOLD,

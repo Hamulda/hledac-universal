@@ -13,5 +13,6 @@ _warnings.warn(
 )
 
 from hledac.universal.utils.mlx_memory._prompt import MLXPromptCache
+from core import aclose
 
 __all__ = ["MLXPromptCache"]

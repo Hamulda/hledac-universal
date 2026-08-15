@@ -44,6 +44,7 @@ import logging
 import time
 from pathlib import Path
 from typing import Any
+from core import aclose
 
 logger = logging.getLogger("hledac.universal.knowledge.duckdb_migrator")
 

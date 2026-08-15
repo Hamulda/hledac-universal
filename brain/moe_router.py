@@ -38,6 +38,10 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 import msgspec
 from typing import Any, TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from mlx_lm import Model as MLXModel
+    from mlx_lm import TokenizerWrapper as MLXTokenizer
 import numpy as np
 from ..security.pii_gate import fallback_sanitize
 from ..core.embeddings.cache import EmbeddingCache
@@ -45,6 +49,7 @@ MAX_LLM_PROMPT_CHARS = 8192
 
 # C1-X FIX: Import MLX_AVAILABLE from SSOT (zero-import detection)
 from hledac.universal.utils.mlx_memory import MLX_AVAILABLE
+from core import aclose
 
 # Lazy accessor for mlx modules - uses centralized get_mx() from SSOT
 def _get_mlx():
@@ -194,11 +199,11 @@ class MoERouter:
         self.config = config or MoERouterConfig()
         self._sanitize_for_llm = sanitize_for_llm
         self._router_mlp: RouterMLP | None = None
-        self._experts: dict[str, tuple[Any, Any]] = {}
+        self._experts: dict[str, tuple[MLXModel, MLXTokenizer]] = {}
         self._expert_usage: dict[str, int] = {}
         self._embedding_model = None
         self._embedding_tokenizer = None
-        self._prompt_cache_by_expert: dict[str, Any] = {}
+        self._prompt_cache_by_expert: dict[str, Any] = {}  # type: ignore[assignment]
         # [META]-013: Delegating to EmbeddingCache(dim=768) — two-layer LRU with
         # free-list memmap. Replaces the old circular-round-robin memmap that
         # had no real eviction. Shares the cache across sessions (meta.json persist).

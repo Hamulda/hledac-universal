@@ -38,6 +38,7 @@ import logging
 import re
 import unicodedata
 from typing import Any, NamedTuple
+from core import aclose
 
 logger = logging.getLogger(__name__)
 

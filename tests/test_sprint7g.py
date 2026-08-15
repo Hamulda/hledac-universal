@@ -20,6 +20,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from hledac.universal.runtime.sprint_scheduler import SprintScheduler, SprintSchedulerConfig
+from core import aclose
 
 
 class TestScanCtFix:

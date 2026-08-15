@@ -11,6 +11,7 @@ import asyncio
 import pytest
 
 from runtime.scheduler_v2.winddown import WinddownOrchestrator
+from core import aclose
 
 
 class TestSC07WinddownNoSchedulerDep:

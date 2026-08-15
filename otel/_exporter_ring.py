@@ -2,6 +2,7 @@
 import threading
 from collections.abc import Sequence
 from typing import Any
+from core import aclose
 
 try:
     from opentelemetry.sdk.trace.export import SpanExportResult

@@ -4,6 +4,7 @@ Sprint F207J-B: Non-feed adapter finding bridge
 """
 
 from .nonfeed_finding_bridge import (
+from core import aclose
     ct_results_to_findings,
     wayback_results_to_findings,
     passive_dns_results_to_findings,

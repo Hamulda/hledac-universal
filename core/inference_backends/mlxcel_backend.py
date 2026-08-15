@@ -32,6 +32,7 @@ else:
         InferenceRequest = Any  # type: ignore[assignment,misc]
         InferenceResponse = Any  # type: ignore[assignment,misc]
         Token = Any  # type: ignore[assignment,misc]
+from core._util import aclose
 
 from hledac.universal.core.inference_coordinator import InferenceBackend, InferenceError
 

@@ -20,6 +20,7 @@ import concurrent.futures
 from unittest import mock
 
 import pytest
+from core import aclose
 
 # ---------------------------------------------------------------------------
 # Sample data

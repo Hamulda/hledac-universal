@@ -11,6 +11,7 @@ until full migration is complete.
 
 # Re-export from acquisition_strategy.py for now (until full extraction)
 from hledac.universal.runtime.acquisition_strategy import (
+from core import aclose
     build_acquisition_plan,
     build_acquisition_report,
     get_lane_plan,

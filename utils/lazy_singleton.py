@@ -20,6 +20,7 @@ import threading
 from collections.abc import Callable
 from contextvars import ContextVar
 from typing import TypeVar
+from core import aclose
 
 __all__ = ["LazySingleton", "AsyncLazySingleton"]
 

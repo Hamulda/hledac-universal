@@ -20,6 +20,7 @@ import tempfile
 import uuid
 from datetime import UTC, datetime
 from pathlib import Path
+from core import aclose
 
 
 class TestEvidenceLogCorrelation:

@@ -15,6 +15,7 @@ sprint retains at least MIN_ACTIVE_WINDOW_S=30s for evidence collection.
 import unittest
 
 from hledac.universal.runtime.sprint_scheduler import SprintSchedulerConfig
+from core import aclose
 
 
 class TestF278ADynamicWindup(unittest.TestCase):

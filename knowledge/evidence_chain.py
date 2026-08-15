@@ -27,6 +27,7 @@ from dataclasses import dataclass, field
 import msgspec
 from hledac.universal.compat.msgspec_gc_compat import Struct
 from hledac.universal.utils.msgspec_json import encode as _msgspec_encode, decode as _msgspec_decode
+from core import aclose
 __all__ = ['ChainStep', 'EvidenceChain', 'EvidenceChainBuilder', 'MAX_CHAIN_DEPTH', 'MAX_CHAINS_PER_SPRINT', 'MAX_CHAIN_JSON_BYTES', 'serialize_chain', 'deserialize_chain', 'summarize_chain_support', 'source_family_from_step_or_finding', 'corroboration_level', 'SOURCE_FAMILY_FEED', 'SOURCE_FAMILY_CT', 'SOURCE_FAMILY_PUBLIC', 'SOURCE_FAMILY_DEEP', 'SOURCE_FAMILY_DOC', 'CORROBORATION_NONE', 'CORROBORATION_SINGLE', 'CORROBORATION_MULTI']
 SOURCE_FAMILY_FEED = 'feed'
 SOURCE_FAMILY_CT = 'ct'

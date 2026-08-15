@@ -32,6 +32,7 @@ try:
 except ImportError:
     httpx = None
 from hledac.universal.knowledge.duckdb_store import CanonicalFinding
+from core import aclose
 logger = logging.getLogger('hledac')
 CC_INDEX_API = 'https://index.commoncrawl.org/'
 CC_COLLINFO_URL = 'https://index.commoncrawl.org/collinfo.json'

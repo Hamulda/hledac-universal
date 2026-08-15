@@ -48,6 +48,7 @@ import asyncio
 import logging
 
 from hledac.universal.core.concurrency_registry import (
+from core._util import aclose
     ConcurrencyBudgetRegistry,
     ConcurrencyCategory,
 )

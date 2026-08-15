@@ -22,6 +22,7 @@ if TYPE_CHECKING:
     import httpx
 else:
     import httpx
+from core import aclose
 logger = logging.getLogger(__name__)
 
 class RecordType(StrEnum):

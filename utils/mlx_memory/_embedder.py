@@ -26,6 +26,7 @@ from typing import Any, Optional
 import msgspec
 
 from hledac.universal.utils._patterns import module_singleton_creator
+from core import aclose
 
 logger = logging.getLogger(__name__)
 _MAX_BATCH_SIZE: int = 32

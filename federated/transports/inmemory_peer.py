@@ -56,6 +56,7 @@ import time
 from typing import Any
 
 from .protocol import NodeTransportFactory, set_sprint_id_attr
+from core import aclose
 
 logger = logging.getLogger(__name__)
 

@@ -47,6 +47,7 @@ _COSINE_LOW_THRESHOLD: float = 0.15    # below → noise even if Tier 1 borderli
 # ── Env overrides ────────────────────────────────────────────────────────────
 # SWARM-010: Use FeatureFlags for registry compliance
 from hledac.universal.core.feature_flags import FeatureFlags, FeatureFlag
+from core import aclose
 _HLEDAC_TRIAGE_DISABLED: bool = FeatureFlags.get(FeatureFlag.TRIAGE_DISABLED)
 _HLEDAC_TRIAGE_TIER2_ENABLED: bool = FeatureFlags.get(FeatureFlag.TRIAGE_TIER2)
 

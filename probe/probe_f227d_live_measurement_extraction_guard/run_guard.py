@@ -3,6 +3,7 @@
 
 import subprocess, sys
 from pathlib import Path
+from core import aclose
 
 REPO_ROOT = Path(__file__).resolve().parent.parent  # probe_f227d/ → hledac/universal/
 

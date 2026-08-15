@@ -1439,6 +1439,7 @@ class MediaSandboxCoordinator:
         # Build analysis script
         analysis_script = f"""
 import sys, os
+from core import aclose
 for k in list(os.environ):
     if any(p in k for p in ('API','KEY','TOKEN','SECRET','HLEDAC')):
         del os.environ[k]

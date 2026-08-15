@@ -61,6 +61,7 @@ from collections import defaultdict
 from typing import Any
 from ._types import CO_OCCURRENCE_FP16, MAX_CAUSAL_ENTITIES, MAX_CAUSAL_FINDINGS, MAX_CAUSAL_HYPOTHESES, MAX_CO_OCCURRENCE_MATRIX_SIZE, AnomalySignal, CausalEntity, CausalHypothesis, TemporalSequence
 from operator import attrgetter, itemgetter
+from core import aclose
 logger = logging.getLogger(__name__)
 
 class CausalReasoner:

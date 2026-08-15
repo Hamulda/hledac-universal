@@ -32,7 +32,10 @@ from concurrent.futures import ThreadPoolExecutor
 from contextlib import closing
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from sentence_transformers import SentenceTransformer
 import numpy as np
 from hledac.universal.utils.asyncx import parallel
 from hledac.universal.utils.mlx_cache import MLX_AVAILABLE, get_mx
@@ -41,6 +44,7 @@ logger = logging.getLogger(__name__)
 # M1-OPT: Use shared domain executor instead of per-module TPE
 # embed preset = 1 worker (MLX embed sync bridge)
 from hledac.universal.utils.domain_executors import get_or_create
+from core import aclose
 
 
 def _get_embed_executor() -> ThreadPoolExecutor:
@@ -49,10 +53,10 @@ def _get_embed_executor() -> ThreadPoolExecutor:
 
 
 # Lazy-loaded mlx.nn module (avoids importing MLX at module load time)
-_mlx_nn_mod: Any = None
+_mlx_nn_mod: Any = None  # type: ignore[assignment]
 
 
-def _get_mlx_nn() -> Any:
+def _get_mlx_nn() -> Any:  # type: ignore[type-arg]
     """Lazily import mlx.nn, returning None if unavailable."""
     global _mlx_nn_mod
     if _mlx_nn_mod is None:
@@ -196,7 +200,7 @@ class DistillationEngine:
     MAX_CHAIN_LENGTH = 50
     __slots__ = tuple(('_critic', '_db_path', '_initialized', 'embedding_dim', 'embedding_model'))
 
-    def __init__(self, embedding_model: Any | None=None, db_path: str | Path | None=None, embedding_dim: int=DEFAULT_EMBEDDING_DIM):
+    def __init__(self, embedding_model: SentenceTransformer | None=None, db_path: str | Path | None=None, embedding_dim: int=DEFAULT_EMBEDDING_DIM):
         self.embedding_model = embedding_model
         self.embedding_dim = embedding_dim
         self._critic: CriticMLP | None = None
@@ -207,7 +211,7 @@ class DistillationEngine:
             self._db_path = Path(db_path)
         self._initialized = False
 
-    async def initialize(self, embedding_model: Any | None=None) -> None:
+    async def initialize(self, embedding_model: SentenceTransformer | None=None) -> None:
         """
         Inicializovat engine.
 

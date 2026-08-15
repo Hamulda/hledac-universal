@@ -35,6 +35,7 @@ from typing import TYPE_CHECKING, Any, Literal, Protocol, runtime_checkable
 from hledac.universal.utils.asyncx import safe_wait_for
 
 import msgspec
+from core import aclose
 
 if TYPE_CHECKING:
     pass

@@ -4,6 +4,7 @@ Shared utilities for runtime modules.
 
 from hledac.universal.runtime._shared.lmdb_pool_helpers import _LMDB_WORKERS
 from hledac.universal.runtime._shared.evidence_log_shared import (
+from core import aclose
     evidence_log_factory,
     evidence_log_init,
 )

@@ -20,6 +20,7 @@ import sys
 from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
+from core import aclose
 REPO_ROOT = '/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal'
 
 class Verdict(str, Enum):

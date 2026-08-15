@@ -46,6 +46,7 @@ from enum import StrEnum
 from typing import Any
 logger = logging.getLogger(__name__)
 import httpx
+from core import aclose
 
 class WhoisError(StrEnum):
     """String-based error codes for WHOIS/RDAP operations."""

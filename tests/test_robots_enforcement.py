@@ -16,6 +16,7 @@ Tests:
 """
 import asyncio
 import pytest
+from core import aclose
 
 
 class TestRobotsParserDefaults:

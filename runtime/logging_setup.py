@@ -8,6 +8,7 @@ Issue #16: Unified structlog configuration moved to utils/logging_config.py
 """
 
 from hledac.universal.utils.logging_config import (
+from core import aclose
     configure_logging,
     get_logger,
     bind_sprint_context,

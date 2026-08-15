@@ -36,6 +36,7 @@ from typing import TYPE_CHECKING, Any, TypeVar
 from hledac.universal.utils.locks import LazyAsyncioLock
 
 from hledac.universal.core.locks import LockCategory, register_lock
+from core import aclose
 
 if TYPE_CHECKING:
     from collections.abc import Awaitable

@@ -55,6 +55,7 @@ import threading
 import time
 import weakref
 from typing import TYPE_CHECKING, Any
+from core import aclose
 if TYPE_CHECKING:
     from hledac.universal.brain.batch_scheduler import BatchScheduler
     from hledac.universal.brain.deephermes3_engine import DeepHermes3Engine

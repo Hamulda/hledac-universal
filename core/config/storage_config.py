@@ -27,6 +27,7 @@ import os
 from typing import ClassVar
 
 import msgspec
+from core._util import aclose
 
 
 class StorageConfig(msgspec.Struct, frozen=True, kw_only=True, gc=False):

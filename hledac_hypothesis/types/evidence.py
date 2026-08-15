@@ -35,6 +35,7 @@ class Evidence(msgspec.Struct, gc=False):
 
 # SourceCredibility is kept as @dataclass — has runtime update method update_accuracy()
 from dataclasses import dataclass, field
+from core import aclose
 
 
 class SourceCredibility(msgspec.Struct, gc=False):

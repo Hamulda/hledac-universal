@@ -35,6 +35,7 @@ from typing import Final
 import httpx
 from hledac.universal.knowledge.duckdb_store import CanonicalFinding
 from hledac.universal.utils.asyncx import parallel_ok
+from core import aclose
 
 logger = logging.getLogger(__name__)
 

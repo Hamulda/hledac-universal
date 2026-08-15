@@ -8,6 +8,7 @@ from __future__ import annotations
 import bisect
 import asyncio
 from typing import Final
+from core import aclose
 
 
 # --- Error taxonomy ---

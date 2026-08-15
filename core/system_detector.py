@@ -47,6 +47,7 @@ try:
 except ImportError:
     from typing import Literal
 from hledac.universal.core.psutil_shim import psutil_module as _psutil_mod
+from core._util import aclose
 
 class HardwareCapabilities(msgspec.Struct, frozen=True, gc=False):
     """

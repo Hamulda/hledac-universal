@@ -1036,6 +1036,7 @@ _TOKEN_HASH_CACHE_LOCK = threading.Lock()
 _MAX_TOKEN_CACHE = 10000
 # R6: Centralized Rust access via core.rust_backend
 from hledac.universal.core.rust_backend import rust
+from core import aclose
 _rust_hamming_dist: Callable[[int, int], int] | None = rust.raw.hamming_dist
 
 class TopKBucketIndex:

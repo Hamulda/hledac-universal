@@ -47,6 +47,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 import msgspec
+from core import aclose
 
 if TYPE_CHECKING:
     from collections.abc import Sequence

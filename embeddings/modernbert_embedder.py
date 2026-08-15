@@ -19,6 +19,7 @@ import threading
 from dataclasses import dataclass
 import msgspec
 import numpy as np
+from core import aclose
 logger = logging.getLogger(__name__)
 MLX_EMBEDDINGS_AVAILABLE = False
 _mlx_available = False

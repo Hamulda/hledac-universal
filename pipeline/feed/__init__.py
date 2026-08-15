@@ -14,6 +14,7 @@ Stages (in execution order):
 For backwards compatibility, live_feed_pipeline.py re-exports all symbols.
 """
 from __future__ import annotations
+from core import aclose
 
 # Re-export lazily to avoid circular import
 # Use `from pipeline.feed import FeedPipelineEntryResult` instead of direct import

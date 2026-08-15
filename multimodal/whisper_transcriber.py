@@ -53,6 +53,7 @@ from pathlib import Path
 from typing import Any, Literal
 
 import msgspec
+from core import aclose
 
 logger = logging.getLogger(__name__)
 

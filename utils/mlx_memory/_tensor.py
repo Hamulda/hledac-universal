@@ -18,6 +18,7 @@ and the MLX array — no copy, no L2 cache eviction.
 from typing import TYPE_CHECKING, Any, Optional
 
 import numpy as np
+from core import aclose
 
 if TYPE_CHECKING:
     import mlx.core as mx

@@ -7,6 +7,7 @@ import tempfile
 import unittest
 
 import numpy as np
+from core import aclose
 
 sys.path.insert(0, '/Users/vojtechhamada/PycharmProjects/Hledac')
 

@@ -16,6 +16,7 @@ from typing import Any
 
 import msgspec
 import numpy as np
+from core import aclose
 logger = logging.getLogger(__name__)
 EvidenceLog = None
 

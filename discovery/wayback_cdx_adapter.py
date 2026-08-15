@@ -19,6 +19,7 @@ import time
 
 from hledac.universal.discovery.base import DiscoveryBatchResult, DiscoveryHit
 from hledac.universal.transport.circuit_breaker import get_breaker
+from core import aclose
 
 # ---------------------------------------------------------------------------
 # Wayback CDX API

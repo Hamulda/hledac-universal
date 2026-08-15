@@ -43,6 +43,7 @@ Usage:
 import importlib
 import types
 from typing import TYPE_CHECKING, Any, Protocol, TypeVar, cast
+from core._util import aclose
 
 __all__ = [
     "DelegatingDomain",

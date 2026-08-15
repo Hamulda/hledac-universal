@@ -19,6 +19,7 @@ import sys
 from pathlib import Path
 
 from operator import attrgetter, itemgetter
+from core import aclose
 HEAVY_MODULES = {
     "duckdb",
     "lancedb",
@@ -114,7 +115,7 @@ ALLOWED = {
     "utils/html_text_fast.py",
     "utils/html_parse_pool.py",
     "coordinators/validation_coordinator.py",
-    "advanced_web/structured_extractor.py",
+    # DELETED: advanced_web/structured_extractor.py
     # Cryptography — security layer, feature-gated
     "intelligence/cryptographic_intelligence.py",
     "security/encryption.py",

@@ -29,6 +29,7 @@ if MLX_AVAILABLE:
 
 import numpy as np
 from typing import TYPE_CHECKING, Optional
+from core import aclose
 if TYPE_CHECKING:
     from hledac.universal.runtime.scheduler_result import SprintSchedulerResult
 _KNOWN_LANES = ('PUBLIC', 'CT', 'WAYBACK', 'DOH', 'PASSIVE_DNS')

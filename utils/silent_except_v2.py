@@ -56,6 +56,7 @@ from dataclasses import dataclass
 from typing import ParamSpec, TypeVar
 
 from hledac.universal.utils.exception_severity import (
+from core import aclose
     Severity,
     ExceptionEvent,
     exc_event,

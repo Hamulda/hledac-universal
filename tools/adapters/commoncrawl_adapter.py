@@ -20,6 +20,7 @@ import logging
 import re
 from dataclasses import dataclass
 import msgspec
+from core import aclose
 logger = logging.getLogger(__name__)
 SOURCE_NAME: str = 'commoncrawl'
 CDX_COLLINFO_URL = 'https://index.commoncrawl.org/collinfo.json'

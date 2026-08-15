@@ -15,6 +15,7 @@ import os
 import py_compile
 from pathlib import Path
 from typing import TypedDict
+from core import aclose
 
 PROJECT_ROOT = Path(__file__).parent.parent
 REPORT_PATH = PROJECT_ROOT / "IMPORT_HEALTH_REPORT.json"

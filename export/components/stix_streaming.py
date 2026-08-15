@@ -42,6 +42,7 @@ def _json_dumps(data: Any, *, indent: bool = False, sort_keys: bool = False) -> 
     return _j.dumps(data, **kwargs)
 from pathlib import Path  # noqa: E402
 from typing import Any  # noqa: E402
+from core import aclose
 
 __all__ = ["stream_stix_bundle", "STIXStreamingResult"]
 

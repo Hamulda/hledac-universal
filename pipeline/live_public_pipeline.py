@@ -1761,6 +1761,7 @@ class PipelineRunResult(Struct, frozen=True):
 from dataclasses import dataclass, field
 from collections import Counter
 from typing import TYPE_CHECKING
+from core import aclose
 
 if TYPE_CHECKING:
     from hledac.universal.knowledge.duckdb_store import DuckDBShadowStore

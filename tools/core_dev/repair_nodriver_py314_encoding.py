@@ -22,6 +22,7 @@ Usage:
 import importlib.util
 import os
 import sys
+from core import aclose
 
 # CDP files known to have CRLF issues in nodriver 0.48.x
 _CDP_FILES_TO_REPAIR = [

@@ -33,6 +33,7 @@ from hledac.universal.utils.asyncx import safe_wait_for
 
 # MODERN-33: Use facade for Rust darwin_affinity extension
 from hledac.universal.core.rust_backend import rust
+from core import aclose
 
 _RUST_DARWIN_AFFINITY = getattr(rust.raw, 'darwin_affinity', None)
 _RUST_TOPOLOGY = getattr(rust.raw, 'topology', None)

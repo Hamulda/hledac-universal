@@ -51,6 +51,7 @@ from typing import TYPE_CHECKING, Any
 from hledac.universal.utils.lru_cache import LRUCache  # noqa: I001
 
 import msgspec  # noqa: E402 (lazy, ok at module level for msgpack encode/decode)
+from core import aclose
 
 if TYPE_CHECKING:
     pass

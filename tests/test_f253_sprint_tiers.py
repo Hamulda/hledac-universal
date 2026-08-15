@@ -3,6 +3,7 @@
 import unittest
 
 from hledac.universal.runtime.sprint_scheduler import (
+from core import aclose
     SPRINT_TIERS,
     SprintSchedulerConfig,
     SprintTooShortError,

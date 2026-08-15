@@ -15,6 +15,7 @@ import asyncio
 import secrets
 from dataclasses import dataclass, field
 import msgspec
+from core import aclose
 
 # Crypto-safe jitter + UA selection — F350M-R
 _JITTER_RNG = secrets.SystemRandom()

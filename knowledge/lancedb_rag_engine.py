@@ -41,6 +41,7 @@ from typing import Any
 import numpy as np
 from context_optimization.mmr import maximal_marginal_relevance
 from hledac.universal.utils.executor_decorator import offload_to
+from core import aclose
 logger = logging.getLogger(__name__)
 _DEFAULT_URI = Path(__file__).parent.parent.parent / 'data' / 'rag.lance'
 _MAX_BATCH_SIZE = 32

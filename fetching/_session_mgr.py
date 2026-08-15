@@ -363,6 +363,7 @@ class SessionManager:
 
 import threading  # noqa: E402
 import weakref  # noqa: E402
+from core import aclose
 
 _session_managers: weakref.WeakValueDictionary[str, SessionManager] = weakref.WeakValueDictionary()
 _session_managers_lock = threading.Lock()

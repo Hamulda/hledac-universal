@@ -38,6 +38,7 @@ from typing import TYPE_CHECKING, Any, Optional
 from collections.abc import Callable
 
 import aiosqlite
+from core._util import aclose
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator

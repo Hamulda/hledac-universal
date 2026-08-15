@@ -42,6 +42,7 @@ import msgspec
 
 from collections import OrderedDict
 from collections.abc import Callable, Iterator
+from core import aclose
 
 __all__ = [
     "BoundedLRUDict",

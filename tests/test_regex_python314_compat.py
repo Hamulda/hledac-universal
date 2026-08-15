@@ -28,6 +28,7 @@ import threading
 import pytest
 
 from hledac.universal.tools.regex_cache import (
+from core import aclose
     MultiPatternCache,
     check_btc_address,
     check_cve,

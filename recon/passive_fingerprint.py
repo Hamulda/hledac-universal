@@ -53,6 +53,7 @@ from hledac.universal.utils.msgspec_json import encode as _msgspec_encode
 from hledac.universal.transport.session_pool import session_pool
 from hledac.universal.network.favicon_hasher import _FaviconHasher
 from hledac.universal.utils.asyncx import _check_gathered
+from core import aclose
 if TYPE_CHECKING:
     from hledac.universal.knowledge.duckdb_store import CanonicalFinding
 logger = logging.getLogger(__name__)

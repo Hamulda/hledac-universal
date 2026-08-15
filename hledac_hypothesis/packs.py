@@ -49,6 +49,7 @@ import msgspec
 from typing import Any
 
 from operator import attrgetter, itemgetter
+from core import aclose
 class SourceHint(msgspec.Struct, gc=False):
     """Source recommendation with quality score."""
     source: str

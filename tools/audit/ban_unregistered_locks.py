@@ -22,6 +22,7 @@ import ast
 import argparse
 import sys
 from pathlib import Path
+from core import aclose
 
 
 # Patterns that indicate a lock is registered or not module-level

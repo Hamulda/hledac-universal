@@ -26,6 +26,7 @@ Sprint companion to F-Bloom-Regression — verify pickle-free hot path.
 from pathlib import Path
 
 import pytest
+from core import aclose
 
 # ---------------------------------------------------------------------------
 # Fixtures

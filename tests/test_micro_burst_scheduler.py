@@ -17,6 +17,7 @@ from typing import Final
 from unittest.mock import patch
 
 import pytest
+from core import aclose
 
 
 class TestBurstPhase:

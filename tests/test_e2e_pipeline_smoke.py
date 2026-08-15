@@ -16,6 +16,7 @@ import logging
 import pytest
 
 from hledac.universal.pipeline.live_feed_pipeline import (
+from core import aclose
     async_run_default_feed_batch,
 )
 

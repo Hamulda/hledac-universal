@@ -25,6 +25,7 @@ import contextvars
 import uuid
 from typing import Any
 import msgspec
+from core._util import aclose
 
 
 # ─── TelemetryContext (O-01) ─────────────────────────────────────────────────

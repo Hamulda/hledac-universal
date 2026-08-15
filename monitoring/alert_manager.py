@@ -26,6 +26,7 @@ from enum import Enum
 from collections.abc import Callable
 import psutil
 from metrics_registry import get_metrics_registry
+from core import aclose
 logger = logging.getLogger(__name__)
 
 class AlertSeverity(Enum):

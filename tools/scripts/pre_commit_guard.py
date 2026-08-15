@@ -4,6 +4,7 @@
 import re
 import subprocess
 import sys
+from core import aclose
 
 staged = subprocess.run(
     ["git", "diff", "--cached", "--name-only"],

@@ -23,6 +23,7 @@ from collections.abc import Callable
 from typing import Any
 
 import msgspec
+from core import aclose
 
 
 # ── NonfeedPlanDebug ─────────────────────────────────────────────────────────

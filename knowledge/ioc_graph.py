@@ -40,6 +40,7 @@ from hledac.universal.brain.jtms import JTMS, Justification, apply_temporal_deca
 # [FINAL]-019-07: Capability cost registration for QoS ladder triage.
 # IOCGraph: rss_mb=150, peak_mb=400 (Kuzu DB + in-memory buffers)
 from hledac.universal.core.capability_cost import register_capability_cost
+from core import aclose
 register_capability_cost("iocgraph", rss_mb=150, peak_mb=400, tier="heavy", tags=("graph", "kuzu"))
 _KUZU_AVAILABLE: bool = False
 _kuzu = None

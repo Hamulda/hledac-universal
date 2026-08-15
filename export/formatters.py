@@ -1,12 +1,13 @@
 # Sprint F214Z: Export Formatter Class Hierarchy
 # Sprint F350M-R: JSONFormatter moved to sprint_exporter.py to break circular import
+# Sprint F232C: JSONFormatter extracted to export/_formatters.py
 # Formatters module is now a re-export surface + utility functions.
 """
 Export formatter class hierarchy.
 
 Architecture:
   ExportFormatter (ABC)
-    ├── JSONFormatter   # re-exported from sprint_exporter.py
+    ├── JSONFormatter   # re-exported from export/_formatters.py
     └── (future: STIXFormatter, MarkdownFormatter)
 
 Each formatter encapsulates its format's logic. The sprint_exporter module
@@ -34,9 +35,10 @@ __all__ = [
     "render_investigation_packet_markdown",
 ]
 
-# Sprint F350M-R: JSONFormatter moved to sprint_exporter.py to break circular import
+# Sprint F232C: JSONFormatter extracted to export/_formatters.py
 # Keep this module as a stable re-export surface for backward compatibility
-from hledac.universal.export.sprint_exporter import JSONFormatter  # noqa: E402, F401
+from hledac.universal.export._formatters import JSONFormatter  # noqa: E402, F401
+from core import aclose
 
 
 class ExportFormatter(ABC):

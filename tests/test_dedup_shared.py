@@ -21,6 +21,7 @@ import sys
 import pytest
 
 from hledac.universal.tools.url_dedup import (
+from core import aclose
     get_default_bloom_filter,
     reset_default_bloom_filter,
 )

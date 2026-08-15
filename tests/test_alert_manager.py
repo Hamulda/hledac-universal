@@ -16,6 +16,7 @@ import time
 import pytest
 
 from hledac.universal.monitoring.alert_manager import (
+from core import aclose
     Alert,
     AlertManager,
     AlertSeverity,

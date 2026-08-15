@@ -26,6 +26,8 @@ _LAZY_EXPORT_MAP: dict[str, str] = {
     # duckdb_store — heavy: duckdb, psutil, msgspec
     "DuckDBShadowStore": "knowledge.duckdb_store",
     "ActivationResult": "knowledge.duckdb_store",
+    "DuckDBArrowBuilder": "knowledge.duckdb_arrow_builder",
+    "ArrowBuildConfig": "knowledge.duckdb_arrow_builder",
     "ReplayResult": "knowledge.duckdb_store",
     "CanonicalFinding": "knowledge.duckdb_store",
     "create_owned_store": "knowledge.duckdb_store",
@@ -101,6 +103,7 @@ _LEGACY_NAMES: frozenset[str] = frozenset(
 )
 
 import warnings as _warnings  # noqa: E402
+from core import aclose
 
 # Sprint 8VC: atomic_storage and persistent_layer moved to legacy/
 # Legacy imports are LAZY (deferred) to prevent import-time coupling.

@@ -29,6 +29,7 @@ from hledac.universal.recon.document_intelligence import (
     PDFAnalyzer,
 )
 from hledac.universal.utils.aho_extractor import (
+from core import aclose
     PILOT_PATTERNS,
     get_suspicious_keywords_automaton,
     scan_suspicious_keywords_list,

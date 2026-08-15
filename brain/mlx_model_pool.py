@@ -21,11 +21,16 @@ from collections.abc import Awaitable, Callable
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 import msgspec
-from typing import Any
-logger = logging.getLogger(__name__)
-_mlx: Any | None = None
+from typing import TYPE_CHECKING, Any
 
-def _get_mlx() -> Any | None:
+if TYPE_CHECKING:
+    from mlx_lm import Model as MLXModel
+    from mlx_lm import TokenizerWrapper as MLXTokenizer
+from core import aclose
+logger = logging.getLogger(__name__)
+_mlx: Any | None = None  # type: ignore[assignment]
+
+def _get_mlx() -> Any | None:  # type: ignore[type-arg]
     global _mlx
     if _mlx is None:
         try:
@@ -37,13 +42,13 @@ def _get_mlx() -> Any | None:
 
 class ModelEntry(msgspec.Struct, gc=False):
     """ISSUE #15: Přidána weakref pro referenční počítání."""
-    model: Any
-    tokenizer: Any | None = None
+    model: MLXModel
+    tokenizer: MLXTokenizer | None = None
     size_bytes: int = 0
     loaded_at: float = 0.0
     access_count: int = 0
     ref_count: int = 1  # ISSUE #15: Reference count pro pool management
-    weak_ref: Any = None  # ISSUE #15: weakref pro GC-safe referenci
+    weak_ref: Any = None  # type: ignore[assignment]  # ISSUE #15: weakref pro GC-safe referenci
 
 class MLXModelPoolConfig(msgspec.Struct, gc=False):
     budget_gb: float = 4.0
@@ -100,7 +105,7 @@ class MLXModelPool:
         total = self._total_hits + self._total_misses
         return {'budget_gb': self._config.budget_gb, 'budget_bytes': self._budget_bytes, 'loaded_count': self._loaded_count, 'total_bytes_used': self.total_bytes_used, 'total_evictions': self._total_evictions, 'hit_rate_pct': self._total_hits / total * 100 if total > 0 else 0, 'models': {mid: {'size_mb': e.size_bytes / 1024 ** 2, 'access_count': e.access_count} for mid, e in self._loaded.items()}}
 
-    async def acquire(self, model_id: str, loader: Callable[[], Awaitable[tuple[Any, Any | None]]] | Callable[[], tuple[Any, Any | None]]) -> tuple[Any, Any | None]:
+    async def acquire(self, model_id: str, loader: Callable[[], Awaitable[tuple[MLXModel, MLXTokenizer | None]]] | Callable[[], tuple[MLXModel, MLXTokenizer | None]]) -> tuple[MLXModel, MLXTokenizer | None]:
         async with self._lock:
             if model_id in self._loaded:
                 e = self._loaded[model_id]
@@ -250,7 +255,7 @@ class MLXModelPool:
             except Exception:  # noqa: BLE001
                 pass
 
-    def _estimate_model_size(self, model: Any, tokenizer: Any | None) -> int:
+    def _estimate_model_size(self, model: MLXModel, tokenizer: MLXTokenizer | None) -> int:
         mod = type(model).__module__.lower()
         name = getattr(model, 'model_name', '').lower() or type(model).__name__.lower()
         if 'hermes' in mod or 'hermes' in name:
@@ -271,7 +276,7 @@ class MLXModelPool:
 
     # ── Async Preload (ISSUE #15) ─────────────────────────────────────────────
 
-    async def preload_async(self, model_id: str, loader: Callable[[], Awaitable[tuple[Any, Any | None]]]) -> None:
+    async def preload_async(self, model_id: str, loader: Callable[[], Awaitable[tuple[MLXModel, MLXTokenizer | None]]]) -> None:
         """
         ISSUE #15: Fire-and-forget async preload.
 
@@ -320,7 +325,7 @@ class MLXModelPool:
 
     # ── Reference Counting (ISSUE #15) ─────────────────────────────────────────
 
-    async def acquire_with_ref(self, model_id: str, loader: Callable[[], Awaitable[tuple[Any, Any | None]]]) -> tuple[Any, Any | None]:
+    async def acquire_with_ref(self, model_id: str, loader: Callable[[], Awaitable[tuple[MLXModel, MLXTokenizer | None]]]) -> tuple[MLXModel, MLXTokenizer | None]:
         """
         ISSUE #15: acquire + inkrementace ref count.
 

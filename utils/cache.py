@@ -359,6 +359,7 @@ class PyCacheDict[K, V]:
 import asyncio
 import weakref
 from collections import OrderedDict
+from core import aclose
 
 # K and V are already defined at module level (lines 26-27) for PyCacheDict.
 # AsyncPyCacheDict reuses the same TypeVars — no redefinition needed.

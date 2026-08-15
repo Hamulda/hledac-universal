@@ -25,6 +25,7 @@ warnings.warn(
 
 # Re-export from new location for backwards compatibility
 from hledac.universal.coordinators.resource.resource_coordinator import (
+from core import aclose
     gc_collect,
     gc_collect_aggressive,
     gc_collect_async,

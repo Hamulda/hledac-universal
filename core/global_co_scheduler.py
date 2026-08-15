@@ -48,6 +48,7 @@ from typing import Any
 import msgspec
 
 from hledac.universal.core.locks import LockCategory, make_lock
+from core._util import aclose
 
 logger = logging.getLogger(__name__)
 

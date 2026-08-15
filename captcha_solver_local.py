@@ -27,6 +27,7 @@ import msgspec
 from typing import TYPE_CHECKING
 
 from hledac.universal.core.feature_flags import FeatureFlag, FeatureFlags
+from core import aclose
 
 if TYPE_CHECKING:
     pass

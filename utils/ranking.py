@@ -22,6 +22,7 @@ from collections import defaultdict
 from dataclasses import dataclass, field
 import msgspec
 from typing import Any
+from core import aclose
 logger = logging.getLogger(__name__)
 
 class RRFConfig(msgspec.Struct, gc=False):

@@ -34,6 +34,7 @@ import subprocess
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
+from core import aclose
 
 # rust_extensions/  →  project root
 _REPO_ROOT = Path(__file__).resolve().parent  # .../hledac/universal/rust_extensions

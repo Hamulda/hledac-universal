@@ -14,6 +14,7 @@ import secrets
 import sys
 import time
 import lmdb
+from core import aclose
 try:
     import orjson
     USE_ORJSON = True

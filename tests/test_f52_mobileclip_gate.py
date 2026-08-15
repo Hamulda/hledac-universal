@@ -1,6 +1,7 @@
 """F5.2: MobileCLIP opt-in env gate."""
 
 import pytest
+from core import aclose
 
 
 class TestF52MobileCLIPGate:

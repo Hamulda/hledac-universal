@@ -14,6 +14,7 @@ Gated by HLEDAC_ENABLE_ZKP=1 (shows warning instead of crashing).
 
 import logging
 import os
+from core import aclose
 
 logger = logging.getLogger(__name__)
 

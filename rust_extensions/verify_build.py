@@ -24,6 +24,7 @@ import sys
 import time
 from collections.abc import Callable
 from typing import Any
+from core import aclose
 
 # ---------------------------------------------------------------------------
 # Import guard — abort early if extension is missing.

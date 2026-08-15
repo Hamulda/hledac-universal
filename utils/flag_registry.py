@@ -220,6 +220,7 @@ def is_enabled(name: str, default: str='0') -> bool:
 # MODERN-M4+ NEW-ISSUE Fix: Import from SSOT UmaBudget instead of hardcoding
 # NOTE: _RAM_FATAL_MB was 7000 (7.0 GiB) which EXCEEDED SSOT ceiling (6.25 GiB)!
 from hledac.universal.utils.uma_budget import FLAG_RAM_WARN_MB, FLAG_RAM_FATAL_MB
+from core import aclose
 
 # Aliases for backward compatibility
 _RAM_WARN_MB: int = FLAG_RAM_WARN_MB  # 5632 MB (was 5500)

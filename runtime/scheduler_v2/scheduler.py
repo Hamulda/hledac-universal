@@ -33,6 +33,7 @@ from hledac.universal.runtime.scheduler_v2._task_registry import (
 from hledac.universal.utils.asyncx import parallel
 from hledac.universal.runtime.scheduler_v2.protocol import InitResult, SprintContext
 from hledac.universal.utils.asyncx import safe_wait_for
+from core import aclose
 
 
 class SprintSchedulerV2(msgspec.Struct, frozen=False, gc=True):

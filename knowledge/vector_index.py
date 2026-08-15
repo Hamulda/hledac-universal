@@ -51,6 +51,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal, cast
 
 import numpy as np
+from core import aclose
 
 if TYPE_CHECKING:
     import lancedb

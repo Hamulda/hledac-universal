@@ -61,6 +61,7 @@ import msgspec
 from typing import Any
 from hledac.universal.utils.asyncx import parallel_ok
 from .qtable import FederatedQTable
+from core import aclose
 logger = logging.getLogger(__name__)
 _AUTO_BRIDGE_SINGLETON: Any | None = None
 _AUTO_BRIDGE_LMDB_PATH: str | None = None

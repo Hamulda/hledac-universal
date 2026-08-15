@@ -28,6 +28,7 @@ from textwrap import dedent
 from typing import NamedTuple
 
 import pytest
+from core import aclose
 
 
 ROOT = Path("/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal")

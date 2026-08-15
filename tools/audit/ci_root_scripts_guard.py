@@ -19,6 +19,7 @@ Allowed locations:
 
 import sys
 from pathlib import Path
+from core import aclose
 
 ROOT = Path(__file__).parent.parent
 

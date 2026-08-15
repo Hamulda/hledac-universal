@@ -16,3 +16,4 @@ warnings.warn(
 )
 
 from hledac.universal.transport.http_utils import fetch_json, safe_fetch
+from core import aclose

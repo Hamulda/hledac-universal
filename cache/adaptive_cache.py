@@ -27,6 +27,7 @@ from typing import Any, Generic, TypeVar
 from collections.abc import Callable
 
 from hledac.universal.core.locks import make_lock, LockCategory
+from core import aclose
 
 logger = logging.getLogger(__name__)
 

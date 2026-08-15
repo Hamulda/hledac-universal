@@ -1,6 +1,7 @@
 """parsing — zero-dependency feed parsing (selectolax + orjson)."""
 
 from hledac.universal.parsing.feed_parser import (
+from core import aclose
     FeedEntry,
     parse_atom,
     parse_feed,

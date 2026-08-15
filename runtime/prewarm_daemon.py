@@ -28,6 +28,7 @@ import time as _time
 import typing
 
 from hledac.universal.utils.asyncx import parallel_ok
+from core import aclose
 
 logger = typing.cast(typing.Any, __import__("logging").getLogger(__name__))
 

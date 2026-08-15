@@ -10,6 +10,7 @@ probe_f214q/.
 """
 
 from hledac_hypothesis.hypothesisgenerator import (
+from core import aclose
     HLEDAC_ENABLE_DSPY,
     HypothesisGenerator,
     ResearchHypothesis,

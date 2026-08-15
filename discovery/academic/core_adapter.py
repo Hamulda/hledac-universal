@@ -24,6 +24,7 @@ from dataclasses import dataclass
 import msgspec
 from typing import NamedTuple
 from hledac.universal.knowledge.duckdb_store import CanonicalFinding
+from core import aclose
 logger = logging.getLogger(__name__)
 CORE_API_BASE = 'https://api.core.ac.uk/v3'
 RATE_LIMIT = 5

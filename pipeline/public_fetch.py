@@ -43,6 +43,7 @@ from hledac.universal.utils.rayon_pool import run_in_cpu_pool_async
 from hledac.universal.utils.patterns.pattern_matcher import PatternHit
 
 import numpy as np
+from core import aclose
 
 # ----------------------------------------------------------------------
 # DI globals — patched by tests; real code uses _ensure_patched()

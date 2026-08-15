@@ -9,6 +9,7 @@ with callers expecting get_random_delay() method.
 """
 import logging
 import secrets
+from core import aclose
 logger = logging.getLogger(__name__)
 
 # Crypto-safe jitter — F350M-R

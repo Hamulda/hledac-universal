@@ -23,6 +23,7 @@ import sys
 import threading
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any
+from core import aclose
 
 if TYPE_CHECKING:
     import structlog

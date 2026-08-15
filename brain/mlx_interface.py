@@ -33,6 +33,9 @@ import threading
 from dataclasses import dataclass
 from typing import Any
 
+# MLX modules - these are loaded lazily and typed as Any
+_MLXModuleType = Any
+
 # MODERN-35 Fix: Import CPU affinity utilities for MLX Metal operations
 from hledac.universal.utils.cpu_affinity import (
     set_mlx_affinity,
@@ -76,10 +79,10 @@ __all__ = [
 # Module-level lazy singletons
 # ---------------------------------------------------------------------------
 
-_mlx_core: Any | None = None
-_mlx_metal: Any | None = None
-_mlx_lm_module: Any | None = None
-_ffi_cb: Any | None = None
+_mlx_core: _MLXModuleType | None = None
+_mlx_metal: _MLXModuleType | None = None
+_mlx_lm_module: _MLXModuleType | None = None
+_ffi_cb: _MLXModuleType | None = None
 _init_lock = threading.Lock()
 
 
@@ -90,6 +93,7 @@ _init_lock = threading.Lock()
 # C1-X FIX: Import MLX_AVAILABLE from SSOT (zero-import detection)
 # Uses importlib.metadata.version("mlx") — no mlx.core import at module load
 from hledac.universal.utils.mlx_memory import MLX_AVAILABLE
+from core import aclose
 
 
 def is_mlx_available() -> bool:
@@ -98,7 +102,7 @@ def is_mlx_available() -> bool:
     return MLX_AVAILABLE
 
 
-def _get_ffi_cb() -> Any | None:
+def _get_ffi_cb() -> _MLXModuleType | None:
     """[SAFE-3] Get FFI circuit breaker singleton (lazy init)."""
     global _ffi_cb
     if _ffi_cb is None and _FFI_CB_AVAILABLE:
@@ -114,7 +118,7 @@ def _get_ffi_cb() -> Any | None:
 # ---------------------------------------------------------------------------
 
 
-def get_mlx() -> Any:
+def get_mlx() -> _MLXModuleType:
     """
     Get mlx.core singleton.
 
@@ -232,7 +236,7 @@ def _embed_mlx(text: str) -> list[float]:
     return [0.0] * 256
 
 
-def get_metal() -> Any:
+def get_metal() -> _MLXModuleType:
     """
     Get mx.metal singleton.
 
@@ -251,7 +255,7 @@ def get_metal() -> Any:
     return _mlx_metal
 
 
-def get_mlx_lm() -> Any:
+def get_mlx_lm() -> _MLXModuleType:
     """
     Get mlx_lm module singleton.
 

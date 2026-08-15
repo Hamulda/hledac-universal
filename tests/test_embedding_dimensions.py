@@ -16,6 +16,7 @@ INVARIANTS:
 """
 
 import pytest
+from core import aclose
 
 
 class TestEmbeddingDimensions:

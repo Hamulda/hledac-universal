@@ -11,6 +11,7 @@ import ctypes
 import ctypes.util
 import sys
 from typing import TYPE_CHECKING
+from core._util import aclose
 
 if TYPE_CHECKING:
     from hledac_rust_extensions import hledac_rust_extensions

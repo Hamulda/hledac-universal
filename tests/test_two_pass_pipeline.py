@@ -16,6 +16,7 @@ from typing import Any
 import pytest
 
 from hledac.universal.utils.two_pass_pipeline import (
+from core import aclose
     PipelineStats,
     TwoPassPipeline,
     TwoPassPipelineConfig,

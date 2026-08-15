@@ -26,7 +26,13 @@ from collections.abc import AsyncIterator, Callable
 from contextlib import asynccontextmanager
 from enum import Enum, auto
 from pathlib import Path
-from typing import Any, Literal, TypeVar
+from typing import TYPE_CHECKING, Any, Literal, TypeVar
+
+if TYPE_CHECKING:
+    from hledac.universal.brain.deephermes3_engine import DeepHermes3Engine
+    from hledac.universal.brain.modernbert_adapter import ModernBertAdapter
+    from hledac.universal.brain.coreml_embedder import CoreMLEmbedder
+    from hledac.universal.core.model_runtime import ModelLifecycle
 
 from hledac.universal.brain.model_inference_guard import check_model_allowed, record_model_failure, record_model_success
 from hledac.universal.brain.quantization_selector import QuantizationSelector
@@ -41,6 +47,7 @@ T = TypeVar('T')
 # C1 FIX: Import from SSOT instead of hardcoded False
 # Uses importlib.metadata.version("mlx") detection — no mlx.core import at module load
 from hledac.universal.utils.mlx_memory import MLX_AVAILABLE
+from core import aclose
 _MLXCEL_DETECTED: bool = False
 
 def _detect_mlxcel() -> bool:
@@ -289,7 +296,7 @@ class MlxcelHermesAdapter:
         return None
 
 @asynccontextmanager
-async def model_lifecycle(model_name: ModelName) -> Any:  # type: ignore[return-value]
+async def model_lifecycle(model_name: ModelName) -> ModelLifecycle:  # type: ignore[return-value]
     """
     Async context manager pro striktní 1-model-at-a-time lifecycle.
 
@@ -355,7 +362,7 @@ class ModelManager:
         self._psutil = _ps
         self._psutil_available = PSUTIL_AVAILABLE
 
-    def _create_hermes_engine(self) -> Any:
+    def _create_hermes_engine(self) -> DeepHermes3Engine:
         """
         Factory pro Hermes3Engine / MlxcelHermesAdapter.
 
@@ -374,7 +381,7 @@ class ModelManager:
         from .deephermes3_engine import DeepHermes3Engine
         return DeepHermes3Engine()
 
-    def _create_modernbert_engine(self) -> Any:
+    def _create_modernbert_engine(self) -> ModernBertAdapter:
         """Factory pro ModernBertModelAdapter (bridges ModernBertEngine → ModelEngine)."""
         from .modernbert_adapter import ModernBertModelAdapter
         return ModernBertModelAdapter()
@@ -476,7 +483,7 @@ class ModelManager:
             pass
         return False
 
-    def _load_coreml_embedder(self) -> Any:
+    def _load_coreml_embedder(self) -> CoreMLEmbedder:
         """Load CoreML version of ModernBERT if available. Returns None if not."""
         if not COREML_MODEL_PATH.exists():
             logger.debug('[COREML] CoreML model not found, will use MLX fallback')
@@ -811,7 +818,7 @@ class ModelManager:
 
     # ── Model Accessors ───────────────────────────────────────────────────────
 
-    def get_model(self, model_name: ModelName) -> Any | None:
+    def get_model(self, model_name: ModelName) -> DeepHermes3Engine | ModernBertAdapter | CoreMLEmbedder | None:
         """
         Vrátí instanci načteného modelu.
 

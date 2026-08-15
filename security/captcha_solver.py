@@ -41,6 +41,7 @@ import hashlib
 import logging
 import time
 from hledac.universal.utils.lru_cache import LRUCache
+from core import aclose
 logger = logging.getLogger(__name__)
 _COREML_AVAILABLE = False
 _VN_AVAILABLE = False

@@ -48,6 +48,7 @@ else:
         from hledac.universal.knowledge.duckdb_store import CanonicalFinding
     except ImportError:
         CanonicalFinding = None
+from core import aclose
 logger = logging.getLogger(__name__)
 MAX_CDX_SNAPSHOTS_PER_DOMAIN: int = 50
 MAX_DOMAINS_PER_SPRINT: int = 100

@@ -115,6 +115,7 @@ import weakref
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
 from typing import Final
+from core import aclose
 
 _log = logging.getLogger(__name__)
 

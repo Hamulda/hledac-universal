@@ -45,6 +45,7 @@ from typing import Any, Literal, TypeVar
 
 from hledac.universal.core.locks import LockCategory, make_lock
 from hledac.universal.utils.asyncx import safe_wait_for
+from core import aclose
 
 logger = logging.getLogger(__name__)
 

@@ -15,6 +15,7 @@ from __future__ import annotations
 import asyncio
 import os
 from typing import TYPE_CHECKING, Any
+from core import aclose
 
 if TYPE_CHECKING:
     from hledac.universal.brain._hermes_cache import HermesModelCache

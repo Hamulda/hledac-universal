@@ -30,6 +30,7 @@ Graceful degradation: falls back to no-op on Python < 3.14
 from __future__ import annotations
 
 from typing import TYPE_CHECKING
+from core import aclose
 
 if TYPE_CHECKING:
     pass

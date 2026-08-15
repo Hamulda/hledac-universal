@@ -24,6 +24,7 @@ warnings.warn(
 )
 
 from hledac.universal.core.locks import (
+from core import aclose
     LockCategory,
     LockInfo,
     register_lock,

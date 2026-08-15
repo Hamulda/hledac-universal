@@ -12,6 +12,7 @@ import pytest  # noqa: F401 — needed for skip markers on ghost MARLCoordinator
 # Lazy import: numpy loaded only when tests run
 pytest.importorskip("numpy")
 import numpy as np  # noqa: E402,F401
+from core import aclose
 
 sys.path.insert(0, "/Users/vojtechhamada/PycharmProjects/Hledac")
 

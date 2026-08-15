@@ -20,6 +20,7 @@ from typing import Any
 
 # G1: ctypes-based secure wipe (M1 Metal-safe, ~100× faster than Python loop)
 from hledac.universal.utils.secure_zero import secure_zero as _secure_zero
+from core import aclose
 
 logger = logging.getLogger(__name__)
 

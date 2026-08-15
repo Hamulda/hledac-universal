@@ -22,6 +22,7 @@ import subprocess
 import sys
 import textwrap
 from pathlib import Path
+from core import aclose
 
 REPO_ROOT = Path("/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal")
 HLEDAC_PARENT = "/Users/vojtechhamada/PycharmProjects/Hledac"

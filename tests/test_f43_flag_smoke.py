@@ -4,6 +4,7 @@ import os
 import subprocess
 import sys
 from pathlib import Path
+from core import aclose
 
 PROJECT_ROOT = Path(__file__).parent.parent
 RUNNER = PROJECT_ROOT / "tools" / "flag_smoke_runner.py"

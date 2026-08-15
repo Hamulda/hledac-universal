@@ -24,6 +24,7 @@ from __future__ import annotations
 
 # Re-export everything from the new types/ subpackage
 from hledac_hypothesis.types import (
+from core import aclose
     # Enums
     HypothesisType,
     HypothesisStatus,

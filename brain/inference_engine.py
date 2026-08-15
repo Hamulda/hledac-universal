@@ -44,7 +44,11 @@ import time
 from collections import defaultdict, deque
 from collections.abc import Callable, Iterator
 from enum import Enum
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    # Type aliases for evidence and hypothesis structures
+    BeliefDict = dict[str, Any]  # Belief dictionary for hypothesis tracking
 import msgspec
 
 from operator import attrgetter, itemgetter
@@ -53,6 +57,7 @@ from hledac.universal.utils.lru_cache import LRUCache
 from hledac.universal.utils.exceptions import InferenceLoopExceeded
 from hledac.universal.utils._patterns import compound_confidence_from_objects  # F320: DRY compound confidence
 import numpy as np
+from core import aclose
 try:
     from hledac.universal.utils.eig import EIGCalculator
     EIG_AVAILABLE = True
@@ -365,12 +370,12 @@ class InferenceEngine:
         self._inference_rules: list[InferenceRule] = []
         self._graph_pruned_count = 0
         self._evidence_pruned_count = 0
-        self._hypothesis_set: list[dict] = []
+        self._hypothesis_set: list[BeliefDict] = []
         self._total_iterations = 0
         self._init_inference_rules()
         logger.info(f'InferenceEngine initialized (MLX: {self.use_mlx}, max_depth: {max_chain_depth}, max_iter: {max_total_iterations})')
 
-    def _run_coro_sync_safe(self, coro):
+    def _run_coro_sync_safe(self, coro) -> Any:
         """Run coroutine safely in a thread pool.
 
         M1-SAFE: When a loop is already running, use run_until_complete on the
@@ -1189,7 +1194,7 @@ class InferenceEngine:
         """Find all paths from start node up to max_depth."""
         paths = []
 
-        def dfs(current: str, path: list[str], depth: int):
+        def dfs(current: str, path: list[str], depth: int) -> None:
             if depth > max_depth:
                 return
             neighbors = self._evidence_graph.get(current, set())
@@ -1817,7 +1822,7 @@ class MultiHopReasoner:
             return (path.total_confidence, -path.path_length, not path.is_cyclic)
         return sorted(paths, key=path_score, reverse=True)
 
-    def get_hypothesis_set(self) -> list[dict]:
+    def get_hypothesis_set(self) -> list[BeliefDict]:
         """
         Sprint F259: Return current hypothesis set for EIGCalculator.
 
@@ -1829,7 +1834,7 @@ class MultiHopReasoner:
         """
         return self._hypothesis_set.copy()
 
-    def update_hypothesis_set(self, beliefs: list[dict]) -> None:
+    def update_hypothesis_set(self, beliefs: list[BeliefDict]) -> None:
         """
         Sprint F259: Update hypothesis set with new beliefs.
 

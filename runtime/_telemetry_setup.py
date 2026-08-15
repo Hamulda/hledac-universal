@@ -36,6 +36,7 @@ import os
 import sys
 import threading
 from typing import Any
+from core import aclose
 
 _OTEL_ENABLED = os.environ.get("HLEDAC_OTEL_ENABLED", "1").strip() == "1"
 _CONFIGURED = False

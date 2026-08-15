@@ -30,6 +30,7 @@ from concurrent.futures import ThreadPoolExecutor
 from typing import TYPE_CHECKING
 
 from hledac.universal.utils.domain_executors import get_html_executor
+from core import aclose
 
 if TYPE_CHECKING:
     pass

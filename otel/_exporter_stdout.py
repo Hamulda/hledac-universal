@@ -11,6 +11,7 @@ import sys
 import threading
 from collections.abc import Sequence
 from typing import Any, TextIO
+from core import aclose
 try:
     from opentelemetry.sdk.trace import ReadableSpan
     from opentelemetry.sdk.trace.export import SpanExporter, SpanExportResult

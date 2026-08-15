@@ -10,6 +10,7 @@ from fastapi import FastAPI
 from pydantic import BaseModel
 from mlx_embeddings import load, generate
 import uvicorn
+from core import aclose
 
 app = FastAPI()
 

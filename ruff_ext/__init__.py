@@ -30,6 +30,7 @@ import ast
 import sys
 from pathlib import Path
 from typing import NamedTuple
+from core import aclose
 
 
 class Violation(NamedTuple):

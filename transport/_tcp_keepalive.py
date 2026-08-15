@@ -15,6 +15,7 @@ Created: 2026-08-06
 """
 
 from __future__ import annotations
+from core import aclose
 
 # =============================================================================
 # Platform Constants (macOS/Linux BSD-compatible) — ISSUE-P6-001 DRY FIX

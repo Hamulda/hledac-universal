@@ -17,6 +17,7 @@ from dataclasses import asdict, dataclass, field
 import msgspec
 from pathlib import Path
 from operator import attrgetter, itemgetter
+from core import aclose
 REPO_ROOT = Path('/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal')
 QODER_ROOT_DEFAULT = REPO_ROOT / '.qoder/repowiki/en/content'
 OUTPUT_JSON_DEFAULT = REPO_ROOT / 'probe_qoder_reality/qoder_reality_matrix.json'

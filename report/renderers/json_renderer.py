@@ -6,6 +6,7 @@ Supports incremental streaming write for large reports.
 """
 import msgspec
 from typing import TYPE_CHECKING, Any
+from core import aclose
 if TYPE_CHECKING:
     from pathlib import Path
 __all__ = ['JSONRenderer']

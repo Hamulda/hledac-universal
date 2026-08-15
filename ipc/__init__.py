@@ -18,6 +18,7 @@ Author: Issue #22
 
 
 from .ring_mmap_ipc import (
+from core import aclose
     RingMMapIPC,
     RingMMap,
     RingMMapChannel,

@@ -46,6 +46,7 @@ from typing import TYPE_CHECKING
 # MODERN-36/37/38 Fix: SSOT imports for UmaBudget constants
 # Import at module level to enable class attribute derivation
 from hledac.universal.utils.uma_budget import UmaBudget
+from core._util import aclose
 
 __all__ = ['NetworkTimeouts', 'M1MemoryBounds', 'MLXInference', 'ProtocolPorts', 'HTTPCodes', 'SemanticRatios', 'DuckDBStorage', 'NETWORK', 'M1_BOUNDS', 'MLX', 'PORTS', 'HTTP', 'RATIOS', 'DUCKDB', 'get_m1_uma_mb']
 

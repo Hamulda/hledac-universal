@@ -30,6 +30,7 @@ class Decision(StrEnum):
     BLOCKED_BY_MEMORY = 'BLOCKED_BY_MEMORY'
     BLOCKED_BY_UNKNOWN = 'BLOCKED_BY_UNKNOWN'
 from hledac.universal.core.resource_governor import get_swap_policy_tier
+from core import aclose
 
 def _check_uma() -> dict:
     """

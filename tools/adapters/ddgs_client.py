@@ -2,6 +2,7 @@
 
 
 from typing import Any
+from core import aclose
 
 # Issue #6: Module-level singletons — reuse DDGS instance across searches.
 # Creating a new DDGS() per search was creating a new primp.Client (new socket)

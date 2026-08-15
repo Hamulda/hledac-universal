@@ -31,6 +31,7 @@ from __future__ import annotations
 
 import warnings
 from importlib import import_module
+from core import aclose
 
 
 # Canonical redirect map — all physical stubs removed (F350M-R A4-5)

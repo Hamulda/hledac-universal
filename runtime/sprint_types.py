@@ -32,6 +32,7 @@ import msgspec
 
 # ── Re-export from scheduler/core/types.py for convenience ─────────────────────
 from hledac.universal.runtime.scheduler.core.types import (
+from core import aclose
     LaneBudgetAllocation,
     LaneBudgetPool,
     SourceTier,

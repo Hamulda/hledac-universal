@@ -39,6 +39,7 @@ import sys
 from contextlib import contextmanager
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
+from core import aclose
 
 if TYPE_CHECKING:
     pass

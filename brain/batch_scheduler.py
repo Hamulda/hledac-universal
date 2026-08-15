@@ -21,6 +21,7 @@ from collections.abc import Callable, Coroutine
 from typing import Any
 from hledac.universal.utils.asyncx import safe_create_task, parallel
 from hledac.universal.core.constants import MLX
+from core import aclose
 logger = logging.getLogger(__name__)
 
 class BatchScheduler:

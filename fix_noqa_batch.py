@@ -6,6 +6,7 @@ These are intentional fail-soft patterns where ignoring exceptions is desired.
 import os
 import ast
 from pathlib import Path
+from core import aclose
 
 EXCLUDE = {'.venv', '__pycache__', '.git', 'node_modules', '.egg-info', '.venv-test', 'bin', 'lib', 'share', 'include'}
 

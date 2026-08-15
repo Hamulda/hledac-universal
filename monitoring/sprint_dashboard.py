@@ -15,6 +15,7 @@ final SprintSchedulerResult regardless of how the sprint exited.
 """
 import time
 from typing import TYPE_CHECKING
+from core import aclose
 try:
     from rich.console import Console
     from rich.live import Live

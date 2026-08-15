@@ -43,6 +43,7 @@ from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor
 from dataclasses import dataclass
 import msgspec
 from typing import Any, TypeVar
+from core import aclose
 
 logger = logging.getLogger(__name__)
 

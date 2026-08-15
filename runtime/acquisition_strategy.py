@@ -98,6 +98,7 @@ from hledac.universal.runtime.acquisition_strategy_planner import (
 
 # Re-export async runner symbols (RUNNER section)
 from hledac.universal.runtime.acquisition_strategy_runner import (
+from core import aclose
     run_enabled_acquisition_lanes,
     _get_ct_adapter,
 )

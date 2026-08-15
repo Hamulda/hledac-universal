@@ -21,6 +21,7 @@ To update baseline after intentional changes:
 import subprocess
 import sys
 import time
+from core import aclose
 
 
 def test_import_run_sprint_time():

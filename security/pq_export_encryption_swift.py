@@ -28,6 +28,7 @@ from typing import Any
 
 # Types from parent module — needed for msgspec.Struct field annotations (evaluated at class def time)
 from .pq_export_encryption import (
+from core import aclose
     compute_aad_hash,
     Decryptability,
     ExportEncryptionEnvelope,

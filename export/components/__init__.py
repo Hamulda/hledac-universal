@@ -8,6 +8,7 @@ from .ioc_table_writer import stream_ioc_table_section
 from .sprint_buffer import SprintExportBuffer
 from .stix_streaming import STIXStreamingResult, stream_stix_bundle
 from .streaming_exporter import SprintStreamingResult, export_sprint_streaming
+from core import aclose
 
 __all__ = [
     "stream_ioc_table_section",

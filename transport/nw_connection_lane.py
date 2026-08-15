@@ -51,6 +51,7 @@ import os
 import platform
 import sys
 from typing import Any
+from core import aclose
 
 logger = logging.getLogger(__name__)
 

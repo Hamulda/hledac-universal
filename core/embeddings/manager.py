@@ -377,6 +377,7 @@ _PREWARM_LOCK = threading.Lock()
 # All embedding entry points now converge on one canonical source.
 
 from hledac.universal.core.embeddings.legacy import (  # noqa: F401 — re-export for compat
+from core._util import aclose
     MLXEmbeddingManager,
     get_mlx_embedder,
     get_embedding_manager,  # deprecated alias

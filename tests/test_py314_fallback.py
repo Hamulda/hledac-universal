@@ -17,6 +17,7 @@ Coverage:
 import sys
 
 import pytest
+from core import aclose
 
 # ---------------------------------------------------------------------------
 # Helpers: block a top-level module import in a single test scope

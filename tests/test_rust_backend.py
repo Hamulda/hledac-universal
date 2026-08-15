@@ -14,6 +14,7 @@ Tests:
 
 
 import pytest
+from core import aclose
 
 
 class TestRustBackendModule:

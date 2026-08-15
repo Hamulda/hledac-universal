@@ -80,6 +80,7 @@ from hledac.universal.runtime.sidecar_dispatcher import (
     SidecarDispatcher,
 )
 from hledac.universal.runtime.sidecar_protocol import SchedulerAdvisory
+from core import aclose
 
 log = logging.getLogger(__name__)
 

@@ -21,6 +21,7 @@ from hledac.universal.planning.cost_model import AdaptiveCostModel
 from hledac.universal.planning.search import anytime_beam_search
 from hledac.universal.planning.slm_decomposer import SLMDecomposer
 from hledac.universal.utils._patterns import async_cleanup  # F320: DRY cleanup pattern
+from core import aclose
 logger = logging.getLogger(__name__)
 
 class PlannerRuntimeRequest(msgspec.Struct, frozen=True, gc=False):

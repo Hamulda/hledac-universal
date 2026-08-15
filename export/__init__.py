@@ -1,5 +1,3 @@
-
-
 # export/ — Backward-compat re-exports from report/
 # Issue 12.1: export/ redirects to report/ package
 # Legacy callers import from export/* — these re-exports maintain compat
@@ -65,6 +63,7 @@ from hledac.universal.export.sprint_bundler import (
 from hledac.universal.export.sprint_viewer import (
     view_bundle,
 )
+from core import aclose
 
 __all__ = [
     # New unified engine (Issue 12.1)

@@ -19,6 +19,7 @@ from .plugin_manager import (
     load_all_plugins,
 )
 from .system_monitor import SystemMonitor, SystemState
+from core import aclose
 
 __all__ = [
     # System monitoring

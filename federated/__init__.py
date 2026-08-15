@@ -64,6 +64,7 @@ from .coordinator import (
     is_federated_enabled,
 )
 from .qtable import MAX_QTABLE_ENTRIES, FederatedQTable
+from core import aclose
 
 # Transports — imported lazily through __getattr__ to avoid pulling
 # heavy modules (cryptography, zeroconf) into the cold-start path when

@@ -916,6 +916,7 @@ class QuantumInspiredPathFinder:
             entropy = float(-np_mod.sum(probs * np_mod.log(probs + 1e-10)))
         return {'total_probability': prob_sum, 'max_probability': max_prob, 'entropy': entropy, 'n_nodes': self.n_nodes}
 import hashlib as _hashlib
+from core import aclose
 _DUCKPGQ_AVAILABLE = False
 _duckpgq_checked = False
 

@@ -23,6 +23,7 @@ from hledac.universal.utils.bloom_filter import (
 
 # Import the Rust extension accessor
 from ._prober import probe
+from core._util import aclose
 
 
 class _RustBloomDomain:

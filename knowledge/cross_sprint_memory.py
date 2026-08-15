@@ -21,6 +21,7 @@ M1 8GB: bounded queries (max_hops=2, limit=50), fail-soft on graph errors.
 """
 import logging
 from typing import Any
+from core import aclose
 logger = logging.getLogger(__name__)
 MAX_ENTITIES = 50
 MAX_HOPS = 2

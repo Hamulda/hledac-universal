@@ -13,9 +13,9 @@ ARCHITECTURE:
 
     DedupManager (_dedup_manager) is NOT wrapped — it is a separate
     component with 44 references in DuckDBShadowStore and will be
-    addressed in F360 Phase 2 (DuckDBCanonical extraction).
+    F360 Phase 2 complete — DedupManager remains separate.
 
-    Composed into DuckDBCanonical.
+    Composed into DuckDBShadowStore (via _wal_manager).
 
 STORAGE TRINITY (CLAUDE.md):
     Layer    | Tech    | Purpose
@@ -34,6 +34,7 @@ import asyncio
 import logging
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
+from core import aclose
 
 if TYPE_CHECKING:
     pass

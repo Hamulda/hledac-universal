@@ -43,6 +43,7 @@ Requires: Python 3.14+ with t-string support (string.templatelib)
 
 
 from string.templatelib import Interpolation, Template
+from core import aclose
 
 __all__ = [
     "t_analyze",

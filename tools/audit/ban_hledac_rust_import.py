@@ -33,6 +33,7 @@ import sys
 from pathlib import Path
 from dataclasses import dataclass
 from collections.abc import Iterator
+from core import aclose
 
 
 # Directories/files that are always allowed to import hledac_rust_extensions directly

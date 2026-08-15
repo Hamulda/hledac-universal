@@ -51,6 +51,7 @@ import msgspec
 import numpy as np
 
 from hledac.universal.utils.msgspec_json import dumps_str as _msgspec_dumps_str
+from core._util import aclose
 
 try:
     from hledac.universal.utils.msgspec_json import decode as _msgspec_decode, encode as _msgspec_encode

@@ -18,6 +18,7 @@ import pytest
 
 from hledac.universal.layers.communication_layer import _BatchItem
 from hledac.universal.tools.source_bandit import SourceBandit
+from core import aclose
 
 
 class TestSprint42A_Aging(unittest.IsolatedAsyncioTestCase):  # noqa: N801

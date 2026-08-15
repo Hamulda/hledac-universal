@@ -12,6 +12,7 @@ import shutil
 import tempfile
 from pathlib import Path
 from unittest.mock import MagicMock, patch
+from core import aclose
 
 
 # Test transport base

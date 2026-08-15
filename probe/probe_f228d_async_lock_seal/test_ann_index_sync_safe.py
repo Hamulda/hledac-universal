@@ -11,6 +11,7 @@ import inspect
 import threading
 
 import pytest
+from core import aclose
 
 
 class TestANNIndexLockSafety:

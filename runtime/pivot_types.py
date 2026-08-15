@@ -11,6 +11,7 @@ Canonical import path:
 from __future__ import annotations
 
 import msgspec
+from core import aclose
 
 
 class PivotTask(msgspec.Struct, frozen=True, gc=False):

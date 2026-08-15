@@ -18,6 +18,7 @@ from unittest.mock import AsyncMock, patch
 import pytest
 
 from hledac.universal.network.ipfs_client import (
+from core import aclose
     MAX_FILE_SIZE_BYTES,
     ipfs_content_to_finding_dict,
     ipfs_fetch_as_findings,

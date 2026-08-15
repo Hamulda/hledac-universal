@@ -262,6 +262,7 @@ _init_lock = LazyAsyncioLock()
 
 # DNS cache — extracted to dns_cache.py (F350M-R refactor)
 from .dns_cache import get_dns_cache
+from core import aclose
 
 _dns_cache = get_dns_cache()
 

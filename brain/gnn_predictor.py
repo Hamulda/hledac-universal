@@ -18,6 +18,7 @@ import time
 from collections import OrderedDict
 from typing import Any
 import numpy as np
+from core import aclose
 logger = logging.getLogger(__name__)
 
 # [GNN-3] Constants for ANE-GNN

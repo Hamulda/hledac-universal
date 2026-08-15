@@ -251,6 +251,7 @@ if TYPE_CHECKING:
     from .link_predictor import _LinkPredictorDomain
 
 from hledac.universal.core.feature_flags import FeatureFlag, FeatureFlags
+from core._util import aclose
 
 logger = logging.getLogger(__name__)
 

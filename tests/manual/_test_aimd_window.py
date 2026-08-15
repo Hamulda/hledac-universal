@@ -1,5 +1,6 @@
 """Test Issue #15: AIMDWindow lock-free counter (partial fix for _aimd_release_success)."""
 import asyncio
+from core import aclose
 
 
 # Simulate the constants

@@ -13,6 +13,7 @@ from typing import Any
 # C1-X FIX: Import MLX_AVAILABLE from SSOT (zero-import detection)
 # Uses importlib.metadata.version("mlx") — no mlx.core import at module load
 from hledac.universal.utils.mlx_memory import MLX_AVAILABLE
+from core import aclose
 
 # We type `mx` as `Any` (not `ModuleType | None`) so downstream signatures
 # like `mx.array`, `mx.zeros`, `mx.compile` stay statically valid — `Any`

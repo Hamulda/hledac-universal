@@ -22,6 +22,7 @@ import logging
 import subprocess
 import sys
 from pathlib import Path
+from core import aclose
 # NOTE: basicConfig removed — use utils.logging_config.configure_logging() for structured logging.
 # This script uses stdlib logging since it's a standalone tool.
 logger = logging.getLogger(__name__)

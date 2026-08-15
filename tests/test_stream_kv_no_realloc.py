@@ -33,6 +33,7 @@ Final: pytest tests/test_stream_kv_no_realloc.py -xvs -q
 from __future__ import annotations
 
 import pytest
+from core import aclose
 
 
 class TestStreamKVNoRealloc:

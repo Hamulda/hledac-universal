@@ -11,6 +11,7 @@ M1 8GB invariant: Soft ceiling 5.5GiB, tier thresholds.
 from __future__ import annotations
 
 import pytest
+from core import aclose
 
 
 class TestMetalMemoryStats:

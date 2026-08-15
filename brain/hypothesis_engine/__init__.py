@@ -56,6 +56,7 @@ from hledac_hypothesis.explainer import (
     SimpleNodeAblationExplainer,
 )
 from hledac_hypothesis.packs import (
+from core import aclose
     HypothesisPack,
     SourceHint,
 )

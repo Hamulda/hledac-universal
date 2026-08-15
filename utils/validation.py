@@ -302,6 +302,7 @@ def demonstrate_validator() -> None:
     print(f"  Custom validators: {stats['custom_validators']}")
     print(f"  Cache hit rate: {stats['hit_rate']:.2%}")
 import uuid
+from core import aclose
 
 def generate_uuid() -> str:
     """Generate a unique identifier."""

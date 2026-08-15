@@ -7,6 +7,7 @@ from __future__ import annotations
 import pytest
 
 from hledac.universal.core.global_cache_registry import (
+from core import aclose
     GlobalCacheRegistry,
     CacheEntry,
     register_cache,

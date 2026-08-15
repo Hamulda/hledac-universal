@@ -21,6 +21,7 @@ import pytest
 
 from hledac.universal.rl.actions import ACTION_CONTINUE, ACTION_DEEP_DIVE
 from hledac.universal.rl.sprint_policy_manager import (
+from core import aclose
     SprintPolicyManager,
     SprintPolicyState,
 )

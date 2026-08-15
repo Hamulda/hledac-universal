@@ -71,6 +71,7 @@ from enum import IntEnum
 from typing import TYPE_CHECKING, Any, TypeVar
 
 from operator import attrgetter, itemgetter
+from core._util import aclose
 if TYPE_CHECKING:
     from collections.abc import ItemsView, KeysView, ValuesView
 

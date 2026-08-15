@@ -20,6 +20,7 @@ from typing import Any
 
 # R6: Centralized Rust access via core.rust_backend
 from hledac.universal.core.rust_backend import rust
+from core import aclose
 
 _rust_health_check = rust.raw.health_check
 _RUST_AVAILABLE = _rust_health_check is not None

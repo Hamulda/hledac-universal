@@ -16,6 +16,7 @@ These tests are excluded from default dev runs via pytest marker.
 import pytest
 
 from pathlib import Path
+from core import aclose
 
 
 def setup_module() -> None:

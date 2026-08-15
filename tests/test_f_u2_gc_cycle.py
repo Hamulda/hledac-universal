@@ -19,6 +19,7 @@ import gc
 import sys
 
 import pytest
+from core import aclose
 
 
 class TestGcCycleMaintain:

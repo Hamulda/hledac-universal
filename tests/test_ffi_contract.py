@@ -31,6 +31,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+from core import aclose
 
 # ============================================================================
 # Paths

@@ -29,6 +29,7 @@ import sqlite3
 import zipfile
 from pathlib import Path
 from typing import Any
+from core import aclose
 
 logger = logging.getLogger(__name__)
 

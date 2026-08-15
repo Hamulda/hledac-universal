@@ -12,6 +12,7 @@ import asyncio
 import pytest
 
 from hledac.universal.utils.asyncx import race_first_success
+from core import aclose
 
 
 class TestRaceFirstSuccessTruthy:

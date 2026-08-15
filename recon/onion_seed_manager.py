@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 import httpx
 from hledac.universal.utils.msgspec_json import loads as _msgspec_loads
+from core import aclose
 if TYPE_CHECKING:
     pass
 logger = logging.getLogger(__name__)

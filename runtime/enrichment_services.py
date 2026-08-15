@@ -19,6 +19,7 @@ from pathlib import Path
 from typing import Any
 from hledac.universal.utils.asyncx import bounded_parallel_map
 from hledac.universal.utils.lmdb_bulk import putmulti_bounded
+from core import aclose
 log = logging.getLogger(__name__)
 _FORENSICS_LMDB_NAME = 'forensics_enrichment.lmdb'
 _MULTIMODAL_LMDB_NAME = 'multimodal_enrichment.lmdb'

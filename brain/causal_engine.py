@@ -24,6 +24,7 @@ import time
 from dataclasses import dataclass, field
 import msgspec
 from typing import Any
+from core import aclose
 MAX_ENTITIES: int = 5000
 MAX_FINDINGS: int = 5000
 MAX_HYPOTHESES: int = 500

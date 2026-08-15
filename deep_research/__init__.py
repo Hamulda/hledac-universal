@@ -17,6 +17,7 @@ from .path_discovery import (
     ShadowWalkerAlgorithm,
 )
 from .utils import (
+from core import aclose
     Harvester,
     LinkCheckResult,
     LinkRotDetector,

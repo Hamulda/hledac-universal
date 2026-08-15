@@ -54,6 +54,7 @@ import time
 from dataclasses import dataclass, field
 from enum import Enum, auto
 from collections.abc import Callable
+from core._util import aclose
 
 logger = logging.getLogger(__name__)
 

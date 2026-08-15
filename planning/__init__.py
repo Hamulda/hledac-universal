@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import threading
 from typing import TYPE_CHECKING, Any
+from core import aclose
 
 if TYPE_CHECKING:
     from .cost_model import AdaptiveCostModel

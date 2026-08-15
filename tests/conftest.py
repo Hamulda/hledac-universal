@@ -476,6 +476,7 @@ def session_otel_tracer():
 # ---------------------------------------------------------------------------
 
 import gc  # noqa: E402
+from core import aclose
 
 # Import mock cleanup utilities (lazy, fail-soft)
 try:

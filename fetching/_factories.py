@@ -12,6 +12,7 @@ Lazy import preserves M1 invariant (no eager imports).
 
 
 from typing import TYPE_CHECKING, Any
+from core import aclose
 
 if TYPE_CHECKING:
     import psutil

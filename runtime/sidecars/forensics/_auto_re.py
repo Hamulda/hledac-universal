@@ -31,6 +31,7 @@ from typing import TYPE_CHECKING, Any
 
 from hledac.universal.runtime.sidecars._base import BaseSidecarAdapter
 from hledac.universal.runtime.sidecar_protocol import SidecarRegistry
+from core import aclose
 
 if TYPE_CHECKING:
     from hledac.universal.brain.auto_re.parser_forge import AutoREResult

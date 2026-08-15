@@ -22,6 +22,7 @@
 
 from hledac.universal.report.engine import ReportEngine, get_report_engine
 import msgspec
+from core import aclose
 
 __all__ = [
     "ReportEngine",

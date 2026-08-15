@@ -230,6 +230,7 @@ class _IdentityCache[T]:
             ),
         }
 import numpy as np
+from core import aclose
 NETWORKX_AVAILABLE = True
 _nx = None
 IGRAPH_AVAILABLE = True

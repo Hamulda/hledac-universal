@@ -39,6 +39,7 @@ from .resource_coordinator import (
     get_gc_stats,
 )
 from .blitz_gc import (
+from core import aclose
     BlitzGCStrategy,
     blitz_gc,
     BLITZ_THRESHOLD,

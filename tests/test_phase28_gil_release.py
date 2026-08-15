@@ -21,6 +21,7 @@ import threading
 from typing import Any
 
 import pytest
+from core import aclose
 
 
 class TestGILReleaseFunctionExists:

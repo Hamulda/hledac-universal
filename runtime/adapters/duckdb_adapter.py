@@ -20,6 +20,7 @@ if TYPE_CHECKING:
     pass
 
 from hledac.universal.runtime.protocols.storage_protocol import StorageProtocol
+from core import aclose
 
 
 class DuckDBStoreAdapter(StorageProtocol):

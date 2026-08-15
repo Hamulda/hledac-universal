@@ -48,6 +48,7 @@ from typing import TYPE_CHECKING, Any
 
 from operator import attrgetter, itemgetter
 from hledac.universal.utils.asyncx import parallel, _check_gathered
+from core import aclose
 
 if TYPE_CHECKING:
     pass

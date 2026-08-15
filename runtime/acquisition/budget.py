@@ -24,6 +24,7 @@ from __future__ import annotations
 import os
 
 import msgspec
+from core import aclose
 
 
 # ── Constants ─────────────────────────────────────────────────────────────────────

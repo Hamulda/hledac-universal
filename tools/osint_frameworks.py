@@ -9,6 +9,7 @@ import json
 import logging
 import os
 import tempfile
+from core import aclose
 logger = logging.getLogger(__name__)
 
 async def _reap_proc(proc: asyncio.subprocess.Process | None) -> None:

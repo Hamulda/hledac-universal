@@ -13,6 +13,7 @@ No behavior change — fail-open semantics preserved.
 
 import logging
 from typing import TYPE_CHECKING, Any
+from core import aclose
 
 if TYPE_CHECKING:
     from hledac.universal.knowledge.semantic_store import SemanticStore

@@ -13,6 +13,7 @@ _warnings.warn(
 )
 
 from hledac.universal.utils.mlx_memory._core import (
+from core import aclose
     mlx_managed,
     mlx_cleanup_after,
     get_mlx_memory_stats,

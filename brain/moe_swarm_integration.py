@@ -30,6 +30,10 @@ import threading
 import time
 from typing import TYPE_CHECKING, Any, Optional
 
+if TYPE_CHECKING:
+    from mlx_lm import Model as MLXModel
+    from mlx_lm import TokenizerWrapper as MLXTokenizer
+
 from .content_router import (
     ContentRouter,
     classify_content,
@@ -52,6 +56,7 @@ from .micro_model_pool import (
 )
 from .micro_model_swarm import create_micro_model_pool  # P3-1 FIX: was importing from micro_model_pool (wrong module)
 from .micro_model_swarm import (
+from core import aclose
     MicroModelSwarmRouter,
     create_swarm_router,
 )
@@ -729,13 +734,13 @@ class MoERouterWithSwarm:
         self._content_router = ContentRouter()
         
         # Expert state (from original MoERouter)
-        self._experts: dict[str, tuple[Any, Any]] = {}
+        self._experts: dict[str, tuple[MLXModel, MLXTokenizer]] = {}
         self._expert_usage: dict[str, int] = {}
-        self._prompt_cache_by_expert: dict[str, Any] = {}
+        self._prompt_cache_by_expert: dict[str, Any] = {}  # type: ignore[assignment]
         
         # Main model reference (DeepHermes-3B)
-        self._main_model: Optional[Any] = None
-        self._main_tokenizer: Optional[Any] = None
+        self._main_model: Optional[MLXModel] = None
+        self._main_tokenizer: Optional[MLXTokenizer] = None
     
     @property
     def config(self) -> Any:
@@ -744,8 +749,8 @@ class MoERouterWithSwarm:
     
     async def initialize(
         self,
-        model: Optional[Any] = None,
-        tokenizer: Optional[Any] = None,
+        model: Optional[MLXModel] = None,
+        tokenizer: Optional[MLXTokenizer] = None,
     ) -> None:
         """
         Initialize the router and micro-model pool.

@@ -15,6 +15,7 @@ import re
 import ast
 import os
 from pathlib import Path
+from core import aclose
 
 
 def needs_operator_import(content: str) -> bool:

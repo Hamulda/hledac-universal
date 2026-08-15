@@ -43,6 +43,7 @@ import logging
 import threading
 from collections.abc import AsyncIterator, Callable, Iterator
 from typing import TypeVar, cast
+from core._util import aclose
 
 logger = logging.getLogger(__name__)
 

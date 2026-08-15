@@ -9,6 +9,7 @@ Tests DS second-opinion channel:
 """
 
 from brain.research_hypothesis_engine import Hypothesis, HypothesisEngine
+from core import aclose
 
 
 class TestDempsterShaferIntegration:

@@ -777,6 +777,7 @@ def _build_query_variants(query: str, dspy_variants: list | None = None) -> list
 
 from dataclasses import dataclass, field
 from enum import Enum, auto
+from core import aclose
 
 
 class SearchStage(Enum):

@@ -24,6 +24,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 from operator import attrgetter, itemgetter
+from core import aclose
 _EWMA_ALPHA = 0.3
 _MAX_ERRORS_STORED = 50
 _MIN_RELIABILITY = 0.01

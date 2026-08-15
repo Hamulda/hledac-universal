@@ -28,6 +28,7 @@ import threading
 from dataclasses import dataclass
 import msgspec
 from typing import Final
+from core import aclose
 _render_active_count: int = 0
 _render_count_lock = threading.Lock()
 _MAX_CONCURRENT_RENDERERS: Final[int] = 1

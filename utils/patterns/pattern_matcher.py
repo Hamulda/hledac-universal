@@ -23,6 +23,7 @@ import time
 from typing import NamedTuple, cast
 
 from operator import attrgetter, itemgetter
+from core import aclose
 logger = logging.getLogger(__name__)
 
 __all__ = [

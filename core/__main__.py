@@ -19,12 +19,30 @@ import time
 from pathlib import Path
 from typing import Any
 
-from hledac.universal.runtime.sprint_entrypoint import (
-    SprintFlags,
-    run_sprint as _runtime_run_sprint,
-)
+# F350M-R: Lazy imports to break core ↔ runtime cycle
+from core._util import aclose
+
+# Lazy runtime access
+_runtime_run_sprint_impl = None
+_SprintFlags_impl = None
+
+def _get_runtime_run_sprint():
+    """Lazy getter for run_sprint from runtime.sprint_entrypoint."""
+    global _runtime_run_sprint_impl
+    if _runtime_run_sprint_impl is None:
+        from hledac.universal.runtime.sprint_entrypoint import run_sprint as _impl
+        _runtime_run_sprint_impl = _impl
+    return _runtime_run_sprint_impl
+
+def _get_SprintFlags():
+    """Lazy getter for SprintFlags from runtime.sprint_entrypoint."""
+    global _SprintFlags_impl
+    if _SprintFlags_impl is None:
+        from hledac.universal.runtime.sprint_entrypoint import SprintFlags as _impl
+        _SprintFlags_impl = _impl
+    return _SprintFlags_impl
 
 # Re-export for backward compatibility (canonical path)
-run_sprint = _runtime_run_sprint
+run_sprint = _get_runtime_run_sprint()
 
-__all__ = ["run_sprint", "SprintFlags"]
+__all__ = ["run_sprint", "_get_SprintFlags"]

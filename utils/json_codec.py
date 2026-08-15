@@ -19,6 +19,7 @@ Invariant: always-on, bounded, fail-safe.
 """
 
 from hledac.universal.utils.codec import *  # noqa: F403, E402
+from core import aclose
 
 # Re-export everything from the canonical codec module.
 # Provides dumps, loads, OPT_SERIALIZE_NUMPY for legacy callers.

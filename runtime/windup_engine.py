@@ -31,9 +31,26 @@ import resource as _resource
 import time
 from typing import TYPE_CHECKING
 
-from hledac.universal.brain.ane_embedder import semantic_dedup_findings
-from hledac.universal.brain.gnn_predictor import get_anomaly_scores, predict_from_edge_list
+# F350M-R: Lazy imports to break runtime ↔ brain cycle
+# These are only used in deprecated windup functions
+_semantic_dedup_findings_impl = None
+_gnn_predictor_impl = None
+
+def _get_semantic_dedup_findings():
+    global _semantic_dedup_findings_impl
+    if _semantic_dedup_findings_impl is None:
+        from hledac.universal.brain.ane_embedder import semantic_dedup_findings as _impl
+        _semantic_dedup_findings_impl = _impl
+    return _semantic_dedup_findings_impl
+
+def _get_gnn_predictor():
+    global _gnn_predictor_impl
+    if _gnn_predictor_impl is None:
+        from hledac.universal.brain import gnn_predictor as _mod
+        _gnn_predictor_impl = _mod
+    return _gnn_predictor_impl
 from hledac.universal.core.mlx_embeddings import get_embedding_manager
+from core import aclose
 
 if TYPE_CHECKING:
     from .sprint_scheduler import SprintScheduler
@@ -86,8 +103,8 @@ async def _run_gnn_phase(graph: object) -> tuple[list, list, object]:
         logger.info("[WINDUP] GNN: empty edge list")
         return gnn_predictions, anomalies, graph
     try:
-        gnn_predictions = predict_from_edge_list(edges, top_k=10)
-        anomalies = get_anomaly_scores(edges)
+        gnn_predictions = _get_gnn_predictor().predict_from_edge_list(edges, top_k=10)
+        anomalies = _get_gnn_predictor().get_anomaly_scores(edges)
     except Exception as e:
         logger.warning(f"[WINDUP] GNN inference: {e}")
     logger.info(
@@ -296,7 +313,7 @@ async def run_windup(
     deduped = all_findings
     if all_findings:
         try:
-            deduped = await semantic_dedup_findings(all_findings)
+            deduped = await _get_semantic_dedup_findings()(all_findings)
         except Exception as e:
             logger.warning(f"[WINDUP] ANE dedup: {e}")
             deduped = all_findings

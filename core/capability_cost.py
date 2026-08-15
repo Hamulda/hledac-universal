@@ -320,6 +320,7 @@ def capability_cost(
 _DEFAULT_WINDUP_LEAD_S = 30
 # SSOT: Use UmaBudget.MISSION_PEAK_RSS_GIB instead of hardcoded 5.5 GiB
 from hledac.universal.utils.uma_budget import MISSION_PEAK_RSS_GIB
+from core._util import aclose
 _DEFAULT_MISSION_PEAK_MB = MISSION_PEAK_RSS_GIB * 1024  # 5632 MB on M1 8GB (SSOT)
 
 

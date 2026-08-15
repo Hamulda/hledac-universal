@@ -8,6 +8,7 @@ Falls back to uuid4 for Python < 3.14 (uuid7 added in 3.14).
 
 
 import uuid
+from core import aclose
 
 # uuid7() added in Python 3.14 — fallback for older versions
 try:

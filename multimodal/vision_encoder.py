@@ -57,6 +57,7 @@ _IMAGENET_STD = [0.229, 0.224, 0.225]
 _MODEL_CACHE_DIR = Path('~/.hledac/models').expanduser()
 _MOBILE_NET_MODEL_PATH = _MODEL_CACHE_DIR / 'vision_encoder.mlpackage'
 from hledac.universal.core.concurrency import ConcurrencyCategory, get_semaphore
+from core import aclose
 _IMAGE_SEMAPHORE = get_semaphore(ConcurrencyCategory.GRAPH_RAG)
 _COREML_EXECUTOR: ThreadPoolExecutor | None = None
 

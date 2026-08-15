@@ -31,6 +31,7 @@ from hypothesis.strategies import (
 
 from hledac.universal.core.lmdb_unified import UnifiedLMDB, SubDB, get_unified_lmdb
 from hledac.universal.brain.prompt_injection_validator import (
+from core import aclose
     sanitize_prompt_injection_patterns,
     PromptInjectionValidationResult,
 )

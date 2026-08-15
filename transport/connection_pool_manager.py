@@ -42,6 +42,7 @@ warnings.warn(
 
 # Re-export from session_pool for backward compatibility
 from .session_pool import (
+from core import aclose
     httpx_socks_client,
     close_httpx_socks,
     session_pool,

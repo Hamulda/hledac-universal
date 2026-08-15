@@ -9,6 +9,7 @@ Tests the contract between transport/policy.py and its callers:
 
 
 import pytest
+from core import aclose
 
 
 class TestTP1T0AlwaysOn:

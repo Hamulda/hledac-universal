@@ -27,6 +27,7 @@ from unittest import mock
 import pytest
 
 from hledac.universal.utils.retry import (
+from core import aclose
     DEFAULT_BASE_DELAY,
     DEFAULT_JITTER_FACTOR,
     DEFAULT_MAX_ATTEMPTS,

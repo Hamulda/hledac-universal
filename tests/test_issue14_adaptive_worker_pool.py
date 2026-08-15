@@ -11,6 +11,7 @@ from unittest.mock import patch
 import pytest
 
 from hledac.universal.runtime.worker_pool import (
+from core import aclose
     SharedWorkerPool,
     get_shared_pool,
     _GOVERNOR_AVAILABLE,

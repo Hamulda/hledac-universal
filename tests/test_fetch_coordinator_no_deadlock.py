@@ -27,6 +27,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 from typing import Any
 
 import pytest
+from core import aclose
 
 # Add project root to path for imports
 sys.path.insert(0, '/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal')

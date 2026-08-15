@@ -264,6 +264,7 @@ class TestPutmultiBoundedPerformance:
 # ---------------------------------------------------------------------------
 import ast as _ast  # noqa: E402
 from pathlib import Path as _Path  # noqa: E402
+from core import aclose
 
 _S3_AUDIT_FILES = [
     "tools/lmdb_kv.py",

@@ -16,6 +16,7 @@ References:
 
 
 from dataclasses import dataclass, field
+from core import aclose
 
 
 @dataclass(slots=True)

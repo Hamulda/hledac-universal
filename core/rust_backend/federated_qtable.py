@@ -18,6 +18,7 @@ Use in acquisition: source prioritization via Q-value argmax.
 from __future__ import annotations
 
 from typing import Any
+from core._util import aclose
 
 
 def get_domain() -> "FederatedQTableDomain":

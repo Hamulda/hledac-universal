@@ -7,6 +7,7 @@ import argparse
 import os
 import pathlib
 from argparse import Namespace as _NS
+from core._util import aclose
 
 # Acquisition profile choices
 _ACQ_PROFILES: tuple[str, ...] = ("default", "nonfeed_diagnostic", "deep_osint_m1")

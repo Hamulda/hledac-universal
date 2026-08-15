@@ -22,6 +22,7 @@ import msgspec
 from typing import TYPE_CHECKING
 
 from hledac.universal.core.resource_governor import _get_cached_psutil_async, _read_virtual_memory_sync, _read_swap_memory_sync
+from core import aclose
 
 if TYPE_CHECKING:
     import psutil

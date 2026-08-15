@@ -3877,6 +3877,7 @@ from typing import Any
 from collections.abc import Callable, Awaitable
 import asyncio
 import heapq
+from core._util import aclose
 
 # Ack deadline per capability (seconds)
 _ACK_DEADLINE_DEFAULT: float = 2.0

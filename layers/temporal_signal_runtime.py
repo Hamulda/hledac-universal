@@ -20,6 +20,7 @@ import time
 from typing import TYPE_CHECKING, Any
 
 from operator import attrgetter, itemgetter
+from core import aclose
 # Lazy import only — no module-level heavy deps
 # Types imported under TYPE_CHECKING to satisfy static type checkers (mypy/pyright).
 # Runtime lazy import still used inside functions to avoid heavy deps in hot-path.

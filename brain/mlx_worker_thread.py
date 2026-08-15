@@ -54,7 +54,11 @@ import threading
 import time
 import weakref
 from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from queue import Queue
 from hledac.universal.utils.asyncx import parallel_ok, safe_gather_fire_and_forget
+from core import aclose
 if TYPE_CHECKING:
     from collections.abc import Coroutine
 logger = logging.getLogger(__name__)
@@ -129,11 +133,11 @@ class MLXWorkerThread:
         self._start_time: float | None = None
         self._lock: threading.Lock = threading.Lock()
         self._busy: bool = False
-        self._spsc_pair: Any = None
-        self._spsc_sender: Any = None
+        self._spsc_pair: Any = None  # type: ignore[assignment]
+        self._spsc_sender: Any = None  # type: ignore[assignment]
         self._spsc_receiver_ptr: int = 0
         self._spsc_result_ready: threading.Event = threading.Event()
-        self._spsc_result: Any = None
+        self._spsc_result: Any = None  # type: ignore[assignment]
         self._finalizer = weakref.finalize(self, _worker_at_exit_shutdown, self)
         atexit.register(self._finalizer)
 

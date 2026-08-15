@@ -140,6 +140,7 @@ DHT_REAL_UDP = os.getenv('HLEDAC_ENABLE_DHT', '').lower() in ('1', 'true', 'yes'
 MAX_DHT_PROBE_DURATION_S = 120
 DHT_BOOTSTRAP_TIMEOUT_S = 8.0
 from hledac.universal.core.concurrency import ConcurrencyCategory, get_semaphore
+from core import aclose
 DHT_BOOTSTRAP_SEMAPHORE = get_semaphore(ConcurrencyCategory.DHT_BOOTSTRAP)
 DHT_REQUEST_SEMAPHORE = get_semaphore(ConcurrencyCategory.DHT_REQUEST)
 DHT_REQUEST_TIMEOUT_S = 5.0

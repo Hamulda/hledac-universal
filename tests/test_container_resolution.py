@@ -13,6 +13,7 @@ from __future__ import annotations
 import pytest
 
 from core.container import (
+from core import aclose
     ServiceContainer,
     get_global_container,
     reset_global_container,

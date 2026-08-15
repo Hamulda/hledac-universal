@@ -11,6 +11,7 @@ This module provides:
 
 
 from typing import Any
+from core import aclose
 
 # Graph Manager (pyvis visualization layer)
 try:

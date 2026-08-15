@@ -43,6 +43,7 @@ from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 
 from hledac.universal.core.locks import LockCategory
+from core import aclose
 
 if TYPE_CHECKING:
     pass

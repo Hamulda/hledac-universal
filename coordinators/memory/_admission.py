@@ -12,6 +12,7 @@ Extracted from memory_coordinator.py (F320 refactor).
 """
 from dataclasses import dataclass
 from enum import Enum
+from core import aclose
 
 
 class CacheLevel(Enum):

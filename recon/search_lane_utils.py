@@ -21,6 +21,7 @@ import logging
 from typing import Any
 
 from hledac.universal.transport.circuit_breaker import (
+from core import aclose
     domain_breaker_check,
     domain_breaker_record_failure,
     domain_breaker_record_success,

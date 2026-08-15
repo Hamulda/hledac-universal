@@ -15,6 +15,7 @@ Pravidla:
 import re
 import sys
 from pathlib import Path
+from core import aclose
 
 SRC = Path("/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal")
 

@@ -1,5 +1,6 @@
 """Helper script to refactor _tree_of_thoughts_reasoning function."""
 import re
+from core import aclose
 
 file_path = '/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/coordinators/meta_reasoning_coordinator.py'
 with open(file_path, 'r') as f:

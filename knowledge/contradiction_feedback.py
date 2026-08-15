@@ -31,7 +31,7 @@ ENGINES:
     _find_contradictions(data) -> list[Contradiction]
   - DempsterShafer (brain/evidence_fusion.py:232)
     detect_contradiction(threshold) -> bool
-  - EvidenceNetworkAnalyzer (advanced_web/evidence_network_analyzer.py:489)
+  - EvidenceNetworkAnalyzer (DEPRECATED - module deleted)
     detect_contradictions(evidence_a, evidence_b) -> dict | None
   - GraphRAG (knowledge/graph_rag.py:1226)
     _detect_contradictions(facts) -> contested + paths
@@ -67,6 +67,7 @@ from datetime import UTC, datetime
 from typing import Any
 
 from operator import attrgetter, itemgetter
+from core import aclose
 logger = logging.getLogger(__name__)
 
 # -- Bounds (M1 8GB safe) -----------------------------------------------------
@@ -707,7 +708,7 @@ class ContradictionFeedbackBridge:
     ) -> list[ContradictionSignal] | None:
         """Run EvidenceNetworkAnalyzer.detect_contradictions().
 
-        advanced_web/evidence_network_analyzer.py:489
+        DEPRECATED - module deleted
         detect_contradictions(evidence_a, evidence_b) -> dict | None
         """
         try:

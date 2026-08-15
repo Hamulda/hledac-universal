@@ -55,6 +55,7 @@ import os
 import sys
 from pathlib import Path
 from typing import Any
+from core import aclose
 
 # Ensure repo root is on sys.path so ``hledac.universal.brain.dspy_programs``
 # (and the rest of the package) is importable when the script is invoked

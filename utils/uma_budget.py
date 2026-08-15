@@ -692,6 +692,7 @@ except Exception as _e:
 MAX_L2_CACHE_SIZE_MB: int = 50
 from hledac.universal.core.memory import get_memory_snapshot as _rust_snapshot
 from hledac.universal.core.psutil_shim import psutil_module as _psutil_mod
+from core import aclose
 
 def _get_mlx_core():
     """Lazy MLX import for memory metrics."""

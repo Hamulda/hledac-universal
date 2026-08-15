@@ -7,6 +7,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import numpy as np
 import pytest
+from core import aclose
 
 # Testuje se pouze pokud je MLX dostupný
 np = pytest.importorskip("numpy")

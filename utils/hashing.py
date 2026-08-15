@@ -17,6 +17,7 @@ from __future__ import annotations
 
 from functools import lru_cache
 from typing import TYPE_CHECKING
+from core import aclose
 
 if TYPE_CHECKING:
     pass

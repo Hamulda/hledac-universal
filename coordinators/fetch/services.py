@@ -49,6 +49,7 @@ from cachetools import TTLCache
 
 from hledac.universal.core.feature_flags import FeatureFlag, FeatureFlags
 from hledac.universal.utils.asyncx import async_getaddrinfo, parallel
+from core import aclose
 
 logger = logging.getLogger(__name__)
 

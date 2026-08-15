@@ -76,3 +76,4 @@ class EvidenceSink(ABC):
 
 # Protocol verze — pro structural typing (Protocol + typing.Protocol)
 from typing import Protocol as EvidenceSinkProtocol  # noqa: E402, F401
+from core._util import aclose

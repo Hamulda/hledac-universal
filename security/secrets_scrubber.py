@@ -27,6 +27,7 @@ import os
 import re
 from functools import lru_cache
 from typing import Any
+from core import aclose
 
 logger = logging.getLogger(__name__)
 

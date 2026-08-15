@@ -40,7 +40,7 @@ from collections.abc import AsyncIterator, Callable, Iterator
 from dataclasses import dataclass
 import msgspec
 from pathlib import Path
-from typing import Any, TypeVar
+from typing import TYPE_CHECKING, Any, TypeVar
 from hledac.universal.utils.asyncx import parallel_ok, safe_wait_for
 from hledac.universal.core.sync_bridge import stream_via_queue
 
@@ -68,6 +68,17 @@ def _otel_resolver() -> Any:
     return _otel_fallback()
 _otel_instrumented = _otel_resolver()
 T = TypeVar('T')
+
+if TYPE_CHECKING:
+    # Forward references for type checking only (avoid circular/havy runtime imports)
+    from hledac.universal.brain.prompt_bandit import PromptBandit
+    from mlx_lm import Model as MLXModel
+    from mlx_lm import TokenizerWrapper as MLXTokenizer
+    from hledac.universal.brain.mlx_batched_executor import MLXBatchedExecutor
+    from hledac.universal.brain.mlx_worker_thread import MLXWorkerThread
+    from hledac.universal.core.mlx_unified_scheduler import MLXUnifiedScheduler
+    from hledac.universal.brain.inference_pipeline import BoundedInferencePipeline
+    from hledac.universal.brain._inference.generate import GenerationFacade
 
 # [FINAL]-019-07: Capability cost registration for QoS ladder triage.
 # Hermes3 (4bit): rss_mb=2000, peak_mb=2200 (model weights + KV cache)
@@ -298,6 +309,7 @@ HLEDAC_ENABLE_DSPY = os.environ.get('HLEDAC_ENABLE_DSPY', '0') == '1' and _DSPY_
 
 # SWARM-010: Use FeatureFlags for MLX prewarm
 from hledac.universal.core.feature_flags import FeatureFlags, FeatureFlag
+from core import aclose
 _MLX_PREWARM_ENABLED = FeatureFlags.get(FeatureFlag.MLX_PREWARM)
 _MLX_PREWARM_LAST_UNLOAD_TIME: float | None = None
 _MLX_PREWARM_SKIP_THRESHOLD_S = 60.0
@@ -675,7 +687,7 @@ class DeepHermes3Engine:
         self._model_breaker = ModelCircuitBreaker(model_id=model_id)
 
     @property
-    def model(self) -> Any:
+    def model(self) -> MLXModel | None:
         """Canonical model reference — shares the loaded model with callers.
 
         M-05 fix: MemoryLayer previously loaded a separate BF16 Hermes-3 via
@@ -686,7 +698,7 @@ class DeepHermes3Engine:
         return self._model
 
     @property
-    def tokenizer(self) -> Any:
+    def tokenizer(self) -> MLXTokenizer | None:
         """Canonical tokenizer reference shared with this engine."""
         return self._tokenizer
 
@@ -755,7 +767,7 @@ class DeepHermes3Engine:
             self._batch_adapter = PriorityQueueAdapter(self)
         return self._batch_adapter
 
-    async def _submit_structured_batch(self, prompt: str, response_model: type, priority: float=1.0, temperature: float=0.1, max_tokens: int=1024, system_msg: str | None=None) -> Any:
+    async def _submit_structured_batch(self, prompt: str, response_model: type[T], priority: float=1.0, temperature: float=0.1, max_tokens: int=1024, system_msg: str | None=None) -> asyncio.Future[T]:
         """
         Sprint 7E: Submit a structured output request to the batch queue.
 
@@ -2043,7 +2055,7 @@ class DeepHermes3Engine:
                                 for _ in mlx_lm.stream_generate(model=self._model, tokenizer=self._tokenizer, prompt=self._system_prompt, prompt_cache=self._system_prompt_cache, max_tokens=1):  # type: ignore[arg-type]
                                     pass
                         finally:
-                            await asyncio.to_thread(_safe_mlx_eval_and_clear_cache, 'system_prompt_cache_prefill')
+                            _safe_mlx_eval_and_clear_cache('system_prompt_cache_prefill')
                 await asyncio.to_thread(_prefill)
                 self._kv_cache_stats['cache_prefills'] = 1
             logger.info('[CACHE] System prompt cache initialized (cold prefill)')
@@ -2120,7 +2132,7 @@ class DeepHermes3Engine:
                                         for _ in mlx_lm.stream_generate(model=self._model, tokenizer=self._tokenizer, prompt=self._system_prompt, prompt_cache=self._system_prompt_cache, max_tokens=1):  # type: ignore[arg-type]
                                             pass
                                 finally:
-                                    await asyncio.to_thread(_safe_mlx_eval_and_clear_cache, 'system_prompt_cache_parallel_prefill')
+                                    _safe_mlx_eval_and_clear_cache('system_prompt_cache_parallel_prefill')
                         await asyncio.to_thread(_do_prefill)
                         self._kv_cache_stats['cache_prefills'] += 1
                     logger.info('[P1-3] System prompt cache prefill complete (parallel)')
@@ -3120,7 +3132,7 @@ class DeepHermes3Engine:
         # M-01: return (response, kv_cache_after) so caller can store populated cache
         return response.strip(), kv_cache_after
 
-    async def _ensure_mlx_batcher(self) -> Any:
+    async def _ensure_mlx_batcher(self) -> MLXBatchedExecutor | None:
         """
         Lazy initialization of MLXBatchedExecutor.
 
@@ -3140,7 +3152,7 @@ class DeepHermes3Engine:
             self._mlx_batcher = None
         return self._mlx_batcher
 
-    def _ensure_mlx_worker_thread(self) -> Any:
+    def _ensure_mlx_worker_thread(self) -> MLXWorkerThread | None:
         """
         Lazy initialization of MLXWorkerThread (M.T2).
 
@@ -3161,7 +3173,7 @@ class DeepHermes3Engine:
             self._mlx_worker_thread = None
         return self._mlx_worker_thread
 
-    async def _ensure_mlx_scheduler(self) -> Any:
+    async def _ensure_mlx_scheduler(self) -> MLXUnifiedScheduler | None:
         """
         Lazy initialization of MLXUnifiedScheduler.
 
@@ -3200,7 +3212,7 @@ class DeepHermes3Engine:
             self._mlx_scheduler = None
         return self._mlx_scheduler
 
-    async def _ensure_inference_pipeline(self) -> Any:
+    async def _ensure_inference_pipeline(self) -> BoundedInferencePipeline | None:
         """
         Issue #17: Lazy initialization of BoundedInferencePipeline.
 
@@ -4465,7 +4477,7 @@ class DeepHermes3Engine:
         return self._kv_cache_mgr
 
     @property
-    def generation_facade(self) -> Any:
+    def generation_facade(self) -> GenerationFacade:
         """Get GenerationFacade wrapping engine's model/tokenizer/metal (PEP 698).
 
         Returns:
@@ -5141,7 +5153,7 @@ class DeepHermes3Engine:
             except Exception as e:
                 logger.debug(f'[SUSTAIN] prompt_cache experiment failed: {e}')
         response = mlx_generate(**generate_kwargs)
-        await asyncio.to_thread(_safe_mlx_eval_and_clear_cache, 'sustain_inference')
+        _safe_mlx_eval_and_clear_cache('sustain_inference')
         try:
             from ..utils.mlx_memory import format_mlx_memory_snapshot
             logger.debug(f'[SUSTAIN] POST: {format_mlx_memory_snapshot()}')
@@ -5203,7 +5215,7 @@ class DeepHermes3Engine:
         # Execute warmup generation (worker thread or inline)
         await self._execute_warmup_generation(warmup_prompt)
 
-        await asyncio.to_thread(_safe_mlx_eval_and_clear_cache, 'warmup_prefill')
+        _safe_mlx_eval_and_clear_cache('warmup_prefill')
         logger.info('[WARMUP] Prefix cache warmup complete (fresh build)')
         return True
 

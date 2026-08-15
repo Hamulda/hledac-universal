@@ -42,6 +42,7 @@ try:
 except ImportError:  # noqa: BLE001
     pass
 from hledac.universal.utils.asyncx import parallel, ParallelResult
+from core import aclose
 logger = logging.getLogger(__name__)
 MAX_ASN_RESULTS: int = 500
 RATE_LIMIT_S: float = 2.0

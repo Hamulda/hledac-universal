@@ -2,6 +2,7 @@
 
 # Base types (SSOT)
 from hledac.universal.discovery.base import (
+from core import aclose
     BaseDiscoveryMixin,
     DiscoveryAdapterProtocol,
     DiscoveryBatchResult,

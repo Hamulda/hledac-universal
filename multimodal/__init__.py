@@ -72,6 +72,7 @@ from .whisper_transcriber import (  # [SILICON-02b]
     transcribe_and_extract_iocs,
 )
 from .vision_encoder import VisionEncoder
+from core import aclose
 
 __all__ = [
     # Shared helpers

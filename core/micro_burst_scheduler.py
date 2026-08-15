@@ -45,6 +45,7 @@ from typing import Final
 
 from hledac.universal.utils._patterns import module_singleton_creator
 from hledac.universal.utils.logger import get_logger
+from core._util import aclose
 
 logger = get_logger(__name__)
 

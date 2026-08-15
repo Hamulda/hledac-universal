@@ -19,6 +19,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from hledac.universal.knowledge.storage_trinity import (
+from core import aclose
     LANCE_FLUSH_INTERVAL_S,
     MAX_LANCE_QUEUE,
     StorageTrinity,

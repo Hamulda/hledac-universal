@@ -21,6 +21,7 @@ import pytest
 sys.path.insert(0, str(Path(__file__).parent.parent.parent.parent.parent))
 
 from hledac.universal.core.mlx_embeddings import (
+from core import aclose
     EmbeddingTask,
     MLXEmbeddingManager,
     apply_task_prefix,

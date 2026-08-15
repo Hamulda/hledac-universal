@@ -7,6 +7,7 @@ M1 8GB: usearch C++ HNSW s Metal SIMD — rychlejší než hnswlib.
 import asyncio
 import logging
 import numpy as np
+from core import aclose
 logger = logging.getLogger(__name__)
 try:
     import usearch

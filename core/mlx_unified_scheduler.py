@@ -46,7 +46,9 @@ from typing import TYPE_CHECKING, Any
 from collections.abc import Callable
 import msgspec
 
-from hledac.universal.runtime.protocols.cleanup_protocol import shutdown_aclose
+# F350M-R: Import from core.protocols (breaks runtime ↔ core cycle)
+from core.protocols import shutdown_aclose
+from core._util import aclose
 if TYPE_CHECKING:
     from hledac.universal.brain.ane_embedder import ANE_MLX_Mutex
     from hledac.universal.brain.deephermes3_engine import DeepHermes3Engine

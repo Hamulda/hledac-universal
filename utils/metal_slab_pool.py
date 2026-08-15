@@ -13,6 +13,7 @@ _warnings.warn(
 )
 
 from hledac.universal.utils.mlx_memory._slab import (
+from core import aclose
     MetalSlabPool,
     release_slab_pool,
 )

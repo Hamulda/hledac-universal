@@ -314,6 +314,7 @@ class QualityRejectionRecord(Struct, frozen=True):
 
 # Sprint 8AG §6.17: Persistent dedup config
 from hledac.universal.config.dedup_config import DEDUP_HOT_CACHE_MAX, DEDUP_LMDB_MAP_SIZE  # noqa: E402
+from core import aclose
 
 # Backward compatibility: module-level aliases (DEPRECATED — use config.dedup_config)
 _DEDUP_LMDB_MAP_SIZE: int = DEDUP_LMDB_MAP_SIZE

@@ -131,6 +131,7 @@ _PYTHON_HEADER = """\
 from __future__ import annotations
 
 import re as _re
+from core import aclose
 
 # Hash validators — mirrors forensics/ioc_extractor.py
 _HASH_VALIDATORS = {{

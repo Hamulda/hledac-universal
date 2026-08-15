@@ -19,7 +19,7 @@ the caller to invoke it with their own parameters (e.g., SidecarOrchestrator
 needs result_sink, governor, scheduler).
 
 USAGE:
-    from hledac.universal._lazy_imports import get_DuckDBShadowStore
+    from _lazy_imports import get_DuckDBShadowStore
 
     DuckDBShadowStore = get_DuckDBShadowStore()
     store = DuckDBShadowStore()
@@ -36,6 +36,7 @@ from __future__ import annotations
 import logging
 import sys
 from typing import TYPE_CHECKING, Any
+from core import aclose
 
 if TYPE_CHECKING:
     from types import ModuleType
@@ -333,7 +334,7 @@ def get_all_service_status() -> dict[str, LazyServiceInfo]:
 
 
 # ─── PEP 810 Module-Level __getattr__ ────────────────────────────────────────
-# Enables: from hledac.universal._lazy_imports import get_DuckDBShadowStore
+# Enables: from _lazy_imports import get_DuckDBShadowStore
 # without triggering import until the function is actually called.
 
 

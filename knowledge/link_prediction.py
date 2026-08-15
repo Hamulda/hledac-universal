@@ -25,6 +25,7 @@ from typing import TYPE_CHECKING, Any, Protocol
 
 from operator import attrgetter, itemgetter
 from msgspec import Struct
+from core import aclose
 
 if TYPE_CHECKING:
     from hledac.universal.knowledge.ioc_graph import IOCGraph

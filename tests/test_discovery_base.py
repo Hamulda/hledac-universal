@@ -17,6 +17,7 @@ from hledac.universal.discovery.duckduckgo_adapter import DuckDuckGoAdapter
 from hledac.universal.discovery.crtsh_adapter import CRTshAdapter
 from hledac.universal.discovery.circl_pdns_adapter import CirclPDNSAdapter
 from hledac.universal.discovery.tvnews_adapter import TVNewsAdapter
+from core import aclose
 
 
 class TestDiscoveryResult:

@@ -5,19 +5,19 @@ store implementations must satisfy. Enables Protocol-based dependency injection
 so callers don't need to know whether they're talking to DuckDBShadowStore
 (the current monolithic implementation) or future extracted components.
 
-ARCHITECTURE (F360):
-    duckdb_protocol.py  — Protocol (interface contract)
-    duckdb_canonical.py — Canonical SQL store (findings, runs, deltas, etc.)
-    duckdb_vector_store.py — HNSW vector operations (rag_embeddings, entity_embeddings)
-    duckdb_wal_manager.py — WAL + LMDB lifecycle
-    duckdb_quality_gate.py — Stateful quality assessment
-    duckdb_analytics.py — Scorecard, FTS5, arrow metrics
-    duckdb_store.py     — DuckDBShadowStore (monolithic, refactoring target)
+ARCHITECTURE (F360 Phase 4+):
+    duckdb_protocol.py       — Protocols (interface contracts)
+    duckdb_arrow_builder.py  — Arrow batch building with fallbacks
+    duckdb_quality_gate.py   — Quality gate (extracted)
+    duckdb_wal_manager.py    — WAL management (extracted)
+    duckdb_vector_store.py   — Vector operations (extracted)
+    duckdb_graph_attachment.py — Graph attachment (extracted)
+    query_executor.py       — SQL query execution (extracted)
+    duckdb_store.py          — DuckDBShadowStore (composition root)
 
-vs duckdb_rag_store.py:
-    duckdb_rag_store.py is a thin facade that delegates to duckdb_store.py.
-    It is NOT a separate RAG engine — DuckDB HNSW lives in DuckDBShadowStore.
-    After F360, duckdb_rag_store.py → duckdb_rag_facade.py (no logic change).
+LAYER RESPONSIBILITIES:
+    Layer 1 (duckdb_arrow_builder.py): Arrow batch building with fallbacks
+    Layer 2 (duckdb_store.py): WAL, dedup, quality gate, graph, vector (composed)
 
 STORAGE TRINITY (CLAUDE.md):
     Layer    | Tech        | Purpose
@@ -31,6 +31,7 @@ from __future__ import annotations
 
 from collections.abc import AsyncIterator
 from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
+from core import aclose
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -42,8 +43,8 @@ class DuckDBStoreProtocol(Protocol):
     """
     Typed contract for DuckDB-backed canonical store.
 
-    F360: DuckDBShadowStore is the current implementation (monolithic).
-    Future extracted DuckDBCanonical will also satisfy this protocol.
+    F360: DuckDBShadowStore is the current implementation (composition root).
+    Extracted components satisfy this protocol via duckdb_protocol.py.
 
     ═══════════════════════════════════════════════════════════════════
     ═ LIFECYCLE
@@ -125,202 +126,57 @@ class DuckDBStoreProtocol(Protocol):
     async def iter_batches_async(
         self,
         sql: str,
+        batch_size: int = 1024,
         params: list[Any] | None = None,
-        batch_size: int = 500,
-    ) -> AsyncIterator[Any]:
-        """Streaming batch query — yields lists of row dicts."""
+    ) -> AsyncIterator[list[Any]]:
+        """Iterate query results in batches (for large result sets)."""
 
-    async def async_query_arrow_batches(
-        self,
-        sql: str,
-        params: list[Any] | None = None,
-        batch_size: int = 2048,
-    ) -> AsyncIterator[Any]:
-        """Streaming Arrow batch query — yields pyarrow.RecordBatch."""
-
-    def iter_batches(
-        self,
-        sql: str,
-        params: list[Any] | None = None,
-        batch_size: int = 500,
-    ) -> AsyncIterator[list[tuple]]:
-        """Sync streaming batch query."""
-
-    # ── FTS5 Search ──────────────────────────────────────────────
-
-    async def fts_search_findings(
-        self,
-        query: str,
-        k: int = 10,
-        after_ts: float | None = None,
-    ) -> list[dict[str, Any]]:
-        """Full-text search over canonical_findings.payload_text using FTS5."""
-
-    # ── Vector / RAG ─────────────────────────────────────────────
-
-    async def upsert_rag_embeddings(self, chunks: list[dict[str, Any]]) -> int:
-        """Batch upsert RAG document chunk embeddings (LIST<FLOAT> vectors)."""
-
-    async def vector_search_rag(
-        self,
-        query_vector: list[float],
-        k: int = 10,
-        document_id: str | None = None,
-    ) -> list[dict[str, Any]]:
-        """
-        ANN vector search over rag_embeddings using DuckDB HNSW.
-
-        Args:
-            query_vector: 384-dim query embedding.
-            k: Number of results (default 10, max 100, M1 8GB safe).
-            document_id: Optional filter to specific document.
-
-        Returns:
-            List of dicts: {chunk_id, document_id, content, metadata_json, distance}
-        """
-
-    async def vector_search_rag_mmr(
-        self,
-        query_vector: list[float],
-        k: int = 10,
-        fetch_k: int = 20,
-        lambda_: float = 0.5,
-    ) -> list[dict[str, Any]]:
-        """MMR (Maximal Marginal Relevance) reranked vector search."""
-
-    async def hybrid_search_rag(
-        self,
-        query_text: str,
-        query_vector: list[float],
-        k: int = 10,
-        fts_weight: float = 0.4,
-        vec_weight: float = 0.6,
-    ) -> list[dict[str, Any]]:
-        """Hybrid FTS5 + vector ANN search with Reciprocal Rank Fusion."""
-
-    async def upsert_entity_embeddings(self, entities: list[dict[str, Any]]) -> int:
-        """Batch upsert entity alias/identity embeddings."""
-
-    async def vector_search_entities(
-        self,
-        query_vector: list[float],
-        k: int = 10,
-        entity_type: str | None = None,
-    ) -> list[dict[str, Any]]:
-        """ANN vector search over entity_embeddings for identity clustering."""
-
-    # ── Analytics / Scorecard ───────────────────────────────────
-
-    async def upsert_scorecard(self, scorecard: dict[str, Any]) -> bool:
-        """Upsert sprint_scorecard row."""
+    # ── Sprint Analytics ─────────────────────────────────────────
 
     async def async_record_sprint_delta(self, delta: dict[str, Any]) -> bool:
-        """Record sprint_delta metrics."""
+        """Record sprint_delta row."""
 
-    async def async_record_source_hit(
-        self,
-        sprint_id: str,
-        ts: float,
-        source_type: str,
-        findings_count: int,
-        ioc_count: int,
-        hit_rate: float,
-    ) -> bool:
-        """Record per-sprint source attribution."""
+    async def async_record_sprint_scorecard(self, scorecard: dict[str, Any]) -> bool:
+        """Record sprint_scorecard row."""
 
-    async def get_stats(self) -> dict[str, Any]:
-        """Return aggregate store statistics."""
+    async def async_record_research_episode(self, episode: dict[str, Any]) -> bool:
+        """Record research_episodes row."""
 
-    # ── Graph Attachments ────────────────────────────────────────
+    # ── Graph Operations ─────────────────────────────────────────
+
+    def get_graph_stats(self) -> dict[str, Any]:
+        """Return graph statistics."""
 
     def inject_graph(self, graph: Any) -> None:
-        """Attach DuckPGQGraph or IOCGraph for entity enrichment."""
+        """Inject DuckPGQGraph or IOCGraph for entity enrichment."""
 
-    def get_graph_attachment_kind(self) -> str | None:
-        """Return kind of attached graph or None."""
-
-    async def get_connected_iocs(
-        self,
-        ioc_value: str,
-        depth: int = 2,
-        ioc_types: list[str] | None = None,
-    ) -> list[dict[str, Any]]:
-        """Graph traversal: find IOC nodes connected to given IOC."""
-
-    async def annotate_findings_with_graph_context(
-        self, findings: list[Any]
-    ) -> list[Any]:
-        """Enrich finding list with graph-derived context (aliases, relationships)."""
-
-    # ── Quality Gate ─────────────────────────────────────────────
-
-    def get_quality_rejection_ledger(self) -> dict[str, int]:
-        """Return quality rejection counts by reason code."""
-
-    # ── WAL ───────────────────────────────────────────────────────
-
-    def wal_manager(self) -> Any:  # WALManager
-        """Return WALManager instance for this store."""
-
-    # ── Maintenance ────────────────────────────────────────────────
-
-    async def async_vacuum_if_needed(self) -> bool:
-        """Run VACUUM if conditions are met (duckdb_vacuum feature flag)."""
-
-    async def vacuum_async(self) -> None:
-        """Force VACUUM regardless of conditions."""
-
-    async def async_healthcheck(self) -> dict[str, Any]:
-        """Return health status (connection, WAL, dedup, memory)."""
-
-    # ── Target / Entity Memory ───────────────────────────────────
-
-    async def upsert_target_memory(self, target_id: str, memory: dict[str, Any]) -> bool:
-        """Upsert target_memory row."""
-
-    async def async_get_target_memory(self, target_id: str) -> dict[str, Any] | None:
-        """Fetch target memory by target_id."""
-
-    async def upsert_episode(self, episode: dict[str, Any]) -> bool:
-        """Upsert research_episode row."""
-
-    # ── Research Sessions ────────────────────────────────────────
-
-    async def async_record_research_session(
-        self, session: dict[str, Any]
-    ) -> bool:
-        """Record research session memory."""
-
-    # ── Hypothesis Tracking ────────────────────────────────────────
-
-    async def async_record_hypothesis_tracking(
-        self, hypothesis: dict[str, Any]
-    ) -> bool:
-        """Record hypothesis tracking row."""
-
-    # ── Entity Observations ──────────────────────────────────────
-
-    async def async_record_entity_observations_bulk(
-        self, observations: list[dict[str, Any]]
-    ) -> int:
-        """Bulk record entity observations for temporal tracking."""
-
-    # ── DHT Metadata ──────────────────────────────────────────────
-
-    async def async_ingest_dht_metadata(self, metadata: dict[str, Any]) -> bool:
-        """Ingest DHT torrent metadata (infohash, name, files, peers)."""
-
-    # ── IOC Co-occurrence ────────────────────────────────────────
-
-    async def async_ingest_cooccurrence_batch(
-        self, cooccurrences: list[dict[str, Any]]
-    ) -> int:
-        """Bulk ingest IOC co-occurrence pairs for speculative edge mining."""
-
-    # ── Target Profiles ────────────────────────────────────────────
+    # ── Target Profiles ───────────────────────────────────────────
 
     async def async_upsert_target_profile(self, profile: dict[str, Any]) -> bool:
         """Upsert target_profiles row."""
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# DuckDBArrowBuilder Protocol — F360 Phase 4
+# ─────────────────────────────────────────────────────────────────────────────
+
+@runtime_checkable
+class DuckDBArrowBuilderProtocol(Protocol):
+    """
+    Typed contract for DuckDBArrowBuilder — Arrow batch building.
+    
+    F360 Phase 4: DuckDBArrowBuilder handles Arrow IPC batch construction
+    from CanonicalFinding objects with multiple fallback paths.
+    """
+
+    def build_arrow_batch(
+        self,
+        findings: list[Any],
+    ) -> tuple[Any | None, Any]:  # (arrow_bytes_or_table, status)
+        """Build Arrow batch from findings."""
+
+    def get_metrics(self) -> dict[str, int]:
+        """Return arrow metrics."""
 
 
 # ─────────────────────────────────────────────────────────────────────────────

@@ -9,6 +9,7 @@ pytest.importorskip("httpx")
 
 from hledac.universal.recon._http_helpers import get_intelligence_session  # noqa: E402
 from hledac.universal.recon.exposure_clients import (  # noqa: E402
+from core import aclose
     CensysClient,
     CVIntelligenceClient,
     ShodanClient,

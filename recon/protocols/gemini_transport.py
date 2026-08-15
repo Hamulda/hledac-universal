@@ -25,6 +25,7 @@ import ssl
 import time
 import urllib.parse
 from typing import NamedTuple
+from core import aclose
 
 logger = logging.getLogger(__name__)
 

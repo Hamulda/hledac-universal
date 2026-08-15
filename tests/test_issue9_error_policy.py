@@ -12,6 +12,7 @@ import asyncio
 import pytest
 
 from runtime.error_policy import (
+from core import aclose
     Ok,
     Err,
     Result,

@@ -763,6 +763,7 @@ import os
 import sys
 import time as _time_module
 from collections.abc import Callable
+from core import aclose
 
 # Rust atomic UMA state — 0=ok, 1=soft_warn, 2=warn, 3=critical, 4=emergency
 _rust_uma_state: Callable | None = None

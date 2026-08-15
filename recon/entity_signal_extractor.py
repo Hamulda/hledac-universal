@@ -34,6 +34,7 @@ from datetime import datetime
 from typing import Any
 from hledac.universal.utils.asyncx import parallel
 from hledac.universal.runtime.worker_pool import RustWorkerPool
+from core import aclose
 logger = logging.getLogger(__name__)
 _NUM_EXTRACTION_WORKERS: int = 2
 _CHUNK_SIZE: int = 32

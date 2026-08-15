@@ -27,6 +27,7 @@ warnings.warn(
 )
 
 from hledac.universal.core.mlx_embeddings import (
+from core import aclose
     MLXEmbeddingManager,
     get_mlx_embedder,
     get_embedding_manager,

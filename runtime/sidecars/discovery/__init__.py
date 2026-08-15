@@ -6,6 +6,7 @@ PEP 562 lazy loading — adapters loaded only when first accessed.
 Adapters: Onion, I2P, IPFS, DHT, CommonCrawl.
 """
 from __future__ import annotations
+from core import aclose
 
 __all__ = [
     "OnionDiscoverySidecarAdapter",

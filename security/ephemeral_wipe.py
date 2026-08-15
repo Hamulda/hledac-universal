@@ -39,6 +39,7 @@ import time
 from typing import Final
 
 from hledac.universal.core.feature_flags import FeatureFlag, FeatureFlags
+from core import aclose
 
 __all__ = [
     "EphemeralStateAnnihilator",

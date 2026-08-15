@@ -26,6 +26,7 @@ from dataclasses import dataclass
 from typing import Final
 from hledac.universal.utils.sync_bridge import run_sync_async
 from hledac.universal.core.concurrency import ConcurrencyCategory, get_semaphore
+from core import aclose
 _WEBKIT_SEMAPHORE: Final[asyncio.Semaphore] = get_semaphore(ConcurrencyCategory.SCRAPE_GENERAL)
 _DEFAULT_TIMEOUT_S: Final[float] = 10.0
 _DEFAULT_MAX_BYTES: Final[int] = 2000000

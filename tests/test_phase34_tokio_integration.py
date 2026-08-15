@@ -24,6 +24,7 @@ import sys
 from typing import TYPE_CHECKING
 
 import pytest
+from core import aclose
 
 if TYPE_CHECKING:
     pass

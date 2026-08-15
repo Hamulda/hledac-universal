@@ -70,6 +70,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from enum import Enum
 from typing import TYPE_CHECKING, Any, Self
+from core import aclose
 if TYPE_CHECKING:
     import numpy as np
     from .autonomous_analyzer import AutoResearchProfile

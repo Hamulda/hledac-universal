@@ -18,6 +18,7 @@ def tracer(category, lock, name, frame_info):
 locks_mod._register_lock = tracer
 
 import pytest
+from core import aclose
 exit_code = pytest.main(["-x", "tests/test_sprint_scheduler.py", "-q", "--tb=short"])
 
 # Write registrations to file

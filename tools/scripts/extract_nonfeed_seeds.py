@@ -210,6 +210,7 @@ def _get_table_schema(conn: Any, table_name: str) -> TableSchema | None:
 
 import re
 from contextlib import contextmanager
+from core import aclose
 
 # Safe identifier validation: alphanumeric + underscore only, no dots, no dashes
 _SAFE_IDENTIFIER_RE = re.compile(r'^[a-zA-Z_][a-zA-Z0-9_]*$')

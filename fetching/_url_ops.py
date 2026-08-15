@@ -294,3 +294,4 @@ def looks_like_feed_url(url: str) -> bool:
 
 
 import functools
+from core import aclose

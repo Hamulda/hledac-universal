@@ -6,6 +6,7 @@ SKIP (not FAIL) if rust_extensions are not importable.
 from pathlib import Path
 
 import pytest
+from core import aclose
 
 # Skip the entire module when the optional Rust extension isn't built.
 # `rust_extensions/` ships with a Cargo project; building it requires

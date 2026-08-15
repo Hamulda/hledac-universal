@@ -25,6 +25,7 @@ from pathlib import Path
 from typing import Any
 from ..utils.safe_render import safe_markdown_link
 from ._shared import _safe_str
+from core import aclose
 __all__ = ['ExportManager', 'EXPORT_AVAILABLE', 'render_sigma_graph_html', 'render_d3_timeline_html', 'render_gexf']
 EXPORT_AVAILABLE = True
 _SENSITIVE_FIELDS = frozenset(['cookie', 'cookies', 'api_key', 'apikey', 'api-key', 'secret', 'password', 'token', 'auth', 'authorization', 'credential', 'session', 'session_id', 'jwt', 'bearer'])

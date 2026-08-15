@@ -22,6 +22,7 @@ from hledac.universal.utils.sync_bridge import (
     run_sync_async,
 )
 from hledac.universal.utils.domain_executors import (
+from core import aclose
     get_exposure_db_executor,
     get_or_create,
     shutdown_all,

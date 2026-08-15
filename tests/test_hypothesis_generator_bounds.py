@@ -10,6 +10,7 @@ probe_f214q/ — uses HypothesisGenerator directly (no scheduler, no DuckDB).
 """
 
 from hledac_hypothesis.hypothesisgenerator import (
+from core import aclose
     MAX_HYPOTHESES,
     MAX_SEEDS_PER_HYPOTHESIS,
     HypothesisGenerator,

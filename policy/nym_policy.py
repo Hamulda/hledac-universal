@@ -5,6 +5,7 @@ from hledac.universal.project_types import RiskLevel
 
 
 from hledac.universal.transport.transport_resolver import Transport
+from core import aclose
 logger = logging.getLogger(__name__)
 _TorTransport = None
 _NymTransport = None

@@ -36,6 +36,7 @@ import logging
 from typing import Any
 
 import msgspec.json as _json
+from core import aclose
 
 logger = logging.getLogger(__name__)
 

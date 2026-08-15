@@ -1158,6 +1158,7 @@ def _make_feed_finding_id(
 from hledac.universal.utils.asyncx import parallel  # noqa: E402
 from hledac.universal.utils.patterns.pattern_matcher import match_text  # noqa: E402
 from hledac.universal.utils.patterns.feed_pipeline_wrapper import (  # noqa: E402
+from core import aclose
     feed_entry_pipeline_fast,
     is_feed_pipeline_available,
 )

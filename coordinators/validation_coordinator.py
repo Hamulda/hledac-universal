@@ -29,6 +29,7 @@ from hledac.universal.compat.msgspec_gc_compat import Struct
 from hledac.universal.utils.asyncx import parallel
 
 from .base import UniversalCoordinator
+from core import aclose
 
 logger = logging.getLogger(__name__)
 try:

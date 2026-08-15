@@ -33,6 +33,7 @@ from typing import Generic, TypeVar, cast
 from hledac.universal.utils.cache import LRUCache
 from hledac.universal.utils.cache import SlidingWindowKVCache
 from hledac.universal.utils.cache import TTLCache
+from core import aclose
 
 __all__ = ["LRUCache", "TTLCache", "SlidingWindowKVCache", "lru_cache"]
 

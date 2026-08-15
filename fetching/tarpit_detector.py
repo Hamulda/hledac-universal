@@ -39,6 +39,7 @@ from urllib.parse import urljoin, urlparse
 import msgspec
 
 from hledac.universal.utils.logging_config import get_logger
+from core import aclose
 
 logger = get_logger(__name__)
 

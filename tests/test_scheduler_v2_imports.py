@@ -5,6 +5,7 @@ F350M-R: verifies SprintLifecycleManager import is wired to the correct module.
 from __future__ import annotations
 
 import pytest
+from core import aclose
 
 
 def test_scheduler_v2_basic_import() -> None:

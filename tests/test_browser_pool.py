@@ -17,6 +17,7 @@ import asyncio
 import gc
 
 import pytest
+from core import aclose
 
 
 # ─── helpers ───────────────────────────────────────────────────────────────────

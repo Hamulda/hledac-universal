@@ -46,6 +46,7 @@ from hledac.universal.compat.msgspec_gc_compat import Struct
 from typing import TYPE_CHECKING, Any, Final
 
 import numpy as np
+from core import aclose
 
 try:
     from usearch.index import Index as _UsearchIndexClass

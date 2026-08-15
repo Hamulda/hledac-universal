@@ -61,6 +61,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 import weakref
+from core._util import aclose
 
 
 

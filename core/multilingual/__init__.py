@@ -26,6 +26,7 @@ from .mrl import (
     truncate_batch,
 )
 from .bge_m3_embedder import (
+from core._util import aclose
     BGEM3Embedder,
     BGEBackend,
     BGEConfig,

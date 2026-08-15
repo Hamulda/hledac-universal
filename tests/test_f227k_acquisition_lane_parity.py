@@ -13,6 +13,7 @@ Matrix: 13 scenarios × all 12 lanes = 156 assertions.
 import pytest
 
 from hledac.universal.runtime.acquisition_strategy import (
+from core import aclose
     LANE_RULES,
     AcquisitionContext,
     AcquisitionLane,

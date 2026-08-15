@@ -35,6 +35,7 @@ warnings.warn(
 
 # Re-export everything from the unified facade for backward compatibility
 from hledac.universal.knowledge.ioc_processor import (  # noqa: F401,E402,F811
+from core import aclose
     # Note: forensics/ is part of hledac.universal package, so hledac.universal.* imports work
     # when the package is installed. This is the standard project import convention.
     fast_ioc_extract,

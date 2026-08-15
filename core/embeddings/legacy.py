@@ -48,6 +48,7 @@ def _get_mx() -> Any | None:
 MLX_EMBEDDINGS_LOAD: Any | None = None
 MLX_EMBEDDINGS_AVAILABLE: bool | None = None
 from enum import Enum
+from core._util import aclose
 
 
 class EmbeddingTask(Enum):

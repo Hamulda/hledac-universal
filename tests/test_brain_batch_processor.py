@@ -13,6 +13,7 @@ from __future__ import annotations
 import asyncio
 import pytest
 import time
+from core import aclose
 
 
 class TestBatchPriority:

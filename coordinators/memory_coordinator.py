@@ -63,6 +63,7 @@ if TYPE_CHECKING:
 import contextlib
 
 from hledac.universal.core.resource_governor import PressureState
+from core import aclose
 
 
 def _serialize_to_json(data: Any) -> bytes:

@@ -21,6 +21,7 @@ import logging
 from collections.abc import Callable
 from enum import Enum
 from hledac.universal.core.psutil_shim import psutil
+from core import aclose
 logger = logging.getLogger(__name__)
 
 class SystemState(Enum):

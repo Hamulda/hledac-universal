@@ -16,6 +16,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from hledac.universal.transport.curl_cffi_fetch import (
+from core import aclose
     _MAX_RESOLVED_SESSIONS,
     _RESOLVED_SESSION_TTL_S,
     _resolved_sessions,

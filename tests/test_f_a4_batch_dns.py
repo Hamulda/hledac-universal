@@ -13,6 +13,7 @@ from unittest.mock import patch
 import pytest
 
 from hledac.universal.utils.batch_dns import (
+from core import aclose
     ENV_OPT_OUT,
     BatchDNSResolver,
     get_batch_dns_resolver,

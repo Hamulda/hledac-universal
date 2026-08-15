@@ -14,6 +14,7 @@ GHOST_INVARIANTS:
 
 import asyncio
 from typing import Any, Protocol, runtime_checkable
+from core import aclose
 
 
 @runtime_checkable

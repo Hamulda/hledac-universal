@@ -14,6 +14,7 @@ from collections.abc import AsyncIterator
 
 from hledac.universal.tool_exec_log import ToolExecLog
 from pathlib import Path
+from core import aclose
 
 
 # ============================================================================

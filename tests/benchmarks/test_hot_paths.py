@@ -8,6 +8,7 @@ M1 8GB budget: each benchmark target <5ms for the hot-path input size.
 """
 
 import pytest
+from core import aclose
 
 
 class TestIOCCanonical:

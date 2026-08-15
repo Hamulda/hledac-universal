@@ -10,6 +10,7 @@ import shutil
 import tempfile
 
 import pytest
+from core import aclose
 
 
 class TestKeyManagerHKDF:

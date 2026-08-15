@@ -599,6 +599,7 @@ async def _gopher_crawl_runner(findings: list, store: DuckDBShadowStore, query: 
     except Exception:
         return 0
 from hledac.universal.runtime.sidecar_runner_decorator import sidecar_runner, sidecar_runner_await
+from core import aclose
 _ExposureCorrelatorRunner = sidecar_runner(name='exposure_correlator', module_path='hledac.universal.intel.exposure_correlator', factory_name='create_exposure_correlator_adapter', correlate_method='correlate')
 _LeakSentinelRunner = sidecar_runner(name='leak_sentinel', module_path='hledac.universal.intel.leak_sentinel', factory_name='create_leak_sentinel_adapter', correlate_method='scan')
 _TemporalArchaeologyRunner = sidecar_runner(name='temporal_archaeology', module_path='hledac.universal.intel.temporal_archaeologist_adapter', factory_name='create_temporal_archaeologist_adapter', correlate_method='synthesize_timeline')

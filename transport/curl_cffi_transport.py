@@ -19,6 +19,7 @@ Tor/I2P/JS are protected from accidental curl routing.
 """
 
 from hledac.universal.core.env_config import ENV  # noqa: E402
+from core import aclose
 
 # Protection hints that trigger curl_cffi escalation
 _PROTECTION_HINTS = {"cloudflare", "akamai", "datadome", "imperva", "perimeterx", "incapsula"}

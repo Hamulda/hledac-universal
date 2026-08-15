@@ -63,6 +63,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from typing import Any, TypeVar
+from core import aclose
 
 logger = logging.getLogger(__name__)
 

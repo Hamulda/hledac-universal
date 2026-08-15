@@ -16,6 +16,7 @@ from __future__ import annotations
 # This ensures TYPE_CHECKING=False when backend modules import it,
 # avoiding the "Any cannot be instantiated" bug.
 from hledac.universal.core.inference_coordinator import (
+from core._util import aclose
     InferenceBackend,
     InferenceError,
     InferenceRequest,

@@ -26,6 +26,7 @@ from collections.abc import AsyncIterator
 
 from hledac.universal.brain._inference.stream_handler import StreamHandler
 from hledac.universal.brain._inference.generate import GenerationFacade
+from core import aclose
 
 if TYPE_CHECKING:
     from typing import Any

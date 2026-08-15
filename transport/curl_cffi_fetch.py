@@ -90,6 +90,7 @@ Architecture (Issue 3.5 consolidation):
 """
 
 from __future__ import annotations
+from core import aclose  # F350M-R: Type-4 clone elimination
 
 from dataclasses import dataclass, field
 
@@ -1771,10 +1772,7 @@ async def _blocking_altsvc_probe_for_url(url: str) -> Any:
                 _cache_put(host, True)
                 return HttpVersion.v3
         finally:
-            try:
-                await sess.aclose()
-            except Exception:  # noqa: BLE001
-                pass
+            await aclose(sess)
     except Exception:  # noqa: BLE001
         pass
     return None

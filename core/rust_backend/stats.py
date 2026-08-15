@@ -19,6 +19,7 @@ __all__ = ["StatCollector"]
 
 import contextlib
 from typing import Any
+from core._util import aclose
 
 # Registry entry: (attribute_name, optional_callable_invoker_or_None)
 #   invoker is None         → call attribute as no-arg callable (property or fn)

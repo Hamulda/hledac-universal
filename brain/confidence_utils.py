@@ -30,6 +30,7 @@ import time
 import uuid
 
 from hledac.universal.brain.jtms import BetaEvidenceRecord
+from core import aclose
 
 
 class BetaBinomial:

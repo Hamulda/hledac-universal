@@ -68,6 +68,7 @@ from dataclasses import dataclass
 import msgspec
 from enum import Enum
 from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
+from core._util import aclose
 
 if TYPE_CHECKING:
     from hledac.universal.core.resource_governor import M1ResourceGovernor

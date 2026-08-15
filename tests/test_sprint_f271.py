@@ -33,6 +33,7 @@ import asyncio
 import warnings
 from pathlib import Path
 import pytest
+from core import aclose
 
 class TestF271CWindupLead:
     """F271C: F221-ABORT guard uses F250 clamp [30, 180] and asserts

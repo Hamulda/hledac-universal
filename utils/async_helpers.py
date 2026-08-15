@@ -51,6 +51,7 @@ warnings.warn(
 
 # Re-export everything from the new package for backward compatibility
 from hledac.universal.utils.asyncx import (
+from core import aclose
     # _monitor.py
     AsyncMonitor,
     get_async_monitor,

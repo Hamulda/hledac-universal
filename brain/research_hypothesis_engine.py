@@ -42,7 +42,14 @@ import types
 from dataclasses import dataclass, field
 import msgspec
 from datetime import UTC, datetime
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    # Forward references for type checking
+    from hledac.universal.brain._inference.generate import GenerationFacade
+    from hledac.universal.brain.inference_pipeline import BoundedInferencePipeline
+    from hledac.universal.brain.deephermes3_engine import DeepHermes3Engine
+    import numpy as np
 from hledac.universal.brain.evidence_fusion import DempsterShafer
 from hledac.universal.utils.sync_bridge import run_sync_async
 from operator import attrgetter, itemgetter
@@ -178,6 +185,7 @@ from hledac_hypothesis.adversarial import AdversarialVerifier
 from hledac_hypothesis.causal import CausalReasoner
 from hledac_hypothesis.explainer import SimpleNodeAblationExplainer, explain_with_mlx
 from hledac_hypothesis.packs import HypothesisPack, SourceHint
+from core import aclose
 
 class HypothesisEngine:
     """
@@ -234,7 +242,7 @@ class HypothesisEngine:
             ds_contradiction_threshold: Threshold for DS contradiction detection
         """
         self.inference_engine = inference_engine
-        self._inference_pipeliner: Any | None = None
+        self._inference_pipeliner: GenerationFacade | BoundedInferencePipeline | None = None
         self.max_hypotheses = max_hypotheses
         self.min_confidence_threshold = min_confidence_threshold
         self.memory_limit_mb = memory_limit_mb
@@ -256,14 +264,14 @@ class HypothesisEngine:
         logger.info(f'HypothesisEngine initialized (max_hypotheses={max_hypotheses}, memory_limit={memory_limit_mb}MB, adversarial_verification={enable_adversarial_verification}, use_dempster_shafer={use_dempster_shafer})')
         self._causal_reasoner: CausalReasoner = CausalReasoner()
         self._causal_entities: dict[str, CausalEntity] = self._causal_reasoner._causal_entities
-        self._co_occurrence_matrix: Any | None = self._causal_reasoner._co_occurrence_matrix
+        self._co_occurrence_matrix: np.ndarray | None = self._causal_reasoner._co_occurrence_matrix
         self._entity_id_to_idx: dict[str, int] = self._causal_reasoner._entity_id_to_idx
         self._idx_to_entity_id: dict[int, str] = self._causal_reasoner._idx_to_entity_id
         self._temporal_sequences: list[TemporalSequence] = self._causal_reasoner._temporal_sequences
         self._anomaly_signals: list[AnomalySignal] = self._causal_reasoner._anomaly_signals
         self._source_types: set[str] = self._causal_reasoner._source_types
 
-    def extract_causal_entities(self, findings: list[Any]) -> list[CausalEntity]:
+    def extract_causal_entities(self, findings: list[str]) -> list[CausalEntity]:
         """
         Sprint F259: Extract entities from findings for causal reasoning.
 
@@ -291,7 +299,7 @@ class HypothesisEngine:
         self._temporal_sequences = self._causal_reasoner._temporal_sequences
         return result
 
-    def compute_co_occurrence_matrix(self) -> Any | None:
+    def compute_co_occurrence_matrix(self) -> np.ndarray | None:
         """Back-compat facade — delegates to CausalReasoner.compute_co_occurrence_matrix."""
         result = self._causal_reasoner.compute_co_occurrence_matrix()
         self._co_occurrence_matrix = self._causal_reasoner._co_occurrence_matrix
@@ -303,13 +311,13 @@ class HypothesisEngine:
         """Back-compat facade — delegates to CausalReasoner.get_co_occurrence."""
         return self._causal_reasoner.get_co_occurrence(entity_a, entity_b)
 
-    def detect_causal_anomalies(self, findings: list[Any]) -> list[AnomalySignal]:
+    def detect_causal_anomalies(self, findings: list[str]) -> list[AnomalySignal]:
         """Back-compat facade — delegates to CausalReasoner.detect_anomalies."""
         result = self._causal_reasoner.detect_anomalies(findings)
         self._anomaly_signals = self._causal_reasoner._anomaly_signals
         return result
 
-    async def generate_causal_hypotheses(self, findings: list[Any], max_hypotheses: int=MAX_CAUSAL_HYPOTHESES) -> list[CausalHypothesis]:
+    async def generate_causal_hypotheses(self, findings: list[str], max_hypotheses: int=MAX_CAUSAL_HYPOTHESES) -> list[CausalHypothesis]:
         """
         Back-compat facade — delegates the entire causal pipeline to
         :meth:`CausalReasoner.generate_hypotheses` (sync, run via
@@ -550,7 +558,7 @@ class HypothesisEngine:
             return 'Adversarial verification is disabled.'
         return self.adversarial_verifier.generate_devils_advocate(hypothesis)
 
-    async def generate_hypotheses_async(self, context: dict[str, Any], hermes_engine: Any=None, prev_reward: float=0.0) -> list[str]:
+    async def generate_hypotheses_async(self, context: dict[str, Any], hermes_engine: DeepHermes3Engine | None=None, prev_reward: float=0.0) -> list[str]:
         """
         P12: Generate hypotheses from RAG context using Hermes 3.
         P17: Added prev_reward parameter for RL integration.
@@ -1151,7 +1159,7 @@ class HypothesisEngine:
             hypotheses = [h for h in hypotheses if h.status == status]
         return hypotheses
 
-    async def generate_sprint_hypotheses(self, findings: list[str], ioc_graph: Any=None, max_hypotheses: int=3, duckdb_store: Any=None, sprint_id: str | None=None) -> list[str]:
+    async def generate_sprint_hypotheses(self, findings: list[str], ioc_graph: Any | None=None, max_hypotheses: int=3, duckdb_store: Any | None=None, sprint_id: str | None=None) -> list[str]:
         """
         Sprint 8TD: Generovat testovatelné hypotézy z IOC findings.
 
@@ -1728,7 +1736,7 @@ class HypothesisEngine:
         logger.info('HypothesisEngine cleared')
     MAX_DARK_QUERIES_PER_SPRINT = 3
 
-    async def generate_dark_surface_queries(self, findings: list[Any], hermes_engine: Any=None, tor_available: bool=False, i2p_available: bool=False) -> list[DarkQuery]:
+    async def generate_dark_surface_queries(self, findings: list[str], hermes_engine: DeepHermes3Engine | None=None, tor_available: bool=False, i2p_available: bool=False) -> list[DarkQuery]:
         """
         F214K: Generate queries for dark/unindexed surfaces from IOC findings.
 
@@ -1772,7 +1780,7 @@ class HypothesisEngine:
 
     # ─── Helper methods (extracted to reduce complexity) ───────────────────────
 
-    def _extract_iocs_from_findings(self, findings: list[Any]) -> list[str]:
+    def _extract_iocs_from_findings(self, findings: list[str]) -> list[str]:
         """Extract IOC values from findings list (max 50 findings, max 15 brief)."""
         iocs: list[str] = []
         for f in findings[:50]:
@@ -1791,7 +1799,7 @@ class HypothesisEngine:
             available_transports.append('I2P')
         return '+'.join(available_transports)
 
-    async def _build_research_context_hints(self, findings: list[Any], hermes_engine: Any) -> list[str]:
+    async def _build_research_context_hints(self, findings: list[str], hermes_engine: DeepHermes3Engine) -> list[str]:
         """Query research layer for supplementary context hints (PII-safe)."""
         if os.environ.get('HLEDAC_ENABLE_RESEARCH_LAYER') != '1' or hermes_engine is None:
             return []

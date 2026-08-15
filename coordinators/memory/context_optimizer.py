@@ -32,6 +32,7 @@ from hledac.universal.coordinators.memory._core import (
     ResearchPhase,
 )
 from hledac.universal.utils.msgspec_json import encode_zstd as _encode_zstd
+from core import aclose
 
 logger = logging.getLogger(__name__)
 

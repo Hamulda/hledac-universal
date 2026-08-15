@@ -37,6 +37,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from hledac.universal.coordinators.enums import MemoryPressureLevel
+from core import aclose
 
 # =============================================================================
 # Operation Tracker

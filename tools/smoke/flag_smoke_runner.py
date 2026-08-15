@@ -37,6 +37,7 @@ import tracemalloc
 from dataclasses import dataclass, field
 import msgspec
 from pathlib import Path
+from core import aclose
 
 # ---------------------------------------------------------------------------
 # sys.path bootstrap — must run BEFORE any hledac.* / utils.* import.

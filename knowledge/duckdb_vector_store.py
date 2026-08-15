@@ -7,12 +7,12 @@ Owns all DuckDB HNSW vector operations:
   - DuckDB array_cosine_distance with HNSW index
 
 ARCHITECTURE:
-  DuckDBVectorStore is COMPOSED into DuckDBCanonical (not inherited).
+  DuckDBVectorStore is COMPOSED into DuckDBShadowStore (via DuckDBShadowStore._init_vector_ops).
   DuckDBVectorStore requires a DuckDB connection (duckdb_conn).
 
   duckdb_store.py          ← DuckDBShadowStore (current monolithic)
   duckdb_vector_store.py   ← F360: Extracted vector operations
-  duckdb_canonical.py      ← F360: DuckDBCanonical (future)
+  duckdb_store.py         ← DuckDBShadowStore (composition root)
 
 M1 8GB constraints:
   - k capped at 100 for all ANN searches (prevents runaway memory)
@@ -34,6 +34,7 @@ from typing import TYPE_CHECKING, Any
 import orjson
 
 from hledac.universal.utils.asyncx import _check_gathered
+from core import aclose
 
 _logger = logging.getLogger(__name__)
 
@@ -57,7 +58,7 @@ class DuckDBVectorStore:
     """
 
     __slots__ = (
-        "_duckdb_conn",      # DuckDB connection (from DuckDBCanonical)
+        "_duckdb_conn",      # DuckDB connection (from DuckDBShadowStore)
         "_executor",         # ThreadPoolExecutor for sync DuckDB calls
         "_initialized",      # Schema initialized flag
         "_rag_schema_initialized",
@@ -71,7 +72,7 @@ class DuckDBVectorStore:
     ) -> None:
         """
         Args:
-            duckdb_conn: DuckDB connection object (from DuckDBCanonical._conn).
+            duckdb_conn: DuckDB connection object (from DuckDBShadowStore._conn).
                         Must be already connected and schema-initialized.
             executor: ThreadPoolExecutor for async-to-sync DuckDB calls.
         """
@@ -96,7 +97,7 @@ class DuckDBVectorStore:
         """
         if self._rag_schema_initialized and self._entity_schema_initialized:
             return
-        # Schema is managed by DuckDBCanonical._init_connection via migration.
+        # Schema is managed by DuckDBShadowStore via DuckDBMigrator.
         # Vector tables are created by DuckDBMigrationManager.
         self._rag_schema_initialized = True
         self._entity_schema_initialized = True

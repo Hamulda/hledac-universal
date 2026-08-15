@@ -8,6 +8,7 @@ Coordinates all renderers and provides streaming write for M1 8GB disk bottlenec
 from dataclasses import dataclass, field
 import msgspec
 from typing import TYPE_CHECKING, Any
+from core import aclose
 if TYPE_CHECKING:
     from pathlib import Path
 __all__ = ['ReportEngine', 'get_report_engine', 'ReportOutput']

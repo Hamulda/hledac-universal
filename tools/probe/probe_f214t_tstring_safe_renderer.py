@@ -15,6 +15,7 @@ Requires: Python 3.14+ for t-string feature probes
 
 import html
 import re
+from core import aclose
 
 # ---------------------------------------------------------------------------
 # Candidate Map: user-controlled f-string sites in export/report pipeline

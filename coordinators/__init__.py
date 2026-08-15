@@ -146,6 +146,7 @@ from .security_coordinator import (
 # swarm_coordinator: deprecated - use lazy import via __getattr__
 # Validation coordinator
 from .validation_coordinator import (
+from core import aclose
     CleaningResult,
     OutputFormat,
     UniversalValidationCoordinator,

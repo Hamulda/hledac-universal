@@ -73,6 +73,7 @@ CRITICAL_ALLOW_MODEL_LOAD = False
 _EMA_ALPHA = 0.3
 # P7-3 SSOT: Import from UmaBudget SSOT, not local definition
 from hledac.universal.utils.uma_budget import (
+from core import aclose
     MISSION_PEAK_RSS_GIB as _UMA_BUDGET_MISSION_PEAK,
     UmaBudget,
 )

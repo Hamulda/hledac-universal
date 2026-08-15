@@ -37,6 +37,7 @@ from ._models import (
 )
 
 from hledac.universal.utils.asyncx import safe_create_task, parallel
+from core import aclose
 
 logger = logging.getLogger(__name__)
 

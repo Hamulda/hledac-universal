@@ -34,6 +34,7 @@ from typing import Any
 from operator import attrgetter, itemgetter
 import msgspec
 import numpy as np
+from core import aclose
 
 logger = logging.getLogger(__name__)
 
@@ -571,13 +572,13 @@ class InsightEngine:
         self,
         items: list[Any],
         type_name: str,
-        content_fn: Any,  # callable[item] -> str
-        novelty_fn: Any,  # callable[item] -> float
-        importance_fn: Any,  # callable[item] -> float
-        tags_fn: Any,  # callable[item] -> list[str]
-        filter_fn: Any = None,  # callable[item] -> bool (None = include all)
-        confidence_fn: Any = None,  # callable[item] -> float OR constant float (None = item.confidence)
-        extra_kwargs_fn: Any = None,  # callable[item] -> dict (merged into Insight kwargs)
+        content_fn: Callable[[Any], str],  # callable[item] -> str
+        novelty_fn: Callable[[Any], float],  # callable[item] -> float
+        importance_fn: Callable[[Any], float],  # callable[item] -> float
+        tags_fn: Callable[[Any], list[str]],  # callable[item] -> list[str]
+        filter_fn: Callable[[Any], bool] | None = None,  # callable[item] -> bool (None = include all)
+        confidence_fn: Callable[[Any], float] | float | None = None,  # callable[item] -> float OR constant float (None = item.confidence)
+        extra_kwargs_fn: Callable[[Any], dict[str, Any]] | None = None,  # callable[item] -> dict (merged into Insight kwargs)
     ) -> list[Insight]:
         """
         Generic list-to-insights converter.

@@ -25,6 +25,7 @@ import ast
 import re
 
 import pytest
+from core import aclose
 
 
 class TestF04StaticAnalysis:

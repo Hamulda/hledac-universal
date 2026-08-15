@@ -22,6 +22,7 @@ from typing import Any
 from unittest.mock import MagicMock
 
 import pytest
+from core import aclose
 
 
 class TestFetchCoordinatorConstruction:

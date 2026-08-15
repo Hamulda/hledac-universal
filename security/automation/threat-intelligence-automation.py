@@ -20,6 +20,7 @@ from typing import Any
 import yaml
 import httpx
 from cachetools import LRUCache
+from core import aclose
 
 logger = logging.getLogger(__name__)
 

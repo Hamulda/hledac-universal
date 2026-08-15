@@ -27,6 +27,7 @@ import asyncio
 import os
 import unittest
 from unittest.mock import patch
+from core import aclose
 
 # ---------------------------------------------------------------------------
 # 1. JA3 profile cycling

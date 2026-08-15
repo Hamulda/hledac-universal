@@ -81,6 +81,7 @@ from .content_router import (
     route_content,
 )
 from .micro_model_pool import (
+from core import aclose
     MICRO_MODELS,
     IMicroModelPool,
     LoadedMicroModel,

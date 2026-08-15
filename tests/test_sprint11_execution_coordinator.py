@@ -11,6 +11,7 @@ import pytest
 from unittest.mock import AsyncMock, MagicMock
 
 from hledac.universal.coordinators.execution_coordinator import (
+from core import aclose
     ExecutionTask,
     ExecutionResult,
     UniversalExecutionCoordinator,

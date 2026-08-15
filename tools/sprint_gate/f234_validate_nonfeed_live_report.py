@@ -21,6 +21,7 @@ Exit codes:
 import json
 import sys
 from typing import Any, cast
+from core import aclose
 
 __all__ = ["validate_report", "main"]
 

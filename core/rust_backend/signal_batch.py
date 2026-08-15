@@ -18,6 +18,7 @@ M1 8GB: GIL released via _py.allow_threads(), no Metal contention.
 from __future__ import annotations
 
 from typing import Any
+from core._util import aclose
 
 
 def get_domain() -> "SignalBatchDomain":

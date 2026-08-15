@@ -14,6 +14,7 @@ from typing import Any
 import pytest
 
 from hledac.universal.core.result import (
+from core import aclose
     try_or_async,
     try_or_none_async,
     try_or_raise_async,

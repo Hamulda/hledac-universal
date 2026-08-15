@@ -195,6 +195,7 @@ from core.rust_backend.ioc import _PythonIocDomain
 from core.rust_backend.misc import _PythonTextDomain, _PythonHtmlDomain
 from core.rust_backend.ip import _PythonIpDomain
 from core.rust_backend.misc import _PythonSimdDomain
+from core import aclose
 
 _PYTHON_DOMAINS = {
     "bloom": _PythonBloomDomain,

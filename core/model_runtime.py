@@ -36,6 +36,7 @@ logger = logging.getLogger(__name__)
 
 # MODERN-35 Fix: Import CPU affinity utilities
 from hledac.universal.utils.cpu_affinity import (
+from core._util import aclose
     set_mlx_affinity,
     is_apple_silicon,
     get_core_topology,

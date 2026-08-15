@@ -16,6 +16,7 @@ import re
 from typing import Any
 
 from hledac.universal.runtime.acquisition.lane_constants import (
+from core import aclose
     NON_TERMINAL_STATES,
     TERMINAL_STATES,
 )

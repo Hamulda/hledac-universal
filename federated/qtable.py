@@ -27,6 +27,7 @@ All methods return safe defaults on any error. They never raise.
 """
 import logging
 from typing import Any
+from core import aclose
 logger = logging.getLogger(__name__)
 __all__ = ['FederatedQTable', 'RustFederatedQTable', 'MAX_QTABLE_ENTRIES']
 MAX_QTABLE_ENTRIES: int = 1024

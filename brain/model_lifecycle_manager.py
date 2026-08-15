@@ -29,11 +29,15 @@ from collections import defaultdict
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 
+if TYPE_CHECKING:
+    from enum import Enum
+
 from hledac.universal.brain.model_inference_guard import check_model_allowed, record_model_failure, record_model_success
 from hledac.universal.brain.model_lifecycle import ensure_mlx_runtime_initialized
 from hledac.universal.utils.asyncx import safe_create_task
 from hledac.universal.utils.concurrency import adjust_fetch_workers
 from hledac.universal.utils.exceptions import MemoryPressureError
+from core import aclose
 
 if TYPE_CHECKING:
     from enum import Enum
@@ -103,13 +107,13 @@ class ModelLifecycleManager:
     __slots__ = ('_loaded_models', '_current_model', '_model_factories', '_lock', '_model_locks')
 
     def __init__(self) -> None:
-        self._loaded_models: dict[Any, Any] = {}
-        self._current_model: Any = None
+        self._loaded_models: dict[str, Any] = {}
+        self._current_model: Any = None  # type: ignore[assignment]
         self._model_factories: dict[Any, Callable[[], Any]] = {}
         self._lock = asyncio.Lock()
         self._model_locks: dict[str, asyncio.Lock] = defaultdict(asyncio.Lock)
 
-    def register_factory(self, model_type: Any, factory: Callable[[], Any]) -> None:
+    def register_factory(self, model_type: Any, factory: Callable[[], Any]) -> None:  # type: ignore[type-arg]
         """Register a model factory for given model type."""
         self._model_factories[model_type] = factory
 
@@ -170,7 +174,7 @@ class ModelLifecycleManager:
                 return
             await self._release_model_async(model_type, model_name)
 
-    async def _release_model_async(self, model_type: Any, model_name: str) -> None:
+    async def _release_model_async(self, model_type: str, model_name: str) -> None:
         """Internal async implementation of model release."""
         model = self._loaded_models.get(model_type)
         rss_before = _get_current_rss_gb()
@@ -204,7 +208,7 @@ class ModelLifecycleManager:
         _verify_rss_after_unload(model_name.lower(), rss_before)
         await adjust_fetch_workers(25)
 
-    async def _cleanup_memory_async(self, model_type: Any | None = None, engine: Any | None = None) -> None:
+    async def _cleanup_memory_async(self, model_type: str | None = None, engine: Any | None = None) -> None:
         """Agresivní async čištění paměti po uvolnění modelu."""
         gc.collect()
         try:
@@ -266,13 +270,13 @@ class ModelLifecycleManager:
         mt = self._get_model_type(model_key)
         return mt is not None and mt in self._loaded_models
 
-    def _get_loaded_model(self, model_type: Any) -> Any:
+    def _get_loaded_model(self, model_type: str) -> Any:
         return self._loaded_models.get(model_type)
 
-    def _set_loaded_model(self, model_type: Any, model: Any) -> None:
+    def _set_loaded_model(self, model_type: str, model: Any) -> None:
         self._loaded_models[model_type] = model
 
-    def _get_model_type(self, model_key: str) -> Any:
+    def _get_model_type(self, model_key: str) -> str:
         """Get ModelType enum from string key. Override in subclass."""
         # This should be overridden or the enum passed in constructor
         from enum import auto

@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING, Final
 import httpx
 
 from hledac.universal.transport.session_pool import session_pool
+from core import aclose
 
 if TYPE_CHECKING:
     from hledac.universal.knowledge.duckdb_store import CanonicalFinding  # noqa: F401

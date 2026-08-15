@@ -12,6 +12,7 @@ Issue E2: Pipeline overlap — eliminates 4-stage Python pipeline overhead.
 from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
+from core import aclose
 
 # Lazy import to avoid hard dependency at module load
 _RUST_FEED_PIPELINE: Any | None = None

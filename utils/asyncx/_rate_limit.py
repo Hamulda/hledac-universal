@@ -35,6 +35,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 from hledac.universal.utils.lru_cache import LRUCache
+from core import aclose
 
 if TYPE_CHECKING:
     pass

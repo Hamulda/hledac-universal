@@ -72,6 +72,7 @@ from collections.abc import Iterator
 logger = _logging.getLogger(__name__)
 
 from hledac.universal.compat.msgspec_gc_compat import Struct
+from core import aclose
 
 if TYPE_CHECKING:
     from hledac.universal.knowledge.target_memory import TargetMemoryUpdate

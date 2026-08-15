@@ -28,6 +28,7 @@ from pathlib import Path
 from typing import Any
 from hledac.universal.tools.ocr_engine import VisionOCR, recognize_async
 from hledac.universal.utils.asyncx import parallel_ok
+from core import aclose
 logger = logging.getLogger(__name__)
 MAX_URL_HITS: int = 20
 'Max embedded URLs/domains extracted from OCR text.'

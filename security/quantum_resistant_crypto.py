@@ -14,6 +14,7 @@ Interface expected by callers:
 """
 import logging
 from typing import TYPE_CHECKING, Any
+from core import aclose
 if TYPE_CHECKING:
     from hledac.universal.security.pq_crypto import PostQuantumBackend
 logger = logging.getLogger(__name__)

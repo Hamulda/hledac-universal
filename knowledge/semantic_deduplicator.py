@@ -46,6 +46,7 @@ from hledac.universal.compat.msgspec_gc_compat import Struct
 from typing import TYPE_CHECKING, Any, Final
 
 from datasketch import MinHash, MinHashLSH
+from core import aclose
 
 if TYPE_CHECKING:
     from hledac.universal.knowledge.duckdb_store import CanonicalFinding

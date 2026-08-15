@@ -23,6 +23,7 @@ import threading
 from typing import Any
 
 import pytest
+from core import aclose
 
 
 # Apple Silicon QoS class values (from libdispatch)

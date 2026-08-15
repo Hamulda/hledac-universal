@@ -90,6 +90,7 @@ from enum import Enum, auto
 from typing import TYPE_CHECKING, Any, Literal, Self
 
 import msgspec
+from core import aclose
 
 if TYPE_CHECKING:
     import httpx

@@ -25,6 +25,7 @@ from typing import TYPE_CHECKING
 os.environ.setdefault("PYTHON_JIT", "1")
 
 from hledac.universal.core.cli.args import build_parser, resolve_rl_args  # noqa: E402
+from core import aclose
 
 if TYPE_CHECKING:
     pass

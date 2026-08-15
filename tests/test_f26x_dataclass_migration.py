@@ -12,6 +12,7 @@ Run: pytest tests/test_f26x_dataclass_migration.py -v
 import msgspec
 import pytest
 from datetime import datetime, UTC
+from core import aclose
 
 
 class TestHypothesisEngineTypes:

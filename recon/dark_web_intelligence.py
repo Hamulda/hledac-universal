@@ -49,6 +49,7 @@ except ImportError:
     httpx_socks = None
 from hledac.universal.project_types import RiskLevel
 from hledac.universal.utils.asyncx import parallel
+from core import aclose
 
 TOR_AVAILABLE = _HTTpx_SOCKS_AVAILABLE
 

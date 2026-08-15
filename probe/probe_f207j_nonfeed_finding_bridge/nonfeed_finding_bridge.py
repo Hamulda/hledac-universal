@@ -31,6 +31,7 @@ import hashlib
 import re
 import time
 from typing import Any
+from core import aclose
 try:
     from hledac.universal.knowledge.duckdb_store import CanonicalFinding
 except ImportError:

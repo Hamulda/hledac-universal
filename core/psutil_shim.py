@@ -35,6 +35,7 @@ in memory pressure detection when psutil is unavailable.
 """
 
 from typing import TYPE_CHECKING, Any
+from core._util import aclose
 
 if TYPE_CHECKING:
     import psutil as _psutil_type

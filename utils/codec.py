@@ -54,6 +54,7 @@ from typing import Any
 
 import msgspec
 import msgspec.json
+from core import aclose
 
 logger = logging.getLogger(__name__)
 

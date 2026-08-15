@@ -24,6 +24,7 @@ if TYPE_CHECKING:
     import httpx
     from hledac.universal.core.ioc_patterns import DOMAIN_RE
 from hledac.universal.knowledge.ioc_graph import IOCGraph
+from core import aclose
 logger = logging.getLogger(__name__)
 _INVALID_DOMAINS = frozenset({'localhost', '.local', '.test', '.invalid', 'localhost.localdomain'})
 

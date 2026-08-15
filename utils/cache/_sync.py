@@ -42,6 +42,7 @@ from collections.abc import Callable
 from typing import Generic, TypeVar, cast
 
 from ._base import CacheMetrics, _OrderTracker
+from core import aclose
 
 K = TypeVar("K")
 V = TypeVar("V")

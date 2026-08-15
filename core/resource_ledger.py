@@ -953,3 +953,4 @@ def get_resource_ledger() -> ResourceLedger:
 
 
 from contextlib import contextmanager
+from core._util import aclose

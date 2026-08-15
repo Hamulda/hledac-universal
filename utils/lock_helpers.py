@@ -17,6 +17,7 @@ import asyncio
 import threading
 from collections.abc import Callable
 from typing import Any
+from core import aclose
 
 
 # Type alias for the lock factory

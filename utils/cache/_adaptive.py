@@ -57,6 +57,7 @@ from typing import Any
 import msgspec
 
 from ._sync import LRUCache
+from core import aclose
 
 logger = logging.getLogger(__name__)
 

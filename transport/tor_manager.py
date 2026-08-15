@@ -5,6 +5,7 @@ import logging
 import time
 from pathlib import Path
 from typing import Any
+from core import aclose
 logger = logging.getLogger(__name__)
 _STEM_SPEC = importlib.util.find_spec('stem')
 STEM_AVAILABLE = _STEM_SPEC is not None

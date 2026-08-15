@@ -32,6 +32,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from hledac.universal.runtime.evidence_corroboration import (
+from core import aclose
     CorroborationScore,
     build_recommended_pivots,
     build_top_indicators,

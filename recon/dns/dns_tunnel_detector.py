@@ -58,6 +58,7 @@ except ImportError:
 
 # R6: Centralized Rust access via core.rust_backend
 from hledac.universal.core.rust_backend import rust
+from core import aclose
 
 HAS_RUST_ENCODING = rust.is_available
 

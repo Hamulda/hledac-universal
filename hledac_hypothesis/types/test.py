@@ -16,6 +16,7 @@ from typing import Any
 
 import msgspec
 from dataclasses import dataclass, field
+from core import aclose
 
 
 class TestType(Enum):

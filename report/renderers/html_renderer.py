@@ -6,6 +6,7 @@ Can use mistune as faster alternative.
 Falls back to basic regex-based conversion.
 """
 from typing import TYPE_CHECKING, Any
+from core import aclose
 if TYPE_CHECKING:
     from pathlib import Path
 __all__ = ['HTMLRenderer']

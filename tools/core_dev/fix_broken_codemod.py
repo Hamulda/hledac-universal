@@ -18,6 +18,7 @@
 
 import re
 import sys
+from core import aclose
 
 FUNC_NAMES = ("safe_gather_ok", "safe_gather_fire_and_forget", "safe_gather_strict", "safe_gather")
 FUNC_PATTERN = "|".join(re.escape(f) for f in FUNC_NAMES)

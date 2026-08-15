@@ -146,6 +146,7 @@ class QualityValidator:
         return intersection / union if union > 0 else 0.0
 from enum import Enum
 import psutil
+from core import aclose
 
 class ThermalState(Enum):
     """M1 thermal states."""

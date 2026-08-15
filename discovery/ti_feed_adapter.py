@@ -1446,6 +1446,7 @@ async def _handle_gopher_fetch(task, scheduler):
         await parallel_ok(*[_buffer_one(item) for item in items], label='ti_feed_adapter:gopher_fetch')
 import re as _ip_re_mod
 from hledac.universal.utils.asyncx import parallel_ok
+from core import aclose
 _IP_PATTERN = _ip_re_mod.compile('^\\d{1,3}\\.\\d{1,3}\\.\\d{1,3}\\.\\d{1,3}$')
 
 def _is_valid_ip(s: str) -> bool:

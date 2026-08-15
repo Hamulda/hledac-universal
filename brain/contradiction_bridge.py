@@ -60,6 +60,7 @@ import os
 import time
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
+from core import aclose
 
 if TYPE_CHECKING:
     from hledac_hypothesis.types.anomaly import Contradiction

@@ -1601,6 +1601,7 @@ def get_sprint_policies_domain(ext: object | None) -> _RustSprintPoliciesDomain 
 # (_PythonHtmlDomain lives in html.py; misc.py re-exports it so that
 # test_differential_fuzzing.py can import it from the canonical location.)
 from hledac.universal.core.rust_backend.html import _PythonHtmlDomain
+from core._util import aclose
 
 
 

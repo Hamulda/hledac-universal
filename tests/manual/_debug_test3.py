@@ -17,6 +17,7 @@ def _make_fake_graph():
 
 # Check what upsert_ioc actually calls
 import inspect
+from core import aclose
 src = inspect.getsource(graph_service.GraphService.upsert_ioc)
 print("=== upsert_ioc source (key lines) ===")
 for i, line in enumerate(src.split('\n'), 1):

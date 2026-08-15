@@ -69,6 +69,7 @@ def is_framework_available(name: str) -> bool:
 # via globals() inside __getattr__.
 
 from typing import Any
+from core._util import aclose
 
 # Framework metadata: (module_name, available_flag_name)
 _FRAMEWORK_DEFS: dict[str, tuple[str, str]] = {

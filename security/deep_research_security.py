@@ -30,6 +30,7 @@ from .destruction import DestructionConfig, SecureDestructor
 from .obfuscation import ObfuscationConfig, ResearchObfuscator
 from .quantum_safe import EncryptedContainer, QuantumSafeVault, SecurityLevel
 from .stealth_communicator import StealthCommunicator
+from core import aclose
 logger = logging.getLogger(__name__)
 
 class DeepSecurityConfig(msgspec.Struct, gc=False):

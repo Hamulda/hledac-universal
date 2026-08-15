@@ -31,6 +31,7 @@ from dataclasses import dataclass
 import msgspec
 from enum import Enum
 from typing import Any
+from core import aclose
 logger = logging.getLogger(__name__)
 
 class M1MemoryOptimizer:

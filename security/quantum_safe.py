@@ -14,6 +14,7 @@ logger = logging.getLogger(__name__)
 
 # secure_zero: ctypes-based memory wipe (M1 Metal-safe, zero Python overhead)
 from hledac.universal.utils.secure_zero import secure_zero as _secure_zero
+from core import aclose
 
 try:
     import oqs as _oqs

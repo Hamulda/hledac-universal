@@ -37,6 +37,7 @@ from typing import TYPE_CHECKING, Self
 import numpy as np
 from hledac.universal.core.psutil_shim import psutil, process
 from hledac.universal.utils.exceptions import MemoryPressureError
+from core import aclose
 if TYPE_CHECKING:
     from hledac.universal.embeddings.modernbert_embedder import ModernBERTEmbedder
 logger = logging.getLogger(__name__)

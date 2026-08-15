@@ -47,6 +47,7 @@ class BrowserDecision(msgspec.Struct, frozen=True, gc=False):
 # ISSUE-014 FIX: asyncio.Lock() removed — was unused, caused "no running event loop" on macOS import
 # ISSUE-018: RSS cache — 10s TTL for M1 battery optimization (updated from 5s)
 from hledac.universal.core.locks import LockCategory, make_lock
+from core import aclose
 
 _RSS_CACHE_TTL_S: float = 10.0
 _RSS_CACHE: tuple[float, float] | None = None  # (timestamp, rss_gib)

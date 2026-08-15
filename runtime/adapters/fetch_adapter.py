@@ -17,6 +17,7 @@ import asyncio
 from typing import Any
 
 from hledac.universal.runtime.protocols.fetch_protocol import FetchProtocol
+from core import aclose
 
 
 class FetchCoordinatorAdapter(FetchProtocol):

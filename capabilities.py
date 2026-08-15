@@ -44,6 +44,7 @@ if TYPE_CHECKING:
     mx: Any
 from dataclasses import dataclass
 import msgspec
+from core import aclose
 _MLX_LOADED = False
 
 def _load_mlx() -> tuple[Any, bool]:

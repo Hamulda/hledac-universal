@@ -20,6 +20,7 @@ Invariant table:
 import asyncio
 
 import pytest
+from core import aclose
 
 try:
     from hledac.universal.storage.write_coalescer import (

@@ -34,6 +34,7 @@ import re
 import time
 from dataclasses import dataclass
 import msgspec
+from core import aclose
 logger = logging.getLogger(__name__)
 MAX_RESPONSE_BYTES: int = 50 * 1024 * 1024
 TIMEOUT_S: float = 30.0

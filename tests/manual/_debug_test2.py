@@ -7,6 +7,7 @@ from hledac.universal.knowledge.graph_service import GraphService
 
 # Check what method graph_service.upsert_ioc calls on the graph
 import inspect
+from core import aclose
 src = inspect.getsource(graph_service.GraphService.upsert_ioc)
 # Find graph.add_ioc vs graph.upsert_ioc
 for line in src.split('\n'):

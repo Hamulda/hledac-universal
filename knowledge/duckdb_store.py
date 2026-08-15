@@ -31,6 +31,9 @@ from hledac.universal.runtime.lifecycle_registry import ResourceLifecycleRegistr
 from hledac.universal.utils.asyncx import safe_create_task, safe_wait_for, _check_gathered
 from hledac.universal.knowledge.duckdb_migrator import SchemaMigrator
 from hledac.universal.knowledge.duckdb_protocol import DedupManagerProtocol, QualityGateProtocol
+# F360 Phase 4: DuckDBCanonical was planned extraction but NOT wired.
+# Legacy (dead code): duckdb_canonical.py exists but is NOT imported anywhere.
+from hledac.universal.knowledge.duckdb_arrow_builder import DuckDBArrowBuilder, ArrowBuildConfig
 
 # [FINAL]-019-07: Capability cost registration for QoS ladder triage.
 # DuckDBShadowStore: rss_mb=200, peak_mb=512 (connection pool + in-process mode)
@@ -2594,6 +2597,7 @@ def shutdown_all_duckdb_stores() -> None:
 
 
 from hledac.universal.core.feature_flags import FeatureFlag, FeatureFlags
+from core import aclose
 
 
 class DuckDBShadowStore:
@@ -2660,6 +2664,8 @@ class DuckDBShadowStore:
         "DEAD_LETTER_PREFIX",
         "__weakref__",
         "_query_cache",
+        # _canonical removed: DuckDBCanonical not wired, DuckDBQueryExecutor handles SQL
+        "_arrow_builder",  # F360 Phase 4: DuckDBArrowBuilder (Arrow batch building)
         "_finalizer",
         "_pending_accepted_findings",
         "_pending_accepted_indices",
@@ -2770,6 +2776,9 @@ class DuckDBShadowStore:
         self._wal_lmdb: Any | None = None
         self._dedup_lmdb: Any | None = None
         self._query_cache: _DuckDBQueryCache | None = None
+        # F360 Phase 4: Extracted components (lazy init)
+        # _canonical removed: DuckDBCanonical not wired
+        self._arrow_builder: DuckDBArrowBuilder | None = None
         self._last_ingest_ts: float = 0.0
         self._pending_accepted_findings: list[CanonicalFinding] = []
         self._pending_accepted_indices: list[int] = []
@@ -3076,6 +3085,26 @@ class DuckDBShadowStore:
     # F360: Graph attachment via extracted DuckDBGraphAttachment
     # Replaces 15 deprecated thin wrappers (inject_graph, get_graph_stats, etc.)
     # NOTE: _graph_attachment is declared in __slots__ (L1843) — do NOT add class-level default here
+    # ── DuckDBArrowBuilder Property (F360 Phase 4) ─────────────────────────────
+    
+    def _ensure_arrow_builder(self) -> DuckDBArrowBuilder:
+        """
+        F360 Phase 4: Get or create DuckDBArrowBuilder instance.
+        
+        DuckDBArrowBuilder handles Arrow IPC batch construction with fallbacks.
+        Uses the same _arrow_metrics dict for consistency.
+        """
+        if self._arrow_builder is None:
+            self._arrow_builder = DuckDBArrowBuilder(
+                config=ArrowBuildConfig(
+                    min_batch_size=5,
+                    max_batch_size=self._duckdb_settings.get("chunk_size", 1024),
+                    rust_batch_threshold=50,
+                ),
+                metrics=self._arrow_metrics,
+            )
+        return self._arrow_builder
+
     def _ensure_graph_attachment(self) -> Any:
         """Lazy-init DuckDBGraphAttachment."""
         if self._graph_attachment is None:
@@ -10492,7 +10521,23 @@ class DuckDBShadowStore:
     def _arrow_build_python(
         self, findings: list[CanonicalFinding], findings_dicts: list[dict] | None = None
     ) -> Any | None:
-        """ISSUE-16: Arrow-table-only variant of _arrow_insert_python."""
+        """ISSUE-16: Arrow-table-only variant of _arrow_insert_python.
+        
+        F360 Phase 4: Delegates to DuckDBArrowBuilder, with inline fallback
+        only if the extracted component is unavailable.
+        """
+        # F360 Phase 4: Use extracted DuckDBArrowBuilder component
+        try:
+            arrow_builder = self._ensure_arrow_builder()
+            table, status = arrow_builder.build_arrow_batch(findings)
+            if table is not None:
+                return table
+            # Fall through to inline fallback if builder returned None
+            _logger.debug("[F360] ArrowBuilder returned None, using inline fallback")
+        except Exception as exc:  # noqa: BLE001 — fail-safe, delegate to inline
+            _logger.debug("[F360] ArrowBuilder unavailable: %s, using inline fallback", exc)
+
+        # Inline fallback (original implementation)
         import pyarrow as _pa
 
         n = len(findings)

@@ -62,6 +62,7 @@ def get_task_tool_preview_mapping() -> dict[str, str]:
     return dict(TASK_TYPE_TO_TOOL_PREVIEW)
 from dataclasses import dataclass
 import msgspec
+from core import aclose
 
 class DeepResearchProviderMirror(msgspec.Struct, frozen=True, gc=False):
     """Triad-side read-only mirror for DeepResearch provider admission metadata."""

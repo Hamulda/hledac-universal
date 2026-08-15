@@ -20,6 +20,7 @@ NOTE:
   Uses httpx for REST API calls - no P2P transport needed.
 """
 from hledac.universal.runtime.sidecars._darknet_base import DarknetSidecarAdapter
+from core import aclose
 
 
 # FIX-5: Inherit from DarknetSidecarAdapter for proper capability handling

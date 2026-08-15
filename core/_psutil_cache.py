@@ -37,6 +37,7 @@ import threading
 import time as _time_module
 from collections.abc import Callable
 from typing import Any
+from core._util import aclose
 
 # Deferred import — psutil is a hard dependency of the M1 8GB stack but we
 # fail-safe rather than crash if it's somehow absent.

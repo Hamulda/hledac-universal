@@ -23,6 +23,7 @@ import threading
 import time as _time_module
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
+from core._util import aclose
 
 if TYPE_CHECKING:
     pass

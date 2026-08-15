@@ -19,6 +19,7 @@ from pathlib import Path
 from typing import Any
 from hledac.universal.config import PrivacyConfig
 from hledac.universal.project_types import AnonymizationLevel, PrivacyEventCategory, PrivacyLevel, ProtocolType, Severity
+from core import aclose
 logger = logging.getLogger(__name__)
 
 # personal_privacy_manager — strict import with fallback

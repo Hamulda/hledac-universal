@@ -6,6 +6,7 @@ import time
 
 from typing import Any
 from urllib.parse import urlencode
+from core import aclose
 logger = logging.getLogger(__name__)
 
 class _CircuitBreaker:

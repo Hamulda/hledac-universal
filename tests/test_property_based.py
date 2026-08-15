@@ -30,6 +30,7 @@ from hledac.universal.coordinators.fetch_coordinator import (
     AIMD_DECREASE_BY_STATE,
 )
 from hledac.universal.tools.url_dedup import (
+from core import aclose
     create_rotating_bloom_filter,
     dedupe_url_list,
 )

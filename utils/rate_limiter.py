@@ -11,6 +11,7 @@ SSOT moved to rate_limiters.py (Sprint 7C).
 
 # Re-export everything from the canonical implementation
 from .rate_limiters import (
+from core import aclose
     QOS_CLASS_BACKGROUND,
     QOS_CLASS_USER_INITIATED,
     QOS_CLASS_USER_INTERACTIVE,

@@ -34,6 +34,7 @@ from collections import OrderedDict
 import msgspec
 from pathlib import Path
 from typing import Any, cast
+from core import aclose
 logger = logging.getLogger(__name__)
 MAX_HASH_CACHE_SIZE = 10000
 try:

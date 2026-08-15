@@ -28,6 +28,7 @@ from __future__ import annotations
 import sys
 import warnings
 from typing import TYPE_CHECKING
+from core._util import aclose
 
 if TYPE_CHECKING:
     from hledac_rust_extensions import hledac_rust_extensions

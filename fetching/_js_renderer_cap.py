@@ -14,6 +14,7 @@ Cached after first check — use reset() to force re-check.
 
 import os
 import threading
+from core import aclose
 
 # =============================================================================
 # CHROME BINARY CHECK (separate to avoid import cycles)

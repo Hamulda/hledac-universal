@@ -91,6 +91,7 @@ if TYPE_CHECKING:
 
 # MODERN-36 Fix: Import UmaBudget at module level for SSOT constant derivation
 from hledac.universal.utils.uma_budget import UmaBudget
+from core._util import aclose
 
 logger = logging.getLogger(__name__)
 

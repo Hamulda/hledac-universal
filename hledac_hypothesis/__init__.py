@@ -53,6 +53,7 @@ logger = logging.getLogger(__name__)
 from hledac.universal.runtime.lane_registry import LANE_REGISTRY
 
 from ._types import (
+from core import aclose
     CO_OCCURRENCE_FP16,
     MAX_CAUSAL_ENTITIES,
     MAX_CAUSAL_FINDINGS,

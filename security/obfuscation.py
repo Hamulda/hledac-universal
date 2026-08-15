@@ -17,6 +17,7 @@ from dataclasses import dataclass, field
 import msgspec
 from datetime import UTC, datetime
 from typing import Any
+from core import aclose
 logger = logging.getLogger(__name__)
 
 # Crypto-safe jitter — F350M-R

@@ -41,6 +41,7 @@ import logging
 import os
 from typing import TYPE_CHECKING, Any
 from hledac.universal.utils.codec import decode as _msgspec_loads, encode as _msgspec_encode
+from core import aclose
 
 if TYPE_CHECKING:
     pass

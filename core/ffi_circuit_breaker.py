@@ -83,6 +83,7 @@ from collections.abc import Callable
 
 from operator import attrgetter, itemgetter
 from otel._buffer import BoundedRing
+from core._util import aclose
 
 if TYPE_CHECKING:
     pass

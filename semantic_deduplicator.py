@@ -34,6 +34,7 @@ from pathlib import Path
 import numpy as np
 import psutil
 from hledac.universal.embedding_pipeline import generate_embeddings
+from core import aclose
 try:
     # R6: Centralized Rust access via core.rust_backend
     from hledac.universal.core.rust_backend import rust

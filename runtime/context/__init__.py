@@ -8,6 +8,7 @@ Exports:
 """
 
 from hledac.universal.runtime.context.bounded_dicts import (
+from core import aclose
     BoundedLRUDict,
     DEFAULT_ENTRIES_PER_SOURCE_MAXSIZE,
     DEFAULT_FEED_ACCEPTED_MAXSIZE,

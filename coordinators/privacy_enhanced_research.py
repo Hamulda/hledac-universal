@@ -28,6 +28,7 @@ from typing import Any
 import msgspec
 
 from hledac.universal.project_types import PrivacyLevel
+from core import aclose
 
 logger = logging.getLogger(__name__)
 

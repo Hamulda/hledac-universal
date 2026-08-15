@@ -13,6 +13,7 @@ Optimized for M1 Mac with ANE acceleration.
 import asyncio
 import logging
 from typing import Any
+from core import aclose
 
 logger = logging.getLogger(__name__)
 

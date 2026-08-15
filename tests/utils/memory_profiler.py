@@ -35,6 +35,7 @@ from typing import Any
 
 from operator import attrgetter, itemgetter
 import psutil
+from core import aclose
 
 __all__ = [
     "get_rss_mb",

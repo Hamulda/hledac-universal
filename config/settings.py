@@ -49,6 +49,7 @@ from collections.abc import Callable
 import msgspec
 
 from hledac.universal.core.env_config import ENV
+from core import aclose
 
 __all__ = [
     "Settings",

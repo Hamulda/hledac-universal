@@ -19,7 +19,11 @@ from __future__ import annotations
 import asyncio
 import logging
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Protocol
+
+if TYPE_CHECKING:
+    from mlx_lm import Model as MLXModel
+    from mlx_lm import TokenizerWrapper as MLXTokenizer
 from collections.abc import AsyncIterator
 
 if TYPE_CHECKING:
@@ -28,6 +32,7 @@ if TYPE_CHECKING:
 
 # MODERN-35 Fix: Import CPU affinity utilities for MLX Metal operations
 from hledac.universal.utils.cpu_affinity import (
+from core import aclose
     set_mlx_affinity,
     is_apple_silicon,
 )
@@ -74,8 +79,8 @@ class GenerationFacade:
 
     def __init__(
         self,
-        model_getter: Any | None = None,
-        tokenizer_getter: Any | None = None,
+        model_getter: Callable[[], MLXModel] | None = None,
+        tokenizer_getter: Callable[[], MLXTokenizer] | None = None,
         metal_device: MetalDevice | None = None,
         kv_cache: KVCacheManager | None = None,
     ) -> None:
@@ -88,8 +93,8 @@ class GenerationFacade:
 
     def set_model_accessors(
         self,
-        model_getter: Any,
-        tokenizer_getter: Any,
+        model_getter: Callable[[], MLXModel],
+        tokenizer_getter: Callable[[], MLXTokenizer],
     ) -> None:
         """Set model and tokenizer accessors."""
         self._model_getter = model_getter
@@ -341,8 +346,8 @@ class GenerationFacade:
 
     async def _run_mlx_generate(
         self,
-        model: Any,
-        tokenizer: Any,
+        model: MLXModel,
+        tokenizer: MLXTokenizer,
         kwargs: dict[str, Any],
     ) -> str:
         """Run MLX generation in thread pool."""

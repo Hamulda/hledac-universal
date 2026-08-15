@@ -13,6 +13,7 @@ from dataclasses import dataclass, field
 from enum import Enum, auto
 from typing import TYPE_CHECKING, Any, Final, Protocol
 import msgspec
+from core import aclose
 logger = logging.getLogger(__name__)
 
 class IntCounterLayoutProto(Protocol):

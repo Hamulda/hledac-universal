@@ -40,6 +40,7 @@ logger = logging.getLogger(__name__)
 # Python 3.14+: contextlib.aclosing() for async generator cleanup
 # Fallback for older Python versions (graceful degradation)
 from contextlib import aclosing  # noqa: E402
+from core import aclose
 
 # Lazy import — ijson loaded only when streaming functions called
 _IJSON_AVAILABLE: bool = True

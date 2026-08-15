@@ -49,6 +49,7 @@ from hledac.universal.utils.query_expansion import DomainSpecificExpansionStrate
 from hledac.universal.utils.asyncx import parallel_ok
 from hledac.universal.utils.two_pass_pipeline import TwoPassPipeline, TwoPassPipelineConfig, consumer_fn_to_thread
 from operator import attrgetter, itemgetter
+from core import aclose
 logger = logging.getLogger(__name__)
 
 class ResultType(Enum):

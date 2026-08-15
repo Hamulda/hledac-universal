@@ -19,6 +19,7 @@ import os
 from typing import Any
 
 from hledac.universal.utils._patterns import LazyLockDescriptor  # F320-REFACTOR-2
+from core import aclose
 
 logger = logging.getLogger(__name__)
 _MOBILECLIP_ENV_GATE = 'HLEDAC_ENABLE_MOBILECLIP'

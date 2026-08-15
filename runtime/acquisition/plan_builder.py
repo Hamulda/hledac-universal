@@ -30,6 +30,7 @@ from hledac.universal.runtime.acquisition.nonfeed_eligibility import (
 )
 from hledac.universal.runtime.acquisition.mission import infer_mission_intent
 from hledac.universal.runtime.acquisition.nonfeed_outcomes import (
+from core import aclose
     AcquisitionStrategySnapshot,
 )
 

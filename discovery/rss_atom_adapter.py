@@ -1560,6 +1560,7 @@ async def async_fetch_all_runtime_feeds(
 
 
 from hledac.universal.utils.html_parse_pool import parse_html_links as _parse_html_links
+from core import aclose
 
 async def parse_html_async(html: str) -> list[dict]:
     """Async wrapper — uses centralized M1-safe ThreadPoolExecutor from html_parse_pool."""

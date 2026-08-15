@@ -40,6 +40,7 @@ import pytest
 # Importujeme testované komponenty
 from hledac.universal.core.lmdb_unified import SubDB, UnifiedLMDB, get_unified_lmdb
 from hledac.universal.knowledge.duckdb_store import DuckDBShadowStore
+from core import aclose
 
 
 # =============================================================================

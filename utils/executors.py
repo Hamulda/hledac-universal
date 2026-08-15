@@ -23,5 +23,6 @@ warnings.warn(
 )
 
 from hledac.universal.utils.domain_executors import get_legacy_cpu_executor, get_legacy_io_executor, shutdown_all  # noqa: F401
+from core import aclose
 
 __all__ = ["get_legacy_cpu_executor", "get_legacy_io_executor", "shutdown_all"]

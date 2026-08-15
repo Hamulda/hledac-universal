@@ -61,6 +61,7 @@ import warnings
 from typing import Any
 from collections.abc import Awaitable
 from .async_helpers import safe_gather_fire_and_forget
+from core import aclose
 logger = logging.getLogger(__name__)
 
 def safe_create_task(coro: Any, *, name: str | None=None, eager_start: bool=True) -> asyncio.Task:

@@ -13,6 +13,7 @@ for "import-from-tests" enforcement.
 import ast
 import sys
 from pathlib import Path
+from core import aclose
 
 ROOT = Path(__file__).parent.parent
 TESTS_TRANSPORTS = ROOT / "tests" / "transports"

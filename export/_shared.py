@@ -16,6 +16,7 @@ import msgspec
 from datetime import UTC, datetime
 from typing import Any, cast
 from collections.abc import Mapping
+from core import aclose
 
 
 # ─────────────────────────────────────────────────────────────────────────────

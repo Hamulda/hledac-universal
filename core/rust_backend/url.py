@@ -102,6 +102,7 @@ class _PythonUrlDomain:
 # CPython's internal lru_cache lock (PEP 701).
 # ------------------------------------------------------------------
 from functools import lru_cache  # noqa: E402
+from core._util import aclose
 
 
 @lru_cache(maxsize=8192)

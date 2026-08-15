@@ -199,6 +199,7 @@ import hashlib as _hashlib  # noqa: E402
 import os as _os  # noqa: E402
 import pathlib as _pathlib  # noqa: E402
 import re as _re  # noqa: E402
+from core import aclose
 
 # Bounded cassette size — keeps individual cassettes under 1 MB to
 # avoid LMDB/DuckDB bloat and to make corruption easier to detect.

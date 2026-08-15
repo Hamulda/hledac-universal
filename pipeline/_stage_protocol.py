@@ -29,6 +29,7 @@ from collections.abc import Awaitable, Callable
 
 import msgspec
 from hledac.universal.compat.msgspec_gc_compat import Struct
+from core import aclose
 
 if TYPE_CHECKING:
     from typing import Protocol

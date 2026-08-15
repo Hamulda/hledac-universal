@@ -144,6 +144,7 @@ class TranscriptionResult(msgspec.Struct, frozen=True, gc=False):
 # whisper (tiny model): rss_mb=70, peak_mb=114 (CoreML encoder + runtime)
 # whisper (base model): rss_mb=114, peak_mb=154
 from hledac.universal.core.capability_cost import register_capability_cost
+from core import aclose
 register_capability_cost("whisperengine", rss_mb=70, peak_mb=114, tier="medium", tags=("speech", "gpu", "ane"))
 
 # ─── Lazy capability detection ───────────────────────────────────────────────

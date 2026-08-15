@@ -6,6 +6,7 @@ import asyncio
 import pytest
 
 from hledac.universal.brain.mlx_model_pool import (
+from core import aclose
     MLXModelPool,
     MLXModelPoolConfig,
     ModelEntry,

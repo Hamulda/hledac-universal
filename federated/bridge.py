@@ -90,6 +90,7 @@ import os
 import time
 from typing import Any, Protocol, runtime_checkable
 from .qtable import MAX_QTABLE_ENTRIES, FederatedQTable
+from core import aclose
 logger = logging.getLogger(__name__)
 __all__ = ['FederatedBridge', 'QTableProtocol', 'BRIDGE_LIGHTWEIGHT_ONLY', 'BRIDGE_LAZY_HYBRID', 'BRIDGE_CROSS_SPRINT_PERSIST', 'LMDB_MAX_ENTRIES', 'LMDB_PERSIST_DEBOUNCE_S', 'LMDB_PERSIST_KEY', 'LMDB_MAP_SIZE_BYTES', 'HYBRID_MAX_INSTANCES']
 LMDB_MAX_ENTRIES: int = MAX_QTABLE_ENTRIES

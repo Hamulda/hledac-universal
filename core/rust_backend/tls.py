@@ -20,6 +20,7 @@ import asyncio
 from typing import TYPE_CHECKING, Any
 
 from hledac.universal.utils.asyncx import parallel_ok
+from core._util import aclose
 
 if TYPE_CHECKING:
     from hledac_rust_extensions import hledac_rust_extensions

@@ -182,6 +182,7 @@ class TestLooksLikeFeedUrl:
 # ---------------------------------------------------------------------------
 
 import urllib.parse  # noqa: E402
+from core import aclose
 
 
 class TestPublicFetcherMigration:

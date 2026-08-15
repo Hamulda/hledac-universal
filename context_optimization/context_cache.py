@@ -61,6 +61,7 @@ if TYPE_CHECKING:
     import numpy as np
 else:
     np = _np
+from core import aclose
 logger = logging.getLogger(__name__)
 FASTEMBED_AVAILABLE = False
 try:

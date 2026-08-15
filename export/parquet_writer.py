@@ -44,6 +44,7 @@ import os
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal, cast
+from core import aclose
 
 logger = logging.getLogger(__name__)
 

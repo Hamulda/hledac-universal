@@ -25,6 +25,7 @@ Invariant: non-persistent, no shared cookies, no screenshots, no disk storage.
 import msgspec.json as _json
 import sys
 import time
+from core import aclose
 
 
 def _build_response(

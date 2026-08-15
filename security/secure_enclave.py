@@ -26,6 +26,7 @@ from dataclasses import dataclass, field
 import msgspec
 from enum import Enum
 from typing import Protocol, runtime_checkable
+from core import aclose
 logger = logging.getLogger(__name__)
 
 class EnclaveAvailability(Enum):

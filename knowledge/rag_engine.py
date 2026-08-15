@@ -186,6 +186,7 @@ class BM25Index:
 _RUST_FULLTEXT: Any = None
 # R6: Centralized Rust access via core.rust_backend
 from hledac.universal.core.rust_backend import rust
+from core import aclose
 
 _RUST_FULLTEXT = rust.fulltext
 _RUST_FULLTEXT_AVAILABLE: bool = False

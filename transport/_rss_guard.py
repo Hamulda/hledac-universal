@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import time
 from typing import Final
+from core import aclose
 
 # Default RSS ceiling for M1 8GB (5.5 GiB = matches sprint mission budget)
 DEFAULT_RSS_BLOCK_GIB: Final[float] = 5.5

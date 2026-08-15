@@ -42,6 +42,7 @@ from hledac.universal.compat.msgspec_gc_compat import Struct
 from functools import cached_property
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
+from core import aclose
 
 if TYPE_CHECKING:
     pass  # DuckDBShadowStore loaded lazily to avoid circular imports

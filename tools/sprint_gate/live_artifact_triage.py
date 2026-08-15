@@ -16,6 +16,7 @@ from collections.abc import Callable
 import msgspec
 from enum import StrEnum
 from pathlib import Path
+from core import aclose
 
 if TYPE_CHECKING:
     from typing import TypeAlias

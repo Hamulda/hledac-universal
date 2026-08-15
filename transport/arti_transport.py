@@ -62,6 +62,7 @@ if TYPE_CHECKING:
 # M1 Resource Ledger imports
 from hledac.universal.core.resource_ledger import get_resource_ledger
 from hledac.universal.transport.resource_admission import TransportAdmission
+from core import aclose
 
 # NEXTGEN-06: Rust embedded Tor detection
 _RUST: object | None = None

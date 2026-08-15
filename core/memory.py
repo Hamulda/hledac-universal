@@ -32,6 +32,7 @@ Import: from core.memory import get_memory_snapshot
 
 import logging
 from typing import Any
+from core._util import aclose
 
 __all__ = [
     "get_memory_snapshot",

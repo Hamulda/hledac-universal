@@ -24,6 +24,7 @@ from hledac.universal.utils.msgspec_json import encode as _msgspec_encode
 from hledac.universal.utils.msgspec_json import decode as _msgspec_decode
 import numpy as np
 from hledac.universal.utils.asyncx import parallel_ok
+from core import aclose
 logger = logging.getLogger(__name__)
 FASTEMBED_AVAILABLE = False
 try:

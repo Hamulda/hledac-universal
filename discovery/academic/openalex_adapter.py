@@ -25,6 +25,7 @@ import msgspec
 from typing import NamedTuple
 import orjson
 from hledac.universal.knowledge.duckdb_store import CanonicalFinding
+from core import aclose
 logger = logging.getLogger(__name__)
 OPENALEX_BASE = 'https://api.openalex.org'
 RATE_LIMIT = 10

@@ -117,6 +117,7 @@ from ..utils.robots_parser import RobotsDocument
 
 # R6: Centralized Rust access
 from hledac.universal.core.rust_backend import rust
+from core import aclose
 
 PyAIMDController = rust.raw.PyAIMDController  # type: ignore[assignment]  # None if N/A
 

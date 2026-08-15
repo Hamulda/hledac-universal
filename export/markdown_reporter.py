@@ -23,6 +23,7 @@ from pathlib import Path
 from typing import Any
 
 from ..utils.safe_render import safe_markdown_link
+from core import aclose
 
 logger = logging.getLogger(__name__)
 

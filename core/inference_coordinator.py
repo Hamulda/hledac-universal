@@ -81,6 +81,7 @@ if TYPE_CHECKING:
 
 from hledac.universal.utils.memory_tier import get_adaptive_cache_size
 from hledac.universal.utils._patterns import LazyLockDescriptor  # F320-REFACTOR-2
+from core._util import aclose
 
 logger = logging.getLogger(__name__)
 

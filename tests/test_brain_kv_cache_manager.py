@@ -11,6 +11,7 @@ M1 8GB invariant: Bounded pool sizes (4/8/64 items).
 from __future__ import annotations
 
 import pytest
+from core import aclose
 
 
 class TestKVCacheStats:

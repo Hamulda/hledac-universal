@@ -51,6 +51,7 @@ _TABLE_NAME_MULTILINGUAL = "semantic_ioc_multilingual_v1"  # SWARM-002
 
 # Sprint F228B: CPU executor for embed (never block event loop)
 from hledac.universal.core.concurrency import ConcurrencyCategory, get_semaphore  # noqa: E402
+from core import aclose
 
 CPU_EXECUTOR = get_semaphore(ConcurrencyCategory.MLX_INFERENCE)
 

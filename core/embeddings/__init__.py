@@ -33,6 +33,7 @@ from hledac.universal.core.embeddings.manager import (
 from hledac.universal.core.embeddings.cache import EmbeddingCache, get_embedding_cache, get_embedding_cache_stats
 
 from hledac.universal.core.embeddings.pool import (
+from core._util import aclose
     init_mlx_buffers,
     mlx_cleanup_sync,
     mlx_cleanup_aggressive,

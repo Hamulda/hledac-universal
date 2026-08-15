@@ -43,6 +43,7 @@ from collections.abc import Callable
 from typing import Any, TypeVar
 
 from hledac.universal.core.locks import LockCategory, make_lock
+from core import aclose
 
 logger = logging.getLogger(__name__)
 

@@ -7,6 +7,7 @@ Sprint F195C: Rich terminal dashboard for live sprint monitoring.
 
 import sys
 from unittest.mock import MagicMock, patch
+from core import aclose
 
 # ── Rich stub ─────────────────────────────────────────────────────────────────
 

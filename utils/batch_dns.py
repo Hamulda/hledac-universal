@@ -60,6 +60,7 @@ import time
 from collections import OrderedDict
 
 from .async_helpers import async_getaddrinfo, safe_gather, safe_wait_for
+from core import aclose
 
 logger = logging.getLogger(__name__)
 

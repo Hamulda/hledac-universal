@@ -2,6 +2,7 @@
 
 # Sprint F232A: Narrative builder stubs — TEMPORARY until component is restored
 from typing import Any
+from core import aclose
 
 
 def _build_operator_brief(

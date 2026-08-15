@@ -22,6 +22,7 @@ import logging
 from typing import TYPE_CHECKING, Any
 
 from hledac.universal.runtime.sidecar_protocol import BaseSidecarAdapter, SidecarContext
+from core import aclose
 
 if TYPE_CHECKING:
     from hledac.universal.runtime.sprint_scheduler import SprintScheduler

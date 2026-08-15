@@ -17,6 +17,7 @@ import pytest
 
 from hledac.universal.core.feature_flags import is_enabled
 from hledac.universal.utils.flag_registry import (
+from core import aclose
     FLAG_REGISTRY,
     FlagGroup,
     VALID_GROUPS,

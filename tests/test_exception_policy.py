@@ -15,6 +15,7 @@ import pytest
 from unittest.mock import MagicMock
 
 from utils.exception_policy import (
+from core import aclose
     ExceptionPolicy,
     HOT_PATH,
     COLD_PATH,

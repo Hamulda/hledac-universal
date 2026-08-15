@@ -38,6 +38,7 @@ import msgspec
 from typing import TYPE_CHECKING
 from hledac.universal.utils.msgspec_json import loads as _msgspec_loads, dumps_str as _msgspec_dumps_str
 from hledac.universal.utils.asyncx import parallel_ok
+from core import aclose
 if TYPE_CHECKING:
     import httpx
     from hledac.universal.knowledge.duckdb_store import CanonicalFinding

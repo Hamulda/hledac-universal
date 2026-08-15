@@ -31,6 +31,7 @@ from collections.abc import Awaitable, Callable
 import logging
 
 from collections.abc import Sequence
+from core import aclose
 
 __all__ = [
     # Singleton

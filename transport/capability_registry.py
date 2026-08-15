@@ -81,6 +81,7 @@ from enum import Enum
 from typing import TYPE_CHECKING
 
 from hledac.universal.utils.asyncx import safe_wait_for
+from core import aclose
 
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable

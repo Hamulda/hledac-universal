@@ -1,6 +1,7 @@
 # ioc_dedup.py — IOC deduplication domain
 
 from typing import TYPE_CHECKING, Any
+from core._util import aclose
 
 
 

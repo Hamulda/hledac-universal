@@ -46,6 +46,7 @@ import logging
 from typing import TYPE_CHECKING
 
 from hledac.universal.core.rust_backend import rust
+from core._util import aclose
 
 if TYPE_CHECKING:
     pass

@@ -30,6 +30,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from hledac.universal.runtime.scheduler_v2._task_registry import TaskScope, safe_create_task_tracked
+from core import aclose
 
 
 # ─────────────────────────────────────────────────────────────────────────────

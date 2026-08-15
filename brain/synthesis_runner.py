@@ -40,6 +40,12 @@ import time
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+if TYPE_CHECKING:
+    from hledac.universal.core.model_runtime import ModelLifecycleProtocol
+    from hledac.universal.brain.deephermes3_engine import DeepHermes3Engine
+    from hledac.universal.brain.research_hypothesis_engine import HypothesisEngine
+    from hledac.universal.brain.collapser_with_consistency import CollapserWithConsistency
+
 from hledac.universal.utils.asyncx import safe_create_task, parallel, first_completed, _check_gathered  # ISSUE-15 + F320
 from hledac.universal.utils.cache import PyCacheDict
 from hledac.universal.utils.msgspec_json import decode as _msgspec_decode
@@ -149,7 +155,7 @@ _HLEDAC_COLLAPSE_THRESHOLD = int(os.getenv("HLEDAC_COLLAPSE_THRESHOLD", "30"))
 # ---------------------------------------------------------------------------
 
 async def _race_try_xgrammar(
-    lifecycle: Any, prompt: str,
+    lifecycle: ModelLifecycleProtocol, prompt: str,
 ) -> tuple[dict | None, str, list[float]]:
     """Race task: try xgrammar generation. Extracted from _race_inference_first_wins."""
     try:
@@ -164,7 +170,7 @@ async def _race_try_xgrammar(
 
 
 async def _race_try_streaming(
-    lifecycle: Any, prompt: str,
+    lifecycle: ModelLifecycleProtocol, prompt: str,
 ) -> tuple[dict | None, str, list[float]]:
     """Race task: try streaming generation. Extracted from _race_inference_first_wins."""
     try:
@@ -179,7 +185,7 @@ async def _race_try_streaming(
 
 
 async def _race_try_structured(
-    lifecycle: Any, prompt: str,
+    lifecycle: ModelLifecycleProtocol, prompt: str,
 ) -> tuple[dict | None, str, list[float]]:
     """Race task: try structured generation. Extracted from _race_inference_first_wins."""
     try:
@@ -198,7 +204,7 @@ async def _race_try_structured(
 # ---------------------------------------------------------------------------
 
 async def _cascade_xgrammar(
-    lifecycle: Any, prompt: str,
+    lifecycle: ModelLifecycleProtocol, prompt: str,
 ) -> tuple[dict | None, list[float]]:
     """Step 1: xgrammar cascade. Returns (dict, []) on success, (None, []) on failure."""
     try:
@@ -216,7 +222,7 @@ async def _cascade_xgrammar(
 
 
 async def _cascade_streaming(
-    lifecycle: Any, prompt: str,
+    lifecycle: ModelLifecycleProtocol, prompt: str,
 ) -> tuple[dict | None, list[float]]:
     """Step 2: streaming cascade. Returns (dict, token_logprobs) on success, (None, []) on failure."""
     try:
@@ -234,7 +240,7 @@ async def _cascade_streaming(
 
 
 async def _cascade_structured(
-    lifecycle: Any, prompt: str,
+    lifecycle: ModelLifecycleProtocol, prompt: str,
 ) -> tuple[dict | None, list[float]]:
     """Step 3: structured Outlines cascade. Returns (dict, []) on success, (None, []) on failure."""
     try:
@@ -257,7 +263,7 @@ async def _cascade_structured(
 # ---------------------------------------------------------------------------
 
 async def _extract_stix_nodes(
-    graph: Any, graph_label: str,
+    graph: Any, graph_label: str,  # type: ignore[type-arg]
 ) -> tuple[list[str], str, str]:
     """
     Sprint 8TH: Extract 'value' fields from graph.export_stix_bundle().
@@ -938,6 +944,7 @@ OSINT_JSON_SCHEMA: str = _msgspec_encode({
 # ---------------------------------------------------------------------------
 
 from dataclasses import dataclass, field
+from core import aclose
 
 
 @dataclass(slots=True)
@@ -978,7 +985,7 @@ class SynthesisSession:
 
     def __init__(self, ctx: SynthesisContext) -> None:
         self._ctx = ctx
-        self._runner: Any = None
+        self._runner: SynthesisRunner | None = None
         self._inited: bool = False
 
     async def __aenter__(self) -> "SynthesisSession":
@@ -1061,7 +1068,7 @@ def _get_flashrank_ranker():
 _COLLAPSER_CACHE: Any | None = None
 
 
-def _get_collapser() -> Any:
+def _get_collapser() -> CollapserWithConsistency:
     """Return the Rust finding_collapser module (lazy, cached).
 
     Falls back to None if Rust extension not available.
@@ -1193,7 +1200,7 @@ class SynthesisRunner:
         """Return IP addresses detected during streaming generation."""
         return self._speculative_ips
 
-    def inject_graph(self, graph: Any) -> None:
+    def inject_graph(self, graph: Any) -> None:  # type: ignore[type-arg]
         """Inject IOCGraph instance from 8QA for STIX context injection."""
         self._ioc_graph = graph
 
@@ -1213,7 +1220,7 @@ class SynthesisRunner:
         """
         self._stix_graph = graph
 
-    def inject_lifecycle_adapter(self, adapter: Any) -> None:
+    def inject_lifecycle_adapter(self, adapter: ModelLifecycleProtocol) -> None:
         """
         SPRINT 8VL: Inject runtime lifecycle adapter for windup gate.
 
@@ -1239,7 +1246,7 @@ class SynthesisRunner:
     # P2-1: Hermes3Engine lazy init for continuous batching
     # ------------------------------------------------------------------
 
-    def _get_hermes_engine(self) -> Any:
+    def _get_hermes_engine(self) -> DeepHermes3Engine | None:
         """
         P2-1: Get or create Hermes3Engine instance for continuous batching.
 
@@ -1361,7 +1368,7 @@ class SynthesisRunner:
     # F214: HypothesisEngine injection
     # ------------------------------------------------------------------
 
-    def inject_hypothesis_engine(self, engine: Any) -> None:
+    def inject_hypothesis_engine(self, engine: HypothesisEngine) -> None:
         """
         F214: Inject HypothesisEngine for optional post-synthesis
         hypothesis extraction from OSINTReport.

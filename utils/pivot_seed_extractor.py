@@ -14,6 +14,7 @@ import re
 from dataclasses import dataclass
 import msgspec
 from typing import Final
+from core import aclose
 
 __all__ = [
     "PivotSeed",

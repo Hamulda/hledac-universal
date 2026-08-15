@@ -18,6 +18,7 @@ M1 safe: pure Python, no model load, no JS renderer.
 """
 import logging
 from hledac.universal.utils.msgspec_json import encode as _msgspec_encode, decode as _msgspec_decode
+from core import aclose
 __all__ = ['FindingEnvelope', 'MAX_ENVELOPE_SIZE', 'envelope_size_guard', 'serialize_envelope', 'deserialize_envelope']
 logger = logging.getLogger(__name__)
 MAX_ENVELOPE_SIZE: int = 4098

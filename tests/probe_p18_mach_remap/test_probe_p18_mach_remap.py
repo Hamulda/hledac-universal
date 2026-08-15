@@ -28,6 +28,7 @@ from pathlib import Path
 from unittest.mock import MagicMock, patch, PropertyMock
 
 import pytest
+from core import aclose
 
 # ─── Test Fixtures ─────────────────────────────────────────────────────────────
 

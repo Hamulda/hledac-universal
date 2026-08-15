@@ -64,6 +64,7 @@ _GC_THRESHOLD = (700, 10, 5)
 # boot/idle/winddown phases. Dynamic threshold adjustments (pressure relief)
 # are no-ops when blitz mode is active.
 from hledac.universal.coordinators.resource.blitz_gc import (
+from core._util import aclose
     BOOT_THRESHOLD,
     blitz_gc as _blitz_gc,
 )

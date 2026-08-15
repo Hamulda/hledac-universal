@@ -21,6 +21,7 @@ from hledac.universal.core.rust_backend import rust as _rust_backend
 from hledac.universal.tools.regex_cache import collapse_whitespace, strip_html_tags
 from hledac.universal.utils.html_text_fast import extract_html_metadata, html_to_text_fast
 from hledac.universal.utils.patterns.pattern_matcher import PatternHit, match_text
+from core import aclose
 
 # XML detection constants
 _XML_MARKER = b'<?xml'

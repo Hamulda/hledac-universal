@@ -31,6 +31,7 @@ from urllib.parse import urlparse
 from hledac.universal.utils.asyncx import parallel_ok
 from hledac.universal.utils.uma_budget import get_uma_snapshot
 from .confidence_policy import compute_confidence as _compute_confidence
+from core import aclose
 _AC_MATCHER: Any = None
 
 def _get_ac_matcher() -> Any:

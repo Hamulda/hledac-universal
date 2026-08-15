@@ -56,6 +56,7 @@ from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING, Any, Generic, TypeVar
 
 from ._sync import LRUCache
+from core import aclose
 
 if TYPE_CHECKING:
     pass

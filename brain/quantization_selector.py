@@ -32,6 +32,7 @@ import logging
 from dataclasses import dataclass
 import msgspec
 from typing import Any
+from core import aclose
 logger = logging.getLogger(__name__)
 Q3_K_M = 'q3_k_m'
 Q4_K_M = 'q4_k_m'

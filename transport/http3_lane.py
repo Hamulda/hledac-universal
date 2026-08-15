@@ -135,6 +135,7 @@ _semaphore: asyncio.Semaphore | None = None
 # PATCH 4: throttle speculative Alt-Svc probes (max 16 concurrent via _probe_semaphore)
 # Uses ConcurrencyCategory.HTTP_LANE from concurrency_registry (shared semaphore).
 from hledac.universal.core.concurrency import ConcurrencyCategory, get_semaphore  # noqa: E402
+from core import aclose
 
 _probe_semaphore: asyncio.Semaphore = get_semaphore(ConcurrencyCategory.HTTP_LANE)
 _neqo_checked: bool = False
@@ -525,10 +526,7 @@ async def _speculative_altsvc_probe_inner(url: str) -> None:
         except Exception as e:  # noqa: BLE001
             logger.debug("http3_lane: speculative header parse failed: %s", e)
         finally:
-            try:
-                await sess.aclose()
-            except Exception:  # noqa: BLE001
-                pass
+            await aclose(sess)
     except asyncio.CancelledError:
         raise
     except Exception as e:  # noqa: BLE001

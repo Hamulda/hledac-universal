@@ -23,6 +23,7 @@ import logging
 import platform
 import struct
 import subprocess
+from core import aclose
 
 __all__ = [
     "get_thermal_state",

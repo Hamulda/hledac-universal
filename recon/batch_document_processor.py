@@ -70,6 +70,7 @@ except ImportError:
     _GOVERNOR_AVAILABLE = False
 
 from hledac.universal.utils.asyncx import _check_gathered
+from core import aclose
 class PDFProcessingResult:
     """Result of processing a single PDF."""
     doc_id: str  # SHA256 hash of file path

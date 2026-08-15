@@ -27,6 +27,7 @@ import msgspec
 from dataclasses import dataclass
 from enum import Enum, auto
 from msgspec import field
+from core import aclose
 
 if TYPE_CHECKING:
     pass

@@ -9,6 +9,7 @@ Verifies:
 import time
 
 from transport.circuit_breaker import (
+from core import aclose
     CIRCUIT_FAILURE_THRESHOLD,
     _metrics_safe_increment,
     clear_all_breakers,

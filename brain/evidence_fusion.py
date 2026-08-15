@@ -28,6 +28,7 @@ import time
 import uuid
 
 from hledac.universal.brain.jtms import EvidenceRecord
+from core import aclose
 
 
 

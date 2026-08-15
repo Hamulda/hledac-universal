@@ -82,6 +82,7 @@ bench("batch_content_hash_hex(100 items) [Rust]", lambda: batch_content_hash_hex
 
 # Batch simhash
 from hledac_rust_extensions import batch_compute_simhash  # noqa: E402
+from core import aclose
 
 texts = [f"Document number {i} with some content for simhash testing" for i in range(100)]
 bench("batch_compute_simhash(100 texts) [Rust]", lambda: batch_compute_simhash(texts))

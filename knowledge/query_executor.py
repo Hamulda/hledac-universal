@@ -38,6 +38,7 @@ import logging as _logging
 
 # MODERN-20: Import canonical schema as single source of truth
 from hledac.universal.core.canonical_schema import (
+from core import aclose
     CANONICAL_FINDINGS_ARITY,
     CANONICAL_FINDINGS_COLUMNS,
     get_duckdb_temp_table_ddl,

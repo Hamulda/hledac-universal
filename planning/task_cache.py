@@ -8,6 +8,7 @@ import logging
 from pathlib import Path
 from typing import Any
 import orjson
+from core import aclose
 logger = logging.getLogger(__name__)
 
 class TaskCache:

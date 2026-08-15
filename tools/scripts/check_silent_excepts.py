@@ -20,6 +20,7 @@ import argparse
 import ast
 import sys
 from pathlib import Path
+from core import aclose
 
 ROOT = Path(__file__).resolve().parent.parent  # hledac/universal/
 SKIP_PARTS = {

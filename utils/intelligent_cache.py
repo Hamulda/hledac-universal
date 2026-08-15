@@ -25,6 +25,7 @@ from __future__ import annotations
 
 # Re-export from new location for backward compatibility
 from hledac.universal.utils.cache import (
+from core import aclose
     CacheConfig,
     CacheEntry,
     CacheStats,

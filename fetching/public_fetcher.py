@@ -2314,6 +2314,7 @@ async def _record_fetch_outcome(
     await _record_route_outcome(result, domain)
     await _record_anti_bot_observations(result, domain)
 from hledac.universal.utils.html_text_fast import extract_html_metadata, html_to_text_fast
+from core import aclose
 
 
 # _sync_process_html imported from _html_processor

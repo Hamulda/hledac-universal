@@ -79,6 +79,7 @@ F350M-R / Issue #D1 — 2026-07-18.
 from __future__ import annotations
 
 from typing import Any
+from core import aclose
 
 __all__: list[str] = ["struct_replace"]
 

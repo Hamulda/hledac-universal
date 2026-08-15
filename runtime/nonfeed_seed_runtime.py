@@ -28,6 +28,7 @@ from collections.abc import Iterable
 from typing import TYPE_CHECKING, Any
 
 from .nonfeed_seed_extractor import (
+from core import aclose
     classify_seed_quality,
     extract_nonfeed_seeds_from_findings,
     extract_nonfeed_seeds_from_text,

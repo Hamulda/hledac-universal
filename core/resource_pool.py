@@ -47,6 +47,7 @@ from enum import Enum, auto
 from typing import TYPE_CHECKING, Any
 from collections.abc import Generator
 from hledac.universal.core.env_config import ENV
+from core._util import aclose
 if TYPE_CHECKING:
     pass
 

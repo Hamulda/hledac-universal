@@ -48,6 +48,7 @@ CircuitBreakerOpen = CircuitBreakerOpenError
 logger = logging.getLogger(__name__)
 from hledac.universal.core.sys_metrics import get_memory_usage_mb
 from hledac.universal.utils.asyncx import safe_wait_for
+from core import aclose
 
 
 class AgentMetrics(Struct):

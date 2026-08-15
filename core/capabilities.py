@@ -26,6 +26,7 @@ import logging
 from dataclasses import dataclass
 import msgspec
 from typing import Any
+from core._util import aclose
 
 __all__ = [
     "Capability",

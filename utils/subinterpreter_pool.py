@@ -49,6 +49,7 @@ import sys
 from typing import Any, TypeVar
 
 from hledac.universal.utils.asyncx import safe_wait_for
+from core import aclose
 
 logger = logging.getLogger(__name__)
 

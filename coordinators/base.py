@@ -29,6 +29,7 @@ from typing import Any
 
 from ._dto import CoordinatorCapabilities, DecisionResponse, ExecutionResult, OperationResult, OperationType
 from .components import (
+from core import aclose
     LoadFactorCalculator,
     MemoryPressureLevel,
     MemoryPressureMonitor,

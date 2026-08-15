@@ -32,6 +32,7 @@ from typing import TYPE_CHECKING, Any
 from collections.abc import Awaitable, Callable
 
 from hledac.universal.utils.asyncx import safe_wait_for
+from core._util import aclose
 
 if TYPE_CHECKING:
     from hledac_rust_extensions import hledac_rust_extensions

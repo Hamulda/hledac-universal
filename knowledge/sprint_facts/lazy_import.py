@@ -32,6 +32,7 @@ import importlib
 import importlib.util
 import sys
 from typing import TYPE_CHECKING, Any
+from core import aclose
 
 if TYPE_CHECKING:
     pass

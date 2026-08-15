@@ -10,6 +10,7 @@ import asyncio
 import logging
 import time
 from typing import TYPE_CHECKING, Any
+from core import aclose
 
 if TYPE_CHECKING:
     from ._stage_protocol import BoundedStageQueue, StageContext

@@ -33,6 +33,7 @@ if TYPE_CHECKING:
 
 # MODERN-35 Fix: Import CPU affinity utilities for MLX Metal operations
 from hledac.universal.utils.cpu_affinity import (
+from core import aclose
     set_mlx_affinity,
     is_apple_silicon,
 )

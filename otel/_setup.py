@@ -25,6 +25,7 @@ import threading
 from dataclasses import dataclass
 import msgspec
 from typing import Any, TextIO
+from core import aclose
 _MAX_QUEUE_SIZE: int = 2048
 _MAX_EXPORT_BATCH: int = 64
 _SCHEDULE_DELAY_MS: int = 2000

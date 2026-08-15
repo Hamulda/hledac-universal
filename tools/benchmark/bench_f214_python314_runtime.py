@@ -60,6 +60,7 @@ except ImportError:
     _HAS_ZSTD = False
 from contextlib import contextmanager
 from hledac.universal.utils.asyncx import parallel_ok
+from core import aclose
 
 @contextmanager
 def package_import_context():

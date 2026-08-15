@@ -23,6 +23,7 @@ from typing import Any
 import pytest
 
 from hledac.universal.runtime.finding_pipeline import (
+from core import aclose
     FindingPipeline,
     create_finding_pipeline,
     _QUEUE_CAPACITY,

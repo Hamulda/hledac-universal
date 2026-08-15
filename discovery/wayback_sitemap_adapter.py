@@ -31,6 +31,7 @@ except ImportError:
 from hledac.universal.discovery.base import DiscoveryBatchResult, DiscoveryHit
 from hledac.universal.fetching.public_fetcher import async_fetch_public_text
 from hledac.universal.utils.asyncx import parallel_ok, safe_wait_for
+from core import aclose
 logger = logging.getLogger(__name__)
 _SOURCE_NAME: str = 'wayback_sitemap'
 _MAX_SITEMAPS: int = 50

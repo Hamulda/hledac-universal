@@ -35,6 +35,7 @@ from hledac.universal.core.capabilities import CAPS, CURL_CFFI
 # This maintains backward compatibility while adding CAPS enforcement
 # E2 FIX: All curl_cffi access goes through this layer
 from hledac.universal.transport.curl_cffi_fetch import (
+from core import aclose
     # Core fetch functions
     fetch_via_curl_cffi,  # E2: canonical entry point
     fetch_via_curl_cffi_cached,  # GET with conditional-GET (304) shortcut

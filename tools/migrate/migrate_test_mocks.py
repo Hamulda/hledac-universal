@@ -31,6 +31,7 @@ import re
 import sys
 from pathlib import Path
 from typing import NamedTuple
+from core import aclose
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Mapping: mock variable patterns → spec class

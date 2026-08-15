@@ -19,6 +19,7 @@ This module is stdlib-first with optional psutil support.
 """
 from dataclasses import dataclass
 import msgspec
+from core import aclose
 _MEMORY_THRESHOLD_REDUCED = 2048
 _MEMORY_THRESHOLD_MINIMAL = 1332
 _MEMORY_THRESHOLD_REJECT = 1024

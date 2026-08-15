@@ -11,6 +11,7 @@ GHOST_INVARIANTS: pure function, named except, fail-safe default 60 s.
 
 
 from typing import Final
+from core import aclose
 
 # Seconds per ResearchMode tier (M1 8GB UMA ceiling).
 # Mapped 1:1 with project_types.ResearchMode strings.

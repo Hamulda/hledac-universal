@@ -52,6 +52,7 @@ MAX_EVENT_HISTORY = 10000
 MAX_PHASE_SAMPLES = 100
 MAX_SOURCE_STATS = 50
 import msgspec
+from core import aclose
 
 class _PhaseSample(msgspec.Struct, gc=False):
     """A single phase duration sample."""

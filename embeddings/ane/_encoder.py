@@ -11,6 +11,7 @@ Vysokoúrovňový unified embedder je v `embeddings/ane/__init__.py`.
 import logging
 from pathlib import Path
 from typing import Any
+from core import aclose
 
 logger = logging.getLogger(__name__)
 

@@ -972,3 +972,32 @@ asyncio_mode = "auto"
 # Session-scoped event loop for pytest-asyncio (M1 8GB: reuse loop, avoid recreate)
 # CRITICAL FIX F350M-R: must match session_event_loop fixture scope below
 asyncio_default_fixture_loop_scope = "session"
+
+[tool.codeclone]
+# Audit trail
+audit_enabled = true
+audit_retention_days = 30
+
+# Quality gates (disabled by default)
+fail_health = -1
+fail_cycles = false
+fail_dead_code = false
+fail_on_new = false
+fail_on_new_metrics = false
+
+# Analysis thresholds
+min_loc = 10
+min_stmt = 6
+
+# Engineering Memory - Semantic Search
+[tool.codeclone.memory.semantic]
+enabled = true
+backend = "lancedb"
+embedding_provider = "fastembed"
+embedding_model = "BAAI/bge-small-en-v1.5"
+embedding_cache_dir = ".codeclone/memory/fastembed"
+index_path = ".codeclone/memory/semantic_index.lance"
+dimension = 384
+max_results = 20
+index_audit = true
+

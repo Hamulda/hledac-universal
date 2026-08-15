@@ -22,6 +22,7 @@ Always-on, bounded, fail-safe. No feature flags.
 """
 
 from typing import TYPE_CHECKING
+from core import aclose
 
 if TYPE_CHECKING:
     pass

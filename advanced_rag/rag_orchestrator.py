@@ -36,6 +36,7 @@ import logging
 import os
 import time
 from typing import Any
+from core import aclose
 logger = logging.getLogger(__name__)
 _MAX_SOURCES = 20
 _MAX_QUERY_CHARS = 1024

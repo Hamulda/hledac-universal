@@ -13,6 +13,7 @@ from enum import Enum
 from typing import Any
 
 import msgspec
+from core import aclose
 
 
 class DarkQueryType(Enum):

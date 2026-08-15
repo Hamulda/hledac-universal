@@ -13,6 +13,7 @@ import logging
 import pytest
 
 from hledac.universal.brain.distillation_engine import (
+from core import aclose
     DistillationEngine,
     DistillationExample,
     create_distillation_engine,

@@ -18,6 +18,7 @@ from __future__ import annotations
 import threading
 from collections import OrderedDict
 from typing import Generic, TypeVar
+from core import aclose
 
 K = TypeVar("K", default=object)
 V = TypeVar("V", default=object)

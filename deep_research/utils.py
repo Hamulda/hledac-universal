@@ -11,6 +11,7 @@ from dataclasses import dataclass
 import msgspec
 from typing import Any
 from hledac.universal.utils.asyncx import parallel_ok
+from core import aclose
 logger = logging.getLogger(__name__)
 
 class LinkCheckResult(msgspec.Struct, gc=False):

@@ -21,6 +21,7 @@ import httpx
 from hledac.universal.knowledge.duckdb_store import CanonicalFinding
 from hledac.universal.transport.circuit_breaker import domain_breaker_check, get_breaker
 from hledac.universal.utils.asyncx import parallel_ok
+from core import aclose
 logger = logging.getLogger(__name__)
 CID_PATTERN = re.compile('\\b(Qm[1-9A-HJ-NP-Za-km-z]{44}|bafy[a-z2-7]{52,})\\b')
 MAX_POOL_SIZE: Final[int] = 8

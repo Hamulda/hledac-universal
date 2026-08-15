@@ -53,6 +53,7 @@ T = TypeVar("T")  # For Generic types
 
 import msgspec
 from msgspec import Struct
+from core import aclose
 
 try:
     from utils.asyncx._parallel import parallel_ok

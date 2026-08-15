@@ -8,13 +8,14 @@ PEP 562 __getattr__ is already defined in __init__.py.
 This module extracts the complex index-building logic for maintainability.
 
 Usage:
-    from hledac.universal._lazy_index import build_module_index
+    from _lazy_index import build_module_index
 """
 
 from __future__ import annotations
 
 from importlib import import_module
 from typing import Any
+from core import aclose
 
 
 def _scan_module_public_attrs(mod_path: str) -> list[str]:

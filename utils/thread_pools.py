@@ -28,6 +28,7 @@ import os
 import threading
 from collections.abc import Callable
 from typing import Any
+from core import aclose
 logger = logging.getLogger(__name__)
 
 def _get_core_counts() -> dict:

@@ -11,6 +11,7 @@ import asyncio
 import pytest
 
 from hledac.universal.utils.asyncx import BoundedPerHostGate
+from core import aclose
 
 
 class TestBoundedPerHostGate:

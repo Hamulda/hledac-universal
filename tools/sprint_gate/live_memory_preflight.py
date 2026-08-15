@@ -31,6 +31,7 @@ import sys
 import time
 from dataclasses import asdict, dataclass
 import msgspec
+from core import aclose
 try:
     from hledac.universal.core.resource_governor import sample_uma_status
 except Exception:

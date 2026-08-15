@@ -15,6 +15,7 @@ from .base import Transport, TransportConfig, TransportResult
 logger = logging.getLogger(__name__)
 from hledac.universal.utils.safe_swallow import safe_swallow
 from hledac.universal.transport.resource_admission import (
+from core import aclose
     TransportAdmission,
     cleanup_child_process,
     cleanup_process_tree,

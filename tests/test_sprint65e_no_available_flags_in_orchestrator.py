@@ -9,6 +9,7 @@ import re
 from pathlib import Path
 
 import pytest
+from core import aclose
 
 # Paths to check
 CHECK_FILES = [

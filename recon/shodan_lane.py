@@ -32,6 +32,7 @@ from hledac.universal.security.secrets_scrubber import redact_shodan_key, safe_e
 
 # DRY: Shared search lane utilities (DRY-2026-08-07)
 from hledac.universal.recon.search_lane_utils import (
+from core import aclose
     apply_jitter,
     circuit_breaker_check,
     http_status_to_failure_kind,

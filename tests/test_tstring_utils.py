@@ -9,6 +9,7 @@ from string.templatelib import Template
 import pytest
 
 from utils.tstring import convert, render, t
+from core import aclose
 
 
 class TestRender:

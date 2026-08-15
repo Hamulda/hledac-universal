@@ -87,6 +87,7 @@ _HYSTERESIS_COUNT: int = 2  # Must see same level N times before notifying
 # ---------------------------------------------------------------------------
 
 import enum
+from core._util import aclose
 
 
 class MemoryPressureLevel(enum.IntEnum):

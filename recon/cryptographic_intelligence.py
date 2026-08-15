@@ -61,6 +61,7 @@ except ImportError:
 # Feature flag: HLEDAC_ENABLE_METAL_HASHCRACK=1 to enable Metal GPU path
 # Default: 0 (disabled) — Metal crate must be compiled in (maturin develop --features "metal")
 from hledac.universal.core.feature_flags import FeatureFlag, FeatureFlags
+from core import aclose
 _METAL_HASHCRACK_ENABLED: bool = FeatureFlags.get(FeatureFlag.METAL_HASHCRACK)
 
 @cache

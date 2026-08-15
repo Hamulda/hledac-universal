@@ -6,6 +6,7 @@ from hledac.universal.core.resource_governor import ResourceGovernor
 from hledac.universal.dht.kademlia_node import KademliaNode
 from hledac.universal.dht.local_graph import LocalGraphStore
 from hledac.universal.dht.sketch_exchange import SketchExchange
+from core import aclose
 
 
 class DummyTransport:

@@ -27,6 +27,7 @@ Usage::
 from __future__ import annotations
 
 import warnings
+from core._util import aclose
 
 __all__ = ["metal_compute"]
 

@@ -40,6 +40,7 @@ AST scan on ~200 production files = <2s. Hermetic. No network. No I/O.
 
 import ast
 from pathlib import Path
+from core import aclose
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 

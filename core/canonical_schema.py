@@ -54,6 +54,7 @@ M1 8GB Notes
 """
 
 from __future__ import annotations
+from core._util import aclose
 
 # ---------------------------------------------------------------------------
 # Column Definitions

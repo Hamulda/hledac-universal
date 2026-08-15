@@ -31,6 +31,7 @@ from .canonical_finding import (  # noqa: E402
     ActivationResult,
 )
 from .source_attribution import (  # noqa: E402
+from core import aclose
     SourceHitLog,
     SprintScorecard,
     SprintDelta,

@@ -12,6 +12,7 @@ no eval, no event loop blocking.
 
 import pytest
 from hledac.universal.federated.qtable import FederatedQTable, MAX_QTABLE_ENTRIES
+from core import aclose
 
 
 class TestFederatedQTableUpdate:

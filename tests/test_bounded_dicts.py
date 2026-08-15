@@ -17,6 +17,7 @@ from __future__ import annotations
 import pytest
 
 from runtime.context.bounded_dicts import BoundedLRUDict
+from core import aclose
 
 
 class TestBoundedLRUDictEviction:

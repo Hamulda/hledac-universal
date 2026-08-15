@@ -41,6 +41,9 @@ __all__ = [
     "duckdb_ro_connection",
     "close_all_pools",
     "get_pool_stats",
+    # F350M-R: Type-4 clone elimination — shared async cleanup helpers
+    "aclose",
+    "aclose_many",
 ]
 
 # ── PEP 810 lazy imports — nothing imported at module load time ───────────────
@@ -236,6 +239,19 @@ def _load_duckdb_pool() -> dict[str, object]:
     return _duckdb_pool_cache
 
 
+
+# F350M-R: Type-4 clone elimination — shared async cleanup helpers
+_util_cache: dict[str, object] | None = None
+
+
+def _load_util() -> dict[str, object]:
+    global _util_cache
+    if _util_cache is None:
+        from core._util import aclose, aclose_many
+        _util_cache = {"aclose": aclose, "aclose_many": aclose_many}
+    return _util_cache
+
+
 # ── Dispatch table: name → loader ───────────────────────────────────────────
 
 _LOADER_DISPATCH: tuple[tuple[frozenset[str], _load_locks | _load_embeddings | _load_resource_governor | _load_resource_lifecycle | _load_system_detector | _load_uma_budget | _load_concurrency | _load_feature_flags | _load_duckdb_pool], ...] = (
@@ -248,6 +264,7 @@ _LOADER_DISPATCH: tuple[tuple[frozenset[str], _load_locks | _load_embeddings | _
     (frozenset(("ConcurrencyCategory", "get_semaphore")), _load_concurrency),
     (frozenset(("FeatureFlags", "FeatureFlag", "FlagCategory", "FlagInfo", "FlagValidationError", "validate_sprint_flags")), _load_feature_flags),
     (frozenset(("duckdb_ro_pool", "duckdb_rw_pool", "duckdb_ro_acquire", "duckdb_ro_connection", "close_all_pools", "get_pool_stats")), _load_duckdb_pool),
+    (frozenset(("aclose", "aclose_many")), _load_util),
 )
 
 

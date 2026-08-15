@@ -41,6 +41,7 @@ KEPT: FindingProto, FindingWithPayloadProto, DuckDBStoreProtocol,
 
 
 from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
+from core._util import aclose
 
 if TYPE_CHECKING:
     from typing import Any

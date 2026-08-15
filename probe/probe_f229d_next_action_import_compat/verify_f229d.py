@@ -8,6 +8,7 @@ import ast
 import json
 import pathlib
 import sys
+from core import aclose
 
 UNIVERSAL_ROOT = pathlib.Path("/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal")
 LSM_PATH = UNIVERSAL_ROOT / "benchmarks" / "live_sprint_measurement.py"

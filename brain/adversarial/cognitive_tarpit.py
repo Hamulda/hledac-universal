@@ -100,6 +100,7 @@ else:
 
 # Feature gate — SWARM-010 compliant via FeatureFlags
 from hledac.universal.core.feature_flags import FeatureFlags, FeatureFlag
+from core import aclose
 _COGNITIVE_TARPIT_ENABLED: Final[bool] = FeatureFlags.get(FeatureFlag.COGNITIVE_TARPIT)
 
 # POS tagging gate (heavy, off by default) — SWARM-010 compliant via FeatureFlags

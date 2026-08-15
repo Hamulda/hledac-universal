@@ -16,6 +16,7 @@ so metadata can be collected even when text parsing fails.
 
 import html as _html
 import re
+from core import aclose
 
 try:
     from selectolax.parser import HTMLParser as _SelectolaxHTMLParser  # type: ignore[import-not-found]

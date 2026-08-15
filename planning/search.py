@@ -8,6 +8,7 @@ import time
 from collections.abc import Callable
 from typing import Any
 from hledac.universal.core.resource_governor import Priority, ResourceGovernor
+from core import aclose
 logger = logging.getLogger(__name__)
 
 class SearchNode:

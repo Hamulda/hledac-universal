@@ -39,6 +39,7 @@ from hledac.universal.utils.msgspec_json import loads as _msgspec_loads, dumps_s
 
 from hledac.universal.core.concurrency_registry import ConcurrencyBudgetRegistry, ConcurrencyCategory
 from hledac.universal.utils.asyncx import parallel_ok
+from core import aclose
 
 logger = logging.getLogger(__name__)
 

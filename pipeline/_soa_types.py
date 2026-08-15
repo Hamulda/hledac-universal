@@ -23,6 +23,7 @@ from typing import TYPE_CHECKING
 
 import msgspec
 from hledac.universal.compat.msgspec_gc_compat import Struct
+from core import aclose
 
 if TYPE_CHECKING:
     pass

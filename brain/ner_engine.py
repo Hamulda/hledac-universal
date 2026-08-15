@@ -34,7 +34,10 @@ import threading
 from collections import deque
 from dataclasses import dataclass, field
 from functools import partial
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from transformers import PreTrainedModel
 
 from operator import attrgetter, itemgetter
 import msgspec
@@ -420,7 +423,7 @@ class NEREngine:
 
     def __init__(self, model_name: str='knowledgator/gliner-relex-large-v0.5'):
         self.model_name = model_name
-        self._model: Any | None = None
+        self._model: PreTrainedModel | Any | None = None  # type: ignore[assignment]
         self._lock = threading.RLock()
         self._initialized = False
         self._nl_available = _NL_AVAILABLE
@@ -902,7 +905,7 @@ n        Pokud je model již načten, nic nedělá.
                     results.append([])
         return results
 
-    async def _run_in_subprocess(self, texts: list[str], labels: list[str], threshold: float, timeout: int) -> Any:
+    async def _run_in_subprocess(self, texts: list[str], labels: list[str], threshold: float, timeout: int) -> list[list[dict[str, Any]]]:
         """
         Spustí GLiNER inference — preferuje persistent worker, fallback na temp subprocess.
 
@@ -1034,6 +1037,7 @@ def get_extraction_status() -> dict:
 import math as _math
 import re as _re
 from hledac.universal.utils.asyncx import safe_wait_for
+from core import aclose
 
 # OSINT-01 FIX: Use `regex` module (linear-time guarantees) instead of `re` for
 # domain pattern. The `re` module's Python engine suffers catastrophic backtracking

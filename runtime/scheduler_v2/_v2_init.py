@@ -122,6 +122,7 @@ class _Injection(msgspec.Struct, frozen=True, gc=False):
 
 # EvidenceLog init from shared module (F350M-R)
 from hledac.universal.runtime._shared.evidence_log_shared import (
+from core import aclose
     evidence_log_init as _evidence_log_init,
 )
 

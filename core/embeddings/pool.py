@@ -51,6 +51,7 @@ logger = logging.getLogger(__name__)
 # C1-X FIX: Import MLX_AVAILABLE from SSOT (zero-import detection)
 # Uses importlib.metadata.version("mlx") — no mlx.core import at module load
 from hledac.universal.utils.mlx_memory import MLX_AVAILABLE
+from core._util import aclose
 
 
 def get_mx():

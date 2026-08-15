@@ -48,6 +48,7 @@ if TYPE_CHECKING:
     from hledac_rust_extensions import MmapBloomFilter as _MmapBloomFilterT
 else:
     _MmapBloomFilterT = object  # type: ignore[assignment,misc]  # runtime sentinel
+from core import aclose
 
 # ---------------------------------------------------------------------------
 # Conditional imports — every symbol below has an explicit type annotation

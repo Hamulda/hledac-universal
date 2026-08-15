@@ -902,6 +902,7 @@ _zstd_compressor = ZstdCompressor()
 _zstd_decompressor = ZstdDecompressor()
 import xxhash
 from hledac.universal.utils.asyncx import parallel_ok
+from core import aclose
 
 class WaybackCDX:
     """Wayback Machine CDX API — low-level domain/URL snapshot discovery.

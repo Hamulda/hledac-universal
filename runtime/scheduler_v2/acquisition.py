@@ -1976,6 +1976,7 @@ class AcquisitionOrchestrator:
 # ── Protocol re-export ────────────────────────────────────────────────────────
 
 from hledac.universal.runtime.scheduler_v2.protocol import AcquisitionPhaseResult  # noqa: E402
+from core import aclose
 
 __all__ = [
     "AcquisitionOrchestrator",

@@ -45,6 +45,7 @@ from typing import TYPE_CHECKING, Any, Literal, TypeVar
 
 from hledac.universal.core.locks import LockCategory, make_lock
 from hledac.universal.utils.asyncx import safe_wait_for
+from core import aclose
 
 # TEL-02: Lazy import — OTel context capture for trace propagation across Rust boundary.
 # Falls back to a no-op when OTel is not installed (safe for all code paths).

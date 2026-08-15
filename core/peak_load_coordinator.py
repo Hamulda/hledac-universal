@@ -74,6 +74,7 @@ logger = logging.getLogger(__name__)
 # New: Uses UmaBudget.UMA_HARD_CEILING_GIB = 6.25 GiB (SSOT)
 
 from hledac.universal.utils.uma_budget import (
+from core._util import aclose
     UmaBudget,
     MISSION_PEAK_RSS_GIB,
     ORCHESTRATOR_GIB,

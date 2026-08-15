@@ -20,6 +20,7 @@ import sys
 # because sys.modules["hledac.universal.__main__"].__name__ == "__main__".
 # We avoid calling main() at module scope to prevent double-execution.
 from hledac.universal.cli.parser import main as _main
+from core import aclose
 
 __all__ = ["main"]
 

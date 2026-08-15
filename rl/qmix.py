@@ -30,6 +30,7 @@ if MLX_AVAILABLE:
         tree_unflatten = None
 
 from hledac.universal.rl.actions import ACTION_DIM, ACTION_FETCH_MORE
+from core import aclose
 if MLX_AVAILABLE:
 
     class QMixer(nn.Module):

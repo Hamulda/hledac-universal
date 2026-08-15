@@ -11,6 +11,7 @@ NOT in the hledac-universal distribution (pyproject.toml only packages
 
 
 from hledac.universal.config import (
+from core import aclose
     DeepResearchConfig,
     M1Presets,
     PrivacyConfig,

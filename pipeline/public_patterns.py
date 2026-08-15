@@ -13,6 +13,7 @@ import hashlib
 import html.parser
 import re
 from typing import TYPE_CHECKING, Any
+from core import aclose
 
 if TYPE_CHECKING:
     pass

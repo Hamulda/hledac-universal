@@ -26,6 +26,7 @@ RUST_EXT_DIR = Path(__file__).parent.parent
 sys.path.insert(0, str(RUST_EXT_DIR))
 
 import pytest
+from core import aclose
 
 
 # ============================================================================

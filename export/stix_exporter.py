@@ -38,6 +38,7 @@ from hledac.universal.utils.codec import (
     encode_pretty_sorted as _json_pretty_sorted,
 )
 from hledac.universal.security.pq_crypto import PostQuantumBackend, PQAvailability, PQSignature, PQStatus, create_post_quantum_backend
+from core import aclose
 
 # Legacy aliases for internal call sites that use _orjson_dumps(data, sort_keys=...)
 # or _orjson_loads(data). These forward to the canonical codec.

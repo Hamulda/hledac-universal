@@ -34,6 +34,7 @@ try:
 except ImportError:
     SourceType = None
 from hledac.universal.knowledge.duckdb_store import CanonicalFinding
+from core import aclose
 logger = logging.getLogger(__name__)
 ALT_PROTOCOLS_ENABLED: bool = os.getenv('HLEDAC_ENABLE_ALT_PROTOCOLS', '0').lower() in ('1', 'true', 'yes', 'on')
 

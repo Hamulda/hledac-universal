@@ -34,6 +34,7 @@ from typing import TYPE_CHECKING, Any
 from hledac.universal.utils.msgspec_json import dumps_str as _msgspec_dumps_str, loads as _msgspec_loads
 from polars import DataFrame
 from rank_bm25 import BM25Okapi
+from core import aclose
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator
 logger = logging.getLogger(__name__)

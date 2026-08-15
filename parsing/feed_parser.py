@@ -39,6 +39,7 @@ except ImportError:
 
 import msgspec
 import xxhash
+from core import aclose
 
 
 # ---------------------------------------------------------------------------

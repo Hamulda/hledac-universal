@@ -15,6 +15,7 @@ import pytest
 
 # Importujeme modul pod testováním
 from fetching.memory_budget_gate import (
+from core import aclose
     _HARD_GIB,
     _SOFT_GIB,
     BrowserDecision,

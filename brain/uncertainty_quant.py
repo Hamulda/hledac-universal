@@ -44,6 +44,7 @@ import time
 from dataclasses import dataclass, field
 from typing import Any
 from collections.abc import Callable
+from core import aclose
 
 logger = logging.getLogger(__name__)
 

@@ -23,6 +23,7 @@ from hledac.universal.transport.circuit_breaker import checked_httpx_get as chec
 from hledac.universal.utils.asyncx import parallel
 logger = logging.getLogger(__name__)
 from hledac.universal.brain.output_dlp_filter import mask_secret as _mask_secret_impl
+from core import aclose
 
 _SECRET_REDACT_LEN = 4
 

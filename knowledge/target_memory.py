@@ -12,6 +12,7 @@ from hledac.universal.compat.msgspec_gc_compat import Struct
 from typing import TYPE_CHECKING, Any
 import orjson
 import psutil
+from core import aclose
 if TYPE_CHECKING:
     from collections.abc import Mapping
 MAX_MEMORY_ENTITIES = 500

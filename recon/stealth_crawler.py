@@ -17,6 +17,7 @@ from __future__ import annotations
 
 # Re-export everything from the new stealth package for backwards compatibility
 from hledac.universal.recon.stealth import (
+from core import aclose
     # Models
     Alert,
     AlertRule,

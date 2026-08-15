@@ -11,6 +11,7 @@ Exports:
 from .client import CoreMLClient, CoreMLServiceError
 from .manager import CoreMLServiceManager
 from .service import (
+from core import aclose
     BatchPredictRequest,
     BatchPredictResult,
     ComputeUnit,

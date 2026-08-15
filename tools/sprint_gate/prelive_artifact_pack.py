@@ -23,6 +23,7 @@ from dataclasses import dataclass, field
 import msgspec
 from enum import StrEnum
 from pathlib import Path
+from core import aclose
 _REQUIRED_PROBES = [('probe_f216h_nonfeed_recovery_guard', 'nonfeed_recovery_guard.json'), ('probe_f216i_zero_findings_quality', 'sanity_zero_findings.json'), ('probe_f216i_zero_findings_quality', 'zero_findings_quality.json'), ('probe_f217c_public_bootstrap', 'public_bootstrap.json'), ('probe_f217d_ct_provider_resilience', 'ct_provider_resilience.json'), ('probe_f217e_nonfeed_candidate_ledger', 'candidate_ledger.json'), ('probe_m218e_memory_integration_guard', 'memory_integration_guard.json'), ('probe_f219a_surface_contract', 'surface_contract.json'), ('probe_f219b_hermes_metal_finalizer', 'hermes_metal_finalizer.json'), ('probe_f219d_public_session_seal', 'public_session_seal.json'), ('probe_f219e_ct_provider_cooldown', 'ct_provider_cooldown.json')]
 _OPTIONAL_PROBES = [('probe_f219f_prelive_decision_gate', 'prelive_decision_gate.json')]
 _F224_PROBES = [('probe_f224a_worker_pool_import_seal', 'worker_pool_import_seal.json'), ('probe_f224b_claims_extraction_v1', 'claims_extraction_v1.json'), ('probe_f224c_discovery_provider_gap', 'discovery_provider_gap.json'), ('probe_f224d_confidence_policy', 'confidence_policy.json'), ('probe_f224e_type_checking_hygiene', 'type_checking_hygiene.json')]

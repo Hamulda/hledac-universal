@@ -31,6 +31,7 @@ import msgspec
 from hledac.universal.compat.msgspec_gc_compat import Struct
 
 from .base import DecisionResponse, ExecutionResult, OperationResult, OperationType, UniversalCoordinator
+from core import aclose
 
 logger = logging.getLogger(__name__)
 

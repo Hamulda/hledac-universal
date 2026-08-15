@@ -29,6 +29,7 @@ from enum import StrEnum
 from typing import TYPE_CHECKING, Any
 
 from hledac.universal.compat.msgspec_gc_compat import Struct, field as msgspec_field
+from core import aclose
 if TYPE_CHECKING:
     pass
 

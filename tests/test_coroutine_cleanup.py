@@ -23,6 +23,7 @@ from collections.abc import AsyncIterator
 from typing import Any
 
 import pytest
+from core import aclose
 
 # === Test fixtures ===
 

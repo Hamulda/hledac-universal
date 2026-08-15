@@ -34,6 +34,7 @@ from unittest.mock import AsyncMock
 import pytest
 
 from core.inference_coordinator import (
+from core import aclose
     InferenceBackend,
     InferenceCoordinator,
     InferenceRequest,

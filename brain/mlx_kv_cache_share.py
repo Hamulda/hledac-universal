@@ -25,6 +25,7 @@ import time as time_module
 from dataclasses import dataclass
 import msgspec
 from typing import TYPE_CHECKING
+from core import aclose
 if TYPE_CHECKING:
     from hledac.universal.brain.deephermes3_engine import DeepHermes3Engine
 logger = logging.getLogger(__name__)

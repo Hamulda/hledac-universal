@@ -33,6 +33,7 @@ from hledac.universal.core.feature_flags import FeatureFlag, FeatureFlags
 from hledac.universal.utils.asyncx import parallel
 
 from .services import (
+from core import aclose
     FetchOptions,
     FetchResult,
     FetchServiceConfig,

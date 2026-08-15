@@ -26,6 +26,7 @@ import contextlib
 from contextvars import ContextVar, Token
 
 import msgspec
+from core import aclose
 
 # =============================================================================
 # SprintContext — frozen struct for hot-path performance

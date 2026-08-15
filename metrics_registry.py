@@ -36,6 +36,7 @@ import msgspec
 
 from hledac.universal.utils._patterns import safe_close  # F320: DRY close helper
 from hledac.universal.utils.cache import LRUCache, TTLCache
+from core import aclose
 
 logger = logging.getLogger(__name__)
 

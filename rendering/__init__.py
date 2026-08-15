@@ -18,6 +18,7 @@ Invariant: max 1 concurrent render via module-level semaphore.
 
 
 from hledac.universal.rendering.macos_webkit_renderer import (
+from core import aclose
     MACOS_WEBKIT_REASONS,
     WebKitRenderResult,
     fetch_with_macos_webkit,

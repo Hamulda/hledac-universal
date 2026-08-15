@@ -31,6 +31,7 @@ import pytest
 
 # Import from the new coordinator
 from core.inference_coordinator import (
+from core import aclose
     InferenceBackend,
     InferenceCoordinator,
     InferenceError,

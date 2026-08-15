@@ -39,6 +39,7 @@ import threading
 from collections import deque
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
+from core._util import aclose
 
 if TYPE_CHECKING:
     pass

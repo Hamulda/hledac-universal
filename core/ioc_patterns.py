@@ -30,6 +30,7 @@ Usage:
 
 import re
 from typing import Final
+from core._util import aclose
 
 __all__ = [
     "IPV4_RE",

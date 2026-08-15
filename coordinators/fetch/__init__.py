@@ -26,6 +26,7 @@ from __future__ import annotations
 
 from .facade import FetchCoordinatorConfig, FetchCoordinatorFacade
 from .services import (
+from core import aclose
     CircuitBreakerService,
     DNSCacheService,
     FetchOptions,

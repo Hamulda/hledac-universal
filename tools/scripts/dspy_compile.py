@@ -56,6 +56,7 @@ def _load_training_data(path: Path) -> list:
 
 """OSINT dark query synthetic trainset — 20 examples covering IP/domain/hash/CVE types."""
 import dspy  # noqa: E402
+from core import aclose
 
 OSINT_DARK_QUERY_TRAINSET = [
     # IP → BGP AS lookup

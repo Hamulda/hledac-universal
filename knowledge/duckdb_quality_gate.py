@@ -5,7 +5,7 @@ Stateful quality assessment engine for canonical finding ingestion.
 
 
 ARCHITECTURE:
-    DuckDBQualityGate is COMPOSED into DuckDBCanonical.
+    DuckDBQualityGate is COMPOSED into DuckDBShadowStore (via _quality_gate).
     Manages QualityAssessmentState (counts, rejection ledger).
     Applies stateful quality rules before canonical write.
 
@@ -37,6 +37,7 @@ if TYPE_CHECKING:
 # duckdb_store holds the canonical _quality_state from quality_assessment.
 # duckdb_quality_gate holds its own lightweight state for per-finding gate logic.
 from dataclasses import dataclass, field
+from core import aclose
 
 
 _logger = logging.getLogger(__name__)

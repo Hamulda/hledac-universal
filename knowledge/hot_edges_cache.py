@@ -473,6 +473,7 @@ def _dec_node_count(env) -> int:
 # Opt-in via HLEDAC_HOT_EDGES_COMPRESS=1 (default ON when rust ext available).
 # SWARM-010: Use FeatureFlags for compression enable
 from hledac.universal.core.feature_flags import FeatureFlags, FeatureFlag
+from core import aclose
 _HOT_EDGES_COMPRESS = FeatureFlags.get(FeatureFlag.HOT_EDGES_COMPRESS)
 _compress_available = False
 _decompress_available = False

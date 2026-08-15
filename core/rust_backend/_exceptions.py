@@ -8,6 +8,7 @@ security-critical tool.
 """
 
 from __future__ import annotations
+from core._util import aclose
 
 
 class RustExtensionError(Exception):

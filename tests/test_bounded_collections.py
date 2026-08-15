@@ -16,6 +16,7 @@ from typing import Any
 import pytest
 
 from hledac.universal.core.bounded_collections import BoundedList, SlottedBoundedList
+from core import aclose
 
 
 # ---------------------------------------------------------------------------

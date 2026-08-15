@@ -26,6 +26,7 @@ import msgspec
 from typing import Any
 from hledac.universal.layers.temporal_signal_layer import TemporalEvent, TemporalSignalLayer, event_from_finding_like
 from operator import attrgetter, itemgetter
+from core import aclose
 logger = logging.getLogger(__name__)
 MAX_PREDICTIONS = 20
 MAX_HISTORY_PER_TYPE = 256

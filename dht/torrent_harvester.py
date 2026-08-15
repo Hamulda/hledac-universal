@@ -34,6 +34,7 @@ from cachetools import TTLCache
 from hledac.universal.knowledge.duckdb_store import CanonicalFinding
 from hledac.universal.utils.asyncx import parallel_ok
 from hledac.universal.utils.source_types import SourceType
+from core import aclose
 
 if TYPE_CHECKING:
     from hledac.universal.dht.metadata_fetcher import (

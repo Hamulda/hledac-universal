@@ -595,6 +595,7 @@ class SecurityLayer:
         logger.info('✅ SecurityLayer cleanup complete')
 import time
 from dataclasses import dataclass, field
+from core import aclose
 
 class AuditEntry(msgspec.Struct, gc=False):
     """

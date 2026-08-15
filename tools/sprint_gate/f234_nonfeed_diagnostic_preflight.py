@@ -37,6 +37,7 @@ _hledac_universal_stub.__package__ = 'hledac.universal'
 sys.modules['hledac.universal'] = _hledac_universal_stub
 
 from hledac.universal.runtime.acquisition_strategy import (  # noqa: E402
+from core import aclose
     build_acquisition_plan,
     normalize_acquisition_profile,
 )

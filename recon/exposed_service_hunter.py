@@ -45,6 +45,7 @@ from hledac.universal.core.concurrency import ConcurrencyCategory, get_semaphore
 from hledac.universal.transport.session_pool import session_pool
 from hledac.universal.utils.asyncx import parallel_ok, safe_wait_for
 from hledac.universal.utils._patterns import scan_parallel
+from core import aclose
 logger = logging.getLogger(__name__)
 
 class ServiceType(Enum):

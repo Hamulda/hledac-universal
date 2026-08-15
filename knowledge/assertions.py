@@ -18,6 +18,7 @@ VŠECHNY FUNKCE VRACEJÍ None — raise AssertionError pokud selžou.
 
 
 from typing import TYPE_CHECKING
+from core import aclose
 
 if TYPE_CHECKING:
     from hledac.universal.knowledge.graph_rag import GraphRAGOrchestrator

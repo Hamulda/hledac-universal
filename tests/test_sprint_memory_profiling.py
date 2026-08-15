@@ -53,6 +53,7 @@ import sys
 
 # Force psutil import before measurement
 import psutil
+from core import aclose
 
 def get_rss_mb():
     try:

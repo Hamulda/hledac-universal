@@ -37,6 +37,7 @@ from hledac.universal.recon.stealth import HeaderConfig, HeaderSpoofer
 from ..layers.stealth_layer import BrowserProfile, FingerprintConfig, FingerprintRandomizer
 from ..utils.rate_limiter import RateLimitConfig, RateLimiter, RateLimitExceeded
 from ..utils.lru_cache import LRUCache
+from core import aclose
 logger = logging.getLogger(__name__)
 
 # Crypto-safe jitter — F350M-R

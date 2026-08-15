@@ -21,6 +21,7 @@ from pathlib import Path
 from typing import Any
 import numpy as np
 from hledac.universal.utils.coreml import CoreMLClient, CoreMLServiceManager
+from core import aclose
 logger = logging.getLogger(__name__)
 _COREMLTOOLS_AVAILABLE = False
 _ORT_AVAILABLE = False

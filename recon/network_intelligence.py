@@ -10,6 +10,7 @@ M1 Optimized: Async I/O, bounded RAM (<300MB for BGP data), no blocking sync cal
 import logging
 import os
 from typing import Any
+from core import aclose
 
 logger = logging.getLogger(__name__)
 

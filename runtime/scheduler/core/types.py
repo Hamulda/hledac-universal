@@ -14,6 +14,7 @@ from dataclasses import dataclass, field
 from enum import Enum, auto
 from typing import Literal
 import msgspec
+from core import aclose
 
 class SourceTier(Enum):
     """Feed source priority tier."""

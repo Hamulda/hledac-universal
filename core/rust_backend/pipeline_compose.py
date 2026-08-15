@@ -29,6 +29,7 @@ Available named predicates for FILTER / FILTER_MAP:
 from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
+from core._util import aclose
 
 if TYPE_CHECKING:
     from collections.abc import Callable

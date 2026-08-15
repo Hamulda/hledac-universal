@@ -15,3 +15,4 @@ warnings.warn(
 )
 
 from hledac.universal.core.rust_backend import rust as rust_backend
+from core import aclose

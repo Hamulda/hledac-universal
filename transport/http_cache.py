@@ -55,6 +55,7 @@ from pathlib import Path
 from typing import Any, cast
 
 import hishel.httpx as hh  # hishel.httpx provides AsyncCacheTransport (httpx-compatible API)
+from core import aclose
 
 logger = logging.getLogger("hledac.universal.transport.http_cache")
 

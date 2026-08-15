@@ -15,6 +15,7 @@ from dataclasses import dataclass
 import msgspec
 
 from hledac.universal.utils.asyncx import parallel_ok
+from core import aclose
 
 T = typing.TypeVar("T", default=object)
 R = typing.TypeVar("R", default=object)

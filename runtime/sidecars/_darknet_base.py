@@ -41,6 +41,7 @@ import logging
 from typing import TYPE_CHECKING
 
 from hledac.universal.runtime.sidecars._base import SchedulerBackedSidecarAdapter
+from core import aclose
 
 if TYPE_CHECKING:
     from hledac.universal.runtime.sidecar_protocol import SidecarContext

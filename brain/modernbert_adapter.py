@@ -32,6 +32,7 @@ import logging
 from typing import Any, TypeVar
 
 from .modernbert_engine import ModernBertEngine
+from core import aclose
 
 logger = logging.getLogger(__name__)
 

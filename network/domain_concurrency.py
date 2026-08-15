@@ -19,6 +19,7 @@ from __future__ import annotations
 import math
 import secrets
 from typing import Any
+from core import aclose
 
 # Crypto-safe RNG — F350M-R
 _RNG = secrets.SystemRandom()

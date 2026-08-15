@@ -21,6 +21,7 @@ import time
 from typing import TYPE_CHECKING
 
 from .base import DiscoveryBatchResult, DiscoveryHit
+from core import aclose
 
 if TYPE_CHECKING:
     from dht.kademlia_node import KademliaNode

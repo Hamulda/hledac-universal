@@ -39,6 +39,7 @@ from pathlib import Path
 from typing import Any
 import orjson
 from operator import attrgetter, itemgetter
+from core import aclose
 logger = logging.getLogger(__name__)
 BOUNDED_ERROR_CLASSES = frozenset(['TimeoutError', 'ConnectionError', 'HTTPError', 'ValueError', 'TypeError', 'AttributeError', 'KeyError', 'IOError', 'RuntimeError', 'CancelledError', 'AuthenticationError', 'PermissionError', 'NotFoundError', 'ValidationError', 'RateLimitError', 'CircuitBreakerError', 'Unknown'])
 BOUNDED_STATUSES = frozenset(['success', 'error', 'cancelled'])

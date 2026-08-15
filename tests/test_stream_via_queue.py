@@ -27,6 +27,7 @@ import hashlib
 import pytest
 
 from hledac.universal.core.sync_bridge import stream_via_queue
+from core import aclose
 
 
 # ---------------------------------------------------------------------------

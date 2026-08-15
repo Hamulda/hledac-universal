@@ -11,6 +11,7 @@ M1 8GB calibrated constants:
 """
 
 from __future__ import annotations
+from core import aclose
 
 # LMDB pool configuration — M1 8GB calibrated
 _LMDB_WORKERS: int = 2  # LMDB writer limit (1 writer + 1 reader)

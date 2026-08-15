@@ -23,6 +23,7 @@ from hledac.universal.core.rust_backend.ioc_stream import (
 )
 from hledac.universal.pipeline._soa_types import MatchedBatch, ScoredBatch
 from hledac.universal.utils.asyncx import parallel_ok
+from core import aclose
 
 logger = logging.getLogger(__name__)
 

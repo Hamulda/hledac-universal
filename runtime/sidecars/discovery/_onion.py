@@ -22,6 +22,7 @@ REAL IMPLEMENTATION:
   If Tor is unavailable, the sidecar skips with clear logging.
 """
 from hledac.universal.runtime.sidecars._darknet_base import DarknetSidecarAdapter
+from core import aclose
 
 
 class OnionDiscoverySidecarAdapter(DarknetSidecarAdapter):

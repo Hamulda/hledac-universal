@@ -14,6 +14,7 @@ import msgspec
 __all__ = ["safe_attr_get"]
 
 from typing import Any
+from core import aclose
 
 
 def safe_attr_get(obj: Any, key: str, default: Any = None) -> Any:

@@ -8,6 +8,7 @@ Implements content_hash + prev_chain -> new_chain for evidence linking.
 from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
+from core._util import aclose
 
 if TYPE_CHECKING:
     from hledac_rust_extensions import hledac_rust_extensions

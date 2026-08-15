@@ -2,6 +2,7 @@
 
 # monitoring — sprint dashboard and runtime observability
 from hledac.universal.monitoring.alert_manager import (
+from core import aclose
     AlertManager,
     AlertSeverity,
     Alert,

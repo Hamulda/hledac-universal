@@ -89,6 +89,7 @@ class FeedPipelineDomain:
 
 import re
 from collections import deque
+from core._util import aclose
 
 
 class PythonFallbackFeedPipelineDomain:

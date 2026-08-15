@@ -24,6 +24,7 @@ from typing import Any
 import pytest
 
 from utils.async_cache import (
+from core import aclose
     AsyncCacheError,
     AsyncLRUCache,
     async_cached,

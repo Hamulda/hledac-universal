@@ -66,6 +66,7 @@ from hledac.universal.utils.asyncx import parallel_ok
 from hledac.universal.transport.session_pool import session_pool
 from hledac.universal.utils.rate_limiter import RateLimitConfig, RateLimiter
 from operator import attrgetter, itemgetter
+from core import aclose
 logger = logging.getLogger(__name__)
 
 # NEW-MEM-005: Archive content cap for M1 8GB safety

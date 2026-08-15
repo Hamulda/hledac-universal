@@ -84,6 +84,7 @@ DEFAULT_MLX_BRIDGE_TIMEOUT_S: float = 30.0
 # MODERN-36 Fix: Import from SSOT instead of hardcoding
 # Old: _MAX_MEMORY_BYTES: int = 6_400 * 1024 * 1024  # 6.25 GiB in bytes
 from hledac.universal.utils.uma_budget import UmaBudget
+from core import aclose
 
 _MAX_MEMORY_BYTES: int = int(UmaBudget.UMA_HARD_CEILING_GIB * 1024 * 1024 * 1024)  # 6.25 GiB in bytes
 

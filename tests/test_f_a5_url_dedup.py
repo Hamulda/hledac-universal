@@ -20,6 +20,7 @@ to avoid the global bloom singleton leaking state across tests.
 import pytest
 
 from hledac.universal.tools.url_dedup import (
+from core import aclose
     RotatingBloomFilterAdapter,
     create_rotating_bloom_filter,
     dedupe_url_list,

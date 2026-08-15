@@ -38,6 +38,7 @@ import functools
 from concurrent.futures import ThreadPoolExecutor
 from typing import Any, TypeVar, cast
 from collections.abc import Awaitable, Callable, Coroutine
+from core import aclose
 T = TypeVar('T')
 
 def run_sync_async(coro: Awaitable[T]) -> T:

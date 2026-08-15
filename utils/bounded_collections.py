@@ -16,6 +16,7 @@ import warnings
 
 # Re-export from core location
 from hledac.universal.core.bounded_collections import (
+from core import aclose
     BoundedList,
     SlottedBoundedList,
 )

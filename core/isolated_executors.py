@@ -81,11 +81,28 @@ import warnings
 from typing import TYPE_CHECKING, Any, Literal, TypeVar
 from collections.abc import Callable
 
-from hledac.universal.runtime.worker_pool import RustWorkerPool, get_rust_pool
-from hledac.universal.utils.asyncx import safe_wait_for
+# F350M-R: Lazy imports to break core ↔ runtime cycle
+from typing import TYPE_CHECKING as _TC
+from core._util import aclose
 
 if TYPE_CHECKING:
-    pass
+    from hledac.universal.runtime.worker_pool import RustWorkerPool, get_rust_pool
+
+# Lazy runtime access — breaks core ↔ runtime cycle
+_rust_pool_module = None
+
+def _get_rust_pool_impl(pool_type: str = "cpu"):
+    """Lazy getter for RustWorkerPool — defers runtime import."""
+    global _rust_pool_module
+    if _rust_pool_module is None:
+        from hledac.universal.runtime import worker_pool as _wp
+        _rust_pool_module = _wp
+    return _rust_pool_module.get_rust_pool(pool_type)
+
+# Alias for backward compatibility
+def get_rust_pool(pool_type: str = "cpu"):
+    return _get_rust_pool_impl(pool_type)
+
 
 logger = logging.getLogger(__name__)
 T = TypeVar("T", default=object)

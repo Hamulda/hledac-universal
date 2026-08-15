@@ -19,6 +19,7 @@ from enum import Enum
 from pathlib import Path
 
 import orjson
+from core import aclose
 
 __all__ = [
     "_make_serializable",

@@ -41,6 +41,7 @@ import msgspec
 
 # ISSUE [ULTIMATE]-005: Unicode fingerprint extraction before stripping
 from hledac.universal.core.rust_backend.unicode_fingerprint import (
+from core import aclose
     get_unicode_fingerprint_domain,
     ENABLE_UNICODE_ATTRIBUTION,
 )

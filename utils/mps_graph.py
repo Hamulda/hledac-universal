@@ -10,6 +10,7 @@ Provides batch dot product and DCT operations via Metal.
 
 import logging
 from typing import Any
+from core import aclose
 
 logger = logging.getLogger(__name__)
 

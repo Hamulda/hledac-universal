@@ -25,6 +25,7 @@ warnings.warn(
 
 # Re-export from new location for backwards compatibility
 from hledac.universal.coordinators.resource.resource_coordinator import AIMDController
+from core import aclose
 
 __all__ = ["AIMDController", "make_enrich_aimd"]
 

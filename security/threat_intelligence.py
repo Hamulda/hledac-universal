@@ -19,6 +19,7 @@ import re
 from pathlib import Path
 from typing import Any
 import httpx
+from core import aclose
 logger = logging.getLogger(__name__)
 
 def _looks_like_ip(s: str) -> bool:

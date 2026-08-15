@@ -14,6 +14,7 @@ import numpy as np
 import pytest
 
 from hledac.universal.semantic_deduplicator import (
+from core import aclose
     _EMBEDDING_DIM,
     MAX_CACHE_ITEMS,
     MAX_CACHE_MEMORY_MB,

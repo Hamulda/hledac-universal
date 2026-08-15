@@ -22,6 +22,7 @@ import pytest
 # Import the shadow module directly (not via hledac package path)
 sys.path.insert(0, "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal")
 from hledac.universal.utils.aho_extractor import (
+from core import aclose
     PILOT_PATTERNS,
     aho_scan_text,
     compare_aho_vs_regex,

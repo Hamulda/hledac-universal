@@ -32,6 +32,7 @@ import sys
 from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
 from typing import Any, TypeVar, cast
 from .async_helpers import parallel_ok, parallel
+from core import aclose
 logger = logging.getLogger(__name__)
 _JITTER_RNG = secrets.SystemRandom()
 T = TypeVar('T', default=Any)

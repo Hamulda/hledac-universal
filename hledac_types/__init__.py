@@ -11,6 +11,7 @@ Usage (after migration):
     from hledac.universal.types import ResearchMode, AgentMetrics, ...
 """
 from hledac.universal.project_types import (
+from core import aclose
     # Enums
     ActionResultType,
     ActionType,

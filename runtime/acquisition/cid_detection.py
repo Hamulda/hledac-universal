@@ -11,6 +11,7 @@ MODERNIZATION (Issue #18):
 
 
 import re
+from core import aclose
 
 # R10: CID detection regex — bounded, no catastrophic backtracking
 # CIDv0: Qm + 44 base58 chars = 46 chars total

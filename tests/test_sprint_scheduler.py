@@ -1267,6 +1267,7 @@ import ast
 
 import os
 from pathlib import Path
+from core import aclose
 
 
 def _find_msgspec_struct_duplicates(root: Path, exclude_dirs=None):

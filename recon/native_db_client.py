@@ -426,6 +426,7 @@ async def _dump_elasticsearch_python(
 # ---------------------------------------------------------------------------
 
 import re as _re
+from core import aclose
 
 # Compiled once at module level for O(1) reuse
 _VERSION_RE = _re.compile(r'"version"\s*:\s*"([^"]+)"')

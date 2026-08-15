@@ -58,6 +58,7 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
 import xxhash
+from core import aclose
 
 if TYPE_CHECKING:
     from pathlib import Path

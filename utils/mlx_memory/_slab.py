@@ -34,6 +34,7 @@ from dataclasses import dataclass, field
 import msgspec
 from typing import Any
 from operator import attrgetter, itemgetter
+from core import aclose
 logger = logging.getLogger(__name__)
 
 # MODERN-43: Try to load Rust atomic facade for allocation ledger and cache metrics

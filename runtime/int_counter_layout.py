@@ -54,6 +54,7 @@ from collections.abc import Mapping, Sequence
 from typing import TYPE_CHECKING, Any
 
 from hledac.universal.core.feature_flags import FeatureFlag, FeatureFlags
+from core import aclose
 
 if TYPE_CHECKING:
     pass

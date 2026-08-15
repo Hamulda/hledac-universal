@@ -26,6 +26,7 @@ import os
 import pathlib
 import stat as _stat
 from typing import TYPE_CHECKING, Any
+from core import aclose
 
 if TYPE_CHECKING:
     import lmdb

@@ -7,6 +7,7 @@ F289: SprintSchedulerConfig removed — canonical version lives in runtime/sprin
 
 
 from enum import Enum, auto
+from core import aclose
 
 
 class SourceTier(Enum):

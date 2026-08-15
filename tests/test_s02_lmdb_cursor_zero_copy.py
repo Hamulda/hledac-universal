@@ -22,6 +22,7 @@ if sys.platform != 'darwin':
     pytest.skip('M1/Apple Silicon only', allow_module_level=True)
 
 from hledac.universal.memory.memory_manager import MemoryManager
+from core import aclose
 
 
 class TestS02LMDBZeroCopy:

@@ -23,6 +23,7 @@ from dataclasses import dataclass, field
 import msgspec
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
+from core import aclose
 if TYPE_CHECKING:
     import numpy as np
 logger = logging.getLogger(__name__)

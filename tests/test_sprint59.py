@@ -17,6 +17,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import numpy as np
 import pytest
+from core import aclose
 
 if TYPE_CHECKING:
     pass

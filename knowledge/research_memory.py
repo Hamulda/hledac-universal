@@ -34,6 +34,7 @@ from hledac.universal.compat.msgspec_gc_compat import Struct
 from typing import TYPE_CHECKING, Any
 
 import orjson
+from core import aclose
 
 if TYPE_CHECKING:
     from hledac.universal.knowledge.duckdb_store import DuckDBShadowStore

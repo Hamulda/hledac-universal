@@ -37,6 +37,7 @@ instead of all 21 try/except blocks (~200ms).
 import importlib
 import logging
 from typing import Any
+from core import aclose
 
 _log = logging.getLogger(__name__)
 

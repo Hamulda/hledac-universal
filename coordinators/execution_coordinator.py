@@ -31,6 +31,7 @@ from hledac.universal.compat.msgspec_gc_compat import Struct
 from hledac.universal.utils.asyncx import first_completed, parallel, safe_create_task  # ISSUE-15
 
 from .base import DecisionResponse, ExecutionResult, OperationResult, OperationType, UniversalCoordinator
+from core import aclose
 
 logger = logging.getLogger(__name__)
 

@@ -25,6 +25,7 @@ import time
 from urllib.parse import urlparse, urlunsplit as _urlunsplit
 
 from hledac.universal.discovery.base import DiscoveryBatchResult, DiscoveryHit
+from core import aclose
 
 
 # ---------------------------------------------------------------------------

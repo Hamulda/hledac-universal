@@ -524,6 +524,7 @@ def clean_search_result_url(url: str, source: str='auto') -> str | None:
             return result
         return extract_url_from_google_redirect(url)
 from dataclasses import dataclass
+from core import aclose
 
 class SearchResultItem(msgspec.Struct, gc=False):
     """Sprint F300: msgspec.Struct for search result item."""

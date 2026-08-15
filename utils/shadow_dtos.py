@@ -25,6 +25,7 @@ import time
 from typing import Any, Literal
 
 import msgspec
+from core import aclose
 
 # ---------------------------------------------------------------------------
 # Shadow twins

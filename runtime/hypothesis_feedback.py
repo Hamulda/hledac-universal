@@ -35,6 +35,7 @@ import logging
 import time
 import msgspec
 from hledac.universal.compat.msgspec_gc_compat import Struct
+from core import aclose
 __all__ = ['HypothesisFeedbackRecord', 'HypothesisFeedbackSummary', 'HypothesisFeedbackAdapter', 'MAX_FEEDBACK_RECORDS', 'MAX_PRUNED_TYPES']
 logger = logging.getLogger(__name__)
 MAX_FEEDBACK_RECORDS: int = 10000

@@ -11,6 +11,7 @@ from typing import TYPE_CHECKING
 import msgspec.json as _json
 
 from hledac.universal.network.session_runtime import (
+from core import aclose
     CT_CONNECT_TIMEOUT_S,
     CT_READ_TIMEOUT_S,
     async_get_httpx_session,

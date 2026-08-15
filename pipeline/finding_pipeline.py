@@ -50,6 +50,7 @@ from hledac.universal.compat.msgspec_gc_compat import Struct
 if TYPE_CHECKING:
     pass
 from hledac.universal.utils.asyncx import parallel_ok, safe_wait_for, parallel
+from core import aclose
 logger = logging.getLogger(__name__)
 _PIPELINE_QUEUE_SIZE: int = 500
 _PIPELINE_CHUNK_SIZE: int = 1024

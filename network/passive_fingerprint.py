@@ -23,6 +23,7 @@ warnings.warn(
 
 # Re-export from canonical location for backward compatibility
 from hledac.universal.recon.passive_fingerprint import (  # noqa: F401, E402
+from core import aclose
     PassiveFingerprintAdapter,
     PassiveTechStackAdapter,
     ServiceFingerprint,

@@ -30,6 +30,7 @@ import re
 from dataclasses import dataclass
 from enum import Enum, auto
 from typing import TYPE_CHECKING, Any, Protocol, TypeVar
+from core import aclose
 
 if TYPE_CHECKING:
     from collections.abc import Sequence

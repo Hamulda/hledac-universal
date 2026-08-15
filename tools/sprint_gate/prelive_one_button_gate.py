@@ -137,6 +137,7 @@ class OneButtonVerdict(StrEnum):
 from functools import lru_cache
 
 from hledac.universal.core.resource_governor import CLEAN_SWAP_MAX_GIB, DIAGNOSTIC_SWAP_MAX_GIB
+from core import aclose
 _BENCHMARK_TO_ACQUISITION_PROFILE: dict[str, str] = {'nonfeed_diagnostic180': 'nonfeed_diagnostic', 'active300': 'default', 'active600': 'default'}
 
 def _get_acquisition_profile_for_benchmark(benchmark_profile: str) -> str:

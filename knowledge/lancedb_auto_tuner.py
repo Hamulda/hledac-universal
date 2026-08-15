@@ -82,6 +82,7 @@ RECALL_EXCELLENT: float = 0.97
 SEARCH_MS_EXCESSIVE: float = 50.0
 # SSOT: Use UmaBudget.MISSION_PEAK_RSS_GIB instead of hardcoded 5.5 GiB
 from hledac.universal.utils.uma_budget import MISSION_PEAK_RSS_GIB
+from core import aclose
 M1_RSS_GUARD_BYTES: int = int(MISSION_PEAK_RSS_GIB * 1024 ** 3)  # 5.5 GiB (SSOT)
 MAX_BRUTE_FORCE_ROWS: int = 10000
 

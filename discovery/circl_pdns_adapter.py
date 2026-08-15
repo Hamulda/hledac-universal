@@ -76,6 +76,7 @@ _COOLDOWN_DEFAULT_S = 300.0
 _MAX_COOLDOWN_KEYS = 64
 _CIRCL_LAST_CALL_TS: float | None = None
 from hledac.universal.security.passive_dns import _is_private_ip
+from core import aclose
 
 def _parse_pdns_line(line: str):
     """

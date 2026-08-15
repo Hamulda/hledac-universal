@@ -12,6 +12,7 @@ import asyncio
 import logging
 from typing import Any
 from hledac.universal.utils.asyncx import parallel
+from core import aclose
 logger = logging.getLogger(__name__)
 
 class AutomationOrchestrator:

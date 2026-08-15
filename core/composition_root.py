@@ -29,8 +29,18 @@ import sys
 from collections.abc import Callable
 from typing import Any
 
-from hledac.universal.runtime.sprint_entrypoint import _cancel_all_tasks
+# F350M-R: Lazy import to break core ↔ runtime cycle
+_cancel_all_tasks_impl = None
+
+def _get_cancel_all_tasks():
+    """Lazy getter for _cancel_all_tasks from runtime.sprint_entrypoint."""
+    global _cancel_all_tasks_impl
+    if _cancel_all_tasks_impl is None:
+        from hledac.universal.runtime.sprint_entrypoint import _cancel_all_tasks as _impl
+        _cancel_all_tasks_impl = _impl
+    return _cancel_all_tasks_impl
 from hledac.universal.utils.asyncx import safe_create_task, first_completed  # ISSUE-15
+from core._util import aclose
 
 # uvloop: 2× I/O speedup on M1 kqueue. Try uvloop.new_event_loop() first,
 # fall back to asyncio.new_event_loop() if uvloop is unavailable (CI, non-M1).
@@ -387,7 +397,7 @@ def run_runtime(
         sys.exit(130)
     finally:
         restore_signals()
-        loop.run_until_complete(_cancel_all_tasks())
+        loop.run_until_complete(_get_cancel_all_tasks()())
         loop.close()
         # CRITICAL FIX F350M-R: reclaim event loop allocations on M1 8GB
         try:
@@ -418,7 +428,7 @@ def shutdown_runtime(
         with contextlib.suppress(asyncio.CancelledError):
             loop.run_until_complete(sprint_task)
 
-    loop.run_until_complete(_cancel_all_tasks())
+    loop.run_until_complete(_get_cancel_all_tasks()())
     loop.close()
     # CRITICAL FIX F350M-R: reclaim event loop allocations on M1 8GB
     try:

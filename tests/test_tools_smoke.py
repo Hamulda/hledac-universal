@@ -29,6 +29,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+from core import aclose
 
 REPO_ROOT = Path("/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal")
 TOOLS_DIR = REPO_ROOT / "tools"

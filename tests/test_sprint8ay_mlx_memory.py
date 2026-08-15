@@ -37,6 +37,7 @@ import sys
 sys.path.insert(0, "{UNIVERSAL_ROOT}")
 
 from hledac.universal.utils.mlx_memory import MLX_AVAILABLE
+from core import aclose
 
 print(f"MLX_AVAILABLE={{MLX_AVAILABLE}}")
 

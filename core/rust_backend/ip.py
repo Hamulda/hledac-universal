@@ -1,6 +1,7 @@
 # ip.py — IP parsing and classification domain
 
 from typing import TYPE_CHECKING, Any
+from core._util import aclose
 
 
 if TYPE_CHECKING:

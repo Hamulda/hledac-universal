@@ -17,6 +17,7 @@ import time
 from typing import TYPE_CHECKING, Any
 
 from hledac.universal.pipeline._soa_types import FeedMatchedBatch, FindingBatch
+from core import aclose
 
 logger = logging.getLogger(__name__)
 

@@ -22,6 +22,7 @@ from collections.abc import Iterator
 from pathlib import Path
 
 import pytest
+from core import aclose
 
 PROJECT_ROOT = Path(__file__).parent.parent
 ENTRYPOINT = PROJECT_ROOT / "__main__.py"

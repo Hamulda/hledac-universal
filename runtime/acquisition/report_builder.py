@@ -19,6 +19,7 @@ from hledac.universal.runtime.acquisition.nonfeed_outcomes import (
     MandatoryLaneTerminality,
 )
 from hledac.universal.runtime.acquisition.plan_builder import (
+from core import aclose
     ACQUISITION_REPORT_SCHEMA_VERSION,
 )
 

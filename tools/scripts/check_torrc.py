@@ -22,6 +22,7 @@ Exit codes:
 import argparse
 import pathlib
 import sys
+from core import aclose
 
 
 def find_torrc() -> str | None:

@@ -16,6 +16,7 @@ if TYPE_CHECKING:
     pass
 
 from hledac.universal.core.env_config import ENV
+from core import aclose
 
 # --- Camoufox lock (lazy initialization) ---
 _CAMOUFOX_LOCK: asyncio.Lock | None = None

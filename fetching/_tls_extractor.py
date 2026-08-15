@@ -6,6 +6,7 @@ Optimized for M1 8GB with Rust acceleration for SAN/issuer processing.
 from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
+from core import aclose
 
 if TYPE_CHECKING:
     pass

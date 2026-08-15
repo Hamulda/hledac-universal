@@ -52,6 +52,7 @@ from brain._hermes_cache import (
     hermes_cache,
 )
 from brain.deephermes3_engine import _maybe_evict_hermes_cache
+from core import aclose
 
 
 class TestHermesModelCacheBasic:

@@ -164,6 +164,7 @@ SharedTensor = _tensor_module.SharedTensor
 # ── Re-export mlx_utils decorators from _core ─────────────────────────────────
 
 from . import _core as _core_mlx_utils
+from core import aclose
 
 mlx_managed = _core_mlx_utils.mlx_managed
 mlx_cleanup_after = _core_mlx_utils.mlx_cleanup_after

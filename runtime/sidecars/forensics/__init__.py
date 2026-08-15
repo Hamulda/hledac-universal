@@ -6,6 +6,7 @@ PEP 562 lazy loading — adapters loaded only when first accessed.
 Adapters: DigitalGhost, Steganography, AutoRE.
 """
 from __future__ import annotations
+from core import aclose
 
 __all__ = [
     "DigitalGhostSidecarAdapter",

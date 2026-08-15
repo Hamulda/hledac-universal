@@ -24,6 +24,7 @@ from unittest.mock import AsyncMock, patch
 import pytest
 
 from hledac.universal.discovery.base import DiscoveryBatchResult, DiscoveryHit
+from core import aclose
 
 
 # ---------------------------------------------------------------------------

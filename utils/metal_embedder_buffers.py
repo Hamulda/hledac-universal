@@ -13,6 +13,7 @@ _warnings.warn(
 )
 
 from hledac.universal.utils.mlx_memory._embedder import (
+from core import aclose
     MetalBufferPool,
     get_buffer_pool,
     init_metal_embedder_buffers,

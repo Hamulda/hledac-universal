@@ -32,6 +32,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from enum import Enum
 from typing import Any
+from core import aclose
 try:
     from .hive_coordination import ConnectedCoordinationSystem, CoordinationTask
 except ImportError:

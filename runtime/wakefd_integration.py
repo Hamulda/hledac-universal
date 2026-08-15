@@ -24,6 +24,7 @@ import asyncio
 import logging
 from typing import TYPE_CHECKING, Any
 from collections.abc import Callable
+from core import aclose
 
 if TYPE_CHECKING:
     pass

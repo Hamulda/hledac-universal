@@ -525,6 +525,7 @@ class CircuitBreaker:
 # E5 FIX: OrderedDict → PyCacheDict — replaces cachetools.LRUCache.
 # LRU-ordered registry: thread-safe via PyCacheDict RLock, eviction automatic.
 from hledac.universal.utils.cache import PyCacheDict
+from core import aclose
 
 # ISSUE-41: Rust-backed lock-free circuit breaker — hot-path fast check
 # Lazy import to avoid early extension load

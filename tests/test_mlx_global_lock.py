@@ -19,6 +19,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from hledac.universal.core.mlx_inference_lock import (
+from core import aclose
     _get_mlx_inference_lock,
     mlx_inference_lock_aio,
     mlx_inference_lock_context,

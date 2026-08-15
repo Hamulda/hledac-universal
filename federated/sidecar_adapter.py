@@ -49,6 +49,7 @@ import uuid
 from typing import Any
 
 from .coordinator import (
+from core import aclose
     AGGREGATION_MAX_FINDINGS,
     FederatedResearchCoordinator,
     NodeLane,

@@ -22,6 +22,7 @@ import msgspec
 from typing import Any
 # R6: Centralized Rust access via core.rust_backend
 from hledac.universal.core.rust_backend import rust
+from core import aclose
 _raw = rust.raw
 LSHIndex = _raw.LSHIndex
 lsh_index_new = _raw.lsh_index_new

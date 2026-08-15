@@ -121,6 +121,7 @@ except (ImportError, AttributeError):
 
 # C1-X FIX: Import MLX_AVAILABLE from SSOT (zero-import detection)
 from hledac.universal.utils.mlx_memory import MLX_AVAILABLE as _MLX_AVAILABLE
+from core import aclose
 
 # Lazy accessor for mlx modules - uses centralized get_mx() from SSOT
 def _get_mlx_modules():

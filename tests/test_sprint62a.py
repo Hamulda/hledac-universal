@@ -12,6 +12,7 @@ except ImportError:
 from hledac.universal.core.resource_governor import ResourceGovernor
 from hledac.universal.multimodal.fusion import MambaFusion
 from hledac.universal.multimodal.vision_encoder import VisionEncoder
+from core import aclose
 
 
 @pytest.fixture

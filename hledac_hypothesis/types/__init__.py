@@ -72,6 +72,7 @@ from .hypothesis import (
 )
 
 from .anomaly import (
+from core import aclose
     Contradiction,
     CrossReferenceResult,
     AdversarialReport,

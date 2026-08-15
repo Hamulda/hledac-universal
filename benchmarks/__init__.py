@@ -1,4 +1,14 @@
-# Re-export shim: benchmarks/ → benchmarks_shadow/
-# Used by tests/test_harness.py
-from benchmarks_shadow.harness import *  # noqa: F401 F403
-from benchmarks_shadow.migrate_schema import *  # noqa: F401 F403
+"""
+Benchmarks package — performance measurement utilities.
+"""
+from .harness import BenchmarkHarness, _percentile, _run_single_sprint_unsafe, _run_single_sprint
+from .migrate_schema import migrate_record
+from core import aclose
+
+__all__ = [
+    "BenchmarkHarness",
+    "_percentile",
+    "_run_single_sprint_unsafe",
+    "_run_single_sprint",
+    "migrate_record",
+]

@@ -109,6 +109,7 @@ from collections import deque
 from typing import Any
 from hledac.universal.utils.asyncx import safe_wait_for
 from .protocol import NodeTransportFactory
+from core import aclose
 logger = logging.getLogger(__name__)
 PEER_NODE_MAX_PEERS: int = 4
 'Hard cap on simultaneous peer sessions.'

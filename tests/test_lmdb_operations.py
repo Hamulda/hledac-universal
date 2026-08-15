@@ -45,6 +45,7 @@ from hledac.universal.utils.lmdb_bulk import (
     putmulti_safe,
 )
 from hledac.universal.security.pii_gate import (
+from core import aclose
     PIICategory,
     PIIMatch,
     SanitizationResult,

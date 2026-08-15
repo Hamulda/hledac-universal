@@ -9,6 +9,7 @@ per key across the entire process lifetime, avoiding import-time spam.
 
 import logging
 import warnings
+from core import aclose
 
 __all__ = ["warn_once", "warn_once_log"]
 

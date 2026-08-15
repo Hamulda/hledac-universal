@@ -14,6 +14,7 @@ Usage: python tools/_py314_apply_slots.py <file> [file ...]
 import ast
 import sys
 from pathlib import Path
+from core import aclose
 
 
 def has_cached_property(tree: ast.Module) -> bool:

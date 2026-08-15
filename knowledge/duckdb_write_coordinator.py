@@ -20,6 +20,7 @@ import logging
 from dataclasses import dataclass
 from enum import Enum
 from typing import TYPE_CHECKING, Any, Protocol
+from core import aclose
 
 if TYPE_CHECKING:
     from pathlib import Path

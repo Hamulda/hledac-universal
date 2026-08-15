@@ -61,6 +61,7 @@ from hledac.universal.security.media_sandbox import (
 
 # ADVERSARY-001-INTERNAL-007: Artifact verifier
 from hledac.universal.security.artifact_verifier import (
+from core import aclose
     ArtifactVerifier,
     ArtifactInstallResult,
     ArtifactManifest,

@@ -17,6 +17,7 @@ import asyncio
 import sys
 
 import pytest
+from core import aclose
 
 
 class TestMallocZonePressureRelief:

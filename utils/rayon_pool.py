@@ -348,6 +348,7 @@ def run_in_mixed_pool[T](n_items: int, fn: Callable[..., T], *args: Any, **kwarg
 
 import asyncio  # noqa: E402
 import warnings as _warnings  # noqa: E402
+from core import aclose
 
 
 async def run_in_cpu_pool_async(

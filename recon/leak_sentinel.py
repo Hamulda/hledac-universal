@@ -39,6 +39,7 @@ import msgspec
 from enum import StrEnum
 from typing import TYPE_CHECKING, Any
 from hledac.universal.utils.asyncx import safe_create_task, safe_gather_fire_and_forget
+from core import aclose
 
 class LeakSentinelError(StrEnum):
     """String-based error codes for fail-soft error reporting."""

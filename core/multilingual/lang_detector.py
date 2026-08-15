@@ -404,6 +404,7 @@ class LangDetector:
 # F320: Refactored to use centralized singleton pattern
 # Previously: duplicate global + if None pattern in 5 files
 from hledac.universal.utils._patterns import module_singleton_getter
+from core._util import aclose
 
 
 def _make_lang_detector() -> LangDetector:

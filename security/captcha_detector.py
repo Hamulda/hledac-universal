@@ -12,6 +12,7 @@ import re
 from io import BytesIO
 
 from hledac.universal.utils.domain_executors import get_captcha_executor
+from core import aclose
 try:
     from PIL import Image
 except ImportError:

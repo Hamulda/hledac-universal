@@ -20,6 +20,7 @@ REAL IMPLEMENTATION:
   CommonCrawl CDX API to discover historical crawl data.
 """
 from hledac.universal.runtime.sidecars._darknet_base import DarknetSidecarAdapter
+from core import aclose
 
 
 class CommonCrawlSidecarAdapter(DarknetSidecarAdapter):

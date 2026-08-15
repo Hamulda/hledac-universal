@@ -45,6 +45,7 @@ from pathlib import Path
 from typing import NamedTuple
 
 import pytest
+from core import aclose
 
 # Absolute path to universal/ (test is at universal/tests/test_... so parent.parent goes to universal/)
 UNIVERSAL_ROOT = Path(__file__).parent.parent.resolve()

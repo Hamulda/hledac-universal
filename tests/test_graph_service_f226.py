@@ -17,6 +17,7 @@ from unittest.mock import MagicMock, patch
 
 from hledac.universal.knowledge import graph_service
 from hledac.universal.knowledge.graph_service import (
+from core import aclose
     _DEFAULT_GRAPH_SERVICE,
     GraphService,
     reset_session,

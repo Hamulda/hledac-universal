@@ -47,6 +47,7 @@ from typing import Any
 
 from hledac.universal.graph.quantum_pathfinder import DuckPGQGraph
 from hledac.universal.runtime.scheduler_v2._task_registry import (
+from core import aclose
     TaskScope,
     safe_create_task_tracked,
 )

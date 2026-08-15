@@ -24,6 +24,7 @@ import pathlib
 import pytest
 
 from hledac.universal.core.lmdb_unified import (
+from core import aclose
     UnifiedLMDB,
     SubDB,
     get_unified_lmdb,

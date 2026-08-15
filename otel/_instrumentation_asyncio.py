@@ -24,6 +24,7 @@ import contextvars
 import sys
 from typing import TYPE_CHECKING, Any, TypeVar
 from collections.abc import Coroutine
+from core import aclose
 
 try:
     from cachetools import LRUCache as _LRUCache

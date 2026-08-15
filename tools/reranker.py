@@ -19,6 +19,7 @@ from typing import Any
 
 from hledac.universal.compat.msgspec_gc_compat import Struct
 from hledac.universal.utils.asyncx import parallel_ok
+from core import aclose
 logger = logging.getLogger(__name__)
 MAX_RERANK_DOCS = 50
 try:

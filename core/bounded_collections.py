@@ -20,6 +20,7 @@ from __future__ import annotations
 from collections import deque
 from typing import Generic, TypeVar
 from collections.abc import Iterator, Iterable
+from core._util import aclose
 
 T = TypeVar("T")
 

@@ -33,6 +33,7 @@ from hledac.universal.utils.asyncx import safe_wait_for
 from hledac.universal.utils._patterns import collect_results_async  # F320: DRY batch processing
 
 from operator import attrgetter, itemgetter
+from core import aclose
 if TYPE_CHECKING:
     from collections.abc import Awaitable
 

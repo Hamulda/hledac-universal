@@ -23,6 +23,7 @@ To migrate:
 
 # Re-export all public symbols from the canonical module
 from hledac.universal.transport.curl_cffi_fetch import (  # noqa: F401, E402
+from core import aclose
     is_curl_cffi_available,
     async_get_curl_cffi_session,
     async_get_curl_cffi_session_for_host,

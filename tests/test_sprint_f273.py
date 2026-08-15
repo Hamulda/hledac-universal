@@ -23,6 +23,7 @@ import msgspec
 import os
 import platform
 import unittest
+from core import aclose
 
 # ---------------------------------------------------------------------------
 # Test infra: import the modules we need (no pytest fixtures, hermetic)

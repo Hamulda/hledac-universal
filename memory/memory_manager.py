@@ -36,6 +36,7 @@ import time
 from pathlib import Path
 from typing import Any
 from hledac.universal.utils.msgspec_json import dumps_str as _msgspec_dumps_str, loads as _msgspec_loads
+from core import aclose
 try:
     import orjson
     ORJSON_AVAILABLE = True

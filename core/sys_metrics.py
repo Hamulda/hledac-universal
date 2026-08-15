@@ -5,6 +5,7 @@ Invariant: All memory functions are fail-safe — return 0/fallback on any error
 """
 
 import logging
+from core._util import aclose
 
 try:
     import psutil

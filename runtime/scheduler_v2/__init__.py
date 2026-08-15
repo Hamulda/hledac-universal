@@ -13,7 +13,10 @@ All phase orchestrators are imported lazily to avoid M1 Metal initialization
 at import time (PEP 810 lazy imports).
 """
 
+from __future__ import annotations
 
+import importlib
+import sys
 from typing import TYPE_CHECKING
 
 # ── Re-exported types (backward compat for v1 imports) ───────────────────────
@@ -26,65 +29,58 @@ __all__ = [
     # v1 compat re-exports
     "SprintSchedulerConfig",
     "SprintSchedulerResult",
-    # v2 types (lazy — imported from protocol.py below)
+    # v2 types
+    "SprintSchedulerV2",
+    "SprintContext",
+    "PhaseRunner",
+    "PreludePhase",
+    "AcquisitionPhase",
+    "WinddownPhase",
+    "AcquisitionOrchestrator",
+    "WinddownOrchestrator",
+    "CycleResult",
+    "LaneResult",
+    "AcquisitionOrchestratorProtocol",
+    "SchedulerProtocol",
 ]
 
 
+# ── Lazy import registry (dict-based, single lookup) ─────────────────────────
+# ponytail: no dict-to-switch optimization needed — 14 items is fine as-is
+_LAZY_MAP: dict[str, str] = {
+    # v1 compat
+    "SprintSchedulerConfig": "hledac.universal.runtime.scheduler_config",
+    "SprintSchedulerResult": "hledac.universal.runtime.scheduler_result",
+    # v2 orchestrator
+    "SprintSchedulerV2": "hledac.universal.runtime.scheduler_v2.scheduler",
+    # v2 protocols
+    "SprintContext": "hledac.universal.runtime.scheduler_v2.protocol",
+    "PhaseRunner": "hledac.universal.runtime.scheduler_v2.protocol",
+    "PreludePhase": "hledac.universal.runtime.scheduler_v2.protocol",
+    "AcquisitionPhase": "hledac.universal.runtime.scheduler_v2.protocol",
+    "WinddownPhase": "hledac.universal.runtime.scheduler_v2.protocol",
+    "AcquisitionOrchestratorProtocol": "hledac.universal.runtime.scheduler_v2.protocol",
+    "SchedulerProtocol": "hledac.universal.runtime.scheduler_v2.protocol",
+    # v2 phase orchestrators
+    "AcquisitionOrchestrator": "hledac.universal.runtime.scheduler_v2.acquisition",
+    "WinddownOrchestrator": "hledac.universal.runtime.scheduler_v2.winddown",
+    # v2 results
+    "CycleResult": "hledac.universal.runtime.scheduler_v2.acquisition",
+    "LaneResult": "hledac.universal.runtime.scheduler_v2.prelude",
+}
+
+
 def __getattr__(name: str):
-    if name == "SprintSchedulerConfig":
-        from hledac.universal.runtime.scheduler_config import SprintSchedulerConfig
-
-        return SprintSchedulerConfig
-    if name == "SprintSchedulerResult":
-        from hledac.universal.runtime.scheduler_result import SprintSchedulerResult
-
-        return SprintSchedulerResult
-    if name == "SprintSchedulerV2":
-        from hledac.universal.runtime.scheduler_v2.scheduler import SprintSchedulerV2
-
-        return SprintSchedulerV2
-    if name == "SprintContext":
-        from hledac.universal.runtime.scheduler_v2.protocol import SprintContext
-
-        return SprintContext
-    if name == "PhaseRunner":
-        from hledac.universal.runtime.scheduler_v2.protocol import PhaseRunner
-
-        return PhaseRunner
-    if name == "PreludePhase":
-        from hledac.universal.runtime.scheduler_v2.protocol import PreludePhase
-
-        return PreludePhase
-    if name == "AcquisitionPhase":
-        from hledac.universal.runtime.scheduler_v2.protocol import AcquisitionPhase
-
-        return AcquisitionPhase
-    if name == "WinddownPhase":
-        from hledac.universal.runtime.scheduler_v2.protocol import WinddownPhase
-
-        return WinddownPhase
-    if name == "AcquisitionOrchestrator":
-        from hledac.universal.runtime.scheduler_v2.acquisition import AcquisitionOrchestrator
-
-        return AcquisitionOrchestrator
-    if name == "WinddownOrchestrator":
-        from hledac.universal.runtime.scheduler_v2.winddown import WinddownOrchestrator
-
-        return WinddownOrchestrator
-    if name == "CycleResult":
-        from hledac.universal.runtime.scheduler_v2.acquisition import CycleResult
-
-        return CycleResult
-    if name == "LaneResult":
-        from hledac.universal.runtime.scheduler_v2.prelude import LaneResult
-
-        return LaneResult
-    if name == "AcquisitionOrchestratorProtocol":
-        from hledac.universal.runtime.scheduler_v2.protocol import AcquisitionOrchestratorProtocol
-
-        return AcquisitionOrchestratorProtocol
-    if name == "SchedulerProtocol":
-        from hledac.universal.runtime.scheduler_v2.protocol import SchedulerProtocol
-
-        return SchedulerProtocol
+    """Lazy import dispatch — single lookup for all 14 exports."""
+    if name in _LAZY_MAP:
+        module = importlib.import_module(_LAZY_MAP[name])
+        return getattr(module, name)
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+
+
+def __dir__():
+    return list(__all__)
+
+
+# ponytail: skip __getitem__ protocol — not needed
+# ponytail: skip typing_extensions imports — TYPE_CHECKING handles type hints

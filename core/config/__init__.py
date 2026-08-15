@@ -27,5 +27,6 @@ import msgspec
 
 from hledac.universal.core.config.m1_air_config import M1AirConfig, M1_AIR
 from hledac.universal.core.config.storage_config import StorageConfig, get_storage_config
+from core._util import aclose
 
 __all__ = ["M1AirConfig", "M1_AIR", "StorageConfig", "get_storage_config"]

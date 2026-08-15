@@ -37,5 +37,6 @@ Or for CPU-bound sync work called from async code:
 NO bare asyncio.run() in production modules (non-__main__).
 """
 from hledac.universal.utils.sync_bridge import run_sync_async, to_thread
+from core._util import aclose
 
 __all__ = ["run_sync_async", "to_thread"]

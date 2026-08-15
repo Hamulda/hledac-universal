@@ -34,6 +34,7 @@ if TYPE_CHECKING:
     pass
 import numpy as np
 import orjson
+from core import aclose
 try:
     import compression.zstd as _zstd
     ZSTD_AVAILABLE = True

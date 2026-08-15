@@ -44,6 +44,7 @@ from dataclasses import dataclass
 import msgspec
 from typing import Any, Literal
 import orjson
+from core import aclose
 logger = logging.getLogger(__name__)
 MAX_SOURCES_IN_REGISTRY: int = 200
 LMDB_MAP_SIZE: int = 1 * 1024 * 1024

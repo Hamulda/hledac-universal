@@ -18,6 +18,7 @@ from dataclasses import dataclass, field
 import msgspec
 from pathlib import Path
 from typing import Any
+from core import aclose
 
 class FunctionSpec(msgspec.Struct, gc=False):
     """One KPI-related function."""

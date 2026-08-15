@@ -21,6 +21,7 @@ from hledac.universal.security import decrypt_aes_gcm, encrypt_aes_gcm
 from hledac.universal.security.key_manager import KeyManager
 from hledac.universal.utils.lmdb_bulk import putmulti_bounded
 from hledac.universal.utils.msgspec_json import decode, encode
+from core import aclose
 
 if TYPE_CHECKING:
     import mlx.core as mx

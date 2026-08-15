@@ -24,6 +24,7 @@ if TYPE_CHECKING:
     from xml.etree.ElementTree import Element
 from hledac.universal.knowledge.duckdb_store import CanonicalFinding
 import httpx
+from core import aclose
 logger = logging.getLogger(__name__)
 OAI_PMH_ENDPOINT = 'http://export.arxiv.org/oai2'
 MAX_RESULTS = 20

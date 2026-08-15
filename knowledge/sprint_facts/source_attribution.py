@@ -18,6 +18,7 @@ from typing import Any
 
 import msgspec
 from hledac.universal.compat.msgspec_gc_compat import Struct
+from core import aclose
 
 
 class SourceHitLog(Struct, frozen=True):

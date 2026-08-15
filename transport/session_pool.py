@@ -66,6 +66,8 @@ if TYPE_CHECKING:
     import httpx
     from httpx import AsyncClient
 
+from core import aclose  # F350M-R: Type-4 clone elimination
+
 logger = logging.getLogger(__name__)
 
 # M1 Resource Ledger: Lazy import to avoid circular dependencies
@@ -481,8 +483,7 @@ async def probe_http2_at_startup() -> bool:
         logger.debug(f"[SessionPool] Startup HTTP/2 probe failed: {e}")
         return None
     finally:
-        if client is not None:
-            await client.aclose()
+        await aclose(client)
 
 
 async def close_httpx() -> None:

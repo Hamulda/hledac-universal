@@ -93,6 +93,7 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
 from hledac.universal.utils.asyncx import _check_gathered
+from core import aclose
 
 if TYPE_CHECKING:
     from .deephermes3_engine import DeepHermes3Engine

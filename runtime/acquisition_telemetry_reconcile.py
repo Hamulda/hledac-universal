@@ -36,6 +36,7 @@ fields exist in the report.
 
 
 import logging
+from core import aclose
 
 __all__ = [
     "reconcile_lane_detail_fields",

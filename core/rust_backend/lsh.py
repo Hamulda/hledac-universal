@@ -1,4 +1,5 @@
 from typing import TYPE_CHECKING, Any
+from core._util import aclose
 if TYPE_CHECKING:
     pass
 __all__ = ['get_lsh_domain']

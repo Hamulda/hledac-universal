@@ -97,6 +97,7 @@ if TYPE_CHECKING:
 # ISSUE-001 Phase 2: SQLite3 → DuckDB Migration
 # ForensicsMetadataStore replaces local SQLite cache with DuckDB for better M1 performance.
 import functools
+from core import aclose
 
 
 @functools.cache

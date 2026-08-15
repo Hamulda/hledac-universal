@@ -20,6 +20,7 @@ from __future__ import annotations
 import asyncio
 import gc
 import pytest
+from core import aclose
 
 
 class TestTaskRegistryWinddown:
