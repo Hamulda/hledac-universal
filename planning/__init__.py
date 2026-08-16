@@ -61,38 +61,34 @@ def get_slm_decomposer(governor, cache, model_name: str = "mlx-community/Qwen2.5
         return _slm_decomposer_instance
 
 
+# REFACTORED: Extracted to dispatch table to fix duplicated_branches (10 instances).
+# Original pattern: 10 repeated if-blocks with identical structure.
+_LAZY_IMPORT_DISPATCH: dict[str, tuple[str, str] | None] = {
+    # Class imports
+    'HTNPlanner': ('.htn_planner', 'HTNPlanner'),
+    'AdaptiveCostModel': ('.cost_model', 'AdaptiveCostModel'),
+    'SLMDecomposer': ('.slm_decomposer', 'SLMDecomposer'),
+    'TaskCache': ('.task_cache', 'TaskCache'),
+    # PRM-1: Step-Level Process Reward Model
+    'PRMFeatureExtractor': ('.step_reward_model', 'PRMFeatureExtractor'),
+    'PRMInference': ('.step_reward_model', 'PRMInference'),
+    'PRMInferenceContext': ('.step_reward_model', 'PRMInferenceContext'),
+    'CumulativePRMScorer': ('.step_reward_model', 'CumulativePRMScorer'),
+    # Function imports
+    'create_default_prm_scorer': ('.step_reward_model', 'create_default_prm_scorer'),
+    'anytime_beam_search': ('.search', 'anytime_beam_search'),
+}
+
+
 def __getattr__(name: str) -> Any:
-    if name == 'HTNPlanner':
-        from .htn_planner import HTNPlanner as cls  # noqa: N813
-        return cls
-    if name == 'AdaptiveCostModel':
-        from .cost_model import AdaptiveCostModel as cls  # noqa: N813
-        return cls
-    # PRM-1: Step-Level Process Reward Model lazy imports
-    if name == 'PRMFeatureExtractor':
-        from .step_reward_model import PRMFeatureExtractor as cls  # noqa: N813
-        return cls
-    if name == 'PRMInference':
-        from .step_reward_model import PRMInference as cls  # noqa: N813
-        return cls
-    if name == 'PRMInferenceContext':
-        from .step_reward_model import PRMInferenceContext as cls  # noqa: N813
-        return cls
-    if name == 'CumulativePRMScorer':
-        from .step_reward_model import CumulativePRMScorer as cls  # noqa: N813
-        return cls
-    if name == 'create_default_prm_scorer':
-        from .step_reward_model import create_default_prm_scorer as fn  # noqa: N813
-        return fn
-    if name == 'anytime_beam_search':
-        from .search import anytime_beam_search as fn
-        return fn
-    if name == 'SLMDecomposer':
-        from .slm_decomposer import SLMDecomposer as cls  # noqa: N813
-        return cls
-    if name == 'TaskCache':
-        from .task_cache import TaskCache as cls  # noqa: N813
-        return cls
+    # Fast path for singleton factory
     if name == 'get_slm_decomposer':
         return get_slm_decomposer
+    # Dispatch table for lazy imports
+    if name in _LAZY_IMPORT_DISPATCH:
+        module_path, symbol_name = _LAZY_IMPORT_DISPATCH[name]
+        # Import the module and get the symbol
+        import importlib
+        module = importlib.import_module(module_path, __package__)
+        return getattr(module, symbol_name)
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
