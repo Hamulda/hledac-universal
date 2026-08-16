@@ -949,9 +949,10 @@ audit_retention_days = 30
 # Note: fail_on_new/fail_on_new_metrics disabled - existing debt in baseline
 # Enable incrementally after fixing debt:
 #   [DONE] 1. Fix captcha_solver duplicate - moved to .archive/deprecated/
-#   2. Clean dead code (3238 items known, 400+ new)
-#   3. Break 7 dependency cycles
-#   4. Refactor 111 high-risk CC functions (max CC=139)
+#   [DONE] 2. Fix planning/__init__.py duplicated_branches (10 if-blocks → dispatch table)
+#   3. Clean dead code (3238 items, mostly in .archive/deprecated/ - intentionally archived)
+#   4. Break 7 dependency cycles
+#   5. Refactor high-risk CC functions (111 with CC>20, max CC=139)
 fail_health = -1
 fail_cycles = false
 fail_dead_code = false
