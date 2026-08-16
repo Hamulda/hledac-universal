@@ -948,10 +948,10 @@ audit_retention_days = 30
 # Quality gates - Stage C: Strict protection
 # Note: fail_on_new/fail_on_new_metrics disabled - existing debt in baseline
 # Enable incrementally after fixing debt:
-#   1. Fix captcha_solver duplicate (easy)
-#   2. Clean dead code (400 items new)
+#   [DONE] 1. Fix captcha_solver duplicate - moved to .archive/deprecated/
+#   2. Clean dead code (3238 items known, 400+ new)
 #   3. Break 7 dependency cycles
-#   4. Refactor CC>100 functions
+#   4. Refactor 111 high-risk CC functions (max CC=139)
 fail_health = -1
 fail_cycles = false
 fail_dead_code = false
