@@ -45,85 +45,42 @@ USAGE:
     print(f"P-cores: {util['p_cores']:.1f}%, E-cores: {util['e_cores']:.1f}%")
 """
 from __future__ import annotations
-
 import ctypes
 import logging
 import os
 import platform
 import threading
 from collections.abc import Sequence
-
-__all__ = [
-    "set_mlx_affinity",
-    "set_io_affinity",
-    "get_p_core_mask",
-    "get_e_core_mask",
-    "get_core_topology",
-    "CoreType",
-    "is_apple_silicon",
-    # NEXTGEN-03: Cluster utilization
-    "get_cluster_utilization",
-    "ClusterUtilization",
-]
-
+__all__ = ['set_mlx_affinity', 'set_io_affinity', 'get_p_core_mask', 'get_e_core_mask', 'get_core_topology', 'CoreType', 'is_apple_silicon', 'get_cluster_utilization', 'ClusterUtilization']
 logger = logging.getLogger(__name__)
-
 
 class CoreType:
     """Core type enumeration for M1 topology."""
-    P_CORE = "performance"
-    E_CORE = "efficiency"
-    UNKNOWN = "unknown"
-
-
-# ═══════════════════════════════════════════════════════════════════════════════
-# Platform Detection
-# ═══════════════════════════════════════════════════════════════════════════════
-
+    P_CORE = 'performance'
+    E_CORE = 'efficiency'
+    UNKNOWN = 'unknown'
 
 def is_apple_silicon() -> bool:
     """Check if running on Apple Silicon (M1/M2/M3/M4)."""
-    return platform.system() == "Darwin" and platform.machine() == "arm64"
-
-
-# ═══════════════════════════════════════════════════════════════════════════════
-# macOS Implementation (pthread_setaffinity_np)
-# ═══════════════════════════════════════════════════════════════════════════════
-
-# ctypes definitions for macOS pthread_setaffinity_np
+    return platform.system() == 'Darwin' and platform.machine() == 'arm64'
 _libc = ctypes.CDLL(None)
-
-# CPU_SETSIZE for macOS (1024)
 CPU_SETSIZE = 1024
-
-# sizeof(__cpu_mask) = 4 bytes on macOS (64-bit)
 CPU_MASK_SIZE = ctypes.sizeof(ctypes.c_uint32 * (CPU_SETSIZE // 32))
-
 
 class _cpuset_macos(ctypes.Structure):
     """macOS cpuset structure for pthread_setaffinity_np."""
-    _fields_ = [
-        ("__bits", ctypes.c_uint32 * (CPU_SETSIZE // 32)),
-    ]
-
-
-# pthread_setaffinity_np signature
+    _fields_ = [('__bits', ctypes.c_uint32 * (CPU_SETSIZE // 32))]
 pthread_setaffinity_np = _libc.pthread_setaffinity_np
-pthread_setaffinity_np.argtypes = [
-    ctypes.c_long,  # thread (0 = current)
-    ctypes.c_size_t,  # cpusetsize
-    ctypes.POINTER(_cpuset_macos)],  # cpuset
+pthread_setaffinity_np.argtypes = ([ctypes.c_long, ctypes.c_size_t, ctypes.POINTER(_cpuset_macos)],)
 pthread_setaffinity_np.restype = ctypes.c_int
-
 
 def _mask_to_cpuset(mask: int) -> _cpuset_macos:
     """Convert integer bitmask to macOS cpuset structure."""
     cpuset = _cpuset_macos()
     for i in range(CPU_SETSIZE):
-        if (mask >> i) & 1:
-            cpuset.__bits[i // 32] |= 1 << (i % 32)
+        if mask >> i & 1:
+            cpuset.__bits[i // 32] |= 1 << i % 32
     return cpuset
-
 
 def _set_thread_affinity(mask: int) -> bool:
     """
@@ -136,33 +93,20 @@ def _set_thread_affinity(mask: int) -> bool:
         True if successful, False otherwise
     """
     if not is_apple_silicon():
-        logger.debug("[CPUAffinity] Not Apple Silicon, skipping affinity")
+        logger.debug('[CPUAffinity] Not Apple Silicon, skipping affinity')
         return False
-    
     try:
         cpuset = _mask_to_cpuset(mask)
-        result = pthread_setaffinity_np(
-            ctypes.c_long(0),  # current thread
-            ctypes.c_size_t(CPU_MASK_SIZE),
-            cpuset
-    )
+        result = pthread_setaffinity_np(ctypes.c_long(0), ctypes.c_size_t(CPU_MASK_SIZE), cpuset)
         if result == 0:
             return True
         else:
-            logger.warning("[CPUAffinity] pthread_setaffinity_np failed: %d", result)
+            logger.warning('[CPUAffinity] pthread_setaffinity_np failed: %d', result)
             return False
     except Exception as e:
-        logger.warning("[CPUAffinity] Failed to set thread affinity: %s", e)
+        logger.warning('[CPUAffinity] Failed to set thread affinity: %s', e)
         return False
-
-
-# ═══════════════════════════════════════════════════════════════════════════════
-# M1 Topology Detection
-# ═══════════════════════════════════════════════════════════════════════════════
-
-# Cache for topology to avoid repeated sysctl calls
 _topology_cache: dict | None = None
-
 
 def _detect_m1_topology() -> dict:
     """
@@ -174,74 +118,32 @@ def _detect_m1_topology() -> dict:
     global _topology_cache
     if _topology_cache is not None:
         return _topology_cache
-    
-    # NEXTGEN-03 FIX: Default for M1 8GB is actually 4P + 4E (8 cores total)
-    # Previous default was incorrect (assumed 4P + 0E)
-    topology = {
-        "p_cores": 4,
-        "e_cores": 4,
-        "total": 8,
-        "p_core_mask": 0b1111,  # P-cores: cores 0-3
-        "e_core_mask": 0b11110000,  # E-cores: cores 4-7
-        "model": "M1 (default)",
-    }
-    
+    topology = {'p_cores': 4, 'e_cores': 4, 'total': 8, 'p_core_mask': 15, 'e_core_mask': 240, 'model': 'M1 (default)'}
     if not is_apple_silicon():
         return topology
-    
     try:
-        # Try to get core counts from sysctl
         import subprocess
-        
-        # Get performance core count
-        result = subprocess.run(
-            ["sysctl", "-n", "hw.perflevel0.physicalcpu"],
-            capture_output=True,
-            text=True
-    )
+        result = subprocess.run(['sysctl', '-n', 'hw.perflevel0.physicalcpu'], capture_output=True, text=True)
         if result.returncode == 0:
-            topology["p_cores"] = int(result.stdout.strip())
-        
-        # Get efficiency core count
-        result = subprocess.run(
-            ["sysctl", "-n", "hw.perflevel1.physicalcpu"],
-            capture_output=True,
-            text=True
-    )
+            topology['p_cores'] = int(result.stdout.strip())
+        result = subprocess.run(['sysctl', '-n', 'hw.perflevel1.physicalcpu'], capture_output=True, text=True)
         if result.returncode == 0:
-            topology["e_cores"] = int(result.stdout.strip())
-        
-        topology["total"] = topology["p_cores"] + topology["e_cores"]
-        
-        # Build masks: P-cores = first N cores, E-cores = remaining cores
-        topology["p_core_mask"] = (1 << topology["p_cores"]) - 1
-        topology["e_core_mask"] = ((1 << topology["total"]) - 1) ^ topology["p_core_mask"]
-        
-        # Get chip model
-        result = subprocess.run(
-            ["sysctl", "-n", "machdep.cpu.brand_string"],
-            capture_output=True,
-            text=True
-    )
+            topology['e_cores'] = int(result.stdout.strip())
+        topology['total'] = topology['p_cores'] + topology['e_cores']
+        topology['p_core_mask'] = (1 << topology['p_cores']) - 1
+        topology['e_core_mask'] = (1 << topology['total']) - 1 ^ topology['p_core_mask']
+        result = subprocess.run(['sysctl', '-n', 'machdep.cpu.brand_string'], capture_output=True, text=True)
         if result.returncode == 0:
-            topology["model"] = result.stdout.strip()
-        
-        logger.info(
-            "[CPUAffinity] Detected %s: %d P-cores, %d E-cores",
-            topology["model"], topology["p_cores"], topology["e_cores"]
-    )
-        
+            topology['model'] = result.stdout.strip()
+        logger.info('[CPUAffinity] Detected %s: %d P-cores, %d E-cores', topology['model'], topology['p_cores'], topology['e_cores'])
     except Exception as e:
-        logger.warning("[CPUAffinity] Failed to detect topology: %s, using defaults", e)
-    
+        logger.warning('[CPUAffinity] Failed to detect topology: %s, using defaults', e)
     _topology_cache = topology
     return topology
-
 
 def get_core_topology() -> dict:
     """Get M1 core topology (cached)."""
     return _detect_m1_topology()
-
 
 def get_p_core_mask() -> int:
     """
@@ -251,8 +153,7 @@ def get_p_core_mask() -> int:
         Integer bitmask with P-core bits set
     """
     topology = _detect_m1_topology()
-    return topology["p_core_mask"]
-
+    return topology['p_core_mask']
 
 def get_e_core_mask() -> int:
     """
@@ -262,12 +163,7 @@ def get_e_core_mask() -> int:
         Integer bitmask with E-core bits set (0 if no E-cores)
     """
     topology = _detect_m1_topology()
-    return topology["e_core_mask"]
-
-
-# ═══════════════════════════════════════════════════════════════════════════════
-# Affinity Functions
-# ═══════════════════════════════════════════════════════════════════════════════
+    return topology['e_core_mask']
 
 def set_mlx_affinity() -> bool:
     """
@@ -289,19 +185,16 @@ def set_mlx_affinity() -> bool:
         True if affinity was set successfully
     """
     if not is_apple_silicon():
-        logger.debug("[CPUAffinity] Not Apple Silicon, MLX affinity not needed")
+        logger.debug('[CPUAffinity] Not Apple Silicon, MLX affinity not needed')
         return False
-    
     p_core_mask = get_p_core_mask()
     if p_core_mask == 0:
-        logger.warning("[CPUAffinity] No P-cores detected, skipping affinity")
+        logger.warning('[CPUAffinity] No P-cores detected, skipping affinity')
         return False
-    
     success = _set_thread_affinity(p_core_mask)
     if success:
-        logger.debug("[CPUAffinity] Thread pinned to P-cores (mask=0x%x)", p_core_mask)
+        logger.debug('[CPUAffinity] Thread pinned to P-cores (mask=0x%x)', p_core_mask)
     return success
-
 
 def set_io_affinity() -> bool:
     """
@@ -320,18 +213,14 @@ def set_io_affinity() -> bool:
     """
     if not is_apple_silicon():
         return False
-    
     e_core_mask = get_e_core_mask()
     if e_core_mask == 0:
-        # No E-cores (M1 8GB) — don't restrict, let OS schedule
-        logger.debug("[CPUAffinity] No E-cores available, I/O affinity not restricted")
+        logger.debug('[CPUAffinity] No E-cores available, I/O affinity not restricted')
         return False
-    
     success = _set_thread_affinity(e_core_mask)
     if success:
-        logger.debug("[CPUAffinity] Thread pinned to E-cores (mask=0x%x)", e_core_mask)
+        logger.debug('[CPUAffinity] Thread pinned to E-cores (mask=0x%x)', e_core_mask)
     return success
-
 
 def set_ane_affinity() -> bool:
     """
@@ -347,8 +236,7 @@ def set_ane_affinity() -> bool:
     Returns:
         True if affinity was set successfully
     """
-    return set_mlx_affinity()  # ANE uses same P-core affinity as MLX
-
+    return set_mlx_affinity()
 
 class mlx_affinity:
     """
@@ -360,24 +248,23 @@ class mlx_affinity:
     
     Thread affinity is reset on context exit.
     """
-    
+    __slots__ = ('_original_mask',)
+
     def __init__(self):
         self._original_mask: int | None = None
-    
-    def __enter__(self) -> "mlx_affinity":
+
+    def __enter__(self) -> 'mlx_affinity':
         if is_apple_silicon():
             p_core_mask = get_p_core_mask()
             if p_core_mask > 0:
                 _set_thread_affinity(p_core_mask)
-                logger.debug("[CPUAffinity] Entered MLX P-core affinity")
+                logger.debug('[CPUAffinity] Entered MLX P-core affinity')
         return self
-    
-    def __exit__(self, exc_type, exc_val, exc_tb) -> None:
-        # Reset to all cores on exit
-        if is_apple_silicon() and self._original_mask is not None:
-            _set_thread_affinity(0)  # 0 = all cores
-            logger.debug("[CPUAffinity] Exited MLX P-core affinity")
 
+    def __exit__(self, exc_type, exc_val, exc_tb) -> None:
+        if is_apple_silicon() and self._original_mask is not None:
+            _set_thread_affinity(0)
+            logger.debug('[CPUAffinity] Exited MLX P-core affinity')
 
 class io_affinity:
     """
@@ -389,31 +276,24 @@ class io_affinity:
     
     Thread affinity is reset on context exit.
     """
-    
+    __slots__ = ('_original_mask',)
+
     def __init__(self):
         self._original_mask: int | None = None
-    
-    def __enter__(self) -> "io_affinity":
+
+    def __enter__(self) -> 'io_affinity':
         if is_apple_silicon():
             e_core_mask = get_e_core_mask()
             if e_core_mask > 0:
                 _set_thread_affinity(e_core_mask)
-                logger.debug("[CPUAffinity] Entered I/O E-core affinity")
+                logger.debug('[CPUAffinity] Entered I/O E-core affinity')
         return self
-    
+
     def __exit__(self, exc_type, exc_val, exc_tb) -> None:
         if is_apple_silicon() and self._original_mask is not None:
             _set_thread_affinity(0)
-            logger.debug("[CPUAffinity] Exited I/O E-core affinity")
-
-
-# ═══════════════════════════════════════════════════════════════════════════════
-# MLX Integration
-# ═══════════════════════════════════════════════════════════════════════════════
-
-# Cache for MLX thread pool state
+            logger.debug('[CPUAffinity] Exited I/O E-core affinity')
 _mlx_initialized: bool = False
-
 
 def init_mlx_affinity() -> None:
     """
@@ -432,28 +312,17 @@ def init_mlx_affinity() -> None:
     global _mlx_initialized
     if _mlx_initialized:
         return
-    
     if is_apple_silicon():
         success = set_mlx_affinity()
         if success:
-            logger.info(
-                "[CPUAffinity] MLX Metal initialized with P-core affinity "
-                "(%d P-cores)", get_core_topology()["p_cores"]
-    )
+            logger.info('[CPUAffinity] MLX Metal initialized with P-core affinity (%d P-cores)', get_core_topology()['p_cores'])
         else:
-            logger.warning("[CPUAffinity] Failed to set MLX P-core affinity")
-    
+            logger.warning('[CPUAffinity] Failed to set MLX P-core affinity')
     _mlx_initialized = True
-
-
-# NEXTGEN-03: Cluster utilization telemetrie
-# ============================================================================
-
 from dataclasses import dataclass
 from _core import aclose
 
-
-@dataclass
+@dataclass(slots=True)
 class ClusterUtilization:
     """
     NEXTGEN-03: Per-cluster CPU utilization metrics.
@@ -470,16 +339,9 @@ class ClusterUtilization:
     p_core_threads: int = 0
     e_core_threads: int = 0
     timestamp: float = 0.0
-    
-    def to_dict(self) -> dict:
-        return {
-            "p_cores": self.p_cores_pct,
-            "e_cores": self.e_cores_pct,
-            "p_core_threads": self.p_core_threads,
-            "e_core_threads": self.e_core_threads,
-            "timestamp": self.timestamp,
-        }
 
+    def to_dict(self) -> dict:
+        return {'p_cores': self.p_cores_pct, 'e_cores': self.e_cores_pct, 'p_core_threads': self.p_core_threads, 'e_core_threads': self.e_core_threads, 'timestamp': self.timestamp}
 
 def get_cluster_utilization() -> ClusterUtilization:
     """
@@ -505,86 +367,48 @@ def get_cluster_utilization() -> ClusterUtilization:
     """
     import time
     import threading
-    
     topology = _detect_m1_topology()
-    p_core_count = topology["p_cores"]
-    e_core_count = topology["e_cores"]
-    
+    p_core_count = topology['p_cores']
+    e_core_count = topology['e_cores']
     if p_core_count == 0:
-        p_core_count = 4  # Default fallback
+        p_core_count = 4
     if e_core_count == 0:
-        e_core_count = 4  # Default fallback
-    
-    # Current timestamp for this sample
+        e_core_count = 4
     now = time.monotonic()
-    
-    # Thread CPU time cache (thread_id -> (timestamp, user_time, system_time))
     global _thread_cpu_cache
     if _thread_cpu_cache is None:
         _thread_cpu_cache = {}
-    
     total_p_cpu_time = 0.0
     total_e_cpu_time = 0.0
     p_threads = 0
     e_threads = 0
-    
-    # Get rusage for current process
     try:
-        # RUSAGE_INFO_T structure (simplified)
-        # typedef struct rusage_info_t {
-        #     uint64_t ri_user_time;      /* user time used */
-        #     uint64_t ri_system_time;   /* system time used */
-        #     ...
-        # } rusage_info_t;
-        
-        # On macOS, use resource module
         import resource
-        
-        # Get current process rusage
         usage = resource.getrusage(resource.RUSAGE_SELF)
         total_user_time = usage.ru_utime
         total_sys_time = usage.ru_stime
         total_cpu_time = total_user_time + total_sys_time
-        
-        # Estimate per-core utilization based on thread count
         thread_count = threading.active_count()
-        
-        # Assume equal distribution across cores initially
-        # Then adjust based on thread naming (rayon pools)
         all_threads = threading.enumerate()
-        
-        # Count threads by name pattern
-        simd_threads = sum(1 for t in all_threads if "simd" in t.name.lower())
-        mlx_threads = sum(1 for t in all_threads if "mlx" in t.name.lower())
-        graph_threads = sum(1 for t in all_threads if "graph" in t.name.lower())
-        io_threads = sum(1 for t in all_threads if "io" in t.name.lower() or "net" in t.name.lower())
-        
-        # P-core threads: simd, mlx, graph (all on P-cores)
+        simd_threads = sum((1 for t in all_threads if 'simd' in t.name.lower()))
+        mlx_threads = sum((1 for t in all_threads if 'mlx' in t.name.lower()))
+        graph_threads = sum((1 for t in all_threads if 'graph' in t.name.lower()))
+        io_threads = sum((1 for t in all_threads if 'io' in t.name.lower() or 'net' in t.name.lower()))
         p_threads = simd_threads + mlx_threads + graph_threads
-        # E-core threads: io, network
         e_threads = io_threads
-        
-        # If no named threads found, distribute evenly
         if p_threads == 0 and e_threads == 0:
             if thread_count <= p_core_count:
                 p_threads = thread_count
             else:
                 p_threads = p_core_count
                 e_threads = thread_count - p_core_count
-        
-        # Compute utilization as percentage
-        # Using elapsed wall time and CPU time to estimate utilization
-        elapsed = 1.0  # Assume 1 second window if no previous sample
-        
+        elapsed = 1.0
         global _last_sample
         if _last_sample is not None:
             elapsed = now - _last_sample
             if elapsed > 0:
                 cpu_delta = total_cpu_time - _last_cpu_time
-                # Utilization = (CPU time / elapsed) / core_count * 100
-                total_util = (cpu_delta / elapsed) * 100
-                
-                # Split by cluster based on thread distribution
+                total_util = cpu_delta / elapsed * 100
                 total_threads = max(p_threads + e_threads, 1)
                 p_pct = total_util * (p_threads / total_threads) if p_threads > 0 else 0.0
                 e_pct = total_util * (e_threads / total_threads) if e_threads > 0 else 0.0
@@ -592,34 +416,14 @@ def get_cluster_utilization() -> ClusterUtilization:
                 p_pct = 0.0
                 e_pct = 0.0
         else:
-            # First sample, no delta available
             p_pct = 0.0
             e_pct = 0.0
-        
-        # Update cache
         _last_sample = now
         _last_cpu_time = total_cpu_time
-        
-        return ClusterUtilization(
-            p_cores_pct=min(p_pct, 100.0),
-            e_cores_pct=min(e_pct, 100.0),
-            p_core_threads=p_threads,
-            e_core_threads=e_threads,
-            timestamp=now,
-    )
-        
+        return ClusterUtilization(p_cores_pct=min(p_pct, 100.0), e_cores_pct=min(e_pct, 100.0), p_core_threads=p_threads, e_core_threads=e_threads, timestamp=now)
     except Exception as e:
-        logger.warning("[CPUAffinity] Failed to get cluster utilization: %s", e)
-        return ClusterUtilization(
-            p_cores_pct=0.0,
-            e_cores_pct=0.0,
-            p_core_threads=0,
-            e_core_threads=0,
-            timestamp=now,
-    )
-
-
-# Module-level cache for utilization calculation
+        logger.warning('[CPUAffinity] Failed to get cluster utilization: %s', e)
+        return ClusterUtilization(p_cores_pct=0.0, e_cores_pct=0.0, p_core_threads=0, e_core_threads=0, timestamp=now)
 _thread_cpu_cache: dict | None = None
 _last_sample: float | None = None
 _last_cpu_time: float = 0.0

@@ -13,6 +13,8 @@ from concurrent.futures import ThreadPoolExecutor
 from contextlib import asynccontextmanager
 from typing import TYPE_CHECKING, Any, TypeVar
 
+from _core.lock_registry import LockCategory, register_lock
+
 if TYPE_CHECKING:
     from collections.abc import Callable
 
@@ -55,7 +57,12 @@ def _get_max_workers_from_governor() -> int:
 # ---------------------------------------------------------------------------
 
 _thread_pool: ThreadPoolExecutor | None = None
-_thread_pool_lock = threading.Lock()
+
+
+@register_lock(LockCategory.CACHE)
+def _thread_pool_lock() -> threading.Lock:
+    """Module-level lock for ThreadPoolExecutor singleton factory."""
+    return threading.Lock()
 
 
 def get_thread_pool(max_workers: int | None = None) -> ThreadPoolExecutor:
@@ -73,7 +80,7 @@ def get_thread_pool(max_workers: int | None = None) -> ThreadPoolExecutor:
     if _thread_pool is not None:
         return _thread_pool
 
-    with _thread_pool_lock:
+    with _thread_pool_lock():
         if _thread_pool is not None:
             return _thread_pool
 

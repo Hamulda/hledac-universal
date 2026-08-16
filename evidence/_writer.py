@@ -26,6 +26,7 @@ from pathlib import Path
 from typing import Any
 
 import msgspec
+from compat.msgspec_gc_compat import Struct
 import orjson
 
 from hledac.universal.utils.asyncx import safe_create_task, safe_wait_for
@@ -36,7 +37,7 @@ logger = logging.getLogger(__name__)
 # ─── EvidenceEvent ──────────────────────────────────────────────────────────────
 
 
-class EvidenceEvent(msgspec.Struct, frozen=False, gc=False):
+class EvidenceEvent(Struct, frozen=False):
     """
     Immutable evidence packet stored in the ledger.
 

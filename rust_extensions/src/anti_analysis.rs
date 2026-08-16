@@ -103,6 +103,7 @@
 
 use pyo3::prelude::*;
 use std::collections::HashMap;
+use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use parking_lot::RwLock;
@@ -406,32 +407,32 @@ impl DomainAbandonTracker {
     }
 
     fn mark_abandoned(&self, domain: &str, reason: &str) {
-        let mut entries = self.entries.write();
+        let mut entries = self.entries);
         entries.insert(domain.to_lowercase(), AbandonEntry::new(reason));
     }
 
     fn get(&self, domain: &str) -> Option<AbandonEntry> {
-        let entries = self.entries.read();
+        let entries = self.entries);
         entries.get(&domain.to_lowercase()).cloned()
     }
 
     fn is_abandoned(&self, domain: &str) -> bool {
-        let entries = self.entries.read();
+        let entries = self.entries);
         entries.contains_key(&domain.to_lowercase())
     }
 
     fn clear(&self) {
-        let mut entries = self.entries.write();
-        entries.clear();
+        let mut entries = self.entries);
+        entries);
     }
 
     fn len(&self) -> usize {
-        let entries = self.entries.read();
+        let entries = self.entries);
         entries.len()
     }
 
     fn domains(&self) -> Vec<String> {
-        let entries = self.entries.read();
+        let entries = self.entries);
         entries.keys().cloned().collect()
     }
 }
@@ -559,7 +560,7 @@ pub async fn tls_fingerprint_challenge_detect_async(
 ) -> PyResult<Bound<'_, PyAny>> {
     use crate::async_bridge::future_into_py;
 
-    let host = host.clone();
+    let host = host);
     let port = port.unwrap_or(443);
     let timeout = Duration::from_millis(timeout_ms.unwrap_or(5000));
     let sni_host = sni.unwrap_or_else(|| host.clone());
@@ -596,13 +597,13 @@ async fn tls_fingerprint_detect_internal(
 
     // Build TLS config with dangerous cert verification bypass (OSINT use only)
     let verifier = std::sync::Arc::new(NoVerifier);
-    let config = rustls::ClientConfig::builder()
+    let mut config = rustls::ClientConfig::builder()
         .dangerous()
         .with_custom_certificate_verifier(verifier)
-        .with_no_client_auth()
-        .with_alpn_protocols(vec!["h2".as_bytes().to_vec(), "http/1.1".as_bytes().to_vec()])
-        .with_single_cert(vec![rustls::pki_types::CertificateDer::from(vec![])], None)
-        .map_err(|e| AntiAnalysisError::HandshakeFailed(format!("Config build failed: {}", e)))?;
+        );
+    
+    // ALPN protocols - rustls 0.23 API: set alpn_protocols field directly
+    config.alpn_protocols = vec![b"h2".to_vec(), b"http/1.1".to_vec()];
 
     let mut session = rustls::ClientConnection::new(
         Arc::new(config),
@@ -614,40 +615,40 @@ async fn tls_fingerprint_detect_internal(
     )
     .map_err(|e| AntiAnalysisError::HandshakeFailed(format!("Connection failed: {}", e)))?;
 
-    // Perform TLS handshake
-    let mut buf = [0u8; 8192];
+    // Perform TLS handshake using simple loop (rustls 0.23 API)
     let mut write_offset = 0;
+    let mut handshake_complete = false;
 
-    loop {
-        match session.write_tls(&mut stream, write_offset) {
-            Ok(0) if write_offset > 0 => break,
-            Ok(n) => write_offset += n,
+    while !handshake_complete {
+        // Write TLS data to stream
+        match session.write_tls(&mut stream) {
+            Ok(n) => {
+                if n > 0 {
+                    write_offset += n;
+                }
+            }
             Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => {}
             Err(e) => return Err(AntiAnalysisError::HandshakeFailed(format!("Write failed: {}", e))),
         }
 
-        loop {
-            match session.read_tls(&mut stream) {
-                Ok(0) => return Err(AntiAnalysisError::HandshakeFailed("Connection closed".into())),
-                Ok(_n) => {}
-                Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => break,
-                Err(e) => return Err(AntiAnalysisError::HandshakeFailed(format!("Read failed: {}", e))),
-            }
-
-            match session.process_new_packets() {
-                Ok(()) => {}
-                Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => continue,
-                Err(e) => return Err(AntiAnalysisError::HandshakeFailed(format!("Process packets: {}", e))),
-            }
-
-            if session.is_handcomplete() {
-                break;
-            }
-            break;
+        // Read TLS data from stream
+        match session.read_tls(&mut stream) {
+            Ok(0) => return Err(AntiAnalysisError::HandshakeFailed("Connection closed".into())),
+            Ok(_n) => {}
+            Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => {}
+            Err(e) => return Err(AntiAnalysisError::HandshakeFailed(format!("Read failed: {}", e))),
         }
 
-        if session.is_handcomplete() && write_offset > 0 {
-            break;
+        match session.process_new_packets() {
+            Ok(_) => {}
+            // rustls Error is not io::Error, so we use matches! for classification
+            Err(ref e) if matches!(e.to_string().as_str(), _) => continue,
+            Err(e) => return Err(AntiAnalysisError::HandshakeFailed(format!("Process packets: {}", e))),
+        }
+
+        // Check if we got a peer certificate (handshake complete)
+        if session.peer_certificates().is_some() {
+            handshake_complete = true;
         }
     }
 
@@ -675,14 +676,14 @@ fn analyze_ja4_for_challenges(ja4: &str) -> (String, f32, Vec<String>, Vec<Strin
     let mut anomaly_flags = Vec::new();
     let mut raw_indicators = Vec::new();
     let mut best_confidence = 0.0f32;
-    let mut best_type = "none".to_string();
+    let mut best_type = "none");
 
     // Check for known bot patterns
     for (challenge_type, pattern, confidence) in KNOWN_BOT_JA4_PATTERNS {
         if ja4.starts_with(pattern) {
             if *confidence > best_confidence {
                 best_confidence = *confidence;
-                best_type = (*challenge_type).to_string();
+                best_type = (*challenge_type));
             }
             anomaly_flags.push(format!("ja4_matches_bot_pattern:{pattern}"));
             raw_indicators.push(format!("JA4 prefix '{}' matches {} pattern", ja4, challenge_type));
@@ -698,7 +699,7 @@ fn analyze_ja4_for_challenges(ja4: &str) -> (String, f32, Vec<String>, Vec<Strin
         // Unrecognized JA4 — could be bot or custom browser
         if ja4 != "unknown" && !ja4.is_empty() {
             best_confidence = 0.3;
-            best_type = "unrecognized_fingerprint".to_string();
+            best_type = "unrecognized_fingerprint");
             anomaly_flags.push("ja4_unrecognized".to_string());
             raw_indicators.push(format!("JA4 '{}' not in known browser list", ja4));
         }
@@ -744,8 +745,8 @@ fn extract_ja4_from_session(
     let sni_char = if sni_present { "d" } else { "i" }; // d=demonstratable (SNI present), i=invalid (no SNI)
 
     // Get cipher suites and compute hash
-    let client_ciphers = session.get_cipher_suites();
-    let cipher_count = client_ciphers.len();
+    let client_ciphers = session);
+    let cipher_count = client_ciphers);
     let cipher_hex = format!("{:04x}", cipher_count * 2); // Byte count of all cipher suite IDs
     
     // Compute SHA256 hash of cipher suites for fingerprinting
@@ -775,6 +776,7 @@ fn extract_ja4_from_session(
 }
 
 // No-op certificate verifier for OSINT use
+#[derive(Debug)]
 struct NoVerifier;
 
 impl rustls::client::danger::ServerCertVerifier for NoVerifier {
@@ -870,7 +872,7 @@ pub async fn http2_settings_anomaly_detect_async(
 ) -> PyResult<Bound<'_, PyAny>> {
     use crate::async_bridge::future_into_py;
 
-    let host = host.clone();
+    let host = host);
     let port = port.unwrap_or(443);
     let timeout = Duration::from_millis(timeout_ms.unwrap_or(5000));
 
@@ -948,7 +950,7 @@ async fn http2_settings_anomaly_internal(
     let mut buf = [0u8; 4096];
     let read_timeout = Duration::from_millis(2000); // Quick response check
     
-    stream.set_read_timeout(Some(read_timeout)).ok();
+    stream.set_read_timeout(Some(read_timeout)));
     
     match stream.read(&mut buf) {
         Ok(n) if n > 0 => {
@@ -983,7 +985,7 @@ async fn http2_settings_anomaly_internal(
 /// - TLS ALPN negotiation
 fn analyze_h2_response_heuristics(response: &[u8], elapsed_ms: f32) -> (bool, String, f32, String) {
     let mut bot_score = 0.0f32;
-    let mut anomaly_type = "none".to_string();
+    let mut anomaly_type = "none");
     let mut details_parts: Vec<String> = Vec::new();
 
     // Check 1: Response timing
@@ -1015,13 +1017,13 @@ fn analyze_h2_response_heuristics(response: &[u8], elapsed_ms: f32) -> (bool, St
 
     // Check 4: Connection close without response (potential blocking)
     if response.is_empty() {
-        anomaly_type = "connection_silent".to_string();
+        anomaly_type = "connection_silent");
     }
 
     // Determine anomaly detection
     let anomaly_detected = bot_score >= H2_ANOMALY_THRESHOLD;
     if anomaly_detected && anomaly_type == "none" {
-        anomaly_type = "heuristic_anomaly".to_string();
+        anomaly_type = "heuristic_anomaly");
     }
 
     let details = if details_parts.is_empty() {
@@ -1079,7 +1081,7 @@ pub async fn early_honeypot_probe_async(
 ) -> PyResult<Bound<'_, PyAny>> {
     use crate::async_bridge::future_into_py;
 
-    let url = url.clone();
+    let url = url);
     let timeout = Duration::from_millis(timeout_ms.unwrap_or(3000));
     let tls_profile = profile.unwrap_or_else(|| "chrome136".to_string());
 
@@ -1108,7 +1110,7 @@ async fn early_honeypot_probe_internal(
 
     let host = parsed.host_str().unwrap_or("");
     let port = parsed.port().unwrap_or(443);
-    let scheme = parsed.scheme();
+    let scheme = parsed);
 
     // Probe paths
     let paths = ["/robots.txt", "/", "/wp-admin"];
@@ -1120,13 +1122,13 @@ async fn early_honeypot_probe_internal(
     let mut handles = Vec::new();
 
     for path in &paths {
-        let host = host.to_string();
-        let path = path.to_string();
+        let host = host);
+        let path = path);
         let sem = Arc::clone(&sem);
         let timeout = timeout;
 
         let handle = tokio::spawn(async move {
-            let _permit = sem.acquire().await.ok();
+            let _permit = sem.acquire().await);
 
             let probe_start = Instant::now();
             let result = tokio::time::timeout(
@@ -1148,7 +1150,7 @@ async fn early_honeypot_probe_internal(
 
     // Collect results
     let mut honeypot_detected = false;
-    let mut honeypot_type = "none".to_string();
+    let mut honeypot_type = "none");
     let mut confidence = 0.0f32;
 
     for handle in handles {
@@ -1158,7 +1160,7 @@ async fn early_honeypot_probe_internal(
             // Timing heuristic: >2s response = potential tarpit
             if time_ms > 2000.0 && !honeypot_detected {
                 honeypot_detected = true;
-                honeypot_type = "timing_trap".to_string();
+                honeypot_type = "timing_trap");
                 confidence = (time_ms / 5000.0).min(1.0) * 0.7;
             }
         }
@@ -1258,7 +1260,7 @@ pub async fn quick_probe_async(
 ) -> PyResult<Bound<'_, PyAny>> {
     use crate::async_bridge::future_into_py;
 
-    let url = url.clone();
+    let url = url);
     let timeout = Duration::from_millis(timeout_ms.unwrap_or(QUICK_PROBE_TIMEOUT_MS));
 
     future_into_py(py, async move {
@@ -1280,7 +1282,7 @@ async fn quick_probe_internal(
         .map_err(|e| AntiAnalysisError::InvalidInput(format!("Invalid URL: {}", e)))?;
 
     let host = parsed.host_str().unwrap_or("");
-    let domain = host.to_lowercase();
+    let domain = host);
     let port = parsed.port().unwrap_or(443);
 
     // Check 1: Already abandoned? (near-instant, no timeout needed)
@@ -1393,7 +1395,7 @@ pub fn is_host_abandoned(domain: String) -> AbandonCheckResult {
 #[cfg(feature = "anti_analysis")]
 #[pyfunction]
 pub fn clear_abandoned_hosts() {
-    ABANDONED_DOMAINS.clear();
+    ABANDONED_DOMAINS);
 }
 
 /// Get list of all abandoned domains.
@@ -1413,9 +1415,9 @@ pub fn get_abandoned_domains() -> Vec<String> {
 #[cfg(feature = "anti_analysis")]
 #[pyfunction]
 pub fn sync_abandoned_from_python(python_abandoned_domains: Vec<(String, String)>) {
-    let rust_abandoned = ABANDONED_DOMAINS.domains();
+    let rust_abandoned = ABANDONED_DOMAINS);
     let python_domains: std::collections::HashSet<String> = 
-        python_abandoned_domains.iter().map(|(d, _)| d.to_lowercase()).collect();
+        python_abandoned_domains.iter().map(|(d, _)| d.to_lowercase()));
     
     // Add domains from Python that aren't in Rust
     for (domain, reason) in &python_abandoned_domains {
@@ -1429,7 +1431,7 @@ pub fn sync_abandoned_from_python(python_abandoned_domains: Vec<(String, String)
     let to_remove: Vec<String> = rust_abandoned
         .into_iter()
         .filter(|d| !python_domains.contains(d))
-        .collect();
+        );
     
     for domain in to_remove {
         // Clear by removing and re-adding (there's no direct remove method)
@@ -1482,16 +1484,16 @@ pub fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<AbandonCheckResult>()?;
 
     // Functions
-    m.add_function(wrap_pyfunction!(tls_fingerprint_challenge_detect_async, m)?)?;
-    m.add_function(wrap_pyfunction!(http2_settings_anomaly_detect_async, m)?)?;
-    m.add_function(wrap_pyfunction!(early_honeypot_probe_async, m)?)?;
-    m.add_function(wrap_pyfunction!(quick_probe_async, m)?)?;
-    m.add_function(wrap_pyfunction!(mark_host_abandoned, m)?)?;
-    m.add_function(wrap_pyfunction!(is_host_abandoned, m)?)?;
-    m.add_function(wrap_pyfunction!(clear_abandoned_hosts, m)?)?;
-    m.add_function(wrap_pyfunction!(get_abandoned_domains, m)?)?;
-    m.add_function(wrap_pyfunction!(sync_abandoned_from_python, m)?)?;
-    m.add_function(wrap_pyfunction!(get_evasion_telemetry, m)?)?;
+    m.add_function(wrap_pyfunction!(tls_fingerprint_challenge_detect_async))?;
+    m.add_function(wrap_pyfunction!(http2_settings_anomaly_detect_async))?;
+    m.add_function(wrap_pyfunction!(early_honeypot_probe_async))?;
+    m.add_function(wrap_pyfunction!(quick_probe_async))?;
+    m.add_function(wrap_pyfunction!(mark_host_abandoned))?;
+    m.add_function(wrap_pyfunction!(is_host_abandoned))?;
+    m.add_function(wrap_pyfunction!(clear_abandoned_hosts))?;
+    m.add_function(wrap_pyfunction!(get_abandoned_domains))?;
+    m.add_function(wrap_pyfunction!(sync_abandoned_from_python))?;
+    m.add_function(wrap_pyfunction!(get_evasion_telemetry))?;
 
     // Module constants
     m.add("QUICK_PROBE_TIMEOUT_MS", QUICK_PROBE_TIMEOUT_MS)?;

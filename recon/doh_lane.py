@@ -15,6 +15,7 @@ import logging
 import time
 from dataclasses import dataclass, field
 import msgspec
+from compat.msgspec_gc_compat import Struct
 from enum import StrEnum
 from typing import TYPE_CHECKING
 from hledac.universal.utils.asyncx import parallel_ok
@@ -40,7 +41,7 @@ from hledac.universal._core.concurrency import ConcurrencyCategory, get_semaphor
 _DOH_SEMAPHORE = get_semaphore(ConcurrencyCategory.DNS_BRUTE)
 COMMON_SUBDOMAINS: list[str] = ['www', 'mail', 'ftp', 'vpn', 'api', 'admin', 'dev', 'staging', 'beta', 'internal', 'corp', 'git', 'jira', 'confluence', 'jenkins', 'gitlab']
 
-class DOHFinding(msgspec.Struct, gc=False):
+class DOHFinding(Struct):
     domain: str
     record_type: str
     value: str

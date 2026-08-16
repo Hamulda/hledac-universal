@@ -14,10 +14,22 @@ use crate::gil::{release_gil, release_gil_caught_panic};
 //   Python json.dumps  ≈ 8-12 ms
 //   serde_json         ≈ 2-4 ms  (3-4× faster, no GIL, SIMD-ready)
 //
-// ## GIL Handling
-// All batch functions release the GIL via `release_gil()` during rayon
-// parallel work. This allows asyncio event loop to run on other threads
-// and enables true CPU parallelism for multi-core workloads.
+// ## GIL Handling (ROADMAP-016: Modern PyO3 Strategy)
+//
+// **Single-item functions**: Use `#[pyo3(gil = "release")]` to automatically
+// release GIL during CPU-bound JSON serialization. No manual `Python::attach`.
+//
+// **Batch functions**: Use `release_gil()` during rayon parallel work.
+// This allows asyncio event loop to run on other threads and enables true
+// CPU parallelism for multi-core workloads.
+//
+// **Functions with Python object access**: Must hold GIL — extract Python
+// objects first, then release GIL for pure-Rust serde_json work.
+//
+// ## Python 3.14+ / M1/ARM64 Compatibility
+//
+// - serde_json uses SIMD internally for JSON parsing (via simdjson)
+// - GIL release: Critical for 8GB M1 Air to avoid blocking asyncio event loop
 //
 // API design:
 //   `serde_json_pretty(json_str)` — pretty-print with indent=2, like json.dumps(d, indent=2)
@@ -46,12 +58,12 @@ use serde_json::Value;
 fn sort_object_keys(val: &Value) -> Value {
     match val {
         Value::Object(map) => {
-            let mut sorted: Vec<_> = map.iter().collect();
+            let mut sorted: Vec<_> = map.iter());
             sorted.sort_by(|a, b| a.0.cmp(b.0));
             let sorted_map: serde_json::Map<String, Value> = sorted
                 .into_iter()
                 .map(|(k, v)| (k.clone(), sort_object_keys(v)))
-                .collect();
+                );
             Value::Object(sorted_map)
         }
         Value::Array(arr) => Value::Array(arr.iter().map(sort_object_keys).collect()),
@@ -107,52 +119,44 @@ pub fn serde_json_reexport(json_str: &str, pretty: bool, sort_keys: bool) -> Str
 /// Drop-in for `json.dumps(d, indent=2)`.
 ///
 /// ## GIL Handling
-/// Releases GIL via `release_gil` during CPU-bound serde_json parsing/serialization.
+/// `#[pyo3(gil = "release")]` - releases GIL during CPU-bound serde_json parsing.
 #[pyfunction]
+#[pyo3(gil = "release")]
 pub fn serde_json_pretty(json_str: &str) -> String {
-    use crate::gil::release_gil;
-    Python::attach(|py| {
-        release_gil(py, || serde_json_reexport(json_str, true, false))
-    })
+    serde_json_reexport(json_str, true, false)
 }
 
 /// Compact serialize (no indent, no key sorting).
 /// Drop-in for `json.dumps(d)`.
 ///
 /// ## GIL Handling
-/// Releases GIL via `release_gil` during CPU-bound serde_json parsing/serialization.
+/// `#[pyo3(gil = "release")]` - releases GIL during CPU-bound serde_json parsing.
 #[pyfunction]
+#[pyo3(gil = "release")]
 pub fn serde_json_compact(json_str: &str) -> String {
-    use crate::gil::release_gil;
-    Python::attach(|py| {
-        release_gil(py, || serde_json_reexport(json_str, false, false))
-    })
+    serde_json_reexport(json_str, false, false)
 }
 
 /// Pretty-print with sorted keys (indent=2, sort_keys=True).
 /// Drop-in for `json.dumps(d, indent=2, sort_keys=True)`.
 ///
 /// ## GIL Handling
-/// Releases GIL via `release_gil` during CPU-bound serde_json parsing/serialization.
+/// `#[pyo3(gil = "release")]` - releases GIL during CPU-bound serde_json parsing.
 #[pyfunction]
+#[pyo3(gil = "release")]
 pub fn serde_json_pretty_sorted(json_str: &str) -> String {
-    use crate::gil::release_gil;
-    Python::attach(|py| {
-        release_gil(py, || serde_json_reexport(json_str, true, true))
-    })
+    serde_json_reexport(json_str, true, true)
 }
 
 /// Compact serialize with sorted keys.
 /// Drop-in for `json.dumps(d, sort_keys=True)`.
 ///
 /// ## GIL Handling
-/// Releases GIL via `release_gil` during CPU-bound serde_json parsing/serialization.
+/// `#[pyo3(gil = "release")]` - releases GIL during CPU-bound serde_json parsing.
 #[pyfunction]
+#[pyo3(gil = "release")]
 pub fn serde_json_compact_sorted(json_str: &str) -> String {
-    use crate::gil::release_gil;
-    Python::attach(|py| {
-        release_gil(py, || serde_json_reexport(json_str, false, true))
-    })
+    serde_json_reexport(json_str, false, true)
 }
 
 // ---------------------------------------------------------------------------
@@ -188,7 +192,7 @@ pub fn serde_json_dumps_compact_bytes(
 
     // Now release GIL for CPU-bound serde_json work
     use crate::gil::release_gil;
-    Python::attach(|py| {
+    let result = Python::assume_gil().map(|py| {
         release_gil(py, || {
             let value: serde_json::Value = match serde_json::from_str(&json_str) {
                 Ok(v) => v,
@@ -196,7 +200,8 @@ pub fn serde_json_dumps_compact_bytes(
             };
             serde_json::to_vec(&value).unwrap_or_default()
         })
-    })
+    });
+    Ok(result)
 }
 
 /// Pretty-print Python dict → bytes (orjson API compatible).
@@ -450,7 +455,7 @@ mod tests {
         assert!(out.contains('\n'), "pretty should add newlines");
         assert!(out.contains("  "), "pretty should use 2-space indent");
         // Verify valid JSON
-        let re_parsed: serde_json::Value = serde_json::from_str(&out).unwrap();
+        let re_parsed: serde_json::Value = serde_json::from_str(&out));
         assert_eq!(re_parsed["a"], 1);
         assert_eq!(re_parsed["b"], 2);
     }
@@ -461,7 +466,7 @@ mod tests {
         let out = serde_json_compact(input);
         assert!(!out.contains('\n'), "compact should have no newlines");
         // Verify valid JSON
-        let re_parsed: serde_json::Value = serde_json::from_str(&out).unwrap();
+        let re_parsed: serde_json::Value = serde_json::from_str(&out));
         assert_eq!(re_parsed["a"], 1);
     }
 
@@ -505,7 +510,7 @@ mod tests {
         let out = serde_json_pretty_sorted(input);
         assert!(out.contains('\n'));
         // After sort+pretty: a should come before z
-        let lines: Vec<&str> = out.lines().collect();
+        let lines: Vec<&str> = out.lines());
         assert!(lines[0].starts_with("{"));
         assert!(lines[1].contains("\"a\":2"));
         assert!(lines[2].contains("\"z\":1"));
@@ -585,7 +590,7 @@ mod tests {
         let out = serde_json_parse(input);
         assert!(!out.is_empty(), "valid JSON should not return empty");
         // Should be valid JSON (compact form)
-        let re_parsed: serde_json::Value = serde_json::from_str(&out).unwrap();
+        let re_parsed: serde_json::Value = serde_json::from_str(&out));
         assert_eq!(re_parsed["a"], 1);
     }
 
@@ -600,7 +605,7 @@ mod tests {
         // Nested object should survive round-trip
         let input = r#"{"z":{"b":1,"a":2},"a":3}"#;
         let out = serde_json_parse(input);
-        let re_parsed: serde_json::Value = serde_json::from_str(&out).unwrap();
+        let re_parsed: serde_json::Value = serde_json::from_str(&out));
         assert_eq!(re_parsed["a"], 3);
         assert_eq!(re_parsed["z"]["a"], 2);
     }
@@ -610,22 +615,22 @@ mod tests {
 /// Called once from lib.rs pymodule init.
 #[allow(dead_code)]
 pub fn register_functions(m: &Bound<'_, pyo3::prelude::PyModule>) -> PyResult<()> {
-    m.add_function(wrap_pyfunction!(serde_json_pretty, m)?)?;
-    m.add_function(wrap_pyfunction!(serde_json_compact, m)?)?;
-    m.add_function(wrap_pyfunction!(serde_json_pretty_sorted, m)?)?;
-    m.add_function(wrap_pyfunction!(serde_json_compact_sorted, m)?)?;
-    m.add_function(wrap_pyfunction!(serde_json_reexport, m)?)?;
-    m.add_function(wrap_pyfunction!(serde_json_parse, m)?)?;
-    m.add_function(wrap_pyfunction!(batch_serde_json, m)?)?;
-    m.add_function(wrap_pyfunction!(batch_serde_json_pretty, m)?)?;
-    m.add_function(wrap_pyfunction!(batch_serde_json_compact, m)?)?;
-    m.add_function(wrap_pyfunction!(batch_serde_json_pretty_sorted, m)?)?;
-    m.add_function(wrap_pyfunction!(batch_serde_json_compact_sorted, m)?)?;
+    m.add_function(wrap_pyfunction!(serde_json_pretty))?;
+    m.add_function(wrap_pyfunction!(serde_json_compact))?;
+    m.add_function(wrap_pyfunction!(serde_json_pretty_sorted))?;
+    m.add_function(wrap_pyfunction!(serde_json_compact_sorted))?;
+    m.add_function(wrap_pyfunction!(serde_json_reexport))?;
+    m.add_function(wrap_pyfunction!(serde_json_parse))?;
+    m.add_function(wrap_pyfunction!(batch_serde_json))?;
+    m.add_function(wrap_pyfunction!(batch_serde_json_pretty))?;
+    m.add_function(wrap_pyfunction!(batch_serde_json_compact))?;
+    m.add_function(wrap_pyfunction!(batch_serde_json_pretty_sorted))?;
+    m.add_function(wrap_pyfunction!(batch_serde_json_compact_sorted))?;
     // ISSUE-005: bytes-in/bytes-out — zero-copy for STIX export, avoids String↔bytes overhead
-    m.add_function(wrap_pyfunction!(serde_json_compact_bytes, m)?)?;
-    m.add_function(wrap_pyfunction!(serde_json_pretty_bytes, m)?)?;
+    m.add_function(wrap_pyfunction!(serde_json_compact_bytes))?;
+    m.add_function(wrap_pyfunction!(serde_json_pretty_bytes))?;
     // ISSUE-039: orjson-compatible dict→bytes API for hot-path serialization (scorecard, telemetry)
-    m.add_function(wrap_pyfunction!(serde_json_dumps_compact_bytes, m)?)?;
-    m.add_function(wrap_pyfunction!(serde_json_dumps_pretty_bytes, m)?)?;
+    m.add_function(wrap_pyfunction!(serde_json_dumps_compact_bytes))?;
+    m.add_function(wrap_pyfunction!(serde_json_dumps_pretty_bytes))?;
     Ok(())
 }

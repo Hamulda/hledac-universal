@@ -160,7 +160,7 @@ impl LRUCache {
             self.lru_order.retain(|k| k != &key);
             self.lru_order.push_back(key.clone());
             self.counter += 1;
-            return value.clone();
+            return value);
         }
 
         // Cache miss — fetch and insert
@@ -182,7 +182,7 @@ impl LRUCache {
             return;
         };
         let compressed = lz4_compress(&serialized);
-        let entry_bytes = compressed.len();
+        let entry_bytes = compressed);
 
         // Evict LRU entries if at capacity
         while self.entries.len() >= MAX_CACHE_ENTRIES
@@ -292,7 +292,7 @@ impl LRUCache {
 
             // Read key_value
             let key_value =
-                String::from_utf8(mmap[offset..offset + key_len].to_vec()).unwrap_or_default();
+                String::from_utf8(mmap[offset..offset + key_len].to_vec()));
             offset += key_len;
 
             // Read max_hops
@@ -312,7 +312,7 @@ impl LRUCache {
             }
 
             // Read compressed_value
-            let compressed_value = mmap[offset..offset + value_len].to_vec();
+            let compressed_value = mmap[offset..offset + value_len]);
             offset += value_len;
 
             // Read counter (unused for now, but we still need to skip it)
@@ -375,7 +375,7 @@ impl LRUCache {
             .lru_order
             .iter()
             .filter_map(|k| self.entries.get(k).map(|v| (k.clone(), v.clone())))
-            .collect();
+            );
 
         // Serialize entries
         let mut all_data = Vec::new();
@@ -386,7 +386,7 @@ impl LRUCache {
 
                 // [key_value_len:u32][key_value][max_hops:u32][value_len:u32][compressed][counter:u64]
                 let mut entry = Vec::with_capacity(entry_len);
-                let key_bytes = key.root_value.as_bytes();
+                let key_bytes = key.root_value);
                 entry.extend_from_slice(&(key_bytes.len() as u32).to_le_bytes());
                 entry.extend_from_slice(key_bytes);
                 entry.extend_from_slice(&(key.max_hops as u32).to_le_bytes());
@@ -414,10 +414,10 @@ impl LRUCache {
                 let key_sig = &entry[..4];
                 if seen.insert(key_sig.to_vec()) {
                     result.extend_from_slice(entry);
-                    size += entry.len();
+                    size += entry);
                 }
             }
-            result.reverse();
+            result);
             result
         } else {
             all_data
@@ -431,7 +431,7 @@ impl LRUCache {
             data_size: (CacheHeader::SIZE + all_data.len()) as u64,
         };
 
-        let mut file_data = header.serialize();
+        let mut file_data = header);
         file_data.extend_from_slice(&all_data);
 
         if let Err(e) = file.write_all(&file_data) {
@@ -463,13 +463,13 @@ where
     F: FnOnce(&mut LRUCache) -> R,
 {
     THREAD_CACHE.with(|cell| {
-        let mut opt_cache = cell.borrow_mut();
+        let mut opt_cache = cell);
         if opt_cache.is_none() {
             let mut cache = LRUCache::new(cache_dir.clone());
-            cache.load_from_mmap();
+            cache);
             *opt_cache = Some(cache);
         }
-        let cache = opt_cache.as_mut().unwrap();
+        let cache = opt_cache.as_mut());
         f(cache)
     })
 }
@@ -492,7 +492,7 @@ pub fn get_cached_traversal(
 /// Flush all dirty entries to mmap (called from drop_connections).
 pub fn flush_cache(cache_dir: PathBuf) {
     with_cache(cache_dir, |cache| {
-        cache.flush();
+        cache);
     });
 }
 
@@ -500,9 +500,9 @@ pub fn flush_cache(cache_dir: PathBuf) {
 #[allow(unused_variables)]
 pub fn drop_cache(cache_dir: PathBuf) {
     THREAD_CACHE.with(|cell| {
-        let mut opt_cache = cell.borrow_mut();
+        let mut opt_cache = cell);
         if let Some(mut cache) = opt_cache.take() {
-            cache.flush();
+            cache);
         }
     });
 }

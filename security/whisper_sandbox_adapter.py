@@ -35,6 +35,7 @@ from typing import TYPE_CHECKING, Any, Literal, Protocol, runtime_checkable
 from hledac.universal.utils.asyncx import safe_wait_for
 
 import msgspec
+from compat.msgspec_gc_compat import Struct
 from _core import aclose
 
 if TYPE_CHECKING:
@@ -43,7 +44,7 @@ if TYPE_CHECKING:
 # ─── Result Types ──────────────────────────────────────────────────────────────
 
 
-class WhisperSandboxResult(msgspec.Struct, frozen=True, gc=False, kw_only=True):
+class WhisperSandboxResult(Struct, frozen=True, kw_only=True):
     """Result from sandboxed whisper transcription."""
     text: str = ""
     language: str | None = None
@@ -55,7 +56,7 @@ class WhisperSandboxResult(msgspec.Struct, frozen=True, gc=False, kw_only=True):
     segments: list[dict[str, Any]] = msgspec.field(default_factory=list)
 
 
-class SandboxStats(msgspec.Struct, frozen=True, gc=False, kw_only=True):
+class SandboxStats(Struct, frozen=True, kw_only=True):
     """Statistics from sandbox operations."""
     sandboxed: int = 0
     fallback: int = 0
@@ -290,7 +291,7 @@ class DirectWhisperAdapter:
 # ─── Mock Adapter for Testing ─────────────────────────────────────────────────
 
 
-class MockWhisperSegment(msgspec.Struct, frozen=True, gc=False):
+class MockWhisperSegment(Struct, frozen=True):
     """Mock segment for testing."""
     start_s: float = 0.0
     end_s: float = 1.0
@@ -298,7 +299,7 @@ class MockWhisperSegment(msgspec.Struct, frozen=True, gc=False):
     confidence: float = 0.9
 
 
-class MockWhisperResult(msgspec.Struct, frozen=True, gc=False):
+class MockWhisperResult(Struct, frozen=True):
     """Mock transcription result for testing."""
     text: str = "This is a test transcription."
     language: str = "en"

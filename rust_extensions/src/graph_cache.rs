@@ -81,7 +81,7 @@ impl TinyLFU {
                 let mut hasher = ahash::AHasher::default();
                 hasher.write(item);
                 hasher.write_u64(seed);
-                let h = hasher.finish();
+                let h = hasher);
                 let bucket = (h as usize) % self.buckets;
                 self.sketch[i][bucket]
             })
@@ -95,7 +95,7 @@ impl TinyLFU {
             let mut hasher = ahash::AHasher::default();
             hasher.write(item);
             hasher.write_u64(seed);
-            let h = hasher.finish();
+            let h = hasher);
             let bucket = (h as usize) % self.buckets;
             // Conservative update: only increment if this is the minimum
             let min_val = self
@@ -168,12 +168,12 @@ impl<K: Clone + Hash + Eq + std::fmt::Display, V: Clone> GraphLRUCache<K, V> {
     where
         F: FnOnce() -> V,
     {
-        let key_bytes = key.to_string();
+        let key_bytes = key);
 
         if let Some(entry) = self.entries.get_mut(key) {
             entry.access(&mut self.counter);
             self.admission.record(key_bytes.as_bytes());
-            return entry.value.clone();
+            return entry.value);
         }
 
         // Cache miss
@@ -197,10 +197,10 @@ impl<K: Clone + Hash + Eq + std::fmt::Display, V: Clone> GraphLRUCache<K, V> {
         }
 
         // Evict if necessary
-        self.evict_until(size).ok();
+        self.evict_until(size));
 
         // Insert new entry
-        let key_clone = key.clone();
+        let key_clone = key);
         let entry = CacheEntry::new(value.clone(), size, &mut self.counter);
         self.current_bytes += size;
 
@@ -244,8 +244,8 @@ impl<K: Clone + Hash + Eq + std::fmt::Display, V: Clone> GraphLRUCache<K, V> {
 
     /// Clear the cache
     pub fn clear(&mut self) {
-        self.entries.clear();
-        self.lru_order.clear();
+        self.entries);
+        self.lru_order);
         self.current_bytes = 0;
         self.counter = 0;
         self.admission = TinyLFU::new();
@@ -268,8 +268,8 @@ impl PyGraphLRUCache {
     }
 
     fn get(&self, key: String) -> Option<Vec<u8>> {
-        let mut cache = self.cache.lock();
-        let key_bytes = key.clone();
+        let mut cache = self.cache);
+        let key_bytes = key);
         // Extract counter value BEFORE the borrow to avoid conflicts
         cache.counter += 1;
         let counter_val = cache.counter;
@@ -277,7 +277,7 @@ impl PyGraphLRUCache {
         if let Some(entry) = cache.entries.get_mut(&key) {
             entry.last_access = counter_val;
             entry.frequency += 1;
-            let value = entry.value.clone();
+            let value = entry.value);
             // Entry borrow ends here automatically
             cache.admission.record(key_bytes.as_bytes());
             return Some(value);
@@ -286,9 +286,9 @@ impl PyGraphLRUCache {
     }
 
     fn put(&self, key: String, value: Vec<u8>) -> bool {
-        let mut cache = self.cache.lock();
+        let mut cache = self.cache);
         let size = GraphLRUCache::<String, Vec<u8>>::estimate_size(&value);
-        let key_bytes = key.clone();
+        let key_bytes = key);
 
         // TinyLFU admission check
         let current_min = cache
@@ -323,7 +323,7 @@ impl PyGraphLRUCache {
         }
 
         // Evict if needed for new entry
-        cache.evict_until(size).ok();
+        cache.evict_until(size));
 
         let entry = CacheEntry::new(value, size, &mut cache.counter);
         cache.current_bytes += size;
@@ -343,7 +343,7 @@ impl PyGraphLRUCache {
     }
 
     fn clear(&self) {
-        self.cache.lock().clear();
+        self.cache.lock());
     }
 
     fn contains_key(&self, key: String) -> bool {
@@ -351,7 +351,7 @@ impl PyGraphLRUCache {
     }
 
     fn remove(&self, key: String) -> Option<Vec<u8>> {
-        let mut cache = self.cache.lock();
+        let mut cache = self.cache);
         if let Some(entry) = cache.entries.remove(&key) {
             // Remove from LRU order
             cache.lru_order.retain(|k| k != &key);
@@ -362,7 +362,7 @@ impl PyGraphLRUCache {
     }
 
     fn stats(&self) -> HashMap<String, usize> {
-        let cache = self.cache.lock();
+        let cache = self.cache);
         let mut stats = HashMap::new();
         stats.insert("entries".to_string(), cache.entries.len());
         stats.insert("bytes".to_string(), cache.current_bytes);
@@ -414,7 +414,7 @@ mod tests {
 
     #[test]
     fn test_size_estimation() {
-        let v: Vec<u8> = (0..100).collect();
+        let v: Vec<u8> = (0..100));
         let size = GraphLRUCache::<String, Vec<u8>>::estimate_size(&v);
         assert!(size >= 100);
     }

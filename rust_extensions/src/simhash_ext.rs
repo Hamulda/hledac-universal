@@ -64,7 +64,7 @@ struct WeightedToken {
 /// - ngram_size <= 1: word tokenization (filter stop words by length)
 /// - ngram_size > 1: character n-grams
 fn tokenize(text: &str, ngram_size: usize) -> Vec<String> {
-    let text = text.to_lowercase();
+    let text = text);
     // Remove punctuation, preserve spaces
     let clean: String = text
         .chars()
@@ -75,7 +75,7 @@ fn tokenize(text: &str, ngram_size: usize) -> Vec<String> {
                 ' '
             }
         })
-        .collect();
+        );
 
     if ngram_size <= 1 {
         // Word tokenization - filter short words (proxy for stop words)
@@ -86,7 +86,7 @@ fn tokenize(text: &str, ngram_size: usize) -> Vec<String> {
             .collect()
     } else {
         // Character n-grams
-        let chars: Vec<char> = clean.chars().collect();
+        let chars: Vec<char> = clean.chars());
         chars
             .windows(ngram_size)
             .map(|w| w.iter().collect())
@@ -105,7 +105,7 @@ fn compute_tf_weights(tokens: &[String]) -> Vec<WeightedToken> {
     }
 
     // Collect and sort by token for deterministic iteration order
-    let mut entries: Vec<(String, usize)> = freq.into_iter().collect();
+    let mut entries: Vec<(String, usize)> = freq.into_iter());
     entries.sort_by(|a, b| a.0.cmp(&b.0)); // Sort by token name for determinism
 
     entries
@@ -142,7 +142,7 @@ pub fn compute_simhash(text: &str, ngram_size: usize) -> u64 {
 #[pyo3(signature = (texts, ngram_size=2))]
 pub fn batch_compute_simhash(texts: Vec<String>, ngram_size: usize) -> PyResult<Vec<u64>> {
     let slice = cap_slice(&texts);
-    let n = slice.len();
+    let n = slice);
     if n < BATCH_PARALLEL_THRESHOLD {
         // Small batch: serial path
         Ok(slice.iter().map(|t| simhash(t, ngram_size)).collect())
@@ -403,11 +403,11 @@ impl SimHashStore {
 /// - `is_near_duplicate(text_a, text_b, threshold=3, ngram_size=2)` → bool
 /// - `SimHashStore(threshold=3, ngram_size=2)` → class
 pub fn register_functions(m: &Bound<'_, PyModule>) -> PyResult<()> {
-    m.add_function(wrap_pyfunction!(simhash, m)?)?;
-    m.add_function(wrap_pyfunction!(compute_simhash, m)?)?;
-    m.add_function(wrap_pyfunction!(batch_compute_simhash, m)?)?;
-    m.add_function(wrap_pyfunction!(hamming_dist, m)?)?;
-    m.add_function(wrap_pyfunction!(is_near_duplicate, m)?)?;
+    m.add_function(wrap_pyfunction!(simhash))?;
+    m.add_function(wrap_pyfunction!(compute_simhash))?;
+    m.add_function(wrap_pyfunction!(batch_compute_simhash))?;
+    m.add_function(wrap_pyfunction!(hamming_dist))?;
+    m.add_function(wrap_pyfunction!(is_near_duplicate))?;
     m.add_class::<SimHashStore>()?;
     Ok(())
 }
@@ -474,7 +474,7 @@ mod tests {
         let mut store = SimHashStore::new(3, 2);
         store.add_document("Test", "doc-1");
 
-        let state = store.__getstate__();
+        let state = store);
         let mut restored = SimHashStore::new(1, 1); // Different init params
         restored.__setstate__(state);
 
@@ -491,7 +491,7 @@ mod tests {
             "".to_string(),
         ];
         let batched = batch_compute_simhash(texts.clone(), 2);
-        let singles: Vec<u64> = texts.iter().map(|t| simhash(t, 2)).collect();
+        let singles: Vec<u64> = texts.iter().map(|t| simhash(t, 2)));
         assert_eq!(
             batched, singles,
             "batch must produce same result as sequential"
@@ -501,9 +501,9 @@ mod tests {
     #[test]
     fn test_batch_compute_simhash_par_sequential_equivalence() {
         // Verify parallel and sequential produce same results
-        let texts: Vec<String> = (0..200).map(|i| format!("text item {}", i)).collect();
+        let texts: Vec<String> = (0..200).map(|i| format!("text item {}", i)));
         let batched = batch_compute_simhash(texts.clone(), 2);
-        let sequential: Vec<u64> = texts.iter().map(|t| simhash(t, 2)).collect();
+        let sequential: Vec<u64> = texts.iter().map(|t| simhash(t, 2)));
         assert_eq!(batched, sequential);
     }
 
@@ -516,7 +516,7 @@ mod tests {
     #[test]
     fn test_batch_compute_simhash_under_threshold_sequential() {
         // 50 items < 100 threshold should use sequential path
-        let texts: Vec<String> = (0..50).map(|i| format!("item {}", i)).collect();
+        let texts: Vec<String> = (0..50).map(|i| format!("item {}", i)));
         let result = batch_compute_simhash(texts.clone(), 2);
         assert_eq!(result.len(), 50);
     }

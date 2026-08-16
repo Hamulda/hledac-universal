@@ -21,6 +21,7 @@ from abc import ABC, abstractmethod
 from typing import TYPE_CHECKING, Any
 import httpx
 import msgspec
+from compat.msgspec_gc_compat import Struct
 from hledac.universal.network.session_runtime import async_get_httpx_session
 from hledac.universal.tools.discovery_replay import read_cassette, replay_enabled, replay_strict_enabled, write_cassette
 from hledac.universal.transport.circuit_breaker import checked_httpx_get, checked_httpx_post
@@ -36,7 +37,7 @@ TIER_SURFACE = 'surface'
 TIER_STRUCTURED_TI = 'structured_ti'
 TIER_OVERLAY_READY = 'overlay_ready'
 
-class NormalizedEntry(msgspec.Struct, frozen=True, gc=False):
+class NormalizedEntry(Struct, frozen=True):
     """
     Lightweight normalized entry from any structured TI source.
 
@@ -202,7 +203,7 @@ class NvdApiAdapter(SourceAdapter):
         try:
             data = _msgspec_loads(text)
         except Exception as e:
-            logger.debug(f'[NVD] JSON parse error for {url}: {e}')
+            logger.debug("[NVD] JSON parse error for %s: %s", url, e)
             return ()
         vulnerabilities = data.get('vulnerabilities', [])
         if not isinstance(vulnerabilities, list):
@@ -228,7 +229,7 @@ class NvdApiAdapter(SourceAdapter):
                     dt = datetime.fromisoformat(pub_str.replace('Z', '+00:00'))
                     published_ts = dt.timestamp()
                 except Exception as e:
-                    logger.debug(f'[NVD] Timestamp parse error for {cve_id}: {e}')
+                    logger.debug("[NVD] Timestamp parse error for %s: %s", cve_id, e)
             references = cve_data.get('references', [])[:5]
             source_url = references[0].get('url', '') if references else ''
             metrics = cve_data.get('metrics', {})
@@ -296,7 +297,7 @@ class CisaKevAdapter(SourceAdapter):
         try:
             data = _msgspec_loads(text)
         except Exception as e:
-            logger.debug(f'[CISA KEV] JSON parse error for {self.API_URL}: {e}')
+            logger.debug("[CISA KEV] JSON parse error for %s: %s", self.API_URL, e)
             return ()
         vulns = data.get('vulnerabilities', [])
         if not isinstance(vulns, list):
@@ -318,7 +319,7 @@ class CisaKevAdapter(SourceAdapter):
                     dt = datetime.strptime(date_added, '%Y-%m-%d')
                     published_ts = dt.timestamp()
                 except Exception as e:
-                    logger.debug(f'[CISA KEV] Date parse error for {cve_id}: {e}')
+                    logger.debug("[CISA KEV] Date parse error for %s: %s", cve_id, e)
             source_url = vuln.get('knownRansomwareCampaignUse', '')
             if not source_url:
                 source_url = 'https://www.cisa.gov/known-exploited-vulnerabilities-catalog'
@@ -344,14 +345,14 @@ async def _generic_get_feed(
         s = await async_get_httpx_session()
         data, status, err = await checked_httpx_get(s, url, timeout=httpx.Timeout(timeout), failure_kind=source_name)
         if err:
-            logger.debug(f'[{source_name}] {err}')
+            logger.debug("[%s] %s", source_name, err)
             return []
         items = data.get(path, [])[:max_items]
         if filter_key and filter_value:
             items = [e for e in items if e.get(filter_key) == filter_value]
         return items
     except Exception as e:
-        logger.debug(f'[{source_name}] {e}')
+        logger.debug("[%s] %s", source_name, e)
     return []
 
 
@@ -370,7 +371,7 @@ async def _generic_post_feed(
         s = await async_get_httpx_session()
         resp, err = await checked_httpx_post(s, url, json=payload or {}, timeout=httpx.Timeout(timeout), failure_kind=source_name)
         if err:
-            logger.debug(f'[{source_name}] {err}')
+            logger.debug("[%s] %s", source_name, err)
             return []
         data = await resp.json()
         items = data.get(data_path, [])[:max_items]
@@ -378,7 +379,7 @@ async def _generic_post_feed(
             return extractor(items)
         return items
     except Exception as e:
-        logger.debug(f'[{source_name}] {e}')
+        logger.debug("[%s] %s", source_name, e)
     return []
 
 
@@ -404,11 +405,11 @@ async def fetch_threatfox(days: int=1) -> list[dict]:
         s = await async_get_httpx_session()
         data, status, err = await checked_httpx_post(s, 'https://threatfox-api.abuse.ch/api/v1/', json={'query': 'get_iocs', 'days': days}, timeout=httpx.Timeout(float(os.environ.get('HLEDAC_FEED_TIMEOUT', '45')), connect=10.0), failure_kind='threatfox')
         if err:
-            logger.debug(f'[ThreatFox] {err}')
+            logger.debug("[ThreatFox] %s", err)
             return []
         return [{'ioc': i.get('ioc_value'), 'ioc_type': i.get('ioc_type'), 'malware': i.get('malware'), 'confidence': i.get('confidence_level', 50) / 100, 'title': f"ThreatFox: {i.get('malware', '?')}", 'source': 'threatfox'} for i in data.get('data', [])]
     except Exception as e:
-        logger.debug(f'[ThreatFox] {e}')
+        logger.debug("[ThreatFox] %s", e)
     return []
 
 async def fetch_sslbl() -> list[dict]:
@@ -422,7 +423,7 @@ async def fetch_sslbl() -> list[dict]:
         timeout_cfg = httpx.Timeout(float(os.environ.get('HLEDAC_FEED_TIMEOUT', '45')), connect=10.0)
         resp = await s.get('https://sslbl.abuse.ch/blacklist/sslblacklist.csv', timeout=timeout_cfg)
         if resp.status_code != 200:
-            logger.debug(f'[SSLBL] HTTP {resp.status_code}')
+            logger.debug("[SSLBL] HTTP %s", resp.status_code)
             return []
         text = resp.text
         findings = []
@@ -439,7 +440,7 @@ async def fetch_sslbl() -> list[dict]:
                 break
         return findings
     except Exception as e:
-        logger.debug(f'[SSLBL] {e}')
+        logger.debug("[SSLBL] %s", e)
     return []
 
 async def fetch_feodo_c2() -> list[dict]:
@@ -448,11 +449,11 @@ async def fetch_feodo_c2() -> list[dict]:
         s = await async_get_httpx_session()
         data, status, err = await checked_httpx_get(s, 'https://feodotracker.abuse.ch/downloads/ipblocklist.json', timeout=httpx.Timeout(15), failure_kind='feodo')
         if err:
-            logger.debug(f'[Feodo] {err}')
+            logger.debug("[Feodo] %s", err)
             return []
         return [{'ioc': e.get('ip_address'), 'ioc_type': 'ip', 'malware': e.get('malware'), 'port': e.get('port'), 'title': f"Feodo C2: {e.get('ip_address')}", 'source': 'feodo_tracker'} for e in (data if isinstance(data, list) else [])]
     except Exception as e:
-        logger.debug(f'[Feodo] {e}')
+        logger.debug("[Feodo] %s", e)
     return []
 
 async def query_circl_pdns(domain: str, max_results: int=50) -> list[dict]:
@@ -461,7 +462,7 @@ async def query_circl_pdns(domain: str, max_results: int=50) -> list[dict]:
         s = await async_get_httpx_session()
         text, status, err = await checked_httpx_get(s, f'https://www.circl.lu/pdns/query/{domain}', timeout=httpx.Timeout(15), failure_kind='circl_pdns')
         if err:
-            logger.debug(f'[CIRCL pDNS] {err}')
+            logger.debug("[CIRCL pDNS] %s", err)
             return []
         if status != 200:
             return []
@@ -471,10 +472,10 @@ async def query_circl_pdns(domain: str, max_results: int=50) -> list[dict]:
                 rec = __msgspec_loads(line)
                 results.append({'ioc': rec.get('rrvalue', ''), 'ioc_type': rec.get('rrtype', 'A').lower(), 'domain': rec.get('rrname', ''), 'first_seen': rec.get('time_first', ''), 'last_seen': rec.get('time_last', ''), 'source': 'circl_pdns'})
             except Exception as e:
-                logger.debug(f'[CIRCL pDNS] JSON parse error for line: {e}')
+                logger.debug("[CIRCL pDNS] JSON parse error for line: %s", e)
         return results
     except Exception as e:
-        logger.debug(f'[CIRCL pDNS] {e}')
+        logger.debug("[CIRCL pDNS] %s", e)
     return []
 
 async def search_crtsh(domain: str, max_results: int=100) -> list[dict]:
@@ -483,7 +484,7 @@ async def search_crtsh(domain: str, max_results: int=100) -> list[dict]:
         s = await async_get_httpx_session()
         data, status, err = await checked_httpx_get(s, 'https://crt.sh/', params={'q': f'%.{domain}', 'output': 'json'}, timeout=httpx.Timeout(20), failure_kind='crtsh')
         if err:
-            logger.warning(f'[crt.sh] {err}')
+            logger.warning("[crt.sh] %s", err)
             return []
         if status != 200:
             return []
@@ -497,7 +498,7 @@ async def search_crtsh(domain: str, max_results: int=100) -> list[dict]:
                     results.append({'ioc': sub, 'ioc_type': 'domain', 'issuer': cert.get('issuer_name', ''), 'title': f'CT cert: {sub}', 'source': 'crtsh'})
         return results
     except Exception as e:
-        logger.warning(f'[crt.sh] {e}')
+        logger.warning("[crt.sh] %s", e)
     return []
 
 async def certstream_monitor(keyword: str, duration_s: int=60, max_certs: int=200) -> list[dict]:
@@ -532,7 +533,7 @@ async def certstream_monitor(keyword: str, duration_s: int=60, max_certs: int=20
                 except TimeoutError:
                     continue
     except Exception as e:
-        logger.warning(f'[Certstream] {e}')
+        logger.warning("[Certstream] %s", e)
     return results
 
 
@@ -547,12 +548,12 @@ def _build_certstream_matcher(patterns: list[str], use_rust: bool) -> tuple[Any 
         if AhoCorasickMatcher is not None:
             try:
                 matcher = AhoCorasickMatcher(patterns_lower)
-                logger.info(f'[Certstream] Rust Aho-Corasick built with {len(patterns)} patterns')
+                logger.info("[Certstream] Rust Aho-Corasick built with %s patterns", len(patterns))
                 return matcher, patterns_lower
             except Exception as e:
-                logger.warning(f'[Certstream] Rust Aho-Corasick unavailable: {e}, using Python fallback')
+                logger.warning("[Certstream] Rust Aho-Corasick unavailable: %s, using Python fallback", e)
 
-    logger.info(f'[Certstream] Python fallback with {len(patterns)} patterns')
+    logger.info("[Certstream] Python fallback with %s patterns", len(patterns))
     return None, patterns_lower
 
 
@@ -655,7 +656,7 @@ async def certstream_monitor_multi(
                 except TimeoutError:
                     continue
     except Exception as e:
-        logger.warning(f'[Certstream] {e}')
+        logger.warning("[Certstream] %s", e)
 
     return results
 
@@ -668,12 +669,12 @@ async def enrich_ip_internetdb(ip: str) -> dict:
         s = await async_get_httpx_session()
         data, status, err = await checked_httpx_get(s, f'https://internetdb.shodan.io/{ip}', timeout=httpx.Timeout(8), failure_kind='shodan_internetdb')
         if err:
-            logger.debug(f'[ShodanInternetDB] {err}')
+            logger.debug("[ShodanInternetDB] %s", err)
             return {}
         if status == 200:
             return {'ip': ip, 'ports': data.get('ports', []) if isinstance(data, dict) else [], 'cves': data.get('cves', []) if isinstance(data, dict) else [], 'hostnames': data.get('hostnames', []) if isinstance(data, dict) else [], 'tags': data.get('tags', []) if isinstance(data, dict) else [], 'source': 'shodan_internetdb'}
     except Exception as e:
-        logger.debug(f'[ShodanInternetDB] {e}')
+        logger.debug("[ShodanInternetDB] %s", e)
     return {}
 COMMUNITY_URL = 'https://api.greynoise.io/v3/community/{ip}'
 
@@ -696,7 +697,7 @@ async def enrich_ip_greynoise_community(session: httpx.AsyncClient, ip: str) -> 
         data = resp.json()
         return {'classification': data.get('classification'), 'noise': data.get('noise', False), 'riot': data.get('riot', False), 'name': data.get('name', ''), 'link': data.get('link', '')}
     except Exception as e:
-        logger.debug(f'[GreyNoise/community] {ip}: {e}')
+        logger.debug("[GreyNoise/community] %s: %s", ip, e)
         return None
 
 async def enrich_findings_greynoise_community(session: httpx.AsyncClient, findings: list[dict], max_lookups: int=40) -> list[dict]:
@@ -711,7 +712,7 @@ async def enrich_findings_greynoise_community(session: httpx.AsyncClient, findin
     ip_findings = [f for f in findings if f.get('ioc_type') in ('ip', 'ipv4') and f.get('ioc')][:max_lookups]
     if not ip_findings:
         return findings
-    logger.info(f'[GreyNoise/community] enriching {len(ip_findings)} IPs (cap={max_lookups})')
+    logger.info("[GreyNoise/community] enriching %s IPs (cap=%s)", len(ip_findings), max_lookups)
     sem = asyncio.Semaphore(1)
 
     async def _enrich_with_rate_limit(finding: dict) -> None:
@@ -727,7 +728,7 @@ async def enrich_findings_greynoise_community(session: httpx.AsyncClient, findin
     from hledac.universal.utils.asyncx import parallel
     await parallel([_enrich_with_rate_limit(f) for f in ip_findings], policy='log', ctx='ti_feed:greynoise_enrich')
     enriched = sum((1 for f in ip_findings if 'greynoise' in f))
-    logger.info(f'[GreyNoise/community] enriched {enriched}/{len(ip_findings)} IPs')
+    logger.info("[GreyNoise/community] enriched %s/%s IPs", enriched, len(ip_findings))
     return findings
 
 def _parse_pastebin_urls(html_text: str, max_pastes: int = 10) -> list[str]:
@@ -764,7 +765,7 @@ def _parse_pastebin_urls(html_text: str, max_pastes: int = 10) -> list[str]:
 def _process_paste_result(raw_url: str, fetch_result, keyword: str) -> dict | None:
     """Process a single paste fetch result for keyword match."""
     if fetch_result.error or fetch_result.text is None:
-        logger.debug(f'[Pastebin] Paste fetch error for {raw_url}: {fetch_result.error}')
+        logger.debug("[Pastebin] Paste fetch error for %s: %s", raw_url, fetch_result.error)
         return None
     content_str = fetch_result.text
     if keyword.lower() in content_str.lower():
@@ -788,7 +789,7 @@ async def scrape_pastebin_for_keyword(keyword: str, max_pastes: int=10) -> list[
         s = await async_get_httpx_session()
         text, status, err = await checked_httpx_get(s, 'https://pastebin.com/archive', timeout=httpx.Timeout(10), failure_kind='pastebin_archive')
         if err:
-            logger.debug(f'[Pastebin archive] {err}')
+            logger.debug("[Pastebin archive] %s", err)
             return []
         if status != 200:
             return []
@@ -806,9 +807,9 @@ async def scrape_pastebin_for_keyword(keyword: str, max_pastes: int=10) -> list[
                 if result:
                     results.append(result)
             except Exception as e:
-                logger.debug(f'[Pastebin] Paste processing error for {raw_url}: {e}')
+                logger.debug("[Pastebin] Paste processing error for %s: %s", raw_url, e)
     except Exception as e:
-        logger.debug(f'[Pastebin] {e}')
+        logger.debug("[Pastebin] %s", e)
     return results
 
 async def search_github_gists(keyword: str, max_results: int=10) -> list[dict]:
@@ -818,7 +819,7 @@ async def search_github_gists(keyword: str, max_results: int=10) -> list[dict]:
         s = await async_get_httpx_session()
         text, status, err = await checked_httpx_get(s, 'https://gist.github.com/search', params={'q': keyword, 's': 'updated'}, timeout=httpx.Timeout(12), failure_kind='github_gist')
         if err:
-            logger.debug(f'[GitHub Gist] {err}')
+            logger.debug("[GitHub Gist] %s", err)
             return []
         if status != 200:
             return []
@@ -855,7 +856,7 @@ async def search_github_gists(keyword: str, max_results: int=10) -> list[dict]:
                         'source': 'github_gist_search'
                     })
     except Exception as e:
-        logger.debug(f'[GitHub Gist] {e}')
+        logger.debug("[GitHub Gist] %s", e)
     return results
 _GH_DORK_TEMPLATES = {'ioc_in_code': '"{v}" filename:iocs.txt OR filename:indicators', 'credential': '"{v}" password OR token OR secret', 'config_leak': '"{v}" filename:config.yml OR filename:.env', 'malware_sample': '"{v}" malware OR implant OR backdoor'}
 _GH_HEADERS_BASE = {'Accept': 'application/vnd.github.v3+json', 'User-Agent': 'hledac-osint/1.0'}
@@ -877,14 +878,14 @@ async def github_dork(value: str, dork_type: str='ioc_in_code', max_results: int
         s = await async_get_httpx_session()
         data, status, err = await checked_httpx_get(s, 'https://api.github.com/search/code', params={'q': query, 'per_page': min(max_results, 30)}, headers=headers, timeout=httpx.Timeout(15), failure_kind='github_dork')
         if err:
-            logger.debug(f'[GitHub dork] {err}')
+            logger.debug("[GitHub dork] %s", err)
             return []
         if status == 200 and isinstance(data, dict):
             return [{'title': i['name'], 'url': i['html_url'], 'snippet': i['repository']['full_name'], 'source': 'github_dork'} for i in data.get('items', [])]
         elif status == 403:
             logger.debug('[GitHub dork] rate limited — set GITHUB_TOKEN')
     except Exception as e:
-        logger.debug(f'[GitHub dork] {e}')
+        logger.debug("[GitHub dork] %s", e)
     return []
 AHMIA_CLEARNET = 'https://ahmia.fi/search/'
 AHMIA_ONION = 'http://juhanurmihxlp77nkq76byazcldy2hlmovfu2epvl5ankdibsot4csyd.onion/search/'
@@ -902,7 +903,7 @@ async def search_ahmia(query: str, max_results: int=20, use_onion: bool=False) -
         params = None if use_onion else {'q': query}
         text, status, err = await checked_httpx_get(s, url, params=params, headers={'User-Agent': 'Mozilla/5.0'}, timeout=httpx.Timeout(15), failure_kind='ahmia_onion' if use_onion else 'ahmia_clearnet')
         if err:
-            logger.debug(f'[Ahmia] fetch failed: {err}')
+            logger.debug("[Ahmia] fetch failed: %s", err)
             return []
         html = str(text)
         if not html:
@@ -936,7 +937,7 @@ async def search_ahmia(query: str, max_results: int=20, use_onion: bool=False) -
                 })
         return results
     except Exception as e:
-        logger.warning(f'[Ahmia] {e}')
+        logger.warning("[Ahmia] %s", e)
     return []
 
 async def query_rdap(target: str) -> dict:
@@ -949,10 +950,10 @@ async def query_rdap(target: str) -> dict:
     if replay_enabled():
         cached = read_cassette('rdap_org', target)
         if cached is not None:
-            logger.debug(f'[RDAP] replay hit for {target}')
+            logger.debug("[RDAP] replay hit for %s", target)
             return cached
         elif replay_strict_enabled():
-            logger.debug(f'[RDAP] replay miss for {target}, strict mode')
+            logger.debug("[RDAP] replay miss for %s, strict mode", target)
             return {'error': 'replay_miss', 'error_type': 'replay_miss', 'target': target, 'rdap': None, 'source': 'rdap_org'}
     is_ip = target.replace('.', '').isdigit() or ':' in target
     base = 'https://rdap.org'
@@ -961,14 +962,14 @@ async def query_rdap(target: str) -> dict:
         s = await async_get_httpx_session()
         data, status, err = await checked_httpx_get(s, endpoint, timeout=httpx.Timeout(10), failure_kind='rdap')
         if err:
-            logger.debug(f'[RDAP] {err}')
+            logger.debug("[RDAP] %s", err)
             return {}
         result = {'target': target, 'rdap': data if isinstance(data, dict) else {}, 'source': 'rdap_org'}
         if replay_enabled():
             write_cassette('rdap_org', target, result)
         return result
     except Exception as e:
-        logger.debug(f'[RDAP] {e}')
+        logger.debug("[RDAP] %s", e)
     return {}
 
 class WaybackArchiveAdapter(SourceAdapter):
@@ -1038,7 +1039,7 @@ class WaybackArchiveAdapter(SourceAdapter):
                             try:
                                 published_ts = ar.timestamp.timestamp()
                             except Exception as e:
-                                logger.debug(f'[WaybackArchive] Timestamp parse error: {e}')
+                                logger.debug("[WaybackArchive] Timestamp parse error: %s", e)
                         entries.append(NormalizedEntry(entry_hash=entry_hash, source_url=ar.url or '', title=ar.title or f'Archive: {ar.url}', body_text=ar.content[:500] if ar.content else '', published_at=published_ts, source_type=self.SOURCE_TYPE, raw_identifiers=(), source_tier=self.SOURCE_TIER, rich_content_available=False))
                         if len(entries) >= limit:
                             return tuple(entries)
@@ -1252,7 +1253,7 @@ async def fetch_i2p_eepsite(url: str, proxy_url: str='http://127.0.0.1:4444') ->
         content = resp.text
         return {'url': url, 'status': resp.status_code, 'content': content[:50000], 'source': 'i2p_eepsite', 'error': None}
     except Exception as e:
-        logger.debug(f'[I2P] {e}')
+        logger.debug("[I2P] %s", e)
         return {'url': url, 'status': 0, 'content': '', 'source': 'i2p_eepsite', 'error': str(e)}
 
 async def search_i2p_directory(query: str, max_results: int=20) -> list[dict]:
@@ -1306,7 +1307,7 @@ async def fetch_ipfs_cid(cid: str) -> dict:
             data = resp.content
             return {'cid': cid, 'source': 'ipfs_local_daemon', 'content': data[:100000].decode('utf-8', errors='replace'), 'size': len(data), 'error': None}
     except Exception as e:
-        logger.debug(f'[IPFS] Local daemon fetch failed for CID {cid}: {e}')
+        logger.debug("[IPFS] Local daemon fetch failed for CID %s: %s", cid, e)
     for gw in _IPFS_GATEWAYS:
         try:
             resp = await session.get(f'{gw}{cid}', timeout=httpx.Timeout(30))
@@ -1314,7 +1315,7 @@ async def fetch_ipfs_cid(cid: str) -> dict:
                 data = resp.content
                 return {'cid': cid, 'source': gw, 'content': data[:100000].decode('utf-8', errors='replace'), 'size': len(data), 'error': None}
         except Exception as e:
-            logger.debug(f'[IPFS] Gateway fetch failed for CID {cid} via {gw}: {e}')
+            logger.debug("[IPFS] Gateway fetch failed for CID %s via %s: %s", cid, gw, e)
     return {'cid': cid, 'source': None, 'content': '', 'size': 0, 'error': 'IPFS nedostupný (daemon + všechny gateways selhaly)'}
 
 async def search_ipfs(query: str, max_results: int=10) -> list[dict]:
@@ -1328,7 +1329,7 @@ async def search_ipfs(query: str, max_results: int=10) -> list[dict]:
             for hit in data.get('hits', {}).get('hits', [])[:max_results]:
                 results.append({'cid': hit.get('_id', ''), 'title': hit.get('_source', {}).get('title', ''), 'score': hit.get('_score', 0), 'source': 'ipfs_search'})
     except Exception as e:
-        logger.debug(f'[IPFS search] {e}')
+        logger.debug("[IPFS search] %s", e)
     return results
 
 @register_task('ipfs_fetch')
@@ -1374,7 +1375,7 @@ async def _handle_ipfs_fetch(task, scheduler):
         try:
             await scheduler._duckdb_store.async_ingest_findings_batch(findings)
         except Exception as e:
-            logger.debug(f'IPFS canonical persist failed: {e}')
+            logger.debug("IPFS canonical persist failed: %s", e)
 
 async def fetch_gopher(host: str, selector: str='/', port: int=70) -> dict:
     """
@@ -1402,13 +1403,13 @@ async def fetch_gopher(host: str, selector: str='/', port: int=70) -> dict:
             async with asyncio.timeout(2.0):
                 await writer.wait_closed()
         except Exception as e:
-            logger.debug(f'[Gopher] Wait closed failed for {host}{selector}: {e}')
+            logger.debug("[Gopher] Wait closed failed for %s%s: %s", host, selector, e)
         content = data.decode('utf-8', errors='replace')
         return {'host': host, 'selector': selector, 'content': content[:10000], 'items': _parse_gophermap(content), 'source': 'gopher', 'error': None}
     except TimeoutError:
         return {'host': host, 'selector': selector, 'content': '', 'items': [], 'source': 'gopher', 'error': 'timeout'}
     except Exception as e:
-        logger.debug(f'[Gopher] {host}{selector}: {e}')
+        logger.debug("[Gopher] %s%s: %s", host, selector, e)
         return {'host': host, 'selector': selector, 'content': '', 'items': [], 'source': 'gopher', 'error': str(e)}
 
 def _parse_gophermap(content: str) -> list[dict]:
@@ -1465,7 +1466,7 @@ async def query_ripe_stat_asn(ip: str) -> dict:
             asns = data.get('asns', [])
             return {'ip': ip, 'asn': asns[0].get('asn') if asns else None, 'holder': asns[0].get('holder') if asns else None, 'prefix': data.get('resource', ip), 'source': 'ripe_stat'}
     except Exception as e:
-        logger.debug(f'[RIPE Stat] {e}')
+        logger.debug("[RIPE Stat] %s", e)
     return {'ip': ip, 'asn': None, 'holder': None, 'source': 'ripe_stat', 'error': 'RIPE Stat nedostupný'}
 
 async def query_team_cymru_asn(ip: str) -> dict:
@@ -1488,7 +1489,7 @@ async def query_team_cymru_asn(ip: str) -> dict:
     except ImportError:  # noqa: BLE001
         pass
     except Exception as e:
-        logger.debug(f'[Cymru aiodns] {e}')
+        logger.debug("[Cymru aiodns] %s", e)
     try:
         proc = await asyncio.create_subprocess_exec('nslookup', '-type=TXT', query_name, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
         async with asyncio.timeout(5.0):
@@ -1497,7 +1498,7 @@ async def query_team_cymru_asn(ip: str) -> dict:
         asn_match = _re.search('"(\\d+)\\s*\\|', output)
         return {'ip': ip, 'asn': f'AS{asn_match.group(1)}' if asn_match else None, 'source': 'team_cymru_nslookup'}
     except Exception as e:
-        logger.debug(f'[Cymru nslookup] {e}')
+        logger.debug("[Cymru nslookup] %s", e)
     return {'ip': ip, 'asn': None, 'source': 'team_cymru', 'error': 'lookup failed'}
 
 @register_task('bgp_asn_lookup')
@@ -1522,7 +1523,7 @@ async def query_bgp_routing_history(resource: str, max_rows: int=20) -> dict:
             data = resp.json()
             return {'resource': resource, 'history': data.get('data', {}).get('by_origin', [])[:max_rows], 'source': 'ripe_bgp_history', 'error': None}
     except Exception as e:
-        logger.debug(f'[BGP history] {e}')
+        logger.debug("[BGP history] %s", e)
     return {'resource': resource, 'history': [], 'source': 'ripe_bgp_history', 'error': 'RIPE BGP history nedostupná'}
 
 @register_task('bgp_routing_history')
@@ -1545,7 +1546,7 @@ async def _handle_bgp_routing_history(task, scheduler):
     try:
         events = await monitor_bgp(prefixes=[task.ioc_value], callback=bgp_callback, duration_seconds=30)
     except Exception as e:
-        logger.debug(f'[BGP routing history] monitor_bgp failed for {task.ioc_value}: {e}')
+        logger.debug("[BGP routing history] monitor_bgp failed for %s: %s", task.ioc_value, e)
         return
     for event in events:
         finding = CanonicalFinding(finding_id=f"bgp_{event['prefix']}_{event['timestamp']}_{int(ts_now * 1000)}", query=f'bgp_monitor:{task.ioc_value}', source_type='bgp_monitor', confidence=0.75, ts=event['timestamp'], provenance=('bgp_monitor', task.ioc_value, event['prefix'], event['as_path'], event['event_type']), payload_text=f"prefix={event['prefix']} as_path={event['as_path']} event={event['event_type']}")
@@ -1588,13 +1589,13 @@ async def _handle_malwarebazaar_search(task, scheduler):
             s = await async_get_httpx_session()
             resp, err = await checked_httpx_post(s, 'https://mb-api.abuse.ch/api/v1/', json={'query': 'get_info', 'hash': ioc}, timeout=httpx.Timeout(15), failure_kind='malwarebazaar_info')
             if err:
-                logger.debug(f'[MalwareBazaar hash] {err}')
+                logger.debug("[MalwareBazaar hash] %s", err)
                 return
             data = await resp.json()
             if data.get('data'):
                 await scheduler._buffer_ioc_pivot('sha256', ioc, 0.85)
         except Exception as e:
-            logger.debug(f'[MalwareBazaar hash] {e}')
+            logger.debug("[MalwareBazaar hash] %s", e)
     else:
         results = await fetch_malwarebazaar_recent(tag=ioc)
         sem = asyncio.Semaphore(4)

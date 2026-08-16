@@ -10,6 +10,8 @@ import subprocess
 import threading
 import weakref
 from _core import aclose
+from _core.lock_registry import LockCategory, register_lock
+
 logger = logging.getLogger(__name__)
 _vault_registry: dict[str, RamDiskVault] = {}
 _atexit_registered: bool = False
@@ -18,7 +20,14 @@ _signal_handler_registered: bool = False
 # Global RAM disk size tracker — prevents M1 8GB oversubscription
 # Lock ensures thread-safe updates across RamDiskVault instances
 _total_ramdisk_mb: int = 0
-_total_ramdisk_lock: threading.Lock = threading.Lock()
+
+
+@register_lock(LockCategory.METRICS)
+def _total_ramdisk_lock() -> threading.Lock:
+    """Module-level lock for RAM disk size tracker."""
+    return threading.Lock()
+
+
 MAX_TOTAL_RAMDISK_MB: int = 512  # Conservative: 512MB on 8GB machine
 
 # Hibernation state tracking for RAM disk safety
@@ -200,8 +209,8 @@ class RamDiskVault:
 
     def mount(self) -> str | None:
         # Check global RAM budget before allocating
-        global _total_ramdisk_mb, _total_ramdisk_lock
-        with _total_ramdisk_lock:
+        global _total_ramdisk_mb
+        with _total_ramdisk_lock():
             if _total_ramdisk_mb + self.size_mb > MAX_TOTAL_RAMDISK_MB:
                 logger.error(
                     f'RAM disk size limit exceeded: {self.size_mb}MB requested, '
@@ -233,7 +242,7 @@ class RamDiskVault:
             self._mounted = True
             _register_vault(self)
             # Update global RAM budget tracker
-            with _total_ramdisk_lock:
+            with _total_ramdisk_lock():
                 _total_ramdisk_mb += self.size_mb
                 logger.debug(f'Global RAM disk budget: {_total_ramdisk_mb}/{MAX_TOTAL_RAMDISK_MB}MB')
             return self.mount_point
@@ -267,7 +276,7 @@ class RamDiskVault:
             logger.info('RAM disk unmounted successfully')
             # Decrement global RAM budget tracker
             global _total_ramdisk_mb
-            with _total_ramdisk_lock:
+            with _total_ramdisk_lock():
                 _total_ramdisk_mb -= self.size_mb
             self.device_path = None
             self.mount_point = None
@@ -293,7 +302,7 @@ class RamDiskVault:
         # Decrement global RAM budget tracker before cleanup
         if self._mounted or self.device_path:
             global _total_ramdisk_mb
-            with _total_ramdisk_lock:
+            with _total_ramdisk_lock():
                 _total_ramdisk_mb -= self.size_mb
         if self.device_path:
             try:

@@ -18,8 +18,10 @@ import msgspec
 from pathlib import Path
 from typing import Any
 from _core import aclose
+from compat.msgspec_gc_compat import Struct
 
-class APIClass(msgspec.Struct, gc=False):
+
+class APIClass(Struct):
     """Represents a Python class with its documentation."""
     name: str
     module: str
@@ -31,7 +33,7 @@ class APIClass(msgspec.Struct, gc=False):
     file_path: str
     line_number: int
 
-class APIMethod(msgspec.Struct, frozen=True, gc=False):
+class APIMethod(Struct, frozen=True):
     """Represents a Python method or function."""
     name: str
     signature: str
@@ -45,7 +47,7 @@ class APIMethod(msgspec.Struct, frozen=True, gc=False):
     is_property: bool
     line_number: int
 
-class APIParameter(msgspec.Struct, frozen=True, gc=False):
+class APIParameter(Struct, frozen=True):
     """Represents a function parameter."""
     name: str
     type_hint: str
@@ -53,7 +55,7 @@ class APIParameter(msgspec.Struct, frozen=True, gc=False):
     is_optional: bool
     description: str
 
-class APIProperty(msgspec.Struct, frozen=True, gc=False):
+class APIProperty(Struct, frozen=True):
     """Represents a class property."""
     name: str
     type_hint: str
@@ -61,7 +63,7 @@ class APIProperty(msgspec.Struct, frozen=True, gc=False):
     is_readonly: bool
     line_number: int
 
-class APIModule(msgspec.Struct, frozen=True, gc=False):
+class APIModule(Struct, frozen=True):
     """Represents a Python module."""
     name: str
     file_path: str

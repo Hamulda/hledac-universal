@@ -5,6 +5,7 @@ import contextvars
 
 from dataclasses import dataclass
 import msgspec
+from compat.msgspec_gc_compat import Struct
 from typing import cast
 __all__ = ['RAMDISK_ROOT', 'FALLBACK_ROOT', 'RAMDISK_ACTIVE', 'CACHE_ROOT', 'LIGHTRAG_ROOT', 'DB_ROOT', 'LMDB_ROOT', 'SPRINT_LMDB_ROOT', 'EVIDENCE_ROOT', 'KEYS_ROOT', 'TOR_ROOT', 'NYM_ROOT', 'I2P_ROOT', 'RUNS_ROOT', 'SOCKETS_ROOT', 'SPRINT_STORE_ROOT', 'IOC_DB_PATH', 'PATHS', 'get_current_paths', 'set_current_paths', 'reset_current_paths', 'get_sprint_parquet_dir', 'get_dedup_paths', 'get_ioc_db_path', 'get_sprint_report_path', 'get_sprint_json_report_path', 'get_sprint_next_seeds_path', 'get_sprint_bundle_path', 'assert_ramdisk_alive', 'cleanup_fallback_artifacts', 'is_auto_ramdisk', 'lmdb_map_size', 'get_lmdb_max_size_mb', 'open_lmdb', 'cleanup_stale_lmdb_locks', 'compact_sprint_lmdb', 'cleanup_stale_sockets', 'CTI_EXPORT_DIR', 'RUNTIME_STATE', 'EMBEDDING_CACHE', 'BENCHMARK_CACHE', '_ensure_ramdisk_active_async']
 _paths_context_var: contextvars.ContextVar[_Paths | None] = contextvars.ContextVar('_paths_context', default=None)
@@ -530,7 +531,7 @@ try:
 except Exception as _e:  # noqa: BLE001
     pass  # chmod may fail if user is not owner
 
-class _Paths(msgspec.Struct, frozen=True, gc=False):
+class _Paths(Struct, frozen=True):
     """Immutable bundle of canonical runtime paths.
 
     `hledac_home` is the XDG-style user-data root (`~/.hledac`); the other

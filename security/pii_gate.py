@@ -30,6 +30,7 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import Any
 import msgspec
+from compat.msgspec_gc_compat import Struct
 from operator import attrgetter, itemgetter
 from _core import aclose
 logger = logging.getLogger(__name__)
@@ -48,7 +49,7 @@ class PIICategory(Enum):
     DRIVER_LICENSE = 'driver_license'
     ADDRESS = 'address'
 
-class PIIMatch(msgspec.Struct, gc=False):
+class PIIMatch(Struct):
     """A single PII match found in text"""
     text: str
     category: PIICategory
@@ -57,7 +58,7 @@ class PIIMatch(msgspec.Struct, gc=False):
     confidence: float
     method: str
 
-class SanitizationResult(msgspec.Struct, gc=False):
+class SanitizationResult(Struct):
     """Sprint F300: msgspec.Struct for sanitization operation result."""
     sanitized_text: str
     pii_found: list[PIIMatch]

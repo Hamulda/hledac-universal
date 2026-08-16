@@ -47,6 +47,7 @@ from typing import TYPE_CHECKING, Any
 
 from operator import attrgetter, itemgetter
 import msgspec
+from compat.msgspec_gc_compat import Struct
 from hledac.universal.compat.msgspec_gc_compat import Struct
 
 from hledac.universal.utils.logging_config import get_logger

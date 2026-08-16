@@ -27,6 +27,7 @@ import time
 from typing import Any
 
 import msgspec
+from compat.msgspec_gc_compat import Struct
 from hledac.universal.utils.asyncx import parallel_ok
 from hledac.universal.utils.encoding import decode_response_bytes
 try:
@@ -70,7 +71,7 @@ MATRIX_TIMEOUT: int = 10
 _ZERONET_ENABLED: bool = os.getenv('HLEDAC_ENABLE_ZERONET', '0').lower() in ('1', 'true', 'yes', 'on')
 _FREENET_ENABLED: bool = os.getenv('HLEDAC_ENABLE_FREENET', '0').lower() in ('1', 'true', 'yes', 'on')
 
-class AltProtocolResult(msgspec.Struct, frozen=True, gc=False):
+class AltProtocolResult(Struct, frozen=True):
     """Result from a single alt-protocol source. M1 8GB: msgspec.Struct for 5-7× faster init."""
     source_type: str
     findings_count: int

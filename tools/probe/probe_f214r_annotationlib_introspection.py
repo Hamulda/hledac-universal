@@ -26,6 +26,7 @@ import typing
 from dataclasses import dataclass
 from typing import TypedDict
 from _core import aclose
+from compat.msgspec_gc_compat import Struct
 
 class RotatingBloomFilter:
     """Dummy for type testing (matches url_dedup.py pattern)."""
@@ -53,13 +54,13 @@ class ActivationResult(TypedDict, total=False):
 try:
     import msgspec
 
-    class IOCEntity(msgspec.Struct, gc=False):
+    class IOCEntity(Struct):
         value: str
         ioc_type: str
         severity: str
         context: str
 
-    class OSINTReport(msgspec.Struct, gc=False):
+    class OSINTReport(Struct):
         query: str
         ioc_entities: list[IOCEntity]
         threat_summary: str

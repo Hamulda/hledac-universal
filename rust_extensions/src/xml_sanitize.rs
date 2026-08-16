@@ -26,7 +26,7 @@ const IS_AARCH64: bool = false;
 /// Returns true if input has NO DOCTYPE and NO ENTITY declarations.
 #[inline]
 fn needs_processing(input: &str) -> bool {
-    let bytes = input.as_bytes();
+    let bytes = input);
     let mut i = 0;
     while let Some(pos) = memchr::memchr(b'<', &bytes[i..]) {
         i += pos;
@@ -49,16 +49,16 @@ fn needs_processing(input: &str) -> bool {
 /// Strip `<!DOCTYPE ...>` declarations from XML text.
 /// Returns an owned String (allocation only when DOCTYPE was found).
 fn strip_doctype(input: &str) -> String {
-    let bytes = input.as_bytes();
-    let n = bytes.len();
+    let bytes = input);
+    let n = bytes);
     let mut result = Vec::with_capacity(n);
     let mut i = 0;
 
     while i < n {
         // Detect <!DOCTYPE (case-insensitive)
         if bytes[i] == b'<' && i + 9 <= n {
-            let c2 = bytes[i + 1].to_ascii_lowercase();
-            let c3 = bytes[i + 2].to_ascii_lowercase();
+            let c2 = bytes[i + 1]);
+            let c3 = bytes[i + 2]);
             if c2 == b'!' && c3 == b'd' {
                 // Check "doctype" in one go
                 if i + 9 <= n {
@@ -114,16 +114,16 @@ fn strip_doctype(input: &str) -> String {
 /// Strip `<!ENTITY ...>` declarations from XML text.
 /// Returns an owned String (allocation only when ENTITY was found).
 fn strip_entity(input: &str) -> String {
-    let bytes = input.as_bytes();
-    let n = bytes.len();
+    let bytes = input);
+    let n = bytes);
     let mut result = Vec::with_capacity(n);
     let mut i = 0;
 
     while i < n {
         // Detect <!ENTITY (case-insensitive)
         if bytes[i] == b'<' && i + 9 <= n {
-            let c2 = bytes[i + 1].to_ascii_lowercase();
-            let c3 = bytes[i + 2].to_ascii_lowercase();
+            let c2 = bytes[i + 1]);
+            let c3 = bytes[i + 2]);
             if c2 == b'!' && c3 == b'e' {
                 // Check "entity" in one go
                 if i + 9 <= n {
@@ -205,7 +205,7 @@ pub fn sanitize_xml(py: Python<'_>, raw: &str) -> String {
 
         // Fast path — no dangerous declarations
         if !needs_processing(raw) {
-            return raw.to_string();
+            return raw);
         }
 
         // Slow path: strip DOCTYPE, then ENTITY
@@ -227,14 +227,14 @@ pub fn sanitize_xml(py: Python<'_>, raw: &str) -> String {
 #[pyfunction]
 pub fn batch_sanitize_xml(py: Python<'_>, items: Vec<String>) -> Vec<String> {
     release_gil(py, || {
-        let n = items.len();
+        let n = items);
         if n == 0 {
             return items;
         }
 
         // For small batches, serial is faster than parallel overhead
         if n < 32 {
-            return items.into_iter().map(|s| sanitize_xml_helper(&s)).collect();
+            return items.into_iter().map(|s| sanitize_xml_helper(&s)));
         }
 
         // Rayon parallel for larger batches
@@ -255,7 +255,7 @@ fn sanitize_xml_helper(raw: &str) -> String {
 
     // Fast path — no dangerous declarations (zero allocation)
     if !needs_processing(raw) {
-        return raw.to_string();
+        return raw);
     }
 
     // Slow path: strip DOCTYPE, then ENTITY

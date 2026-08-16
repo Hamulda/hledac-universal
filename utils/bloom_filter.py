@@ -26,15 +26,36 @@ Example:
     >>> "https://example.com/page2" in bf
     False
 """
-import json
 import logging
 import math
 from dataclasses import dataclass
 from collections import OrderedDict
 import msgspec
+from compat.msgspec_gc_compat import Struct
 from pathlib import Path
 from typing import Any, cast
 from _core import aclose
+
+# orjson fallback — 5-10× faster than stdlib json, M1 optimized
+try:
+    import orjson
+
+    def _json_loads(data: str | bytes) -> Any:
+        return orjson.loads(data)
+
+    def _json_dumps(data: Any) -> str:
+        return orjson.dumps(data).decode("utf-8")
+
+except ImportError:
+    import json as _stdlib_json
+
+    def _json_loads(data: str | bytes) -> Any:
+        return _stdlib_json.loads(data)
+
+    def _json_dumps(data: Any) -> str:
+        return _stdlib_json.dumps(data)
+
+
 logger = logging.getLogger(__name__)
 MAX_HASH_CACHE_SIZE = 10000
 try:
@@ -56,7 +77,7 @@ except ImportError:
     _RUST_BLOOM_AVAILABLE = False
 logger.debug('bloom_filter_backend', extra={'backend': 'rust' if _RUST_BLOOM_AVAILABLE else 'python'})
 
-class BloomFilterStats(msgspec.Struct, gc=False):
+class BloomFilterStats(Struct):
     """Statistics for Bloom Filter."""
     size: int
     hash_count: int
@@ -192,13 +213,13 @@ class BloomFilter:
         """Save Bloom Filter to file."""
         data = {'size': self.size, 'hash_count': self.hash_count, 'max_elements': self.max_elements, 'error_rate': self.error_rate, 'element_count': self.element_count, 'byte_array': list(self._byte_array)}
         with open(filepath, 'w') as f:
-            json.dump(data, f)
+            f.write(_json_dumps(data))
 
     @classmethod
     def load(cls, filepath: str | Path) -> BloomFilter:
         """Load Bloom Filter from file."""
         with open(filepath) as f:
-            data = json.load(f)
+            data = _json_loads(f.read())
         bf = cls(max_elements=data['max_elements'], error_rate=data['error_rate'])
         bf.size = data['size']
         bf.hash_count = data['hash_count']

@@ -44,14 +44,14 @@ class NextAction(StrEnum):
     RUN_MISSING_PROBE = 'RUN_MISSING_PROBE'
     FIX_CONTRACT_GATE = 'FIX_CONTRACT_GATE'
 
-class Blocker(msgspec.Struct, gc=False):
+class Blocker(Struct):
     category: str
     severity: str
     detail: str
     current_swap_gib: float | None = None
     threshold_gib: float | None = None
 
-class ReadinessResult(msgspec.Struct, frozen=True, gc=False):
+class ReadinessResult(Struct, frozen=True):
     verdict: Verdict
     live_allowed: bool
     next_action: NextAction
@@ -84,6 +84,8 @@ class ReadinessResult(msgspec.Struct, frozen=True, gc=False):
         return out
 from hledac.universal._core.resource_governor import CLEAN_SWAP_MAX_GIB, DIAGNOSTIC_SWAP_MAX_GIB, HARD_BLOCK_SWAP_GIB
 from _core import aclose
+from compat.msgspec_gc_compat import Struct
+
 _F224_BLOCKING_PROFILES = ('active300', 'nonfeed_diagnostic')
 _F224_BLOCKING_PROBES = [('probe_f224a_worker_pool_import_seal', 'worker_pool_import_seal.json'), ('probe_f224c_discovery_provider_gap', 'discovery_provider_gap.json'), ('probe_f224d_sprint_id_collision', 'sprint_id_collision.json'), ('probe_f224d_confidence_policy', 'confidence_policy.json')]
 _F231_BLOCKING_PROFILES = ('active300', 'nonfeed_diagnostic')

@@ -23,6 +23,7 @@ from __future__ import annotations
 from typing import Final
 
 import msgspec
+from compat.msgspec_gc_compat import Struct
 from _core import aclose
 
 
@@ -58,7 +59,7 @@ _BRIDGE_CONFIDENCE_MAX: Final = 1.0
 _BRIDGE_CONFIDENCE_MIN: Final = 0.0
 
 
-class BridgeConfig(msgspec.Struct, frozen=True, gc=False):
+class BridgeConfig(Struct, frozen=True):
     """
     Base configuration for any source → CanonicalFinding bridge.
 

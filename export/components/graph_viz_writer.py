@@ -46,6 +46,7 @@ async def stream_graph_viz_section(graph_manager: object, *, max_nodes: int=200,
         if callable(getter):
             return getter()
         return []
+
     try:
         nodes = _get_nodes_or_edges(graph_manager, 'nodes')
     except Exception:
@@ -54,48 +55,55 @@ async def stream_graph_viz_section(graph_manager: object, *, max_nodes: int=200,
         edges = _get_nodes_or_edges(graph_manager, 'edges')
     except Exception:
         edges = []
-    node_count = len(nodes) if nodes else 0
-    edge_count = len(edges) if edges else 0
-    capped = node_count > max_nodes or edge_count > max_edges
-    yield '# Graph Visualization\n\n'
-    yield f'_Nodes: {node_count} | Edges: {edge_count}'
-    if capped:
-        yield f' (cap: {max_nodes} nodes / {max_edges} edges)'
-    yield '\n\n'
-    if not nodes and (not edges):
-        yield '_No graph data available._\n'
-        return
-    yield '```mermaid\nflowchart TD\n'
-    rendered_nodes: set = set()
-    for node in (nodes or [])[:max_nodes]:
-        if isinstance(node, dict):
-            node_id = node.get('id', node.get('ioc_value', 'unnamed'))
-            label = node.get('label', node.get('ioc_value', node.get('type', '?')))
-            _node_type = node.get('type', 'ioc')
-        else:
-            node_id = str(node)
-            label = str(node)
-        safe_id = node_id.replace('-', '_').replace(' ', '_')[:40]
-        if safe_id not in rendered_nodes:
-            yield f'    {safe_id}[{label}]\n'
-            rendered_nodes.add(safe_id)
-    rendered_edges = 0
-    for edge in (edges or [])[:max_edges]:
-        if isinstance(edge, dict):
-            src = str(edge.get('source', edge.get('src', '?')))
-            dst = str(edge.get('target', edge.get('dst', '?')))
-            rel = edge.get('relation', edge.get('type', 'related_to'))
-        else:
-            src, dst, rel = (str(edge), '?', 'related_to')
-        safe_src = src.replace('-', '_').replace(' ', '_')[:40]
-        safe_dst = dst.replace('-', '_').replace(' ', '_')[:40]
-        if safe_src == safe_dst:
-            continue
-        rel_safe = rel.replace(' ', '-')[:20] if rel else 'related'
-        yield f'    {safe_src} -->|{rel_safe}| {safe_dst}\n'
-        rendered_edges += 1
-        if rendered_edges % 50 == 0:
-            await asyncio.sleep(0)
-    yield '```\n'
-    if capped:
-        yield f'\n_Warning: graph capped at {max_nodes} nodes / {max_edges} edges._\n'
+
+    try:
+        node_count = len(nodes) if nodes else 0
+        edge_count = len(edges) if edges else 0
+        capped = node_count > max_nodes or edge_count > max_edges
+        yield '# Graph Visualization\n\n'
+        yield f'_Nodes: {node_count} | Edges: {edge_count}'
+        if capped:
+            yield f' (cap: {max_nodes} nodes / {max_edges} edges)'
+        yield '\n\n'
+        if not nodes and (not edges):
+            yield '_No graph data available._\n'
+            return
+        yield '```mermaid\nflowchart TD\n'
+        rendered_nodes: set = set()
+        for node in (nodes or [])[:max_nodes]:
+            if isinstance(node, dict):
+                node_id = node.get('id', node.get('ioc_value', 'unnamed'))
+                label = node.get('label', node.get('ioc_value', node.get('type', '?')))
+                _node_type = node.get('type', 'ioc')
+            else:
+                node_id = str(node)
+                label = str(node)
+            safe_id = node_id.replace('-', '_').replace(' ', '_')[:40]
+            if safe_id not in rendered_nodes:
+                yield f'    {safe_id}[{label}]\n'
+                rendered_nodes.add(safe_id)
+        rendered_edges = 0
+        for edge in (edges or [])[:max_edges]:
+            if isinstance(edge, dict):
+                src = str(edge.get('source', edge.get('src', '?')))
+                dst = str(edge.get('target', edge.get('dst', '?')))
+                rel = edge.get('relation', edge.get('type', 'related_to'))
+            else:
+                src, dst, rel = (str(edge), '?', 'related_to')
+            safe_src = src.replace('-', '_').replace(' ', '_')[:40]
+            safe_dst = dst.replace('-', '_').replace(' ', '_')[:40]
+            if safe_src == safe_dst:
+                continue
+            rel_safe = rel.replace(' ', '-')[:20] if rel else 'related'
+            yield f'    {safe_src} -->|{rel_safe}| {safe_dst}\n'
+            rendered_edges += 1
+            if rendered_edges % 50 == 0:
+                await asyncio.sleep(0)
+        yield '```\n'
+        if capped:
+            yield f'\n_Warning: graph capped at {max_nodes} nodes / {max_edges} edges._\n'
+    finally:
+        # Cleanup: clear references to allow garbage collection
+        # when generator is abandoned mid-stream
+        nodes = None
+        edges = None

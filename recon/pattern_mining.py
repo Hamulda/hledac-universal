@@ -50,6 +50,7 @@ import logging
 from collections import Counter, defaultdict, deque
 from dataclasses import dataclass, field
 import msgspec
+from compat.msgspec_gc_compat import Struct
 from datetime import datetime, timedelta
 from enum import Enum
 from typing import Any
@@ -249,7 +250,7 @@ class AnomalyType(Enum):
     # [FINAL]-019: Expected relationship missing from graph topology
     MISSING_RELATIONSHIP = 'missing_relationship'
 
-class Event(msgspec.Struct, gc=False):
+class Event(Struct):
     """Generic event for pattern mining."""
     timestamp: datetime
     entity_id: str
@@ -257,7 +258,7 @@ class Event(msgspec.Struct, gc=False):
     value: float | None = None
     metadata: dict[str, Any] = field(default_factory=dict)
 
-class Action(msgspec.Struct, gc=False):
+class Action(Struct):
     """User action for behavioral pattern mining."""
     timestamp: datetime
     user_id: str
@@ -266,7 +267,7 @@ class Action(msgspec.Struct, gc=False):
     duration_ms: int | None = None
     metadata: dict[str, Any] = field(default_factory=dict)
 
-class Communication(msgspec.Struct, gc=False):
+class Communication(Struct):
     """Communication event for pattern mining."""
     timestamp: datetime
     sender: str
@@ -275,7 +276,7 @@ class Communication(msgspec.Struct, gc=False):
     size_bytes: int | None = None
     metadata: dict[str, Any] = field(default_factory=dict)
 
-class Transaction(msgspec.Struct, gc=False):
+class Transaction(Struct):
     """Financial transaction for flow analysis."""
     timestamp: datetime
     sender: str
@@ -285,7 +286,7 @@ class Transaction(msgspec.Struct, gc=False):
     transaction_id: str | None = None
     metadata: dict[str, Any] = field(default_factory=dict)
 
-class Pattern(msgspec.Struct, gc=False):
+class Pattern(Struct):
     """Base pattern class."""
     pattern_type: PatternType
     description: str
@@ -375,7 +376,7 @@ class SequentialPattern(Pattern):
             self.pattern_type = PatternType.SEQUENTIAL
         self.sequence_length = len(self.sequence)
 
-class Anomaly(msgspec.Struct, gc=False):
+class Anomaly(Struct):
     """Detected anomaly in data."""
     anomaly_type: AnomalyType
     timestamp: datetime
@@ -386,7 +387,7 @@ class Anomaly(msgspec.Struct, gc=False):
     actual_value: float | None = None
     related_pattern: str | None = None
 
-class CorrelationMatrix(msgspec.Struct, gc=False):
+class CorrelationMatrix(Struct):
     """Cross-pattern correlation results."""
     pattern_ids: list[str] = field(default_factory=list)
     correlation_matrix: np.ndarray = field(default_factory=lambda: np.array([]))

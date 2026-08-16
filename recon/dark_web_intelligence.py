@@ -34,6 +34,7 @@ import time
 from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
 import msgspec
+from compat.msgspec_gc_compat import Struct
 from datetime import datetime
 from enum import Enum
 from typing import TYPE_CHECKING, Any
@@ -99,7 +100,7 @@ class OnionType(Enum):
     UNKNOWN = 'unknown'
 
 
-class CrawlTask(msgspec.Struct, frozen=True, gc=False):
+class CrawlTask(Struct, frozen=True):
     """
     ISSUE-017: BFS crawl task — single URL with depth for parallel processing.
     Thread-safe: immutable (frozen=True), no internal mutable state.
@@ -110,7 +111,7 @@ class CrawlTask(msgspec.Struct, frozen=True, gc=False):
     parent_url: str | None = None
 
 
-class HiddenService(msgspec.Struct, gc=False):
+class HiddenService(Struct):
     """Represents a discovered hidden service. F350M-R: gc=False for M1 8GB."""
     address: str
     onion_type: OnionType
@@ -129,7 +130,7 @@ class HiddenService(msgspec.Struct, gc=False):
     keywords: list[str] = field(default_factory=list)
     risk_level: RiskLevel = RiskLevel.MEDIUM
 
-class DarkWebContent(msgspec.Struct, frozen=True, gc=False):
+class DarkWebContent(Struct, frozen=True):
     """Content extracted from dark web. F350M-R: gc=False for M1 8GB."""
     url: str
     content_hash: str
@@ -144,7 +145,7 @@ class DarkWebContent(msgspec.Struct, frozen=True, gc=False):
     magnet_links: list[str] = field(default_factory=list)
     raw_html: str = ''
 
-class PGPKeyInfo(msgspec.Struct, frozen=True, gc=False):
+class PGPKeyInfo(Struct, frozen=True):
     """Extracted PGP key information."""
     key_id: str
     fingerprint: str
@@ -938,7 +939,7 @@ def darkweb_content_to_canonical(content: DarkWebContent, query: str) -> Canonic
     finding_id = f'dw_{hashlib.md5(content.url.encode()).hexdigest()[:16]}'
     return CanonicalFinding(finding_id=finding_id, query=query, source_type='onion_discovery', confidence=confidence, ts=content.extracted_at, provenance=(content.url,), payload_text=payload)
 
-class DHTFinding(msgspec.Struct, frozen=True, gc=False):
+class DHTFinding(Struct, frozen=True):
     """Structured output from DHT crawl operations."""
     info_hash: str
     name: str = ''

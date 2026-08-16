@@ -29,6 +29,7 @@ import logging
 import time
 from dataclasses import dataclass
 import msgspec
+from compat.msgspec_gc_compat import Struct
 from typing import Any, Self
 from hledac.universal._core.psutil_shim import PSUTIL_AVAILABLE as _PSUTIL_AVAILABLE
 from hledac.universal._core.psutil_shim import process as _process
@@ -56,7 +57,7 @@ def _get_mx() -> Any | None:
     return _get_mx_from_core()
 
 
-class ResourceBudget(msgspec.Struct, gc=False):
+class ResourceBudget(Struct):
     """Resource budget for a request."""
     ram_mb: int
     time_sec: float

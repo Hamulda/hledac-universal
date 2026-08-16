@@ -25,6 +25,7 @@ from typing import Any, Protocol, TypeVar, runtime_checkable
 from collections.abc import Callable
 
 import msgspec
+from compat.msgspec_gc_compat import Struct
 
 from hledac.universal.runtime.lane_registry import LANE_REGISTRY
 from _core import aclose
@@ -105,7 +106,7 @@ class SchedulerAdvisory(Protocol):
 
 # ── SidecarContext ──────────────────────────────────────────────────────────────
 
-class SidecarContext(msgspec.Struct, gc=False):
+class SidecarContext(Struct):
     """
     Context passed to every sidecar adapter.
 

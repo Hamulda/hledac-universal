@@ -57,6 +57,7 @@ from pathlib import Path
 from typing import Any
 
 import msgspec
+from compat.msgspec_gc_compat import Struct
 from _core import aclose
 
 log = logging.getLogger(__name__)
@@ -152,7 +153,7 @@ def _ensure_frameworks() -> bool:
 
 # ── Public types ──────────────────────────────────────────────────────────────
 
-class MediaFormatInfo(msgspec.Struct, frozen=True, gc=False):
+class MediaFormatInfo(Struct, frozen=True):
     """Probed format info — no decode, metadata only."""
     file_path: str
     media_type: str  # "audio" | "video" | "unknown"
@@ -168,7 +169,7 @@ class MediaFormatInfo(msgspec.Struct, frozen=True, gc=False):
     file_size_bytes: int = 0
 
 
-class TranscriptionResult(msgspec.Struct, frozen=True, gc=False):
+class TranscriptionResult(Struct, frozen=True):
     """Speech-to-text result from SFSpeechRecognizer."""
     text: str = ""
     confidence: float = 0.0
@@ -177,7 +178,7 @@ class TranscriptionResult(msgspec.Struct, frozen=True, gc=False):
     locale: str = _SPEECH_LOCALE
 
 
-class VideoTranscriptionResult(msgspec.Struct, frozen=True, gc=False):
+class VideoTranscriptionResult(Struct, frozen=True):
     """Combined audio transcription + video frame OCR result."""
     audio_transcript: str = ""
     audio_confidence: float = 0.0

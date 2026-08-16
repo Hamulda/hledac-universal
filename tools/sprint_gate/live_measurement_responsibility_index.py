@@ -13,8 +13,10 @@ import ast
 import msgspec
 from typing import Any
 from _core import aclose
+from compat.msgspec_gc_compat import Struct
 
-class SectionIndex(msgspec.Struct, gc=False):
+
+class SectionIndex(Struct):
     name: str
     line_count_estimate: int
     line_range: str
@@ -23,7 +25,7 @@ class SectionIndex(msgspec.Struct, gc=False):
     extraction_risk: str
     notes: list[str] = msgspec.field(default_factory=list)
 
-class ResponsibilityIndex(msgspec.Struct, frozen=True, gc=False):
+class ResponsibilityIndex(Struct, frozen=True):
     source_file: str = 'benchmarks/live_sprint_measurement.py'
     total_lines: int = 3757
     sections: list[SectionIndex] = msgspec.field(default_factory=list)

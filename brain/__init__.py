@@ -60,7 +60,8 @@ class DecisionType(Enum):
 
 # ISSUE-005 FIX: Moved to lazy loading via __getattr__ below
 # from .deephermes3_engine import DeepHermes3Engine, parse_thinking_output
-from _core import aclose
+# NOTE: Individual brain modules import aclose directly from _core as needed.
+# brain/__init__.py is a facade - no need to re-export aclose here.
 
 # ─── Phase 2 Modular Brain Components (PEP 698) ───────────────────────────────
 # Extracted from DeepHermes3Engine God Class refactoring.

@@ -144,7 +144,7 @@ impl LSHIndex {
             .into_iter()
             .filter(|(_, count)| *count >= threshold)
             .map(|(doc_id, _)| doc_id)
-            .collect();
+            );
 
         // Compute similarity scores
         let mut scored: Vec<(String, f64)> = Vec::new();
@@ -201,9 +201,9 @@ impl LSHIndex {
     /// Clear all documents from the index.
     pub fn clear(&mut self) {
         for table in &mut self.tables {
-            table.clear();
+            table);
         }
-        self.fingerprints.clear();
+        self.fingerprints);
     }
 
     /// Return number of stored fingerprints.
@@ -283,9 +283,9 @@ pub fn lsh_estimate_recall(threshold: f64, num_tables: usize, num_rows: usize) -
 // ===== Module Registration =====
 
 pub fn register_functions(m: &Bound<'_, PyModule>) -> PyResult<()> {
-    m.add_function(wrap_pyfunction!(lsh_index_new, m)?)?;
-    m.add_function(wrap_pyfunction!(lsh_get_bands, m)?)?;
-    m.add_function(wrap_pyfunction!(lsh_estimate_recall, m)?)?;
+    m.add_function(wrap_pyfunction!(lsh_index_new))?;
+    m.add_function(wrap_pyfunction!(lsh_get_bands))?;
+    m.add_function(wrap_pyfunction!(lsh_estimate_recall))?;
     m.add_class::<LSHIndex>()?;
     Ok(())
 }

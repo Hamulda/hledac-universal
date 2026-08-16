@@ -34,6 +34,7 @@ import logging
 import os
 from dataclasses import dataclass, field
 import msgspec
+from compat.msgspec_gc_compat import Struct
 from _core import aclose
 logger = logging.getLogger(__name__)
 PRIVACY_BUDGET_RATIO = 0.15
@@ -42,14 +43,14 @@ DEFAULT_I2P_WORKERS = 1
 DEFAULT_NYM_WORKERS = 1
 MIN_CLEARNET_WORKERS = 3
 
-class PrivacyLaneConfig(msgspec.Struct, frozen=True, gc=False):
+class PrivacyLaneConfig(Struct, frozen=True):
     """Configuration for a single privacy transport lane."""
     name: str
     workers: int
     env_gate: str
     ram_per_session_mb: int = 80
 
-class PrivacyBudgetAllocator(msgspec.Struct, gc=False):
+class PrivacyBudgetAllocator(Struct):
     """
     Allocates privacy lane semaphores from total fetch worker budget.
 

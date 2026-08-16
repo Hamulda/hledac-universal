@@ -45,6 +45,7 @@ import logging
 import threading
 from hledac.universal.utils.asyncx import safe_create_task
 import msgspec
+from compat.msgspec_gc_compat import Struct
 from hledac.universal._core.resource_governor import UMA_STATE_CRITICAL, UMA_STATE_EMERGENCY, UMA_STATE_WARN, sample_uma_status
 from hledac.universal._core.resource_governor import PressureState, uma_state_to_pressure_state
 try:
@@ -100,7 +101,7 @@ except Exception:  # noqa: BLE001
     # Fail-soft: capability_cost module may not be available in all environments
     pass
 
-class SidecarAdmission(msgspec.Struct, frozen=True, gc=False):
+class SidecarAdmission(Struct, frozen=True):
     """F204J: Result of sidecar admission check."""
     allowed: bool
     sidecar_name: str
@@ -109,7 +110,7 @@ class SidecarAdmission(msgspec.Struct, frozen=True, gc=False):
     uma_state: str
     estimated_mb: int
 
-class RendererAdmission(msgspec.Struct, frozen=True, gc=False):
+class RendererAdmission(Struct, frozen=True):
     """F214R: Result of renderer admission check.
 
     One unified answer to: can JS renderer be used right now?
@@ -120,7 +121,7 @@ class RendererAdmission(msgspec.Struct, frozen=True, gc=False):
     uma_state: str
     model_loaded: bool
 
-class ModelAdmission(msgspec.Struct, frozen=True, gc=False):
+class ModelAdmission(Struct, frozen=True):
     """F214R: Result of model load admission check.
 
     One unified answer to: can a new model load be initiated?
@@ -131,7 +132,7 @@ class ModelAdmission(msgspec.Struct, frozen=True, gc=False):
     uma_state: str
     free_uma_gib: float
 
-class BranchAdmission(msgspec.Struct, frozen=True, gc=False):
+class BranchAdmission(Struct, frozen=True):
     """F214R: Result of branch admission check.
 
     Answers: can a named branch run given current memory state?
@@ -143,7 +144,7 @@ class BranchAdmission(msgspec.Struct, frozen=True, gc=False):
     branch_concurrency: int
     estimated_mb: int
 
-class LaneAdmission(msgspec.Struct, frozen=True, gc=False):
+class LaneAdmission(Struct, frozen=True):
     """F214R: Result of lane admission check.
 
     Answers: can a named lane be admitted given current memory state?
@@ -155,7 +156,7 @@ class LaneAdmission(msgspec.Struct, frozen=True, gc=False):
     uma_state: str
     risk_level: str
 
-class MissionBudgetSnapshot(msgspec.Struct, frozen=True, gc=False):
+class MissionBudgetSnapshot(Struct, frozen=True):
     """F204J: Budget snapshot for scorecard export."""
     sprint_id: str
     peak_rss_gib: float
@@ -165,7 +166,7 @@ class MissionBudgetSnapshot(msgspec.Struct, frozen=True, gc=False):
     renderer_allowed: bool
     fetch_limit: int
 
-class GovernorDecision(msgspec.Struct, frozen=True, gc=False):
+class GovernorDecision(Struct, frozen=True):
     """Output of M1ResourceGovernor.evaluate()."""
     fetch_limit: int
     allow_renderer: bool
@@ -180,7 +181,7 @@ class GovernorDecision(msgspec.Struct, frozen=True, gc=False):
     system_used_gib: float = 0.0
     swap_detected: bool = False
 
-class GovernorSnapshot(msgspec.Struct, frozen=True, gc=False):
+class GovernorSnapshot(Struct, frozen=True):
     """Snapshot of governor internal state for dashboard rendering."""
     uma_state: str
     model_loaded: bool

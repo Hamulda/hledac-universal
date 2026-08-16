@@ -22,7 +22,7 @@ Use a direct __setattr__ override on the class. Cost: ~0.05 µs per mutation.
         cycle_time_ema: float = 1.0
         ...
 
-    class _CycleState(msgspec.Struct, frozen=True, gc=False):  # AFTER
+    class _CycleState(Struct, frozen=True):  # AFTER
         barrier_retry_count: int = 0
         stop_requested: bool = False
         cycle_time_ema: float = 1.0
@@ -42,7 +42,7 @@ Use field(default_factory=...) for mutable containers + __setattr__ for field re
         sidecar_tasks: set[Any] = field(default_factory=set)
         ...
 
-    class _RuntimeState(msgspec.Struct, frozen=True, gc=False):  # AFTER
+    class _RuntimeState(Struct, frozen=True):  # AFTER
         bg_tasks: set = field(default_factory=set)
         duckdb_store: Any = None
         sidecar_tasks: set = field(default_factory=set)
@@ -65,7 +65,7 @@ KEY INVARIANTS
 MIGRATION QUICK-REFERENCE
 =========================
   @dataclass(slots=True)              → msgspec.Struct, frozen=True  + __setattr__ override
-  @dataclass(frozen=True, slots=True) → msgspec.Struct, frozen=True, gc=False + __setattr__
+  @dataclass(frozen=True, slots=True) → Struct, frozen=True + __setattr__
   field(default_factory=X)             → field(default_factory=X)  (msgspec.field syntax)
 
 LEAVE AS @dataclass(slots=True) when:
@@ -79,6 +79,7 @@ F350M-R / Issue #D1 — 2026-07-18.
 from __future__ import annotations
 
 from typing import Any
+from compat.msgspec_gc_compat import Struct
 from _core import aclose
 
 __all__: list[str] = ["struct_replace"]

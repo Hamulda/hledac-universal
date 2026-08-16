@@ -20,6 +20,7 @@ import os
 import time
 from dataclasses import dataclass
 import msgspec
+from compat.msgspec_gc_compat import Struct
 from typing import NamedTuple
 import orjson
 from hledac.universal.knowledge.duckdb_store import CanonicalFinding
@@ -35,7 +36,7 @@ def _get_email() -> str:
     """Get email for polite pool."""
     return os.environ.get('HLEDAC_CONTACT_EMAIL', 'research@hledac.ai')
 
-class OAPaper(msgspec.Struct, gc=False):
+class OAPaper(Struct):
     """Open Access paper info from Unpaywall."""
     doi: str
     title: str

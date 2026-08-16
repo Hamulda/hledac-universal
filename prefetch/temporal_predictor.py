@@ -23,6 +23,7 @@ import time
 from collections import deque
 from dataclasses import dataclass, field
 import msgspec
+from compat.msgspec_gc_compat import Struct
 from typing import Any
 from hledac.universal.layers.temporal_signal_layer import TemporalEvent, TemporalSignalLayer, event_from_finding_like
 from operator import attrgetter, itemgetter
@@ -37,7 +38,7 @@ CONFIDENCE_BOOST_BURST = 2.0
 MIN_EVENTS_FOR_PATTERN = 5
 PEAK_HOUR_TOLERANCE = 2
 
-class IOCPrediction(msgspec.Struct, frozen=True, gc=False):
+class IOCPrediction(Struct, frozen=True):
     """Single IOC prediction from temporal analysis."""
     ioc_value: str
     ioc_type: str
@@ -47,7 +48,7 @@ class IOCPrediction(msgspec.Struct, frozen=True, gc=False):
     predicted_at: float
     expires_at: float
 
-class _PatternStats(msgspec.Struct, gc=False):
+class _PatternStats(Struct):
     """Per-(ioc_type, source) rolling pattern statistics."""
     hour_counts: list[int] = field(default_factory=lambda: [0] * 24)
     dow_counts: list[int] = field(default_factory=lambda: [0] * 7)

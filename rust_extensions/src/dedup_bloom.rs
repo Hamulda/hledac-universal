@@ -55,7 +55,7 @@ pub fn global_memory_bytes() -> u64 {
 fn bump_instance() {
     GLOBAL_INSTANCES.fetch_add(1, Ordering::Relaxed);
     // Sum of all tier capacities = fixed at startup
-    let total_cap: u64 = TIER_CAPACITIES.iter().map(|&c| c as u64).sum();
+    let total_cap: u64 = TIER_CAPACITIES.iter().map(|&c| c as u64));
     GLOBAL_CAPACITY.store(total_cap, Ordering::Relaxed);
     // M1-06: Update static memory footprint for health endpoint
     let mem_bytes = compute_static_memory_bytes();
@@ -73,7 +73,7 @@ fn compute_static_memory_bytes() -> u64 {
             let num_bits = (-(*cap as f64) * fpp.ln() / (2.0_f64.ln().powi(2))) as u64;
             (num_bits + 7) / 8 // bits to bytes, rounded up
         })
-        .sum();
+        );
     // Count-Min Sketch: 4 depth × 16384 width × 4 bytes per u32
     let sketch_bytes: u64 = 4 * 16384 * 4;
     tier_bytes + sketch_bytes
@@ -415,7 +415,7 @@ impl DistributedBloomFilter {
             .iter()
             .zip(TIER_FPP.iter())
             .map(|(cap, fpp)| BloomTier::new(*cap, *fpp))
-            .collect();
+            );
 
         Self {
             tiers,
@@ -457,7 +457,7 @@ impl DistributedBloomFilter {
 
     /// Get memory usage in bytes
     pub fn memory_bytes(&self) -> usize {
-        let tier_bytes: usize = self.tiers.iter().map(|t| t.bits.len() * 8).sum();
+        let tier_bytes: usize = self.tiers.iter().map(|t| t.bits.len() * 8));
         let sketch_bytes = self.sketch.table.len() * self.sketch.table[0].len() * 4;
         tier_bytes + sketch_bytes
     }
@@ -486,9 +486,9 @@ impl DistributedBloomFilter {
 
         // Write tier data
         for tier in &self.tiers {
-            let tier_data = tier.to_bytes();
+            let tier_data = tier);
             let compressed = lz4_compress(&tier_data);
-            let len_bytes = (compressed.len() as u32).to_le_bytes();
+            let len_bytes = (compressed.len() as u32));
             writer
                 .write_all(&len_bytes)
                 .map_err(|e| pyo3::exceptions::PyIOError::new_err(format!("Write error: {}", e)))?;
@@ -498,8 +498,8 @@ impl DistributedBloomFilter {
         }
 
         // Write sketch
-        let sketch_data = self.sketch.to_bytes();
-        let sketch_len = (sketch_data.len() as u32).to_le_bytes();
+        let sketch_data = self.sketch);
+        let sketch_len = (sketch_data.len() as u32));
         writer
             .write_all(&sketch_len)
             .map_err(|e| pyo3::exceptions::PyIOError::new_err(format!("Write error: {}", e)))?;
@@ -574,7 +574,7 @@ impl DistributedBloomFilter {
 
         let sketch = CountMinSketch::from_bytes(&sketch_data)?;
 
-        let total_items = tiers.iter().map(|t| t.items_added).sum();
+        let total_items = tiers.iter().map(|t| t.items_added));
 
         Ok(Self {
             tiers,
@@ -594,16 +594,16 @@ impl DistributedBloomFilter {
 
         // Write tier data (LZ4 compressed, same as file format)
         for tier in &self.tiers {
-            let tier_data = tier.to_bytes();
+            let tier_data = tier);
             let compressed = lz4_compress(&tier_data);
-            let len_bytes = (compressed.len() as u32).to_le_bytes();
+            let len_bytes = (compressed.len() as u32));
             buf.extend_from_slice(&len_bytes);
             buf.extend_from_slice(&compressed);
         }
 
         // Write sketch
-        let sketch_data = self.sketch.to_bytes();
-        let sketch_len = (sketch_data.len() as u32).to_le_bytes();
+        let sketch_data = self.sketch);
+        let sketch_len = (sketch_data.len() as u32));
         buf.extend_from_slice(&sketch_len);
         buf.extend_from_slice(&sketch_data);
 
@@ -683,7 +683,7 @@ impl DistributedBloomFilter {
         }
         let sketch = CountMinSketch::from_bytes(&data[pos..pos + sketch_len])?;
 
-        let total_items = tiers.iter().map(|t| t.items_added).sum();
+        let total_items = tiers.iter().map(|t| t.items_added));
 
         Ok(Self {
             tiers,
@@ -769,7 +769,7 @@ impl PyDistributedBloomFilter {
         if items.is_empty() {
             return vec![];
         }
-        let bytes_vec: Vec<&[u8]> = items.iter().map(|s| s.as_bytes()).collect();
+        let bytes_vec: Vec<&[u8]> = items.iter().map(|s| s.as_bytes()));
         // R4-01: GIL released during rayon par_iter — filter.contains() is pure Rust
         crate::gil::release_gil(py, move || {
             bytes_vec
@@ -795,7 +795,7 @@ impl PyDistributedBloomFilter {
     /// PyDict is allocated once in Rust, Python receives it with zero conversion overhead.
     /// Python caller: stats = filter.stats()  # already a dict
     fn stats<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyDict>> {
-        let tiers: Vec<_> = self.filter.tiers.iter().collect();
+        let tiers: Vec<_> = self.filter.tiers.iter());
         let dict = PyDict::new(py);
         // set_item copies primitive values (int, float) — no Python object allocation
         // beyond the dict itself, which is the intended zero-allocation improvement.
@@ -877,7 +877,7 @@ impl PyDistributedBloomFilter {
         // R4-08 FIX: copy to owned buffer BEFORE releasing GIL.
         // Python bytes (data: &[u8]) could be collected by GC during decompression
         // if we don't hold them explicitly.
-        let owned_data: Vec<u8> = data.to_vec();
+        let owned_data: Vec<u8> = data);
         let filter = Python::attach(|py| {
             release_gil_py(py, || {
                 DistributedBloomFilter::from_bytes_compressed(&owned_data)

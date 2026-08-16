@@ -45,8 +45,10 @@ from __future__ import annotations
 import threading
 from typing import TYPE_CHECKING
 
+from _core.lock_registry import LockCategory, register_lock
 from operator import attrgetter, itemgetter
 import msgspec
+from compat.msgspec_gc_compat import Struct
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -65,7 +67,7 @@ __all__ = [
 ]
 
 
-class CostTier(msgspec.Struct, frozen=True, gc=False):
+class CostTier(Struct, frozen=True):
     """
     Memory cost tier for capability classification.
 
@@ -82,7 +84,7 @@ class CostTier(msgspec.Struct, frozen=True, gc=False):
         return f"CostTier({self.name!r}, priority={self.priority})"
 
 
-class CapabilityCost(msgspec.Struct, frozen=True, gc=False):
+class CapabilityCost(Struct, frozen=True):
     """
     Memory cost profile for a single capability.
 
@@ -131,7 +133,7 @@ CostTier.MEDIUM = CostTier(name="medium", priority=2)
 CostTier.LIGHT = CostTier(name="light", priority=3)
 
 
-class TriageDecision(msgspec.Struct, frozen=True, gc=False):
+class TriageDecision(Struct, frozen=True):
     """
     Result of a QoS ladder triage decision.
 
@@ -244,14 +246,19 @@ class CapabilityCostRegistry:
 
 # Module-level singleton
 _cost_registry: CapabilityCostRegistry | None = None
-_registry_lock = threading.Lock()
+
+
+@register_lock(LockCategory.METRICS)
+def _registry_lock() -> threading.Lock:
+    """Module-level lock for CapabilityCostRegistry singleton factory."""
+    return threading.Lock()
 
 
 def get_cost_registry() -> CapabilityCostRegistry:
     """Get or create the singleton CapabilityCostRegistry."""
     global _cost_registry
     if _cost_registry is None:
-        with _registry_lock:
+        with _registry_lock():
             if _cost_registry is None:
                 _cost_registry = CapabilityCostRegistry()
     return _cost_registry
@@ -490,14 +497,19 @@ class QoSLadderController:
 
 # Module-level singleton
 _qos_ladder: QoSLadderController | None = None
-_qos_lock = threading.Lock()
+
+
+@register_lock(LockCategory.METRICS)
+def _qos_lock() -> threading.Lock:
+    """Module-level lock for QoSLadderController singleton factory."""
+    return threading.Lock()
 
 
 def get_qos_ladder() -> QoSLadderController:
     """Get or create the singleton QoSLadderController."""
     global _qos_ladder
     if _qos_ladder is None:
-        with _qos_lock:
+        with _qos_lock():
             if _qos_ladder is None:
                 _qos_ladder = QoSLadderController()
     return _qos_ladder

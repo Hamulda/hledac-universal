@@ -47,7 +47,6 @@ Replace these patterns across the codebase:
 P7-2: All subsystems should use this service instead of bare except + silent fallback.
 """
 from __future__ import annotations
-
 import logging
 import threading
 import time
@@ -55,25 +54,21 @@ from dataclasses import dataclass, field
 from enum import Enum, auto
 from collections.abc import Callable
 from _core._util import aclose
-
 logger = logging.getLogger(__name__)
-
 
 class CircuitState(Enum):
     """Circuit breaker states."""
-    CLOSED = auto()   # Normal operation
-    OPEN = auto()     # Fast-fail mode
-    HALF_OPEN = auto()  # Recovery probe
-
+    CLOSED = auto()
+    OPEN = auto()
+    HALF_OPEN = auto()
 
 class CircuitBreakerOpen(Exception):
     """Raised when circuit breaker is OPEN and request is blocked."""
 
-    def __init__(self, domain: str, message: str = ""):
+    def __init__(self, domain: str, message: str=''):
         self.domain = domain
         self.message = message
-        super().__init__(f"CircuitBreakerOpen({domain}): {message}")
-
+        super().__init__(f'CircuitBreakerOpen({domain}): {message}')
 
 @dataclass(frozen=True, slots=True)
 class CircuitBreakerConfig:
@@ -82,12 +77,11 @@ class CircuitBreakerConfig:
 
     P7-2 SSOT: All circuit breaker configs should use this class.
     """
-    failure_threshold: int = 5        # Failures before opening
-    success_threshold: int = 2        # Successes in HALF_OPEN to close
-    recovery_timeout: float = 30.0     # Seconds before trying HALF_OPEN
-    half_open_max_calls: int = 3      # Max calls allowed in HALF_OPEN
-    name: str = ""                    # Domain name for logging
-
+    failure_threshold: int = 5
+    success_threshold: int = 2
+    recovery_timeout: float = 30.0
+    half_open_max_calls: int = 3
+    name: str = ''
 
 @dataclass(frozen=True, slots=True)
 class CircuitBreakerStats:
@@ -100,18 +94,13 @@ class CircuitBreakerStats:
     last_success_time: float | None
     open_since: float | None
 
-
 class CircuitBreaker:
     """
     Thread-safe circuit breaker with CLOSED → OPEN → HALF_OPEN → CLOSED lifecycle.
 
     P7-2: Fail-loud contract — raises CircuitBreakerOpen instead of returning defaults.
     """
-
-    __slots__ = tuple((
-        '_config', '_lock', '_state', '_failure_count', '_success_count',
-        '_last_failure_time', '_last_success_time', '_open_since', '_half_open_calls',
-    ))
+    __slots__ = tuple(('_config', '_lock', '_state', '_failure_count', '_success_count', '_last_failure_time', '_last_success_time', '_open_since', '_half_open_calls'))
 
     def __init__(self, config: CircuitBreakerConfig) -> None:
         self._config = config
@@ -133,7 +122,6 @@ class CircuitBreaker:
     def state(self) -> CircuitState:
         """Current circuit state (thread-safe)."""
         with self._lock:
-            # Check if we should transition OPEN → HALF_OPEN
             if self._state == CircuitState.OPEN:
                 if self._should_attempt_recovery():
                     self._transition_to_half_open()
@@ -157,15 +145,13 @@ class CircuitBreaker:
             now = time.monotonic()
             self._last_success_time = now
             self._success_count += 1
-
             if self._state == CircuitState.HALF_OPEN:
                 if self._success_count >= self._config.success_threshold:
                     self._transition_to_closed()
             elif self._state == CircuitState.CLOSED:
-                # Reset failure count on success
                 self._failure_count = 0
 
-    def record_failure(self, error: Exception | None = None) -> None:
+    def record_failure(self, error: Exception | None=None) -> None:
         """
         Record failed operation.
 
@@ -175,15 +161,9 @@ class CircuitBreaker:
             now = time.monotonic()
             self._last_failure_time = now
             self._failure_count += 1
-
-            error_msg = str(error) if error else "unknown"
-            logger.debug(
-                "[CircuitBreaker] %s recorded failure #%d: %s",
-                self._config.name, self._failure_count, error_msg
-    )
-
+            error_msg = str(error) if error else 'unknown'
+            logger.debug('[CircuitBreaker] %s recorded failure #%d: %s', self._config.name, self._failure_count, error_msg)
             if self._state == CircuitState.HALF_OPEN:
-                # Any failure in HALF_OPEN → immediately OPEN
                 self._transition_to_open()
             elif self._state == CircuitState.CLOSED:
                 if self._failure_count >= self._config.failure_threshold:
@@ -191,7 +171,7 @@ class CircuitBreaker:
 
     def record_timeout(self) -> None:
         """Record a timeout failure (treated same as regular failure)."""
-        self.record_failure(TimeoutError("operation timed out"))
+        self.record_failure(TimeoutError('operation timed out'))
 
     def _should_attempt_recovery(self) -> bool:
         """Check if enough time has passed to attempt recovery."""
@@ -205,10 +185,7 @@ class CircuitBreaker:
         self._state = CircuitState.OPEN
         self._open_since = time.monotonic()
         self._half_open_calls = 0
-        logger.warning(
-            "[CircuitBreaker] %s OPEN (failures=%d, threshold=%d)",
-            self._config.name, self._failure_count, self._config.failure_threshold
-    )
+        logger.warning('[CircuitBreaker] %s OPEN (failures=%d, threshold=%d)', self._config.name, self._failure_count, self._config.failure_threshold)
 
     def _transition_to_half_open(self) -> None:
         """Transition to HALF_OPEN state."""
@@ -216,7 +193,7 @@ class CircuitBreaker:
         self._success_count = 0
         self._half_open_calls = 0
         self._open_since = None
-        logger.info("[CircuitBreaker] %s HALF_OPEN (recovery probe)", self._config.name)
+        logger.info('[CircuitBreaker] %s HALF_OPEN (recovery probe)', self._config.name)
 
     def _transition_to_closed(self) -> None:
         """Transition to CLOSED state."""
@@ -225,7 +202,7 @@ class CircuitBreaker:
         self._success_count = 0
         self._open_since = None
         self._half_open_calls = 0
-        logger.info("[CircuitBreaker] %s CLOSED (recovered)", self._config.name)
+        logger.info('[CircuitBreaker] %s CLOSED (recovered)', self._config.name)
 
     def allow_request(self) -> bool:
         """
@@ -235,43 +212,26 @@ class CircuitBreaker:
         Raises CircuitBreakerOpen if circuit is OPEN (fail-loud mode).
         """
         state = self.state
-
         if state == CircuitState.CLOSED:
             return True
-
         if state == CircuitState.OPEN:
-            # Fail-loud: raise instead of returning False
-            raise CircuitBreakerOpen(self._config.name, "circuit is open")
-
-        # HALF_OPEN: allow limited calls
+            raise CircuitBreakerOpen(self._config.name, 'circuit is open')
         with self._lock:
             if self._half_open_calls >= self._config.half_open_max_calls:
-                raise CircuitBreakerOpen(
-                    self._config.name,
-                    f"half_open limit reached ({self._config.half_open_max_calls})"
-    )
+                raise CircuitBreakerOpen(self._config.name, f'half_open limit reached ({self._config.half_open_max_calls})')
             self._half_open_calls += 1
             return True
 
     def stats(self) -> CircuitBreakerStats:
         """Get immutable stats snapshot."""
         with self._lock:
-            return CircuitBreakerStats(
-                domain=self._config.name,
-                state=self._state,
-                failure_count=self._failure_count,
-                success_count=self._success_count,
-                last_failure_time=self._last_failure_time,
-                last_success_time=self._last_success_time,
-                open_since=self._open_since,
-    )
+            return CircuitBreakerStats(domain=self._config.name, state=self._state, failure_count=self._failure_count, success_count=self._success_count, last_failure_time=self._last_failure_time, last_success_time=self._last_success_time, open_since=self._open_since)
 
     def reset(self) -> None:
         """Reset circuit to CLOSED state (for testing or manual intervention)."""
         with self._lock:
             self._transition_to_closed()
-            logger.info("[CircuitBreaker] %s manually reset to CLOSED", self._config.name)
-
+            logger.info('[CircuitBreaker] %s manually reset to CLOSED', self._config.name)
 
 class CircuitBreakerRegistry:
     """
@@ -279,16 +239,13 @@ class CircuitBreakerRegistry:
 
     P7-2 SSOT: Use this registry instead of creating breakers ad-hoc.
     """
+    __slots__ = ('_breakers', '_lock')
 
     def __init__(self) -> None:
         self._breakers: dict[str, CircuitBreaker] = {}
         self._lock = threading.RLock()
 
-    def get_breaker(
-        self,
-        domain: str,
-        config: CircuitBreakerConfig | None = None,
-    ) -> CircuitBreaker:
+    def get_breaker(self, domain: str, config: CircuitBreakerConfig | None=None) -> CircuitBreaker:
         """
         Get or create a circuit breaker for domain.
 
@@ -302,10 +259,8 @@ class CircuitBreakerRegistry:
         with self._lock:
             if domain in self._breakers:
                 return self._breakers[domain]
-
             if config is None:
                 config = CircuitBreakerConfig(name=domain)
-
             breaker = CircuitBreaker(config)
             self._breakers[domain] = breaker
             return breaker
@@ -320,20 +275,9 @@ class CircuitBreakerRegistry:
         with self._lock:
             for breaker in self._breakers.values():
                 breaker.reset()
-
-
-# Global registry instance
 circuit_breaker_registry = CircuitBreakerRegistry()
 
-
-# =============================================================================
-# P7-2: Decorators for fail-loud circuit breaker integration
-# =============================================================================
-
-def with_circuit_breaker(
-    domain: str,
-    config: CircuitBreakerConfig | None = None,
-) -> Callable:
+def with_circuit_breaker(domain: str, config: CircuitBreakerConfig | None=None) -> Callable:
     """
     Decorator that wraps a function with circuit breaker protection.
 
@@ -352,11 +296,11 @@ def with_circuit_breaker(
     def decorator(func: Callable) -> Callable:
         import asyncio
         import functools
-
         if asyncio.iscoroutinefunction(func):
+
             @functools.wraps(func)
             async def async_wrapper(*args, **kwargs):
-                breaker.allow_request()  # Raises CircuitBreakerOpen if open
+                breaker.allow_request()
                 try:
                     result = await func(*args, **kwargs)
                     breaker.record_success()
@@ -365,9 +309,10 @@ def with_circuit_breaker(
                     breaker.record_failure(e)
                     raise
         else:
+
             @functools.wraps(func)
             def sync_wrapper(*args, **kwargs):
-                breaker.allow_request()  # Raises CircuitBreakerOpen if open
+                breaker.allow_request()
                 try:
                     result = func(*args, **kwargs)
                     breaker.record_success()
@@ -375,48 +320,9 @@ def with_circuit_breaker(
                 except Exception as e:
                     breaker.record_failure(e)
                     raise
-
         return async_wrapper if asyncio.iscoroutinefunction(func) else sync_wrapper
-
     return decorator
-
-
-# =============================================================================
-# P7-2: Default configs for common domains
-# =============================================================================
-
-# LanceDB operations: slower ops, higher threshold
-DEFAULT_LANCEDB_CONFIG = CircuitBreakerConfig(
-    name="lancedb",
-    failure_threshold=3,
-    success_threshold=2,
-    recovery_timeout=60.0,  # 1 minute recovery
-    half_open_max_calls=2,
-    )
-
-# MLX model loading: expensive, lower threshold
-DEFAULT_MLX_CONFIG = CircuitBreakerConfig(
-    name="mlx_model",
-    failure_threshold=2,
-    success_threshold=1,
-    recovery_timeout=120.0,  # 2 minutes (model load is expensive)
-    half_open_max_calls=1,
-    )
-
-# DuckDB operations: fast, higher threshold
-DEFAULT_DUCKDB_CONFIG = CircuitBreakerConfig(
-    name="duckdb",
-    failure_threshold=5,
-    success_threshold=2,
-    recovery_timeout=30.0,
-    half_open_max_calls=3,
-    )
-
-# Transport operations: fast, high threshold
-DEFAULT_TRANSPORT_CONFIG = CircuitBreakerConfig(
-    name="transport",
-    failure_threshold=5,
-    success_threshold=3,
-    recovery_timeout=30.0,
-    half_open_max_calls=5,
-    )
+DEFAULT_LANCEDB_CONFIG = CircuitBreakerConfig(name='lancedb', failure_threshold=3, success_threshold=2, recovery_timeout=60.0, half_open_max_calls=2)
+DEFAULT_MLX_CONFIG = CircuitBreakerConfig(name='mlx_model', failure_threshold=2, success_threshold=1, recovery_timeout=120.0, half_open_max_calls=1)
+DEFAULT_DUCKDB_CONFIG = CircuitBreakerConfig(name='duckdb', failure_threshold=5, success_threshold=2, recovery_timeout=30.0, half_open_max_calls=3)
+DEFAULT_TRANSPORT_CONFIG = CircuitBreakerConfig(name='transport', failure_threshold=5, success_threshold=3, recovery_timeout=30.0, half_open_max_calls=5)

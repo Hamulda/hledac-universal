@@ -50,6 +50,7 @@ use pyo3::prelude::*;
 use std::cell::Cell;
 use std::sync::atomic::{AtomicU8, AtomicUsize, Ordering};
 use std::sync::LazyLock;
+use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
 // ---------------------------------------------------------------------------
@@ -59,11 +60,11 @@ use std::time::{Duration, Instant};
 /// Atomic counter for threshold switches (idle→normal→pressure).
 static THRESHOLD_SWITCH_COUNT: AtomicUsize = AtomicUsize::new(0);
 
-/// Last observed threshold level (for detecting switches).
-static LAST_THRESHOLD_LEVEL: Cell<u8> = Cell::new(PRESSURE_UNSET);
+/// Last observed threshold level (for detecting switches) - AtomicU8 is Sync-safe.
+static LAST_THRESHOLD_LEVEL: AtomicU8 = AtomicU8::new(PRESSURE_UNSET);
 
-/// Timestamp of last threshold switch.
-static LAST_THRESHOLD_SWITCH_TIME: Cell<Instant> = Cell::new(Instant::now());
+/// Timestamp of last threshold switch - protected by Mutex for interior mutability.
+static LAST_THRESHOLD_SWITCH_TIME: Mutex<Instant> = Mutex::new(Instant::now());
 
 /// Get the count of threshold switches since process start.
 #[inline]
@@ -75,39 +76,39 @@ pub fn get_threshold_switch_count() -> usize {
 #[inline]
 pub fn reset_threshold_switch_count() {
     THRESHOLD_SWITCH_COUNT.store(0, Ordering::Relaxed);
-    LAST_THRESHOLD_LEVEL.set(PRESSURE_UNSET);
-    LAST_THRESHOLD_SWITCH_TIME.set(Instant::now());
+    LAST_THRESHOLD_LEVEL.store(PRESSURE_UNSET, Ordering::Relaxed);
+    *LAST_THRESHOLD_SWITCH_TIME.lock().unwrap() = Instant::now();
 }
 
 /// Record a threshold switch (called internally by mixed_threshold).
 #[inline]
 fn record_threshold_switch(new_level: u8) {
-    let last = LAST_THRESHOLD_LEVEL.get();
+    let last = LAST_THRESHOLD_LEVEL.load(Ordering::Relaxed);
     if last != new_level {
         THRESHOLD_SWITCH_COUNT.fetch_add(1, Ordering::Relaxed);
-        LAST_THRESHOLD_LEVEL.set(new_level);
-        LAST_THRESHOLD_SWITCH_TIME.set(Instant::now());
+        LAST_THRESHOLD_LEVEL.store(new_level, Ordering::Relaxed);
+        *LAST_THRESHOLD_SWITCH_TIME.lock().unwrap() = Instant::now();
     }
 }
 
 /// Get the current threshold level (0=idle, 1=normal, 2=pressure).
 #[inline]
 pub fn get_current_threshold_level() -> u8 {
-    LAST_THRESHOLD_LEVEL.get()
+    LAST_THRESHOLD_LEVEL.load(Ordering::Relaxed)
 }
 
 /// Get time since last threshold switch.
 #[inline]
 pub fn get_time_since_last_switch() -> Duration {
-    LAST_THRESHOLD_SWITCH_TIME.get().elapsed()
+    LAST_THRESHOLD_SWITCH_TIME.lock().unwrap().elapsed()
 }
 
 /// Get threshold switch statistics as a tuple.
 pub fn get_threshold_stats() -> (usize, u8, f64) {
     (
         THRESHOLD_SWITCH_COUNT.load(Ordering::Relaxed),
-        LAST_THRESHOLD_LEVEL.get(),
-        LAST_THRESHOLD_SWITCH_TIME.get().elapsed().as_secs_f64(),
+        LAST_THRESHOLD_LEVEL.load(Ordering::Relaxed),
+        LAST_THRESHOLD_SWITCH_TIME.lock().unwrap().elapsed().as_secs_f64(),
     )
 }
 
@@ -273,7 +274,7 @@ pub fn budget_allows(extra: usize) -> bool {
 /// Phase configs are initial seeds — pressure-based sizing takes precedence.
 pub fn set_phase(phase: &str) {
     if let Ok(mut p) = BUDGET_PHASE.lock() {
-        *p = phase.to_string();
+        *p = phase;
     }
 }
 
@@ -746,30 +747,30 @@ pub fn get_thread_budget_breakdown() -> (usize, usize, usize, usize, usize) {
 }
 
 pub fn register_functions(m: &Bound<'_, PyModule>) -> PyResult<()> {
-    m.add_function(wrap_pyfunction!(get_adaptive_cpu_threads, m)?)?;
-    m.add_function(wrap_pyfunction!(get_adaptive_io_threads, m)?)?;
-    m.add_function(wrap_pyfunction!(get_adaptive_mixed_threshold, m)?)?;
-    m.add_function(wrap_pyfunction!(get_adaptive_mixed_threshold_via_metal, m)?)?;
-    m.add_function(wrap_pyfunction!(get_metal_limit_bytes_py, m)?)?;
-    m.add_function(wrap_pyfunction!(sync_metal_memory_pressure_py, m)?)?;
+    m.add_function(wrap_pyfunction!(get_adaptive_cpu_threads))?;
+    m.add_function(wrap_pyfunction!(get_adaptive_io_threads))?;
+    m.add_function(wrap_pyfunction!(get_adaptive_mixed_threshold))?;
+    m.add_function(wrap_pyfunction!(get_adaptive_mixed_threshold_via_metal))?;
+    m.add_function(wrap_pyfunction!(get_metal_limit_bytes_py))?;
+    m.add_function(wrap_pyfunction!(sync_metal_memory_pressure_py))?;
     // MODERN-31: Phase setter/getter
-    m.add_function(wrap_pyfunction!(set_adaptive_phase, m)?)?;
-    m.add_function(wrap_pyfunction!(get_adaptive_phase, m)?)?;
+    m.add_function(wrap_pyfunction!(set_adaptive_phase))?;
+    m.add_function(wrap_pyfunction!(get_adaptive_phase))?;
     // MODERN-32 + THREAD-BUDGET-01: Global thread budget
-    m.add_function(wrap_pyfunction!(get_total_active_threads_budget, m)?)?;
-    m.add_function(wrap_pyfunction!(get_available_thread_budget, m)?)?;
-    m.add_function(wrap_pyfunction!(get_thread_budget_breakdown, m)?)?;
+    m.add_function(wrap_pyfunction!(get_total_active_threads_budget))?;
+    m.add_function(wrap_pyfunction!(get_available_thread_budget))?;
+    m.add_function(wrap_pyfunction!(get_thread_budget_breakdown))?;
     // THREAD-BUDGET-01: New budget functions
-    m.add_function(wrap_pyfunction!(get_budget_ceiling, m)?)?;
-    m.add_function(wrap_pyfunction!(check_budget_allows, m)?)?;
+    m.add_function(wrap_pyfunction!(get_budget_ceiling))?;
+    m.add_function(wrap_pyfunction!(check_budget_allows))?;
     // sync_adaptive_state removed: deprecated no-op, not used from Python
 
     // MODERN-CROSS-4: Threshold switch monitoring
-    m.add_function(wrap_pyfunction!(get_threshold_switch_counter, m)?)?;
-    m.add_function(wrap_pyfunction!(reset_threshold_switch_counter, m)?)?;
-    m.add_function(wrap_pyfunction!(get_current_metal_level, m)?)?;
-    m.add_function(wrap_pyfunction!(get_seconds_since_last_switch, m)?)?;
-    m.add_function(wrap_pyfunction!(get_threshold_monitoring_stats, m)?)?;
+    m.add_function(wrap_pyfunction!(get_threshold_switch_counter))?;
+    m.add_function(wrap_pyfunction!(reset_threshold_switch_counter))?;
+    m.add_function(wrap_pyfunction!(get_current_metal_level))?;
+    m.add_function(wrap_pyfunction!(get_seconds_since_last_switch))?;
+    m.add_function(wrap_pyfunction!(get_threshold_monitoring_stats))?;
 
     Ok(())
 }

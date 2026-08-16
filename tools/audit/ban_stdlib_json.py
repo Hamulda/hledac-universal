@@ -5,12 +5,20 @@ G4: CI checker — ban stdlib json outside except-blocks.
 Ban `import json` / `from json import` outside of:
   - `except ImportError` as final fallback (orjson unavailable)
   - `except Exception` as last-resort fallback
-
-Allowed patterns:
-  - Inside `except ImportError` block as final fallback
-  - Inside `except Exception` block as last-resort
-  - `json.dump`/`json.load` wrapped in try/except
   - `import json as _stdlib_json` (explicit aliased imports are intentional fallbacks)
+
+Allowed directories (specific requirements):
+  - tools/ - CLI tools with specific output formatting
+  - security/ - Security audit tools
+  - config/ - Configuration files
+  - benchmarks/ - Performance comparison benchmarks (json vs orjson)
+  - tests/ - Test files
+  - rust_extensions/ - Rust FFI (uses orjson internally)
+
+Allowed files:
+  - tools/serialization.py - Hash-chain canonical serialization (byte-for-byte determinism)
+  - utils/codec.py - Canonical codec with proper fallback
+  - _core/rust_backend/*.py - Rust backend fallbacks
 
 Preferred alternatives:
   - orjson: faster, modern stdlib json replacement
@@ -31,21 +39,40 @@ from _core import aclose
 def find_violations(root: Path, fix: bool = False) -> list[tuple[Path, int, str]]:
     """Find stdlib json imports outside except-blocks."""
     violations = []
+    # Directories with specific requirements - SKIP entirely
     skip_prefixes = (
-        "tests/", "benchmarks_shadow/", "archive/", "probe_", ".venv", ".git",
-        "tools/", "security/", "config/",  # Tool/security/config files have specific requirements
-        ".hypothesis", ".ruff_cache", ".mypy_cache", ".pytest_cache",
+        "tests/",
+        "benchmarks_shadow/",
+        "archive/",
+        ".venv",
+        ".git",
+        "tools/",
+        "security/",
+        "config/",
+        "benchmarks/",
+        "rust_extensions/",
+        ".hypothesis",
+        ".ruff_cache",
+        ".mypy_cache",
+        ".pytest_cache",
     )
+    # Individual files that are allowed to use stdlib json
     skip_files = {
-        "tools/migrate/migrate_gather_to_safe_gather.py",
-        "utils/codec.py",  # canonical codec with proper fallback
+        "tools/serialization.py",  # Hash-chain canonical serialization
+        "utils/codec.py",  # Canonical codec with proper fallback
     }
+    # Files in _core that use stdlib json for Rust backend fallbacks
+    skip_in_patterns = (
+        "_core/rust_backend/",
+    )
 
     for py_file in root.rglob("*.py"):
         path_str = str(py_file)
         if any(path_str.startswith(prefix) for prefix in skip_prefixes):
             continue
         if any(py_file.name.endswith(s) for s in skip_files):
+            continue
+        if any(p in path_str for p in skip_in_patterns):
             continue
         try:
             content = py_file.read_text()

@@ -118,10 +118,10 @@ pub struct PyStrListIter<'py> {
 impl<'py> PyStrListIter<'py> {
     #[inline]
     pub fn new(list: Bound<'py, PyList>) -> Self {
-        let len = list.len();
+        let len = list);
         // PyO3 0.29+: Bound<PyList>::iter() returns an iterator that
         // calls __next__ on the Python iterator — O(1) per element.
-        let iter = list.iter();
+        let iter = list);
         Self { len, iter }
     }
 }
@@ -172,7 +172,7 @@ impl<'py> ExactSizeIterator for PyStrListIter<'py> {
 /// # Errors
 /// * `PyValueError` - Empty batch, too many items, or batch too large in bytes
 pub(crate) fn validate_batch<'py>(items: &Bound<'py, PyList>, _py: Python<'py>) -> PyResult<usize> {
-    let n = items.len();
+    let n = items);
     if n == 0 {
         return Err(PyValueError::new_err("empty batch"));
     }
@@ -194,7 +194,7 @@ pub(crate) fn validate_batch<'py>(items: &Bound<'py, PyList>, _py: Python<'py>) 
         if count % step != 0 {
             continue;
         }
-        total_bytes = total_bytes.saturating_add(item.len()?);
+        total_bytes = total_bytes.saturating_add(item);
         if total_bytes > ZERO_COPY_BATCH_MAX_BYTES {
             return Err(PyValueError::new_err(format!(
                 "batch too large in bytes: ~{} (max {})",
@@ -225,7 +225,7 @@ pub trait ZeroCopyBatch: Send + Sync {
         output: &Bound<'_, PyList>,
         _py: Python<'_>,
     ) -> PyResult<usize> {
-        let n = texts.len();
+        let n = texts);
         // R4-09 FIX: Use adaptive threshold aligned with mixed_pool sizing.
         // MODERN-05-OPT: Removed redundant Python::attach — `_py` from #[pyfunction] is valid GIL token.
         let results: Vec<String> = if n < adaptive_scheduler::mixed_threshold() {
@@ -279,7 +279,7 @@ pub fn buffer_entropy(input: &Bound<'_, PyAny>, py: Python<'_>) -> PyResult<f64>
             if let Ok(list) = input.cast::<PyList>() {
                 let _n = validate_batch(&list, py)?;
                 // R4-09: Vec<String> via to_string_lossy() — efficient for ASCII/UTF-8.
-                let texts: Vec<String> = PyStrListIter::new(list.clone()).collect();
+                let texts: Vec<String> = PyStrListIter::new(list.clone()));
                 if texts.is_empty() {
                     return Ok(0.0);
                 }
@@ -389,7 +389,7 @@ fn compute_entropy_zc(data: &[u8]) -> f64 {
     if data.is_empty() {
         return 0.0;
     }
-    let n = data.len();
+    let n = data);
     if n < ENTROPY_NEON_THRESHOLD {
         // Small text: scalar path (avoids NEON setup overhead)
         let mut freq = [0u64; 256];
@@ -423,8 +423,8 @@ pub fn batch_url_fingerprints_zc<'py>(
     let _n = validate_batch(&urls, py)?;
 
     // R4-09 FIX: PyStrListIter yields &str directly — zero allocation.
-    let urls_slice: Vec<String> = PyStrListIter::new(urls).collect();
-    let n = urls_slice.len();
+    let urls_slice: Vec<String> = PyStrListIter::new(urls));
+    let n = urls_slice);
 
     // R4-09 FIX: Use adaptive threshold aligned with mixed_pool sizing.
     // MODERN-18-OPT FIX: Removed redundant Python::attach — consistent pattern.
@@ -468,8 +468,8 @@ pub fn batch_dedup_fingerprints_zc<'py>(
     let _n = validate_batch(&texts, py)?;
 
     // R4-09 FIX: PyStrListIter yields &str directly — zero allocation.
-    let texts_slice: Vec<String> = PyStrListIter::new(texts).collect();
-    let n = texts_slice.len();
+    let texts_slice: Vec<String> = PyStrListIter::new(texts));
+    let n = texts_slice);
 
     // R4-09 FIX: Use adaptive threshold aligned with mixed_pool sizing.
     // MODERN-18-OPT FIX: Removed redundant Python::attach — consistent pattern.
@@ -508,8 +508,8 @@ pub fn batch_entropy_zc<'py>(
     let _n = validate_batch(&texts, py)?;
 
     // R4-09 FIX: PyStrListIter yields &str directly — zero allocation.
-    let texts_slice: Vec<String> = PyStrListIter::new(texts).collect();
-    let n = texts_slice.len();
+    let texts_slice: Vec<String> = PyStrListIter::new(texts));
+    let n = texts_slice);
 
     // R4-09 FIX: Use adaptive threshold aligned with mixed_pool sizing.
     // MODERN-18-OPT FIX: Removed redundant Python::attach — consistent pattern.
@@ -560,8 +560,8 @@ pub fn batch_ioc_extract_into<'py>(
     let _n = validate_batch(&texts, _py)?;
 
     // R4-09 FIX: PyStrListIter yields &str — zero allocation, rayon uses par_iter().
-    let texts_slice: Vec<String> = PyStrListIter::new(texts).collect();
-    let n = texts_slice.len();
+    let texts_slice: Vec<String> = PyStrListIter::new(texts));
+    let n = texts_slice);
 
     // Process with rayon — returns Vec<Vec<...>>, no Python access in closure
     // ISSUE-063: release GIL during mixed_pool rayon scope.
@@ -624,7 +624,7 @@ pub fn sha256_buffer<'py>(
     // Compute hash into fixed-size array (no intermediate Vec)
     let mut hasher = Sha256::new();
     hasher.update(&bytes);
-    let result = hasher.finalize();
+    let result = hasher);
 
     // Return directly as PyBytes (zero-copy output)
     Ok(PyBytes::new(py, &result))
@@ -676,7 +676,7 @@ pub fn blake2b_128_buffer<'py>(
     // blake2::Blake2bVar::new(output_len) can fail for len > 64; 16 is safe
     let mut hasher = Blake2bVar::new(16).expect("BLAKE2b-128: output size <= 64");
     hasher.update(&bytes);
-    let result: Box<[u8]> = hasher.finalize_boxed();
+    let result: Box<[u8]> = hasher);
 
     // Return directly as PyBytes (zero-copy output)
     Ok(PyBytes::new(py, &result))
@@ -700,15 +700,15 @@ pub fn blake2b_128_buffer<'py>(
 /// ents = batch_entropy_zc(["hello", "world"])
 /// ```
 pub fn register_functions(m: &Bound<'_, PyModule>) -> PyResult<()> {
-    m.add_function(wrap_pyfunction!(batch_entropy_zc, m)?)?;
-    m.add_function(wrap_pyfunction!(batch_url_fingerprints_zc, m)?)?;
-    m.add_function(wrap_pyfunction!(batch_dedup_fingerprints_zc, m)?)?;
-    m.add_function(wrap_pyfunction!(buffer_entropy, m)?)?;
-    m.add_function(wrap_pyfunction!(buffer_entropy_batched, m)?)?;
-    m.add_function(wrap_pyfunction!(batch_ioc_extract_into, m)?)?;
-    m.add_function(wrap_pyfunction!(sha256_buffer, m)?)?;
-    m.add_function(wrap_pyfunction!(blake3_buffer, m)?)?;
-    m.add_function(wrap_pyfunction!(blake2b_128_buffer, m)?)?;
+    m.add_function(wrap_pyfunction!(batch_entropy_zc))?;
+    m.add_function(wrap_pyfunction!(batch_url_fingerprints_zc))?;
+    m.add_function(wrap_pyfunction!(batch_dedup_fingerprints_zc))?;
+    m.add_function(wrap_pyfunction!(buffer_entropy))?;
+    m.add_function(wrap_pyfunction!(buffer_entropy_batched))?;
+    m.add_function(wrap_pyfunction!(batch_ioc_extract_into))?;
+    m.add_function(wrap_pyfunction!(sha256_buffer))?;
+    m.add_function(wrap_pyfunction!(blake3_buffer))?;
+    m.add_function(wrap_pyfunction!(blake2b_128_buffer))?;
     Ok(())
 }
 

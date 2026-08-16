@@ -42,6 +42,8 @@ import threading
 import time
 from typing import TYPE_CHECKING
 
+from _core.lock_registry import LockCategory, register_lock
+
 if TYPE_CHECKING:
     import psutil
 
@@ -49,7 +51,12 @@ logger = logging.getLogger(__name__)
 
 # Singleton registry: db_path → GraphLockManager instance
 _LOCK_REGISTRY: dict[str, GraphLockManager] = {}
-_REGISTRY_LOCK = threading.Lock()
+
+
+@register_lock(LockCategory.GRAPH)
+def _REGISTRY_LOCK() -> threading.Lock:
+    """Module-level lock for graph lock registry."""
+    return threading.Lock()
 
 # Safety bounds
 MAX_LOCK_WAIT_S: float = 2.0
@@ -281,7 +288,7 @@ class GraphLockManager:
     )
 
     def __new__(cls, db_path: str) -> GraphLockManager:
-        with _REGISTRY_LOCK:
+        with _REGISTRY_LOCK():
             if db_path not in _LOCK_REGISTRY:
                 _LOCK_REGISTRY[db_path] = super().__new__(cls)
             return _LOCK_REGISTRY[db_path]

@@ -24,6 +24,7 @@ from enum import Enum
 from typing import Any
 
 import msgspec
+from compat.msgspec_gc_compat import Struct
 from hledac.universal.compat.msgspec_gc_compat import Struct
 
 from hledac.universal.utils.asyncx import parallel

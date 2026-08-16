@@ -22,6 +22,7 @@ Planner/Runner section boundaries, and F350M-R cleanup notes.
 from __future__ import annotations
 import logging
 import msgspec
+from compat.msgspec_gc_compat import Struct
 from hledac.universal.compat.msgspec_gc_compat import Struct
 import re
 from collections.abc import AsyncGenerator, Callable
@@ -476,7 +477,7 @@ def _make_lane_rules() -> tuple[LaneRule, ...]:
 
 LANE_RULES: tuple[LaneRule, ...] = _make_lane_rules()
 
-class NonfeedPlanDebug(msgspec.Struct, gc=False):
+class NonfeedPlanDebug(Struct):
     """[F207L] Diagnostic snapshot of nonfeed lane planning for live KPI debugging.
 
     Records what the acquisition planner decided and why,
@@ -573,7 +574,7 @@ class NonfeedSeedContext:
         """Return counts by non-empty seed kind."""
         return {k: len(v) for k, v in [('domains', self.domains), ('ips', self.ips), ('urls', self.urls), ('hashes', self.hashes), ('cves', self.cves)] if v}
 
-class AcquisitionStrategySnapshot(msgspec.Struct, gc=False):
+class AcquisitionStrategySnapshot(Struct):
     """Full acquisition strategy snapshot for one sprint/cycle."""
     query: str = ''
     duration_s: float = 0.0
@@ -1444,7 +1445,7 @@ class AcquisitionLaneOutcome(Struct, frozen=True):
 _NONFEED_LANE_FAMILY_MAP = {'PUBLIC': AcquisitionLane.PUBLIC, 'CT': AcquisitionLane.CT, 'PIVOT_EXECUTOR': AcquisitionLane.PIVOT_EXECUTOR, 'WAYBACK': AcquisitionLane.WAYBACK, 'PASSIVE_DNS': AcquisitionLane.PASSIVE_DNS}
 _ACCEPTED_TERMINAL_STATES = frozenset(['success', 'success_empty', 'empty'])
 
-class NonfeedMissionSnapshot(msgspec.Struct, gc=False):
+class NonfeedMissionSnapshot(Struct):
     """F217B: Snapshot of nonfeed mission controller state at a point in time.
 
     This is a plain msgspec.Struct (mutable) so that the scheduler can

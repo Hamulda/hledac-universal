@@ -19,6 +19,7 @@ import logging
 import time
 from dataclasses import dataclass, field
 import msgspec
+from compat.msgspec_gc_compat import Struct
 from datetime import UTC, datetime
 from typing import Any
 from hledac.universal.utils.asyncx import parallel_ok
@@ -28,7 +29,7 @@ from _core import aclose
 logger = logging.getLogger(__name__)
 MODULE_TIMEOUT = 60
 
-class Finding(msgspec.Struct, gc=False):
+class Finding(Struct):
     """Represents a finding from cross-module analysis.
 
     Attributes:
@@ -44,7 +45,7 @@ class Finding(msgspec.Struct, gc=False):
     confidence: float
     modules: list[str] = field(default_factory=list)
 
-class CorrelationReport(msgspec.Struct, frozen=True, gc=False):
+class CorrelationReport(Struct, frozen=True):
     """Report of cross-module correlations.
 
     Attributes:
@@ -56,7 +57,7 @@ class CorrelationReport(msgspec.Struct, frozen=True, gc=False):
     risk_score: float = 0.0
     attribution: dict[str, Any] = field(default_factory=dict)
 
-class Anomaly(msgspec.Struct, frozen=True, gc=False):
+class Anomaly(Struct, frozen=True):
     """Represents an anomaly detected during analysis.
 
     Attributes:
@@ -70,7 +71,7 @@ class Anomaly(msgspec.Struct, frozen=True, gc=False):
     description: str
     affected_modules: list[str] = field(default_factory=list)
 
-class SharedContext(msgspec.Struct, frozen=True, gc=False):
+class SharedContext(Struct, frozen=True):
     """Shared context passed between workflow modules.
 
     Attributes:
@@ -84,7 +85,7 @@ class SharedContext(msgspec.Struct, frozen=True, gc=False):
     module_status: dict[str, str] = field(default_factory=dict)
     resource_usage: dict[str, Any] = field(default_factory=dict)
 
-class ComprehensiveReport(msgspec.Struct, frozen=True, gc=False):
+class ComprehensiveReport(Struct, frozen=True):
     """Comprehensive analysis report from workflow execution.
 
     Attributes:
@@ -179,7 +180,7 @@ class ComprehensiveReport(msgspec.Struct, frozen=True, gc=False):
         parts.append('        </div>\n    </div>\n</body>\n</html>')
         return ''.join(parts)
 
-class WorkflowPlan(msgspec.Struct, frozen=True, gc=False):
+class WorkflowPlan(Struct, frozen=True):
     """Plan for workflow execution.
 
     Attributes:
@@ -191,7 +192,7 @@ class WorkflowPlan(msgspec.Struct, frozen=True, gc=False):
     execution_mode: str = 'parallel'
     parallel_groups: list[list[str]] | None = None
 
-class IntelligenceConfig(msgspec.Struct, frozen=True, gc=False):
+class IntelligenceConfig(Struct, frozen=True):
     """Configuration for workflow orchestrator.
 
     Attributes:
@@ -678,7 +679,7 @@ class WorkflowOrchestrator:
 HIGH_RISK_PATTERNS: dict[tuple[str, str], float] = {('scrubbed_metadata', 'steganography_detected'): 0.5, ('dns_tunneling', 'encoded_payload'): 0.4, ('zero_width_unicode', 'base64_hidden'): 0.3, ('future_timestamp', 'gps_mismatch'): 0.2}
 SEVERITY_WEIGHTS = {'critical': 1.0, 'high': 0.75, 'medium': 0.5, 'low': 0.25}
 
-class CorrelationResult(msgspec.Struct, frozen=True, gc=False):
+class CorrelationResult(Struct, frozen=True):
     """Lightweight correlation result from findings analysis.
 
     Attributes:

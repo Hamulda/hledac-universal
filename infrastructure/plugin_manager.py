@@ -35,6 +35,7 @@ import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
 import msgspec
+from compat.msgspec_gc_compat import Struct
 from enum import Enum
 from pathlib import Path
 from typing import Any
@@ -57,7 +58,7 @@ class PluginType(Enum):
     UTILITY = 'utility'
     INTEGRATION = 'integration'
 
-class PluginMetadata(msgspec.Struct, gc=False):
+class PluginMetadata(Struct):
     """Plugin metadata structure"""
     name: str
     version: str
@@ -70,7 +71,7 @@ class PluginMetadata(msgspec.Struct, gc=False):
     permissions: list[str] = field(default_factory=list)
     config_schema: dict[str, Any] | None = None
 
-class LoadedPlugin(msgspec.Struct, frozen=True, gc=False):
+class LoadedPlugin(Struct, frozen=True):
     """Loaded plugin container"""
     metadata: PluginMetadata
     module: Any

@@ -34,7 +34,7 @@ impl RecentIocsRing {
 
     pub fn push(&mut self, fingerprint: u64) {
         if self.inner.len() >= self.capacity {
-            self.inner.pop_front();
+            self.inner);
         }
         self.inner.push_back(fingerprint);
     }
@@ -52,7 +52,7 @@ impl RecentIocsRing {
     }
 
     pub fn clear(&mut self) {
-        self.inner.clear();
+        self.inner);
     }
 }
 

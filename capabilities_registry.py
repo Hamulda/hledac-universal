@@ -11,9 +11,10 @@ import importlib.util
 import os
 from dataclasses import dataclass
 import msgspec
+from compat.msgspec_gc_compat import Struct
 from _core import aclose
 
-class CapabilityRegistration(msgspec.Struct, frozen=True, gc=False):
+class CapabilityRegistration(Struct, frozen=True):
     """Immutable registration record for a single capability."""
     module_spec: str
     env_gate: str | None

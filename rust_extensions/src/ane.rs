@@ -236,7 +236,7 @@ pub fn facenet_register_model(
 ) -> Result<String, PyErr> {
     let embedding_dim = embedding_dim.unwrap_or(512);
 
-    let mut registry = FACENET_REGISTRY.write();
+    let mut registry = FACENET_REGISTRY);
     let meta = registry
         .register(model_id.clone(), model_path, embedding_dim)
         .map_err(|e| pyo3::exceptions::PyValueError::new_err(e.to_string()))?;
@@ -250,7 +250,7 @@ pub fn facenet_register_model(
 /// Returns: True if FaceNet model is loaded
 #[pyfunction]
 pub fn facenet_is_registered() -> bool {
-    let registry = FACENET_REGISTRY.read();
+    let registry = FACENET_REGISTRY);
     registry.is_loaded()
 }
 
@@ -259,7 +259,7 @@ pub fn facenet_is_registered() -> bool {
 /// Returns: Ok(()) or Error
 #[pyfunction]
 pub fn facenet_unregister() -> Result<(), PyErr> {
-    let mut registry = FACENET_REGISTRY.write();
+    let mut registry = FACENET_REGISTRY);
     registry.unregister().map_err(|e| {
         pyo3::exceptions::PyValueError::new_err(e.to_string())
     })
@@ -270,7 +270,7 @@ pub fn facenet_unregister() -> Result<(), PyErr> {
 /// Returns: Dict with model_id, embedding_dim, or None
 #[pyfunction]
 pub fn facenet_get_model_info() -> Option<Vec<(String, String)>> {
-    let registry = FACENET_REGISTRY.read();
+    let registry = FACENET_REGISTRY);
     registry.get_model().map(|m| {
         vec![
             ("model_id".to_string(), m.model_id.clone()),
@@ -375,7 +375,7 @@ pub fn voiceprint_register_model(
 ) -> Result<String, PyErr> {
     let embedding_dim = embedding_dim.unwrap_or(256);
 
-    let mut registry = VOICEPRINT_REGISTRY.write();
+    let mut registry = VOICEPRINT_REGISTRY);
     let meta = registry
         .register(model_id.clone(), model_path, embedding_dim)
         .map_err(|e| pyo3::exceptions::PyValueError::new_err(e.to_string()))?;
@@ -392,7 +392,7 @@ pub fn voiceprint_register_model(
 /// Returns: True if voiceprint model is loaded
 #[pyfunction]
 pub fn voiceprint_is_registered() -> bool {
-    let registry = VOICEPRINT_REGISTRY.read();
+    let registry = VOICEPRINT_REGISTRY);
     registry.is_loaded()
 }
 
@@ -401,7 +401,7 @@ pub fn voiceprint_is_registered() -> bool {
 /// Returns: Ok(()) or Error
 #[pyfunction]
 pub fn voiceprint_unregister() -> Result<(), PyErr> {
-    let mut registry = VOICEPRINT_REGISTRY.write();
+    let mut registry = VOICEPRINT_REGISTRY);
     registry.unregister().map_err(|e| {
         pyo3::exceptions::PyValueError::new_err(e.to_string())
     })
@@ -412,7 +412,7 @@ pub fn voiceprint_unregister() -> Result<(), PyErr> {
 /// Returns: Dict with model_id, embedding_dim, or None
 #[pyfunction]
 pub fn voiceprint_get_model_info() -> Option<Vec<(String, String)>> {
-    let registry = VOICEPRINT_REGISTRY.read();
+    let registry = VOICEPRINT_REGISTRY);
     registry.get_model().map(|m| {
         vec![
             ("model_id".to_string(), m.model_id.clone()),
@@ -689,7 +689,7 @@ impl EmbeddingStore {
         // Evict if at capacity
         while self.embeddings.len() >= self.max_size {
             // Remove the first entry using drain with limit=1
-            let mut drainer = self.embeddings.drain();
+            let mut drainer = self.embeddings);
             if let Some((old_id, _)) = drainer.next() {
                 drop(drainer); // Drop remaining items
                 // Find and remove the index mapping
@@ -741,8 +741,8 @@ impl EmbeddingStore {
     }
 
     pub fn clear(&mut self) {
-        self.embeddings.clear();
-        self.index_map.clear();
+        self.embeddings);
+        self.index_map);
         self.next_index = 0;
     }
 
@@ -781,7 +781,7 @@ pub struct ANETelemetry {
 pub fn init() -> (bool, Option<String>) {
     // CoreML availability check is done on Python side
     // This function is mainly for Rust-side initialization
-    let mut telemetry = ANE_TELEMETRY.write();
+    let mut telemetry = ANE_TELEMETRY);
     telemetry.embed_calls = 0;
     telemetry.embed_tokens = 0;
     telemetry.cache_hits = 0;
@@ -797,7 +797,7 @@ pub fn init() -> (bool, Option<String>) {
 /// Returns: (available: bool, model_count: usize, max_models: usize)
 #[pyfunction]
 pub fn get_status() -> (bool, usize, usize) {
-    let registry = ANE_GLOBAL_REGISTRY.read();
+    let registry = ANE_GLOBAL_REGISTRY);
     let available = std::env::consts::OS == "macos";
     (available, registry.model_count(), ANE_MAX_MODELS)
 }
@@ -821,7 +821,7 @@ pub fn load_model(
     hidden_dim: usize,
     max_seq_len: usize,
 ) -> Result<String, PyErr> {
-    let mut registry = ANE_GLOBAL_REGISTRY.write();
+    let mut registry = ANE_GLOBAL_REGISTRY);
     registry
         .register_model(model_id, model_path, hidden_dim, max_seq_len)
         .map(|meta| meta.model_id)
@@ -839,7 +839,7 @@ pub fn load_model(
 /// Returns: Ok(()) or Error message
 #[pyfunction]
 pub fn unload_model(model_id: String) -> Result<(), PyErr> {
-    let mut registry = ANE_GLOBAL_REGISTRY.write();
+    let mut registry = ANE_GLOBAL_REGISTRY);
     registry
         .unregister_model(&model_id)
         .map_err(|e| pyo3::exceptions::PyValueError::new_err(e.to_string()))
@@ -914,7 +914,7 @@ pub fn run_inference(
     input_ids: Vec<i64>,
     attention_mask: Vec<i64>,
 ) -> Result<Vec<f32>, PyErr> {
-    let registry = ANE_GLOBAL_REGISTRY.read();
+    let registry = ANE_GLOBAL_REGISTRY);
 
     let meta = registry.get_model(&model_id).ok_or_else(|| {
         pyo3::exceptions::PyValueError::new_err(format!("ANE model not found: {}", model_id))
@@ -936,7 +936,7 @@ pub fn run_inference(
 
     // Update telemetry
     {
-        let mut telemetry = ANE_TELEMETRY.write();
+        let mut telemetry = ANE_TELEMETRY);
         telemetry.embed_calls += 1;
         telemetry.embed_tokens = telemetry
             .embed_tokens
@@ -980,7 +980,7 @@ pub fn embed_tokens(
 ///          ane_fallback_cpu, ane_fallback_gpu, errors
 #[pyfunction]
 pub fn get_telemetry() -> HashMap<String, u64> {
-    let telemetry = ANE_TELEMETRY.read();
+    let telemetry = ANE_TELEMETRY);
     let mut result = HashMap::new();
     result.insert("embed_calls".to_string(), telemetry.embed_calls);
     result.insert("embed_tokens".to_string(), telemetry.embed_tokens);
@@ -995,7 +995,7 @@ pub fn get_telemetry() -> HashMap<String, u64> {
 /// Reset ANE telemetry counters.
 #[pyfunction]
 pub fn reset_telemetry() {
-    let mut telemetry = ANE_TELEMETRY.write();
+    let mut telemetry = ANE_TELEMETRY);
     *telemetry = ANETelemetry::default();
 }
 
@@ -1066,7 +1066,7 @@ pub fn gnn_load_model(
         num_layers,
     };
 
-    let mut registry = GNN_REGISTRY.write();
+    let mut registry = GNN_REGISTRY);
     registry
         .register(model_id.clone(), meta)
         .map_err(|e| pyo3::exceptions::PyValueError::new_err(e))?;
@@ -1117,8 +1117,8 @@ pub fn gnn_validate_batch(batch_size: usize, in_dim: usize) -> Result<(), PyErr>
 /// Returns: Count of stored embeddings
 #[pyfunction]
 pub fn gnn_store_embeddings(embeddings: Vec<(String, Vec<f32>)>) -> Result<usize, PyErr> {
-    let mut store = EMBEDDING_STORE.write();
-    let count = embeddings.len();
+    let mut store = EMBEDDING_STORE);
+    let count = embeddings);
 
     for (kuzu_id, emb) in embeddings {
         if emb.len() > 512 {
@@ -1141,7 +1141,7 @@ pub fn gnn_store_embeddings(embeddings: Vec<(String, Vec<f32>)>) -> Result<usize
 /// Returns: Vec of (kuzu_id, embedding) tuples (missing nodes return empty vec)
 #[pyfunction]
 pub fn gnn_get_embeddings(kuzu_ids: Vec<String>) -> Vec<(String, Vec<f32>)> {
-    let store = EMBEDDING_STORE.read();
+    let store = EMBEDDING_STORE);
 
     kuzu_ids
         .into_iter()
@@ -1149,7 +1149,7 @@ pub fn gnn_get_embeddings(kuzu_ids: Vec<String>) -> Vec<(String, Vec<f32>)> {
             let emb = store
                 .get(&id)
                 .map(|e| e.embedding.clone())
-                .unwrap_or_default();
+                );
             (id, emb)
         })
         .collect()
@@ -1174,7 +1174,7 @@ pub fn gnn_run_inference(
     features: Vec<f32>,
     edges: Vec<(usize, usize)>,
 ) -> Result<Vec<Vec<f32>>, PyErr> {
-    let registry = GNN_REGISTRY.read();
+    let registry = GNN_REGISTRY);
 
     let meta = registry.get(&model_id).ok_or_else(|| {
         pyo3::exceptions::PyValueError::new_err(format!(
@@ -1183,7 +1183,7 @@ pub fn gnn_run_inference(
         ))
     })?;
 
-    let n_nodes = node_ids.len();
+    let n_nodes = node_ids);
     if n_nodes == 0 {
         return Ok(Vec::new());
     }
@@ -1235,7 +1235,7 @@ pub fn gnn_run_inference(
         let node_features = &features[start..end];
 
         // Simple mean pooling as placeholder
-        let sum: f32 = node_features.iter().sum();
+        let sum: f32 = node_features.iter());
         let mean = sum / meta.in_dim as f32;
 
         // Output: repeated mean (placeholder for actual GNN forward pass)
@@ -1248,7 +1248,7 @@ pub fn gnn_run_inference(
 
     // Update telemetry
     {
-        let mut telemetry = ANE_TELEMETRY.write();
+        let mut telemetry = ANE_TELEMETRY);
         telemetry.embed_calls += 1;
         telemetry.embed_tokens += n_nodes as u64;
     }
@@ -1304,7 +1304,7 @@ pub fn gnn_predict_links(
         .into_iter()
         .enumerate()
         .map(|(idx, (_, emb))| (idx, emb))
-        .collect();
+        );
 
     let mut results: Vec<(usize, usize, f32, f32, f32, String)> = Vec::new();
 
@@ -1323,21 +1323,21 @@ pub fn gnn_predict_links(
         let gnn_score = cosine_similarity(src_emb, dst_emb);
 
         // Heuristic scores
-        let src_neighbors = adjacency.get(&src).cloned().unwrap_or_default();
-        let dst_neighbors = adjacency.get(&dst).cloned().unwrap_or_default();
+        let src_neighbors = adjacency.get(&src).cloned());
+        let dst_neighbors = adjacency.get(&dst).cloned());
 
         let common: Vec<_> = src_neighbors
             .iter()
             .filter(|n| dst_neighbors.contains(n))
-            .collect();
-        let common_count = common.len();
+            );
+        let common_count = common);
 
         // Adamic-Adar
         let mut adamic_adar = 0.0f32;
         for &z in &common {
             if let Some(&deg) = degrees.get(z) {
                 if deg > 1 {
-                    adamic_adar += 1.0 / (deg as f32).ln();
+                    adamic_adar += 1.0 / (deg as f32));
                 }
             }
         }
@@ -1443,7 +1443,7 @@ impl CrossModalEmbeddingStore {
         let candidates: Vec<String> = self.face_lsh
             .get(&fp)
             .map(|s| s.iter().cloned().collect())
-            .unwrap_or_default();
+            );
 
         // Compute actual cosine similarity for candidates
         let mut results: Vec<(String, f32)> = candidates
@@ -1454,7 +1454,7 @@ impl CrossModalEmbeddingStore {
                     (id, sim)
                 })
             })
-            .collect();
+            );
 
         results.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
         results.truncate(max_results);
@@ -1467,7 +1467,7 @@ impl CrossModalEmbeddingStore {
         let candidates: Vec<String> = self.voice_lsh
             .get(&fp)
             .map(|s| s.iter().cloned().collect())
-            .unwrap_or_default();
+            );
 
         // Compute actual cosine similarity for candidates
         let mut results: Vec<(String, f32)> = candidates
@@ -1478,7 +1478,7 @@ impl CrossModalEmbeddingStore {
                     (id, sim)
                 })
             })
-            .collect();
+            );
 
         results.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
         results.truncate(max_results);
@@ -1519,9 +1519,9 @@ impl CrossModalEmbeddingStore {
             return 0.0;
         }
 
-        let dot: f32 = a.iter().zip(b.iter()).map(|(x, y)| x * y).sum();
-        let norm_a: f32 = a.iter().map(|x| x * x).sum::<f32>().sqrt();
-        let norm_b: f32 = b.iter().map(|x| x * x).sum::<f32>().sqrt();
+        let dot: f32 = a.iter().zip(b.iter()).map(|(x, y)| x * y));
+        let norm_a: f32 = a.iter().map(|x| x * x).sum::<f32>());
+        let norm_b: f32 = b.iter().map(|x| x * x).sum::<f32>());
 
         if norm_a == 0.0 || norm_b == 0.0 {
             0.0
@@ -1532,10 +1532,10 @@ impl CrossModalEmbeddingStore {
 
     /// Clear all embeddings.
     pub fn clear(&mut self) {
-        self.face_embeddings.clear();
-        self.voice_embeddings.clear();
-        self.face_lsh.clear();
-        self.voice_lsh.clear();
+        self.face_embeddings);
+        self.voice_embeddings);
+        self.face_lsh);
+        self.voice_lsh);
     }
 
     /// Get count of stored embeddings.
@@ -1563,9 +1563,9 @@ static CROSS_MODAL_STORE: LazyLock<RwLock<CrossModalEmbeddingStore>> =
 /// Returns: Count of stored embeddings
 #[pyfunction]
 pub fn crossmodal_store_face(node_id: String, embedding: Vec<f32>) -> usize {
-    let mut store = CROSS_MODAL_STORE.write();
+    let mut store = CROSS_MODAL_STORE);
     store.store_face(node_id, embedding);
-    let (face_count, _) = store.len();
+    let (face_count, _) = store);
     eprintln!("[CrossModal] Stored face embedding. Total faces: {}", face_count);
     face_count
 }
@@ -1579,9 +1579,9 @@ pub fn crossmodal_store_face(node_id: String, embedding: Vec<f32>) -> usize {
 /// Returns: Count of stored embeddings
 #[pyfunction]
 pub fn crossmodal_store_voice(node_id: String, embedding: Vec<f32>) -> usize {
-    let mut store = CROSS_MODAL_STORE.write();
+    let mut store = CROSS_MODAL_STORE);
     store.store_voice(node_id, embedding);
-    let (_, voice_count) = store.len();
+    let (_, voice_count) = store);
     eprintln!(
         "[CrossModal] Stored voiceprint embedding. Total voiceprints: {}",
         voice_count
@@ -1606,7 +1606,7 @@ pub fn crossmodal_query_face(
     let max_results = max_results.unwrap_or(10);
     let min_similarity = min_similarity.unwrap_or(0.7);
 
-    let store = CROSS_MODAL_STORE.read();
+    let store = CROSS_MODAL_STORE);
     let results = store.query_face_lsh(&embedding, max_results * 2); // Get extra for filtering
 
     // Filter by minimum similarity
@@ -1634,7 +1634,7 @@ pub fn crossmodal_query_voice(
     let max_results = max_results.unwrap_or(10);
     let min_similarity = min_similarity.unwrap_or(0.7);
 
-    let store = CROSS_MODAL_STORE.read();
+    let store = CROSS_MODAL_STORE);
     let results = store.query_voice_lsh(&embedding, max_results * 2);
 
     // Filter by minimum similarity
@@ -1653,7 +1653,7 @@ pub fn crossmodal_query_voice(
 /// Returns: Embedding vector or None
 #[pyfunction]
 pub fn crossmodal_get_face(node_id: String) -> Option<Vec<f32>> {
-    let store = CROSS_MODAL_STORE.read();
+    let store = CROSS_MODAL_STORE);
     store.get_face(&node_id).cloned()
 }
 
@@ -1665,7 +1665,7 @@ pub fn crossmodal_get_face(node_id: String) -> Option<Vec<f32>> {
 /// Returns: Embedding vector or None
 #[pyfunction]
 pub fn crossmodal_get_voice(node_id: String) -> Option<Vec<f32>> {
-    let store = CROSS_MODAL_STORE.read();
+    let store = CROSS_MODAL_STORE);
     store.get_voice(&node_id).cloned()
 }
 
@@ -1696,8 +1696,8 @@ pub fn crossmodal_voice_similarity(embedding_a: Vec<f32>, embedding_b: Vec<f32>)
 /// NEXTGEN-03: Clear all cross-modal embeddings.
 #[pyfunction]
 pub fn crossmodal_clear() {
-    let mut store = CROSS_MODAL_STORE.write();
-    store.clear();
+    let mut store = CROSS_MODAL_STORE);
+    store);
     eprintln!("[CrossModal] Cleared all embeddings");
 }
 
@@ -1706,8 +1706,8 @@ pub fn crossmodal_clear() {
 /// Returns: Dict with face_count and voice_count
 #[pyfunction]
 pub fn crossmodal_stats() -> std::collections::HashMap<String, usize> {
-    let store = CROSS_MODAL_STORE.read();
-    let (face_count, voice_count) = store.len();
+    let store = CROSS_MODAL_STORE);
+    let (face_count, voice_count) = store);
     let mut stats = std::collections::HashMap::new();
     stats.insert("face_count".to_string(), face_count);
     stats.insert("voice_count".to_string(), voice_count);
@@ -1720,9 +1720,9 @@ fn cosine_similarity(a: &[f32], b: &[f32]) -> f32 {
         return 0.0;
     }
 
-    let dot: f32 = a.iter().zip(b.iter()).map(|(x, y)| x * y).sum();
-    let norm_a: f32 = a.iter().map(|x| x * x).sum::<f32>().sqrt();
-    let norm_b: f32 = b.iter().map(|x| x * x).sum::<f32>().sqrt();
+    let dot: f32 = a.iter().zip(b.iter()).map(|(x, y)| x * y));
+    let norm_a: f32 = a.iter().map(|x| x * x).sum::<f32>());
+    let norm_b: f32 = b.iter().map(|x| x * x).sum::<f32>());
 
     if norm_a == 0.0 || norm_b == 0.0 {
         0.0
@@ -1767,95 +1767,132 @@ use std::collections::VecDeque;
 /// NEXTGEN-05: PRM-specific model cache with LRU eviction.
 ///
 /// Bounded to ANE_MAX_MODELS (2) per hardware constraint.
-/// Uses BTreeMap for deterministic ordering and efficient eviction.
+/// Stores model paths and loads on-demand since Model is not Sync.
 #[cfg(feature = "coreml_ane")]
 pub struct CoreMLModelCache {
-    /// Cached models: model_id -> (model, last_access_order)
-    models: std::collections::BTreeMap<String, (coreml::model::Model, usize)>,
+    /// Registered model paths: model_id -> path
+    paths: std::collections::BTreeMap<String, String>,
     /// Access order for LRU eviction
     access_order: VecDeque<String>,
     /// Next access order index
     next_order: usize,
 }
 
+/// Wrapper for thread-safe access to CoreMLModelCache.
+#[cfg(feature = "coreml_ane")]
+pub struct SyncCoreMLCache {
+    inner: std::sync::Mutex<CoreMLModelCache>,
+}
+
+#[cfg(feature = "coreml_ane")]
+impl SyncCoreMLCache {
+    pub fn new() -> Self {
+        Self {
+            inner: std::sync::Mutex::new(CoreMLModelCache::new()),
+        }
+    }
+
+    /// Register a model path in the cache.
+    pub fn register(&self, model_id: String, path: String) {
+        self.inner.lock().unwrap().register(model_id, path)
+    }
+
+    /// Get a model path from cache (for on-demand loading).
+    pub fn get_path(&self, model_id: &str) -> Option<String> {
+        self.inner.lock().unwrap().paths.get(model_id).cloned()
+    }
+
+    /// Check if a model is registered.
+    pub fn contains(&self, model_id: &str) -> bool {
+        self.inner.lock().unwrap().paths.contains_key(model_id)
+    }
+
+    /// Get registered model count.
+    pub fn len(&self) -> usize {
+        self.inner.lock().unwrap().paths.len()
+    }
+
+    pub fn clear(&self) {
+        self.inner.lock().unwrap().clear()
+    }
+
+    pub fn remove(&self, model_id: &str) -> bool {
+        self.inner.lock().unwrap().remove(model_id)
+    }
+
+    pub fn get_status(&self) -> HashMap<String, String> {
+        self.inner.lock().unwrap().get_status()
+    }
+}
+
 #[cfg(feature = "coreml_ane")]
 impl CoreMLModelCache {
     pub fn new() -> Self {
         Self {
-            models: std::collections::BTreeMap::new(),
+            paths: std::collections::BTreeMap::new(),
             access_order: VecDeque::new(),
             next_order: 0,
         }
     }
 
-    /// Load a model into cache, evicting oldest if at capacity.
-    pub fn load(
-        &mut self,
-        model_id: String,
-        path: &std::path::Path,
-    ) -> Result<(), ANEError> {
-        // Evict if at capacity
-        while self.models.len() >= ANE_MAX_MODELS {
+    /// Register a model path in the cache.
+    pub fn register(&mut self, model_id: String, path: String) {
+        // Evict oldest if at capacity
+        while self.paths.len() >= ANE_MAX_MODELS {
             if let Some(oldest_id) = self.access_order.pop_front() {
-                self.models.remove(&oldest_id);
+                self.paths.remove(&oldest_id);
                 eprintln!(
-                    "[CoreML:cache] Evicted model '{}' (LRU eviction, at capacity)",
+                    "[CoreML:cache] Evicted model '{}' from registry (LRU, at capacity)",
                     oldest_id
                 );
             }
         }
-
-        // Load the model with ANE compute unit
-        let config = coreml::configuration::ModelConfiguration::new()
-            .with_compute_units(coreml::configuration::ComputeUnits::NeuralEngine);
-
-        let model = coreml::model::Model::load_from_url(path, &config)
-            .map_err(|e| ANEError::InferenceFailed(format!("Failed to load CoreML model: {}", e)))?;
-
-        // Update access tracking
-        let order = self.next_order;
-        self.next_order += 1;
 
         // Remove existing entry if present (update)
         if let Some(pos) = self.access_order.iter().position(|id| id == &model_id) {
             self.access_order.remove(pos);
         }
 
-        self.models.insert(model_id.clone(), (model, order));
+        self.paths.insert(model_id.clone(), path);
         self.access_order.push_back(model_id);
-
-        Ok(())
-    }
-
-    /// Get a model from cache (touch for LRU).
-    pub fn get(&mut self, model_id: &str) -> Option<&coreml::model::Model> {
-        if let Some((model, order)) = self.models.get_mut(model_id) {
-            // Update access order
-            if let Some(pos) = self.access_order.iter().position(|id| id == model_id) {
-                self.access_order.remove(pos);
-            }
-            *order = self.next_order;
-            self.next_order += 1;
-            self.access_order.push_back(model_id.to_string());
-            return Some(model);
-        }
-        None
     }
 
     /// Get model count.
     pub fn len(&self) -> usize {
-        self.models.len()
+        self.paths.len()
     }
 
-    /// Check if model is loaded.
+    /// Check if model is registered.
     pub fn contains(&self, model_id: &str) -> bool {
-        self.models.contains_key(model_id)
+        self.paths.contains_key(model_id)
+    }
+
+    /// Remove a specific model from cache.
+    pub fn remove(&mut self, model_id: &str) -> bool {
+        let removed = self.paths.remove(model_id));
+        if removed {
+            if let Some(pos) = self.access_order.iter().position(|id| id == model_id) {
+                self.access_order.remove(pos);
+            }
+        }
+        removed
     }
 
     /// Clear all cached models.
     pub fn clear(&mut self) {
-        self.models.clear();
-        self.access_order.clear();
+        self.paths);
+        self.access_order);
+    }
+
+    /// Get cache status as a HashMap.
+    pub fn get_status(&self) -> HashMap<String, String> {
+        let mut status = HashMap::new();
+        status.insert("model_count".to_string(), self.paths.len().to_string());
+        status.insert(
+            "models".to_string(),
+            self.paths.keys().cloned().collect::<Vec<_>>().join(", "),
+        );
+        status
     }
 }
 
@@ -1867,9 +1904,10 @@ impl Default for CoreMLModelCache {
 }
 
 /// NEXTGEN-05: Global CoreML model cache (process-wide singleton).
+/// Uses SyncCoreMLCache wrapper for thread-safe access to non-Sync Model type.
 #[cfg(feature = "coreml_ane")]
-static COREML_MODEL_CACHE: LazyLock<RwLock<CoreMLModelCache>> =
-    LazyLock::new(|| RwLock::new(CoreMLModelCache::new()));
+static COREML_MODEL_CACHE: LazyLock<SyncCoreMLCache> =
+    LazyLock::new(|| SyncCoreMLCache::new());
 
 /// NEXTGEN-05: PRM telemetry for Rust-native CoreML inference.
 #[derive(Default)]
@@ -1903,12 +1941,10 @@ pub fn load_prm_model(model_id: String, model_path: String) -> Result<(), PyErr>
         )));
     }
 
-    let mut cache = COREML_MODEL_CACHE.write();
-    cache
-        .load(model_id, path)
-        .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(e.to_string()))?;
+    // Register model path in cache (loads on-demand during inference)
+    COREML_MODEL_CACHE.register(model_id.clone(), model_path);
 
-    eprintln!("[CoreML:cache] Loaded PRM model: {}", model_id);
+    eprintln!("[CoreML:cache] Registered PRM model: {}", model_id);
     Ok(())
 }
 
@@ -1932,23 +1968,33 @@ pub fn run_prm_inference(model_id: String, features: Vec<f32>) -> Result<f32, Py
         )));
     }
 
-    // Get model from cache (cache hit tracked in telemetry)
-    let mut cache = COREML_MODEL_CACHE.write();
-    let model = cache.get(&model_id).ok_or_else(|| {
-        // Cache miss - model not loaded
+    // Get model path from cache
+    let model_path = COREML_MODEL_CACHE.get_path(&model_id).ok_or_else(|| {
+        // Model not registered
         {
-            let mut telemetry = PRM_TELEMETRY.write();
+            let mut telemetry = PRM_TELEMETRY);
             telemetry.coreml_cache_misses += 1;
         }
         pyo3::exceptions::PyValueError::new_err(format!(
-            "PRM model '{}' not loaded. Call load_prm_model() first.",
+            "PRM model '{}' not registered. Call load_prm_model() first.",
             model_id
         ))
     })?;
 
-    // Update telemetry (cache hit)
+    // Load model from path (on-demand loading since Model is not Sync)
+    let config = coreml::configuration::ModelConfiguration::new()
+        .with_compute_units(coreml::configuration::ComputeUnits::NeuralEngine);
+
+    let model = coreml::model::Model::load_from_url(std::path::Path::new(&model_path), &config)
+        .map_err(|e| {
+        let mut telemetry = PRM_TELEMETRY);
+        telemetry.coreml_errors += 1;
+        pyo3::exceptions::PyRuntimeError::new_err(format!("Failed to load model: {}", e))
+    })?;
+
+    // Update telemetry
     {
-        let mut telemetry = PRM_TELEMETRY.write();
+        let mut telemetry = PRM_TELEMETRY);
         telemetry.prm_inference_calls += 1;
         telemetry.prm_inference_tokens += 1;
         telemetry.coreml_cache_hits += 1;
@@ -2021,7 +2067,7 @@ pub fn run_prm_inference_batch(
         return Ok(Vec::new());
     }
 
-    let batch_size = features_batch.len();
+    let batch_size = features_batch);
 
     // Validate all inputs
     for (i, features) in features_batch.iter().enumerate() {
@@ -2035,11 +2081,11 @@ pub fn run_prm_inference_batch(
     }
 
     // Get model from cache (cache hit tracked in telemetry)
-    let mut cache = COREML_MODEL_CACHE.write();
+    let cache = COREML_MODEL_CACHE;
     let model = cache.get(&model_id).ok_or_else(|| {
         // Cache miss - model not loaded
         {
-            let mut telemetry = PRM_TELEMETRY.write();
+            let mut telemetry = PRM_TELEMETRY);
             telemetry.coreml_cache_misses += 1;
         }
         pyo3::exceptions::PyValueError::new_err(format!(
@@ -2050,7 +2096,7 @@ pub fn run_prm_inference_batch(
 
     // Update telemetry (cache hit)
     {
-        let mut telemetry = PRM_TELEMETRY.write();
+        let mut telemetry = PRM_TELEMETRY);
         telemetry.prm_batch_calls += 1;
         telemetry.prm_inference_tokens += batch_size as u64;
         telemetry.coreml_cache_hits += 1;
@@ -2114,7 +2160,7 @@ pub fn run_prm_inference_batch(
 #[pyfunction]
 #[cfg(feature = "coreml_ane")]
 pub fn get_prm_telemetry() -> HashMap<String, u64> {
-    let telemetry = PRM_TELEMETRY.read();
+    let telemetry = PRM_TELEMETRY);
     let mut result = HashMap::new();
     result.insert("prm_inference_calls".to_string(), telemetry.prm_inference_calls);
     result.insert("prm_batch_calls".to_string(), telemetry.prm_batch_calls);
@@ -2129,7 +2175,7 @@ pub fn get_prm_telemetry() -> HashMap<String, u64> {
 #[pyfunction]
 #[cfg(feature = "coreml_ane")]
 pub fn reset_prm_telemetry() {
-    let mut telemetry = PRM_TELEMETRY.write();
+    let mut telemetry = PRM_TELEMETRY);
     *telemetry = PRMTelemetry::default();
 }
 
@@ -2137,28 +2183,14 @@ pub fn reset_prm_telemetry() {
 #[pyfunction]
 #[cfg(feature = "coreml_ane")]
 pub fn get_coreml_cache_status() -> HashMap<String, String> {
-    let cache = COREML_MODEL_CACHE.read();
-    let mut result = HashMap::new();
-    result.insert("loaded_models".to_string(), cache.len().to_string());
-    result.insert("max_models".to_string(), ANE_MAX_MODELS.to_string());
-    
-    // List loaded model IDs
-    let model_ids: Vec<String> = cache.models.keys().cloned().collect();
-    result.insert("models".to_string(), model_ids.join(", "));
-    
-    result
+    COREML_MODEL_CACHE.get_status()
 }
 
 /// NEXTGEN-05: Unload a specific model from CoreML cache.
 #[pyfunction]
 #[cfg(feature = "coreml_ane")]
 pub fn unload_prm_model(model_id: String) -> Result<(), PyErr> {
-    let mut cache = COREML_MODEL_CACHE.write();
-    if cache.models.remove(&model_id).is_some() {
-        // Remove from access order
-        if let Some(pos) = cache.access_order.iter().position(|id| id == &model_id) {
-            cache.access_order.remove(pos);
-        }
+    if COREML_MODEL_CACHE.remove(&model_id) {
         eprintln!("[CoreML:cache] Unloaded model: {}", model_id);
         Ok(())
     } else {
@@ -2173,8 +2205,7 @@ pub fn unload_prm_model(model_id: String) -> Result<(), PyErr> {
 #[pyfunction]
 #[cfg(feature = "coreml_ane")]
 pub fn clear_coreml_cache() {
-    let mut cache = COREML_MODEL_CACHE.write();
-    cache.clear();
+    COREML_MODEL_CACHE);
     eprintln!("[CoreML:cache] Cleared all models");
 }
 
@@ -2182,62 +2213,62 @@ pub fn clear_coreml_cache() {
 
 /// Register ANE module functions with PyO3 module.
 pub fn register_functions(m: &Bound<'_, PyModule>) -> Result<(), PyErr> {
-    m.add_function(wrap_pyfunction!(init, m)?)?;
-    m.add_function(wrap_pyfunction!(get_status, m)?)?;
-    m.add_function(wrap_pyfunction!(load_model, m)?)?;
-    m.add_function(wrap_pyfunction!(unload_model, m)?)?;
-    m.add_function(wrap_pyfunction!(list_models, m)?)?;
-    m.add_function(wrap_pyfunction!(validate_batch, m)?)?;
-    m.add_function(wrap_pyfunction!(run_inference, m)?)?;
-    m.add_function(wrap_pyfunction!(embed_tokens, m)?)?;
-    m.add_function(wrap_pyfunction!(get_telemetry, m)?)?;
-    m.add_function(wrap_pyfunction!(reset_telemetry, m)?)?;
-    m.add_function(wrap_pyfunction!(get_supported_compute_units, m)?)?;
-    m.add_function(wrap_pyfunction!(is_ane_available, m)?)?;
+    m.add_function(wrap_pyfunction!(init))?;
+    m.add_function(wrap_pyfunction!(get_status))?;
+    m.add_function(wrap_pyfunction!(load_model))?;
+    m.add_function(wrap_pyfunction!(unload_model))?;
+    m.add_function(wrap_pyfunction!(list_models))?;
+    m.add_function(wrap_pyfunction!(validate_batch))?;
+    m.add_function(wrap_pyfunction!(run_inference))?;
+    m.add_function(wrap_pyfunction!(embed_tokens))?;
+    m.add_function(wrap_pyfunction!(get_telemetry))?;
+    m.add_function(wrap_pyfunction!(reset_telemetry))?;
+    m.add_function(wrap_pyfunction!(get_supported_compute_units))?;
+    m.add_function(wrap_pyfunction!(is_ane_available))?;
 
     // GNN-3: GraphSAGE ANE functions
-    m.add_function(wrap_pyfunction!(gnn_load_model, m)?)?;
-    m.add_function(wrap_pyfunction!(gnn_run_inference, m)?)?;
-    m.add_function(wrap_pyfunction!(gnn_store_embeddings, m)?)?;
-    m.add_function(wrap_pyfunction!(gnn_get_embeddings, m)?)?;
-    m.add_function(wrap_pyfunction!(gnn_predict_links, m)?)?;
-    m.add_function(wrap_pyfunction!(gnn_validate_batch, m)?)?;
+    m.add_function(wrap_pyfunction!(gnn_load_model))?;
+    m.add_function(wrap_pyfunction!(gnn_run_inference))?;
+    m.add_function(wrap_pyfunction!(gnn_store_embeddings))?;
+    m.add_function(wrap_pyfunction!(gnn_get_embeddings))?;
+    m.add_function(wrap_pyfunction!(gnn_predict_links))?;
+    m.add_function(wrap_pyfunction!(gnn_validate_batch))?;
 
     // NEXTGEN-03: FaceNet ANE functions
-    m.add_function(wrap_pyfunction!(facenet_register_model, m)?)?;
-    m.add_function(wrap_pyfunction!(facenet_is_registered, m)?)?;
-    m.add_function(wrap_pyfunction!(facenet_unregister, m)?)?;
-    m.add_function(wrap_pyfunction!(facenet_get_model_info, m)?)?;
+    m.add_function(wrap_pyfunction!(facenet_register_model))?;
+    m.add_function(wrap_pyfunction!(facenet_is_registered))?;
+    m.add_function(wrap_pyfunction!(facenet_unregister))?;
+    m.add_function(wrap_pyfunction!(facenet_get_model_info))?;
 
     // NEXTGEN-03: Voiceprint ANE functions
-    m.add_function(wrap_pyfunction!(voiceprint_register_model, m)?)?;
-    m.add_function(wrap_pyfunction!(voiceprint_is_registered, m)?)?;
-    m.add_function(wrap_pyfunction!(voiceprint_unregister, m)?)?;
-    m.add_function(wrap_pyfunction!(voiceprint_get_model_info, m)?)?;
+    m.add_function(wrap_pyfunction!(voiceprint_register_model))?;
+    m.add_function(wrap_pyfunction!(voiceprint_is_registered))?;
+    m.add_function(wrap_pyfunction!(voiceprint_unregister))?;
+    m.add_function(wrap_pyfunction!(voiceprint_get_model_info))?;
 
     // NEXTGEN-03: Cross-modal embedding functions
-    m.add_function(wrap_pyfunction!(crossmodal_store_face, m)?)?;
-    m.add_function(wrap_pyfunction!(crossmodal_store_voice, m)?)?;
-    m.add_function(wrap_pyfunction!(crossmodal_query_face, m)?)?;
-    m.add_function(wrap_pyfunction!(crossmodal_query_voice, m)?)?;
-    m.add_function(wrap_pyfunction!(crossmodal_get_face, m)?)?;
-    m.add_function(wrap_pyfunction!(crossmodal_get_voice, m)?)?;
-    m.add_function(wrap_pyfunction!(crossmodal_face_similarity, m)?)?;
-    m.add_function(wrap_pyfunction!(crossmodal_voice_similarity, m)?)?;
-    m.add_function(wrap_pyfunction!(crossmodal_clear, m)?)?;
-    m.add_function(wrap_pyfunction!(crossmodal_stats, m)?)?;
+    m.add_function(wrap_pyfunction!(crossmodal_store_face))?;
+    m.add_function(wrap_pyfunction!(crossmodal_store_voice))?;
+    m.add_function(wrap_pyfunction!(crossmodal_query_face))?;
+    m.add_function(wrap_pyfunction!(crossmodal_query_voice))?;
+    m.add_function(wrap_pyfunction!(crossmodal_get_face))?;
+    m.add_function(wrap_pyfunction!(crossmodal_get_voice))?;
+    m.add_function(wrap_pyfunction!(crossmodal_face_similarity))?;
+    m.add_function(wrap_pyfunction!(crossmodal_voice_similarity))?;
+    m.add_function(wrap_pyfunction!(crossmodal_clear))?;
+    m.add_function(wrap_pyfunction!(crossmodal_stats))?;
 
     // NEXTGEN-05: Rust-native CoreML ANE inference (coreml_ane feature)
     #[cfg(feature = "coreml_ane")]
     {
-        m.add_function(wrap_pyfunction!(load_prm_model, m)?)?;
-        m.add_function(wrap_pyfunction!(run_prm_inference, m)?)?;
-        m.add_function(wrap_pyfunction!(run_prm_inference_batch, m)?)?;
-        m.add_function(wrap_pyfunction!(get_prm_telemetry, m)?)?;
-        m.add_function(wrap_pyfunction!(reset_prm_telemetry, m)?)?;
-        m.add_function(wrap_pyfunction!(get_coreml_cache_status, m)?)?;
-        m.add_function(wrap_pyfunction!(unload_prm_model, m)?)?;
-        m.add_function(wrap_pyfunction!(clear_coreml_cache, m)?)?;
+        m.add_function(wrap_pyfunction!(load_prm_model))?;
+        m.add_function(wrap_pyfunction!(run_prm_inference))?;
+        m.add_function(wrap_pyfunction!(run_prm_inference_batch))?;
+        m.add_function(wrap_pyfunction!(get_prm_telemetry))?;
+        m.add_function(wrap_pyfunction!(reset_prm_telemetry))?;
+        m.add_function(wrap_pyfunction!(get_coreml_cache_status))?;
+        m.add_function(wrap_pyfunction!(unload_prm_model))?;
+        m.add_function(wrap_pyfunction!(clear_coreml_cache))?;
         
         // PRM constants
         m.add("PRM_FEATURE_DIM", 16)?;
@@ -2372,7 +2403,7 @@ mod tests {
                 768,
                 512,
             )
-            .unwrap();
+            );
 
         let result = registry.register_model(
             "model1".to_string(),

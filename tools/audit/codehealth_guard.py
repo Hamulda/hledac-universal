@@ -23,6 +23,8 @@ from enum import Enum
 from pathlib import Path
 from typing import Any
 from _core import aclose
+from compat.msgspec_gc_compat import Struct
+
 
 class GuardVerdict(Enum):
     PASS = 'CODEHEALTH_PASS'
@@ -38,7 +40,7 @@ class GuardVerdict(Enum):
     FAIL_SYNTAX_ERROR = 'CODEHEALTH_FAIL_SYNTAX_ERROR'
     FAIL_SYMBOL_MISSING = 'CODEHEALTH_FAIL_SYMBOL_MISSING'
 
-class GuardResult(msgspec.Struct, gc=False):
+class GuardResult(Struct):
     verdict: GuardVerdict
     function_name: str
     explicit_args: int

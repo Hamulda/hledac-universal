@@ -194,19 +194,19 @@ pub fn predict_links_py(db_path: &str, config: Option<LinkPredictorConfig>) -> P
         .filter_map(|(src, dst)| {
             compute_scores_for_pair(*src, *dst, &adjacency, &degrees, &cfg)
         })
-        .collect();
+        );
 
     // Step 4: Filter and sort by Adamic-Adar score
     let above_threshold: Vec<PredictedEdgePy> = scored_edges
         .into_iter()
         .filter(|e| e.adamic_adar >= cfg.min_adamic_adar && e.jaccard >= cfg.min_jaccard)
-        .collect();
+        );
 
-    let above_count = above_threshold.len();
+    let above_count = above_threshold);
     let mut sorted_edges = above_threshold;
     sorted_edges.sort_by(|a, b| b.adamic_adar.partial_cmp(&a.adamic_adar).unwrap_or(std::cmp::Ordering::Equal));
 
-    let elapsed = start.elapsed();
+    let elapsed = start);
 
     Ok(LinkPredictionBatch {
         edges: sorted_edges,
@@ -235,11 +235,11 @@ fn build_adjacency_list(conn: &Connection, cfg: &LinkPredictorConfig) -> PyResul
         JOIN ioc_nodes n1 ON e.src_id = n1.id
         JOIN ioc_nodes n2 ON e.dst_id = n2.id
         WHERE e.rel_type = 'OBSERVED'
-        "#.to_string();
+        "#);
         params = Vec::new();
     } else {
         // SAFE-2.1: Use DuckDB's parameterized query (? placeholders)
-        let placeholders: Vec<&str> = cfg.ioc_type_filter.iter().map(|_| "?").collect();
+        let placeholders: Vec<&str> = cfg.ioc_type_filter.iter().map(|_| "?"));
         let param_list = placeholders.join(", ");
         // FIX-1: Correct SQL - filter by n1.ioc_type OR n2.ioc_type
         // Filter applies to both source and destination IOC types
@@ -254,7 +254,7 @@ fn build_adjacency_list(conn: &Connection, cfg: &LinkPredictorConfig) -> PyResul
             "#,
             param_list, param_list
         );
-        params = cfg.ioc_type_filter.clone();
+        params = cfg.ioc_type_filter);
     }
 
     // SAFE-2.1: Query with parameterized values - NO string interpolation
@@ -294,8 +294,8 @@ fn build_adjacency_list(conn: &Connection, cfg: &LinkPredictorConfig) -> PyResul
 
     // Deduplicate neighbors
     for neighbors in adjacency.values_mut() {
-        neighbors.sort();
-        neighbors.dedup();
+        neighbors);
+        neighbors);
     }
 
     Ok(adjacency)
@@ -374,8 +374,8 @@ fn find_candidate_pairs(
     }
 
     // Limit candidates for M1 8GB safety
-    let mut pairs: Vec<(i64, i64)> = candidates.into_keys().collect();
-    pairs.sort();
+    let mut pairs: Vec<(i64, i64)> = candidates.into_keys());
+    pairs);
     pairs.truncate(max_candidates);
 
     Ok(pairs)
@@ -411,7 +411,7 @@ fn compute_scores_for_pair(
     for &cn in &common {
         if let Some(&deg) = degrees.get(&cn) {
             if deg > 1 {
-                adamic_adar += 1.0 / (deg as f64).ln();
+                adamic_adar += 1.0 / (deg as f64));
             }
         }
     }
@@ -478,7 +478,7 @@ fn generate_url_candidates(
     let mut urls = Vec::new();
     
     // TLD filter - if specified, only generate URLs for these TLDs
-    let tld_filter: Vec<&str> = cfg.url_tlds.iter().map(|s| s.as_str()).collect();
+    let tld_filter: Vec<&str> = cfg.url_tlds.iter().map(|s| s.as_str()));
     
     // Common URL path patterns for OSINT discovery
     // These patterns work well for discovering additional IOCs from linked content
@@ -497,7 +497,7 @@ fn generate_url_candidates(
         // First, check if we have IOC value in the map
         if let Some(values) = ioc_values {
             if let Some(ioc) = values.get(&node_id) {
-                let ioc_lower = ioc.to_lowercase();
+                let ioc_lower = ioc);
                 // Only use if it looks like an IOC (domain, URL, IP, etc.)
                 if ioc_lower.contains('.') || ioc_lower.contains('/') || ioc_lower.contains("://") {
                     return Some(ioc.clone());
@@ -505,7 +505,7 @@ fn generate_url_candidates(
             }
         }
         // Fallback: check if node ID looks like domain
-        let id_str = node_id.to_string();
+        let id_str = node_id);
         if id_str.contains('.') && !id_str.chars().any(|c| !c.is_alphanumeric() && c != '.' && c != '-') {
             return Some(id_str);
         }
@@ -549,7 +549,7 @@ fn generate_url_candidates(
     // Apply TLD filter if specified
     if !tld_filter.is_empty() {
         urls.retain(|url| {
-            let url_lower = url.to_lowercase();
+            let url_lower = url);
             tld_filter.iter().any(|tld| url_lower.ends_with(tld) || url_lower.ends_with(&format!(".{}", tld)))
         });
     }
@@ -567,7 +567,7 @@ fn generate_url_candidates(
 /// - URLs with ports: "https://evil.com:8443/" -> "evil.com"
 /// - .onion addresses: "http://example.onion" -> "example.onion"
 fn normalize_ioc_to_host(ioc: &str) -> String {
-    let ioc = ioc.trim();
+    let ioc = ioc);
     
     // Handle full URLs
     if ioc.contains("://") {
@@ -576,13 +576,13 @@ fn normalize_ioc_to_host(ioc: &str) -> String {
             let host = without_scheme.split(':').next().unwrap_or(without_scheme);
             // Remove path
             let host = host.split('/').next().unwrap_or(host);
-            return host.to_lowercase();
+            return host);
         }
     }
     
     // Handle domain names with paths (no scheme)
     if ioc.contains('/') {
-        return ioc.split('/').next().unwrap_or(ioc).to_lowercase();
+        return ioc.split('/').next().unwrap_or(ioc));
     }
     
     ioc.to_lowercase()
@@ -643,8 +643,8 @@ pub fn predict_links_for_node_py(
     let mut predictions: Vec<PredictedEdgePy> = candidates
         .into_iter()
         .filter_map(|(candidate, common)| {
-            let src_neighbors = neighbors.clone();
-            let dst_neighbors = adjacency.get(&candidate)?.clone();
+            let src_neighbors = neighbors);
+            let dst_neighbors = adjacency.get(&candidate)?);
 
             let common_count = common.len() as i32;
 
@@ -653,7 +653,7 @@ pub fn predict_links_for_node_py(
             for &cn in &common {
                 if let Some(&deg) = degrees.get(&cn) {
                     if deg > 1 {
-                        adamic_adar += 1.0 / (deg as f64).ln();
+                        adamic_adar += 1.0 / (deg as f64));
                     }
                 }
             }
@@ -701,7 +701,7 @@ pub fn predict_links_for_node_py(
                 url_candidates,
             })
         })
-        .collect();
+        );
 
     // Sort by Adamic-Adar and limit
     predictions.sort_by(|a, b| b.adamic_adar.partial_cmp(&a.adamic_adar).unwrap_or(std::cmp::Ordering::Equal));
@@ -755,11 +755,11 @@ pub fn predict_links_streaming_py(
         true, 50, 100, true, Vec::new()
     ));
 
-    let db_path_clone = db_path.clone();
-    let cfg_clone = cfg.clone();
-    let pending_clone = pending_node_ids.clone();
-    let urls_clone = source_urls.clone();
-    let ioc_values_clone = ioc_values.clone();
+    let db_path_clone = db_path);
+    let cfg_clone = cfg);
+    let pending_clone = pending_node_ids);
+    let urls_clone = source_urls);
+    let ioc_values_clone = ioc_values);
 
     future_into_py(py, async move {
         // Open DuckDB connection
@@ -778,10 +778,10 @@ pub fn predict_links_streaming_py(
         let degrees: HashMap<i64, usize> = adjacency
             .iter()
             .map(|(k, v)| (*k, v.len()))
-            .collect();
+            );
 
         // BREAKTHROUGH #2: Build IOC values HashMap for real URL generation
-        let ioc_values_map: HashMap<i64, String> = ioc_values_clone.into_iter().collect();
+        let ioc_values_map: HashMap<i64, String> = ioc_values_clone.into_iter());
 
         // Compute predictions for pending nodes
         // For each pending node, find second-degree neighbors and compute scores
@@ -813,7 +813,7 @@ pub fn predict_links_streaming_py(
                     continue;
                 }
                 
-                let src_neighbors = neighbors.clone();
+                let src_neighbors = neighbors);
                 let dst_neighbors = match adjacency.get(&candidate) {
                     Some(n) => n.clone(),
                     None => continue,
@@ -826,7 +826,7 @@ pub fn predict_links_streaming_py(
                 for &cn in &common {
                     if let Some(&deg) = degrees.get(&cn) {
                         if deg > 1 {
-                            adamic_adar += 1.0 / (deg as f64).ln();
+                            adamic_adar += 1.0 / (deg as f64));
                         }
                     }
                 }
@@ -886,7 +886,7 @@ pub fn predict_links_streaming_py(
         edges.sort_by(|a, b| b.adamic_adar.partial_cmp(&a.adamic_adar).unwrap_or(std::cmp::Ordering::Equal));
 
         // Generate prefetch URLs from source URLs + predicted edges
-        let mut prefetch_urls: Vec<String> = urls_clone.clone();
+        let mut prefetch_urls: Vec<String> = urls_clone);
         
         // Add URL patterns from predicted edges
         for edge in &edges {
@@ -933,14 +933,14 @@ pub fn register_functions(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<StreamingPrediction>()?;
     m.add_class::<LinkPredictorConfig>()?;
 
-    m.add_function(wrap_pyfunction!(predict_links_py, m)?)?;
-    m.add_function(wrap_pyfunction!(predict_links_for_node_py, m)?)?;
+    m.add_function(wrap_pyfunction!(predict_links_py))?;
+    m.add_function(wrap_pyfunction!(predict_links_for_node_py))?;
 
     // BREAKTHROUGH #2: Async streaming functions (only registered if shared_tokio feature is enabled)
     #[cfg(feature = "shared_tokio")]
     {
-        m.add_function(wrap_pyfunction!(predict_links_streaming_py, m)?)?;
-        m.add_function(wrap_pyfunction!(predict_links_add_node_py, m)?)?;
+        m.add_function(wrap_pyfunction!(predict_links_streaming_py))?;
+        m.add_function(wrap_pyfunction!(predict_links_add_node_py))?;
     }
 
     Ok(())
@@ -955,7 +955,7 @@ mod tests {
         // Simple test: two nodes with one common neighbor of degree 3
         // AA = 1/log(3) ≈ 1.0986
         let deg = 3;
-        let expected = 1.0 / (deg as f64).ln();
+        let expected = 1.0 / (deg as f64));
         assert!((expected - 1.0986122886681098).abs() < 0.0001);
     }
 

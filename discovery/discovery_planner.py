@@ -28,6 +28,7 @@ import logging
 import random
 from dataclasses import dataclass, field
 import msgspec
+from compat.msgspec_gc_compat import Struct
 from enum import Enum
 from typing import Any
 logger = logging.getLogger(__name__)
@@ -73,14 +74,14 @@ def get_provider_state(name: str) -> ProviderCapabilityState:
         return ProviderCapabilityState.DISABLED
     return ProviderCapabilityState.PRODUCTION
 
-class ProviderPlan(msgspec.Struct, gc=False):
+class ProviderPlan(Struct):
     """Plan for a single discovery call."""
     provider: str
     max_results: int
     timeout_s: float
     estimated_cost_ms: float
 
-class ProviderStatusDebug(msgspec.Struct, frozen=True, gc=False):
+class ProviderStatusDebug(Struct, frozen=True):
     """Why a provider was selected or skipped."""
     provider: str
     state: ProviderCapabilityState
@@ -108,7 +109,7 @@ def serialize_provider_status_debug(debug_entries: list[ProviderStatusDebug] | l
             result.append({'provider': entry.get('provider', ''), 'state': state if state is not None else str(state), 'selected': entry.get('selected', False), 'reason': entry.get('reason', '')})
     return result
 
-class DiscoveryPlan(msgspec.Struct, frozen=True, gc=False):
+class DiscoveryPlan(Struct, frozen=True):
     """Full plan for a sprint discovery pass."""
     plans: list[ProviderPlan]
     estimated_total_ms: float

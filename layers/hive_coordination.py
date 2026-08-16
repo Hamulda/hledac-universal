@@ -26,6 +26,7 @@ import asyncio
 import logging
 
 import msgspec
+from compat.msgspec_gc_compat import Struct
 import msgspec.json as _json
 import sqlite3
 from contextlib import closing
@@ -52,7 +53,7 @@ class TopologyType(Enum):
     HYBRID = 'hybrid'
     ADAPTIVE = 'adaptive'
 
-class CoordinationNode(msgspec.Struct, gc=False):
+class CoordinationNode(Struct):
     """Represents a node in the coordination network"""
     node_id: str
     layer: CoordinationLayer
@@ -62,7 +63,7 @@ class CoordinationNode(msgspec.Struct, gc=False):
     connected_nodes: list[str]
     performance_metrics: dict[str, float]
 
-class CoordinationTask(msgspec.Struct, gc=False):
+class CoordinationTask(Struct):
     """Represents a task flowing through the coordination system"""
     task_id: str
     description: str

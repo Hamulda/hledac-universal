@@ -39,6 +39,7 @@ import time
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 import msgspec
+from compat.msgspec_gc_compat import Struct
 from typing import TYPE_CHECKING, Any
 
 from hledac.universal.knowledge.duckdb_store import CanonicalFinding
@@ -54,7 +55,7 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 
 
-class LaneSpec(msgspec.Struct, frozen=True, gc=False):
+class LaneSpec(Struct, frozen=True):
     """
     Budget contract for a lane.
 
@@ -74,7 +75,7 @@ class LaneSpec(msgspec.Struct, frozen=True, gc=False):
 # ---------------------------------------------------------------------------
 
 
-class LaneContext(msgspec.Struct, gc=False):
+class LaneContext(Struct):
     """
     Runtime context for lane execution.
 
@@ -92,7 +93,7 @@ class LaneContext(msgspec.Struct, gc=False):
 # ---------------------------------------------------------------------------
 
 
-class ResolveResult(msgspec.Struct, gc=False):
+class ResolveResult(Struct):
     """
     Structured result from the resolve phase.
 
@@ -111,7 +112,7 @@ class ResolveResult(msgspec.Struct, gc=False):
 # ---------------------------------------------------------------------------
 
 
-class FetchResult(msgspec.Struct, gc=False):
+class FetchResult(Struct):
     """
     Structured result from the fetch phase.
 
@@ -136,7 +137,7 @@ class FetchResult(msgspec.Struct, gc=False):
 # ---------------------------------------------------------------------------
 
 
-class ParsedResult(msgspec.Struct, gc=False):
+class ParsedResult(Struct):
     """
     Structured result from the parse phase.
 
@@ -159,7 +160,7 @@ class ParsedResult(msgspec.Struct, gc=False):
 # ---------------------------------------------------------------------------
 
 
-class DedupResult(msgspec.Struct, gc=False):
+class DedupResult(Struct):
     """
     Result of the dedup phase.
 

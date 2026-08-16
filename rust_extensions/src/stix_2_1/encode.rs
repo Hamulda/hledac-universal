@@ -80,7 +80,7 @@ impl Default for StixBundle {
 fn new_uuid() -> String {
     use rand::RngCore;
     let mut bytes = [0u8; 16];
-    rand::rng().fill_bytes(&mut bytes);
+    rand::thread_rng().fill_bytes(&mut bytes);
     // Set version (4) and variant (RFC 4122)
     bytes[6] = (bytes[6] & 0x0f) | 0x40;
     bytes[8] = (bytes[8] & 0x3f) | 0x80;
@@ -314,7 +314,7 @@ pub fn encode_finding(finding_py: &PyAny, py: Python<'_>) -> PyResult<Py<PyBytes
     let note = encode_note(query, payload, finding_id);
     bundle.add_object(note);
 
-    let bytes = bundle.to_bytes_compact();
+    let bytes = bundle.to_vec();
     Ok(PyBytes::new(py, &bytes).into())
 }
 
@@ -355,7 +355,7 @@ pub fn encode_findings_batch(findings_py: &PyAny, py: Python<'_>) -> PyResult<Py
     );
     bundle.add_object(note);
 
-    let bytes = bundle.to_bytes_compact();
+    let bytes = bundle.to_vec();
     Ok(PyBytes::new(py, &bytes).into())
 }
 
@@ -455,8 +455,7 @@ fn iso8601_timestamp() -> String {
 
     let now = SystemTime::now()
         .duration_since(UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_secs();
+        .unwrap_or_default();
 
     let days = now / 86400;
     let secs_in_day = now % 86400;
@@ -521,8 +520,7 @@ fn future_timestamp(days: i64) -> String {
 
     let now = SystemTime::now()
         .duration_since(UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_secs();
+        .unwrap_or_default();
 
     let future_secs = now.saturating_add((days as u64).saturating_mul(86400));
     let days_count = future_secs / 86400;
@@ -579,7 +577,7 @@ mod tests {
     #[test]
     fn test_bundle_empty() {
         let bundle = StixBundle::new();
-        let bytes = bundle.to_bytes_compact();
+        let bytes = bundle.to_vec();
         let json_str = String::from_utf8(bytes).unwrap();
         assert!(json_str.contains("\"type\":\"bundle\""));
         assert!(json_str.contains("\"spec_version\":\"2.1\""));
@@ -587,13 +585,13 @@ mod tests {
 
     #[test]
     fn test_cybox_pattern_url() {
-        let pattern = build_cybox_pattern("url", "https://evil.com/payload").unwrap();
+        let pattern = build_cybox_pattern("url", "https://evil.com/payload");
         assert_eq!(pattern, "url = 'https://evil.com/payload'");
     }
 
     #[test]
     fn test_cybox_pattern_ipv4() {
-        let pattern = build_cybox_pattern("ipv4", "1.2.3.4").unwrap();
+        let pattern = build_cybox_pattern("ipv4", "1.2.3.4");
         assert_eq!(pattern, "ipv4-addr:value = '1.2.3.4'");
     }
 
@@ -602,8 +600,7 @@ mod tests {
         let pattern = build_cybox_pattern(
             "sha256",
             "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
-        )
-        .unwrap();
+        );
         assert!(pattern.contains("SHA-256"));
     }
 
@@ -627,7 +624,7 @@ mod tests {
         );
 
         let indicator = encode_indicator(&finding).unwrap();
-        let obj = indicator.as_object().unwrap();
+        let obj = indicator.as_object();
         assert_eq!(obj.get("type").and_then(|v| v.as_str()), Some("url"));
         assert!(obj.contains_key("pattern"));
         assert!(obj.contains_key("id"));

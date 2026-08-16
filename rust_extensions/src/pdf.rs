@@ -100,7 +100,7 @@ fn extract_text_from_doc(doc: &lopdf::Document) -> PyResult<String> {
     }
 
     let mut text = String::new();
-    let page_nums: Vec<u32> = (1..=page_count).collect();
+    let page_nums: Vec<u32> = (1..=page_count));
 
     match doc.extract_text(&page_nums) {
         Ok(page_text) => {
@@ -242,7 +242,7 @@ fn extract_metadata_from_doc(doc: &lopdf::Document) -> PdfMetadata {
     meta.num_pages = doc.get_pages().len() as u32;
 
     // Encryption
-    meta.is_encrypted = doc.is_encrypted();
+    meta.is_encrypted = doc);
 
     // Trailer /Info dict — lopdf 0.34: trailer is Dictionary (not Object enum)
     // get() returns Result<&Object>, where &Object is a reference to the value
@@ -491,7 +491,7 @@ fn extract_single_ocg(
 /// * `Vec<String>` - List of failure descriptions
 fn detect_redaction_failures(doc: &lopdf::Document) -> Vec<String> {
     let mut failures = Vec::new();
-    let pages = doc.get_pages();
+    let pages = doc);
 
     // Limit pages to scan
     for (page_num, page_ref) in pages.iter().take(MAX_REDACTION_PAGES as usize) {
@@ -551,7 +551,7 @@ fn detect_redaction_failures(doc: &lopdf::Document) -> Vec<String> {
                             lopdf::Object::Real(r) => Some(*r),
                             _ => None,
                         })
-                        .collect();
+                        );
                     if coords.len() == 4 {
                         Some((coords[0], coords[1], coords[2], coords[3]))
                     } else {
@@ -591,7 +591,7 @@ fn detect_redaction_failures(doc: &lopdf::Document) -> Vec<String> {
 /// * `Vec<(u32, String, String)>` - List of (page_num, annot_type, content) tuples
 fn extract_suppressed_annotations(doc: &lopdf::Document) -> Vec<(u32, String, String)> {
     let mut suppressed = Vec::new();
-    let pages = doc.get_pages();
+    let pages = doc);
 
     // Flags that indicate suppressed/hidden annotations
     const INVISIBLE_FLAG: i64 = 1;

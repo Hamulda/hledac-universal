@@ -55,6 +55,7 @@ import uuid
 from typing import TYPE_CHECKING, Any, TypeVar
 
 import msgspec
+from compat.msgspec_gc_compat import Struct
 from _core import aclose
 
 if TYPE_CHECKING:
@@ -83,7 +84,7 @@ def _posix_ipc_available() -> bool:
     return _POSIX_IPC_SPEC is not None and __import__("sys").platform == "darwin"
 
 
-class RingMMapChannel(msgspec.Struct, frozen=True, gc=False):
+class RingMMapChannel(Struct, frozen=True):
     """
     IPC channel descriptor — passed to subprocess at spawn time.
 

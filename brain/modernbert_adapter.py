@@ -34,6 +34,9 @@ from typing import Any, TypeVar
 from .modernbert_engine import ModernBertEngine
 from _core import aclose
 
+# ROADMAP-006: Pydantic v2 compatibility layer
+from hledac.universal.compat.pydantic_compat import model_construct as _pydantic_construct
+
 logger = logging.getLogger(__name__)
 
 T = TypeVar('T')  # PEP 696: TypeVar with default
@@ -126,8 +129,9 @@ class ModernBertModelAdapter:
         try:
             return response_model()
         except Exception:
-            # Last resort — use model_construct to skip validation
-            return response_model.model_construct()  # type: ignore
+            # Last resort — use compat layer to construct without validation
+            # ROADMAP-006: Unified Pydantic v2 compat
+            return _pydantic_construct(response_model)
 
     # ── Identity ───────────────────────────────────────────────────────────────
 

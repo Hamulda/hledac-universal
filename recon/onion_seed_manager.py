@@ -1,8 +1,6 @@
 """
 OnionSeedManager — curated .onion seed list management + Ahmia discovery.
 """
-import json
-
 import logging
 import re
 import time

@@ -34,6 +34,7 @@ from __future__ import annotations
 import logging
 import time
 import msgspec
+from compat.msgspec_gc_compat import Struct
 from hledac.universal.compat.msgspec_gc_compat import Struct
 from _core import aclose
 __all__ = ['HypothesisFeedbackRecord', 'HypothesisFeedbackSummary', 'HypothesisFeedbackAdapter', 'MAX_FEEDBACK_RECORDS', 'MAX_PRUNED_TYPES']

@@ -51,6 +51,7 @@ from collections import OrderedDict
 from hledac.universal.utils.locks import LazyAsyncioLock
 from dataclasses import dataclass, field
 import msgspec
+from compat.msgspec_gc_compat import Struct
 from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     pass
@@ -68,7 +69,7 @@ MAX_COURT_CASES: int = 50
 RATE_LIMIT_S: float = 2.0
 TIMEOUT_S: float = 30.0
 
-class PasteFinding(msgspec.Struct, gc=False):
+class PasteFinding(Struct):
     uri: str
     source: str
     extracted_secrets: list[str] = field(default_factory=list)
@@ -79,7 +80,7 @@ class PasteFinding(msgspec.Struct, gc=False):
     def to_finding_dict(self) -> dict:
         return {'source': 'pastebin', 'source_family': 'FEED', 'uri': self.uri, 'source_name': self.source, 'secrets': [_mask_secret(s) for s in self.extracted_secrets], 'emails': self.emails, 'ips': self.ip_addresses, 'snippet': self.context_snippet[:200]}
 
-class UsenetArticle(msgspec.Struct, gc=False):
+class UsenetArticle(Struct):
     message_id: str
     subject: str
     from_addr: str
@@ -91,7 +92,7 @@ class UsenetArticle(msgspec.Struct, gc=False):
     def to_finding_dict(self) -> dict:
         return {'source': 'usenet', 'source_family': 'FEED', 'message_id': self.message_id, 'subject': self.subject, 'from': self.from_addr, 'date': self.date, 'newsgroup': self.newsgroup, 'body_preview': self.body[:500], 'url': self.url}
 
-class ChatMessage(msgspec.Struct, frozen=True, gc=False):
+class ChatMessage(Struct, frozen=True):
     platform: str
     channel: str
     user: str
@@ -102,7 +103,7 @@ class ChatMessage(msgspec.Struct, frozen=True, gc=False):
     def to_finding_dict(self) -> dict:
         return {'source': f'{self.platform}_chat', 'source_family': 'FEED', 'platform': self.platform, 'channel': self.channel, 'user': self.user, 'timestamp': self.timestamp, 'content_preview': self.content[:200], 'message_id': self.message_id}
 
-class AcademicPaper(msgspec.Struct, gc=False):
+class AcademicPaper(Struct):
     title: str
     authors: list[str]
     year: int | None
@@ -116,7 +117,7 @@ class AcademicPaper(msgspec.Struct, gc=False):
     def to_finding_dict(self) -> dict:
         return {'source': 'academic', 'source_family': 'PUBLIC', 'title': self.title, 'authors': self.authors, 'year': self.year, 'link': self.link, 'source_name': self.source, 'abstract_preview': self.abstract[:500], 'doi': self.doi, 'citations': self.citations, 'tags': self.tags}
 
-class EdgarFiling(msgspec.Struct, frozen=True, gc=False):
+class EdgarFiling(Struct, frozen=True):
     cik: str
     company_name: str
     form_type: str
@@ -128,7 +129,7 @@ class EdgarFiling(msgspec.Struct, frozen=True, gc=False):
     def to_finding_dict(self) -> dict:
         return {'source': 'sec_edgar', 'source_family': 'PUBLIC', 'cik': self.cik, 'company': self.company_name, 'form': self.form_type, 'date': self.filing_date, 'accession': self.accession_number, 'url': self.document_url}
 
-class CourtCase(msgspec.Struct, frozen=True, gc=False):
+class CourtCase(Struct, frozen=True):
     case_id: str
     docket_number: str
     court: str
@@ -241,7 +242,7 @@ class PasteSiteAdapter(Protocol):
         """Parse the response body. Return None on parse error or empty body."""
         ...
 
-class _RawPasteAdapter(msgspec.Struct, frozen=True, gc=False):
+class _RawPasteAdapter(Struct, frozen=True):
     """Trivial adapter: response body IS the paste text (ghostbin, rentry, pastebin_raw)."""
     site_id: str
     host: str
@@ -255,7 +256,7 @@ class _RawPasteAdapter(msgspec.Struct, frozen=True, gc=False):
     def parse(self, body: str, paste_id: str) -> str | None:
         return body or None
 
-class _PrivateBinAdapter(msgspec.Struct, frozen=True, gc=False):
+class _PrivateBinAdapter(Struct, frozen=True):
     """PrivateBin v2 → v1 fallback + encrypted-paste marker detection.
 
     Behavior preserved bit-for-bit from the original _scrape_privatebin:
@@ -284,7 +285,7 @@ class _PrivateBinAdapter(msgspec.Struct, frozen=True, gc=False):
             return data.get('content') or None
         return None
 
-class _ZeroBinAdapter(msgspec.Struct, frozen=True, gc=False):
+class _ZeroBinAdapter(Struct, frozen=True):
     """0bin HTML page → extract <pre class='paste-content'> with len > 10."""
     site_id: str = '0bin'
     host: str = '0bin.net'

@@ -34,6 +34,7 @@ import logging
 import time
 from dataclasses import dataclass, field
 import msgspec
+from compat.msgspec_gc_compat import Struct
 from typing import TYPE_CHECKING, Any
 from _core import aclose
 if TYPE_CHECKING:
@@ -48,7 +49,7 @@ IDLE_PREFETCH_INTERVAL_S = 5.0
 IDLE_PREFETCH_THRESHOLD = 3
 PREFETCH_PREWARMED_HOSTS_MAX = 50
 
-class PrefetchItem(msgspec.Struct, gc=False):
+class PrefetchItem(Struct):
     """
     Single IOC prefetch item with priority queue ordering.
 

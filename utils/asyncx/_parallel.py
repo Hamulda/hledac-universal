@@ -45,6 +45,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Literal, TypeVar, cast, overload
 
 import msgspec
+from compat.msgspec_gc_compat import Struct
 
 from hledac.universal.utils.asyncx._fault import _log_failure, silent_except
 
@@ -62,12 +63,17 @@ logger = logging.getLogger(__name__)
 _SAFE_GATHER_SAMPLE_CAP = 5
 
 # Eager task creation: Python 3.12+ stdlib accepts `eager_start=True` on
-# loop.create_task(), running the coroutine synchronously up to its
-# first await. With uvloop on M1, this eliminates ~15-30μs scheduling
-# overhead per task in scatter/gather patterns. Degrades gracefully on
-# <3.12 (no eager_start kwarg passed).
+# TaskGroup.create_task(), running the coroutine synchronously up to its
+# first await. This eliminates ~15-30μs scheduling overhead per task in
+# scatter/gather patterns. Degrades gracefully on <3.12 (no eager_start).
+#
+# ISSUE-010: uvloop + eager_start compatibility
+# - uvloop 0.22.x C-level create_task does NOT accept eager_start
+# - BUT TaskGroup.create_task() handles eager_start at the stdlib level
+#   BEFORE calling into the event loop, so uvloop does NOT block TaskGroup's
+#   eager_start support
+# - Feature flag HLEDAC_EAGER_START_ENABLED controls global eager_start behavior
 import sys
-from _core import aclose
 
 _PY_312_PLUS: bool = sys.version_info >= (3, 12)
 
@@ -78,8 +84,64 @@ try:
 except ImportError:
     _UVLOOP_INSTALLED = False
 
-# uvloop 0.22.x C-level create_task does NOT accept eager_start kwarg.
-_EAGER_START_SUPPORTED: bool = _PY_312_PLUS and not _UVLOOP_INSTALLED
+# eager_start is supported when Python >= 3.12 (stdlib TaskGroup.create_task
+# handles it natively, independent of whether uvloop is installed)
+_EAGER_START_SUPPORTED: bool = _PY_312_PLUS
+
+
+# ---------------------------------------------------------------------------
+# ISSUE-010: Feature-flag gated eager_start
+# ---------------------------------------------------------------------------
+
+
+def _should_use_eager_start() -> bool:
+    """Determine if eager_start should be used based on feature flags.
+
+    Returns:
+        True if eager_start should be enabled, False otherwise.
+
+    Logic:
+        1. Must be Python 3.12+ (eager_start not available earlier)
+        2. HLEDAC_EAGER_START_ENABLED must be True (default True)
+
+    Note: For asyncio.create_task() with uvloop, eager_start is handled
+    separately by otel/_instrumentation_asyncio.py (which uses try/except
+    to gracefully fall back). For TaskGroup.create_task(), eager_start works
+    universally on Python 3.12+ since it's processed at stdlib level.
+    """
+    if not _EAGER_START_SUPPORTED:
+        return False
+
+    # Import lazily to avoid circular imports and allow env override at runtime
+    from hledac.universal._core.env_config import ENV
+
+    return ENV.EAGER_START_ENABLED
+
+
+# ---------------------------------------------------------------------------
+# TaskGroup task creation helpers
+# ---------------------------------------------------------------------------
+
+
+def _tg_create_task(
+    tg: asyncio.TaskGroup,
+    coro: Any,
+    *,
+    name: str | None = None,
+) -> None:
+    """Create task in TaskGroup with optional eager_start (Python 3.12+).
+
+    Uses eager_start=True when supported for ~15-30μs per-task overhead reduction.
+    Respects HLEDAC_EAGER_START_ENABLED feature flag. Gracefully degrades on
+    Python < 3.12 or when feature flag is disabled.
+
+    Note: TaskGroup.create_task() handles eager_start at stdlib level, so
+    uvloop's C-level limitations do NOT apply here.
+    """
+    if _should_use_eager_start():
+        tg.create_task(coro, name=name, eager_start=True)
+    else:
+        tg.create_task(coro, name=name)
 
 
 # ---------------------------------------------------------------------------
@@ -113,16 +175,28 @@ def safe_create_task(
 ) -> asyncio.Task[Any]:
     """Defensive create_task wrapper with OTel context propagation.
 
+    ISSUE-010: Respects HLEDAC_EAGER_START_ENABLED feature flag.
+
     Args:
         coro: The coroutine to wrap in a task.
         name: Optional task name (passed to asyncio.create_task).
         eager_start: Run coroutine synchronously up to first await (3.12+).
+                     When feature flag is disabled, this is overridden to False.
         otel_trace: Capture and propagate OTel trace context (default True).
 
     Returns:
         asyncio.Task wrapping the coroutine.
+
+    Note:
+        When uvloop is installed, eager_start is handled by the OTel factory
+        (which has try/except graceful fallback) or disabled for direct
+        asyncio.create_task() calls. TaskGroup.create_task() always supports
+        eager_start on Python 3.12+ since it's processed at stdlib level.
     """
-    task = _safe_task_factory(coro, name=name, eager_start=eager_start, otel_trace=otel_trace)
+    # ISSUE-010: Apply feature flag to eager_start
+    should_eager = eager_start and _should_use_eager_start()
+
+    task = _safe_task_factory(coro, name=name, eager_start=should_eager, otel_trace=otel_trace)
     task.add_done_callback(_log_task_exception)
     return task
 
@@ -137,8 +211,7 @@ def _log_task_exception(task: asyncio.Task[Any]) -> None:
         try:
             _log_failure("background_task", e, is_escalated=True)
         except Exception:
-            import sys
-
+            # Fallback: write to stderr if logging fails
             try:
                 sys.stderr.write(f"Unhandled task exception in background_task: {e!r}\n")
             except Exception:  # noqa: BLE001
@@ -152,7 +225,7 @@ def _log_task_exception(task: asyncio.Task[Any]) -> None:
 ExceptionPolicy = Literal["raise", "first", "collect", "log"]
 
 
-class ParallelResult(msgspec.Struct, frozen=True, gc=False):
+class ParallelResult(Struct, frozen=True):
     """Canonical result of ``parallel()`` with policy-driven error routing.
 
     Attributes:
@@ -169,7 +242,7 @@ class ParallelResult(msgspec.Struct, frozen=True, gc=False):
     re_raised: BaseException | None = None
 
 
-class SafeGatherResult(msgspec.Struct, frozen=True, gc=False):
+class SafeGatherResult(Struct, frozen=True):
     """Result of `safe_gather` — msgspec.Struct for ~3× faster instantiation.
 
     Attributes:
@@ -183,7 +256,7 @@ class SafeGatherResult(msgspec.Struct, frozen=True, gc=False):
     re_raised: BaseException | None = None
 
 
-class RaceFirstSuccessResult(msgspec.Struct, frozen=True, gc=False):
+class RaceFirstSuccessResult(Struct, frozen=True):
     """Result of `race_first_success` — msgspec.Struct for ~3× faster instantiation."""
 
     result: Any = None
@@ -193,7 +266,7 @@ class RaceFirstSuccessResult(msgspec.Struct, frozen=True, gc=False):
     falsy_results: list[Any] = msgspec.field(default_factory=list)
 
 
-class _BoundedExceptionLog(msgspec.Struct, frozen=True, gc=False):
+class _BoundedExceptionLog(Struct, frozen=True):
     """Single bounded log line summarizing suppressed exceptions.
 
     Returned by safe_gather_fire_and_forget so callers can decide whether to
@@ -424,7 +497,7 @@ async def _parallel_taskgroup[T](
     try:
         async with asyncio.TaskGroup() as tg:
             for idx, coro in enumerate(coros):
-                tg.create_task(_run(idx, coro), name=f"parallel[{idx}]", eager_start=True)
+                _tg_create_task(tg, _run(idx, coro), name=f"parallel[{idx}]")
     except BaseExceptionGroup as eg:
         for exc in eg.exceptions:
             if isinstance(exc, asyncio.CancelledError):
@@ -683,7 +756,7 @@ async def try_group[*Ts](
     try:
         async with asyncio.TaskGroup() as tg:
             for idx, coro in enumerate(coros):
-                tg.create_task(_run(idx, coro), name=f"try_group[{idx}]", eager_start=True)
+                _tg_create_task(tg, _run(idx, coro), name=f"try_group[{idx}]")
     except* asyncio.CancelledError:
         raise
     except* BaseException as eg:
@@ -729,7 +802,7 @@ async def parallel_taskgroup_star[T](
     try:
         async with asyncio.TaskGroup() as tg:
             for idx, coro in enumerate(coros):
-                tg.create_task(_run(idx, coro), name=f"ptgs[{idx}]", eager_start=True)
+                _tg_create_task(tg, _run(idx, coro), name=f"ptgs[{idx}]")
     except* asyncio.CancelledError as _eg:
         _log.debug("[GHOST] parallel_taskgroup_star CancelledError%s", (" " + ctx) if ctx else "")
         raise
@@ -971,7 +1044,7 @@ async def race_first_success(
                             else:
                                 falsy_results.append(val)
 
-                    tg.create_task(_runner(idx, coro, coro_label, require_truthy), name=f"race:{coro_label}")
+                    _tg_create_task(tg, _runner(idx, coro, coro_label, require_truthy), name=f"race:{coro_label}")
     except TimeoutError:
         return RaceFirstSuccessResult(result=None, winner_index=-1, winner_label="", errors=errors, falsy_results=falsy_results)
     except BaseExceptionGroup as eg:
@@ -1051,7 +1124,7 @@ async def chunked_taskgroup[T, R](
         try:
             async with asyncio.TaskGroup() as tg:
                 for local_idx, item in enumerate(batch):
-                    tg.create_task(capture(local_idx, item), name=f"chunk[{batch_start + local_idx}]")
+                    _tg_create_task(tg, capture(local_idx, item), name=f"chunk[{batch_start + local_idx}]")
         except BaseExceptionGroup as eg:
             for exc in eg.exceptions:
                 if isinstance(exc, asyncio.CancelledError):

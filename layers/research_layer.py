@@ -1,270 +1,39 @@
 """
-Research Layer - GhostDirector and Deep Research Integration
-============================================================
+Research Layer - DEPRECATED Wrapper
+=================================
 
+This module is DEPRECATED. Import from `layers.research` instead:
 
-Integrates:
-- GhostDirector: 18+ actions, OODA loop, autonomous investigation
-- ResearchDepthMaximizer: 10-level deep research, citation following
-- Hunter: DuckDuckGo search, Trafilatura extraction
+    from layers.research import ResearchLayer, TemporalSignalLayer, TemporalEvent, TemporalScore
 
-This is a thin wrapper that imports existing research modules
-and adds integration logic for the universal orchestrator.
+This file exists for backward compatibility only and will be removed in a future version.
 """
-import logging
-from typing import Any
-from hledac.universal.project_types import DeepResearchConfig, ExplorationNode, ExplorationStrategy, GhostMission
-from _core import aclose
-logger = logging.getLogger(__name__)
+import warnings
 
-class ResearchLayer:
-    """
-    Research layer for deep investigation with GhostDirector and depth maximization.
+# Deprecation warning for direct imports
+warnings.warn(
+    "layers.research_layer is deprecated. Import from layers.research instead.",
+    DeprecationWarning,
+    stacklevel=2,
+)
 
-    This layer:
-    1. Manages GhostDirector for autonomous actions (can be shared from LayerManager)
-    2. Performs 10-level deep research with citation following
-    3. Hunts for URLs and extracts content
-    4. Explores tangential topics
+# Re-export from consolidated module
+from layers.research import (
+    ResearchLayer,
+    TemporalSignalLayer,
+    TemporalEvent,
+    TemporalScore,
+    TemporalEdgeCandidate,
+    _KeyState,
+    event_from_finding_like,
+)
 
-    Example:
-        research = ResearchLayer(config)
-        await research.initialize()
-
-        # Start Ghost mission
-        mission = await research.create_mission("Investigate quantum computing")
-        result = await research.execute_mission(mission)
-
-        # Deep research
-        exploration = await research.deep_explore(
-            "https://example.com/paper",
-            strategy=ExplorationStrategy.CITATION_FOLLOWING
-    )
-    """
-    __slots__ = tuple(('_actions_executed', '_depth_levels_reached', '_depth_maximizer', '_explorations', '_ghost_director', '_ghost_director_shared', '_hunter', '_missions', '_missions_completed', 'config'))
-
-    def __init__(self, config: DeepResearchConfig | None=None, ghost_director: Any | None=None):
-        """
-        Initialize ResearchLayer.
-
-        Args:
-            config: Deep research configuration (uses defaults if None)
-            ghost_director: Optional shared GhostDirector instance from LayerManager
-                           (prevents duplicate initialization on M1 8GB)
-        """
-        self.config = config or DeepResearchConfig()
-        self._ghost_director = ghost_director
-        self._ghost_director_shared = ghost_director is not None
-        self._depth_maximizer = None
-        self._hunter = None
-        self._missions: dict[str, GhostMission] = {}
-        self._explorations: dict[str, list[ExplorationNode]] = {}
-        self._missions_completed = 0
-        self._actions_executed = 0
-        self._depth_levels_reached = 0
-        logger.info(f"ResearchLayer initialized (GhostDirector: {('shared' if self._ghost_director_shared else 'lazy')})")
-
-    async def initialize(self) -> bool:
-        """
-        Initialize ResearchLayer components.
-
-        Returns:
-            True if initialization successful
-        """
-        try:
-            logger.info('🚀 Initializing ResearchLayer...')
-            await self._init_hunter()
-            await self._init_depth_maximizer()
-            logger.info('✅ ResearchLayer initialized successfully')
-            return True
-        except Exception as e:
-            logger.error(f'❌ ResearchLayer initialization failed: {e}')
-            return False
-
-    async def _init_ghost_director(self) -> None:
-        """Lazy initialization of GhostDirector (only if not shared)"""
-        if self._ghost_director_shared and self._ghost_director is not None:
-            logger.debug('Using shared GhostDirector from LayerManager')
-            return
-        if self._ghost_director is None:
-            try:
-                # GhostDirector adapter exists in hledac.cortex.director
-                from hledac.universal.cortex.director import GhostDirector
-                self._ghost_director = GhostDirector(max_steps=20)
-                await self._ghost_director.initialize_drivers()
-                logger.info('✅ GhostDirector initialized (local)')
-            except Exception as e:  # noqa: BLEAVE
-                logger.warning(f'⚠️ GhostDirector not available: {e}')
-                self._ghost_director = None
-
-    async def _init_depth_maximizer(self) -> None:
-        """Lazy initialization of ResearchDepthMaximizer."""
-        # hledac.research.depth_maximizer doesn't exist (F330 cleanup)
-        # Research depth is handled by the universal brain/hypothesis_engine
-        logger.debug('ResearchDepthMaximizer not available — depth research via brain layer')
-        self._depth_maximizer = None
-
-    async def _init_hunter(self) -> None:
-        """Lazy initialization of Hunter."""
-        # hledac.cortex.hunter doesn't exist (F330 cleanup)
-        # URL harvesting is handled by FetchCoordinator in universal
-        logger.debug('Hunter not available — URL harvesting via FetchCoordinator')
-        self._hunter = None
-
-    def create_mission(self, goal: str) -> GhostMission:
-        """
-        Create a new GhostDirector mission.
-
-        Args:
-            goal: Mission goal/description
-
-        Returns:
-            GhostMission
-        """
-        import uuid
-        mission_id = str(uuid.uuid4())[:8]
-        mission = GhostMission(mission_id=mission_id, goal=goal, actions=[], current_step=0, acquired_loot=[], anti_loop_counter=0)
-        self._missions[mission_id] = mission
-        logger.info(f'🎯 Mission created: {mission_id} - {goal[:50]}...')
-        return mission
-
-    async def execute_mission(self, mission: GhostMission, max_steps: int | None=None) -> dict[str, Any]:
-        """
-        Execute a GhostDirector mission.
-
-        Args:
-            mission: GhostMission to execute
-            max_steps: Maximum steps (uses config default if None)
-
-        Returns:
-            Mission results
-        """
-        if self._ghost_director is None:
-            await self._init_ghost_director()
-        if self._ghost_director is None:
-            logger.error('❌ GhostDirector not available')
-            return {'success': False, 'error': 'GhostDirector not available'}
-        max_steps = max_steps or 20
-        logger.info(f'🚀 Executing mission: {mission.mission_id}')
-        try:
-            result = await self._ghost_director.start_investigation(mission.goal)
-            self._missions_completed += 1
-            self._actions_executed += result.get('actions_count', 0)
-            mission.acquired_loot = result.get('loot', [])
-            return {'success': True, 'mission_id': mission.mission_id, 'goal': mission.goal, 'actions_executed': result.get('actions_count', 0), 'loot_count': len(mission.acquired_loot), 'findings': result.get('findings', []), 'duration': result.get('duration', 0)}
-        except Exception as e:
-            logger.error(f'❌ Mission execution failed: {e}')
-            return {'success': False, 'mission_id': mission.mission_id, 'error': str(e)}
-
-    async def deep_explore(self, start_url: str, strategy: ExplorationStrategy | None=None, max_depth: int | None=None) -> list[ExplorationNode]:
-        """
-        Perform deep research exploration.
-
-        Args:
-            start_url: Starting URL
-            strategy: Exploration strategy (uses config default if None)
-            max_depth: Maximum depth (uses config default if None)
-
-        Returns:
-            List of ExplorationNodes
-        """
-        if self._depth_maximizer is None:
-            await self._init_depth_maximizer()
-        if self._depth_maximizer is None or not hasattr(self._depth_maximizer, 'start_deep_research'):
-            logger.warning('⚠️ ResearchDepthMaximizer not available, using fallback')
-            return await self._fallback_exploration(start_url, max_depth)
-        strategy = strategy or ExplorationStrategy(self.config.strategy)
-        max_depth = max_depth or self.config.max_depth
-        logger.info(f'🔍 Deep exploration: {start_url} (strategy: {strategy.value}, max_depth: {max_depth})')
-        try:
-            result = await self._depth_maximizer.start_deep_research(query=start_url, strategy=strategy.value)
-            nodes = []
-            for item in result.get('explored', []):
-                node = ExplorationNode(node_id=item.get('id', ''), url=item.get('url', ''), title=item.get('title', ''), depth=item.get('depth', 0), parent_id=item.get('parent'), children=item.get('children', []), citations=item.get('citations', []), quality_score=item.get('quality', 0.0))
-                nodes.append(node)
-            self._depth_levels_reached = max((n.depth for n in nodes)) if nodes else 0
-            logger.info(f'✅ Deep exploration complete: {len(nodes)} nodes, depth {self._depth_levels_reached}')
-            return nodes
-        except Exception as e:
-            logger.error(f'❌ Deep exploration failed: {e}')
-            return await self._fallback_exploration(start_url, max_depth)
-
-    async def _fallback_exploration(self, start_url: str, max_depth: int | None) -> list[ExplorationNode]:
-        """Fallback exploration without DepthMaximizer"""
-        logger.debug(f'Using fallback exploration for {start_url}')
-        return [ExplorationNode(node_id='root', url=start_url, title='Root', depth=0, parent_id=None, children=[], citations=[], quality_score=1.0)]
-
-    async def hunt(self, query: str, dorks: list[str] | None=None) -> list[dict[str, Any]]:
-        """
-        Hunt for URLs using DuckDuckGo.
-
-        Args:
-            query: Search query
-            dorks: Optional search dorks
-
-        Returns:
-            List of found URLs with metadata
-        """
-        if self._hunter is None:
-            await self._init_hunter()
-        if self._hunter is None:
-            logger.warning('⚠️ Hunter not available')
-            return []
-        try:
-            results = []
-            async for artifact in self._hunter.search(query, dorks=dorks):
-                results.append({'url': artifact.url if hasattr(artifact, 'url') else str(artifact), 'title': artifact.title if hasattr(artifact, 'title') else '', 'source': 'hunter'})
-            logger.info(f'🔍 Hunt complete: {len(results)} results')
-            return results
-        except Exception as e:
-            logger.error(f'❌ Hunt failed: {e}')
-            return []
-
-    async def harvest(self, url: str, depth: int=0) -> dict[str, Any]:
-        """
-        Harvest content from URL using Trafilatura.
-
-        Args:
-            url: URL to harvest
-            depth: Harvesting depth
-
-        Returns:
-            Harvested content
-        """
-        if self._hunter is None:
-            await self._init_hunter()
-        if self._hunter is None:
-            logger.warning('⚠️ Hunter not available')
-            return {'url': url, 'content': '', 'success': False}
-        try:
-            result = await self._hunter.harvest(url, depth=depth)
-            return {'url': url, 'content': result.content if hasattr(result, 'content') else str(result), 'title': result.title if hasattr(result, 'title') else '', 'success': True}
-        except Exception as e:
-            logger.error(f'❌ Harvest failed: {e}')
-            return {'url': url, 'content': '', 'success': False, 'error': str(e)}
-
-    def get_statistics(self) -> dict[str, Any]:
-        """Get research layer statistics"""
-        return {'missions_completed': self._missions_completed, 'actions_executed': self._actions_executed, 'depth_levels_reached': self._depth_levels_reached, 'active_missions': len(self._missions), 'ghost_director_available': self._ghost_director is not None, 'depth_maximizer_available': self._depth_maximizer is not None, 'hunter_available': self._hunter is not None, 'config': {'max_depth': self.config.max_depth, 'strategy': self.config.strategy, 'follow_citations': self.config.follow_citations, 'explore_tangents': self.config.explore_tangents}}
-
-    async def cleanup(self) -> None:
-        """Cleanup resources"""
-        logger.info('🧹 Cleaning up ResearchLayer...')
-        if self._ghost_director and hasattr(self._ghost_director, 'cleanup'):
-            try:
-                await self._ghost_director.cleanup()
-            except Exception as e:
-                logger.warning(f'⚠️ GhostDirector cleanup error: {e}')
-        if self._depth_maximizer and hasattr(self._depth_maximizer, 'stop'):
-            try:
-                await self._depth_maximizer.stop()
-            except Exception as e:
-                logger.warning(f'⚠️ DepthMaximizer cleanup error: {e}')
-        if self._hunter and hasattr(self._hunter, 'cleanup'):
-            try:
-                await self._hunter.cleanup()
-            except Exception as e:
-                logger.warning(f'⚠️ Hunter cleanup error: {e}')
-        self._missions.clear()
-        self._explorations.clear()
-        logger.info('✅ ResearchLayer cleanup complete')
+__all__ = [
+    'ResearchLayer',
+    'TemporalSignalLayer',
+    'TemporalEvent',
+    'TemporalScore',
+    'TemporalEdgeCandidate',
+    '_KeyState',
+    'event_from_finding_like',
+]

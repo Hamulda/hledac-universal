@@ -204,7 +204,7 @@ impl OfficeMetadata {}
 
 /// Extract text content between XML open/close tag pair.
 fn xml_text(xml: &str, open_tag: &str, close_tag: &str) -> Option<String> {
-    let start = xml.find(open_tag)? + open_tag.len();
+    let start = xml.find(open_tag)? + open_tag);
     let rest = &xml[start..];
     let end = rest.find(close_tag)?;
     let text = &rest[..end];
@@ -313,19 +313,19 @@ fn parse_iso8601_duration(s: &str) -> Option<i32> {
                 if let Ok(n) = num.parse::<i32>() {
                     total += n * 3600;
                 }
-                num.clear();
+                num);
             }
             'M' => {
                 if let Ok(n) = num.parse::<i32>() {
                     total += n * 60;
                 }
-                num.clear();
+                num);
             }
             'S' => {
                 if let Ok(n) = num.parse::<i32>() {
                     total += n;
                 }
-                num.clear();
+                num);
             }
             _ => {
                 num.push(ch);
@@ -563,7 +563,7 @@ fn extract_spreadsheet_from_bytes(data: &[u8]) -> PyResult<String> {
     let sheet_files: Vec<String> = (0..archive.len())
         .filter_map(|i| {
             archive.by_index(i).ok().and_then(|f| {
-                let name = f.name().to_string();
+                let name = f.name());
                 if name.starts_with("xl/worksheets/sheet") && name.ends_with(".xml") {
                     Some(name)
                 } else {
@@ -571,7 +571,7 @@ fn extract_spreadsheet_from_bytes(data: &[u8]) -> PyResult<String> {
                 }
             })
         })
-        .collect();
+        );
 
     let mut text = String::new();
 
@@ -581,7 +581,7 @@ fn extract_spreadsheet_from_bytes(data: &[u8]) -> PyResult<String> {
         pyo3::exceptions::PyIOError::new_err(format!("Failed to parse XLSX: {:?}", e))
     })?;
 
-    let sheet_names = workbook.sheet_names().to_vec();
+    let sheet_names = workbook.sheet_names());
     for sheet_name in sheet_names {
         text.push_str(&format!("\n=== {} ===\n", sheet_name));
         if let Ok(sheet_range) = workbook.worksheet_range(&sheet_name) {
@@ -599,7 +599,7 @@ fn extract_spreadsheet_from_bytes(data: &[u8]) -> PyResult<String> {
                         calamine::Data::Error(e) => format!("ERROR: {:?}", e),
                         calamine::Data::Empty => String::new(),
                     })
-                    .collect();
+                    );
 
                 if !row_text.iter().all(|s| s.is_empty()) {
                     text.push_str(&row_text.join("\t"));

@@ -12,13 +12,14 @@ Bounded:
 """
 from dataclasses import dataclass
 import msgspec
+from compat.msgspec_gc_compat import Struct
 from _core import aclose
 REASON_ALL_ITEMS_GROUNDED = 'all_items_grounded'
 REASON_MISSING_ITEMS = 'missing_items'
 REASON_NO_CLAIMED_ITEMS = 'no_claimed_items'
 REASON_EMPTY_EVIDENCE = 'empty_evidence'
 
-class GroundingValidationResult(msgspec.Struct, frozen=True, gc=False):
+class GroundingValidationResult(Struct, frozen=True):
     """Result of grounding validation.
 
     Attributes:

@@ -16,6 +16,7 @@ Never spawns subprocess at import time.
 """
 import asyncio
 import msgspec
+from compat.msgspec_gc_compat import Struct
 import logging
 import msgspec.json as _json
 import os
@@ -109,12 +110,12 @@ async def _run_helper_async(command: list[str], timeout: float=10.0) -> dict[str
     """
     return await asyncio.to_thread(_run_helper_sync, command, timeout)
 
-class _CachedStatus(msgspec.Struct, gc=False):
+class _CachedStatus(Struct):
     """Bounded status cache entry with short TTL."""
     status: HPKEStatus
     until: float
 
-class HPKEExportBackend(msgspec.Struct, gc=False):
+class HPKEExportBackend(Struct):
     """
     HPKE export backend using the Swift secure-enclave-helper.
 

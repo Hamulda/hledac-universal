@@ -55,6 +55,7 @@ from hledac.universal._core.rust_backend import get_accel
 
 import httpx
 import msgspec
+from compat.msgspec_gc_compat import Struct
 from hledac.universal.compat.msgspec_gc_compat import Struct
 
 from hledac.universal.pipeline._deduper import (

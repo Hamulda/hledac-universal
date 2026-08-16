@@ -46,8 +46,11 @@ import threading
 import time
 from dataclasses import dataclass, field
 import msgspec
+from compat.msgspec_gc_compat import Struct
 from typing import Any
 from hledac.universal.utils.asyncx import safe_create_task, safe_wait_for
+from _core.lock_registry import LockCategory, register_lock
+
 logger = logging.getLogger(__name__)
 
 # Issue #042: M1 8GB tuned generational GC thresholds.
@@ -86,7 +89,12 @@ _GC_THRESHOLD_CURRENT: str = "ok"
 
 # Triple-checked lock for init-once GC configuration (per PMB lesson #2154)
 _gc_configured = False
-_gc_configure_lock = threading.Lock()
+
+
+@register_lock(LockCategory.CONFIG)
+def _gc_configure_lock() -> threading.Lock:
+    """Module-level lock for GC configuration initialization."""
+    return threading.Lock()
 
 
 def _ensure_gc_configured() -> None:
@@ -102,7 +110,7 @@ def _ensure_gc_configured() -> None:
     global _gc_configured
     if _gc_configured:
         return
-    with _gc_configure_lock:
+    with _gc_configure_lock():
         if _gc_configured:
             return
         _apply_gc_config()
@@ -188,7 +196,7 @@ _PRESSURE_RELIEF_MIN_INTERVAL_S: float = 60.0
 # Issue #042: Background gc.collect(2) interval (60s per spec)
 _GC_BACKGROUND_INTERVAL_S: float = 60.0
 
-class MemoryCycleStats(msgspec.Struct, gc=False):
+class MemoryCycleStats(Struct):
     """Snapshot of GC + pressure-relief state — for telemetry / debug."""
     gc_freeze_supported: bool
     gc_gen0_collected: int

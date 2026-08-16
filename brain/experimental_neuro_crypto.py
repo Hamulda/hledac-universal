@@ -12,6 +12,7 @@ from dataclasses import dataclass
 
 
 import msgspec
+from compat.msgspec_gc_compat import Struct
 from typing import Any
 import numpy as np
 if not os.getenv('HLEDAC_ENABLE_NEURO_CRYPTO'):
@@ -304,7 +305,7 @@ class EntropyPool:
         self._reseed_count += 1
         logger.debug(f'EntropyPool reseeded (count: {self._reseed_count})')
 
-class SNNEncryptedContainer(msgspec.Struct, gc=False):
+class SNNEncryptedContainer(Struct):
     """Container for SNN-based encrypted data with neural signatures."""
     ciphertext: bytes
     neural_signature: np.ndarray

@@ -42,6 +42,7 @@ import time
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 import msgspec
+from compat.msgspec_gc_compat import Struct
 from typing import Any, TYPE_CHECKING
 from _core._util import aclose
 
@@ -100,7 +101,7 @@ def _get_rust_aggregator() -> Any:
 
 # ── Metric instruments cache ────────────────────────────────────────────────────
 
-class _MetricInstruments(msgspec.Struct, gc=False):
+class _MetricInstruments(Struct):
     """Cached OTel metric instruments for one metric name."""
     counter_values: dict[str, tuple[int, int]]  # name → (count, bytes)
     histogram_values: dict[str, dict[str, int]]  # name → {p50, p95, p99, ...}

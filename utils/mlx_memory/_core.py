@@ -782,6 +782,7 @@ def get_semaphore_for_testing(category: str) -> asyncio.Semaphore:
 # Python fallback: threading.Lock + plain ints (still thread-safe).
 
 _cache_metrics_lock = threading.Lock()
+register_lock(LockCategory.CACHE, _cache_metrics_lock, "mlx_memory._cache_metrics_lock")
 _CACHE_HITS: int = 0
 _CACHE_MISSES: int = 0
 _RUST_AVAILABLE: bool = False

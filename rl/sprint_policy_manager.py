@@ -27,6 +27,7 @@ import math
 import os
 import secrets
 import msgspec
+from compat.msgspec_gc_compat import Struct
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 if TYPE_CHECKING:
@@ -58,7 +59,7 @@ _QMIX_FIELD = 'qmix_weights'
 # Non-security RNG — exploration epsilon-greedy sampling (30× faster than secrets)
 _RANDOM = secrets.SystemRandom()
 
-class SprintPolicyState(msgspec.Struct, gc=False):
+class SprintPolicyState(Struct):
     """Serialized policy state persisted to disk."""
     sprint_sequence_number: int = 0
     epsilon: float = _DEFAULT_EPSILON

@@ -44,6 +44,7 @@ if TYPE_CHECKING:
     mx: Any
 from dataclasses import dataclass
 import msgspec
+from compat.msgspec_gc_compat import Struct
 from _core import aclose
 _MLX_LOADED = False
 
@@ -125,7 +126,7 @@ class CapabilityTruthLayer(Enum):
     RUNTIME_LOADED = 'loaded'
     EFFECTIVE_FOR_TOOL_CONTRACT = 'effective'
 
-class CapabilityTruthStatus(msgspec.Struct, gc=False):
+class CapabilityTruthStatus(Struct):
     """
     F6: Truthful capability status across all four layers.
 
@@ -232,7 +233,7 @@ def get_capability_truth_matrix(capabilities: list[Capability], registry: Capabi
     declarations = _get_tool_capability_declarations()
     return {cap: probe_capability_truth(cap, registry, declarations) for cap in capabilities}
 
-class CapabilityStatus(msgspec.Struct, frozen=True, gc=False):
+class CapabilityStatus(Struct, frozen=True):
     """Status of a capability."""
     available: bool
     reason: str = ''

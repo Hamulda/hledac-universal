@@ -22,6 +22,7 @@ import time
 from collections import deque
 from dataclasses import dataclass
 import msgspec
+from compat.msgspec_gc_compat import Struct
 from typing import TYPE_CHECKING, Any, Final
 from _core import aclose
 if TYPE_CHECKING:
@@ -32,7 +33,7 @@ SUBMIT_TIMEOUT_S = 120.0
 PREPROCESS_WORKERS = 2
 _DEEP_THINKING_PREFIX: Final[str] = ' <|im_start|>reasoning\nFor this query, I need to think step by step about the evidence and derive conclusions.<|im_end|>\n'
 
-class PendingRequest(msgspec.Struct, gc=False):
+class PendingRequest(Struct):
     """A pending inference request with its resolving future."""
     future: asyncio.Future[str]
     prompt: str

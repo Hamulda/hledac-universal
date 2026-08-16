@@ -11,10 +11,11 @@ import os
 import secrets
 from dataclasses import dataclass
 import msgspec
+from compat.msgspec_gc_compat import Struct
 from _core import aclose
 logger = logging.getLogger(__name__)
 
-class EncryptionResult(msgspec.Struct, gc=False):
+class EncryptionResult(Struct):
     """Result of encryption operation"""
     ciphertext: str
     nonce: str
@@ -22,7 +23,7 @@ class EncryptionResult(msgspec.Struct, gc=False):
     success: bool = True
     error: str | None = None
 
-class DecryptionResult(msgspec.Struct, gc=False):
+class DecryptionResult(Struct):
     """Result of decryption operation"""
     plaintext: str
     success: bool = True

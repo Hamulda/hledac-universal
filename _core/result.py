@@ -33,6 +33,7 @@ from typing import TypeVar, Generic
 from collections.abc import Awaitable
 from dataclasses import dataclass
 import msgspec
+from compat.msgspec_gc_compat import Struct
 from _core._util import aclose
 
 T = TypeVar("T", default=object)
@@ -65,7 +66,7 @@ class Ok(Generic[T]):
         return self.value
 
 
-class Err(msgspec.Struct, frozen=True, gc=False):
+class Err(Struct, frozen=True):
     """Err result — carries error message and optional exception. F350M-R: gc=False for M1 8GB."""
     error: str
     exception: BaseException | None = None

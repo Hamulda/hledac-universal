@@ -31,6 +31,7 @@ Invariant: Always-on, bounded, fail-safe — no feature flags.
 from __future__ import annotations
 
 import msgspec
+from compat.msgspec_gc_compat import Struct
 from hledac.universal.compat.msgspec_gc_compat import Struct
 from enum import Enum, auto
 from typing import Protocol, runtime_checkable, Any

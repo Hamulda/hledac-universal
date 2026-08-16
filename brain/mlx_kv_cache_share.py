@@ -24,6 +24,7 @@ import logging
 import time as time_module
 from dataclasses import dataclass
 import msgspec
+from compat.msgspec_gc_compat import Struct
 from typing import TYPE_CHECKING
 from _core import aclose
 if TYPE_CHECKING:
@@ -31,7 +32,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 _MAX_CACHED_PROMPTS: int = 8
 
-class TokenizedPromptEntry(msgspec.Struct, gc=False):
+class TokenizedPromptEntry(Struct):
     """Cached tokenized prompt array."""
     key: str
     tokens: list[int]
@@ -41,7 +42,7 @@ class TokenizedPromptEntry(msgspec.Struct, gc=False):
     last_used: float = 0.0
     tokenize_time_ms: float = 0.0
 
-class PromptCacheStats(msgspec.Struct, gc=False):
+class PromptCacheStats(Struct):
     """Statistics for tokenized prompt cache."""
     cache_hits: int = 0
     cache_misses: int = 0

@@ -25,14 +25,16 @@ from typing import Any
 import numpy as np
 
 import msgspec
+from compat.msgspec_gc_compat import Struct
 
+from _core.lock_registry import LockCategory, register_lock
 from hledac.universal.utils.cache import PyCacheDict
 from _core import aclose
 
 logger = logging.getLogger(__name__)
 
 
-class EmbeddingResult(msgspec.Struct, frozen=True, gc=False):
+class EmbeddingResult(Struct, frozen=True):
     """
     FLOW-04: Structured embedding result with explicit dimension validation.
 
@@ -84,7 +86,14 @@ class EmbeddingResult(msgspec.Struct, frozen=True, gc=False):
             model=model,
     )
 _unified_manager: UnifiedEmbeddingManager | None = None
-_manager_lock = threading.Lock()
+
+
+@register_lock(LockCategory.CACHE)
+def _manager_lock() -> threading.Lock:
+    """Module-level lock for UnifiedEmbeddingManager singleton."""
+    return threading.Lock()
+
+
 SUPPORTED_DIMS = (256, 512, 768)
 DEFAULT_DIM = 512
 # FLOW-02: M1 8GB safe — truncate text before MLX tokenization to prevent OOM
@@ -139,7 +148,7 @@ class UnifiedEmbeddingManager:
         """Ensure MLX backend is loaded (thread-safe via threading.Lock)."""
         if self._is_loaded:
             return
-        with _manager_lock:
+        with _manager_lock():
             if self._is_loaded:
                 return
             try:

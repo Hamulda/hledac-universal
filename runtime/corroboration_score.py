@@ -9,6 +9,7 @@ from __future__ import annotations
 
 
 import msgspec
+from compat.msgspec_gc_compat import Struct
 from hledac.universal.compat.msgspec_gc_compat import Struct
 from typing import TYPE_CHECKING
 from _core import aclose

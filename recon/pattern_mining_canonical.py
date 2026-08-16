@@ -30,14 +30,35 @@ OSINT Pattern Types:
   - Sequential: Sekvence aktivit (scan → exploit → exfil)
   - Anomaly: Nové vzory chování — outlier detection
 """
-import json
 import logging
 import time
 from dataclasses import dataclass, field
 import msgspec
+from compat.msgspec_gc_compat import Struct
 from datetime import datetime
 from typing import Any
 from _core import aclose
+
+# orjson fallback — 5-10× faster than stdlib json, M1 optimized
+try:
+    import orjson
+
+    def _json_loads(data: str | bytes) -> Any:
+        return orjson.loads(data)
+
+    def _json_dumps(data: Any) -> str:
+        return orjson.dumps(data).decode("utf-8")
+
+except ImportError:
+    import json as _stdlib_json
+
+    def _json_loads(data: str | bytes) -> Any:
+        return _stdlib_json.loads(data)
+
+    def _json_dumps(data: Any) -> str:
+        return _stdlib_json.dumps(data)
+
+
 logger = logging.getLogger(__name__)
 MAX_FINDINGS: int = 500
 MAX_PATTERNS: int = 200
@@ -58,7 +79,7 @@ try:
 except ImportError:
     CanonicalFinding = None
 
-class PatternCandidate(msgspec.Struct, gc=False):
+class PatternCandidate(Struct):
     """A derived pattern candidate produced by the pattern mining engine."""
     pattern_id: str
     pattern_type: str
@@ -72,7 +93,7 @@ class PatternCandidate(msgspec.Struct, gc=False):
     def to_dict(self) -> dict[str, Any]:
         return {'pattern_id': self.pattern_id, 'pattern_type': self.pattern_type, 'pattern_data': self.pattern_data, 'confidence': self.confidence, 'severity': self.severity, 'description': self.description, 'source_findings': self.source_findings, 'metadata': self.metadata}
 
-class PatternMiningResult(msgspec.Struct, frozen=True, gc=False):
+class PatternMiningResult(Struct, frozen=True):
     """Aggregated result of pattern mining on sprint findings."""
     temporal_patterns: list[PatternCandidate] = field(default_factory=list)
     behavioral_patterns: list[PatternCandidate] = field(default_factory=list)
@@ -113,9 +134,9 @@ class PatternMiningAdapter:
                 value = 0.5
                 if hasattr(f, 'payload_text') and f.payload_text:
                     try:
-                        payload = json.loads(f.payload_text)
+                        payload = _json_loads(f.payload_text)
                         value = payload.get('confidence', 0.5)
-                    except (json.JSONDecodeError, TypeError):  # noqa: BLE001
+                    except (ValueError, TypeError):  # noqa: BLE001
                         pass
                 events.append(Event(timestamp=datetime.fromtimestamp(ts), entity_id=entity_id, event_type=event_type, value=value, metadata={'query': getattr(f, 'query', '')}))
             except Exception:  # noqa: BLE001
@@ -193,11 +214,11 @@ class PatternMiningAdapter:
             for cand in result.temporal_patterns[:MAX_PATTERNS]:
                 fid = f'pattern_temporal_{cand.pattern_id[:24]}_{int(ts * 1000) % 1000000:06d}'
                 payload = cand.to_dict()
-                findings.append(CanonicalFinding(finding_id=fid, query=query, source_type='pattern_temporal', confidence=cand.confidence, ts=ts, provenance=('pattern_mining', 'temporal'), payload_text=json.dumps(payload)))
+                findings.append(CanonicalFinding(finding_id=fid, query=query, source_type='pattern_temporal', confidence=cand.confidence, ts=ts, provenance=('pattern_mining', 'temporal'), payload_text=_json_dumps(payload)))
             for cand in result.behavioral_patterns[:MAX_PATTERNS]:
                 fid = f'pattern_behavioral_{cand.pattern_id[:24]}_{int(ts * 1000) % 1000000:06d}'
                 payload = cand.to_dict()
-                findings.append(CanonicalFinding(finding_id=fid, query=query, source_type='pattern_behavioral', confidence=cand.confidence, ts=ts, provenance=('pattern_mining', 'behavioral'), payload_text=json.dumps(payload)))
+                findings.append(CanonicalFinding(finding_id=fid, query=query, source_type='pattern_behavioral', confidence=cand.confidence, ts=ts, provenance=('pattern_mining', 'behavioral'), payload_text=_json_dumps(payload)))
             self._stats['findings_produced'] = len(findings)
             return findings
         except Exception as e:

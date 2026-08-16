@@ -13,11 +13,12 @@ Sprint P1-12 — PEP 810 lazy loading: adapters loaded on first use, not at impo
 import importlib
 from collections.abc import Callable
 import msgspec
+from compat.msgspec_gc_compat import Struct
 from typing import Any
 from hledac.universal.utils.cache import PyCacheDict
 from _core import aclose
 
-class SourceEntry(msgspec.Struct, gc=False):
+class SourceEntry(Struct):
     """F229: Named source with tier and acquisition lane."""
     adapter: Callable[..., Any] | None = None
     tier: int = 1

@@ -25,6 +25,7 @@ import logging
 from collections.abc import Sequence
 from dataclasses import dataclass, field
 import msgspec
+from compat.msgspec_gc_compat import Struct
 from hledac.universal.compat.msgspec_gc_compat import Struct
 from hledac.universal.utils.msgspec_json import encode as _msgspec_encode, decode as _msgspec_decode
 from _core import aclose

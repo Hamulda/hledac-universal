@@ -42,6 +42,7 @@ from typing import cast
 
 from hledac.universal.utils.asyncx import parallel
 import msgspec
+from compat.msgspec_gc_compat import Struct
 from hledac.universal.compat.msgspec_gc_compat import Struct
 from typing import TYPE_CHECKING, Any, Final
 

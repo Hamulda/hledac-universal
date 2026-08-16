@@ -20,27 +20,19 @@ Architecture (Sprint Split-Brain):
 - KVCacheEvictor: Pure eviction logic + MemoryPressureListener
 - KVCacheStats: Immutable statistics snapshot
 """
-
 from __future__ import annotations
-
 import logging
 import threading
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
-
 from hledac.universal.utils.lru_cache import LRUCache
 from _core import aclose
-
 if TYPE_CHECKING:
     from collections.abc import Callable
-
 logger = logging.getLogger(__name__)
+_KVCacheValue = tuple[Any, int, float]
 
-# Type for KV cache value: (cache_tensor, size_bytes, timestamp)
-_KVCacheValue = tuple[Any, int, float]  # type: ignore[type-arg]
-
-
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class KVCacheStats:
     """Immutable snapshot of KV cache statistics."""
     pool_size: int = 0
@@ -52,7 +44,6 @@ class KVCacheStats:
     cache_hits: int = 0
     cache_misses: int = 0
     cache_prefills: int = 0
-
 
 class KVCacheEvictor:
     """
@@ -69,19 +60,9 @@ class KVCacheEvictor:
       - on_warn: prune 75% of KV pool + clear session cache
       - on_critical: invalidate all caches
     """
+    __slots__ = ('_kv_pool', '_session_pool', '_prefix_cache', '_kv_stats', '_session_stats', '_prefix_stats', '_key_locks', '_lock')
 
-    __slots__ = (
-        '_kv_pool', '_session_pool', '_prefix_cache',
-        '_kv_stats', '_session_stats', '_prefix_stats',
-        '_key_locks', '_lock',
-    )
-
-    def __init__(
-        self,
-        kv_pool: LRUCache,
-        session_pool: LRUCache,
-        prefix_cache: LRUCache,
-    ) -> None:
+    def __init__(self, kv_pool: LRUCache, session_pool: LRUCache, prefix_cache: LRUCache) -> None:
         self._kv_pool = kv_pool
         self._session_pool = session_pool
         self._prefix_cache = prefix_cache
@@ -95,7 +76,7 @@ class KVCacheEvictor:
         """Evict oldest `count` items from KV pool."""
         for _ in range(min(count, len(self._kv_pool))):
             try:
-                self._kv_pool.pop(oldest := True)
+                self._kv_pool.pop((oldest := True))
             except KeyError:
                 break
 
@@ -111,14 +92,13 @@ class KVCacheEvictor:
         self._session_pool.clear()
         self._kv_pool.clear()
 
-    # MemoryPressureListener protocol (R8)
     @property
     def listener_priority(self) -> int:
         return 1
 
     @property
     def listener_name(self) -> str:
-        return "kv_cache_evictor"
+        return 'kv_cache_evictor'
 
     def on_soft_warn(self) -> None:
         """R8: ELEVATED pressure — prune KV pool 50%, clear prefix cache."""
@@ -126,7 +106,7 @@ class KVCacheEvictor:
         evict_count = max(1, pool_size // 2)
         self._evict_kv_pool_items(evict_count)
         self._prefix_cache.clear()
-        logger.info("[KVCacheEvictor] on_soft_warn: pruned %d/%d KV pool", evict_count, pool_size)
+        logger.info('[KVCacheEvictor] on_soft_warn: pruned %d/%d KV pool', evict_count, pool_size)
 
     def on_warn(self) -> None:
         """R8: HIGH pressure — prune KV pool 75%, clear session + prefix caches."""
@@ -135,12 +115,12 @@ class KVCacheEvictor:
         self._evict_kv_pool_items(evict_count)
         self._session_pool.clear()
         self._prefix_cache.clear()
-        logger.warning("[KVCacheEvictor] on_warn: pruned %d/%d KV pool", evict_count, pool_size)
+        logger.warning('[KVCacheEvictor] on_warn: pruned %d/%d KV pool', evict_count, pool_size)
 
     def on_critical(self) -> None:
         """R8: CRITICAL pressure — invalidate everything."""
-        self.invalidate_all("critical_pressure")
-        logger.critical("[KVCacheEvictor] on_critical: all caches invalidated")
+        self.invalidate_all('critical_pressure')
+        logger.critical('[KVCacheEvictor] on_critical: all caches invalidated')
 
     def on_normal(self) -> None:
         """R8: NORMAL pressure — no action needed."""
@@ -148,20 +128,9 @@ class KVCacheEvictor:
 
     def get_stats(self) -> KVCacheStats:
         """Get comprehensive cache statistics."""
-        return KVCacheStats(
-            pool_size=len(self._kv_pool),
-            pool_maxsize=self._kv_pool.max_size,
-            session_cache_size=len(self._session_pool),
-            session_cache_maxsize=self._session_pool.max_size,
-            prefix_cache_size=len(self._prefix_cache),
-            prefix_cache_maxsize=self._prefix_cache.max_size,
-            cache_hits=self._session_stats['session_cache_hits'] + self._prefix_stats['prefix_cache_hits'],
-            cache_misses=self._session_stats['session_cache_misses'] + self._prefix_stats['prefix_cache_misses'],
-            cache_prefills=self._kv_stats['cache_prefills'],
-    )
+        return KVCacheStats(pool_size=len(self._kv_pool), pool_maxsize=self._kv_pool.max_size, session_cache_size=len(self._session_pool), session_cache_maxsize=self._session_pool.max_size, prefix_cache_size=len(self._prefix_cache), prefix_cache_maxsize=self._prefix_cache.max_size, cache_hits=self._session_stats['session_cache_hits'] + self._prefix_stats['prefix_cache_hits'], cache_misses=self._session_stats['session_cache_misses'] + self._prefix_stats['prefix_cache_misses'], cache_prefills=self._kv_stats['cache_prefills'])
 
-
-@dataclass
+@dataclass(slots=True)
 class KVCacheManager:
     """
     Unified KV cache management for Metal model inference.
@@ -172,46 +141,23 @@ class KVCacheManager:
 
     M1 8GB UMA safe: Bounded sizes, memory tracking, pressure-aware eviction.
     """
-
-    # KV Pool config
     kv_pool_maxsize: int = 4
     kv_pool_memory_mb: int = 256
-
-    # Session cache config
     session_cache_maxsize: int = 8
     session_cache_memory_mb: int = 128
-
-    # Prefix cache config
     prefix_cache_maxsize: int = 64
-
-    # Internal state
     _kv_cache_pool: LRUCache[str, _KVCacheValue] = field(default=None)
-    _session_cache_pool: LRUCache[str, tuple[Any, str, float, int]] = field(default=None)  # type: ignore[type-arg]
-    _prefix_cache: LRUCache[str, Any] = field(default=None)  # type: ignore[type-arg]
+    _session_cache_pool: LRUCache[str, tuple[Any, str, float, int]] = field(default=None)
+    _prefix_cache: LRUCache[str, Any] = field(default=None)
     _evictor: KVCacheEvictor = field(default=None)
 
-    def __post_init__(
-        self,
-        _kv_cache_pool: LRUCache | None = None,
-        _session_cache_pool: LRUCache | None = None,
-        _prefix_cache: LRUCache | None = None,
-    ) -> None:
+    def __post_init__(self, _kv_cache_pool: LRUCache | None=None, _session_cache_pool: LRUCache | None=None, _prefix_cache: LRUCache | None=None) -> None:
         """Initialize cache pools with bounded sizes."""
         self._kv_cache_pool = _kv_cache_pool or LRUCache(max_size=self.kv_pool_maxsize)
         self._session_cache_pool = _session_cache_pool or LRUCache(max_size=self.session_cache_maxsize)
         self._prefix_cache = _prefix_cache or LRUCache(max_size=self.prefix_cache_maxsize)
-
-        # Create evictor with shared pools
-        self._evictor = KVCacheEvictor(
-            self._kv_cache_pool,
-            self._session_cache_pool,
-            self._prefix_cache,
-    )
+        self._evictor = KVCacheEvictor(self._kv_cache_pool, self._session_cache_pool, self._prefix_cache)
         self._register_with_broadcaster()
-
-    # ========================================================================
-    # Prefix Cache Methods
-    # ========================================================================
 
     def get_prefix_cache(self, system_prompt: str) -> Any | None:
         """Get cached prefix cache for system prompt."""
@@ -232,10 +178,6 @@ class KVCacheManager:
         with self._evictor._lock:
             self._prefix_cache.put(key, cache_data)
 
-    # ========================================================================
-    # Session Cache Methods
-    # ========================================================================
-
     def get_session_cache(self, session_key: str) -> tuple[Any, str, float, int] | None:
         """Get cached session KV cache."""
         with self._evictor._lock:
@@ -250,10 +192,6 @@ class KVCacheManager:
         """Store session KV cache."""
         with self._evictor._lock:
             self._session_cache_pool.put(session_key, (cache_data, prompt, timestamp, size_bytes))
-
-    # ========================================================================
-    # KV Pool Methods
-    # ========================================================================
 
     def get_kv_cache(self, key: str) -> Any | None:
         """Get KV cache tensor from pool."""
@@ -282,10 +220,6 @@ class KVCacheManager:
         """Prune KV cache based on LRU policy."""
         return self._evictor.prune_kv_cache()
 
-    # ========================================================================
-    # Statistics & Control
-    # ========================================================================
-
     def get_stats(self) -> KVCacheStats:
         """Get comprehensive cache statistics."""
         return self._evictor.get_stats()
@@ -293,10 +227,6 @@ class KVCacheManager:
     def invalidate_all_caches(self, reason: str) -> None:
         """Invalidate all caches with logging."""
         self._evictor.invalidate_all(reason)
-
-    # ========================================================================
-    # MemoryPressureListener — delegate to evictor
-    # ========================================================================
 
     @property
     def listener_priority(self) -> int:
@@ -324,13 +254,9 @@ class KVCacheManager:
             from hledac.universal._core.memory_pressure import MemoryPressureBroadcaster
             broadcaster = MemoryPressureBroadcaster.get_instance()
             broadcaster.register(self)
-        except Exception:  # noqa: BLE001
+        except Exception:
             pass
-
-
-# Singleton accessor
 _kv_cache_manager_instance: KVCacheManager | None = None
-
 
 def get_kv_cache_manager() -> KVCacheManager:
     """Get singleton KVCacheManager instance."""
@@ -338,8 +264,5 @@ def get_kv_cache_manager() -> KVCacheManager:
     if _kv_cache_manager_instance is None:
         _kv_cache_manager_instance = KVCacheManager()
     return _kv_cache_manager_instance
-
-
-# Convenience class aliases
-PrefixCache = KVCacheManager  # type: ignore[misc]
-SessionCache = KVCacheManager  # type: ignore[misc]
+PrefixCache = KVCacheManager
+SessionCache = KVCacheManager

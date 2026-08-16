@@ -1,0 +1,1667 @@
+{
+  "total_modules": 100,
+  "active_modules": 35,
+  "dormant_modules": 14,
+  "zombie_modules": 51,
+  "modules_by_feature": {
+    "core": [
+      "bloom",
+      "hash",
+      "memory",
+      "simd",
+      "ip_parse",
+      "url_ops",
+      "xxhash_ext",
+      "rolling_hash",
+      "simhash",
+      "rate_limit",
+      "aho_corasick",
+      "sprint_policies",
+      "spsc_queue",
+      "finding_collapser",
+      "compress",
+      "consistency_verifier",
+      "crypto_accelerate",
+      "deobfuscate",
+      "ffi_safe",
+      "h2_safari_preset",
+      "health",
+      "html_parse",
+      "int_counter_layout",
+      "ioc_extract",
+      "ioc_extract_fast",
+      "ioc_extract_simd",
+      "ioc_stream_scan",
+      "mpsc_pool",
+      "topology",
+      "url_engine",
+      "zero_copy"
+    ],
+    "graph": [
+      "lsh_index",
+      "hot_edges",
+      "graph_centrality",
+      "graph_analytics",
+      "hot_edges_rs"
+    ],
+    "data": [
+      "graph_traverse",
+      "link_predictor",
+      "arrow_batch_builder",
+      "aimd_controller"
+    ],
+    "mlx_fabric": [
+      "mlx_bridge"
+    ],
+    "anti_analysis": [
+      "anti_analysis"
+    ],
+    "dns": [
+      "dns",
+      "dns_tunnel"
+    ],
+    "tls13": [
+      "tls13",
+      "tls_metadata"
+    ],
+    "quic": [
+      "quic"
+    ],
+    "embedded_tor": [
+      "arti_bridge",
+      "sendfile"
+    ],
+    "stealth_bridge": [
+      "stealth_bridge"
+    ],
+    "whisper": [
+      "whisper"
+    ],
+    "ane": [
+      "ane"
+    ],
+    "metal": [
+      "metal_compute",
+      "metal_hashcrack"
+    ],
+    "iosurface": [
+      "iosurface_bridge"
+    ],
+    "advanced": [
+      "feed_pipeline",
+      "adaptive_scheduler",
+      "circuit_breaker",
+      "elastic_pool",
+      "signal_batch",
+      "telemetry_agg",
+      "text_norm",
+      "text_similarity",
+      "quality_gate",
+      "graph_cache",
+      "dedup_bloom",
+      "pipeline_compose",
+      "serde_json_rs",
+      "claims_extraction",
+      "content_hasher",
+      "feed_decision",
+      "query_terms",
+      "regex_lz4",
+      "simd_similarity",
+      "telemetery_agg",
+      "federated_qtable"
+    ],
+    "swarm_dag": [
+      "swarm_dag"
+    ],
+    "p2p_harvest": [
+      "swarm_fabric",
+      "p2p_harvest"
+    ],
+    "stix": [
+      "stix_2_1"
+    ],
+    "native_db": [
+      "native_db"
+    ],
+    "fulltext": [
+      "fulltext_index"
+    ],
+    "target_os=macos": [
+      "madvise",
+      "darwin_affinity"
+    ],
+    "accelerate": [
+      "accelerate"
+    ],
+    "deep_ac": [
+      "aho_corasick_simd"
+    ],
+    "deep_git": [
+      "git_forensics"
+    ],
+    "nw_framework": [
+      "nw_connection"
+    ],
+    "pdf": [
+      "pdf"
+    ],
+    "office": [
+      "office"
+    ],
+    "simdjson": [
+      "simdjson_extract",
+      "simhash_ext"
+    ],
+    "otel": [
+      "tracing"
+    ],
+    "deep_unindexed": [
+      "unindexed_scanner"
+    ],
+    "deep_warc": [
+      "warc_parser"
+    ],
+    "lmdb_dht": [
+      "lmdb_dht"
+    ],
+    "metal_shared": [
+      "metal_shared_buf"
+    ],
+    "shared_tokio": [
+      "async_bridge",
+      "async_query"
+    ],
+    "none": [
+      "collections_backup"
+    ]
+  },
+  "active_api_summary": {
+    "bloom": [
+      "BloomFilter",
+      "UrlSet",
+      "batch_bloom_check"
+    ],
+    "hash": [
+      "content_hash_hex",
+      "blake3_64",
+      "sha256_hex",
+      "batch_content_hash_hex_parallel"
+    ],
+    "memory": [
+      "get_process_rss_gib",
+      "memory_pressure_level",
+      "get_available_memory_gib",
+      "get_metal_active_memory_gib"
+    ],
+    "simd": [
+      "neon_available",
+      "dot_product_f32"
+    ],
+    "ip_parse": [
+      "parse_ip",
+      "is_private",
+      "is_loopback"
+    ],
+    "url_ops": [
+      "classify_url",
+      "extract_domain"
+    ],
+    "xxhash_ext": [
+      "xxh3_64",
+      "batch_xxh3_64"
+    ],
+    "rolling_hash": [
+      "RollingHashEngine"
+    ],
+    "simhash": [
+      "simhash"
+    ],
+    "hot_edges": [
+      "detect_hot_edges"
+    ],
+    "graph_centrality": [
+      "betweenness_centrality",
+      "pagerank"
+    ],
+    "graph_traverse": [
+      "traverse_graph",
+      "find_paths"
+    ],
+    "link_predictor": [
+      "predict_links"
+    ],
+    "arrow_batch_builder": [
+      "ArrowBatchBuilder"
+    ],
+    "rate_limit": [
+      "TokenBucket"
+    ],
+    "aho_corasick": [
+      "AhoCorasickMatcher"
+    ],
+    "sprint_policies": [
+      "LaneBudgetPool",
+      "FeedDominanceGuard"
+    ],
+    "mlx_bridge": [
+      "mlx_alloc_bytes_add",
+      "mlx_alloc_bytes_sub",
+      "mlx_alloc_bytes_get"
+    ],
+    "finding_collapser": [
+      "collapse_findings"
+    ],
+    "anti_analysis": [
+      "quick_probe_async",
+      "mark_host_abandoned",
+      "get_evasion_telemetry"
+    ],
+    "dns": [
+      "resolve_async",
+      "resolve_async_await",
+      "prefetch_async"
+    ],
+    "tls13": [
+      "ja4_from_client_hello",
+      "connect_and_ja4",
+      "extract_tls_metadata"
+    ],
+    "quic": [
+      "fetch",
+      "connect"
+    ],
+    "arti_bridge": [
+      "ArtiNode"
+    ],
+    "stealth_bridge": [
+      "dns_resolve_async",
+      "quic_fetch"
+    ],
+    "whisper": [
+      "transcribe",
+      "is_available",
+      "get_cache_dir"
+    ],
+    "ane": [
+      "ModelRegistry",
+      "predict"
+    ],
+    "metal_compute": [
+      "gpu_matmul"
+    ],
+    "iosurface_bridge": [
+      "IOSurfaceTextureDescriptor"
+    ],
+    "feed_pipeline": [
+      "feed_entry_pipeline",
+      "feed_batch_pipeline"
+    ],
+    "swarm_dag": [
+      "SwarmDAG"
+    ],
+    "swarm_fabric": [
+      "SwarmFabric"
+    ],
+    "stix_2_1": [
+      "encode",
+      "decode",
+      "validate"
+    ],
+    "madvise": [
+      "madvise_dontneed",
+      "madvise_willneed"
+    ],
+    "darwin_affinity": [
+      "set_affinity",
+      "get_affinity"
+    ]
+  },
+  "recommendations": [
+    "Consider removing 51 ZOMBIE modules: aho_corasick_simd, aimd_controller, async_bridge, async_query, claims_extraction, collections_backup, compress, consistency_verifier, content_hasher, crypto_accelerate",
+    "ACTVE modules with no Python callers: bloom"
+  ],
+  "details": [
+    {
+      "name": "bloom",
+      "status": "ACTIVE",
+      "feature": "core",
+      "description": "BloomFilter, UrlSet - IOC deduplication",
+      "python_callers": [],
+      "api": [
+        "BloomFilter",
+        "UrlSet",
+        "batch_bloom_check"
+      ],
+      "notes": [
+        "WARNING: Marked ACTIVE but no Python callers found!"
+      ],
+      "files_with_issues": []
+    },
+    {
+      "name": "hash",
+      "status": "ACTIVE",
+      "feature": "core",
+      "description": "Content hashing - xxh3-64, blake3, sha256",
+      "python_callers": [
+        "utils/hashing.py",
+        "network/banner_grabber.py",
+        "network/favicon_hasher.py"
+      ],
+      "api": [
+        "content_hash_hex",
+        "blake3_64",
+        "sha256_hex",
+        "batch_content_hash_hex_parallel"
+      ],
+      "notes": [],
+      "files_with_issues": []
+    },
+    {
+      "name": "memory",
+      "status": "ACTIVE",
+      "feature": "core",
+      "description": "Memory monitoring - RSS, pressure, Metal memory",
+      "python_callers": [
+        "utils/sys_metrics.py",
+        "_core/rust_backend/memory.py"
+      ],
+      "api": [
+        "get_process_rss_gib",
+        "memory_pressure_level",
+        "get_available_memory_gib",
+        "get_metal_active_memory_gib"
+      ],
+      "notes": [],
+      "files_with_issues": []
+    },
+    {
+      "name": "simd",
+      "status": "ACTIVE",
+      "feature": "core",
+      "description": "ARM NEON detection and dot product",
+      "python_callers": [
+        "_core/rust_backend/__init__.py"
+      ],
+      "api": [
+        "neon_available",
+        "dot_product_f32"
+      ],
+      "notes": [],
+      "files_with_issues": []
+    },
+    {
+      "name": "ip_parse",
+      "status": "ACTIVE",
+      "feature": "core",
+      "description": "IP parsing and classification",
+      "python_callers": [
+        "_core/rust_backend/ip.py"
+      ],
+      "api": [
+        "parse_ip",
+        "is_private",
+        "is_loopback"
+      ],
+      "notes": [],
+      "files_with_issues": []
+    },
+    {
+      "name": "url_ops",
+      "status": "ACTIVE",
+      "feature": "core",
+      "description": "URL classification and operations",
+      "python_callers": [
+        "_core/rust_backend/url.py"
+      ],
+      "api": [
+        "classify_url",
+        "extract_domain"
+      ],
+      "notes": [],
+      "files_with_issues": []
+    },
+    {
+      "name": "xxhash_ext",
+      "status": "ACTIVE",
+      "feature": "core",
+      "description": "xxHash3-64 hashing - high performance",
+      "python_callers": [
+        "_core/rust_backend/url.py",
+        "utils/bloom_filter.py"
+      ],
+      "api": [
+        "xxh3_64",
+        "batch_xxh3_64"
+      ],
+      "notes": [],
+      "files_with_issues": []
+    },
+    {
+      "name": "rolling_hash",
+      "status": "ACTIVE",
+      "feature": "core",
+      "description": "Rolling hash for content fingerprinting",
+      "python_callers": [
+        "_core/rust_backend/__init__.py"
+      ],
+      "api": [
+        "RollingHashEngine"
+      ],
+      "notes": [],
+      "files_with_issues": []
+    },
+    {
+      "name": "simhash",
+      "status": "ACTIVE",
+      "feature": "core",
+      "description": "SimHash for near-duplicate detection",
+      "python_callers": [
+        "_core/rust_backend/__init__.py"
+      ],
+      "api": [
+        "simhash"
+      ],
+      "notes": [],
+      "files_with_issues": []
+    },
+    {
+      "name": "lsh_index",
+      "status": "DORMANT",
+      "feature": "graph",
+      "description": "LSH index for near-duplicate detection",
+      "python_callers": [],
+      "api": [
+        "LSHIndex"
+      ],
+      "notes": [
+        "Not yet integrated"
+      ],
+      "files_with_issues": []
+    },
+    {
+      "name": "hot_edges",
+      "status": "ACTIVE",
+      "feature": "graph",
+      "description": "Hot edges detection in graph",
+      "python_callers": [
+        "_core/rust_backend/misc.py"
+      ],
+      "api": [
+        "detect_hot_edges"
+      ],
+      "notes": [],
+      "files_with_issues": []
+    },
+    {
+      "name": "graph_centrality",
+      "status": "ACTIVE",
+      "feature": "graph",
+      "description": "Graph centrality metrics",
+      "python_callers": [
+        "_core/rust_backend/__init__.py"
+      ],
+      "api": [
+        "betweenness_centrality",
+        "pagerank"
+      ],
+      "notes": [],
+      "files_with_issues": []
+    },
+    {
+      "name": "graph_traverse",
+      "status": "ACTIVE",
+      "feature": "data",
+      "description": "Graph traversal with DuckDB",
+      "python_callers": [
+        "_core/rust_backend/__init__.py"
+      ],
+      "api": [
+        "traverse_graph",
+        "find_paths"
+      ],
+      "notes": [],
+      "files_with_issues": []
+    },
+    {
+      "name": "link_predictor",
+      "status": "ACTIVE",
+      "feature": "data",
+      "description": "Link prediction - Adamic-Adar, Jaccard",
+      "python_callers": [
+        "_core/rust_backend/__init__.py"
+      ],
+      "api": [
+        "predict_links"
+      ],
+      "notes": [],
+      "files_with_issues": []
+    },
+    {
+      "name": "arrow_batch_builder",
+      "status": "ACTIVE",
+      "feature": "data",
+      "description": "Arrow IPC batch builder",
+      "python_callers": [
+        "_core/rust_backend/__init__.py"
+      ],
+      "api": [
+        "ArrowBatchBuilder"
+      ],
+      "notes": [],
+      "files_with_issues": []
+    },
+    {
+      "name": "rate_limit",
+      "status": "ACTIVE",
+      "feature": "core",
+      "description": "Token bucket rate limiting",
+      "python_callers": [
+        "_core/rust_backend/__init__.py"
+      ],
+      "api": [
+        "TokenBucket"
+      ],
+      "notes": [],
+      "files_with_issues": []
+    },
+    {
+      "name": "aho_corasick",
+      "status": "ACTIVE",
+      "feature": "core",
+      "description": "Aho-Corasick multi-pattern matcher",
+      "python_callers": [
+        "recon/social_identity_miner.py"
+      ],
+      "api": [
+        "AhoCorasickMatcher"
+      ],
+      "notes": [],
+      "files_with_issues": []
+    },
+    {
+      "name": "sprint_policies",
+      "status": "ACTIVE",
+      "feature": "core",
+      "description": "Lane budget pool, feed dominance guard",
+      "python_callers": [
+        "_core/rust_backend/__init__.py"
+      ],
+      "api": [
+        "LaneBudgetPool",
+        "FeedDominanceGuard"
+      ],
+      "notes": [],
+      "files_with_issues": []
+    },
+    {
+      "name": "spsc_queue",
+      "status": "ZOMBIE",
+      "feature": "core",
+      "description": "SPSC queue (if not used via pools)",
+      "python_callers": [],
+      "api": [],
+      "notes": [
+        "Check if actually used via pools module."
+      ],
+      "files_with_issues": []
+    },
+    {
+      "name": "mlx_bridge",
+      "status": "ACTIVE",
+      "feature": "mlx_fabric",
+      "description": "MLX tensor bridge for Apple Silicon",
+      "python_callers": [
+        "utils/mlx_memory/_slab.py"
+      ],
+      "api": [
+        "mlx_alloc_bytes_add",
+        "mlx_alloc_bytes_sub",
+        "mlx_alloc_bytes_get"
+      ],
+      "notes": [],
+      "files_with_issues": []
+    },
+    {
+      "name": "finding_collapser",
+      "status": "ACTIVE",
+      "feature": "core",
+      "description": "Finding deduplication and collapsing",
+      "python_callers": [
+        "_core/rust_backend/__init__.py"
+      ],
+      "api": [
+        "collapse_findings"
+      ],
+      "notes": [],
+      "files_with_issues": []
+    },
+    {
+      "name": "anti_analysis",
+      "status": "ACTIVE",
+      "feature": "anti_analysis",
+      "description": "Evasive TLS/HTTP2 challenge detection",
+      "python_callers": [
+        "_core/rust_backend/anti_analysis.py",
+        "hledac/rust.py"
+      ],
+      "api": [
+        "quick_probe_async",
+        "mark_host_abandoned",
+        "get_evasion_telemetry"
+      ],
+      "notes": [],
+      "files_with_issues": []
+    },
+    {
+      "name": "dns",
+      "status": "ACTIVE",
+      "feature": "dns",
+      "description": "DNS resolution - DoT/DoH via hickory",
+      "python_callers": [
+        "transport/dns_cache.py"
+      ],
+      "api": [
+        "resolve_async",
+        "resolve_async_await",
+        "prefetch_async"
+      ],
+      "notes": [],
+      "files_with_issues": []
+    },
+    {
+      "name": "tls13",
+      "status": "ACTIVE",
+      "feature": "tls13",
+      "description": "TLS 1.3 JA4 fingerprinting",
+      "python_callers": [
+        "_core/rust_backend/tls.py",
+        "fetching/_tls_extractor.py"
+      ],
+      "api": [
+        "ja4_from_client_hello",
+        "connect_and_ja4",
+        "extract_tls_metadata"
+      ],
+      "notes": [],
+      "files_with_issues": []
+    },
+    {
+      "name": "quic",
+      "status": "ACTIVE",
+      "feature": "quic",
+      "description": "QUIC/HTTP3 via quinn",
+      "python_callers": [
+        "_core/rust_backend/__init__.py"
+      ],
+      "api": [
+        "fetch",
+        "connect"
+      ],
+      "notes": [],
+      "files_with_issues": []
+    },
+    {
+      "name": "arti_bridge",
+      "status": "ACTIVE",
+      "feature": "embedded_tor",
+      "description": "In-process Tor via Arti",
+      "python_callers": [
+        "_core/rust_backend/arti.py"
+      ],
+      "api": [
+        "ArtiNode"
+      ],
+      "notes": [],
+      "files_with_issues": []
+    },
+    {
+      "name": "stealth_bridge",
+      "status": "ACTIVE",
+      "feature": "stealth_bridge",
+      "description": "Stealth DNS/QUIC bridges",
+      "python_callers": [
+        "hledac/rust.py"
+      ],
+      "api": [
+        "dns_resolve_async",
+        "quic_fetch"
+      ],
+      "notes": [],
+      "files_with_issues": []
+    },
+    {
+      "name": "whisper",
+      "status": "ACTIVE",
+      "feature": "whisper",
+      "description": "Whisper.cpp speech-to-text via CoreML/ANE",
+      "python_callers": [
+        "_core/rust_backend/whisper.py"
+      ],
+      "api": [
+        "transcribe",
+        "is_available",
+        "get_cache_dir"
+      ],
+      "notes": [],
+      "files_with_issues": []
+    },
+    {
+      "name": "ane",
+      "status": "ACTIVE",
+      "feature": "ane",
+      "description": "Apple Neural Engine model registry",
+      "python_callers": [
+        "_core/rust_backend/__init__.py"
+      ],
+      "api": [
+        "ModelRegistry",
+        "predict"
+      ],
+      "notes": [],
+      "files_with_issues": []
+    },
+    {
+      "name": "metal_compute",
+      "status": "ACTIVE",
+      "feature": "metal",
+      "description": "Metal GPU compute for matmul",
+      "python_callers": [
+        "_core/rust_backend/__init__.py"
+      ],
+      "api": [
+        "gpu_matmul"
+      ],
+      "notes": [],
+      "files_with_issues": []
+    },
+    {
+      "name": "iosurface_bridge",
+      "status": "ACTIVE",
+      "feature": "iosurface",
+      "description": "IOSurface zero-copy bridge",
+      "python_callers": [
+        "_core/rust_backend/__init__.py"
+      ],
+      "api": [
+        "IOSurfaceTextureDescriptor"
+      ],
+      "notes": [],
+      "files_with_issues": []
+    },
+    {
+      "name": "feed_pipeline",
+      "status": "ACTIVE",
+      "feature": "advanced",
+      "description": "Feed entry/batch pipeline processing",
+      "python_callers": [
+        "utils/patterns/feed_pipeline_wrapper.py",
+        "pipeline/feed/_scan_stage.py"
+      ],
+      "api": [
+        "feed_entry_pipeline",
+        "feed_batch_pipeline"
+      ],
+      "notes": [],
+      "files_with_issues": []
+    },
+    {
+      "name": "swarm_dag",
+      "status": "ACTIVE",
+      "feature": "swarm_dag",
+      "description": "Work-stealing task DAG scheduler",
+      "python_callers": [
+        "_core/rust_backend/__init__.py"
+      ],
+      "api": [
+        "SwarmDAG"
+      ],
+      "notes": [],
+      "files_with_issues": []
+    },
+    {
+      "name": "swarm_fabric",
+      "status": "ACTIVE",
+      "feature": "p2p_harvest",
+      "description": "P2P swarm fabric for DHT crawling",
+      "python_callers": [
+        "_core/rust_backend/__init__.py"
+      ],
+      "api": [
+        "SwarmFabric"
+      ],
+      "notes": [],
+      "files_with_issues": []
+    },
+    {
+      "name": "stix_2_1",
+      "status": "ACTIVE",
+      "feature": "stix",
+      "description": "STIX 2.1 bundle encoding + validation",
+      "python_callers": [
+        "_core/rust_backend/__init__.py"
+      ],
+      "api": [
+        "encode",
+        "decode",
+        "validate"
+      ],
+      "notes": [],
+      "files_with_issues": []
+    },
+    {
+      "name": "native_db",
+      "status": "ZOMBIE",
+      "feature": "native_db",
+      "description": "Native database wire protocols",
+      "python_callers": [],
+      "api": [],
+      "notes": [
+        "No Python callers found. Consider removal if not planned."
+      ],
+      "files_with_issues": []
+    },
+    {
+      "name": "fulltext_index",
+      "status": "ZOMBIE",
+      "feature": "fulltext",
+      "description": "Fulltext indexing",
+      "python_callers": [],
+      "api": [],
+      "notes": [
+        "No Python callers found. Consider removal if not planned."
+      ],
+      "files_with_issues": []
+    },
+    {
+      "name": "madvise",
+      "status": "ACTIVE",
+      "feature": "target_os=macos",
+      "description": "madvise system calls for memory management",
+      "python_callers": [
+        "_core/rust_backend/__init__.py"
+      ],
+      "api": [
+        "madvise_dontneed",
+        "madvise_willneed"
+      ],
+      "notes": [],
+      "files_with_issues": []
+    },
+    {
+      "name": "darwin_affinity",
+      "status": "ACTIVE",
+      "feature": "target_os=macos",
+      "description": "Darwin thread affinity",
+      "python_callers": [
+        "_core/rust_backend/__init__.py"
+      ],
+      "api": [
+        "set_affinity",
+        "get_affinity"
+      ],
+      "notes": [],
+      "files_with_issues": []
+    },
+    {
+      "name": "accelerate",
+      "status": "DORMANT",
+      "feature": "accelerate",
+      "description": "Accelerate/vDSP FFI for cosine similarity",
+      "python_callers": [],
+      "api": [
+        "cosine_similarity"
+      ],
+      "notes": [
+        "Python fallback: scipy/numpy for cosine similarity"
+      ],
+      "files_with_issues": []
+    },
+    {
+      "name": "adaptive_scheduler",
+      "status": "DORMANT",
+      "feature": "advanced",
+      "description": "Adaptive thread scheduling based on workload",
+      "python_callers": [],
+      "api": [
+        "AdaptiveScheduler",
+        "get_budget_ceiling"
+      ],
+      "notes": [
+        "Python path: isolated_executors.py uses Python-side budget"
+      ],
+      "files_with_issues": []
+    },
+    {
+      "name": "circuit_breaker",
+      "status": "DORMANT",
+      "feature": "advanced",
+      "description": "Circuit breaker pattern for fault tolerance",
+      "python_callers": [],
+      "api": [
+        "CircuitBreaker"
+      ],
+      "notes": [
+        "Not yet integrated"
+      ],
+      "files_with_issues": []
+    },
+    {
+      "name": "elastic_pool",
+      "status": "DORMANT",
+      "feature": "advanced",
+      "description": "Elastic thread pool with auto-scaling",
+      "python_callers": [],
+      "api": [
+        "ElasticPool"
+      ],
+      "notes": [
+        "Not yet integrated"
+      ],
+      "files_with_issues": []
+    },
+    {
+      "name": "signal_batch",
+      "status": "DORMANT",
+      "feature": "advanced",
+      "description": "Signal batching for feed processing",
+      "python_callers": [],
+      "api": [
+        "SignalBatch"
+      ],
+      "notes": [
+        "Not yet integrated"
+      ],
+      "files_with_issues": []
+    },
+    {
+      "name": "telemetry_agg",
+      "status": "DORMANT",
+      "feature": "advanced",
+      "description": "Telemetry aggregation",
+      "python_callers": [],
+      "api": [
+        "TelemetryAggregator"
+      ],
+      "notes": [
+        "Not yet integrated"
+      ],
+      "files_with_issues": []
+    },
+    {
+      "name": "text_norm",
+      "status": "DORMANT",
+      "feature": "advanced",
+      "description": "Text normalization",
+      "python_callers": [],
+      "api": [
+        "normalize_text"
+      ],
+      "notes": [
+        "Not yet integrated"
+      ],
+      "files_with_issues": []
+    },
+    {
+      "name": "text_similarity",
+      "status": "DORMANT",
+      "feature": "advanced",
+      "description": "Text similarity metrics",
+      "python_callers": [],
+      "api": [
+        "jaccard_similarity",
+        "cosine_similarity"
+      ],
+      "notes": [
+        "Not yet integrated"
+      ],
+      "files_with_issues": []
+    },
+    {
+      "name": "quality_gate",
+      "status": "DORMANT",
+      "feature": "advanced",
+      "description": "Quality gate for IOC validation",
+      "python_callers": [],
+      "api": [
+        "QualityGate"
+      ],
+      "notes": [
+        "Not yet integrated"
+      ],
+      "files_with_issues": []
+    },
+    {
+      "name": "graph_cache",
+      "status": "DORMANT",
+      "feature": "advanced",
+      "description": "Graph caching layer",
+      "python_callers": [],
+      "api": [
+        "GraphCache"
+      ],
+      "notes": [
+        "Not yet integrated"
+      ],
+      "files_with_issues": []
+    },
+    {
+      "name": "dedup_bloom",
+      "status": "DORMANT",
+      "feature": "advanced",
+      "description": "Bloom filter deduplication",
+      "python_callers": [],
+      "api": [
+        "DedupBloom"
+      ],
+      "notes": [
+        "Not yet integrated"
+      ],
+      "files_with_issues": []
+    },
+    {
+      "name": "pipeline_compose",
+      "status": "DORMANT",
+      "feature": "advanced",
+      "description": "Pipeline composition utilities",
+      "python_callers": [],
+      "api": [
+        "PipelineComposer"
+      ],
+      "notes": [
+        "Not yet integrated"
+      ],
+      "files_with_issues": []
+    },
+    {
+      "name": "serde_json_rs",
+      "status": "DORMANT",
+      "feature": "advanced",
+      "description": "Serde JSON Rust bindings",
+      "python_callers": [],
+      "api": [
+        "parse_json",
+        "to_json"
+      ],
+      "notes": [
+        "Not yet integrated"
+      ],
+      "files_with_issues": []
+    },
+    {
+      "name": "aho_corasick_simd",
+      "status": "ZOMBIE",
+      "feature": "deep_ac",
+      "description": "NEON SIMD Aho-Corasick for high-performance scanning",
+      "python_callers": [],
+      "api": [],
+      "notes": [
+        "No Python callers found. Consider removal if not planned."
+      ],
+      "files_with_issues": []
+    },
+    {
+      "name": "claims_extraction",
+      "status": "ZOMBIE",
+      "feature": "advanced",
+      "description": "Claims extraction from text",
+      "python_callers": [],
+      "api": [],
+      "notes": [
+        "No Python callers found. Consider removal if not planned."
+      ],
+      "files_with_issues": []
+    },
+    {
+      "name": "compress",
+      "status": "ZOMBIE",
+      "feature": "core",
+      "description": "Compression utilities",
+      "python_callers": [],
+      "api": [],
+      "notes": [
+        "No Python callers found. Consider removal if not planned."
+      ],
+      "files_with_issues": []
+    },
+    {
+      "name": "consistency_verifier",
+      "status": "ZOMBIE",
+      "feature": "core",
+      "description": "Consistency verification",
+      "python_callers": [],
+      "api": [],
+      "notes": [
+        "No Python callers found. Consider removal if not planned."
+      ],
+      "files_with_issues": []
+    },
+    {
+      "name": "content_hasher",
+      "status": "ZOMBIE",
+      "feature": "advanced",
+      "description": "Content hashing utilities",
+      "python_callers": [],
+      "api": [],
+      "notes": [
+        "No Python callers found. Consider removal if not planned."
+      ],
+      "files_with_issues": []
+    },
+    {
+      "name": "crypto_accelerate",
+      "status": "ZOMBIE",
+      "feature": "core",
+      "description": "Cryptographic acceleration",
+      "python_callers": [],
+      "api": [],
+      "notes": [
+        "No Python callers found. Consider removal if not planned."
+      ],
+      "files_with_issues": []
+    },
+    {
+      "name": "deobfuscate",
+      "status": "ZOMBIE",
+      "feature": "core",
+      "description": "Deobfuscation utilities",
+      "python_callers": [],
+      "api": [],
+      "notes": [
+        "No Python callers found. Consider removal if not planned."
+      ],
+      "files_with_issues": []
+    },
+    {
+      "name": "feed_decision",
+      "status": "ZOMBIE",
+      "feature": "advanced",
+      "description": "Feed decision logic",
+      "python_callers": [],
+      "api": [],
+      "notes": [
+        "No Python callers found. Consider removal if not planned."
+      ],
+      "files_with_issues": []
+    },
+    {
+      "name": "ffi_safe",
+      "status": "ZOMBIE",
+      "feature": "core",
+      "description": "FFI safety utilities",
+      "python_callers": [],
+      "api": [],
+      "notes": [
+        "No Python callers found. Consider removal if not planned."
+      ],
+      "files_with_issues": []
+    },
+    {
+      "name": "git_forensics",
+      "status": "ZOMBIE",
+      "feature": "deep_git",
+      "description": "Git packfile forensics",
+      "python_callers": [],
+      "api": [],
+      "notes": [
+        "ORPHANED - Python has own Git analysis. Consider removal."
+      ],
+      "files_with_issues": []
+    },
+    {
+      "name": "graph_analytics",
+      "status": "ZOMBIE",
+      "feature": "graph",
+      "description": "Graph analytics with petgraph",
+      "python_callers": [],
+      "api": [],
+      "notes": [
+        "No Python callers found. Consider removal if not planned."
+      ],
+      "files_with_issues": []
+    },
+    {
+      "name": "h2_safari_preset",
+      "status": "ZOMBIE",
+      "feature": "core",
+      "description": "Safari H2 preset",
+      "python_callers": [],
+      "api": [],
+      "notes": [
+        "No Python callers found. Consider removal if not planned."
+      ],
+      "files_with_issues": []
+    },
+    {
+      "name": "health",
+      "status": "ZOMBIE",
+      "feature": "core",
+      "description": "Health check utilities",
+      "python_callers": [],
+      "api": [],
+      "notes": [
+        "No Python callers found. Python path exists."
+      ],
+      "files_with_issues": []
+    },
+    {
+      "name": "hot_edges_rs",
+      "status": "ZOMBIE",
+      "feature": "graph",
+      "description": "Hot edges detection (Rust implementation)",
+      "python_callers": [],
+      "api": [],
+      "notes": [
+        "No Python callers found. Consider removal if not planned."
+      ],
+      "files_with_issues": []
+    },
+    {
+      "name": "html_parse",
+      "status": "ZOMBIE",
+      "feature": "core",
+      "description": "HTML parsing utilities",
+      "python_callers": [],
+      "api": [],
+      "notes": [
+        "No Python callers found. Python fallback: beautifulsoup4/lxml."
+      ],
+      "files_with_issues": []
+    },
+    {
+      "name": "int_counter_layout",
+      "status": "ZOMBIE",
+      "feature": "core",
+      "description": "Integer counter layout",
+      "python_callers": [],
+      "api": [],
+      "notes": [
+        "No Python callers found. Consider removal if not planned."
+      ],
+      "files_with_issues": []
+    },
+    {
+      "name": "ioc_extract",
+      "status": "ZOMBIE",
+      "feature": "core",
+      "description": "IOC extraction (legacy)",
+      "python_callers": [],
+      "api": [],
+      "notes": [
+        "No Python callers. Python uses ioc module facade."
+      ],
+      "files_with_issues": []
+    },
+    {
+      "name": "ioc_extract_fast",
+      "status": "ZOMBIE",
+      "feature": "core",
+      "description": "Fast IOC extraction",
+      "python_callers": [],
+      "api": [],
+      "notes": [
+        "No Python callers found. Consider removal if not planned."
+      ],
+      "files_with_issues": []
+    },
+    {
+      "name": "ioc_extract_simd",
+      "status": "ZOMBIE",
+      "feature": "core",
+      "description": "SIMD IOC extraction",
+      "python_callers": [],
+      "api": [],
+      "notes": [
+        "No Python callers found. Consider removal if not planned."
+      ],
+      "files_with_issues": []
+    },
+    {
+      "name": "ioc_stream_scan",
+      "status": "ZOMBIE",
+      "feature": "core",
+      "description": "IOC stream scanning",
+      "python_callers": [],
+      "api": [],
+      "notes": [
+        "No Python callers found. Consider removal if not planned."
+      ],
+      "files_with_issues": []
+    },
+    {
+      "name": "mpsc_pool",
+      "status": "ZOMBIE",
+      "feature": "core",
+      "description": "Multi-producer single-consumer pool",
+      "python_callers": [],
+      "api": [],
+      "notes": [
+        "No Python callers found. Consider removal if not planned."
+      ],
+      "files_with_issues": []
+    },
+    {
+      "name": "nw_connection",
+      "status": "ZOMBIE",
+      "feature": "nw_framework",
+      "description": "Network.framework connection",
+      "python_callers": [],
+      "api": [],
+      "notes": [
+        "No Python callers found. Consider removal if not planned."
+      ],
+      "files_with_issues": []
+    },
+    {
+      "name": "p2p_harvest",
+      "status": "ZOMBIE",
+      "feature": "p2p_harvest",
+      "description": "P2P harvesting modules",
+      "python_callers": [],
+      "api": [],
+      "notes": [
+        "No Python callers found. Consider removal if not planned."
+      ],
+      "files_with_issues": []
+    },
+    {
+      "name": "pdf",
+      "status": "ZOMBIE",
+      "feature": "pdf",
+      "description": "PDF extraction",
+      "python_callers": [],
+      "api": [],
+      "notes": [
+        "No Python callers. Python fallback: PyMuPDF."
+      ],
+      "files_with_issues": []
+    },
+    {
+      "name": "office",
+      "status": "ZOMBIE",
+      "feature": "office",
+      "description": "Office document extraction",
+      "python_callers": [],
+      "api": [],
+      "notes": [
+        "No Python callers. Python fallback: python-docx + openpyxl."
+      ],
+      "files_with_issues": []
+    },
+    {
+      "name": "query_terms",
+      "status": "ZOMBIE",
+      "feature": "advanced",
+      "description": "Query term processing",
+      "python_callers": [],
+      "api": [],
+      "notes": [
+        "No Python callers found. Consider removal if not planned."
+      ],
+      "files_with_issues": []
+    },
+    {
+      "name": "regex_lz4",
+      "status": "ZOMBIE",
+      "feature": "advanced",
+      "description": "Regex with LZ4 compression",
+      "python_callers": [],
+      "api": [],
+      "notes": [
+        "REMOVED from features. No Python callers."
+      ],
+      "files_with_issues": []
+    },
+    {
+      "name": "sendfile",
+      "status": "ZOMBIE",
+      "feature": "embedded_tor",
+      "description": "Sendfile for Tor",
+      "python_callers": [],
+      "api": [],
+      "notes": [
+        "No Python callers found. Consider removal if not planned."
+      ],
+      "files_with_issues": []
+    },
+    {
+      "name": "simdjson_extract",
+      "status": "ZOMBIE",
+      "feature": "simdjson",
+      "description": "SIMD JSON extraction",
+      "python_callers": [],
+      "api": [],
+      "notes": [
+        "No Python callers found. Consider removal if not planned."
+      ],
+      "files_with_issues": []
+    },
+    {
+      "name": "simd_similarity",
+      "status": "ZOMBIE",
+      "feature": "advanced",
+      "description": "SIMD similarity metrics",
+      "python_callers": [],
+      "api": [],
+      "notes": [
+        "No Python callers found. Consider removal if not planned."
+      ],
+      "files_with_issues": []
+    },
+    {
+      "name": "simhash_ext",
+      "status": "ZOMBIE",
+      "feature": "simdjson",
+      "description": "Simhash extension",
+      "python_callers": [],
+      "api": [],
+      "notes": [
+        "No Python callers found. Consider removal if not planned."
+      ],
+      "files_with_issues": []
+    },
+    {
+      "name": "telemetery_agg",
+      "status": "ZOMBIE",
+      "feature": "advanced",
+      "description": "Telemetry aggregation",
+      "python_callers": [],
+      "api": [],
+      "notes": [
+        "No Python callers found. Consider removal if not planned."
+      ],
+      "files_with_issues": []
+    },
+    {
+      "name": "tls_metadata",
+      "status": "ZOMBIE",
+      "feature": "tls13",
+      "description": "TLS metadata extraction",
+      "python_callers": [],
+      "api": [],
+      "notes": [
+        "No Python callers found. Consider removal if not planned."
+      ],
+      "files_with_issues": []
+    },
+    {
+      "name": "topology",
+      "status": "ZOMBIE",
+      "feature": "core",
+      "description": "Network topology",
+      "python_callers": [],
+      "api": [],
+      "notes": [
+        "No Python callers found. Consider removal if not planned."
+      ],
+      "files_with_issues": []
+    },
+    {
+      "name": "tracing",
+      "status": "ZOMBIE",
+      "feature": "otel",
+      "description": "Tracing infrastructure",
+      "python_callers": [],
+      "api": [],
+      "notes": [
+        "No Python callers. Internal only."
+      ],
+      "files_with_issues": []
+    },
+    {
+      "name": "unindexed_scanner",
+      "status": "ZOMBIE",
+      "feature": "deep_unindexed",
+      "description": "Unindexed file scanner",
+      "python_callers": [],
+      "api": [],
+      "notes": [
+        "No Python callers found. Consider removal if not planned."
+      ],
+      "files_with_issues": []
+    },
+    {
+      "name": "url_engine",
+      "status": "ZOMBIE",
+      "feature": "core",
+      "description": "URL engine",
+      "python_callers": [],
+      "api": [],
+      "notes": [
+        "No Python callers. url_ops handles URL ops."
+      ],
+      "files_with_issues": []
+    },
+    {
+      "name": "warc_parser",
+      "status": "ZOMBIE",
+      "feature": "deep_warc",
+      "description": "WARC file parser",
+      "python_callers": [],
+      "api": [],
+      "notes": [
+        "No Python callers found. Consider removal if not planned."
+      ],
+      "files_with_issues": []
+    },
+    {
+      "name": "zero_copy",
+      "status": "ZOMBIE",
+      "feature": "core",
+      "description": "Zero-copy utilities",
+      "python_callers": [],
+      "api": [],
+      "notes": [
+        "No Python callers found. Consider removal if not planned."
+      ],
+      "files_with_issues": []
+    },
+    {
+      "name": "aimd_controller",
+      "status": "ZOMBIE",
+      "feature": "data",
+      "description": "AIMD congestion control",
+      "python_callers": [],
+      "api": [],
+      "notes": [
+        "No Python callers found. Consider removal if not planned."
+      ],
+      "files_with_issues": []
+    },
+    {
+      "name": "federated_qtable",
+      "status": "ZOMBIE",
+      "feature": "advanced",
+      "description": "Federated Q-table",
+      "python_callers": [],
+      "api": [],
+      "notes": [
+        "No Python callers found. Consider removal if not planned."
+      ],
+      "files_with_issues": []
+    },
+    {
+      "name": "lmdb_dht",
+      "status": "ZOMBIE",
+      "feature": "lmdb_dht",
+      "description": "LMDB DHT",
+      "python_callers": [],
+      "api": [],
+      "notes": [
+        "No Python callers found. Consider removal if not planned."
+      ],
+      "files_with_issues": []
+    },
+    {
+      "name": "metal_hashcrack",
+      "status": "ZOMBIE",
+      "feature": "metal",
+      "description": "Metal hash cracking (DEPRECATED)",
+      "python_callers": [],
+      "api": [],
+      "notes": [
+        "DEPRECATED per D6. No Python callers."
+      ],
+      "files_with_issues": []
+    },
+    {
+      "name": "metal_shared_buf",
+      "status": "ZOMBIE",
+      "feature": "metal_shared",
+      "description": "Metal shared buffer",
+      "python_callers": [],
+      "api": [],
+      "notes": [
+        "No Python callers found. Consider removal if not planned."
+      ],
+      "files_with_issues": []
+    },
+    {
+      "name": "dns_tunnel",
+      "status": "ZOMBIE",
+      "feature": "dns",
+      "description": "DNS tunneling",
+      "python_callers": [],
+      "api": [],
+      "notes": [
+        "No Python callers found. Consider removal if not planned."
+      ],
+      "files_with_issues": []
+    },
+    {
+      "name": "async_bridge",
+      "status": "ZOMBIE",
+      "feature": "shared_tokio",
+      "description": "Async bridge for Python\u2194Rust FFI",
+      "python_callers": [],
+      "api": [],
+      "notes": [
+        "No Python callers found. Consider removal if not planned."
+      ],
+      "files_with_issues": []
+    },
+    {
+      "name": "async_query",
+      "status": "ZOMBIE",
+      "feature": "shared_tokio",
+      "description": "Async query execution",
+      "python_callers": [],
+      "api": [],
+      "notes": [
+        "No Python callers found. Consider removal if not planned."
+      ],
+      "files_with_issues": []
+    },
+    {
+      "name": "collections_backup",
+      "status": "ZOMBIE",
+      "feature": "none",
+      "description": "Backup collections module",
+      "python_callers": [],
+      "api": [],
+      "notes": [
+        "Never declared in lib.rs. Dead code."
+      ],
+      "files_with_issues": []
+    }
+  ]
+}

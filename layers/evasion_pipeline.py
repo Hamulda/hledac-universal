@@ -99,6 +99,7 @@ from enum import IntEnum
 from typing import Any
 
 import msgspec
+from compat.msgspec_gc_compat import Struct
 import orjson
 from _core import aclose
 
@@ -133,7 +134,7 @@ class EvasionCategory(IntEnum):
     GLOBALS = 170
 
 
-class EvasionScript(msgspec.Struct, gc=False):  # type: ignore[misc]
+class EvasionScript(Struct):  # type: ignore[misc]
     """A single evasion script with metadata for deduplication and ordering.
 
     Replaces the bare ``EvasionScript = str`` type alias from
@@ -158,7 +159,7 @@ class EvasionScript(msgspec.Struct, gc=False):  # type: ignore[misc]
 # FingerprintProfile — single source of truth
 # ═══════════════════════════════════════════════════════════════════════════
 
-class FingerprintProfile(msgspec.Struct, gc=False):  # type: ignore[misc]
+class FingerprintProfile(Struct):  # type: ignore[misc]
     """Complete browser fingerprint profile.
 
     This is the canonical data model replacing ``BrowserProfile`` from

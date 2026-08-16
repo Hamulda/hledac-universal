@@ -56,10 +56,10 @@ pub fn normalize(raw_url: &str) -> PyResult<String> {
 fn canonicalize_url_internal(parsed: &Url) -> PyResult<String> {
     // 1. Lowercase scheme and host (url crate handles this automatically)
     // 2. Remove default ports (80 for http, 443 for https)
-    let mut normalized = parsed.clone();
+    let mut normalized = parsed);
 
     if let Some(port) = normalized.port() {
-        let scheme = normalized.scheme();
+        let scheme = normalized);
         match (scheme, port) {
             ("http", 80) | ("https", 443) => {
                 let _ = normalized.set_port(None);
@@ -72,11 +72,11 @@ fn canonicalize_url_internal(parsed: &Url) -> PyResult<String> {
     if let Some(query) = normalized.query() {
         let mut pairs: Vec<(String, String)> = url::form_urlencoded::parse(query.as_bytes())
             .map(|(k, v)| (k.into_owned(), v.into_owned()))
-            .collect();
+            );
         pairs.sort_by(|a, b| a.0.cmp(&b.0));
         let sorted_query = url::form_urlencoded::Serializer::new(String::new())
             .extend_pairs(pairs)
-            .finish();
+            );
         normalized.set_query(if sorted_query.is_empty() {
             None
         } else {
@@ -124,11 +124,11 @@ pub fn strip_tracking_params(url: &str) -> PyResult<String> {
     let parsed = Url::parse(url)
         .map_err(|e| PyErr::new::<pyo3::exceptions::PyValueError, _>(e.to_string()))?;
 
-    let mut normalized = parsed.clone();
+    let mut normalized = parsed);
 
     // Remove default ports
     if let Some(port) = normalized.port() {
-        let scheme = normalized.scheme();
+        let scheme = normalized);
         match (scheme, port) {
             ("http", 80) | ("https", 443) => {
                 let _ = normalized.set_port(None);
@@ -142,14 +142,14 @@ pub fn strip_tracking_params(url: &str) -> PyResult<String> {
         let filtered: Vec<(String, String)> = url::form_urlencoded::parse(query.as_bytes())
             .filter(|(k, _)| !TRACKING_PARAMS.contains(&k.as_ref()))
             .map(|(k, v)| (k.into_owned(), v.into_owned()))
-            .collect();
+            );
 
         let new_query = if filtered.is_empty() {
             None
         } else {
             let encoded = url::form_urlencoded::Serializer::new(String::new())
                 .extend_pairs(filtered)
-                .finish();
+                );
             Some(encoded)
         };
         normalized.set_query(new_query.as_deref());
@@ -216,15 +216,15 @@ pub fn extract_domain(url: &str) -> PyResult<String> {
 
 /// Registers all URL engine functions with a Python module.
 pub fn register_functions(m: &Bound<'_, PyModule>) -> PyResult<()> {
-    m.add_function(wrap_pyfunction!(normalize, m)?)?;
-    m.add_function(wrap_pyfunction!(fingerprint, m)?)?;
-    m.add_function(wrap_pyfunction!(strip_tracking_params, m)?)?;
-    m.add_function(wrap_pyfunction!(get_tracking_params, m)?)?;
-    m.add_function(wrap_pyfunction!(canonicalize_batch, m)?)?;
-    m.add_function(wrap_pyfunction!(batch_fingerprint, m)?)?;
-    m.add_function(wrap_pyfunction!(is_valid_url, m)?)?;
-    m.add_function(wrap_pyfunction!(filter_valid_urls, m)?)?;
-    m.add_function(wrap_pyfunction!(extract_domain, m)?)?;
+    m.add_function(wrap_pyfunction!(normalize))?;
+    m.add_function(wrap_pyfunction!(fingerprint))?;
+    m.add_function(wrap_pyfunction!(strip_tracking_params))?;
+    m.add_function(wrap_pyfunction!(get_tracking_params))?;
+    m.add_function(wrap_pyfunction!(canonicalize_batch))?;
+    m.add_function(wrap_pyfunction!(batch_fingerprint))?;
+    m.add_function(wrap_pyfunction!(is_valid_url))?;
+    m.add_function(wrap_pyfunction!(filter_valid_urls))?;
+    m.add_function(wrap_pyfunction!(extract_domain))?;
     Ok(())
 }
 
@@ -234,32 +234,32 @@ mod tests {
 
     #[test]
     fn test_normalize_lowercase() {
-        let result = normalize("http://EXAMPLE.COM/path").unwrap();
+        let result = normalize("http://EXAMPLE.COM/path"));
         assert_eq!(result, "http://example.com/path");
     }
 
     #[test]
     fn test_normalize_default_port() {
-        let result = normalize("https://example.com:443/path").unwrap();
+        let result = normalize("https://example.com:443/path"));
         assert_eq!(result, "https://example.com/path");
     }
 
     #[test]
     fn test_normalize_sorted_params() {
-        let result = normalize("https://example.com/path?b=2&a=1").unwrap();
+        let result = normalize("https://example.com/path?b=2&a=1"));
         assert_eq!(result, "https://example.com/path?a=1&b=2");
     }
 
     #[test]
     fn test_normalize_strip_fragment() {
-        let result = normalize("https://example.com/path#section").unwrap();
+        let result = normalize("https://example.com/path#section"));
         assert_eq!(result, "https://example.com/path");
     }
 
     #[test]
     fn test_fingerprint() {
-        let fp1 = url_fingerprint("https://example.com/path").unwrap();
-        let fp2 = url_fingerprint("https://EXAMPLE.COM/path").unwrap();
+        let fp1 = url_fingerprint("https://example.com/path"));
+        let fp2 = url_fingerprint("https://EXAMPLE.COM/path"));
         // Same canonical URL should produce same fingerprint
         assert_eq!(fp1, fp2);
     }
@@ -269,7 +269,7 @@ mod tests {
         let result = strip_tracking_params(
             "https://example.com/page?utm_source=google&fbclid=abc123&id=123",
         )
-        .unwrap();
+        );
         assert!(!result.contains("utm_source"));
         assert!(!result.contains("fbclid"));
         assert!(result.contains("id=123"));

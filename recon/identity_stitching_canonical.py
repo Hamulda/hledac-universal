@@ -27,6 +27,7 @@ import logging
 import time
 from dataclasses import dataclass
 import msgspec
+from compat.msgspec_gc_compat import Struct
 from typing import Any
 from hledac.universal.utils.msgspec_json import dumps_str as _msgspec_dumps_str
 from operator import attrgetter, itemgetter
@@ -48,7 +49,7 @@ try:
 except ImportError:
     CanonicalFinding = None
 
-class IdentityCandidate(msgspec.Struct, gc=False):
+class IdentityCandidate(Struct):
     """
     A derived identity candidate produced by the stitching engine.
 

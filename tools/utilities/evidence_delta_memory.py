@@ -23,6 +23,8 @@ import msgspec
 from enum import StrEnum
 from pathlib import Path
 from _core import aclose
+from compat.msgspec_gc_compat import Struct
+
 
 class Verdict(StrEnum):
     DELTA_NO_PRIOR = 'DELTA_NO_PRIOR'
@@ -30,7 +32,7 @@ class Verdict(StrEnum):
     DELTA_NEW_NONFEED_EVIDENCE = 'DELTA_NEW_NONFEED_EVIDENCE'
     DELTA_MEANINGFUL_RESEARCH_PROGRESS = 'DELTA_MEANINGFUL_RESEARCH_PROGRESS'
 
-class EvidenceDelta(msgspec.Struct, gc=False):
+class EvidenceDelta(Struct):
     new_source_families: list[str] = field(default_factory=list)
     disappeared_source_families: list[str] = field(default_factory=list)
     continued_source_families: list[str] = field(default_factory=list)
@@ -67,7 +69,7 @@ class CapabilityDeltaVerdict(StrEnum):
     NOT_COMPARABLE_HARDWARE_TAINTED = 'NOT_COMPARABLE_HARDWARE_TAINTED'
     NO_PRIOR = 'NO_PRIOR'
 
-class CapabilityDelta(msgspec.Struct, frozen=True, gc=False):
+class CapabilityDelta(Struct, frozen=True):
     capability_delta_verdict: CapabilityDeltaVerdict
     improved_dimensions: list[str] = field(default_factory=list)
     regressed_dimensions: list[str] = field(default_factory=list)

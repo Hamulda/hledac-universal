@@ -109,6 +109,13 @@ class EntityUncertainty:
 
 class LogitsCaptureProcessor:
     """
+    __slots__ = (
+        '_max_window',
+        '_position',
+        '_tokenizer',
+        '_top_k',
+    )
+
     mlx_lm-compatible logits processor that captures top-k logits per token.
 
     Implements the logits_processor protocol: __call__(token_ids, logits) -> logits.
@@ -116,6 +123,11 @@ class LogitsCaptureProcessor:
 
     Thread-safety: NOT thread-safe. One instance per generation call.
     """
+
+    __slots__ = (
+        '_top_k',
+        '_max_window',
+    )
 
     def __init__(self, top_k: int = DEFAULT_TOP_K, max_window: int = MAX_TOKEN_WINDOW) -> None:
         self._top_k = top_k
@@ -217,6 +229,12 @@ class LogitsCaptureProcessor:
 
 class TokenUncertaintyCollector:
     """
+    __slots__ = (
+        '_max_window',
+        '_processor',
+        '_top_k',
+    )
+
     High-level API for token-level uncertainty collection and entity aggregation.
 
     Wraps LogitsCaptureProcessor and provides entity-level uncertainty lookup.
@@ -233,6 +251,11 @@ class TokenUncertaintyCollector:
         # Entity uncertainty
         result = collector.get_entity_uncertainty("192.168.1.1", output)
     """
+
+    __slots__ = (
+        '_top_k',
+        '_max_window',
+    )
 
     def __init__(self, top_k: int = DEFAULT_TOP_K, max_window: int = MAX_TOKEN_WINDOW) -> None:
         self._top_k = top_k

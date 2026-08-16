@@ -27,32 +27,40 @@ import asyncio
 import threading
 from dataclasses import dataclass
 import msgspec
+from compat.msgspec_gc_compat import Struct
 from typing import Final
 from _core import aclose
+from _core.lock_registry import LockCategory, register_lock
+
 _render_active_count: int = 0
-_render_count_lock = threading.Lock()
+
+
+@register_lock(LockCategory.CACHE)
+def _render_count_lock() -> threading.Lock:
+    """Module-level lock for renderer slot counter."""
+    return threading.Lock()
 _MAX_CONCURRENT_RENDERERS: Final[int] = 1
 _RENDER_TIMEOUT_HINTS: dict[str, float] = {'fast': 8.0, 'standard': 15.0, 'heavy': 30.0}
 
-class RendererPolicy(msgspec.Struct, frozen=True, gc=False):
+class RendererPolicy(Struct, frozen=True):
     """Renderer capability and timeout hints."""
     allowed: bool
     max_concurrent: int
     timeout_hint: float
     blocked_reason: str | None = None
 
-class ConcurrencyHint(msgspec.Struct, frozen=True, gc=False):
+class ConcurrencyHint(Struct, frozen=True):
     """Concurrency hint for a transport class."""
     max_workers: int
     timeout_s: float
 
-class TransportPolicy(msgspec.Struct, gc=False):
+class TransportPolicy(Struct):
     """Composite transport policy."""
     renderer: RendererPolicy
     concurrency: ConcurrencyHint
     transport: str
 
-class OPSECContext(msgspec.Struct, frozen=True, gc=False):
+class OPSECContext(Struct, frozen=True):
     """Runtime context for OPSEC policy evaluation."""
     url: str = ''
     has_model_context: bool = False
@@ -129,7 +137,7 @@ def acquire_renderer_slot() -> bool:
 
     Thread-safe. Fails softly if max concurrent renderers reached.
     """
-    with _render_count_lock:
+    with _render_count_lock():
         global _render_active_count
         if _render_active_count < _MAX_CONCURRENT_RENDERERS:
             _render_active_count += 1
@@ -140,14 +148,14 @@ def release_renderer_slot() -> None:
     """
     Release a renderer slot. Idempotent — safe to call even if not acquired.
     """
-    with _render_count_lock:
+    with _render_count_lock():
         global _render_active_count
         if _render_active_count > 0:
             _render_active_count -= 1
 
 def get_renderer_active_count() -> int:
     """Current active renderer count (for testing/debug)."""
-    with _render_count_lock:
+    with _render_count_lock():
         return _render_active_count
 
 def get_stealth_capability_flags(has_model_context: bool) -> dict[str, bool]:

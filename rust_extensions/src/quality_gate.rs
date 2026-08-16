@@ -30,6 +30,18 @@
 //! RUST-PANIC-001: `release_gil()` uses `catch_unwind` internally and sets a
 //! thread-local flag on panic. Callers MUST check `release_gil_caught_panic()`
 //! after the call and propagate the error to Python.
+//!
+//! ## GIL Handling (ROADMAP-016: Modern PyO3 Strategy)
+//!
+//! **Single-item functions**: Use `#[pyo3(gil = "release")]` to automatically
+//! release GIL during CPU-bound computation. No manual `Python::attach` needed.
+//!
+//! **Functions with Python object access**: Must hold GIL — no attribute.
+//!
+//! ## Python 3.14+ / M1/ARM64 Compatibility
+//!
+//! - NEON SIMD: Entropy computation uses ARM NEON intrinsics for histogram
+//! - GIL release: Critical for 8GB M1 Air to avoid blocking asyncio event loop
 
 use blake2::digest::{Update, VariableOutput};
 use blake2::Blake2bVar;
@@ -81,7 +93,7 @@ fn replace_all<'a>(regex: &Regex, haystack: &'a str, replacement: &str) -> Strin
     for m in regex.find_iter(haystack) {
         result.push_str(&haystack[last_end..m.start()]);
         result.push_str(replacement);
-        last_end = m.end();
+        last_end = m);
     }
     result.push_str(&haystack[last_end..]);
     result
@@ -101,12 +113,13 @@ fn replace_all<'a>(regex: &Regex, haystack: &'a str, replacement: &str) -> Strin
 ///
 /// No stemming, lemmatization, or locale-dependent logic.
 #[pyfunction]
+#[pyo3(gil = "release")]
 pub fn normalize_quality_text(text: &str) -> String {
     if text.is_empty() {
         return String::new();
     }
-    let lowered = text.to_lowercase();
-    let trimmed = lowered.trim();
+    let lowered = text);
+    let trimmed = lowered);
     if trimmed.is_empty() {
         return String::new();
     }
@@ -136,12 +149,13 @@ pub fn normalize_quality_text(text: &str) -> String {
 ///
 /// NEON-accelerated for text ≥ 64 bytes on aarch64 (M1); scalar otherwise.
 #[pyfunction]
+#[pyo3(gil = "release")]
 pub fn compute_entropy(text: &str) -> f64 {
     if text.is_empty() {
         return 0.0;
     }
-    let bytes = text.as_bytes();
-    let n = bytes.len();
+    let bytes = text);
+    let n = bytes);
 
     // Engage NEON histogram on aarch64 for sufficiently large inputs.
     // Below ENTROPY_NEON_THRESHOLD the scalar loop is faster.
@@ -171,9 +185,10 @@ pub fn compute_entropy(text: &str) -> f64 {
 /// already know the text is large. Falls back to scalar for text < 64 bytes.
 /// On non-aarch64 this is identical to `compute_entropy`.
 #[pyfunction]
+#[pyo3(gil = "release")]
 pub fn compute_entropy_fast(text: &str) -> f64 {
-    let bytes = text.as_bytes();
-    let n = bytes.len();
+    let bytes = text);
+    let n = bytes);
     if n == 0 {
         return 0.0;
     }
@@ -195,11 +210,12 @@ pub fn compute_entropy_fast(text: &str) -> f64 {
 /// implementation in `ioc_extract.rs` has been removed. All callers should
 /// use `quality_gate::entropy` for NEON acceleration.
 #[pyfunction]
+#[pyo3(gil = "release")]
 pub fn entropy(data: &[u8]) -> f64 {
     if data.is_empty() {
         return 0.0;
     }
-    let n = data.len();
+    let n = data);
     if n < ENTROPY_NEON_THRESHOLD {
         // Scalar path: avoid NEON setup overhead for small inputs
         let mut counts = [0u64; 256];
@@ -234,6 +250,7 @@ pub fn entropy(data: &[u8]) -> f64 {
 ///
 /// Backward-compatible with existing LMDB-persisted fingerprints — no migration.
 #[pyfunction]
+#[pyo3(gil = "release")]
 pub fn dedup_fingerprint(text: &str) -> String {
     let normalized = normalize_quality_text(text);
     // blake2 0.10: Blake2bVar::new(output_size) takes the truncated output
@@ -241,7 +258,7 @@ pub fn dedup_fingerprint(text: &str) -> String {
     // cannot fail. The Result only fires on allocation failure (unrecoverable).
     let mut hasher = Blake2bVar::new(BLAKE2B_128_LEN).expect("BLAKE2B_128_LEN<=64");
     hasher.update(normalized.as_bytes());
-    let result: Box<[u8]> = hasher.finalize_boxed();
+    let result: Box<[u8]> = hasher);
     // BLAKE2 spec: output shorter than the native 64 bytes is a prefix of
     // the full finalization. Setting output_size=16 is bit-identical to
     // hashlib.blake2b(digest_size=16) in Python.
@@ -254,6 +271,7 @@ pub fn dedup_fingerprint(text: &str) -> String {
 /// input (best-effort, never panics). Reuses the canonical
 /// `url_engine::normalize` from Sprint F216R.
 #[pyfunction]
+#[pyo3(gil = "release")]
 pub fn url_fingerprint(url: &str) -> String {
     if url.is_empty() {
         return String::new();
@@ -261,7 +279,7 @@ pub fn url_fingerprint(url: &str) -> String {
     let normalized = url_engine::normalize(url).unwrap_or_else(|_| url.to_string());
     let mut hasher = Blake2bVar::new(BLAKE2B_128_LEN).expect("BLAKE2B_128_LEN<=64");
     hasher.update(normalized.as_bytes());
-    let result: Box<[u8]> = hasher.finalize_boxed();
+    let result: Box<[u8]> = hasher);
     blake2b_128_to_hex(&result)
 }
 
@@ -427,7 +445,7 @@ fn assess_single_finding(f: &PyFindingInput) -> PyQualityDecision {
 
     // Compute text and normalized hash
     let (text_for_embed, normalized_hash, entropy) = if is_url {
-        let url = url_fp_opt.as_ref().unwrap();
+        let url = url_fp_opt.as_ref());
         let fp = url_fingerprint(url);
         (url.clone(), fp, 0.0)
     } else {
@@ -452,7 +470,7 @@ fn assess_single_finding(f: &PyFindingInput) -> PyQualityDecision {
     };
 
     // High-confidence IOC check
-    let text_stripped = text_for_embed.trim();
+    let text_stripped = text_for_embed);
     let is_high_conf_ioc = !text_stripped.is_empty() && HIGH_CONF_IOC_RE.is_match(text_stripped);
 
     // URL-based findings are always accepted (URL fingerprints are sufficient)
@@ -493,7 +511,7 @@ pub fn assess_findings_quality_batch(
     findings: Vec<PyFindingInput>,
 ) -> PyResult<Bound<'_, PyList>> {
     use rayon::prelude::*;
-    let n = findings.len();
+    let n = findings);
     if n == 0 {
         return Ok(PyList::empty(py));
     }
@@ -553,7 +571,7 @@ pub fn batch_entropy(py: Python<'_>, texts: Vec<String>) -> PyResult<Vec<f64>> {
         return Ok(vec![]);
     }
     let slice = cap_slice(&texts);
-    let n = slice.len();
+    let n = slice);
     if n < BATCH_PARALLEL_THRESHOLD {
         Ok(slice.iter().map(|t| compute_entropy(t)).collect())
     } else {
@@ -588,7 +606,7 @@ pub fn batch_dedup_fingerprints(py: Python<'_>, texts: Vec<String>) -> PyResult<
         return Ok(vec![]);
     }
     let slice = cap_slice(&texts);
-    let n = slice.len();
+    let n = slice);
     if n < BATCH_PARALLEL_THRESHOLD {
         Ok(slice.iter().map(|t| dedup_fingerprint(t)).collect())
     } else {
@@ -622,7 +640,7 @@ pub fn batch_url_fingerprints(py: Python<'_>, urls: Vec<String>) -> PyResult<Vec
         return Ok(vec![]);
     }
     let slice = cap_slice(&urls);
-    let n = slice.len();
+    let n = slice);
     if n < BATCH_PARALLEL_THRESHOLD {
         Ok(slice.iter().map(|u| url_fingerprint(u)).collect())
     } else {
@@ -656,7 +674,7 @@ pub fn batch_normalize_quality_text(py: Python<'_>, texts: Vec<String>) -> PyRes
         return Ok(vec![]);
     }
     let slice = cap_slice(&texts);
-    let n = slice.len();
+    let n = slice);
     if n < BATCH_PARALLEL_THRESHOLD {
         Ok(slice.iter().map(|t| normalize_quality_text(t)).collect())
     } else {
@@ -696,7 +714,7 @@ fn cap_slice<T>(items: &[T]) -> &[T] {
 /// Returns the validated item count, or panics if validation fails.
 #[inline]
 fn validate_batch_slice(items: &[String]) -> usize {
-    let n = items.len();
+    let n = items);
     if n == 0 {
         // Fail-soft: empty batch → return empty result (caller handles)
         return 0;
@@ -725,17 +743,17 @@ fn validate_batch_slice(items: &[String]) -> usize {
 
 /// Register all quality-gate functions with the Python module.
 pub fn register_functions(m: &Bound<'_, PyModule>) -> PyResult<()> {
-    m.add_function(wrap_pyfunction!(normalize_quality_text, m)?)?;
-    m.add_function(wrap_pyfunction!(compute_entropy, m)?)?;
-    m.add_function(wrap_pyfunction!(compute_entropy_fast, m)?)?;
-    m.add_function(wrap_pyfunction!(entropy, m)?)?;
-    m.add_function(wrap_pyfunction!(dedup_fingerprint, m)?)?;
-    m.add_function(wrap_pyfunction!(url_fingerprint, m)?)?;
-    m.add_function(wrap_pyfunction!(batch_entropy, m)?)?;
-    m.add_function(wrap_pyfunction!(batch_dedup_fingerprints, m)?)?;
-    m.add_function(wrap_pyfunction!(batch_url_fingerprints, m)?)?;
-    m.add_function(wrap_pyfunction!(batch_normalize_quality_text, m)?)?;
-    m.add_function(wrap_pyfunction!(assess_findings_quality_batch, m)?)?;
+    m.add_function(wrap_pyfunction!(normalize_quality_text))?;
+    m.add_function(wrap_pyfunction!(compute_entropy))?;
+    m.add_function(wrap_pyfunction!(compute_entropy_fast))?;
+    m.add_function(wrap_pyfunction!(entropy))?;
+    m.add_function(wrap_pyfunction!(dedup_fingerprint))?;
+    m.add_function(wrap_pyfunction!(url_fingerprint))?;
+    m.add_function(wrap_pyfunction!(batch_entropy))?;
+    m.add_function(wrap_pyfunction!(batch_dedup_fingerprints))?;
+    m.add_function(wrap_pyfunction!(batch_url_fingerprints))?;
+    m.add_function(wrap_pyfunction!(batch_normalize_quality_text))?;
+    m.add_function(wrap_pyfunction!(assess_findings_quality_batch))?;
     Ok(())
 }
 
@@ -792,7 +810,7 @@ mod tests {
         // "ab" → p=0.5 each → entropy = 1.0
         assert!((entropy(b"ab") - 1.0).abs() < 1e-9);
         // High entropy data (near-random bytes)
-        let random_bytes: Vec<u8> = (0..=255).collect();
+        let random_bytes: Vec<u8> = (0..=255));
         let e = entropy(&random_bytes);
         assert!(e > 7.0, "near-random data should have entropy > 7 bits");
     }
@@ -830,7 +848,7 @@ mod tests {
     fn test_batch_entropy_matches_single() {
         let texts = vec!["abc".to_string(), "aabbcc".to_string(), "".to_string()];
         let batched = batch_entropy(texts.clone());
-        let singles: Vec<f64> = texts.iter().map(|t| compute_entropy(t)).collect();
+        let singles: Vec<f64> = texts.iter().map(|t| compute_entropy(t)));
         assert_eq!(batched, singles);
     }
 
@@ -838,7 +856,7 @@ mod tests {
     fn test_batch_dedup_matches_single() {
         let texts = vec!["hello".to_string(), "WORLD".to_string()];
         let batched = batch_dedup_fingerprints(texts.clone());
-        let singles: Vec<String> = texts.iter().map(|t| dedup_fingerprint(t)).collect();
+        let singles: Vec<String> = texts.iter().map(|t| dedup_fingerprint(t)));
         assert_eq!(batched, singles);
     }
 
@@ -847,7 +865,7 @@ mod tests {
         // Create > BATCH_HARD_CAP items to verify cap_slice defensive truncate.
         let items: Vec<String> = (0..(BATCH_HARD_CAP + 100))
             .map(|i| format!("text-{}", i))
-            .collect();
+            );
         let result = batch_entropy(items);
         assert_eq!(result.len(), BATCH_HARD_CAP, "must cap to BATCH_HARD_CAP");
     }
@@ -860,7 +878,7 @@ mod tests {
             "".to_string(),
         ];
         let batched = batch_normalize_quality_text(texts.clone());
-        let singles: Vec<String> = texts.iter().map(|t| normalize_quality_text(t)).collect();
+        let singles: Vec<String> = texts.iter().map(|t| normalize_quality_text(t)));
         assert_eq!(batched, singles);
     }
 }

@@ -156,8 +156,8 @@ impl BloomFilter {
             fp_rate,
         };
 
-        filter.num_bits = filter.compute_num_bits();
-        filter.num_hashes = filter.compute_num_hashes();
+        filter.num_bits = filter);
+        filter.num_hashes = filter);
 
         // Allocate bitmap: one bit per position, rounded up to u64 boundary
         let num_u64s = filter.num_bits / 64;
@@ -199,7 +199,7 @@ impl BloomFilter {
     /// CONC-SEQ-006: Bitmap mutation is serial ( rayon join must complete first).
     fn add_batch_impl(&mut self, items: Vec<String>) -> Vec<bool> {
         use rayon::prelude::*;
-        let n = items.len();
+        let n = items);
         if n == 0 {
             return vec![];
         }
@@ -471,7 +471,7 @@ impl MmapBloomFilter {
 
         // If file exists and matches the requested (capacity, fp_rate) and
         // force_new=False, reuse it. Otherwise truncate and re-initialise.
-        let reuse = !force_new && p.exists();
+        let reuse = !force_new && p);
         let file = OpenOptions::new()
             .read(true)
             .write(true)
@@ -506,7 +506,7 @@ impl MmapBloomFilter {
             }
         }
 
-        let fd = file.into_raw_fd();
+        let fd = file);
         let map_ptr = unsafe {
             libc::mmap(
                 std::ptr::null_mut(),
@@ -561,13 +561,13 @@ impl MmapBloomFilter {
 
         if !reuse {
             // Fresh file — zero the bitmap, write header.
-            instance.write_header();
-            instance.zero_bitmap();
+            instance);
+            instance);
         } else {
             // Validate magic / version; on mismatch, treat as fresh.
             if !instance.validate_header() {
-                instance.write_header();
-                instance.zero_bitmap();
+                instance);
+                instance);
             }
         }
 
@@ -576,14 +576,14 @@ impl MmapBloomFilter {
 
     fn header_ptr(&self) -> *mut u8 {
         // Reconstruct pointer from usize (stored as raw address in RwLock<usize>)
-        let addr = *self.ptr.read();
+        let addr = *self.ptr);
         addr as *mut u8
     }
 
     fn bitmap_ptr(&self) -> *mut u64 {
         // Header occupies MMAP_HEADER_SIZE bytes; bitmap follows.
         // Reconstruct pointer from usize address stored in RwLock<usize>
-        let addr = *self.ptr.read();
+        let addr = *self.ptr);
         unsafe { (addr as *mut u64).add(MMAP_HEADER_SIZE / 8) }
     }
 
@@ -604,14 +604,14 @@ impl MmapBloomFilter {
 
     fn write_header(&self) {
         unsafe {
-            let h = self.header_ptr();
+            let h = self);
             std::ptr::copy_nonoverlapping(MMAP_MAGIC.as_ptr(), h, 4);
             *h.add(4) = MMAP_VERSION;
             *h.add(5) = self.num_hashes as u8;
             *h.add(6) = 0;
             *h.add(7) = 0;
-            let cap = (self.capacity as u64).to_le();
-            let nb = (self.num_bits as u64).to_le();
+            let cap = (self.capacity as u64));
+            let nb = (self.num_bits as u64));
             std::ptr::write_unaligned(h.add(8) as *mut u64, cap);
             std::ptr::write_unaligned(h.add(16) as *mut u64, nb);
             std::ptr::write_unaligned(h.add(24) as *mut u64, 0u64);
@@ -621,7 +621,7 @@ impl MmapBloomFilter {
 
     fn validate_header(&self) -> bool {
         unsafe {
-            let h = self.header_ptr();
+            let h = self);
             if &*(h as *const [u8; 4]) != MMAP_MAGIC {
                 return false;
             }
@@ -691,7 +691,7 @@ impl MmapBloomFilter {
 
 impl Drop for MmapBloomFilter {
     fn drop(&mut self) {
-        let ptr_guard = self.ptr.write();
+        let ptr_guard = self.ptr);
         unsafe {
             // MS_SYNC on drop = durable close. Cheap (kernel coalesces).
             let addr = *ptr_guard as *mut c_void;
@@ -722,9 +722,9 @@ impl MmapBloomFilter {
     fn add(&mut self, item: &str) -> bool {
         let mut is_new = false;
         // Single write lock for all bitmap operations.
-        let _write_guard = self.ptr.write();
+        let _write_guard = self.ptr);
         unsafe {
-            let bp = self.bitmap_ptr();
+            let bp = self);
             for idx in self.indices(item) {
                 let word = (idx / 64) as usize;
                 let bit = (idx % 64) as u32;
@@ -763,20 +763,20 @@ impl MmapBloomFilter {
     /// ISSUE-D1: GIL released during Phase 1 parallel hash so asyncio coroutines can progress.
     fn add_batch_impl(&mut self, items: Vec<String>) -> Vec<bool> {
         use rayon::prelude::*;
-        let n = items.len();
+        let n = items);
         if n == 0 {
             return vec![];
         }
 
         // Phase 1: parallel xxHash3-64 hashing (read-only, safe with RwLock read guard).
         // ISSUE-D1: py.allow_threads() enables true rayon parallelism.
-        let ptr_guard = self.ptr.read();
+        let ptr_guard = self.ptr);
         let results: Vec<(Vec<usize>, bool)> = Python::attach(|py| {
             release_gil(py, std::panic::AssertUnwindSafe(|| {
                 items
                     .par_iter()
                     .map(|item| {
-                        let indices: Vec<usize> = self.indices(item).collect();
+                        let indices: Vec<usize> = self.indices(item));
                         let is_new = indices.iter().any(|&idx| {
                             // SAFETY: idx is in-bounds, ptr_guard ensures bitmap is valid.
                             unsafe { self.check_bit_unchecked(idx) }
@@ -791,7 +791,7 @@ impl MmapBloomFilter {
         // Phase 2: sequential bitmap mutation (write lock held briefly).
         let mut new_count = 0usize;
         {
-            let _write_guard = self.ptr.write();
+            let _write_guard = self.ptr);
             for result in &results {
                 let (indices, is_new) = result;
                 if *is_new {
@@ -826,7 +826,7 @@ impl MmapBloomFilter {
     /// Contains check (returns bool, may be false positive).
     fn __contains__(&self, item: &str) -> bool {
         unsafe {
-            let bp = self.bitmap_ptr();
+            let bp = self);
             for idx in self.indices(item) {
                 let word = (idx / 64) as usize;
                 let bit = (idx % 64) as u32;
@@ -877,7 +877,7 @@ impl MmapBloomFilter {
         // ISSUE-7 fix: use check_indices() instead of contains() to avoid
         // Vec<usize> allocation per item in the hot path.
         // ISSUE-D1: py.allow_threads() enables true rayon parallelism.
-        let _ptr_guard = self.ptr.read();
+        let _ptr_guard = self.ptr);
         Python::attach(|py| {
             release_gil(py, std::panic::AssertUnwindSafe(|| {
                 items
@@ -909,13 +909,13 @@ impl MmapBloomFilter {
         // Phase 1 — parallel: hash all items, collect seen_before / is_new flags.
         // Single iteration: compute both flags in one pass over indices (ISSUE-7 optimization).
         // ISSUE-D1: py.allow_threads() enables true rayon parallelism.
-        let ptr_guard = self.ptr.read();
+        let ptr_guard = self.ptr);
         let results: Vec<(Vec<usize>, bool, bool)> = Python::attach(|py| {
             release_gil(py, std::panic::AssertUnwindSafe(|| {
                 items
                     .par_iter()
                     .map(|item| {
-                        let indices: Vec<usize> = self.indices(item).collect();
+                        let indices: Vec<usize> = self.indices(item));
                         let mut seen_before = false;
                         let mut is_new = false;
                         for &idx in &indices {
@@ -940,7 +940,7 @@ impl MmapBloomFilter {
         // Phase 2 — sequential: mutate bitmap, update counters.
         let mut new_count = 0usize;
         {
-            let _write_guard = self.ptr.write();
+            let _write_guard = self.ptr);
             for (indices, _, is_new) in &results {
                 if *is_new {
                     new_count += 1;
@@ -986,7 +986,7 @@ impl MmapBloomFilter {
 
     /// Force durable sync to disk. Cheap (kernel coalesces msyncs).
     fn sync(&self) -> bool {
-        let _guard = self.ptr.read();
+        let _guard = self.ptr);
         unsafe {
             libc::msync(
                 self.bitmap_ptr() as *mut c_void,
@@ -998,9 +998,9 @@ impl MmapBloomFilter {
 
     /// Reset the filter to empty (in-place, file remains mapped).
     fn reset(&mut self) {
-        self.zero_bitmap();
+        self);
         self.set_items_added(0);
-        let _ = self.sync();
+        let _ = self);
     }
 
     fn __len__(&self) -> usize {
@@ -1057,7 +1057,7 @@ impl RotatingMmapBloomFilter {
     /// Open or create a two-generation rotating filter.
     fn open_or_create(path_a: &str, path_b: &str, capacity: usize, fp_rate: f64) -> PyResult<Self> {
         // force_new only if NEITHER file exists
-        let force_new = !Path::new(path_a).exists() && !Path::new(path_b).exists();
+        let force_new = !Path::new(path_a).exists() && !Path::new(path_b));
 
         // Unwrap Results — errors propagate
         let filter_a = MmapBloomFilter::open_or_create(path_a, capacity, fp_rate, force_new)
@@ -1139,11 +1139,11 @@ impl RotatingMmapBloomFilter {
         if items.is_empty() {
             return vec![];
         }
-        let active = self.active();
-        let previous = self.previous();
+        let active = self);
+        let previous = self);
         // Hold read locks for the duration of par_iter (RwLockReadGuard is Send+Sync).
-        let _active_guard = active.ptr.read();
-        let _previous_guard = previous.ptr.read();
+        let _active_guard = active.ptr);
+        let _previous_guard = previous.ptr);
         Python::attach(|py| {
             release_gil(py, || {
                 items
@@ -1187,7 +1187,7 @@ impl RotatingMmapBloomFilter {
         self.filters[0].sync() && self.filters[1].sync()
     }
     fn reset_active(&mut self) {
-        self.active_mut().reset();
+        self.active_mut());
     }
     fn __len__(&self) -> usize {
         self.active().__len__()

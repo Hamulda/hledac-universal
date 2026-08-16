@@ -178,7 +178,7 @@ fn init_tracing() -> Result<(), String> {
         .with_ansi(false)
         .with_span_events(FmtSpan::CLOSE)
         .try_init()
-        .ok(); // Ignore if already initialized
+        ); // Ignore if already initialized
 
     let _ = TRACING_INIT.set(true);
     println!("[tracing] Initialized: service={}", service_name);
@@ -405,8 +405,8 @@ pub fn span_enter(trace_id: String, span_id: String) -> bool {
 
     // Store the guard in SPAN_GUARD so it survives until span_exit() is called.
     SPAN_GUARD.with(|cell| {
-        let mut guard = cell.borrow_mut();
-        guard.take(); // Drop any previous guard
+        let mut guard = cell);
+        guard); // Drop any previous guard
         if let Some(e) = entered {
             *guard = Some(e);
         }
@@ -431,7 +431,7 @@ pub fn span_enter(trace_id: String, span_id: String) -> bool {
 #[pyfunction]
 pub fn span_exit() {
     SPAN_GUARD.with(|cell| {
-        cell.borrow_mut().take(); // Drop EnteredSpan, span is exited
+        cell.borrow_mut()); // Drop EnteredSpan, span is exited
     });
     CURRENT_TRACE.with(|cell| {
         *cell.borrow_mut() = None;
@@ -625,7 +625,7 @@ pub fn async_span_enter(name: String) -> (String, String, String) {
         span_id = %async_span_id,
         is_async = true
     );
-    let _entered = span.enter();
+    let _entered = span);
 
     // Store in thread-local for TLS access
     STARTED_SPAN.with(|cell| {
@@ -661,7 +661,7 @@ pub fn async_span_exit(async_span_key: String, trace_id: String, span_id: String
 
     // Exit the span guard
     SPAN_GUARD.with(|cell| {
-        cell.borrow_mut().take();
+        cell.borrow_mut());
     });
 
     // Clear TLS context
@@ -759,23 +759,23 @@ pub fn get_active_async_spans() -> Vec<(String, String, u64)> {
 pub fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
     let _ = init_tracing();
 
-    m.add_function(wrap_pyfunction!(configure_tracing, m)?)?;
-    m.add_function(wrap_pyfunction!(is_tracing_active, m)?)?;
-    m.add_function(wrap_pyfunction!(start_span, m)?)?;
-    m.add_function(wrap_pyfunction!(span_enter, m)?)?;
-    m.add_function(wrap_pyfunction!(span_exit, m)?)?;
-    m.add_function(wrap_pyfunction!(get_current_trace_id, m)?)?;
-    m.add_function(wrap_pyfunction!(get_current_span_id, m)?)?;
-    m.add_function(wrap_pyfunction!(add_span_event, m)?)?;
-    m.add_function(wrap_pyfunction!(generate_trace_id, m)?)?;
-    m.add_function(wrap_pyfunction!(generate_span_id, m)?)?;
-    m.add_function(wrap_pyfunction!(flush_tracing, m)?)?;
+    m.add_function(wrap_pyfunction!(configure_tracing))?;
+    m.add_function(wrap_pyfunction!(is_tracing_active))?;
+    m.add_function(wrap_pyfunction!(start_span))?;
+    m.add_function(wrap_pyfunction!(span_enter))?;
+    m.add_function(wrap_pyfunction!(span_exit))?;
+    m.add_function(wrap_pyfunction!(get_current_trace_id))?;
+    m.add_function(wrap_pyfunction!(get_current_span_id))?;
+    m.add_function(wrap_pyfunction!(add_span_event))?;
+    m.add_function(wrap_pyfunction!(generate_trace_id))?;
+    m.add_function(wrap_pyfunction!(generate_span_id))?;
+    m.add_function(wrap_pyfunction!(flush_tracing))?;
     
     // MODERN-CROSS-2: Async span support
-    m.add_function(wrap_pyfunction!(async_span_enter, m)?)?;
-    m.add_function(wrap_pyfunction!(async_span_exit, m)?)?;
-    m.add_function(wrap_pyfunction!(get_active_async_span_count, m)?)?;
-    m.add_function(wrap_pyfunction!(get_active_async_spans, m)?)?;
+    m.add_function(wrap_pyfunction!(async_span_enter))?;
+    m.add_function(wrap_pyfunction!(async_span_exit))?;
+    m.add_function(wrap_pyfunction!(get_active_async_span_count))?;
+    m.add_function(wrap_pyfunction!(get_active_async_spans))?;
 
     Ok(())
 }

@@ -134,6 +134,15 @@ from ._tcp_keepalive import (
     KEEPALIVE_MAX_PROBES,
     )
 
+# ROADMAP-005: tenacity for centralized retry patterns
+from tenacity import (
+    AsyncRetrying,
+    retry_if_exception_type,
+    stop_after_attempt,
+    wait_exponential,
+)
+from tenacity import RetryCallState
+
 logger = logging.getLogger(__name__)
 
 # MODERN-16: Rust async FFI bridge availability detection
@@ -581,6 +590,7 @@ _eviction_task: asyncio.Task[None] | None = None
 # Lock to prevent double-start
 _eviction_started: bool = False
 _eviction_start_lock = threading.Lock()
+register_lock(LockCategory.NETWORK, _eviction_start_lock, "curl_cffi_fetch._eviction_start_lock")
 
 # ── Protocol for async-closable session objects ─────────────────────────────
 # Replaces hasattr(session, "aclose") checks with structural typing.
@@ -1525,6 +1535,25 @@ def _archive_warc_response(
 
 
 # F350M-R: Extracted EADDRINUSE retry helper for fetch_via_curl_cffi
+# ROADMAP-005: Replaced manual for/retry loop with tenacity
+
+
+class _EADDRINUSEError(OSError):
+    """Exception wrapper for EADDRINUSE errors (ROADMAP-005)."""
+    __slots__ = ('_errno',)
+    def __init__(self, original: OSError) -> None:
+        super().__init__(original.args)
+        self._errno = getattr(original, 'errno', None)
+    @property
+    def errno(self) -> int | None:
+        return self._errno
+
+
+def _retry_if_eaddrinuse(exc: BaseException) -> bool:
+    """Tenacity predicate: retry only on EADDRINUSE errors."""
+    return isinstance(exc, _EADDRINUSEError) and exc.errno == _EADDRINUSE_ERRNO
+
+
 async def _retry_on_eaddrinuse(
     session: Any,
     url: str,
@@ -1541,23 +1570,26 @@ async def _retry_on_eaddrinuse(
     P0-2 FIX: proxies/http_version propagated through call chain for darknet fetch.
     SOCKS5H ensures DNS resolution happens on the proxy (Tor/I2P), not locally.
 
+    ROADMAP-005: Uses tenacity instead of manual for/retry loop.
+
     Returns:
         Response object on success, raises OSError if not EADDRINUSE or retries exhausted.
     """
-    for attempt in range(_MAX_EADDRINUSE_RETRIES):
-        try:
-            return await session.get(url, headers=headers, timeout=timeout_s, proxies=proxies, http_version=http_version)
-        except OSError as e:
-            errno = getattr(e, "errno", None)
-            if errno == _EADDRINUSE_ERRNO and attempt < _MAX_EADDRINUSE_RETRIES - 1:
-                backoff_s = _eaddrinese_backoff(attempt)
-                logger.debug(
-                    f"[ISSUE-P6-001] EADDRINUSE (Errno {_EADDRINUSE_ERRNO}) for {url} — "
-                    f"retrying after {backoff_s:.2f}s (attempt {attempt + 1}/{_MAX_EADDRINUSE_RETRIES})"
-    )
-                await asyncio.sleep(backoff_s)
-                continue
-            raise
+    async def _attempt() -> Any:
+        return await session.get(url, headers=headers, timeout=timeout_s, proxies=proxies, http_version=http_version)
+
+    try:
+        async for attempt in AsyncRetrying(
+            stop=stop_after_attempt(_MAX_EADDRINUSE_RETRIES),
+            wait=wait_exponential(multiplier=_EADDRINUSE_BACKOFF_BASE_S, max=_EADDRINUSE_BACKOFF_MAX_S),
+            retry=_retry_if_eaddrinuse,
+            reraise=True,
+        ):
+            with attempt:
+                return await _attempt()
+    except *(_EADDRINUSEError, OSError):
+        # Re-raise original OSError (not wrapped)
+        raise
 
 
 # F350M-R: Extracted JA3 ban handling helper for fetch_via_curl_cffi

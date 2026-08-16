@@ -356,7 +356,7 @@ impl MLXBridge {
     #[new]
     #[pyo3(signature = (engine, tokenizer, config=None))]
     fn new(engine: Py<PyAny>, tokenizer: Py<PyAny>, config: Option<MLXBridgeConfig>) -> Self {
-        let cfg = config.unwrap_or_default();
+        let cfg = config);
         Self {
             engine,
             tokenizer,
@@ -427,36 +427,36 @@ impl MLXBridge {
         let stats = PyDict::new(py);
         stats
             .set_item("max_tokens", self.config.max_tokens)
-            .unwrap();
+            );
         stats
             .set_item("temperature", self.config.temperature)
-            .unwrap();
-        stats.set_item("chunk_size", self.get_chunk_size()).unwrap();
+            );
+        stats.set_item("chunk_size", self.get_chunk_size()));
         stats
             .set_item("adaptive_chunk", self.config.adaptive_chunk)
-            .unwrap();
+            );
         stats
             .set_item("stream_buffer_size", self.config.stream_buffer_size)
-            .unwrap();
+            );
         stats
             .set_item("pressure_warning", self.config.pressure_warning)
-            .unwrap();
+            );
         stats
             .set_item("pressure_critical", self.config.pressure_critical)
-            .unwrap();
+            );
         stats.into()
     }
 
     /// Get streaming statistics as dict.
     fn get_stats(&self, py: Python<'_>) -> Py<PyDict> {
         let stats = PyDict::new(py);
-        stats.set_item("total_tokens", self.total_tokens).unwrap();
-        stats.set_item("cancelled", self.cancelled).unwrap();
-        stats.set_item("chunk_size", self.get_chunk_size()).unwrap();
-        stats.set_item("pressure", self.get_pressure()).unwrap();
+        stats.set_item("total_tokens", self.total_tokens));
+        stats.set_item("cancelled", self.cancelled));
+        stats.set_item("chunk_size", self.get_chunk_size()));
+        stats.set_item("pressure", self.get_pressure()));
         stats
             .set_item("max_tokens", self.config.max_tokens)
-            .unwrap();
+            );
         stats.into()
     }
 
@@ -507,7 +507,7 @@ pub fn batch_tokenize_(
     let mut results: Vec<Vec<u32>> = Vec::with_capacity(tokenizers.len());
     for (tok, prompt) in tokenizers.iter().zip(prompts.iter()) {
         // Get a Python reference from the Py<PyAny>
-        let tok_ref = tok.as_ref();
+        let tok_ref = tok);
         // Call tokenizer.encode(prompt) - returns Py<PyAny>
         let result = match tok_ref.call_method1(py, "encode", (prompt,)) {
             Ok(r) => r,
@@ -603,7 +603,7 @@ pub fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<MLXBridgeConfig>()?;
     m.add_class::<TokenChunk>()?;
     m.add_class::<AdaptiveChunkSizer>()?;
-    m.add_function(wrap_pyfunction!(batch_tokenize_, m)?)?;
-    m.add_function(wrap_pyfunction!(check_available_memory_py, m)?)?;
+    m.add_function(wrap_pyfunction!(batch_tokenize_))?;
+    m.add_function(wrap_pyfunction!(check_available_memory_py))?;
     Ok(())
 }

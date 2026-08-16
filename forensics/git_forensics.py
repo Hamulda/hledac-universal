@@ -41,6 +41,7 @@ from pathlib import Path
 from typing import Any
 
 import msgspec
+from compat.msgspec_gc_compat import Struct
 from _core import aclose
 
 logger = logging.getLogger(__name__)
@@ -62,7 +63,7 @@ except ImportError:
     _GitForensicsExtractor = None
 
 
-class GitForensicRecord(msgspec.Struct, frozen=True, gc=False):
+class GitForensicRecord(Struct, frozen=True):
     """Single git object forensic record — msgspec for M1 8GB memory efficiency."""
     sha1: str
     object_type: str
@@ -77,7 +78,7 @@ class GitForensicRecord(msgspec.Struct, frozen=True, gc=False):
     message_preview: str | None = None
 
 
-class GitForensicsStats(msgspec.Struct, frozen=True, gc=False):
+class GitForensicsStats(Struct, frozen=True):
     """Statistics from packfile analysis — msgspec for M1 8GB memory efficiency."""
     total_objects: int
     commit_objects: int
@@ -92,7 +93,7 @@ class GitForensicsStats(msgspec.Struct, frozen=True, gc=False):
     extraction_time_ms: int
 
 
-class GitForensicsResult(msgspec.Struct, frozen=True, gc=False):
+class GitForensicsResult(Struct, frozen=True):
     """Complete git forensics analysis result — msgspec for M1 8GB memory efficiency."""
     packfile_path: str
     timestamp: datetime

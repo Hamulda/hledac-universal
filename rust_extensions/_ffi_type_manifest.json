@@ -1,9 +1,9 @@
 {
   "version": "1.0.0",
-  "generated_at": "2026-08-16T15:33:43.565507+00:00",
+  "generated_at": "2026-08-16T21:47:21.416854+00:00",
   "capability": "NEXTGEN-05",
   "description": "Build-time FFI type-safety manifest",
-  "__source_hash__": "9e540f8b52c10caab6289ad1ed5a2442229f862ca09cf8e3d3af2b99956daa67",
+  "__source_hash__": "bc78bb9198dd4b0c9ab08bfd32990e6d84e959452aca54099561b25073996837",
   "classes": {
     "warc_parser.WarcCertificate": {
       "module": "warc_parser",
@@ -2702,35 +2702,11 @@
       "is_async": false,
       "doc_comment": null
     },
-    "text_norm.nfc_normalize": {
-      "module": "text_norm",
-      "name": "nfc_normalize",
-      "signature": "(text: str)",
-      "return_type": "str",
-      "is_async": false,
-      "doc_comment": null
-    },
-    "text_norm.nfd_normalize": {
-      "module": "text_norm",
-      "name": "nfd_normalize",
-      "signature": "(text: str)",
-      "return_type": "str",
-      "is_async": false,
-      "doc_comment": null
-    },
     "text_norm.batch_nfc_normalize": {
       "module": "text_norm",
       "name": "batch_nfc_normalize",
       "signature": "(texts: list[str])",
       "return_type": "list[str]",
-      "is_async": false,
-      "doc_comment": null
-    },
-    "text_norm.strip_diacritics": {
-      "module": "text_norm",
-      "name": "strip_diacritics",
-      "signature": "(text: str)",
-      "return_type": "str",
       "is_async": false,
       "doc_comment": null
     },
@@ -3378,38 +3354,6 @@
       "module": "serde_json_rs",
       "name": "serde_json_reexport",
       "signature": "(json_str: str, pretty: bool, sort_keys: bool)",
-      "return_type": "str",
-      "is_async": false,
-      "doc_comment": null
-    },
-    "serde_json_rs.serde_json_pretty": {
-      "module": "serde_json_rs",
-      "name": "serde_json_pretty",
-      "signature": "(json_str: str)",
-      "return_type": "str",
-      "is_async": false,
-      "doc_comment": null
-    },
-    "serde_json_rs.serde_json_compact": {
-      "module": "serde_json_rs",
-      "name": "serde_json_compact",
-      "signature": "(json_str: str)",
-      "return_type": "str",
-      "is_async": false,
-      "doc_comment": null
-    },
-    "serde_json_rs.serde_json_pretty_sorted": {
-      "module": "serde_json_rs",
-      "name": "serde_json_pretty_sorted",
-      "signature": "(json_str: str)",
-      "return_type": "str",
-      "is_async": false,
-      "doc_comment": null
-    },
-    "serde_json_rs.serde_json_compact_sorted": {
-      "module": "serde_json_rs",
-      "name": "serde_json_compact_sorted",
-      "signature": "(json_str: str)",
       "return_type": "str",
       "is_async": false,
       "doc_comment": null
@@ -4230,14 +4174,6 @@
       "is_async": false,
       "doc_comment": null
     },
-    "ioc_extract_simd.extract_iocs_simd": {
-      "module": "ioc_extract_simd",
-      "name": "extract_iocs_simd",
-      "signature": "(text: str)",
-      "return_type": "list[tuple[str, str]]",
-      "is_async": false,
-      "doc_comment": null
-    },
     "ioc_extract_simd.batch_extract_iocs_simd": {
       "module": "ioc_extract_simd",
       "name": "batch_extract_iocs_simd",
@@ -4526,38 +4462,6 @@
       "is_async": false,
       "doc_comment": null
     },
-    "content_hasher.sha256_hex": {
-      "module": "content_hasher",
-      "name": "sha256_hex",
-      "signature": "(data: bytes)",
-      "return_type": "str",
-      "is_async": false,
-      "doc_comment": null
-    },
-    "content_hasher.blake3_64": {
-      "module": "content_hasher",
-      "name": "blake3_64",
-      "signature": "(body: bytes)",
-      "return_type": "str",
-      "is_async": false,
-      "doc_comment": null
-    },
-    "content_hasher.xxh3_64_hex": {
-      "module": "content_hasher",
-      "name": "xxh3_64_hex",
-      "signature": "(data: bytes)",
-      "return_type": "str",
-      "is_async": false,
-      "doc_comment": null
-    },
-    "content_hasher.blake3_hex": {
-      "module": "content_hasher",
-      "name": "blake3_hex",
-      "signature": "(body: bytes)",
-      "return_type": "str",
-      "is_async": false,
-      "doc_comment": null
-    },
     "content_hasher.batch_xxh3_64_hex": {
       "module": "content_hasher",
       "name": "batch_xxh3_64_hex",
@@ -4659,54 +4563,6 @@
       "name": "batch_ioc_extract_unified",
       "signature": "(texts: list[str])",
       "return_type": "list[list[tuple[str, str]]]",
-      "is_async": false,
-      "doc_comment": null
-    },
-    "quality_gate.normalize_quality_text": {
-      "module": "quality_gate",
-      "name": "normalize_quality_text",
-      "signature": "(text: str)",
-      "return_type": "str",
-      "is_async": false,
-      "doc_comment": null
-    },
-    "quality_gate.compute_entropy": {
-      "module": "quality_gate",
-      "name": "compute_entropy",
-      "signature": "(text: str)",
-      "return_type": "float",
-      "is_async": false,
-      "doc_comment": null
-    },
-    "quality_gate.compute_entropy_fast": {
-      "module": "quality_gate",
-      "name": "compute_entropy_fast",
-      "signature": "(text: str)",
-      "return_type": "float",
-      "is_async": false,
-      "doc_comment": null
-    },
-    "quality_gate.entropy": {
-      "module": "quality_gate",
-      "name": "entropy",
-      "signature": "(data: bytes)",
-      "return_type": "float",
-      "is_async": false,
-      "doc_comment": null
-    },
-    "quality_gate.dedup_fingerprint": {
-      "module": "quality_gate",
-      "name": "dedup_fingerprint",
-      "signature": "(text: str)",
-      "return_type": "str",
-      "is_async": false,
-      "doc_comment": null
-    },
-    "quality_gate.url_fingerprint": {
-      "module": "quality_gate",
-      "name": "url_fingerprint",
-      "signature": "(url: str)",
-      "return_type": "str",
       "is_async": false,
       "doc_comment": null
     },
@@ -4875,22 +4731,6 @@
       "name": "json_pointer_extract_multi",
       "signature": "(json_bytes: bytes, pointers: list[str])",
       "return_type": "list[list[int]]",
-      "is_async": false,
-      "doc_comment": null
-    },
-    "arti_bridge.fetch_onion_async": {
-      "module": "arti_bridge",
-      "name": "fetch_onion_async",
-      "signature": "(node: ArtiNode, url: str, timeout_s: float | None)",
-      "return_type": "Any",
-      "is_async": false,
-      "doc_comment": null
-    },
-    "arti_bridge.fetch_batch_async": {
-      "module": "arti_bridge",
-      "name": "fetch_batch_async",
-      "signature": "(node: ArtiNode, urls: list[str], timeout_s: float | None)",
-      "return_type": "Any",
       "is_async": false,
       "doc_comment": null
     },
@@ -5722,14 +5562,6 @@
       "module": "async_bridge",
       "name": "async_fetch_py",
       "signature": "(url: str, method: str | None, body: list[int] | None, headers: list[tuple[str, str]] | None, timeout_s: float | None)",
-      "return_type": "Any",
-      "is_async": false,
-      "doc_comment": null
-    },
-    "async_bridge.async_fetch_onion_py": {
-      "module": "async_bridge",
-      "name": "async_fetch_onion_py",
-      "signature": "(node: Any, url: str, method: str | None, body: list[int] | None, headers: list[tuple[str, str]] | None, timeout_s: float | None)",
       "return_type": "Any",
       "is_async": false,
       "doc_comment": null

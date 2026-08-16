@@ -15,6 +15,7 @@ import os
 import secrets
 from dataclasses import dataclass
 import msgspec
+from compat.msgspec_gc_compat import Struct
 from pathlib import Path
 from typing import Any
 
@@ -24,7 +25,7 @@ from _core import aclose
 
 logger = logging.getLogger(__name__)
 
-class DestructionConfig(msgspec.Struct, gc=False):
+class DestructionConfig(Struct):
     """Konfigurace bezpečného mazání"""
     passes: int = 3
     pass_patterns: list[bytes] | None = None

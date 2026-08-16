@@ -333,8 +333,8 @@ mod py_bindings {
     }
 
     pub fn register_functions(m: &Bound<'_, PyModule>) -> PyResult<()> {
-        m.add_function(wrap_pyfunction!(sendfile_to_socket_py, m)?)?;
-        m.add_function(wrap_pyfunction!(sendfile_available, m)?)?;
+        m.add_function(wrap_pyfunction!(sendfile_to_socket_py))?;
+        m.add_function(wrap_pyfunction!(sendfile_available))?;
         Ok(())
     }
 }

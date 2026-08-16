@@ -37,10 +37,16 @@ import sys
 import threading
 from typing import Any
 from _core import aclose
+from _core.lock_registry import LockCategory, register_lock
 
 _OTEL_ENABLED = os.environ.get("HLEDAC_OTEL_ENABLED", "1").strip() == "1"
 _CONFIGURED = False
-_LOCK = threading.Lock()
+
+
+@register_lock(LockCategory.METRICS)
+def _telemetry_lock() -> threading.Lock:
+    """Module-level lock for OTel telemetry setup."""
+    return threading.Lock()
 
 
 def _configure_otel() -> bool:
@@ -108,7 +114,7 @@ def _configure_logfire() -> bool:
 def configure() -> None:
     """Unified telemetry config. Call once at startup. Idempotent. Thread-safe."""
     global _CONFIGURED
-    with _LOCK:
+    with _telemetry_lock():
         if _CONFIGURED:
             return
         # Configure structlog via unified config

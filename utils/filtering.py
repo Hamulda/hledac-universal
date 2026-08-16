@@ -37,6 +37,7 @@ from collections.abc import Iterator
 from contextlib import closing
 from dataclasses import dataclass
 import msgspec
+from compat.msgspec_gc_compat import Struct
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -49,7 +50,7 @@ except ImportError:
     ORJSON_AVAILABLE = False
 logger = logging.getLogger(__name__)
 
-class FilterStats(msgspec.Struct, gc=False):
+class FilterStats(Struct):
     """Statistics for fast filter."""
     total_checked: int = 0
     blocked: int = 0
@@ -63,7 +64,7 @@ class FilterStats(msgspec.Struct, gc=False):
             return 0.0
         return self.blocked / self.total_checked
 
-class FrontierStats(msgspec.Struct, frozen=True, gc=False):
+class FrontierStats(Struct, frozen=True):
     """Statistics for frontier operations."""
     total_urls: int = 0
     checked_urls: int = 0

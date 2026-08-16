@@ -48,6 +48,7 @@ from pathlib import Path
 from typing import Any, cast
 
 import msgspec
+from compat.msgspec_gc_compat import Struct
 import numpy as np
 
 from hledac.universal.utils.msgspec_json import dumps_str as _msgspec_dumps_str
@@ -125,7 +126,7 @@ def _dequantize_int8(int8_vec: np.ndarray, scale: np.ndarray) -> np.ndarray:
 # ---------------------------------------------------------------------------
 
 
-class CacheStats(msgspec.Struct, gc=False):
+class CacheStats(Struct):
     hits: int = 0
     misses: int = 0
     l1_hits: int = 0
@@ -164,7 +165,7 @@ class CacheStats(msgspec.Struct, gc=False):
 
 
 # ISSUE #022: CacheEntry now mutable (no frozen=True) to allow mtime updates
-class CacheEntry(msgspec.Struct, gc=False):
+class CacheEntry(Struct):
     offset: int
     length: int  # embedding dimension (256)
     mtime: float

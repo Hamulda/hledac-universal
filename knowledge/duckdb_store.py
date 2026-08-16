@@ -836,6 +836,10 @@ from .sprint_boundary import SprintBoundaryCoordinator
 # MODERN-36: Reduced from 128 to 64 for M1 8GB + 6-thread budget
 _IOC_CHUNK: int = 64  # per-chunk size for parallel IOC buffering
 
+# ROADMAP-004: Bounded concurrency for parallel IOC buffering
+# M1 8GB friendly: 8 concurrent IOC buffer operations
+_IOC_BUFFER_CONCURRENCY: int = 8
+
 # Lazy imports from quality_assessment to avoid circular dependency
 # duckdb_store ↔ quality_assessment — both use TYPE_CHECKING to break circular import
 from typing import TYPE_CHECKING
@@ -9463,6 +9467,9 @@ class DuckDBShadowStore:
         in parallel chunks. Reduces nesting from 6 to 2 levels.
 
         [META]-006: Uses finding.timestamp as observed_at for protocol provenance.
+
+        ROADMAP-004: Uses bounded_parallel_map for parallel IOC buffering.
+        M1 8GB: concurrency=8 for memory-safe bounded parallelism.
         """
         if not (_IOC_EXTRACT_BATCH_AVAILABLE and _get_rust_batch_ioc_extract()):
             return
@@ -9487,23 +9494,46 @@ class DuckDBShadowStore:
                     if ioc_key not in seen_iocs:
                         seen_iocs.add(ioc_key)
                         all_iocs.append((ioc_type, ioc_value, 1.0, observed_at))
-            # Chunk and buffer in parallel
-            ioc_chunks: list[list[tuple[str, str, float, float]]] = [
-                all_iocs[i : i + _IOC_CHUNK] for i in range(0, len(all_iocs), _IOC_CHUNK)
-            ]
 
-            async def _buffer_chunk(chunk: list[tuple[str, str, float, float]]) -> None:
-                for ioc_type, ioc_value, score, obs_at in chunk:
-                    await buffer_ioc(ioc_type, ioc_value, score, obs_at)
+            # ROADMAP-004: Parallel IOC buffering with bounded concurrency
+            # Uses module-level _IOC_BUFFER_CONCURRENCY (M1 8GB friendly: 8)
 
-            if ioc_chunks:
-                await parallel(
-                    [_buffer_chunk(chunk) for chunk in ioc_chunks],
-                    taskgroup=True,
-                    policy="collect",
-                    ctx="duckdb_store:ioc_buffer",
-                    logger_instance=None,
-    )
+            async def _buffer_single_ioc(ioc: tuple[str, str, float, float]) -> bool:
+                """Buffer single IOC to truth graph with fault isolation."""
+                # ROADMAP-004: Circuit breaker check before each buffer operation
+                cb = _get_duckdb_circuit()
+                if cb is not None:
+                    try:
+                        cb.check()
+                    except CircuitBreakerOpen:
+                        _logger.debug("[ROADMAP-004] Circuit breaker open, skipping IOC buffer")
+                        return False
+                try:
+                    await buffer_ioc(ioc[0], ioc[1], ioc[2], ioc[3])
+                    return True
+                except Exception as e:  # noqa: BLE001 — best-effort; IOC buffer failure; non-critical
+                    _logger.debug("[ROADMAP-004] IOC buffer failed: %s", e)
+                    return False
+
+            if all_iocs:
+                # ROADMAP-004: Use bounded_parallel_map for M1 8GB memory-safe parallelism
+                from utils.asyncx import bounded_parallel_map
+                buffer_results = await bounded_parallel_map(
+                    all_iocs,
+                    _buffer_single_ioc,
+                    concurrency=_IOC_BUFFER_CONCURRENCY,
+                    ordered=False,  # No ordering needed for IOC buffering
+                    ctx="duckdb_store:ioc_buffer_parallel",
+                    logger_instance=_logger,
+                )
+                # ROADMAP-004: Track IOC buffer success rate
+                success_count = sum(1 for r in buffer_results if r)
+                if success_count < len(all_iocs):
+                    _logger.debug(
+                        "[ROADMAP-004] IOC buffer: %d/%d succeeded",
+                        success_count,
+                        len(all_iocs),
+                    )
             flush_buffers()
         except Exception:  # noqa: BLE001 — best-effort; IOC extraction failure; non-critical
             pass
@@ -10109,6 +10139,40 @@ class DuckDBShadowStore:
         await self._maybe_auto_maintenance()
 
         return results
+
+    async def async_ingest_findings_batch_parallel(
+        self,
+        findings: list[CanonicalFinding],
+        *,
+        concurrency: int = 8,  # M1 8GB friendly
+    ) -> list[FindingQualityDecision | ActivationResult]:
+        """
+        ROADMAP-004: Explicit parallel ingest path with bounded concurrency.
+
+        This method is a COMPATIBILITY STUB that delegates to async_ingest_findings_batch().
+        The main batch method already uses parallel patterns internally:
+        - Phase 1: Parallel quality assessment via ThreadPoolExecutor
+        - IOC buffering: Parallel via bounded_parallel_map (ROADMAP-004)
+        - WAL + DuckDB storage: Parallel via asyncio.gather
+
+        This stub exists for callers that explicitly want the parallel path guarantee.
+        It may be extended in the future to use bounded_parallel_map for finding-level
+        parallelization across the entire ingest pipeline.
+
+        Args:
+            findings: List of CanonicalFinding objects.
+            concurrency: Max concurrent operations (default: 8 for M1 8GB).
+                Note: Currently unused (delegates to async_ingest_findings_batch).
+
+        Returns:
+            list[FindingQualityDecision | ActivationResult] - 1:1 with input.
+        """
+        if not findings:
+            return []
+
+        # ROADMAP-004: Main batch path already uses parallel patterns internally.
+        # IOC buffering specifically uses bounded_parallel_map with concurrency control.
+        return await self.async_ingest_findings_batch(findings)
 
     def _envelope_to_payload(self, envelope: FindingEnvelope) -> str | None:
         """

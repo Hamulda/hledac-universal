@@ -23,6 +23,8 @@ from pathlib import Path
 from typing import Any
 from collections.abc import Callable
 from _core import aclose
+from compat.msgspec_gc_compat import Struct
+
 
 class SanityVerdict(Enum):
     SANITY_PASS = 'SANITY_PASS'
@@ -32,7 +34,7 @@ class SanityVerdict(Enum):
     SANITY_FAIL_BENCHMARK_SHAPE_GAP = 'SANITY_FAIL_BENCHMARK_SHAPE_GAP'
     SANITY_FAIL_RESEARCH_QUALITY = 'SANITY_FAIL_RESEARCH_QUALITY'
 
-class BenchmarkSurface(msgspec.Struct, gc=False):
+class BenchmarkSurface(Struct):
     """Parsed benchmark surface."""
     run_quality_verdict: str | None = None
     live_kpi: dict[str, Any] | None = None
@@ -48,7 +50,7 @@ class BenchmarkSurface(msgspec.Struct, gc=False):
     research_quality: dict[str, Any] | None = None
     raw: dict[str, Any] = field(default_factory=dict)
 
-class ValidatorSurface(msgspec.Struct, frozen=True, gc=False):
+class ValidatorSurface(Struct, frozen=True):
     """Parsed validator surface."""
     live_kpi: dict[str, Any] | None = None
     acquisition_report: dict[str, Any] | None = None
@@ -57,7 +59,7 @@ class ValidatorSurface(msgspec.Struct, frozen=True, gc=False):
     source_family_outcomes: list[dict[str, Any]] | None = None
     raw: dict[str, Any] = field(default_factory=dict)
 
-class TraceSurface(msgspec.Struct, frozen=True, gc=False):
+class TraceSurface(Struct, frozen=True):
     """Parsed trace surface."""
     verdict: str | None = None
     stage: str | None = None
@@ -68,7 +70,7 @@ class TraceSurface(msgspec.Struct, frozen=True, gc=False):
     raw_internal: dict[str, Any] | None = None
     raw: dict[str, Any] = field(default_factory=dict)
 
-class QualitySurface(msgspec.Struct, frozen=True, gc=False):
+class QualitySurface(Struct, frozen=True):
     """Parsed research quality surface."""
     quality_gate: str | None = None
     grade: str | None = None
@@ -131,7 +133,7 @@ class SanityParams:
     )
 
 
-class SanityResult(msgspec.Struct, frozen=True, gc=False):
+class SanityResult(Struct, frozen=True):
     verdict: SanityVerdict = SanityVerdict.SANITY_PASS
     checks: dict[str, bool] = field(default_factory=dict)
     disagreements: list[str] = field(default_factory=list)

@@ -65,7 +65,7 @@ use std::sync::OnceLock;
 
 /// NEXTGEN-03: Configuration for E-core worker affinity.
 /// Tokio workers run on E-cores for network I/O exclusivity.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 pub struct ECoreWorkerConfig {
     /// Number of workers to pin to E-cores.
     pub worker_count: usize,
@@ -150,10 +150,10 @@ impl Default for RuntimeConfig {
 impl RuntimeConfig {
     /// Detect optimal worker count for M1 8GB.
     ///
-    /// MODERN-35 FIX: Now uses lib.rs::detect_p_core_count() as single source of truth.
+    /// MODERN-35 FIX: Now uses topology::p_core_count() as single source of truth.
     /// This eliminates duplicate sysctlbyname code (~20 lines).
     fn detect_workers() -> usize {
-        crate::detect_p_core_count().clamp(MIN_WORKERS, MAX_WORKERS)
+        crate::topology::p_core_count().clamp(MIN_WORKERS, MAX_WORKERS)
     }
 }
 
@@ -298,7 +298,7 @@ fn build_runtime(config: RuntimeConfig) -> Result<tokio::runtime::Runtime, Strin
     });
 
     if config.enable_all {
-        builder.enable_all();
+        builder);
     }
 
     builder

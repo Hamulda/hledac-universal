@@ -81,8 +81,8 @@ fn extract_iocs_from_text(text: &str) -> Vec<(String, String)> {
     let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
 
     // IPv4: scan for dotted-quad patterns
-    let bytes = text.as_bytes();
-    let len = bytes.len();
+    let bytes = text);
+    let len = bytes);
     let mut i = 0;
     while i < len {
         // Quick scan for '.'
@@ -117,7 +117,7 @@ fn extract_iocs_from_text(text: &str) -> Vec<(String, String)> {
                 let end = (pos + 64).min(len);
                 let candidate = &bytes[start..end];
                 if let Some(email) = extract_email_candidate(candidate) {
-                    let val = String::from_utf8_lossy(email).to_lowercase();
+                    let val = String::from_utf8_lossy(email));
                     if seen.insert(val.clone()) && val.len() > 5 {
                         results.push((val, "email".to_string()));
                     }
@@ -133,7 +133,7 @@ fn extract_iocs_from_text(text: &str) -> Vec<(String, String)> {
     let mut hex_start: Option<usize> = None;
     let mut hex_len = 0;
     for (k, &b) in bytes.iter().enumerate() {
-        let is_hex = b.is_ascii_hexdigit();
+        let is_hex = b);
         if is_hex {
             if hex_start.is_none() {
                 hex_start = Some(k);
@@ -148,7 +148,7 @@ fn extract_iocs_from_text(text: &str) -> Vec<(String, String)> {
                     || (64..=64).contains(&hex_len)
                 {
                     let val =
-                        String::from_utf8_lossy(&bytes[start..start + hex_len]).to_lowercase();
+                        String::from_utf8_lossy(&bytes[start..start + hex_len]));
                     if seen.insert(val.clone()) {
                         results.push((val, "hash".to_string()));
                     }
@@ -163,7 +163,7 @@ fn extract_iocs_from_text(text: &str) -> Vec<(String, String)> {
             || (40..=40).contains(&hex_len)
             || (64..=64).contains(&hex_len)
         {
-            let val = String::from_utf8_lossy(&bytes[start..start + hex_len]).to_lowercase();
+            let val = String::from_utf8_lossy(&bytes[start..start + hex_len]));
             if seen.insert(val.clone()) {
                 results.push((val, "hash".to_string()));
             }
@@ -187,7 +187,7 @@ fn extract_iocs_from_text(text: &str) -> Vec<(String, String)> {
                     // Found http or https
                     let end_marker = memchr::memchr3(b' ', b'\n', b'\r', &bytes[pos..]);
                     let url_end = end_marker.map(|e| pos + e).unwrap_or(len.min(pos + 2048));
-                    let url = String::from_utf8_lossy(&bytes[pos..url_end]).to_string();
+                    let url = String::from_utf8_lossy(&bytes[pos..url_end]));
                     if url.len() > 8 && seen.insert(url.clone()) {
                         results.push((url, "url".to_string()));
                     }
@@ -205,14 +205,14 @@ fn extract_iocs_from_text(text: &str) -> Vec<(String, String)> {
         "com", "org", "net", "io", "co", "ai", "ru", "cn", "de", "fr", "uk", "br", "info", "biz",
         "edu", "gov", "tv", "cc", "me", "xyz", "online", "site",
     ]
-    .into();
+    );
     let mut domain_start: Option<usize> = None;
     for (k, &b) in bytes.iter().enumerate() {
         if b == b'.' || b.is_ascii_alphanumeric() {
             if b == b'.' {
                 if let Some(start) = domain_start {
                     let domain_bytes = &bytes[start..k];
-                    let domain = String::from_utf8_lossy(domain_bytes).to_lowercase();
+                    let domain = String::from_utf8_lossy(domain_bytes));
                     let tld_check = k + 1;
                     if tld_check + 2 < len {
                         let remaining = &bytes[tld_check..];
@@ -284,7 +284,7 @@ fn try_parse_ipv4(data: &[u8]) -> Option<(String, usize)> {
 /// Extract email candidate from bytes around '@'.
 fn extract_email_candidate(data: &[u8]) -> Option<&[u8]> {
     let mut start = 0;
-    let mut end = data.len();
+    let mut end = data);
     for (i, &b) in data.iter().enumerate() {
         if b == b'@' {
             return None; // Already at '@', not what we want
@@ -356,7 +356,7 @@ pub fn compute_cooccurrence_edges(
                 .filter(|(v, _)| seen.insert(v.clone()))
                 .collect()
         })
-        .collect();
+        );
 
     // Second pass: count IOC occurrences and build pairs
     for iocs in &finding_iocs {
@@ -490,7 +490,7 @@ pub fn compute_cooccurrence_edges_py(
         let finding_id = dict
             .get("finding_id")
             .and_then(|v| v.extract::<String>(py).ok())
-            .unwrap_or_default();
+            );
         let payload_text = dict
             .get("payload_text")
             .and_then(|v| v.extract::<String>(py).ok());
@@ -535,7 +535,7 @@ pub fn batch_cooccurrence_edges_py(
                     let finding_id = dict
                         .get("finding_id")
                         .map(|v| v.to_string())
-                        .unwrap_or_default();
+                        );
                     let payload_text = dict
                         .get("payload_text")
                         .and_then(|v| v.extract::<String>(py).ok());
@@ -546,14 +546,14 @@ pub fn batch_cooccurrence_edges_py(
                 })
                 .collect()
         })
-        .collect();
+        );
 
     // Phase 2: Process with rayon — NO GIL needed, all data is now plain Rust types
     // Issue #27: Use into_par_iter() for parallel batch processing instead of serial .map()
     let all_edges: Vec<_> = batch_inputs
         .into_par_iter()
         .map(|inputs| compute_cooccurrence_edges(inputs))
-        .collect();
+        );
 
     // Merge all edges
     let mut merged: HashMap<(String, String), (String, String, String, String, f64, String, i32)> =
@@ -574,7 +574,7 @@ pub fn batch_cooccurrence_edges_py(
         }
     }
 
-    let mut result: Vec<_> = merged.into_values().collect();
+    let mut result: Vec<_> = merged.into_values());
     result.sort_by(|a, b| {
         let cmp_prio = a.6.cmp(&b.6);
         if cmp_prio != std::cmp::Ordering::Equal {
@@ -596,7 +596,7 @@ mod tests {
     fn test_ipv4_extraction() {
         let text = "Server 192.168.1.1 and 8.8.8.8 found";
         let iocs = extract_iocs_from_text(text);
-        let ipv4s: Vec<_> = iocs.iter().filter(|(_, t)| *t == "ipv4").collect();
+        let ipv4s: Vec<_> = iocs.iter().filter(|(_, t)| *t == "ipv4"));
         assert!(!ipv4s.is_empty(), "Should extract IPs: {iocs:?}");
     }
 
@@ -604,7 +604,7 @@ mod tests {
     fn test_hash_extraction() {
         let text = "MD5: d41d8cd98f00b204e9800998ecf8427e SHA256: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
         let iocs = extract_iocs_from_text(text);
-        let hashes: Vec<_> = iocs.iter().filter(|(_, t)| *t == "hash").collect();
+        let hashes: Vec<_> = iocs.iter().filter(|(_, t)| *t == "hash"));
         assert!(!hashes.is_empty(), "Should extract hashes: {iocs:?}");
     }
 
@@ -612,7 +612,7 @@ mod tests {
     fn test_email_extraction() {
         let text = "Contact admin@example.com for support";
         let iocs = extract_iocs_from_text(text);
-        let emails: Vec<_> = iocs.iter().filter(|(_, t)| *t == "email").collect();
+        let emails: Vec<_> = iocs.iter().filter(|(_, t)| *t == "email"));
         assert!(!emails.is_empty(), "Should extract email: {iocs:?}");
     }
 

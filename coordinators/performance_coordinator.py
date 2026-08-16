@@ -30,6 +30,7 @@ from typing import Any
 from weakref import ref
 
 import msgspec
+from compat.msgspec_gc_compat import Struct
 from hledac.universal.compat.msgspec_gc_compat import Struct
 
 from hledac.universal.utils.asyncx import safe_create_task

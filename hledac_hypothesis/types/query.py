@@ -15,6 +15,8 @@ from typing import Any
 import msgspec
 from _core import aclose
 
+from compat.msgspec_gc_compat import Struct
+
 
 class DarkQueryType(Enum):
     """Types of dark surface queries for unindexed source expansion."""
@@ -24,7 +26,7 @@ class DarkQueryType(Enum):
     I2P = "i2p"
 
 
-class DarkQuery(msgspec.Struct, frozen=True, gc=False):
+class DarkQuery(Struct, frozen=True):
     """
     Query for exploring dark/unindexed surface.
 
@@ -38,7 +40,7 @@ class DarkQuery(msgspec.Struct, frozen=True, gc=False):
     reasoning: str = ""  # Why this query was generated
 
 
-class _DarkQueryListResponse(msgspec.Struct, gc=False):
+class _DarkQueryListResponse(Struct):
     """Response model for Hermes LLM dark query generation."""
     queries: list[dict[str, Any]] = msgspec.field(default_factory=list)
 

@@ -27,6 +27,7 @@ E2E flow:
 """
 from __future__ import annotations
 import msgspec
+from compat.msgspec_gc_compat import Struct
 
 from operator import attrgetter, itemgetter
 import asyncio
@@ -658,7 +659,7 @@ async def _distill_findings(
 # ---------------------------------------------------------------------------
 
 
-class SynthesisOutcome(msgspec.Struct, gc=False):
+class SynthesisOutcome(Struct):
     """
     Sprint F151A: Fail-soft synthesis outcome seam.
 
@@ -716,7 +717,7 @@ def synthesis_outcome_to_dict(outcome: SynthesisOutcome | None) -> dict:
         return {"status": "unknown", "primary_reason": "attr_error", "operator_note": ""}
 
 
-class UncertaintyFlags(msgspec.Struct, gc=False):
+class UncertaintyFlags(Struct):
     """
     APEX-1009: Measured uncertainty metadata for hallucination detection.
 
@@ -891,7 +892,7 @@ def _resolve_alternative_protocols(
     return protocols[:_MAX_PROTOCOLS_PER_ENTITY]
 
 
-class IOCEntity(msgspec.Struct, gc=False):
+class IOCEntity(Struct):
     """Jedna IOC entita extrahovaná z findingu."""
     value: str
     ioc_type: str  # "cve","ip","hash","onion","domain","apt","malware","btc"
@@ -902,7 +903,7 @@ class IOCEntity(msgspec.Struct, gc=False):
     uncertainty_flag: str = "normal"  # "normal", "elevated", "high_entropy"
 
 
-class OSINTReport(msgspec.Struct, gc=False):
+class OSINTReport(Struct):
     """
     STIX-ready OSINT synthesis report.
 

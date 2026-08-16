@@ -15,6 +15,7 @@ import re
 from dataclasses import dataclass
 from pathlib import Path
 import msgspec
+from compat.msgspec_gc_compat import Struct
 from operator import attrgetter, itemgetter
 from _core import aclose
 logger = logging.getLogger(__name__)
@@ -26,7 +27,7 @@ URL_ENCODING_REGEX = '(?:%[0-9A-Fa-f]{2})+'
 MIN_ENTROPY = 2.5
 MAX_ENTROPY = 7.5
 
-class EncodingChain(msgspec.Struct, gc=False):
+class EncodingChain(Struct):
     """Represents a chain of nested encodings.
 
     Attributes:
@@ -38,7 +39,7 @@ class EncodingChain(msgspec.Struct, gc=False):
     final_content: str
     depth: int
 
-class EncodingFinding(msgspec.Struct, gc=False):
+class EncodingFinding(Struct):
     """Sprint F300: msgspec.Struct for detected encoding in text.
 
     Attributes:
@@ -62,7 +63,7 @@ class EncodingFinding(msgspec.Struct, gc=False):
     entropy: float = 0.0
     nested_chain: EncodingChain | None = None
 
-class EncodingConfig(msgspec.Struct, gc=False):
+class EncodingConfig(Struct):
     """Sprint F300: msgspec.Struct for encoding detection configuration.
 
     Attributes:

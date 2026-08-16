@@ -26,6 +26,7 @@ TaskRegistry (safe_create_task_tracked). This guarantees:
 import asyncio
 from dataclasses import dataclass
 import msgspec
+from compat.msgspec_gc_compat import Struct
 from typing import Any
 
 from hledac.universal.utils.asyncx import first_completed  # ISSUE-15
@@ -50,7 +51,7 @@ def _lazy_import(name: str) -> Any:
         _LAZY_IMPORT_CACHE[name] = import_module(name)
     return _LAZY_IMPORT_CACHE[name]
 
-class LaneResult(msgspec.Struct, gc=False):
+class LaneResult(Struct):
     lane: str
     attempted: bool
     skipped: bool

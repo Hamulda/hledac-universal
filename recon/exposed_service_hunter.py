@@ -36,6 +36,7 @@ import logging
 import re
 from dataclasses import dataclass, field
 import msgspec
+from compat.msgspec_gc_compat import Struct
 from datetime import UTC, datetime
 from enum import Enum
 from typing import Any
@@ -65,7 +66,6 @@ class ServiceType(Enum):
     DIRECTORY_LISTING = 'directory_listing'
     RSYNC = 'rsync'
 
-
 class ExposureType(Enum):
     """Types of exposure."""
     OPEN = 'open'
@@ -85,7 +85,7 @@ class RiskLevel(Enum):
     HIGH = 'high'
     CRITICAL = 'critical'
 
-class ExposedService(msgspec.Struct, gc=False):
+class ExposedService(Struct):
     """Represents a discovered exposed service."""
     service_type: str
     host: str
@@ -99,7 +99,7 @@ class ExposedService(msgspec.Struct, gc=False):
         """Convert to dictionary."""
         return {'service_type': self.service_type, 'host': self.host, 'port': self.port, 'exposure_type': self.exposure_type, 'metadata': self.metadata, 'risk_level': self.risk_level, 'discovered_at': self.discovered_at.isoformat()}
 
-class S3Bucket(msgspec.Struct, frozen=True, gc=False):
+class S3Bucket(Struct, frozen=True):
     """S3 bucket information."""
     bucket_name: str
     region: str | None
@@ -109,7 +109,7 @@ class S3Bucket(msgspec.Struct, frozen=True, gc=False):
     total_size: int | None
     permissions: list[str]
 
-class CertificateInfo(msgspec.Struct, frozen=True, gc=False):
+class CertificateInfo(Struct, frozen=True):
     """Certificate transparency information."""
     domain: str
     issuer: str
@@ -195,16 +195,8 @@ class S3BucketEnumerator:
         """
         if not self.session:
             return None
-
         regions_to_try = [None] + self.S3_REGIONS[:5]
-        # MinIO/self-hosted S3 patterns (common custom endpoints)
-        minio_patterns = [
-            None,  # standard s3.amazonaws.com
-            'localhost:9000',
-            'minio.local:9000',
-            's3.local',
-        ]
-
+        minio_patterns = [None, 'localhost:9000', 'minio.local:9000', 's3.local']
         for region in regions_to_try:
             for endpoint in minio_patterns:
                 try:
@@ -213,30 +205,18 @@ class S3BucketEnumerator:
                             url = f'https://{endpoint}/minio/{bucket_name}'
                         else:
                             url = f'https://s3.{region}.amazonaws.com/{bucket_name}'
+                    elif endpoint and endpoint != 'localhost:9000':
+                        url = f'https://{endpoint}/{bucket_name}'
                     else:
-                        if endpoint and endpoint != 'localhost:9000':
-                            url = f'https://{endpoint}/{bucket_name}'
-                        else:
-                            url = f'https://{bucket_name}.s3.amazonaws.com'
-
-                    # 1.1/1.2/1.3 FIX: Use GET ?list-type=2 for actual listability check
-                    # This is the S3 ListObjectsV2 API and properly indicates if bucket is listable
+                        url = f'https://{bucket_name}.s3.amazonaws.com'
                     list_url = f'{url}?list-type=2&max-keys=1'
                     async with self.session.get(list_url, follow_redirects=True, timeout=10) as resp:
                         if resp.status == 200:
-                            # Check for XML listing response
                             text = resp.text or ''
-                            # S3 returns <ListBucketResult> or <ListAllMyBucketsResult>
-                            # ListAllMyBucketsResult = listing ALL buckets = more severe exposure
-                            # <Contents> indicates bucket has objects
-                            # <CommonPrefixes> indicates prefix listing
                             is_listable = '<ListBucketResult' in text or '<ListAllMyBucketsResult' in text
                             has_objects = '<Contents' in text
                             has_prefixes = '<CommonPrefixes' in text
-                            
-                            # Determine severity based on what we found
                             if '<ListAllMyBucketsResult' in text:
-                                # Listing all buckets - most severe
                                 exposure = ExposureType.OPEN.value
                                 risk = RiskLevel.CRITICAL.value
                             elif is_listable:
@@ -245,39 +225,9 @@ class S3BucketEnumerator:
                             else:
                                 exposure = ExposureType.PUBLIC.value
                                 risk = RiskLevel.LOW.value
-                            return ExposedService(
-                                service_type=ServiceType.S3_BUCKET.value,
-                                host=urlparse(url).netloc or f'{bucket_name}.s3.amazonaws.com',
-                                port=443,
-                                exposure_type=exposure,
-                                risk_level=risk,
-                                metadata={
-                                    'bucket_name': bucket_name,
-                                    'region': region,
-                                    'listable': is_listable,
-                                    'has_objects': has_objects,
-                                    'has_prefixes': has_prefixes,
-                                    'url': url,
-                                    'is_minio': endpoint is not None,
-                                }
-    )
+                            return ExposedService(service_type=ServiceType.S3_BUCKET.value, host=urlparse(url).netloc or f'{bucket_name}.s3.amazonaws.com', port=443, exposure_type=exposure, risk_level=risk, metadata={'bucket_name': bucket_name, 'region': region, 'listable': is_listable, 'has_objects': has_objects, 'has_prefixes': has_prefixes, 'url': url, 'is_minio': endpoint is not None})
                         elif resp.status == 403:
-                            # Denied - bucket exists but no access
-                            return ExposedService(
-                                service_type=ServiceType.S3_BUCKET.value,
-                                host=urlparse(url).netloc or f'{bucket_name}.s3.amazonaws.com',
-                                port=443,
-                                exposure_type=ExposureType.PUBLIC.value,
-                                risk_level=RiskLevel.LOW.value,
-                                metadata={
-                                    'bucket_name': bucket_name,
-                                    'region': region,
-                                    'listable': False,
-                                    'exists': True,
-                                    'url': url,
-                                    'is_minio': endpoint is not None,
-                                }
-    )
+                            return ExposedService(service_type=ServiceType.S3_BUCKET.value, host=urlparse(url).netloc or f'{bucket_name}.s3.amazonaws.com', port=443, exposure_type=ExposureType.PUBLIC.value, risk_level=RiskLevel.LOW.value, metadata={'bucket_name': bucket_name, 'region': region, 'listable': False, 'exists': True, 'url': url, 'is_minio': endpoint is not None})
                         elif resp.status == 404:
                             continue
                 except TimeoutError:
@@ -301,7 +251,6 @@ class S3BucketEnumerator:
                 permissions[perm_name] = {'accessible': False, 'error': str(e)}
         return permissions
 
-
 class GCSBucketEnumerator:
     """
     Google Cloud Storage bucket enumeration using common naming patterns.
@@ -314,13 +263,10 @@ class GCSBucketEnumerator:
     - https://{bucket}.storage.googleapis.com
     - https://{bucket}.storage.googleapis.com/?acl
     """
-    BUCKET_SUFFIXES = ('', '-prod', '-dev', '-staging', '-backup', '-data', '-assets',
-                       '-media', '-static', '-files', '-documents', '-private', '-public',
-                       '-logs', '-config', '-database', '-storage', '-usercontent')
-    
+    BUCKET_SUFFIXES = ('', '-prod', '-dev', '-staging', '-backup', '-data', '-assets', '-media', '-static', '-files', '-documents', '-private', '-public', '-logs', '-config', '-database', '-storage', '-usercontent')
     __slots__ = tuple(('_owned_session', 'session'))
 
-    def __init__(self, session: httpx.AsyncClient | None = None):
+    def __init__(self, session: httpx.AsyncClient | None=None):
         self.session = session
         self._owned_session = session is None
 
@@ -334,8 +280,7 @@ class GCSBucketEnumerator:
             await self.session.close()
             self.session = None
 
-    async def enumerate_buckets(self, target: str, san_names: list[str] | None = None,
-                                max_concurrent: int = 20) -> list[ExposedService]:
+    async def enumerate_buckets(self, target: str, san_names: list[str] | None=None, max_concurrent: int=20) -> list[ExposedService]:
         """
         Enumerate GCS buckets using naming patterns and optional SAN-derived names.
         
@@ -350,28 +295,22 @@ class GCSBucketEnumerator:
         findings = []
         target_clean = target.replace('.', '-').replace('_', '-').lower()
         bucket_names: set[str] = set()
-        
-        # Generate bucket names from target patterns
         for suffix in self.BUCKET_SUFFIXES:
             bucket_name = f'{target_clean}{suffix}'
             bucket_names.add(bucket_name)
             bucket_names.add(bucket_name.replace('-', ''))
             bucket_names.add(bucket_name.replace('-', '_'))
-        
-        # Derive bucket names from SAN names if provided
         if san_names:
-            for san in san_names[:50]:  # Bound to prevent excessive requests
+            for san in san_names[:50]:
                 san_clean = san.lower().strip().lstrip('*.')
                 if san_clean and '.' in san_clean:
-                    # Extract subdomain parts as potential bucket names
                     parts = san_clean.split('.')
                     if len(parts) >= 2:
                         bucket_names.add(parts[0])
                         bucket_names.add(parts[0].replace('.', '-'))
-        
         logger.info(f'Checking {len(bucket_names)} potential GCS buckets for {target}')
         semaphore = asyncio.Semaphore(max_concurrent)
-        
+
         async def check_bucket(bucket_name: str) -> ExposedService | None:
             async with semaphore:
                 try:
@@ -382,97 +321,49 @@ class GCSBucketEnumerator:
                 except Exception as e:
                     logger.debug(f'Error checking GCS bucket {bucket_name}: {e}')
                 return None
-        
         tasks = [check_bucket(name) for name in bucket_names]
         results = await parallel_ok(*tasks, label='exposed_service_hunter:gcs_enum')
-        
         for result in results:
             if result:
                 findings.append(result)
-        
         return findings
 
     async def _check_bucket_exists(self, bucket_name: str) -> ExposedService | None:
         """Check if a GCS bucket exists and is accessible."""
         if not self.session:
             return None
-        
-        urls_to_try = [
-            f'https://storage.googleapis.com/{bucket_name}',
-            f'https://{bucket_name}.storage.googleapis.com',
-        ]
-        
+        urls_to_try = [f'https://storage.googleapis.com/{bucket_name}', f'https://{bucket_name}.storage.googleapis.com']
         for url in urls_to_try:
             try:
                 async with self.session.head(url, follow_redirects=True, timeout=8) as resp:
                     status = resp.status_code
-                    
                     if status == 200:
-                        # Bucket exists and is accessible
-                        return ExposedService(
-                            service_type=ServiceType.GCS_BUCKET.value,
-                            host=f'{bucket_name}.storage.googleapis.com',
-                            port=443,
-                            exposure_type=ExposureType.OPEN.value,
-                            risk_level=RiskLevel.CRITICAL.value,
-                            metadata={
-                                'bucket_name': bucket_name,
-                                'listable': True,
-                                'url': url,
-                                'provider': 'gcs'
-                            }
-    )
+                        return ExposedService(service_type=ServiceType.GCS_BUCKET.value, host=f'{bucket_name}.storage.googleapis.com', port=443, exposure_type=ExposureType.OPEN.value, risk_level=RiskLevel.CRITICAL.value, metadata={'bucket_name': bucket_name, 'listable': True, 'url': url, 'provider': 'gcs'})
                     elif status == 403:
-                        # Bucket exists but not publicly accessible
-                        return ExposedService(
-                            service_type=ServiceType.GCS_BUCKET.value,
-                            host=f'{bucket_name}.storage.googleapis.com',
-                            port=443,
-                            exposure_type=ExposureType.PUBLIC.value,
-                            risk_level=RiskLevel.LOW.value,
-                            metadata={
-                                'bucket_name': bucket_name,
-                                'listable': False,
-                                'exists': True,
-                                'url': url,
-                                'provider': 'gcs'
-                            }
-    )
+                        return ExposedService(service_type=ServiceType.GCS_BUCKET.value, host=f'{bucket_name}.storage.googleapis.com', port=443, exposure_type=ExposureType.PUBLIC.value, risk_level=RiskLevel.LOW.value, metadata={'bucket_name': bucket_name, 'listable': False, 'exists': True, 'url': url, 'provider': 'gcs'})
                     elif status == 404:
-                        # Bucket doesn't exist, try next URL pattern
                         continue
             except TimeoutError:
                 continue
             except Exception as e:
                 logger.debug(f'Error checking GCS bucket {bucket_name}: {e}')
                 continue
-        
         return None
 
     async def check_bucket_permissions(self, bucket_name: str) -> dict[str, Any]:
         """Check specific permissions on a GCS bucket."""
         if not self.session:
             return {}
-        
         permissions = {}
         base_url = f'https://storage.googleapis.com/{bucket_name}'
-        checks = [
-            ('list', f'{base_url}/?prefix=&max-keys=1'),
-            ('acl', f'{base_url}/?acl'),
-        ]
-        
+        checks = [('list', f'{base_url}/?prefix=&max-keys=1'), ('acl', f'{base_url}/?acl')]
         for perm_name, url in checks:
             try:
                 async with self.session.get(url, timeout=5) as resp:
-                    permissions[perm_name] = {
-                        'accessible': resp.status == 200,
-                        'status': resp.status
-                    }
+                    permissions[perm_name] = {'accessible': resp.status == 200, 'status': resp.status}
             except Exception as e:
                 permissions[perm_name] = {'accessible': False, 'error': str(e)}
-        
         return permissions
-
 
 class AzureBlobEnumerator:
     """
@@ -486,15 +377,11 @@ class AzureBlobEnumerator:
     - https://{account}.blob.core.windows.net/{container}?restype=container
     - https://{account}.blob.core.windows.net/{container}?comp=list
     """
-    ACCOUNT_SUFFIXES = ('', 'prod', 'dev', 'staging', 'backup', 'data', 'assets',
-                        'media', 'static', 'files', 'logs', 'config')
-    CONTAINER_SUFFIXES = ('', '-prod', '-dev', '-staging', '-backup', '-data', '-assets',
-                          '-media', '-static', '-files', '-documents', '-private', '-public',
-                          '-logs', '-config', '-database', '-storage')
-    
+    ACCOUNT_SUFFIXES = ('', 'prod', 'dev', 'staging', 'backup', 'data', 'assets', 'media', 'static', 'files', 'logs', 'config')
+    CONTAINER_SUFFIXES = ('', '-prod', '-dev', '-staging', '-backup', '-data', '-assets', '-media', '-static', '-files', '-documents', '-private', '-public', '-logs', '-config', '-database', '-storage')
     __slots__ = tuple(('_owned_session', 'session'))
 
-    def __init__(self, session: httpx.AsyncClient | None = None):
+    def __init__(self, session: httpx.AsyncClient | None=None):
         self.session = session
         self._owned_session = session is None
 
@@ -508,8 +395,7 @@ class AzureBlobEnumerator:
             await self.session.close()
             self.session = None
 
-    async def enumerate_containers(self, target: str, san_names: list[str] | None = None,
-                                   max_concurrent: int = 20) -> list[ExposedService]:
+    async def enumerate_containers(self, target: str, san_names: list[str] | None=None, max_concurrent: int=20) -> list[ExposedService]:
         """
         Enumerate Azure Blob containers using naming patterns.
         
@@ -522,22 +408,16 @@ class AzureBlobEnumerator:
             List of exposed Azure Blob containers
         """
         target_clean = target.replace('.', '').replace('-', '').replace('_', '').lower()
-        
-        # Generate storage account names (3-24 chars, lowercase alphanumeric)
         account_names: set[str] = set()
         for suffix in self.ACCOUNT_SUFFIXES:
             account_name = f'{target_clean}{suffix}'[:24]
             if len(account_name) >= 3:
                 account_names.add(account_name)
-        
-        # Generate container names
         container_names: set[str] = set()
         for suffix in self.CONTAINER_SUFFIXES:
-            container_name = f'{target_clean}{suffix}'[:63]  # Azure container name limit
+            container_name = f'{target_clean}{suffix}'[:63]
             container_names.add(container_name)
             container_names.add(container_name.replace('-', ''))
-        
-        # Derive names from SAN names if provided
         if san_names:
             for san in san_names[:30]:
                 san_clean = san.lower().strip().lstrip('*.')
@@ -546,103 +426,45 @@ class AzureBlobEnumerator:
                     if len(parts) >= 2:
                         account_names.add(parts[0][:24])
                         container_names.add(parts[0][:63])
-        
         logger.info(f'Checking {len(account_names) * len(container_names)} potential Azure containers for {target}')
-        
-        # Limit total combinations to prevent excessive requests
         limited_accounts = list(account_names)[:10]
         limited_containers = list(container_names)[:20]
-        
-        return await scan_parallel(
-            check_args=[(a, c) for a in limited_accounts for c in limited_containers],
-            checker=lambda a, c: self._check_container_exists(a, c),
-            label='exposed_service_hunter:azure',
-            logger=logger,
-            log_success='Found Azure container: {0}/{1}',
-            semaphore=asyncio.Semaphore(max_concurrent),
-    )
+        return await scan_parallel(check_args=[(a, c) for a in limited_accounts for c in limited_containers], checker=lambda a, c: self._check_container_exists(a, c), label='exposed_service_hunter:azure', logger=logger, log_success='Found Azure container: {0}/{1}', semaphore=asyncio.Semaphore(max_concurrent))
 
     async def _check_container_exists(self, account_name: str, container_name: str) -> ExposedService | None:
         """Check if an Azure Blob container exists and is accessible."""
         if not self.session:
             return None
-        
         host = f'{account_name}.blob.core.windows.net'
         url = f'https://{host}/{container_name}'
-        
         try:
-            # Check container with restype=container
-            async with self.session.get(
-                f'{url}?restype=container',
-                follow_redirects=True,
-                timeout=8
-            ) as resp:
+            async with self.session.get(f'{url}?restype=container', follow_redirects=True, timeout=8) as resp:
                 status = resp.status_code
-                
                 if status == 200:
-                    return ExposedService(
-                        service_type=ServiceType.AZURE_CONTAINER.value,
-                        host=host,
-                        port=443,
-                        exposure_type=ExposureType.OPEN.value,
-                        risk_level=RiskLevel.CRITICAL.value,
-                        metadata={
-                            'account_name': account_name,
-                            'container_name': container_name,
-                            'listable': True,
-                            'url': url,
-                            'provider': 'azure'
-                        }
-    )
+                    return ExposedService(service_type=ServiceType.AZURE_CONTAINER.value, host=host, port=443, exposure_type=ExposureType.OPEN.value, risk_level=RiskLevel.CRITICAL.value, metadata={'account_name': account_name, 'container_name': container_name, 'listable': True, 'url': url, 'provider': 'azure'})
                 elif status == 403:
-                    return ExposedService(
-                        service_type=ServiceType.AZURE_CONTAINER.value,
-                        host=host,
-                        port=443,
-                        exposure_type=ExposureType.PUBLIC.value,
-                        risk_level=RiskLevel.LOW.value,
-                        metadata={
-                            'account_name': account_name,
-                            'container_name': container_name,
-                            'listable': False,
-                            'exists': True,
-                            'url': url,
-                            'provider': 'azure'
-                        }
-    )
-        except TimeoutError:  # noqa: BLE001
+                    return ExposedService(service_type=ServiceType.AZURE_CONTAINER.value, host=host, port=443, exposure_type=ExposureType.PUBLIC.value, risk_level=RiskLevel.LOW.value, metadata={'account_name': account_name, 'container_name': container_name, 'listable': False, 'exists': True, 'url': url, 'provider': 'azure'})
+        except TimeoutError:
             pass
         except Exception as e:
             logger.debug(f'Error checking Azure container {account_name}/{container_name}: {e}')
-        
         return None
 
     async def check_container_permissions(self, account_name: str, container_name: str) -> dict[str, Any]:
         """Check specific permissions on an Azure Blob container."""
         if not self.session:
             return {}
-        
         host = f'{account_name}.blob.core.windows.net'
         base_url = f'https://{host}/{container_name}'
         permissions = {}
-        
-        checks = [
-            ('list', f'{base_url}?restype=container&comp=list'),
-            ('acl', f'{base_url}?restype=container&comp=acl'),
-        ]
-        
+        checks = [('list', f'{base_url}?restype=container&comp=list'), ('acl', f'{base_url}?restype=container&comp=acl')]
         for perm_name, url in checks:
             try:
                 async with self.session.get(url, timeout=5) as resp:
-                    permissions[perm_name] = {
-                        'accessible': resp.status == 200,
-                        'status': resp.status
-                    }
+                    permissions[perm_name] = {'accessible': resp.status == 200, 'status': resp.status}
             except Exception as e:
                 permissions[perm_name] = {'accessible': False, 'error': str(e)}
-        
         return permissions
-
 
 class RsyncScanner:
     """
@@ -663,7 +485,7 @@ class RsyncScanner:
     RSYNC_TIMEOUT = 5.0
     _DEFAULT_MODULE_TIMEOUT = 3.0
 
-    async def __aenter__(self) -> "RsyncScanner":
+    async def __aenter__(self) -> 'RsyncScanner':
         """Async context manager entry."""
         return self
 
@@ -681,18 +503,7 @@ class RsyncScanner:
                     is_readable = await self._check_module_readable(host, module)
                     exposure = ExposureType.OPEN.value if is_readable else ExposureType.PUBLIC.value
                     risk = RiskLevel.HIGH.value if is_readable else RiskLevel.MEDIUM.value
-                    findings.append(ExposedService(
-                        service_type=ServiceType.RSYNC.value,
-                        host=host,
-                        port=self.RSYNC_PORT,
-                        exposure_type=exposure,
-                        risk_level=risk,
-                        metadata={
-                            'module': module,
-                            'is_readable': is_readable,
-                            'server_type': 'rsync',
-                        }
-                    ))
+                    findings.append(ExposedService(service_type=ServiceType.RSYNC.value, host=host, port=self.RSYNC_PORT, exposure_type=exposure, risk_level=risk, metadata={'module': module, 'is_readable': is_readable, 'server_type': 'rsync'}))
                     if is_readable:
                         logger.info(f'[RSYNC] Module "{module}" readable on {host}')
         except Exception as e:
@@ -702,15 +513,9 @@ class RsyncScanner:
     async def _enumerate_modules(self, host: str) -> list[str]:
         """Enumerate rsync modules by connecting to daemon."""
         try:
-            reader, writer = await safe_wait_for(
-                asyncio.open_connection(host, self.RSYNC_PORT),
-                timeout=self.RSYNC_TIMEOUT
-    )
-            # Send @RSYNCD:30.0 protocol initiation
+            reader, writer = await safe_wait_for(asyncio.open_connection(host, self.RSYNC_PORT), timeout=self.RSYNC_TIMEOUT)
             writer.write(b'@RSYNCD:30.0\n')
             await writer.drain()
-
-            # Read modules list (terminated by @RSYNCD:EXIT)
             modules = []
             async with asyncio.timeout(self.RSYNC_TIMEOUT):
                 while True:
@@ -720,11 +525,9 @@ class RsyncScanner:
                     line_str = line.decode('utf-8', errors='ignore').strip()
                     if line_str == '@RSYNCD:EXIT':
                         break
-                    if line_str and not line_str.startswith('@'):
-                        # Format: "modulename\tdescription"
+                    if line_str and (not line_str.startswith('@')):
                         parts = line_str.split('\t')
                         modules.append(parts[0])
-
             writer.close()
             await writer.wait_closed()
             return modules
@@ -738,30 +541,18 @@ class RsyncScanner:
         A module may not require auth but still deny file listing.
         """
         try:
-            reader, writer = await safe_wait_for(
-                asyncio.open_connection(host, self.RSYNC_PORT),
-                timeout=self.RSYNC_TIMEOUT
-    )
-            # Protocol initiation
+            reader, writer = await safe_wait_for(asyncio.open_connection(host, self.RSYNC_PORT), timeout=self.RSYNC_TIMEOUT)
             writer.write(b'@RSYNCD:30.0\n')
             await writer.drain()
-
-            # Read initial greeting
             async with asyncio.timeout(self._DEFAULT_MODULE_TIMEOUT):
                 greeting = await reader.readline()
                 greeting_str = greeting.decode('utf-8', errors='ignore').strip()
-                
-                # Check for error in greeting
                 if '@RSYNCD:ERR' in greeting_str or '@RSYNCD:CHKL' in greeting_str:
                     writer.close()
                     await writer.wait_closed()
                     return False
-
-            # Request module listing
             writer.write(f'{module}\n'.encode())
             await writer.drain()
-
-            # Read module response - should contain file listing or confirmation
             responses: list[bytes] = []
             async with asyncio.timeout(self._DEFAULT_MODULE_TIMEOUT):
                 while True:
@@ -769,31 +560,18 @@ class RsyncScanner:
                     if not chunk:
                         break
                     responses.append(chunk)
-                    # rsync sends @RSYNCD:EXIT when done
                     if b'@RSYNCD:EXIT' in chunk:
                         break
-
             writer.close()
             await writer.wait_closed()
-
-            # Combine responses and check for success indicators
             full_response = b''.join(responses).decode('utf-8', errors='ignore')
-            
-            # Error responses
             if '@RSYNCD:ERR' in full_response or '@RSYNCD:CHKL' in full_response:
                 return False
-            
-            # Success indicators:
-            # 1. File listing entries (d=directory, f=file, etc.)
-            # 2. Module confirmation without error
-            # 3. Non-empty response
-            has_file_entries = any(c in full_response for c in ('\t', 'd', 'f', '-', 'l'))
+            has_file_entries = any((c in full_response for c in ('\t', 'd', 'f', '-', 'l')))
             is_readable = '@RSYNCD:OK' in full_response or has_file_entries or len(full_response) > 50
-            
             return is_readable
         except Exception:
             return False
-
 
 class DatabasePortScanner:
     """
@@ -808,17 +586,7 @@ class DatabasePortScanner:
     Extraction is fire-and-forget — failures are logged but don't block scanning.
     """
     DATABASE_PORTS = {27017: (ServiceType.MONGODB, 'MongoDB'), 27018: (ServiceType.MONGODB, 'MongoDB Shard'), 27019: (ServiceType.MONGODB, 'MongoDB Config'), 6379: (ServiceType.REDIS, 'Redis'), 6380: (ServiceType.REDIS, 'Redis Alternate'), 9200: (ServiceType.ELASTICSEARCH, 'Elasticsearch'), 9300: (ServiceType.ELASTICSEARCH, 'Elasticsearch Transport'), 5984: (ServiceType.COUCHDB, 'CouchDB'), 6984: (ServiceType.COUCHDB, 'CouchDB SSL'), 5432: ('postgresql', 'PostgreSQL'), 3306: ('mysql', 'MySQL'), 1433: ('mssql', 'Microsoft SQL Server'), 1521: ('oracle', 'Oracle Database'), 9042: ('cassandra', 'Cassandra'), 7474: ('neo4j', 'Neo4j'), 8529: ('arangodb', 'ArangoDB')}
-
-    # Ports that support native wire-protocol extraction (HEIST-03)
-    _EXTRACTABLE_PORTS: dict[int, str] = {
-        27017: 'mongodb',
-        27018: 'mongodb',
-        27027019: 'mongodb',
-        6379: 'redis',
-        6380: 'redis',
-        9200: 'elasticsearch',
-    }
-
+    _EXTRACTABLE_PORTS: dict[int, str] = {27017: 'mongodb', 27018: 'mongodb', 27027019: 'mongodb', 6379: 'redis', 6380: 'redis', 9200: 'elasticsearch'}
     __slots__ = tuple(('timeout',))
 
     def __init__(self, timeout: float=5.0):
@@ -838,14 +606,7 @@ class DatabasePortScanner:
         """
         ports_to_check = ports or list(self.DATABASE_PORTS.keys())
         logger.info(f'Scanning {len(hosts)} hosts on {len(ports_to_check)} ports')
-
-        return await scan_parallel(
-            check_args=[(h, p) for h in hosts for p in ports_to_check],
-            checker=lambda h, p: self._check_port(h, p),
-            label='exposed_service_hunter:db_scan',
-            logger=logger,
-            log_success='Found exposed database: {host}:{port}',
-    )
+        return await scan_parallel(check_args=[(h, p) for h in hosts for p in ports_to_check], checker=lambda h, p: self._check_port(h, p), label='exposed_service_hunter:db_scan', logger=logger, log_success='Found exposed database: {host}:{port}')
 
     async def _check_port(self, host: str, port: int) -> ExposedService | None:
         """Check if a specific port is open and identify service."""
@@ -859,7 +620,7 @@ class DatabasePortScanner:
                 async with asyncio.timeout(2):
                     banner = await reader.read(1024)
                 banner = banner.decode('utf-8', errors='ignore').strip()
-            except Exception:  # noqa: BLE001
+            except Exception:
                 pass
             writer.close()
             await writer.wait_closed()
@@ -867,21 +628,14 @@ class DatabasePortScanner:
             service_type, service_name = service_info
             risk_level = RiskLevel.CRITICAL.value if port in [27017, 6379, 9200, 5984] else RiskLevel.HIGH.value
             result = ExposedService(service_type=service_type.value if isinstance(service_type, ServiceType) else service_type, host=host, port=port, exposure_type=ExposureType.OPEN.value, risk_level=risk_level, metadata={'service_name': service_name, 'banner': banner[:200] if banner else None, 'protocol': 'tcp'})
-
-            # HEIST-03 FIX: Await extraction result and attach actual data.
-            # Previous implementation stored task object (not data) and never awaited —
-            # results were lost and concurrency was unbounded.
             if port in self._EXTRACTABLE_PORTS:
                 try:
                     extraction_data = await self._extract_database_data(host, port)
                     if extraction_data:
                         result.metadata['extraction_data'] = extraction_data
-                        logger.debug(
-                            f'[HEIST-03] extraction result attached for {host}:{port}'
-    )
+                        logger.debug(f'[HEIST-03] extraction result attached for {host}:{port}')
                 except Exception as e:
                     logger.debug(f'[HEIST-03] extraction await failed for {host}:{port}: {e}')
-
             return result
         except TimeoutError:
             return None
@@ -904,54 +658,17 @@ class DatabasePortScanner:
         db_type = self._EXTRACTABLE_PORTS.get(port)
         if not db_type:
             return None
-
         try:
-            from hledac.universal.network.native_extraction import (
-                extract_from_exposed,
-                is_native_extraction_enabled,
-    )
-
-            # HEIST-08 gate: extraction only when enabled
-            # But for HEIST-03 we ALWAYS attempt — the feature gate is for
-            # the broader scanning mode, not individual extraction calls.
+            from hledac.universal.network.native_extraction import extract_from_exposed, is_native_extraction_enabled
             result = await extract_from_exposed(host, port, db_type)
             if result is None:
                 return None
-
-            logger.info(
-                f'[HEIST-03] {db_type} extraction {host}:{port} — '
-                f'success={result.success}, '
-                f'databases={result.databases}, '
-                f'keys={result.key_count}, '
-                f'indices={result.indices}'
-    )
-
-            # Convert struct to dict for metadata storage
-            return {
-                'db_type': db_type,
-                'success': result.success,
-                'error': result.error,
-                'databases': result.databases,
-                'collections': dict(result.collections) if result.collections else None,
-                'sample_documents': result.sample_documents,
-                'keys': result.keys,
-                'key_count': result.key_count,
-                'indices': result.indices,
-                'es_documents': result.es_documents,
-                'auth_required': result.auth_required,
-                'banner': result.banner,
-            }
-
+            logger.info(f'[HEIST-03] {db_type} extraction {host}:{port} — success={result.success}, databases={result.databases}, keys={result.key_count}, indices={result.indices}')
+            return {'db_type': db_type, 'success': result.success, 'error': result.error, 'databases': result.databases, 'collections': dict(result.collections) if result.collections else None, 'sample_documents': result.sample_documents, 'keys': result.keys, 'key_count': result.key_count, 'indices': result.indices, 'es_documents': result.es_documents, 'auth_required': result.auth_required, 'banner': result.banner}
         except ImportError:
-            logger.debug(
-                f'[HEIST-03] native_extraction not available for '
-                f'{host}:{port} ({db_type}) — extraction skipped'
-    )
+            logger.debug(f'[HEIST-03] native_extraction not available for {host}:{port} ({db_type}) — extraction skipped')
         except Exception as e:
-            logger.warning(
-                f'[HEIST-03] Extraction failed for {host}:{port} ({db_type}): {e}'
-    )
-
+            logger.warning(f'[HEIST-03] Extraction failed for {host}:{port} ({db_type}): {e}')
         return None
 
     async def test_mongodb_auth(self, host: str, port: int=27017) -> dict[str, Any]:
@@ -977,8 +694,6 @@ class DatabasePortScanner:
             version_match = re.search(b'"version"\\s*:\\s*"([^"]+)"', response)
             if version_match:
                 result['version'] = version_match.group(1).decode('utf-8', errors='ignore')
-
-            # HEIST-03: Trigger native extraction when no auth required
             if result['auth_required'] is False:
                 logger.info(f'[HEIST-03] MongoDB no-auth detected at {host}:{port} — extracting...')
                 extraction = await self._extract_database_data(host, port)
@@ -1008,8 +723,6 @@ class DatabasePortScanner:
                 version_match = re.search('redis_version:(\\S+)', response_str)
                 if version_match:
                     result['version'] = version_match.group(1)
-
-            # HEIST-03: Trigger native extraction when no auth required
             if result['auth_required'] is False:
                 logger.info(f'[HEIST-03] Redis no-auth detected at {host}:{port} — extracting...')
                 extraction = await self._extract_database_data(host, port)
@@ -1033,7 +746,7 @@ class DatabasePortScanner:
                     body = resp.json()
                     result['version'] = body.get('version', {}).get('number')
                     result['cluster_name'] = body.get('cluster_name')
-                except Exception:  # noqa: BLE001
+                except Exception:
                     pass
             elif resp.status_code == 401:
                 result['auth_required'] = True
@@ -1041,174 +754,92 @@ class DatabasePortScanner:
             result['error'] = str(e)
         return result
 
-    async def _try_extract_mongodb(
-        self, host: str, port: int = 27017,
-        limit: int = 500
-    ) -> list[dict[str, Any]]:
+    async def _try_extract_mongodb(self, host: str, port: int=27017, limit: int=500) -> list[dict[str, Any]]:
         """HEIST-03: Extract data from unauthenticated MongoDB via Rust native_db.
 
         Called after test_mongodb_auth() returns auth_required=False.
         Falls back gracefully if Rust native_db feature not compiled.
         """
-        # ISSUE-014: Route through core.rust_backend wrapper for ABI checking,
-        # capability scoring, and container-based force override.
         from hledac.universal._core.rust_backend import rust
         MongoDumper = rust.raw.MongoDumper
         if MongoDumper is None:
-            logger.debug(
-                f'[HEIST-03] Rust native_db not available — '
-                f'skipping MongoDB extraction for {host}:{port}'
-    )
+            logger.debug(f'[HEIST-03] Rust native_db not available — skipping MongoDB extraction for {host}:{port}')
             return []
         try:
             dumper = MongoDumper()
-            entries = await asyncio.to_thread(
-                dumper.dump_all, host, port, limit, self.timeout
-    )
+            entries = await asyncio.to_thread(dumper.dump_all, host, port, limit, self.timeout)
             results: list[dict[str, Any]] = []
             for entry in entries:
-                entry_dict = {
-                    'database': entry.database,
-                    'collection': entry.collection,
-                    'document_count': entry.document_count,
-                    'documents_json': entry.documents_json,
-                    'error': entry.error,
-                }
+                entry_dict = {'database': entry.database, 'collection': entry.collection, 'document_count': entry.document_count, 'documents_json': entry.documents_json, 'error': entry.error}
                 results.append(entry_dict)
                 if entry.error:
-                    logger.warning(
-                        f'[HEIST-03] MongoDB extraction error '
-                        f'{host}:{port}/{entry.database}/{entry.collection}: '
-                        f'{entry.error}'
-    )
+                    logger.warning(f'[HEIST-03] MongoDB extraction error {host}:{port}/{entry.database}/{entry.collection}: {entry.error}')
                 elif entry.collection and entry.document_count:
-                    logger.info(
-                        f'[HEIST-03] MongoDB extracted '
-                        f'{entry.document_count} docs from '
-                        f'{host}:{port}/{entry.database}/{entry.collection}'
-    )
+                    logger.info(f'[HEIST-03] MongoDB extracted {entry.document_count} docs from {host}:{port}/{entry.database}/{entry.collection}')
             return results
         except Exception as e:
-            logger.warning(
-                f'[HEIST-03] MongoDB extraction failed {host}:{port}: {e}'
-    )
+            logger.warning(f'[HEIST-03] MongoDB extraction failed {host}:{port}: {e}')
             return []
 
-    async def _try_extract_redis(
-        self, host: str, port: int = 6379,
-        max_keys: int = 500
-    ) -> list[dict[str, Any]]:
+    async def _try_extract_redis(self, host: str, port: int=6379, max_keys: int=500) -> list[dict[str, Any]]:
         """HEIST-03: Extract data from unauthenticated Redis via Rust native_db.
 
         Called after test_redis_auth() returns auth_required=False.
         Falls back gracefully if Rust native_db feature not compiled.
         """
-        # ISSUE-014: Route through core.rust_backend wrapper for ABI checking,
-        # capability scoring, and container-based force override.
         from hledac.universal._core.rust_backend import rust
         RedisDumper = rust.raw.RedisDumper
         if RedisDumper is None:
-            logger.debug(
-                f'[HEIST-03] Rust native_db not available — '
-                f'skipping Redis extraction for {host}:{port}'
-    )
+            logger.debug(f'[HEIST-03] Rust native_db not available — skipping Redis extraction for {host}:{port}')
             return []
         try:
             dumper = RedisDumper()
-            entries = await asyncio.to_thread(
-                dumper.dump_all, host, port, max_keys, self.timeout
-    )
+            entries = await asyncio.to_thread(dumper.dump_all, host, port, max_keys, self.timeout)
             results: list[dict[str, Any]] = []
             for entry in entries:
-                entry_dict = {
-                    'key': entry.key,
-                    'key_type': entry.key_type,
-                    'value': entry.value,
-                    'ttl': entry.ttl,
-                    'error': entry.error,
-                }
+                entry_dict = {'key': entry.key, 'key_type': entry.key_type, 'value': entry.value, 'ttl': entry.ttl, 'error': entry.error}
                 results.append(entry_dict)
                 if entry.error:
-                    logger.warning(
-                        f'[HEIST-03] Redis extraction error '
-                        f'{host}:{port}/{entry.key}: {entry.error}'
-    )
-            if results and not results[0].get('error'):
-                logger.info(
-                    f'[HEIST-03] Redis extracted {len(results)} keys '
-                    f'from {host}:{port}'
-    )
+                    logger.warning(f'[HEIST-03] Redis extraction error {host}:{port}/{entry.key}: {entry.error}')
+            if results and (not results[0].get('error')):
+                logger.info(f'[HEIST-03] Redis extracted {len(results)} keys from {host}:{port}')
             return results
         except Exception as e:
-            logger.warning(
-                f'[HEIST-03] Redis extraction failed {host}:{port}: {e}'
-    )
+            logger.warning(f'[HEIST-03] Redis extraction failed {host}:{port}: {e}')
             return []
 
-    async def _try_extract_elasticsearch(
-        self, host: str, port: int = 9200,
-        limit: int = 100
-    ) -> list[dict[str, Any]]:
+    async def _try_extract_elasticsearch(self, host: str, port: int=9200, limit: int=100) -> list[dict[str, Any]]:
         """HEIST-03: Extract data from unauthenticated Elasticsearch via Rust
         native_db.
 
         Called after test_elasticsearch_auth() returns auth_required=False.
         Falls back to httpx-based extraction if Rust native_db not compiled.
         """
-        # First try Rust native_db path
-        # ISSUE-014: Route through core.rust_backend wrapper for ABI checking,
-        # capability scoring, and container-based force override.
         from hledac.universal._core.rust_backend import rust
         ElasticsearchDumper = rust.raw.ElasticsearchDumper
         if ElasticsearchDumper is not None:
             try:
                 dumper = ElasticsearchDumper()
-                entries = await asyncio.to_thread(
-                    dumper.dump_all, host, port, limit, self.timeout
-    )
+                entries = await asyncio.to_thread(dumper.dump_all, host, port, limit, self.timeout)
                 results: list[dict[str, Any]] = []
                 for entry in entries:
-                    entry_dict = {
-                        'index': entry.index,
-                        'document_count': entry.document_count,
-                        'documents_json': entry.documents_json,
-                        'error': entry.error,
-                    }
+                    entry_dict = {'index': entry.index, 'document_count': entry.document_count, 'documents_json': entry.documents_json, 'error': entry.error}
                     results.append(entry_dict)
                     if entry.error:
-                        logger.warning(
-                            f'[HEIST-03] ES extraction error '
-                            f'{host}:{port}/{entry.index}: {entry.error}'
-    )
+                        logger.warning(f'[HEIST-03] ES extraction error {host}:{port}/{entry.index}: {entry.error}')
                     elif entry.document_count:
-                        logger.info(
-                            f'[HEIST-03] ES extracted '
-                            f'{entry.document_count} docs from '
-                            f'{host}:{port}/{entry.index}'
-    )
+                        logger.info(f'[HEIST-03] ES extracted {entry.document_count} docs from {host}:{port}/{entry.index}')
                 return results
             except Exception as e:
-                logger.debug(
-                    f'[HEIST-03] Rust ES extraction failed, httpx fallback: {e}'
-    )
+                logger.debug(f'[HEIST-03] Rust ES extraction failed, httpx fallback: {e}')
         else:
-            logger.debug(
-                f'[HEIST-03] Rust native_db not available — '
-                f'falling back to httpx ES extraction for {host}:{port}'
-    )
-
-        # Python httpx fallback for Elasticsearch (REST-based)
+            logger.debug(f'[HEIST-03] Rust native_db not available — falling back to httpx ES extraction for {host}:{port}')
         try:
             import httpx
             import json
             results: list[dict[str, Any]] = []
-            async with httpx.AsyncClient(
-                timeout=httpx.Timeout(self.timeout)
-            ) as client:
-                # List indices
-                cat_resp = await client.get(
-                    f'http://{host}:{port}/_cat/indices?format=json'
-    )
+            async with httpx.AsyncClient(timeout=httpx.Timeout(self.timeout)) as client:
+                cat_resp = await client.get(f'http://{host}:{port}/_cat/indices?format=json')
                 if cat_resp.status_code != 200:
                     return []
                 indices_data = cat_resp.json()
@@ -1216,55 +847,22 @@ class DatabasePortScanner:
                     index_name = idx_entry.get('index', '')
                     if not index_name or index_name.startswith('.'):
                         continue
-                    # Search documents
                     try:
-                        search_resp = await client.post(
-                            f'http://{host}:{port}/{index_name}/_search',
-                            json={
-                                'query': {'match_all': {}},
-                                'size': limit,
-                                '_source': True,
-                            },
-    )
+                        search_resp = await client.post(f'http://{host}:{port}/{index_name}/_search', json={'query': {'match_all': {}}, 'size': limit, '_source': True})
                         if search_resp.status_code == 200:
                             body = search_resp.json()
                             hits = body.get('hits', {}).get('hits', [])
-                            docs = [
-                                json.dumps(h.get('_source', {}))
-                                for h in hits
-                            ]
-                            results.append({
-                                'index': index_name,
-                                'document_count': len(docs),
-                                'documents_json': docs,
-                                'error': None,
-                            })
-                            logger.info(
-                                f'[HEIST-03] ES (httpx) extracted '
-                                f'{len(docs)} docs from '
-                                f'{host}:{port}/{index_name}'
-    )
+                            docs = [json.dumps(h.get('_source', {})) for h in hits]
+                            results.append({'index': index_name, 'document_count': len(docs), 'documents_json': docs, 'error': None})
+                            logger.info(f'[HEIST-03] ES (httpx) extracted {len(docs)} docs from {host}:{port}/{index_name}')
                     except Exception as e:
-                        results.append({
-                            'index': index_name,
-                            'document_count': None,
-                            'documents_json': None,
-                            'error': str(e),
-                        })
+                        results.append({'index': index_name, 'document_count': None, 'documents_json': None, 'error': str(e)})
             return results
         except Exception as e:
-            logger.warning(
-                f'[HEIST-03] ES extraction failed {host}:{port}: {e}'
-    )
+            logger.warning(f'[HEIST-03] ES extraction failed {host}:{port}: {e}')
             return []
 
-    async def scan_and_extract(
-        self, hosts: list[str],
-        extract_data: bool = True,
-        mongo_limit: int = 500,
-        redis_max_keys: int = 500,
-        es_limit: int = 100,
-    ) -> list[ExposedService]:
+    async def scan_and_extract(self, hosts: list[str], extract_data: bool=True, mongo_limit: int=500, redis_max_keys: int=500, es_limit: int=100) -> list[ExposedService]:
         """HEIST-03: Scan for exposed databases AND extract data.
 
         Extends scan_hosts() with native wire-protocol data extraction
@@ -1281,71 +879,40 @@ class DatabasePortScanner:
             List of ExposedService objects with extraction metadata populated.
         """
         findings = await self.scan_hosts(hosts)
-
         if not extract_data:
             return findings
-
-        # Phase 2: For each open MongoDB/Redis/ES instance, extract data
         for finding in findings:
             service_type = finding.service_type
             host = finding.host
             port = finding.port
-
             try:
                 if service_type in ('mongodb', ServiceType.MONGODB.value):
                     auth = await self.test_mongodb_auth(host, port)
                     finding.metadata['mongo_auth'] = auth
                     if auth.get('auth_required') is False:
-                        logger.info(
-                            f'[HEIST-03] Open MongoDB at {host}:{port} '
-                            f'— extracting data...'
-    )
-                        extracted = await self._try_extract_mongodb(
-                            host, port, mongo_limit
-    )
+                        logger.info(f'[HEIST-03] Open MongoDB at {host}:{port} — extracting data...')
+                        extracted = await self._try_extract_mongodb(host, port, mongo_limit)
                         finding.metadata['extracted_data'] = extracted
                         finding.metadata['extraction_method'] = 'rust_native_db'
-
                 elif service_type in ('redis', ServiceType.REDIS.value):
                     auth = await self.test_redis_auth(host, port)
                     finding.metadata['redis_auth'] = auth
                     if auth.get('auth_required') is False:
-                        logger.info(
-                            f'[HEIST-03] Open Redis at {host}:{port} '
-                            f'— extracting data...'
-    )
-                        extracted = await self._try_extract_redis(
-                            host, port, redis_max_keys
-    )
+                        logger.info(f'[HEIST-03] Open Redis at {host}:{port} — extracting data...')
+                        extracted = await self._try_extract_redis(host, port, redis_max_keys)
                         finding.metadata['extracted_data'] = extracted
                         finding.metadata['extraction_method'] = 'rust_native_db'
-
-                elif service_type in (
-                    'elasticsearch', ServiceType.ELASTICSEARCH.value
-                ):
+                elif service_type in ('elasticsearch', ServiceType.ELASTICSEARCH.value):
                     auth = await self.test_elasticsearch_auth(host, port)
                     finding.metadata['es_auth'] = auth
                     if auth.get('auth_required') is False:
-                        logger.info(
-                            f'[HEIST-03] Open Elasticsearch at {host}:{port} '
-                            f'— extracting data...'
-    )
-                        extracted = await self._try_extract_elasticsearch(
-                            host, port, es_limit
-    )
+                        logger.info(f'[HEIST-03] Open Elasticsearch at {host}:{port} — extracting data...')
+                        extracted = await self._try_extract_elasticsearch(host, port, es_limit)
                         finding.metadata['extracted_data'] = extracted
-                        finding.metadata['extraction_method'] = (
-                            'rust_native_db' if 'rust_native_db' not in str(
-                                extracted
-                            ) else 'httpx_fallback'
-    )
+                        finding.metadata['extraction_method'] = 'rust_native_db' if 'rust_native_db' not in str(extracted) else 'httpx_fallback'
             except Exception as e:
-                logger.warning(
-                    f'[HEIST-03] Extraction orchestration failed '
-                    f'{host}:{port}: {e}'
-    )
+                logger.warning(f'[HEIST-03] Extraction orchestration failed {host}:{port}: {e}')
                 finding.metadata['extraction_error'] = str(e)
-
         return findings
 
 class GraphQLIntrospector:
@@ -1387,14 +954,7 @@ class GraphQLIntrospector:
 
         async def check_with_base(endpoint: str) -> ExposedService | None:
             return await self._check_endpoint(f'{base_url}{endpoint}')
-
-        return await scan_parallel(
-            check_args=[(ep,) for ep in self.COMMON_ENDPOINTS],
-            checker=check_with_base,
-            label='exposed_service_hunter:graphql',
-            logger=logger,
-            log_success='Found GraphQL endpoint: {0}',  # First positional arg
-    )
+        return await scan_parallel(check_args=[(ep,) for ep in self.COMMON_ENDPOINTS], checker=check_with_base, label='exposed_service_hunter:graphql', logger=logger, log_success='Found GraphQL endpoint: {0}')
 
     async def _check_endpoint(self, url: str) -> ExposedService | None:
         """Check if a URL is a GraphQL endpoint with introspection enabled."""
@@ -1416,7 +976,7 @@ class GraphQLIntrospector:
                     text = await resp.text()
                     if 'introspection' in text.lower() or '__schema' in text.lower():
                         return ExposedService(service_type=ServiceType.GRAPHQL.value, host=urlparse(url).netloc, port=443 if url.startswith('https') else 80, exposure_type=ExposureType.PUBLIC.value, risk_level=RiskLevel.MEDIUM.value, metadata={'endpoint': url, 'introspection_enabled': False, 'note': 'GraphQL endpoint detected but introspection disabled'})
-        except httpx.HTTPError:  # noqa: BLE001
+        except httpx.HTTPError:
             pass
         except Exception as e:
             logger.debug(f'Error checking GraphQL endpoint {url}: {e}')
@@ -1543,13 +1103,7 @@ class ContainerAPIExplorer:
 
     async def scan_docker_apis(self, hosts: list[str], max_concurrent: int=20) -> list[ExposedService]:
         """Scan for exposed Docker APIs."""
-        return await scan_parallel(
-            check_args=[(h, p) for h in hosts for p in self.DOCKER_PORTS],
-            checker=lambda h, p: self._check_docker_api(h, p),
-            label='exposed_service_hunter:docker',
-            logger=logger,
-            log_success='Found exposed Docker API: {host}:{port}',
-    )
+        return await scan_parallel(check_args=[(h, p) for h in hosts for p in self.DOCKER_PORTS], checker=lambda h, p: self._check_docker_api(h, p), label='exposed_service_hunter:docker', logger=logger, log_success='Found exposed Docker API: {host}:{port}')
 
     async def _check_docker_api(self, host: str, port: int) -> ExposedService | None:
         """Check if a Docker API is exposed."""
@@ -1572,13 +1126,7 @@ class ContainerAPIExplorer:
 
     async def scan_kubernetes_apis(self, hosts: list[str], max_concurrent: int=20) -> list[ExposedService]:
         """Scan for exposed Kubernetes APIs."""
-        return await scan_parallel(
-            check_args=[(h, p) for h in hosts for p in self.KUBERNETES_PORTS],
-            checker=lambda h, p: self._check_kubernetes_api(h, p),
-            label='exposed_service_hunter:k8s',
-            logger=logger,
-            log_success='Found exposed Kubernetes API: {host}:{port}',
-    )
+        return await scan_parallel(check_args=[(h, p) for h in hosts for p in self.KUBERNETES_PORTS], checker=lambda h, p: self._check_kubernetes_api(h, p), label='exposed_service_hunter:k8s', logger=logger, log_success='Found exposed Kubernetes API: {host}:{port}')
 
     async def _check_kubernetes_api(self, host: str, port: int) -> ExposedService | None:
         """Check if a Kubernetes API is exposed."""
@@ -1593,7 +1141,7 @@ class ContainerAPIExplorer:
                         data = await resp.json()
                         if 'gitVersion' in data or 'major' in data:
                             return ExposedService(service_type=ServiceType.KUBERNETES.value, host=host, port=port, exposure_type=ExposureType.OPEN.value, risk_level=RiskLevel.CRITICAL.value, metadata={'version': data.get('gitVersion'), 'major': data.get('major'), 'minor': data.get('minor'), 'platform': data.get('platform'), 'endpoint': url})
-                    except Exception:  # noqa: BLE001
+                    except Exception:
                         pass
                 elif resp.status in [401, 403]:
                     text = await resp.text()
@@ -1616,28 +1164,10 @@ class SwaggerEnumerator:
     M1 Optimized: Minimal YAML parsing - extracts only endpoint paths and
     auth schemes, not full spec tree. Uses iterparse-style streaming for JSON.
     """
-    SWAGGER_PATHS: tuple[str, ...] = (
-        '/swagger.json',
-        '/openapi.json',
-        '/api-docs',
-        '/api-docs.json',
-        '/swagger/v1/swagger.json',
-        '/api/v1/docs',
-        '/api/v2/docs',
-        '/openapi.yaml',
-        '/swagger.yaml',
-        '/v2/api-docs',
-        '/v3/api-docs',
-        '/api/swagger.json',
-        '/api/openapi.json',
-        '/docs/swagger.json',
-        '/api/v1/swagger.json',
-        '/api/v2/openapi.json',
-        '/api/schema.json',
-    )
+    SWAGGER_PATHS: tuple[str, ...] = ('/swagger.json', '/openapi.json', '/api-docs', '/api-docs.json', '/swagger/v1/swagger.json', '/api/v1/docs', '/api/v2/docs', '/openapi.yaml', '/swagger.yaml', '/v2/api-docs', '/v3/api-docs', '/api/swagger.json', '/api/openapi.json', '/docs/swagger.json', '/api/v1/swagger.json', '/api/v2/openapi.json', '/api/schema.json')
     __slots__ = tuple(('_owned_session', 'session'))
 
-    def __init__(self, session: httpx.AsyncClient | None = None):
+    def __init__(self, session: httpx.AsyncClient | None=None):
         self.session = session
         self._owned_session = session is None
 
@@ -1651,7 +1181,7 @@ class SwaggerEnumerator:
             await self.session.close()
             self.session = None
 
-    async def discover_endpoints(self, base_url: str, max_concurrent: int = 10) -> list[ExposedService]:
+    async def discover_endpoints(self, base_url: str, max_concurrent: int=10) -> list[ExposedService]:
         """
         Discover Swagger/OpenAPI specification files on a target.
 
@@ -1669,46 +1199,24 @@ class SwaggerEnumerator:
 
         async def check_with_base(path: str) -> ExposedService | None:
             return await self._check_swagger_path(f'{base_url}{path}')
-
-        return await scan_parallel(
-            check_args=[(p,) for p in self.SWAGGER_PATHS],
-            checker=check_with_base,
-            label='exposed_service_hunter:swagger',
-            logger=logger,
-            log_success='Found Swagger/OpenAPI spec: {0}',
-    )
+        return await scan_parallel(check_args=[(p,) for p in self.SWAGGER_PATHS], checker=check_with_base, label='exposed_service_hunter:swagger', logger=logger, log_success='Found Swagger/OpenAPI spec: {0}')
 
     async def _check_swagger_path(self, url: str) -> ExposedService | None:
         """Check if a URL serves a valid Swagger/OpenAPI specification."""
         if not self.session:
             return None
         try:
-            # HEAD first to avoid downloading large specs unnecessarily
             async with self.session.head(url, follow_redirects=True, timeout=8) as head_resp:
                 if head_resp.status_code == 200:
                     content_type = head_resp.headers.get('content-type', '').lower()
-                    if any(ct in content_type for ct in ('json', 'yaml', 'x-yaml', 'octet-stream')):
+                    if any((ct in content_type for ct in ('json', 'yaml', 'x-yaml', 'octet-stream'))):
                         return await self._fetch_and_parse_spec(url)
                 elif head_resp.status_code == 405:
-                    # HEAD not allowed, try GET directly
                     return await self._fetch_and_parse_spec(url)
                 elif head_resp.status_code in (401, 403):
-                    # Spec present but access-restricted - still a finding
                     host = urlparse(url).netloc
-                    return ExposedService(
-                        service_type=ServiceType.SWAGGER.value,
-                        host=host,
-                        port=443 if url.startswith('https') else 80,
-                        exposure_type=ExposureType.PUBLIC.value,
-                        risk_level=RiskLevel.MEDIUM.value,
-                        metadata={
-                            'endpoint': url,
-                            'accessible': False,
-                            'status': head_resp.status_code,
-                            'note': 'Swagger/OpenAPI spec detected but access-restricted',
-                        },
-    )
-        except httpx.HTTPError:  # noqa: BLE001
+                    return ExposedService(service_type=ServiceType.SWAGGER.value, host=host, port=443 if url.startswith('https') else 80, exposure_type=ExposureType.PUBLIC.value, risk_level=RiskLevel.MEDIUM.value, metadata={'endpoint': url, 'accessible': False, 'status': head_resp.status_code, 'note': 'Swagger/OpenAPI spec detected but access-restricted'})
+        except httpx.HTTPError:
             pass
         except Exception as e:
             logger.debug(f'Error checking Swagger path {url}: {e}')
@@ -1726,7 +1234,7 @@ class SwaggerEnumerator:
                 if data is None:
                     return None
                 return self._build_exposed_service(url, data)
-        except httpx.HTTPError:  # noqa: BLE001
+        except httpx.HTTPError:
             pass
         except Exception as e:
             logger.debug(f'Error fetching Swagger spec {url}: {e}')
@@ -1763,7 +1271,7 @@ class SwaggerEnumerator:
         if isinstance(paths, dict):
             endpoints = list(paths.keys())[:50]
         auth_schemes = self._extract_auth_schemes(data)
-        return endpoints, auth_schemes, spec_version, title
+        return (endpoints, auth_schemes, spec_version, title)
 
     def _extract_auth_schemes(self, data: dict) -> list[str]:
         """Extract authentication schemes from spec data."""
@@ -1791,21 +1299,8 @@ class SwaggerEnumerator:
         base_path = '/'.join(url.split('/')[:3])
         risk = RiskLevel.HIGH.value
         if auth_schemes:
-            risk = RiskLevel.CRITICAL.value if any(
-                s and 'api' in str(s).lower() or 'bearer' in str(s).lower()
-                for s in auth_schemes
-            ) else RiskLevel.HIGH.value
-        return ExposedService(
-            service_type=ServiceType.SWAGGER.value,
-            host=host, port=port,
-            exposure_type=ExposureType.MISCONFIGURED.value,
-            risk_level=risk,
-            metadata={
-                'endpoint': url, 'spec_version': spec_version, 'title': title,
-                'endpoint_count': len(endpoints), 'sample_endpoints': endpoints[:20],
-                'auth_schemes': auth_schemes[:10], 'base_path': base_path,
-            },
-    )
+            risk = RiskLevel.CRITICAL.value if any((s and 'api' in str(s).lower() or 'bearer' in str(s).lower() for s in auth_schemes)) else RiskLevel.HIGH.value
+        return ExposedService(service_type=ServiceType.SWAGGER.value, host=host, port=port, exposure_type=ExposureType.MISCONFIGURED.value, risk_level=risk, metadata={'endpoint': url, 'spec_version': spec_version, 'title': title, 'endpoint_count': len(endpoints), 'sample_endpoints': endpoints[:20], 'auth_schemes': auth_schemes[:10], 'base_path': base_path})
 
     @staticmethod
     def _parse_yaml_minimal(text: str) -> dict | None:
@@ -1817,63 +1312,37 @@ class SwaggerEnumerator:
         Falls back to PyYAML only if regex extraction fails.
         """
         result: dict[str, Any] = {}
-        # Extract paths block
-        paths_match = re.search(
-            r'^paths:\s*\n((?:  \S.*\n)*)', text, re.MULTILINE
-    )
+        paths_match = re.search('^paths:\\s*\\n((?:  \\S.*\\n)*)', text, re.MULTILINE)
         if paths_match:
             paths_block = paths_match.group(1)
-            path_keys = re.findall(r'^  (/[^:]+):', paths_block, re.MULTILINE)
+            path_keys = re.findall('^  (/[^:]+):', paths_block, re.MULTILINE)
             if path_keys:
                 result['paths'] = {k: {} for k in path_keys}
-
-        # Extract version
-        version_match = re.search(
-            r'^(?:swagger|openapi):\s*["\']?([\d.]+)', text, re.MULTILINE
-    )
+        version_match = re.search('^(?:swagger|openapi):\\s*["\\\']?([\\d.]+)', text, re.MULTILINE)
         if version_match:
             result['openapi'] = version_match.group(1)
             result['swagger'] = version_match.group(1)
-
-        # Extract info block
-        info_match = re.search(
-            r"^info:\s*\n(?:^\s{2}title:\s*['\"]?([^\n'\"]+))",
-            text, re.MULTILINE,
-    )
+        info_match = re.search('^info:\\s*\\n(?:^\\s{2}title:\\s*[\'\\"]?([^\\n\'\\"]+))', text, re.MULTILINE)
         if info_match:
             result['info'] = {'title': info_match.group(1).strip()}
-
-        # Extract security schemes
         sec_schemes: dict[str, dict[str, str]] = {}
-        sec_block = re.search(
-            r'(?:securitySchemes|securityDefinitions):\s*\n((?:  \S[^\n]*\n(?:    \S[^\n]*\n)*)*)',
-            text, re.MULTILINE,
-    )
+        sec_block = re.search('(?:securitySchemes|securityDefinitions):\\s*\\n((?:  \\S[^\\n]*\\n(?:    \\S[^\\n]*\\n)*)*)', text, re.MULTILINE)
         if sec_block:
-            scheme_names = re.findall(r'^  (\S+):', sec_block.group(1), re.MULTILINE)
+            scheme_names = re.findall('^  (\\S+):', sec_block.group(1), re.MULTILINE)
             for name in scheme_names[:10]:
-                type_match = re.search(
-                    rf'^  {re.escape(name)}:\s*\n    type:\s*(\S+)',
-                    sec_block.group(1), re.MULTILINE,
-    )
+                type_match = re.search(f'^  {re.escape(name)}:\\s*\\n    type:\\s*(\\S+)', sec_block.group(1), re.MULTILINE)
                 if type_match:
                     sec_schemes[name] = {'type': type_match.group(1)}
             if sec_schemes:
                 result['securitySchemes'] = sec_schemes
-
-        # If regex couldn't extract anything useful, try full PyYAML parse
         if not result.get('paths'):
             try:
                 import yaml
                 data = yaml.safe_load(text)
                 if isinstance(data, dict):
-                    result = {k: v for k, v in data.items()
-                              if k in ('paths', 'info', 'openapi', 'swagger',
-                                       'security', 'components',
-                                       'securityDefinitions')}
-            except Exception:  # noqa: BLE001
+                    result = {k: v for k, v in data.items() if k in ('paths', 'info', 'openapi', 'swagger', 'security', 'components', 'securityDefinitions')}
+            except Exception:
                 pass
-
         return result if result else None
 
     async def parse_spec_endpoints(self, url: str) -> dict[str, Any]:
@@ -1889,13 +1358,7 @@ class SwaggerEnumerator:
         Returns:
             Dict with 'endpoints', 'auth_schemes', 'version', 'title'
         """
-        result: dict[str, Any] = {
-            'endpoints': [],
-            'auth_schemes': [],
-            'version': 'unknown',
-            'title': 'unknown',
-            'base_url': '/'.join(url.split('/')[:3]),
-        }
+        result: dict[str, Any] = {'endpoints': [], 'auth_schemes': [], 'version': 'unknown', 'title': 'unknown', 'base_url': '/'.join(url.split('/')[:3])}
         if not self.session:
             return result
         try:
@@ -1907,31 +1370,21 @@ class SwaggerEnumerator:
                     data = json.loads(text)
                 except json.JSONDecodeError:
                     data = self._parse_yaml_minimal(text)
-
                 if isinstance(data, dict):
                     result['version'] = data.get('swagger') or data.get('openapi', 'unknown')
                     info = data.get('info', {})
                     if isinstance(info, dict):
                         result['title'] = info.get('title', 'unknown')
-
                     paths = data.get('paths', {})
                     if isinstance(paths, dict):
                         for path, methods in paths.items():
                             if isinstance(methods, dict):
-                                http_methods = [
-                                    m.upper() for m in methods
-                                    if m.lower() in ('get', 'post', 'put', 'delete',
-                                                     'patch', 'options', 'head')
-                                ]
+                                http_methods = [m.upper() for m in methods if m.lower() in ('get', 'post', 'put', 'delete', 'patch', 'options', 'head')]
                                 for method in http_methods:
-                                    result['endpoints'].append({
-                                        'path': path,
-                                        'method': method,
-                                    })
+                                    result['endpoints'].append({'path': path, 'method': method})
         except Exception as e:
             logger.debug(f'Error parsing spec endpoints {url}: {e}')
         return result
-
 
 class GitExposer:
     """
@@ -1952,26 +1405,16 @@ class GitExposer:
     - Can reveal commit history, file contents, secrets
     - Even without listing, packfile access is a finding
     """
-    GIT_PATHS = (
-        '.git/HEAD',
-        '.git/config',
-        '.git/packed-refs',
-        '.git/objects/pack/',
-        '.git/refs/heads/',
-        '.git/index',
-    )
-
-    # Packfile magic bytes (Git pack format v2)
+    GIT_PATHS = ('.git/HEAD', '.git/config', '.git/packed-refs', '.git/objects/pack/', '.git/refs/heads/', '.git/index')
     PACKFILE_MAGIC = b'PACK'
-    PACKFILE_MIN_HEADER = 12  # 8-byte header + 4-byte footer signature
+    PACKFILE_MIN_HEADER = 12
+    _RE_GIT_HEAD = re.compile('^ref:\\s*refs/heads/(\\S+)$', re.MULTILINE)
+    _RE_GIT_COMMIT = re.compile('\\b[0-9a-f]{40}\\b')
+    _RE_GIT_EMAIL = re.compile('[\\w.+-]+@[\\w.-]+\\.[a-zA-Z]{2,}')
+    _RE_GIT_EMAIL_QUOTED = re.compile('"([\\w.+-]+@[\\w.-]+\\.[a-zA-Z]{2,})"')
+    __slots__ = ('session',)
 
-    _RE_GIT_HEAD = re.compile(r'^ref:\s*refs/heads/(\S+)$', re.MULTILINE)
-    _RE_GIT_COMMIT = re.compile(r'\b[0-9a-f]{40}\b')
-    _RE_GIT_EMAIL = re.compile(r'[\w.+-]+@[\w.-]+\.[a-zA-Z]{2,}')
-    # Quoted email pattern for git config (e.g., "user" = "name <email@domain.com>")
-    _RE_GIT_EMAIL_QUOTED = re.compile(r'"([\w.+-]+@[\w.-]+\.[a-zA-Z]{2,})"')
-
-    def __init__(self, session: httpx.AsyncClient | None = None):
+    def __init__(self, session: httpx.AsyncClient | None=None):
         """Initialize GitExposer with optional session."""
         self.session: httpx.AsyncClient | None = session
 
@@ -1985,41 +1428,26 @@ class GitExposer:
         
         Returns dict with packfile analysis results.
         """
-        packfile_info: dict[str, Any] = {
-            'detected': False,
-            'count': 0,
-            'total_objects': 0,
-            'versions': set(),
-        }
-        
+        packfile_info: dict[str, Any] = {'detected': False, 'count': 0, 'total_objects': 0, 'versions': set()}
         if not self.session:
             return packfile_info
-        
         base = base.rstrip('/')
-        # Try to fetch packfile list from objects/pack/ directory
         pack_url = f'{base}/.git/objects/pack/'
-        
         try:
             async with self.session.get(pack_url, timeout=10, follow_redirects=True) as resp:
                 if resp.status != 200:
                     return packfile_info
-                
                 text = resp.text or ''
-                # Extract .pack file names from directory listing
-                pack_files = re.findall(r'pack-([a-f0-9]{40})\.pack', text, re.IGNORECASE)
+                pack_files = re.findall('pack-([a-f0-9]{40})\\.pack', text, re.IGNORECASE)
                 packfile_info['count'] = len(pack_files)
                 packfile_info['detected'] = len(pack_files) > 0
-                
                 if pack_files:
-                    # Analyze first packfile for header info
                     sample_pack = pack_files[0]
                     header_info = await self._fetch_packfile_header(base, sample_pack)
                     if header_info:
                         packfile_info.update(header_info)
-                        
-        except Exception:  # noqa: BLE001
+        except Exception:
             pass
-        
         return packfile_info
 
     async def _fetch_packfile_header(self, base: str, pack_hash: str) -> dict[str, Any]:
@@ -2030,42 +1458,24 @@ class GitExposer:
         - 4 bytes: version (2 or 3)
         - 4 bytes: number of objects (big-endian)
         """
-        info: dict[str, Any] = {
-            'total_objects': 0,
-            'versions': set(),
-        }
-        
+        info: dict[str, Any] = {'total_objects': 0, 'versions': set()}
         if not self.session:
             return info
-        
         pack_url = f'{base}/.git/objects/pack/pack-{pack_hash}.pack'
-        
         try:
-            # Only fetch first 16 bytes for header analysis
-            async with self.session.get(
-                pack_url, 
-                timeout=10, 
-                follow_redirects=True,
-                headers={'Range': 'bytes=0-15'}
-            ) as resp:
+            async with self.session.get(pack_url, timeout=10, follow_redirects=True, headers={'Range': 'bytes=0-15'}) as resp:
                 if resp.status not in (200, 206):
                     return info
-                
                 content = resp.content
                 if len(content) < 12:
                     return info
-                
-                # Check PACK magic
                 if content[:4] == b'PACK':
                     info['versions'].add(int.from_bytes(content[4:8], 'big'))
                     info['total_objects'] = int.from_bytes(content[8:12], 'big')
-                    # Cap object count for safety
                     if info['total_objects'] > 1000000:
                         info['total_objects'] = 1000000
-                        
-        except Exception:  # noqa: BLE001
+        except Exception:
             pass
-        
         info['versions'] = list(info['versions'])
         return info
 
@@ -2073,26 +1483,21 @@ class GitExposer:
         """Check if a URL exposes a git repository."""
         if not self.session:
             return None
-
         base = base_url.rstrip('/')
         git_info: dict[str, Any] = {}
         found_files: list[str] = []
-
         for path in self.GIT_PATHS:
             try:
-                url = f'{base}/.git/{path.lstrip(".git/")}'
+                url = f"{base}/.git/{path.lstrip('.git/')}"
                 async with self.session.get(url, timeout=10, follow_redirects=True) as resp:
                     if resp.status == 200:
                         found_files.append(path)
                         content = resp.text[:4096] if resp.text else ''
-                        git_info[path] = content[:500]  # Truncate for safety
-            except Exception:  # noqa: BLE001
+                        git_info[path] = content[:500]
+            except Exception:
                 pass
-
         if not found_files:
             return None
-
-        # Analyze .git/HEAD
         is_git_repo = False
         branch = None
         if '.git/HEAD' in git_info:
@@ -2102,64 +1507,28 @@ class GitExposer:
                 is_git_repo = True
                 branch = match.group(1)
             elif self._RE_GIT_COMMIT.search(head_content):
-                # Detached HEAD
                 is_git_repo = True
-
         if not is_git_repo:
             return None
-
-        # Extract emails from .git/config (both standard and quoted formats)
         emails = []
         if '.git/config' in git_info:
             config_text = git_info.get('.git/config', '')
-            # Standard email format: user@domain.com
             emails.extend(self._RE_GIT_EMAIL.findall(config_text)[:3])
-            # Quoted email format: "name <email@domain.com>"
             emails.extend(self._RE_GIT_EMAIL_QUOTED.findall(config_text)[:3])
-            # Deduplicate and limit
             emails = list(dict.fromkeys(emails))[:5]
-
-        # Check for packfiles with header analysis
         has_packfiles = '.git/objects/pack/' in found_files
         packfile_count = len([f for f in found_files if 'pack' in f])
         packfile_info = await self._analyze_packfiles(base) if has_packfiles else {}
-
-        # Determine risk level
         risk = RiskLevel.HIGH.value
         if emails or has_packfiles:
             risk = RiskLevel.CRITICAL.value
         elif len(found_files) >= 3:
             risk = RiskLevel.HIGH.value
-
-        # Elevate risk based on packfile analysis
         if packfile_info.get('detected') and packfile_info.get('total_objects', 0) > 1000:
             risk = RiskLevel.CRITICAL.value
-
         host = urlparse(base).netloc
         port = 443 if base.startswith('https') else 80
-
-        return ExposedService(
-            service_type='git_repo',
-            host=host,
-            port=port,
-            exposure_type=ExposureType.LEAKED.value,
-            risk_level=risk,
-            metadata={
-                'url': base,
-                'files_exposed': found_files,
-                'branch': branch,
-                'emails_found': emails,
-                'has_packfiles': has_packfiles,
-                'packfile_count': packfile_count,
-                'packfile_analysis': packfile_info,
-                'forensics': {
-                    'git_head': git_info.get('.git/HEAD', '')[:200],
-                    'git_config': git_info.get('.git/config', '')[:500],
-                    'packed_refs': git_info.get('.git/packed-refs', '')[:500] if '.git/packed-refs' in git_info else None,
-                }
-            }
-    )
-
+        return ExposedService(service_type='git_repo', host=host, port=port, exposure_type=ExposureType.LEAKED.value, risk_level=risk, metadata={'url': base, 'files_exposed': found_files, 'branch': branch, 'emails_found': emails, 'has_packfiles': has_packfiles, 'packfile_count': packfile_count, 'packfile_analysis': packfile_info, 'forensics': {'git_head': git_info.get('.git/HEAD', '')[:200], 'git_config': git_info.get('.git/config', '')[:500], 'packed_refs': git_info.get('.git/packed-refs', '')[:500] if '.git/packed-refs' in git_info else None}})
 
 class DirectoryListingDetector:
     """
@@ -2184,56 +1553,12 @@ class DirectoryListingDetector:
     M1 Optimized: Regex-first detection (no DOM parsing), bounded response
     body scan (first 8KB only), async semaphore-gated concurrency.
     """
-    DIR_LIST_PATHS: tuple[str, ...] = (
-        '/',
-        '/backup/',
-        '/backups/',
-        '/archive/',
-        '/archives/',
-        '/logs/',
-        '/log/',
-        '/tmp/',
-        '/temp/',
-        '/data/',
-        '/dump/',
-        '/dumps/',
-        '/export/',
-        '/exports/',
-        '/db/',
-        '/database/',
-        '/config/',
-        '/conf/',
-        '/.git/',
-        '/.svn/',
-        '/.hg/',
-        '/wp-content/uploads/',
-        '/uploads/',
-        '/files/',
-        '/assets/',
-    )
-    # Regex patterns that indicate directory listing
-    DIR_LISTING_PATTERNS: tuple[re.Pattern, ...] = (
-        re.compile(r'<title>\s*Index\s+of\s+/', re.IGNORECASE),
-        re.compile(r'<title>\s*Directory\s+listing\s+for\s+/', re.IGNORECASE),
-        re.compile(r'<h1>\s*Index\s+of\s+/', re.IGNORECASE),
-        re.compile(r'\[To\s+Parent\s+Directory\]', re.IGNORECASE),
-        re.compile(r'<a\s+href="[^"]*">\s*Parent\s+Directory\s*</a>', re.IGNORECASE),
-        re.compile(r'<th[^>]*>\s*Name\s*</th>.*<th[^>]*>\s*(?:Last\s+modified|Date)\s*</th>', re.IGNORECASE | re.DOTALL),
-        re.compile(r'<th[^>]*>\s*Size\s*</th>', re.IGNORECASE),
-    )
-    # Suspicious file extensions found in directory listings
-    SENSITIVE_EXTENSIONS: tuple[str, ...] = (
-        '.bak', '.backup', '.old', '.orig', '.swp', '.swo',
-        '.env', '.config', '.ini', '.cfg', '.conf', '.yaml', '.yml',
-        '.log', '.sql', '.sql.gz', '.dump', '.pgsql',
-        '.zip', '.tar', '.tar.gz', '.tgz', '.7z', '.rar',
-        '.pem', '.key', '.crt', '.cer', '.p12', '.pfx',
-        '.htpasswd', '.htaccess', '.passwd', '.shadow',
-        '.DS_Store', '.gitignore', '.dockerignore',
-    )
+    DIR_LIST_PATHS: tuple[str, ...] = ('/', '/backup/', '/backups/', '/archive/', '/archives/', '/logs/', '/log/', '/tmp/', '/temp/', '/data/', '/dump/', '/dumps/', '/export/', '/exports/', '/db/', '/database/', '/config/', '/conf/', '/.git/', '/.svn/', '/.hg/', '/wp-content/uploads/', '/uploads/', '/files/', '/assets/')
+    DIR_LISTING_PATTERNS: tuple[re.Pattern, ...] = (re.compile('<title>\\s*Index\\s+of\\s+/', re.IGNORECASE), re.compile('<title>\\s*Directory\\s+listing\\s+for\\s+/', re.IGNORECASE), re.compile('<h1>\\s*Index\\s+of\\s+/', re.IGNORECASE), re.compile('\\[To\\s+Parent\\s+Directory\\]', re.IGNORECASE), re.compile('<a\\s+href="[^"]*">\\s*Parent\\s+Directory\\s*</a>', re.IGNORECASE), re.compile('<th[^>]*>\\s*Name\\s*</th>.*<th[^>]*>\\s*(?:Last\\s+modified|Date)\\s*</th>', re.IGNORECASE | re.DOTALL), re.compile('<th[^>]*>\\s*Size\\s*</th>', re.IGNORECASE))
+    SENSITIVE_EXTENSIONS: tuple[str, ...] = ('.bak', '.backup', '.old', '.orig', '.swp', '.swo', '.env', '.config', '.ini', '.cfg', '.conf', '.yaml', '.yml', '.log', '.sql', '.sql.gz', '.dump', '.pgsql', '.zip', '.tar', '.tar.gz', '.tgz', '.7z', '.rar', '.pem', '.key', '.crt', '.cer', '.p12', '.pfx', '.htpasswd', '.htaccess', '.passwd', '.shadow', '.DS_Store', '.gitignore', '.dockerignore')
     __slots__ = tuple(('_owned_session', 'session', '_git_exposer'))
 
-    def __init__(self, session: httpx.AsyncClient | None = None):
+    def __init__(self, session: httpx.AsyncClient | None=None):
         self.session = session
         self._owned_session = session is None
         self._git_exposer = GitExposer()
@@ -2249,11 +1574,7 @@ class DirectoryListingDetector:
             await self.session.close()
             self.session = None
 
-    async def scan_urls(
-        self,
-        urls: list[str],
-        max_concurrent: int = 10,
-    ) -> list[ExposedService]:
+    async def scan_urls(self, urls: list[str], max_concurrent: int=10) -> list[ExposedService]:
         """
         Scan a list of URLs for directory listing exposure.
 
@@ -2276,7 +1597,7 @@ class DirectoryListingDetector:
         async def _check_url_combo(base_url: str, subpath: str) -> ExposedService | None:
             async with semaphore:
                 try:
-                    full_url = f'{base_url.rstrip("/")}{subpath}'
+                    full_url = f"{base_url.rstrip('/')}{subpath}"
                     result = await self._check_directory_listing(full_url)
                     if result:
                         logger.info(f'Found directory listing: {full_url}')
@@ -2284,19 +1605,14 @@ class DirectoryListingDetector:
                 except Exception as e:
                     logger.debug(f'Error checking directory {base_url}{subpath}: {e}')
                 return None
-
         tasks: list = []
         for base_url in urls:
             for subpath in self.DIR_LIST_PATHS:
                 tasks.append(_check_url_combo(base_url, subpath))
-
         results = await parallel_ok(*tasks, label='exposed_service_hunter:dir_list_scan')
         for result in results:
             if result:
                 findings.append(result)
-
-        # 1.7 FIX: Perform git forensics on discovered URLs
-        # This catches git repos that don't expose via "Index of" listing
         for base_url in urls:
             try:
                 git_result = await self._git_exposer.check_git_exposure(base_url)
@@ -2305,14 +1621,9 @@ class DirectoryListingDetector:
                     findings.append(git_result)
             except Exception as e:
                 logger.debug(f'Error checking git exposure for {base_url}: {e}')
-
         return findings
 
-    async def scan_host(
-        self,
-        base_url: str,
-        max_concurrent: int = 10,
-    ) -> list[ExposedService]:
+    async def scan_host(self, base_url: str, max_concurrent: int=10) -> list[ExposedService]:
         """Scan a single host for directory listings."""
         return await self.scan_urls([base_url], max_concurrent)
 
@@ -2321,17 +1632,13 @@ class DirectoryListingDetector:
         if not self.session:
             return None
         try:
-            # Use Range header to limit response to first 8KB
             headers = {'Range': 'bytes=0-8191'}
             async with self.session.get(url, headers=headers, follow_redirects=True, timeout=10) as resp:
-                # Accept 200, 206 (partial content), or any success indicating content
                 if resp.status_code not in (200, 206, 301, 302):
                     return None
                 text = (resp.text or '')[:8192]
                 if not text or len(text) < 100:
                     return None
-
-                # Check for directory listing patterns
                 is_dir_listing = False
                 matched_patterns: list[str] = []
                 for pattern in self.DIR_LISTING_PATTERNS:
@@ -2339,18 +1646,11 @@ class DirectoryListingDetector:
                         is_dir_listing = True
                         matched_patterns.append(pattern.pattern[:60])
                         break
-
                 if not is_dir_listing:
                     return None
-
-                # Count sensitive files in the listing
                 sensitive_files: list[str] = []
                 total_files = 0
-                # Extract filenames from href attributes
-                file_links = re.findall(
-                    r'<a[^>]+href="([^"]+)"[^>]*>([^<]+)</a>',
-                    text, re.IGNORECASE,
-    )
+                file_links = re.findall('<a[^>]+href="([^"]+)"[^>]*>([^<]+)</a>', text, re.IGNORECASE)
                 for href, display in file_links:
                     if href in ('/', '..', '../', './'):
                         continue
@@ -2360,42 +1660,21 @@ class DirectoryListingDetector:
                         if href_lower.endswith(ext):
                             sensitive_files.append(href)
                             break
-
-                # Determine risk level based on what's exposed
                 risk = RiskLevel.MEDIUM.value
-                if any(f.endswith(('.pem', '.key', '.crt', '.env', '.htpasswd'))
-                       for f in sensitive_files):
+                if any((f.endswith(('.pem', '.key', '.crt', '.env', '.htpasswd')) for f in sensitive_files)):
                     risk = RiskLevel.CRITICAL.value
-                elif any(f.endswith(('.sql', '.dump', '.backup', '.bak'))
-                         for f in sensitive_files):
+                elif any((f.endswith(('.sql', '.dump', '.backup', '.bak')) for f in sensitive_files)):
                     risk = RiskLevel.HIGH.value
                 elif sensitive_files:
                     risk = RiskLevel.MEDIUM.value
-
                 host = urlparse(url).netloc
                 port = 443 if url.startswith('https') else 80
-
-                return ExposedService(
-                    service_type=ServiceType.DIRECTORY_LISTING.value,
-                    host=host,
-                    port=port,
-                    exposure_type=ExposureType.MISCONFIGURED.value,
-                    risk_level=risk,
-                    metadata={
-                        'url': url,
-                        'total_files_visible': total_files,
-                        'sensitive_files_count': len(sensitive_files),
-                        'sensitive_files': sensitive_files[:20],
-                        'match_pattern': matched_patterns[0] if matched_patterns else None,
-                        'server': resp.headers.get('server', 'unknown'),
-                    },
-    )
-        except httpx.HTTPError:  # noqa: BLE001
+                return ExposedService(service_type=ServiceType.DIRECTORY_LISTING.value, host=host, port=port, exposure_type=ExposureType.MISCONFIGURED.value, risk_level=risk, metadata={'url': url, 'total_files_visible': total_files, 'sensitive_files_count': len(sensitive_files), 'sensitive_files': sensitive_files[:20], 'match_pattern': matched_patterns[0] if matched_patterns else None, 'server': resp.headers.get('server', 'unknown')})
+        except httpx.HTTPError:
             pass
         except Exception as e:
             logger.debug(f'Error checking directory listing {url}: {e}')
         return None
-
 
 class ExposedServiceHunter:
     """
@@ -2419,11 +1698,7 @@ class ExposedServiceHunter:
         >>> results = await hunter.hunt("example.com")
         >>> print(f"Found {len(results['s3_buckets'])} S3 buckets")
     """
-    __slots__ = tuple((
-        '_container_explorer', '_ct_logs', '_db_scanner',
-        '_dir_listing_detector', '_graphql_introspector',
-        '_s3_enumerator', '_swagger_enumerator', 'session',
-    ))
+    __slots__ = tuple(('_container_explorer', '_ct_logs', '_db_scanner', '_dir_listing_detector', '_graphql_introspector', '_s3_enumerator', '_swagger_enumerator', 'session'))
 
     def __init__(self):
         self.session: httpx.AsyncClient | None = None
@@ -2437,10 +1712,7 @@ class ExposedServiceHunter:
 
     async def __aenter__(self):
         """Async context manager entry."""
-        self.session = httpx.AsyncClient(
-            timeout=httpx.Timeout(total=30),
-            limits=httpx.Limits(max_connections=100, max_keepalive_connections=20),
-    )
+        self.session = httpx.AsyncClient(timeout=httpx.Timeout(total=30), limits=httpx.Limits(max_connections=100, max_keepalive_connections=20))
         self._s3_enumerator = S3BucketEnumerator(self.session)
         self._graphql_introspector = GraphQLIntrospector(self.session)
         self._ct_logs = CertificateTransparency(self.session)
@@ -2583,16 +1855,7 @@ class ExposedServiceHunter:
         Returns:
             Dictionary with categorized findings
         """
-        results: dict[str, list[ExposedService]] = {
-            's3_buckets': [],
-            'databases': [],
-            'graphql': [],
-            'certificates': [],
-            'container_apis': [],
-            'swagger': [],
-            'directory_listings': [],
-            'all': [],
-        }
+        results: dict[str, list[ExposedService]] = {'s3_buckets': [], 'databases': [], 'graphql': [], 'certificates': [], 'container_apis': [], 'swagger': [], 'directory_listings': [], 'all': []}
         logger.info(f'Starting exposed service hunt for: {target}')
         domain = target.replace('https://', '').replace('http://', '').split('/')[0]
         try:
@@ -2645,7 +1908,6 @@ class ExposedServiceHunter:
             results['swagger'] = swagger_findings
             results['all'].extend(swagger_findings)
             logger.info(f'Found {len(swagger_findings)} Swagger/OpenAPI specs')
-            # Also check HTTP if HTTPS is available
             if base_url.startswith('https://'):
                 http_url = base_url.replace('https://', 'http://')
                 http_swagger = await self.discover_swagger_endpoints(http_url)
@@ -2659,7 +1921,6 @@ class ExposedServiceHunter:
             results['directory_listings'] = dir_findings
             results['all'].extend(dir_findings)
             logger.info(f'Found {len(dir_findings)} directory listings')
-            # Also check HTTP version
             http_dir_findings = await self.detect_directory_listings(f'http://{domain}')
             results['directory_listings'].extend(http_dir_findings)
             results['all'].extend(http_dir_findings)
@@ -2670,18 +1931,7 @@ class ExposedServiceHunter:
 
     def get_statistics(self) -> dict[str, Any]:
         """Get hunter statistics."""
-        return {
-            'session_active': self.session is not None,
-            'components': {
-                's3_enumerator': self._s3_enumerator is not None,
-                'db_scanner': True,
-                'graphql_introspector': self._graphql_introspector is not None,
-                'ct_logs': self._ct_logs is not None,
-                'container_explorer': self._container_explorer is not None,
-                'swagger_enumerator': self._swagger_enumerator is not None,
-                'dir_listing_detector': self._dir_listing_detector is not None,
-            },
-        }
+        return {'session_active': self.session is not None, 'components': {'s3_enumerator': self._s3_enumerator is not None, 'db_scanner': True, 'graphql_introspector': self._graphql_introspector is not None, 'ct_logs': self._ct_logs is not None, 'container_explorer': self._container_explorer is not None, 'swagger_enumerator': self._swagger_enumerator is not None, 'dir_listing_detector': self._dir_listing_detector is not None}}
 
 class APICache:
     """
@@ -2762,13 +2012,13 @@ class APICache:
     def __exit__(self, exc_type, exc, tb) -> None:
         try:
             self.close()
-        except Exception:  # noqa: BLE001
+        except Exception:
             pass
 
     def __del__(self) -> None:
         try:
             self._conn.close()
-        except Exception:  # noqa: BLE001
+        except Exception:
             pass
 
 async def search_shodan(query: str, api_key: str | None=None) -> list[dict[str, Any]]:
@@ -2800,7 +2050,7 @@ async def search_shodan(query: str, api_key: str | None=None) -> list[dict[str, 
             logger.info(f'Shodan cache hit for query: {query}')
             cache.close()
             return results
-        except json.JSONDecodeError:  # noqa: BLE001
+        except json.JSONDecodeError:
             pass
     timeout = httpx.Timeout(total=30)
     try:
@@ -2863,7 +2113,7 @@ async def search_censys(query: str, api_id: str | None=None, api_secret: str | N
             logger.info(f'Censys cache hit for query: {query}')
             cache.close()
             return results
-        except json.JSONDecodeError:  # noqa: BLE001
+        except json.JSONDecodeError:
             pass
     timeout = httpx.Timeout(total=30)
     try:
@@ -2920,11 +2170,6 @@ async def scan_graphql_endpoint(url: str) -> dict | None:
         result = await introspector._check_endpoint(url)
         return result.to_dict() if result else None
 
-
-# =============================================================================
-# ISSUE [ULTIMATE]-004: Banner-to-CVE Pipeline
-# =============================================================================
-
 class BannerParser:
     """
     Parse service banners to extract technology and version information.
@@ -2941,62 +2186,13 @@ class BannerParser:
         - Docker/Kubernetes API responses
         - TLS certificate Subject/CN fields
     """
-
-    # Banner regex patterns: (tech_name, version_group, pattern)
-    _BANNER_PATTERNS: list[tuple[str, str, re.Pattern]] = [
-        # HTTP Servers
-        (r'nginx', r'nginx(?:/|\\s)([\d.]+)', None),
-        (r'Apache', r'Apache/([\d.]+)', None),
-        (r'Apache', r'Apache-Coyote/([\d.]+)', None),
-        (r'microsoft-iis', r'Microsoft-IIS/([\d.]+)', None),
-        (r'lighttpd', r'lighttpd/([\d.]+)', None),
-        (r'OpenBSD httpd', r'Server: OpenBSD httpd', None),
-
-        # SSH
-        (r'OpenSSH', r'SSH-[\d.]+-OpenSSH_([\d.]+)', None),
-        (r'OpenSSH', r'OpenSSH_([\d.]+)', None),
-
-        # Mail Servers
-        (r'Postfix', r'Postfix', None),
-        (r'Exim', r'Exim ([\d.]+)', None),
-        (r'Sendmail', r'Sendmail', None),
-        (r'Dovecot', r'Dovecot ([\d.]+)', None),
-
-        # Databases
-        (r'MySQL', r'mysql[\s]+([\d.]+)', None),
-        (r'MySQL', r'MySQL Community Server ([\d.]+)', None),
-        (r'PostgreSQL', r'PostgreSQL ([\d.]+)', None),
-        (r'PostgreSQL', r'pg[\s]+([\d.]+)', None),
-        (r'Redis', r'Redis ([\d.]+)', None),
-        (r'MongoDB', r'MongoDB ([\d.]+)', None),
-        (r'Elasticsearch', r'elasticsearch/([\d.]+)', None),
-
-        # Containers
-        (r'Docker', r'Docker', None),
-        (r'Kubernetes', r'kubernetes', None),
-
-        # Web Frameworks
-        (r'PHP', r'PHP/([\d.]+)', None),
-        (r'Node.js', r'Node\.js', None),
-        (r'Django', r'Django', None),
-        (r'Flask', r'Flask', None),
-
-        # FTP
-        (r'vsftpd', r'vsftpd ([\d.]+)', None),
-        (r'ProFTPD', r'ProFTPD ([\d.]+)', None),
-
-        # VPN
-        (r'OpenVPN', r'OpenVPN', None),
-    ]
+    _BANNER_PATTERNS: list[tuple[str, str, re.Pattern]] = [('nginx', 'nginx(?:/|\\\\s)([\\d.]+)', None), ('Apache', 'Apache/([\\d.]+)', None), ('Apache', 'Apache-Coyote/([\\d.]+)', None), ('microsoft-iis', 'Microsoft-IIS/([\\d.]+)', None), ('lighttpd', 'lighttpd/([\\d.]+)', None), ('OpenBSD httpd', 'Server: OpenBSD httpd', None), ('OpenSSH', 'SSH-[\\d.]+-OpenSSH_([\\d.]+)', None), ('OpenSSH', 'OpenSSH_([\\d.]+)', None), ('Postfix', 'Postfix', None), ('Exim', 'Exim ([\\d.]+)', None), ('Sendmail', 'Sendmail', None), ('Dovecot', 'Dovecot ([\\d.]+)', None), ('MySQL', 'mysql[\\s]+([\\d.]+)', None), ('MySQL', 'MySQL Community Server ([\\d.]+)', None), ('PostgreSQL', 'PostgreSQL ([\\d.]+)', None), ('PostgreSQL', 'pg[\\s]+([\\d.]+)', None), ('Redis', 'Redis ([\\d.]+)', None), ('MongoDB', 'MongoDB ([\\d.]+)', None), ('Elasticsearch', 'elasticsearch/([\\d.]+)', None), ('Docker', 'Docker', None), ('Kubernetes', 'kubernetes', None), ('PHP', 'PHP/([\\d.]+)', None), ('Node.js', 'Node\\.js', None), ('Django', 'Django', None), ('Flask', 'Flask', None), ('vsftpd', 'vsftpd ([\\d.]+)', None), ('ProFTPD', 'ProFTPD ([\\d.]+)', None), ('OpenVPN', 'OpenVPN', None)]
 
     @classmethod
     def _init_patterns(cls) -> None:
         """Lazily initialize compiled regex patterns."""
         if cls._BANNER_PATTERNS[0][2] is None:
-            cls._BANNER_PATTERNS = [
-                (tech, ver, re.compile(pat, re.IGNORECASE))
-                for tech, ver, _ in cls._BANNER_PATTERNS
-            ]
+            cls._BANNER_PATTERNS = [(tech, ver, re.compile(pat, re.IGNORECASE)) for tech, ver, _ in cls._BANNER_PATTERNS]
 
     @classmethod
     def parse_banner(cls, banner: str) -> list[tuple[str, str | None]]:
@@ -3012,22 +2208,17 @@ class BannerParser:
         cls._init_patterns()
         results: list[tuple[str, str | None]] = []
         seen: set[str] = set()
-
         for tech, ver_pat, pattern in cls._BANNER_PATTERNS:
             match = pattern.search(banner)
             if match:
-                key = f"{tech}:{match.group(1) if match.lastindex else ''}"
+                key = f"{tech}:{(match.group(1) if match.lastindex else '')}"
                 if key in seen:
                     continue
                 seen.add(key)
-
                 version = match.group(1) if match.lastindex else None
                 results.append((tech, version))
-
-                # Also add without version for broad matching
                 if tech.lower() not in [r[0].lower() for r in results]:
                     results.append((tech, None))
-
         return results
 
     @classmethod
@@ -3042,37 +2233,29 @@ class BannerParser:
         """
         results: list[tuple[str, str | None]] = []
         seen: set[str] = set()
-
-        # Server header
         server = headers.get('server', '')
         if server:
             for tech, ver, pattern in cls._BANNER_PATTERNS:
                 if pattern.search(server):
-                    key = f"{tech}:{ver}"
+                    key = f'{tech}:{ver}'
                     if key in seen:
                         continue
                     seen.add(key)
                     version = pattern.search(server)
                     ver = version.group(1) if version and version.lastindex else None
                     results.append((tech, ver))
-
-        # X-Powered-By
         powered_by = headers.get('x-powered-by', '')
         if powered_by:
             if 'PHP' in powered_by:
-                match = re.search(r'PHP[/\s]([\d.]+)', powered_by, re.IGNORECASE)
+                match = re.search('PHP[/\\s]([\\d.]+)', powered_by, re.IGNORECASE)
                 results.append(('PHP', match.group(1) if match else None))
             elif 'ASP.NET' in powered_by:
-                match = re.search(r'ASP\.NET[\s]([\d.]+)', powered_by, re.IGNORECASE)
+                match = re.search('ASP\\.NET[\\s]([\\d.]+)', powered_by, re.IGNORECASE)
                 results.append(('ASP.NET', match.group(1) if match else None))
-
-        # X-AspNet-Version
         asp_ver = headers.get('x-aspnet-version') or headers.get('x-aspnetmvc-version')
         if asp_ver:
             results.append(('ASP.NET', asp_ver))
-
         return results
-
 
 def correlate_banner_cves(banner: str) -> list[dict[str, Any]]:
     """
@@ -3091,29 +2274,18 @@ def correlate_banner_cves(banner: str) -> list[dict[str, Any]]:
         matrix = get_cve_matrix()
     except ImportError:
         return []
-
     results: list[dict[str, Any]] = []
     parsed = BannerParser.parse_banner(banner)
-
     for tech, version in parsed:
         try:
             matches = matrix.match(tech, version)
-            for match in matches[:5]:  # Top 5 per technology
-                results.append({
-                    'technology': tech,
-                    'version': version,
-                    'cve_id': match.cve_id,
-                    'cvss_score': match.cvss_score,
-                    'cwe_id': match.cwe_id,
-                    'description': match.description_snippet[:200],
-                })
+            for match in matches[:5]:
+                results.append({'technology': tech, 'version': version, 'cve_id': match.cve_id, 'cvss_score': match.cvss_score, 'cwe_id': match.cwe_id, 'description': match.description_snippet[:200]})
         except Exception:
             continue
-
     return results
 
-
-async def banner_grabber(host: str, port: int, timeout: float = 5.0) -> str | None:
+async def banner_grabber(host: str, port: int, timeout: float=5.0) -> str | None:
     """
     Grab service banner via TCP connection.
 
@@ -3133,57 +2305,35 @@ async def banner_grabber(host: str, port: int, timeout: float = 5.0) -> str | No
         Raw banner string or None
     """
     import socket
-
     if port in (80, 8080, 443, 8443):
-        # HTTP banner
         try:
             async with httpx.AsyncClient(timeout=timeout) as client:
                 protocol = 'https' if port in (443, 8443) else 'http'
                 resp = await client.get(f'{protocol}://{host}:{port}/', timeout=timeout)
                 headers = dict(resp.headers)
-                banner_parts = [f"HTTP/{resp.http_version} {resp.status_code}"]
+                banner_parts = [f'HTTP/{resp.http_version} {resp.status_code}']
                 if 'server' in headers:
                     banner_parts.append(f"Server: {headers['server']}")
                 if 'x-powered-by' in headers:
                     banner_parts.append(f"X-Powered-By: {headers['x-powered-by']}")
                 return '\n'.join(banner_parts)
-        except Exception:  # noqa: BLE001
+        except Exception:
             pass
     else:
-        # Raw TCP banner
         try:
-            reader, writer = await safe_wait_for(
-                asyncio.open_connection(host, port),
-                timeout=timeout
-    )
+            reader, writer = await safe_wait_for(asyncio.open_connection(host, port), timeout=timeout)
             try:
-                # Send appropriate probe based on port
                 if port == 22:
-                    # SSH: just wait for banner
                     pass
                 elif port == 21:
                     writer.write(b'QUIT\r\n')
                     await writer.drain()
-
                 banner = await safe_wait_for(reader.read(1024), timeout=timeout)
                 return banner.decode('utf-8', errors='ignore').strip()
             finally:
                 writer.close()
                 await writer.wait_closed()
-        except Exception:  # noqa: BLE001
+        except Exception:
             pass
-
     return None
-
-
-__all__ = [
-    'ExposedServiceHunter', 'S3BucketEnumerator', 'DatabasePortScanner',
-    'GraphQLIntrospector', 'CertificateTransparency', 'ContainerAPIExplorer',
-    'SwaggerEnumerator', 'DirectoryListingDetector',
-    'ExposedService', 'S3Bucket', 'CertificateInfo',
-    'ServiceType', 'ExposureType', 'RiskLevel',
-    'quick_hunt', 'check_s3_bucket', 'scan_graphql_endpoint',
-    'search_shodan', 'search_censys', 'APICache',
-    # ISSUE [ULTIMATE]-004: Banner-to-CVE Pipeline
-    'BannerParser', 'correlate_banner_cves', 'banner_grabber',
-]
+__all__ = ['ExposedServiceHunter', 'S3BucketEnumerator', 'DatabasePortScanner', 'GraphQLIntrospector', 'CertificateTransparency', 'ContainerAPIExplorer', 'SwaggerEnumerator', 'DirectoryListingDetector', 'ExposedService', 'S3Bucket', 'CertificateInfo', 'ServiceType', 'ExposureType', 'RiskLevel', 'quick_hunt', 'check_s3_bucket', 'scan_graphql_endpoint', 'search_shodan', 'search_censys', 'APICache', 'BannerParser', 'correlate_banner_cves', 'banner_grabber']

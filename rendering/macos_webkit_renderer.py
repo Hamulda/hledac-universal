@@ -19,6 +19,7 @@ Integration order:
 """
 import asyncio
 import msgspec
+from compat.msgspec_gc_compat import Struct
 import msgspec.json as _json
 import sys
 import time
@@ -53,7 +54,7 @@ class MACOS_WEBKIT_REASONS:
     SUCCESS = 'macos_webkit_success'
     MAX_BYTES_EXCEEDED = 'macos_webkit_max_bytes_exceeded'
 
-class WebKitRenderResult(msgspec.Struct, frozen=True, gc=False):
+class WebKitRenderResult(Struct, frozen=True):
     """Result of a WKWebView render attempt.
 
     Always returned (never raises) — callers check .ok before using .html.

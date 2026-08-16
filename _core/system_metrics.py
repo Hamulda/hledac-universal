@@ -24,6 +24,7 @@ import time as _time_module
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 from _core._util import aclose
+from _core.lock_registry import LockCategory, auto_register
 
 if TYPE_CHECKING:
     pass
@@ -129,7 +130,10 @@ class SystemSnapshot:
 _rusage_cache: dict[str, tuple[int, float]] = {}  # key → (rusage_maxrss_bytes, timestamp)
 _rusage_lock: "threading.Lock | None" = None  # lazily initialized
 
+
+@auto_register(LockCategory.METRICS)
 def _get_rusage_lock():
+    """DCLP lazy lock for rusage cache."""
     global _rusage_lock
     if _rusage_lock is None:
         import threading
@@ -179,7 +183,9 @@ _memory_pressure_cache: dict[str, tuple[dict[str, int], float]] = {}  # key → 
 _mach_lock: "threading.Lock | None" = None
 
 
+@auto_register(LockCategory.METRICS)
 def _get_mach_lock():
+    """DCLP lazy lock for memory pressure cache."""
     global _mach_lock
     if _mach_lock is None:
         import threading
@@ -329,6 +335,17 @@ def get_memory_pressure_mach() -> dict[str, int]:
 # Unified snapshot — single point of entry for hot paths
 # ------------------------------------------------------------------ #
 _system_snapshot_cache: dict[str, tuple[SystemSnapshot, float]] = {}
+_snapshot_lock: "threading.Lock | None" = None
+
+
+@auto_register(LockCategory.METRICS)
+def _get_snapshot_lock():
+    """DCLP lazy lock for system snapshot cache."""
+    global _snapshot_lock
+    if _snapshot_lock is None:
+        import threading
+        _snapshot_lock = threading.Lock()
+    return _snapshot_lock
 
 
 def get_system_snapshot() -> SystemSnapshot:
@@ -442,11 +459,10 @@ def get_system_snapshot() -> SystemSnapshot:
 def invalidate_cache() -> None:
     """Invalidate all caches. For testing or forced refresh."""
     global _rusage_cache, _memory_pressure_cache, _system_snapshot_cache
-    import threading
 
     with _get_rusage_lock():
         _rusage_cache.clear()
     with _get_mach_lock():
         _memory_pressure_cache.clear()
-    with threading.Lock():
+    with _get_snapshot_lock():
         _system_snapshot_cache.clear()

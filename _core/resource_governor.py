@@ -63,6 +63,7 @@ from enum import Enum, StrEnum
 from typing import TYPE_CHECKING, Any, Protocol, TypeVar
 import heapq
 import msgspec
+from compat.msgspec_gc_compat import Struct
 
 _KT = TypeVar("_KT")
 _VT = TypeVar("_VT")
@@ -160,7 +161,7 @@ class UMAGovernor(Protocol):  # type: ignore[explicit-any]
 from hledac.universal._core.locks import LockCategory, register_lock
 
 
-class ConcurrencyPreset(msgspec.Struct, frozen=True, gc=False):
+class ConcurrencyPreset(Struct, frozen=True):
     """
     Sprint F289: Immutable concurrency preset derived from UMA state.
     MODERN-36: Updated for unified 6-thread budget.
@@ -866,7 +867,7 @@ def _record_transition(state: str, prev_io_only: bool, io_only: bool) -> None:
             _telemetry["io_only_exit_count"] += 1
 
 
-class UMAStatus(msgspec.Struct, frozen=True, gc=False):
+class UMAStatus(Struct, frozen=True):
     """
     Sprint 8AB + F163F: Unified UMA accounting snapshot.
     Migrated from @dataclass(frozen=True, slots=True) → msgspec.Struct.
@@ -1143,7 +1144,7 @@ class QoSLevel(StrEnum):
         return self.severity < other.severity
 
 
-class QoSProfile(msgspec.Struct, frozen=True, gc=False):
+class QoSProfile(Struct, frozen=True):
     """
     [FINAL]-019: QoS profile snapshot emitted with every GovernorDecision.
 
@@ -1176,7 +1177,7 @@ class QoSProfile(msgspec.Struct, frozen=True, gc=False):
     reason: str = ""
 
 
-class GovernorDecision(msgspec.Struct, frozen=True, gc=False):
+class GovernorDecision(Struct, frozen=True):
     """
     G-1 Fix: Canonical governor rozhodnutí s auto-apply semantics.
     Migrated from @dataclass(frozen=True, slots=True) → msgspec.Struct.
@@ -1232,7 +1233,7 @@ class GovernorDecision(msgspec.Struct, frozen=True, gc=False):
     degradation_level: QoSLevel = QoSLevel.FULL
 
 
-class M1ThermalStatus(msgspec.Struct, frozen=True, gc=False):
+class M1ThermalStatus(Struct, frozen=True):
     """
     HW-01: Termální stav M1 procesoru.
 
@@ -2472,7 +2473,7 @@ class M1ResourceGovernor:
         except Exception:
             return False
 
-    class SidecarAdmission(msgspec.Struct, frozen=True, gc=False):
+    class SidecarAdmission(Struct, frozen=True):
         """Sidecar admission result. Migrated from @dataclass → msgspec.Struct."""
 
         allowed: bool
@@ -2542,7 +2543,7 @@ class ResourceExhaustedError(RuntimeError):
     )
 
 
-class ReservationInfo(msgspec.Struct, frozen=True, gc=False):
+class ReservationInfo(Struct, frozen=True):
     """
     Diagnostic snapshot returned by AsyncUMAGuard.reserve() on entry.
 
@@ -3595,7 +3596,7 @@ _mpc_lock: _threading.Lock = _threading.Lock()
 register_lock(LockCategory.MPC, _mpc_lock, "resource_governor._mpc_lock")
 
 
-class MPCMetrics(msgspec.Struct, frozen=True, gc=False):
+class MPCMetrics(Struct, frozen=True):
     """
     F290: Diagnostic snapshot from MPC controller.
     Migrated from @dataclass(frozen=True, slots=True) → msgspec.Struct.

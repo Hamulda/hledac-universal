@@ -14,6 +14,7 @@ import re
 from collections import defaultdict
 from dataclasses import dataclass
 import msgspec
+from compat.msgspec_gc_compat import Struct
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
@@ -24,7 +25,7 @@ from _core import aclose
 
 logger = logging.getLogger(__name__)
 
-class ThreatIntelligence(msgspec.Struct, gc=False):
+class ThreatIntelligence(Struct):
     """Threat intelligence data"""
     threat_id: str
     threat_type: str
@@ -37,7 +38,7 @@ class ThreatIntelligence(msgspec.Struct, gc=False):
     confidence: float
     tags: list[str]
 
-class SecurityAlert(msgspec.Struct, frozen=True, gc=False):
+class SecurityAlert(Struct, frozen=True):
     """Security alert generated from threat intelligence"""
     alert_id: str
     threat_intelligence: ThreatIntelligence
@@ -47,7 +48,7 @@ class SecurityAlert(msgspec.Struct, frozen=True, gc=False):
     timestamp: datetime
     status: str
 
-class DefenseAction(msgspec.Struct, frozen=True, gc=False):
+class DefenseAction(Struct, frozen=True):
     """Automated defense action"""
     action_id: str
     action_type: str

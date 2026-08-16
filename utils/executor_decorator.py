@@ -48,6 +48,7 @@ from collections.abc import Callable, Awaitable
 
 from hledac.universal._core.config.m1_air_config import M1AirConfig
 from _core import aclose
+from _core.locks import LockCategory, register_lock
 
 __all__ = [
     "offload_to",
@@ -71,6 +72,7 @@ POOL_NAMES = frozenset([
 # Module-level singletons — lazy initialization on first use.
 _pools: dict[str, NamedPool] = {}
 _pools_lock = threading.Lock()
+register_lock(LockCategory.CONFIG, _pools_lock, "utils.executor_decorator._pools_lock")
 
 
 class NamedPool:

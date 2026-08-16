@@ -33,6 +33,7 @@ Do té doby zůstává donor/compat vrstvou s tímto bridge seamem.
 import logging
 from dataclasses import dataclass
 import msgspec
+from compat.msgspec_gc_compat import Struct
 from enum import Enum
 from typing import TYPE_CHECKING, Any
 from _core import aclose
@@ -80,7 +81,7 @@ class ActionType(Enum):
     STEALTH_HARVEST = 'stealth_harvest'
     OSINT_DISCOVERY = 'osint_discovery'
 
-class ActionResult(msgspec.Struct, gc=False):
+class ActionResult(Struct):
     """Výsledek akce"""
     success: bool
     action: str

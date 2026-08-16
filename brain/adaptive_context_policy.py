@@ -19,12 +19,13 @@ This module is stdlib-first with optional psutil support.
 """
 from dataclasses import dataclass
 import msgspec
+from compat.msgspec_gc_compat import Struct
 from _core import aclose
 _MEMORY_THRESHOLD_REDUCED = 2048
 _MEMORY_THRESHOLD_MINIMAL = 1332
 _MEMORY_THRESHOLD_REJECT = 1024
 
-class ContextBudgetDecision(msgspec.Struct, frozen=True, gc=False):
+class ContextBudgetDecision(Struct, frozen=True):
     """Result of a context budget decision."""
     mode: str
     max_prompt_chars: int
@@ -207,8 +208,7 @@ def truncate_prompt_simple(prompt: str, max_chars: int, preserve_end_fraction: f
     back = prompt[-keep_back:]
     return front + '\n\n[... truncated ...]\n\n' + back
 
-
-@dataclass
+@dataclass(slots=True)
 class ThermalGenerationParams:
     """
     ISSUE-015: Thermal generation parameters for LLM inference.
@@ -216,9 +216,8 @@ class ThermalGenerationParams:
     Under thermal pressure, shorter generations (reduced max_tokens) complete faster
     and allow thermal recovery on fanless M1 devices.
     """
-    max_tokens_override: int | None = None  # None = use model default
-    temperature_reduction: float = 0.0  # 0.0-0.5, subtracted from temperature when throttled
-
+    max_tokens_override: int | None = None
+    temperature_reduction: float = 0.0
 
 async def get_thermal_generation_params() -> ThermalGenerationParams:
     """
@@ -232,9 +231,6 @@ async def get_thermal_generation_params() -> ThermalGenerationParams:
         from hledac.universal._core.protocols import get_governor
         gov = get_governor()
         decision = await gov.evaluate()
-        return ThermalGenerationParams(
-            max_tokens_override=decision.max_tokens_override,
-            temperature_reduction=decision.temperature_reduction,
-    )
+        return ThermalGenerationParams(max_tokens_override=decision.max_tokens_override, temperature_reduction=decision.temperature_reduction)
     except Exception:
         return ThermalGenerationParams()

@@ -8,6 +8,7 @@ import logging
 import secrets
 from dataclasses import dataclass
 import msgspec
+from compat.msgspec_gc_compat import Struct
 from enum import Enum
 
 logger = logging.getLogger(__name__)
@@ -37,7 +38,7 @@ class SecurityLevel(Enum):
     HIGH = 'high'
     MAXIMUM = 'maximum'
 
-class EncryptedContainer(msgspec.Struct, gc=False):
+class EncryptedContainer(Struct):
     """Šifrovaný kontejner"""
     ciphertext: bytes
     encapsulated_key: bytes

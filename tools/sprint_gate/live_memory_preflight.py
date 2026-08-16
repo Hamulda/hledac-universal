@@ -32,6 +32,8 @@ import time
 from dataclasses import asdict, dataclass
 import msgspec
 from _core import aclose
+from compat.msgspec_gc_compat import Struct
+
 try:
     from hledac.universal._core.resource_governor import sample_uma_status
 except Exception:
@@ -88,7 +90,7 @@ def _operator_action_for_verdict(verdict: str) -> str:
         return 'close some apps to clear swap; rerun preflight'
     return 'memory state OK — ready for active300 sprint'
 
-class PreflightResult(msgspec.Struct, gc=False):
+class PreflightResult(Struct):
     verdict: str
     uma_state: str
     system_used_gib: float

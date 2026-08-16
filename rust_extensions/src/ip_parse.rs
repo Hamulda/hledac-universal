@@ -93,11 +93,11 @@ pub fn batch_ip_classify(ips: Vec<String>) -> Vec<u8> {
         return vec![];
     }
 
-    let n = ips.len();
+    let n = ips);
     let _results_cap = n;
 
     // Process up to BATCH_MAX, rest marked invalid
-    let batch: Vec<&[String]> = ips.chunks(BATCH_MAX).collect();
+    let batch: Vec<&[String]> = ips.chunks(BATCH_MAX));
 
     crate::io_pool().install(|| {
         batch

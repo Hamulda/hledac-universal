@@ -16,6 +16,7 @@ Designed to be:
 
 from dataclasses import dataclass
 import msgspec
+from compat.msgspec_gc_compat import Struct
 from enum import Enum
 from _core import aclose
 
@@ -28,7 +29,7 @@ class DepCategory(Enum):
     PLATFORM_GUARDED = "platform_guarded"         # Depends on platform (e.g. MPS)
 
 
-class AccelerationStatus(msgspec.Struct, frozen=True, gc=False):
+class AccelerationStatus(Struct, frozen=True):
     """Status for a single acceleration dependency."""
     name: str
     available: bool
@@ -38,7 +39,7 @@ class AccelerationStatus(msgspec.Struct, frozen=True, gc=False):
     platform_note: str | None
 
 
-class PlatformReport(msgspec.Struct, frozen=True, gc=False):
+class PlatformReport(Struct, frozen=True):
     """Full platform acceleration report."""
     statuses: dict[str, AccelerationStatus]
     summary: str

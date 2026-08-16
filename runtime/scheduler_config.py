@@ -13,6 +13,7 @@ from dataclasses import dataclass, field
 from enum import Enum, auto
 from typing import TYPE_CHECKING, Any, Final, Protocol
 import msgspec
+from compat.msgspec_gc_compat import Struct
 from _core import aclose
 logger = logging.getLogger(__name__)
 
@@ -39,7 +40,7 @@ class SourceTier(Enum):
         return f'SourceTier.{self.name}'
 _TIER_ORDER = [SourceTier.SURFACE, SourceTier.STRUCTURED_TI, SourceTier.DEEP, SourceTier.ARCHIVE, SourceTier.OTHER]
 
-class EarlyExitClass(msgspec.Struct, gc=False):
+class EarlyExitClass(Struct):
     """Canonical early-exit classification labels."""
     NATURAL = 'natural'
     FEED_DOMINANT = 'feed_dominant'
@@ -49,7 +50,7 @@ class EarlyExitClass(msgspec.Struct, gc=False):
     UNKNOWN = 'unknown'
 _UNSET: Any = object()
 
-class SprintSchedulerConfig(msgspec.Struct, gc=False):
+class SprintSchedulerConfig(Struct):
     """Configuration for one sprint run.
 
     STEP 1 extracted from sprint_scheduler.py (33 449 LOC → modular package).

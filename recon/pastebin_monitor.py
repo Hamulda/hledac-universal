@@ -29,6 +29,7 @@ from hledac.universal.utils.locks import LazyAsyncioLock
 import time
 from dataclasses import dataclass
 import msgspec
+from compat.msgspec_gc_compat import Struct
 from msgspec import field
 from typing import Any
 import httpx
@@ -44,7 +45,7 @@ def _mask_secret(value: str) -> str:
     """Mask secrets via centralized DLP filter (SOVEREIGN-010)."""
     return _mask_secret_impl(value)
 
-class PasteFinding(msgspec.Struct, gc=False):
+class PasteFinding(Struct):
     """Structured paste finding result."""
     uri: str
     source: str
@@ -123,7 +124,7 @@ async def _read_text_with_cap(resp: httpx.Response, cap: int = _MAX_PASTE_BYTES)
     except Exception:
         return ""
 
-class _CircuitState(msgspec.Struct, frozen=True, gc=False):
+class _CircuitState(Struct, frozen=True):
     failures: int = 0
     opened_at: float = 0.0
     _lock: asyncio.Lock = field(default_factory=asyncio.Lock)

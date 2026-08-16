@@ -21,11 +21,12 @@ import logging
 from collections import defaultdict
 from dataclasses import dataclass, field
 import msgspec
+from compat.msgspec_gc_compat import Struct
 from typing import Any
 from _core import aclose
 logger = logging.getLogger(__name__)
 
-class RRFConfig(msgspec.Struct, gc=False):
+class RRFConfig(Struct):
     """Configuration for Reciprocal Rank Fusion"""
     k: int = 60
     max_results: int = 100
@@ -33,7 +34,7 @@ class RRFConfig(msgspec.Struct, gc=False):
     deduplication: bool = True
     dedup_threshold: float = 0.7
 
-class RankedResult(msgspec.Struct, frozen=True, gc=False):
+class RankedResult(Struct, frozen=True):
     """Individual ranked result"""
     id: str
     title: str

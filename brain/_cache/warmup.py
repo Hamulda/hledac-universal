@@ -15,37 +15,27 @@ Extracted to eliminate depth-6 nested functions:
 
 M1 8GB Safe: Parallel prefill with timeout protection.
 """
-
 from __future__ import annotations
-
 import asyncio
 import logging
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Callable
-
 if TYPE_CHECKING:
     import mlx.core as mx
-
 logger = logging.getLogger(__name__)
-
 WARMUP_CACHE_DIR = Path.home() / '.hledac' / 'cache' / 'warmup'
 
-
-@dataclass
+@dataclass(slots=True)
 class WarmupConfig:
     """Configuration for model warmup."""
-    system_prompt: str = "You are a helpful research assistant."
-    few_shot_examples: list[dict[str, str]] = field(default_factory=lambda: [
-        {"user": "What is 2+2?", "assistant": "4"},
-        {"user": "Capital of France?", "assistant": "Paris"},
-    ])
+    system_prompt: str = 'You are a helpful research assistant.'
+    few_shot_examples: list[dict[str, str]] = field(default_factory=lambda: [{'user': 'What is 2+2?', 'assistant': '4'}, {'user': 'Capital of France?', 'assistant': 'Paris'}])
     warmup_tokens: int = 1000
     parallel_prefill: bool = True
     timeout_seconds: float = 60.0
 
-
-@dataclass
+@dataclass(slots=True)
 class WarmupResult:
     """Result of warmup operation."""
     success: bool
@@ -53,7 +43,6 @@ class WarmupResult:
     prefill_tokens: int
     duration_seconds: float
     error: str | None = None
-
 
 class WarmupManager:
     """
@@ -66,14 +55,9 @@ class WarmupManager:
 
     Supports parallel system prompt + warmup cache prefill (F320 optimization).
     """
+    __slots__ = ('_cache_saver', '_config', '_mlx_lock', '_model_getter', '_supports_stream_generate', '_tokenizer_getter')
 
-    def __init__(
-        self,
-        config: WarmupConfig | None = None,
-        model_getter: Callable[[], Any] | None = None,
-        tokenizer_getter: Callable[[], Any] | None = None,
-        cache_saver: Callable[[], Any] | None = None,
-    ) -> None:
+    def __init__(self, config: WarmupConfig | None=None, model_getter: Callable[[], Any] | None=None, tokenizer_getter: Callable[[], Any] | None=None, cache_saver: Callable[[], Any] | None=None) -> None:
         self._config = config or WarmupConfig()
         self._model_getter = model_getter
         self._tokenizer_getter = tokenizer_getter
@@ -81,11 +65,7 @@ class WarmupManager:
         self._mlx_lock = None
         self._supports_stream_generate = False
 
-    def set_model_accessors(
-        self,
-        model_getter: Callable[[], Any],
-        tokenizer_getter: Callable[[], Any],
-    ) -> None:
+    def set_model_accessors(self, model_getter: Callable[[], Any], tokenizer_getter: Callable[[], Any]) -> None:
         """Set model and tokenizer accessors (for lazy initialization)."""
         self._model_getter = model_getter
         self._tokenizer_getter = tokenizer_getter
@@ -122,29 +102,16 @@ class WarmupManager:
         """
         import time
         start = time.time()
-
         try:
             if self._config.parallel_prefill:
                 result = await self._parallel_warmup()
             else:
                 result = await self._sequential_warmup()
-
             duration = time.time() - start
-            return WarmupResult(
-                success=result,
-                cache_stored=result,
-                prefill_tokens=self._estimate_prefill_tokens(),
-                duration_seconds=duration,
-            )
+            return WarmupResult(success=result, cache_stored=result, prefill_tokens=self._estimate_prefill_tokens(), duration_seconds=duration)
         except Exception as e:
             logger.warning(f'[WarmupManager] Warmup failed: {e}')
-            return WarmupResult(
-                success=False,
-                cache_stored=False,
-                prefill_tokens=0,
-                duration_seconds=time.time() - start,
-                error=str(e),
-            )
+            return WarmupResult(success=False, cache_stored=False, prefill_tokens=0, duration_seconds=time.time() - start, error=str(e))
 
     async def _parallel_warmup(self) -> bool:
         """Parallel system cache + warmup cache prefilling."""
@@ -155,34 +122,18 @@ class WarmupManager:
 
         async def prefetch_warmup_cache() -> bool:
             return await self._prefill_warmup_cache()
-
         try:
-            # Run both prefetches in parallel
-            # F3XX: parallel(policy="collect") replaces asyncio.gather.
-            results = await parallel(
-                [
-                    safe_wait_for(prefetch_system_cache(), timeout=self._config.timeout_seconds),
-                    safe_wait_for(prefetch_warmup_cache(), timeout=self._config.timeout_seconds),
-                ],
-                policy="collect",
-                ctx="warmup",
-            )
-
-            successes = sum(1 for r in results.ok if r is True)
+            results = await parallel([safe_wait_for(prefetch_system_cache(), timeout=self._config.timeout_seconds), safe_wait_for(prefetch_warmup_cache(), timeout=self._config.timeout_seconds)], policy='collect', ctx='warmup')
+            successes = sum((1 for r in results.ok if r is True))
             exceptions = results.errors
-
             if exceptions:
                 logger.warning(f'[WarmupManager] {len(exceptions)} prefill exception(s)')
-
-            # Save cache if warmup successful
             if successes >= 2 and self._cache_saver is not None:
                 try:
                     await asyncio.to_thread(self._cache_saver)
                 except Exception as e:
                     logger.debug(f'[WarmupManager] Cache save failed: {e}')
-
             return successes >= 1
-
         except Exception as e:
             logger.warning(f'[WarmupManager] Parallel warmup failed: {e}, falling back')
             return await self._sequential_warmup()
@@ -201,13 +152,10 @@ class WarmupManager:
         """
         if self._model_getter is None or self._tokenizer_getter is None:
             return False
-
         model = self._model_getter()
         tokenizer = self._tokenizer_getter()
-
         if model is None or tokenizer is None:
             return False
-
         try:
             import mlx.core as mx
             import mlx_lm
@@ -219,19 +167,12 @@ class WarmupManager:
                     try:
                         mx.eval([])
                         with mlx_lock:
-                            for _ in mlx_lm.stream_generate(
-                                model=model,
-                                tokenizer=tokenizer,
-                                prompt=self._build_warmup_prompt(),
-                                max_tokens=1,  # Minimal tokens to prime cache
-                            ):
+                            for _ in mlx_lm.stream_generate(model=model, tokenizer=tokenizer, prompt=self._build_warmup_prompt(), max_tokens=1):
                                 pass
                     finally:
                         self._clear_mlx_cache('system_prompt_cache_prefill')
-
             await asyncio.to_thread(do_prefill)
             return True
-
         except Exception as e:
             logger.warning(f'[WarmupManager] System cache prefill failed: {e}')
             return False
@@ -244,52 +185,31 @@ class WarmupManager:
         """
         if self._model_getter is None or self._tokenizer_getter is None:
             return False
-
         model = self._model_getter()
         tokenizer = self._tokenizer_getter()
-
         if model is None or tokenizer is None:
             return False
-
         try:
             import mlx_lm
             from hledac.universal.utils.mlx_memory import get_metal_stream_context
             from mlx_lm.sample_utils import make_sampler
-
             warmup_prompt = self._build_warmup_prompt()
 
             def do_generate() -> None:
                 with get_metal_stream_context():
-                    mlx_lm.generate(
-                        model=model,
-                        tokenizer=tokenizer,
-                        prompt=warmup_prompt,
-                        sampler=make_sampler(temp=0.7),
-                        max_tokens=self._config.warmup_tokens,
-                    )
-
-            # Check for worker thread availability
+                    mlx_lm.generate(model=model, tokenizer=tokenizer, prompt=warmup_prompt, sampler=make_sampler(temp=0.7), max_tokens=self._config.warmup_tokens)
             worker = getattr(self, '_mlx_worker', None)
             worker_live = worker is not None and getattr(worker, 'is_active', lambda: False)()
-
             if worker_live:
                 main_loop = asyncio.get_running_loop()
 
                 async def coro_wrapper() -> Any:
                     return do_generate()
-
-                inference_future = asyncio.run_coroutine_threadsafe(
-                    coro_wrapper(), main_loop
-                )
-                await safe_wait_for(
-                    asyncio.wrap_future(inference_future),
-                    timeout=self._config.timeout_seconds,
-                )
+                inference_future = asyncio.run_coroutine_threadsafe(coro_wrapper(), main_loop)
+                await safe_wait_for(asyncio.wrap_future(inference_future), timeout=self._config.timeout_seconds)
             else:
                 await asyncio.to_thread(do_generate)
-
             return True
-
         except Exception as e:
             logger.warning(f'[WarmupManager] Warmup cache prefill failed: {e}')
             return False
@@ -307,17 +227,12 @@ class WarmupManager:
             import mlx.core as mx
             mx.eval([])
             mx.metal.clear_cache()
-        except Exception:  # noqa: BLE001
+        except Exception:
             pass
 
     def _estimate_prefill_tokens(self) -> int:
         """Estimate tokens processed during prefill."""
-        # Rough estimate based on warmup config
-        return (
-            len(self._config.few_shot_examples) * 20 +  # few-shot
-            self._config.warmup_tokens +  # warmup
-            50  # system prompt overhead
-        )
+        return len(self._config.few_shot_examples) * 20 + self._config.warmup_tokens + 50
 
     def restore_cache(self, cache_path: Path | str) -> bool:
         """
@@ -331,9 +246,7 @@ class WarmupManager:
         """
         try:
             from safetensors import safe_load_file
-            # Load and apply cache
             tensors = safe_load_file(str(cache_path))
-            # Would need model reference to apply cache
             return True
         except Exception as e:
             logger.warning(f'[WarmupManager] Cache restore failed: {e}')

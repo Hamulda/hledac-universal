@@ -33,6 +33,7 @@ import os
 import threading
 from typing import Final, cast
 from _core import aclose
+from _core.lock_registry import LockCategory, register_lock
 
 # Default base under ~/.hledac/ — co-located with LMDB_STORE_ROOT
 _LMDB_STORE_DEFAULT: Final[str] = "~/.hledac/lmdb_store"
@@ -45,7 +46,12 @@ _UNRESOLVED: Final[object] = object()
 
 # Module-level singleton (thread-safe via GIL, immutable after init)
 _DEFAULT_PATHS: dict[str, str] | object  # type: ignore[valid-type]
-_DEFAULT_PATHS_LOCK: Final[threading.Lock] = threading.Lock()
+
+
+@register_lock(LockCategory.CONFIG)
+def _DEFAULT_PATHS_LOCK() -> threading.Lock:
+    """Module-level lock for dedup paths singleton."""
+    return threading.Lock()
 
 
 def resolve_dedup_paths(env_prefix: str = "HLEDAC_DEDUP") -> dict[str, str]:
@@ -112,7 +118,7 @@ def get_dedup_paths() -> dict[str, str]:
     """
     global _DEFAULT_PATHS
     if _DEFAULT_PATHS is _UNRESOLVED:
-        with _DEFAULT_PATHS_LOCK:
+        with _DEFAULT_PATHS_LOCK():
             # Double-check after acquiring lock
             if _DEFAULT_PATHS is _UNRESOLVED:
                 _DEFAULT_PATHS = resolve_dedup_paths()
@@ -127,5 +133,5 @@ def reset_dedup_paths() -> None:
     NOT thread-safe for concurrent use; call only in isolated test contexts.
     """
     global _DEFAULT_PATHS
-    with _DEFAULT_PATHS_LOCK:
+    with _DEFAULT_PATHS_LOCK():
         _DEFAULT_PATHS = _UNRESOLVED

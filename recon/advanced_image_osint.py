@@ -32,6 +32,7 @@ import io
 import logging
 from dataclasses import dataclass, field
 import msgspec
+from compat.msgspec_gc_compat import Struct
 from typing import Any
 logger = logging.getLogger(__name__)
 try:
@@ -51,14 +52,14 @@ def _get_mx():
     from hledac.universal.utils.mlx_memory._core import get_mx as _get_mx_from_core
     return _get_mx_from_core()
 
-class ImageHash(msgspec.Struct, gc=False):
+class ImageHash(Struct):
     """Perceptual hash for image similarity."""
     ahash: str
     phash: str
     dhash: str
     whash: str
 
-class OCRResult(msgspec.Struct, frozen=True, gc=False):
+class OCRResult(Struct, frozen=True):
     """OCR extraction result."""
     text: str
     confidence: float
@@ -66,7 +67,7 @@ class OCRResult(msgspec.Struct, frozen=True, gc=False):
     regions: list[dict[str, Any]]
     processing_time_ms: float
 
-class SteganalysisResult(msgspec.Struct, frozen=True, gc=False):
+class SteganalysisResult(Struct, frozen=True):
     """Steganography analysis result."""
     is_suspicious: bool
     lsb_entropy: float
@@ -76,7 +77,7 @@ class SteganalysisResult(msgspec.Struct, frozen=True, gc=False):
     suspicious_patterns: list[str]
     visual_artifacts: np.ndarray | None = None
 
-class ImageAnalysis(msgspec.Struct, frozen=True, gc=False):
+class ImageAnalysis(Struct, frozen=True):
     """Complete image analysis result."""
     file_hash: str
     image_hash: ImageHash

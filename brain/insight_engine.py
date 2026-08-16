@@ -33,13 +33,14 @@ from typing import Any
 
 from operator import attrgetter, itemgetter
 import msgspec
+from compat.msgspec_gc_compat import Struct
 import numpy as np
 from _core import aclose
 
 logger = logging.getLogger(__name__)
 
 
-class Insight(msgspec.Struct, gc=False):
+class Insight(Struct):
     """Generated insight."""
     insight_id: str
     type: str
@@ -52,7 +53,7 @@ class Insight(msgspec.Struct, gc=False):
     related_insights: list[str] = field(default_factory=list)
 
 
-class Pattern(msgspec.Struct, gc=False):
+class Pattern(Struct):
     """Discovered pattern."""
     pattern_type: str
     description: str
@@ -61,7 +62,7 @@ class Pattern(msgspec.Struct, gc=False):
     examples: list[str] = field(default_factory=list)
 
 
-class Anomaly(msgspec.Struct, gc=False):
+class Anomaly(Struct):
     """Detected anomaly."""
     anomaly_type: str
     description: str
@@ -71,7 +72,7 @@ class Anomaly(msgspec.Struct, gc=False):
     implications: str
 
 
-class Contradiction(msgspec.Struct, gc=False):
+class Contradiction(Struct):
     """Identified contradiction."""
     contradiction_id: str
     statement_a: str
@@ -80,7 +81,7 @@ class Contradiction(msgspec.Struct, gc=False):
     resolution_options: list[str] = field(default_factory=list)
 
 
-class Gap(msgspec.Struct, gc=False):
+class Gap(Struct):
     """Identified knowledge gap."""
     area: str
     description: str
@@ -88,7 +89,7 @@ class Gap(msgspec.Struct, gc=False):
     research_opportunities: list[str] = field(default_factory=list)
 
 
-class Hypothesis(msgspec.Struct, gc=False):
+class Hypothesis(Struct):
     """Generated hypothesis."""
     # Intentionally NOT brain.hypothesis._types.Hypothesis —
     # simpler shape (insight string only, no statement/evidence/tests).
@@ -99,7 +100,7 @@ class Hypothesis(msgspec.Struct, gc=False):
     test_methods: list[str] = field(default_factory=list)
 
 
-class CausalRelationship(msgspec.Struct, gc=False):
+class CausalRelationship(Struct):
     """
     Causal relationship between variables.
 
@@ -116,7 +117,7 @@ class CausalRelationship(msgspec.Struct, gc=False):
     alternative_explanations: list[str] = field(default_factory=list)
 
 
-class SynthesisLevel(msgspec.Struct, gc=False):
+class SynthesisLevel(Struct):
     """
     Multi-level synthesis result.
 
@@ -135,7 +136,7 @@ class SynthesisLevel(msgspec.Struct, gc=False):
     key_insights: list[str] = field(default_factory=list)
 
 
-class InsightAnalysisResult(msgspec.Struct, gc=False):
+class InsightAnalysisResult(Struct):
     """Complete insight analysis result.
 
     Sprint F300: Migrated from dataclass(slots=True) to msgspec.Struct.

@@ -633,7 +633,7 @@ def create_rust_miner(prefer_rust: bool=True) -> RustMiner:
     """
     return RustMiner(prefer_rust=prefer_rust)
 
-class FeedDiscoveryResult(msgspec.Struct, frozen=True, gc=False):
+class FeedDiscoveryResult(Struct, frozen=True):
     """Result of feed discovery."""
     feed_urls: list[str]
     source_url: str
@@ -710,7 +710,7 @@ class FeedDiscoverer:
             return urljoin(base_url, href)
         return ''
 
-class ExtractedMetadata(msgspec.Struct, frozen=True, gc=False):
+class ExtractedMetadata(Struct, frozen=True):
     """Metadata extracted from non-HTML documents."""
     content_type: str
     file_size: int

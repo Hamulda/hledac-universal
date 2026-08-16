@@ -28,6 +28,7 @@ Each pivot output:
 """
 import logging
 import msgspec
+from compat.msgspec_gc_compat import Struct
 import msgspec.json as _json
 import math
 import re
@@ -57,7 +58,7 @@ class PivotType:
     ARCHIVE = 'archive'
     GRAPH = 'graph'
 
-class Pivot(msgspec.Struct, frozen=True, gc=False):
+class Pivot(Struct, frozen=True):
     """
     A single investigation pivot derived from findings.
 
@@ -86,7 +87,7 @@ class Pivot(msgspec.Struct, frozen=True, gc=False):
     estimated_cost: float = field(compare=False, default=0.5)
     mission_boost: float = field(compare=False, default=1.0)
 
-class PivotStats(msgspec.Struct, gc=False):
+class PivotStats(Struct):
     """
     Tracks pivot usage history for exponential decay scoring.
     Tracks successes/failures so underperforming or stale pivots lose priority.

@@ -64,6 +64,7 @@ from typing import Any, Literal
 from hledac.universal.utils.asyncx import safe_wait_for
 
 import msgspec
+from compat.msgspec_gc_compat import Struct
 
 logger = logging.getLogger(__name__)
 
@@ -120,7 +121,7 @@ _COREML_MODEL_URLS: dict[str, str] = {
 
 # ─── Public types ────────────────────────────────────────────────────────────
 
-class TranscriptionSegment(msgspec.Struct, frozen=True, gc=False):
+class TranscriptionSegment(Struct, frozen=True):
     """Single transcribed segment with timing and confidence."""
     start_s: float = 0.0
     end_s: float = 0.0
@@ -128,7 +129,7 @@ class TranscriptionSegment(msgspec.Struct, frozen=True, gc=False):
     confidence: float = 0.0
 
 
-class TranscriptionResult(msgspec.Struct, frozen=True, gc=False):
+class TranscriptionResult(Struct, frozen=True):
     """Complete transcription result from whisper.cpp."""
     text: str = ""
     language: str = "en"

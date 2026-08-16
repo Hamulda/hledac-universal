@@ -41,6 +41,8 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+from hledac.universal._core.locks import LockCategory, register_lock
+
 # ============================================================================
 # Canonical Enums (Sprint 8C3)
 # ============================================================================
@@ -81,6 +83,7 @@ _MAX_BUFFER_SIZE = 100
 # ============================================================================
 
 _trace_lock = threading.Lock()
+register_lock(LockCategory.METRICS, _trace_lock, "flow_trace._trace_lock")
 _run_id: str | None = None
 _session_start: float = time.time()
 _event_count: int = 0

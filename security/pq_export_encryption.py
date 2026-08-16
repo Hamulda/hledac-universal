@@ -29,6 +29,7 @@ import hashlib
 import logging
 from dataclasses import dataclass
 import msgspec
+from compat.msgspec_gc_compat import Struct
 from enum import Enum
 from typing import Protocol, runtime_checkable
 from _core import aclose
@@ -54,7 +55,7 @@ class Decryptability(Enum):
     EPHEMERAL_TEST_ONLY = 'ephemeral_test_only'
     UNSUPPORTED = 'unsupported'
 
-class ExportEncryptionEnvelope(msgspec.Struct, gc=False):
+class ExportEncryptionEnvelope(Struct):
     """
     Encrypted export bundle envelope — PRODUCTION safe, no private key material.
 
@@ -109,7 +110,7 @@ class ExportEncryptionEnvelope(msgspec.Struct, gc=False):
         """Safe repr — no private key material."""
         return f'ExportEncryptionEnvelope(mode={self.mode!r}, pq={self.pq}, decryptability={self.decryptability.value}, recipient_key_id={self.recipient_key_id!r}, backend={self.backend!r})'
 
-class TestOnlyHPKERoundtripMaterial(msgspec.Struct, frozen=True, gc=False):
+class TestOnlyHPKERoundtripMaterial(Struct, frozen=True):
     """
     Test-only HPKE roundtrip material — NEVER used in production.
 
@@ -122,7 +123,7 @@ class TestOnlyHPKERoundtripMaterial(msgspec.Struct, frozen=True, gc=False):
     public_key_b64: str
     private_key_b64: str
 
-class HPKEStatus(msgspec.Struct, frozen=True, gc=False):
+class HPKEStatus(Struct, frozen=True):
     """Current status of the HPKE export backend."""
     availability: HPKEAvailability = HPKEAvailability.DISABLED
     backend_name: str = 'null'

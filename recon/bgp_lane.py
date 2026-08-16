@@ -28,6 +28,7 @@ import time
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 import msgspec
+from compat.msgspec_gc_compat import Struct
 from typing import Any, cast
 from hledac.universal._core.concurrency import ConcurrencyCategory, get_semaphore
 from hledac.universal.transport.session_pool import session_pool
@@ -50,7 +51,7 @@ TIMEOUT_PER_REQUEST: float = 15.0
 MAX_PREFIXES_PER_ASN: int = 200
 BGPVIEW_API = 'https://api.bgpview.io'
 
-class BGPFinding(msgspec.Struct, gc=False):
+class BGPFinding(Struct):
     """
     BGP intelligence finding.
 
@@ -97,7 +98,7 @@ class BGPFinding(msgspec.Struct, gc=False):
             parts.append(f'Queried IP: {self.query_ip}')
         return '\n'.join(parts)
 
-class BGPResult(msgspec.Struct, frozen=True, gc=False):
+class BGPResult(Struct, frozen=True):
     """Result of a BGP lane operation."""
     ip: str
     asn: int | None = None

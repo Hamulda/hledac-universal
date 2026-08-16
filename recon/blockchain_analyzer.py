@@ -59,6 +59,7 @@ from collections import OrderedDict, defaultdict, deque
 from itertools import combinations
 from dataclasses import dataclass, field
 import msgspec
+from compat.msgspec_gc_compat import Struct
 from datetime import datetime, timedelta
 from enum import Enum
 from typing import Any
@@ -163,7 +164,7 @@ class RiskScore(Enum):
     LOW = 0.25
     MINIMAL = 0.0
 
-class Transaction(msgspec.Struct, gc=False):
+class Transaction(Struct):
     """Represents a blockchain transaction."""
     tx_hash: str
     timestamp: datetime
@@ -180,7 +181,7 @@ class Transaction(msgspec.Struct, gc=False):
     input_data: str | None = None
     metadata: dict[str, Any] = field(default_factory=dict)
 
-class WalletAnalysis(msgspec.Struct, frozen=True, gc=False):
+class WalletAnalysis(Struct, frozen=True):
     """Comprehensive analysis of a wallet address."""
     address: str
     chain: str
@@ -198,7 +199,7 @@ class WalletAnalysis(msgspec.Struct, frozen=True, gc=False):
     balance: float = 0.0
     known_associations: list[str] = field(default_factory=list)
 
-class TransactionPattern(msgspec.Struct, frozen=True, gc=False):
+class TransactionPattern(Struct, frozen=True):
     """Detected pattern in transactions."""
     pattern_type: PatternType
     confidence: float
@@ -207,7 +208,7 @@ class TransactionPattern(msgspec.Struct, frozen=True, gc=False):
     addresses_involved: list[str] = field(default_factory=list)
     metadata: dict[str, Any] = field(default_factory=dict)
 
-class Cluster(msgspec.Struct, frozen=True, gc=False):
+class Cluster(Struct, frozen=True):
     """A cluster of related addresses."""
     cluster_id: str
     addresses: list[str]
@@ -216,7 +217,7 @@ class Cluster(msgspec.Struct, frozen=True, gc=False):
     label: str | None = None
     metadata: dict[str, Any] = field(default_factory=dict)
 
-class CrossChainResult(msgspec.Struct, frozen=True, gc=False):
+class CrossChainResult(Struct, frozen=True):
     """Result of cross-chain analysis."""
     primary_address: str
     related_addresses: dict[str, list[str]]
@@ -224,7 +225,7 @@ class CrossChainResult(msgspec.Struct, frozen=True, gc=False):
     risk_assessment: str
     overall_risk_score: float
 
-class APIResponse(msgspec.Struct, frozen=True, gc=False):
+class APIResponse(Struct, frozen=True):
     """Cached API response wrapper."""
     data: Any
     timestamp: datetime

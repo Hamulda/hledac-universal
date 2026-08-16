@@ -40,6 +40,7 @@ import sys
 import sysconfig
 from dataclasses import dataclass, field
 import msgspec
+from compat.msgspec_gc_compat import Struct
 from functools import lru_cache
 from typing import Literal
 try:
@@ -49,7 +50,7 @@ except ImportError:
 from hledac.universal._core.psutil_shim import psutil_module as _psutil_mod
 from _core._util import aclose
 
-class HardwareCapabilities(msgspec.Struct, frozen=True, gc=False):
+class HardwareCapabilities(Struct, frozen=True):
     """
     Immutable hardware capability snapshot.
 

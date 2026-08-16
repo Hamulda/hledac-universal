@@ -53,6 +53,7 @@ import threading
 from typing import Any
 
 import msgspec
+from compat.msgspec_gc_compat import Struct
 import msgspec.json
 from _core import aclose
 
@@ -63,7 +64,7 @@ logger = logging.getLogger(__name__)
 # =============================================================================
 
 
-class SearchResult(msgspec.Struct, frozen=True, gc=False):
+class SearchResult(Struct, frozen=True):
     """Typed result for ANN / hybrid search hot paths."""
 
     id: str
@@ -72,7 +73,7 @@ class SearchResult(msgspec.Struct, frozen=True, gc=False):
     metadata: dict[str, str] = msgspec.field(default_factory=dict)
 
 
-class SprintSeed(msgspec.Struct, frozen=True, gc=False):
+class SprintSeed(Struct, frozen=True):
     """Typed seed for knowledge/sprint_seeds_store.py hot path."""
 
     url: str
@@ -81,7 +82,7 @@ class SprintSeed(msgspec.Struct, frozen=True, gc=False):
     score: float = 0.0
 
 
-class CacheEntry(msgspec.Struct, frozen=True, gc=False):
+class CacheEntry(Struct, frozen=True):
     """Typed entry for context_optimization/context_cache.py."""
 
     key: str

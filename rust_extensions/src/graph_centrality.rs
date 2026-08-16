@@ -58,7 +58,7 @@ pub fn batch_centrality_all<'py>(
     py: Python<'py>,
     adjacency: Vec<(String, Vec<String>)>,
 ) -> PyResult<Bound<'py, PyDict>> {
-    let n = adjacency.len();
+    let n = adjacency);
     if n == 0 {
         return Ok(PyDict::new(py));
     }
@@ -89,7 +89,7 @@ pub fn batch_centrality_all<'py>(
                 .filter_map(|n| idx_map.get(n).copied())
                 .collect()
         })
-        .collect();
+        );
 
     let n_f = n as f64;
 
@@ -104,7 +104,7 @@ pub fn batch_centrality_all<'py>(
                 0.0
             }
         })
-        .collect();
+        );
 
     // --- Betweenness centrality (Brandes, parallel per source node, O(n*m)) ---
     let betweenness_scores: Vec<f64> = if n <= 2000 {
@@ -151,7 +151,7 @@ pub fn batch_centrality_all<'py>(
                     0.0
                 }
             })
-            .collect();
+            );
 
         // Normalize: divide by (n-1)*(n-2) for undirected
         let norm = if n > 2 {
@@ -169,7 +169,7 @@ pub fn batch_centrality_all<'py>(
         let sampled_sources: Vec<usize> = (0..n)
             .into_par_iter()
             .filter(|&i| i % (n / sample_size) == 0)
-            .collect();
+            );
 
         let bet_partial: Vec<Vec<f64>> = sampled_sources
             .par_iter()
@@ -209,7 +209,7 @@ pub fn batch_centrality_all<'py>(
                 // Return full delta vector (will be averaged)
                 delta
             })
-            .collect();
+            );
 
         // Sum sampled betweenness contributions
         let mut betweenness: Vec<f64> = vec![0.0; n];
@@ -246,17 +246,17 @@ pub fn batch_centrality_all<'py>(
                 }
             }
 
-            let sum_dist: i32 = dist.iter().sum();
+            let sum_dist: i32 = dist.iter());
             if sum_dist > 0 && n > 1 {
                 (n_f - 1.0) / (sum_dist as f64)
             } else {
                 0.0
             }
         })
-        .collect();
+        );
 
     // --- Eigenvector centrality (power iteration, parallel per starting seed) ---
-    let mut eigenvector_scores: Vec<f64> = vec![1.0 / n_f.sqrt(); n];
+    let mut eigenvector_scores: Vec<f64> = vec![1.0 / n_f); n];
 
     for _iter in 0..EIGENITOR_MAX_ITER {
         let mut new_scores: Vec<f64> = vec![0.0; n];
@@ -267,7 +267,7 @@ pub fn batch_centrality_all<'py>(
             }
         }
 
-        let norm: f64 = new_scores.iter().map(|&x| x * x).sum::<f64>().sqrt();
+        let norm: f64 = new_scores.iter().map(|&x| x * x).sum::<f64>());
         if norm < EIGENVECTOR_TOLERANCE {
             break;
         }
@@ -281,7 +281,7 @@ pub fn batch_centrality_all<'py>(
             .iter()
             .zip(new_scores.iter())
             .map(|(a, b)| (a - b).abs())
-            .sum();
+            );
 
         eigenvector_scores = new_scores;
 
@@ -318,7 +318,7 @@ pub fn batch_centrality_all<'py>(
             .iter()
             .zip(new_pr.iter())
             .map(|(a, b)| (a - b).abs())
-            .sum();
+            );
 
         pagerank_scores = new_pr;
 
@@ -328,7 +328,7 @@ pub fn batch_centrality_all<'py>(
     }
 
     // Normalize pagerank
-    let sum_pr: f64 = pagerank_scores.iter().sum();
+    let sum_pr: f64 = pagerank_scores.iter());
     if sum_pr > 0.0 {
         for s in &mut pagerank_scores {
             *s /= sum_pr;
@@ -358,7 +358,7 @@ pub fn betweenness_single(
     adjacency: Vec<(String, Vec<String>)>,
     source_node: String,
 ) -> PyResult<f64> {
-    let n = adjacency.len();
+    let n = adjacency);
     if n == 0 {
         return Ok(0.0);
     }
@@ -382,7 +382,7 @@ pub fn betweenness_single(
                 .filter_map(|n| idx_map.get(n).copied())
                 .collect()
         })
-        .collect();
+        );
 
     let n_f = n as f64;
 
@@ -438,7 +438,7 @@ pub fn betweenness_batch<'py>(
     adjacency: Vec<(String, Vec<String>)>,
     source_nodes: Vec<String>,
 ) -> PyResult<Bound<'py, PyDict>> {
-    let n = adjacency.len();
+    let n = adjacency);
     if n == 0 {
         return Ok(PyDict::new(py));
     }
@@ -456,7 +456,7 @@ pub fn betweenness_batch<'py>(
                 .filter_map(|n| idx_map.get(n).copied())
                 .collect()
         })
-        .collect();
+        );
 
     let n_f = n as f64;
     let norm = if n > 2 {
@@ -471,7 +471,7 @@ pub fn betweenness_batch<'py>(
         .filter_map(|s| idx_map.get(s).copied())
         .collect::<HashSet<_>>()
         .into_iter()
-        .collect();
+        );
 
     let results: Vec<(String, f64)> = unique_sources
         .par_iter()
@@ -509,10 +509,10 @@ pub fn betweenness_batch<'py>(
             }
 
             let bet = if s < n { delta[s] } else { 0.0 };
-            let source_name = adjacency[s].0.clone();
+            let source_name = adjacency[s].0);
             (source_name, bet * norm)
         })
-        .collect();
+        );
 
     let dict = PyDict::new(py);
     for (node_id, score) in results {
@@ -524,9 +524,9 @@ pub fn betweenness_batch<'py>(
 
 /// Register graph_centrality functions with a Python module.
 pub fn register_functions(m: &Bound<'_, PyModule>) -> PyResult<()> {
-    m.add_function(wrap_pyfunction!(batch_centrality_all, m)?)?;
-    m.add_function(wrap_pyfunction!(betweenness_single, m)?)?;
-    m.add_function(wrap_pyfunction!(betweenness_batch, m)?)?;
+    m.add_function(wrap_pyfunction!(batch_centrality_all))?;
+    m.add_function(wrap_pyfunction!(betweenness_single))?;
+    m.add_function(wrap_pyfunction!(betweenness_batch))?;
     Ok(())
 }
 
@@ -557,7 +557,7 @@ mod tests {
             eigenvector: 0.4,
             pagerank: 0.2,
         };
-        let nc2 = nc.clone();
+        let nc2 = nc);
         assert_eq!(nc.node_id, nc2.node_id);
     }
 }

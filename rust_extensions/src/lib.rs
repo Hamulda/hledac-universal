@@ -3,8 +3,120 @@
 //! This crate provides high-performance Rust implementations of critical
 //! security operations used by the hledac tool.
 
-#![allow(dead_code)]
-#![allow(unused_imports)]
+// ============================================================================
+// MODERN RUST BEST PRACTICES (ROADMAP-012)
+// ============================================================================
+//
+// This crate follows modern Rust patterns for dead code management:
+//
+// 1. NO global #[allow(dead_code)] — Rust's linter will warn about unused code
+// 2. Zombie modules (no Python callers) use targeted #[allow(dead_code)] per-module
+// 3. Dormant modules (kept for future use) have inline comments explaining why
+// 4. Feature-gated modules only warn when their feature is enabled
+//
+// KNOWN ZOMBIE/DORMANT MODULES (no Python callers found):
+// - accelerate: Accelerate/vDSP FFI - no callers (Python fallback: scipy/numpy)
+// - feed_pipeline: Feed pipeline - no callers (replaced by live_feed_pipeline.py)
+// - h2_safari_preset: Safari H2 preset - no callers
+// - health: Health metrics - no callers (Python path exists)
+// - topology: Network topology - no callers
+// - tracing: Tracing infrastructure - no direct callers (internal only)
+// - deobfuscate: Deobfuscation - no callers
+// - mpsc_pool: Multi-producer single-consumer - no callers
+// - pipeline_compose: Pipeline composition - no callers
+// - spsc_queue: Single-producer single-consumer - no callers
+// - adaptive_scheduler: Adaptive scheduling - no callers
+// - circuit_breaker: Circuit breaker - no callers
+// - claims_extraction: Claims extraction - no callers
+// - compress: Compression - no callers
+// - crypto_accelerate: Crypto acceleration - no callers
+// - data: Data module - no callers
+// - elastic_pool: Elastic pool - no callers
+// - feed_decision: Feed decision - no callers
+// - ffi_safe: FFI safety - no callers
+// - graph_analytics: Graph analytics - no callers
+// - hot_edges_rs: Hot edges - no callers
+// - html_parse: HTML parsing - no callers
+// - int_counter_layout: Int counter layout - no callers
+// - ioc_extract: IOC extraction - no callers (Python uses ioc module facade)
+// - ioc_extract_simd: IOC extraction SIMD - no callers
+// - ioc_stream_scan: IOC stream scan - no callers
+// - lsh_index: LSH index - no callers
+// - pool_run: Pool run - no callers
+// - quality_gate: Quality gate - no callers
+// - query_terms: Query terms - no callers
+// - regex_lz4: Regex LZ4 - REMOVED (zombie, no Python callers)
+// - serde_json_rs: Serde JSON RS - no callers
+// - signal_batch: Signal batch - no callers
+// - simd_similarity: SIMD similarity - no callers
+// - telemetry_agg: Telemetry aggregation - no callers
+// - text_norm: Text normalization - no callers
+// - text_similarity: Text similarity - no callers
+// - tls13: TLS 1.3 - no callers (Python fallback: tls_metadata)
+// - url_engine: URL engine - no callers
+// - url_ops: URL operations - no callers
+// - xxhash_ext: xxHash extension - no callers
+// - zero_copy: Zero copy - no callers
+// - aho_corasick_simd: Aho-Corasick SIMD - no callers
+// - git_forensics: Git forensics - ORPHANED (Python has own Git analysis)
+// - unindexed_scanner: Unindexed scanner - no callers
+// - warc_parser: WARC parser - no callers
+// - mlx_bridge: MLX bridge - no callers
+// - nw_connection: Network connection - no callers
+// - arrow_batch_builder: Arrow batch builder - no callers
+// - arrow_c_data: Arrow C data - no callers
+// - arrow_ipc_mmap: Arrow IPC mmap - no callers
+// - aimd_controller: AIMD controller - no callers
+// - federated_qtable: Federated Q-table - no callers
+// - lmdb_dht: LMDB DHT - no callers
+// - simdjson_extract: SIMD JSON extract - no callers
+// - simhash_ext: Simhash extension - no callers
+// - dns_tunnel: DNS tunnel - no callers
+// - tls_metadata: TLS metadata - no callers
+// - sendfile: Sendfile - no callers
+// - fulltext_index: Fulltext index - no callers
+// - p2p_harvest: P2P harvest - no callers
+// - async_bridge: Async bridge - no callers
+// - async_query: Async query - no callers
+// - swarm_dag: Swarm DAG - no callers
+// - metal_compute: Metal compute - no callers (DEPRECATED)
+// - metal_hashcrack: Metal hash crack - DEPRECATED (no Python callers)
+// - metal_shared_buf: Metal shared buffer - no callers
+// - pdf: PDF extraction - no callers (Python fallback: PyMuPDF)
+// - office: Office documents - no callers (Python fallback: python-docx)
+// - consistency_verifier: Consistency verifier - no callers
+// - native_db: Native DB wire protocols - no callers
+// - content_hasher: Content hasher - no callers
+// - dedup_bloom: Dedup bloom - no callers
+// - graph_cache: Graph cache - no callers
+// - collections_backup: Dead module (never declared in lib.rs)
+// - regex_lz4: Marked as REMOVED but kept for potential future use
+//
+// USED MODULES (have Python callers):
+// - rust.memory: Memory monitoring (RSS, pressure, Metal memory)
+// - rust.rate_limit: Rate limiting
+// - rust.bloom: BloomFilter, UrlSet
+// - rust.sprint_policies: LaneBudgetPool, FeedDominanceGuard
+// - rust.ioc_dedup: IocDedupStore
+// - rust.rolling_hash: RollingHashEngine
+// - rust.link_predictor: Link prediction
+// - rust.graph_centrality: Graph centrality
+// - rust.whisper: Whisper transcription
+// - rust.anti_analysis: Anti-analysis/evasion detection
+// - rust.quic: QUIC/HTTP3
+// - rust.ane: ANE/CoreML model registry
+// - rust.madvise: madvise system calls
+// - rust.swarm_fabric: Swarm fabric
+// - rust.iosurface_bridge: IOSurface bridge
+// - rust.arti_bridge: Arti Tor bridge
+// - rust.stealth_bridge: Stealth bridge
+// - rust.binary_matryoshka: Binary Matryoshka
+// - rust.dns: DNS resolution
+// - rust.tls: TLS fingerprinting
+// - rust.pool_run: CPU pool run (archived)
+// - rust.simd: ARM NEON detection, dot product
+// - rust.stix: STIX 2.1 bundle encoding + validation
+// ============================================================================
 
 use pyo3::prelude::*;
 
@@ -31,81 +143,250 @@ mod qos_class_helpers;
 // ============================================================================
 
 mod _entropy;
+
+// ZOMBIE: No Python callers found (Python fallback: scipy/numpy cosine)
+#[allow(dead_code)]
 mod accelerate;
+// ZOMBIE: No Python callers
+#[allow(dead_code)]
 mod adaptive_scheduler;
+
 mod aho_corasick;
+
+// ZOMBIE: No Python callers
+#[allow(dead_code)]
 mod aho_corasick_simd;
+
 mod anti_analysis;
 mod bloom;
+// ZOMBIE: No Python callers
+#[allow(dead_code)]
 mod circuit_breaker;
+
+// ZOMBIE: No Python callers
+#[allow(dead_code)]
 mod claims_extraction;
+
+// ZOMBIE: No Python callers
+#[allow(dead_code)]
 mod compress;
+
+// ZOMBIE: No Python callers
+#[allow(dead_code)]
 mod consistency_verifier;
+
+// ZOMBIE: No Python callers
+#[allow(dead_code)]
 mod content_hasher;
+
+// ZOMBIE: No Python callers
+#[allow(dead_code)]
 mod crypto_accelerate;
+
+// ZOMBIE: No Python callers
+#[allow(dead_code)]
 mod dedup_bloom;
+
+// ZOMBIE: No Python callers
+#[allow(dead_code)]
 mod deobfuscate;
+
 mod dns;
+
+// ZOMBIE: No Python callers
+#[allow(dead_code)]
 mod elastic_pool;
+
+// ZOMBIE: No Python callers
+#[allow(dead_code)]
 mod feed_decision;
+
+// ZOMBIE: No callers (replaced by live_feed_pipeline.py)
+#[allow(dead_code)]
 mod feed_pipeline;
+// ZOMBIE: No Python callers
+#[allow(dead_code)]
 mod ffi_safe;
+
 mod finding_collapser;
+
 #[cfg(feature = "fulltext")]
+// ZOMBIE: No Python callers
+#[allow(dead_code)]
 mod fulltext_index;
+
+// ORPHANED: Python has its own Git packfile analysis
+#[allow(dead_code)]
 mod git_forensics;
+
+// ZOMBIE: No Python callers
+#[allow(dead_code)]
 mod graph_analytics;
+
+// ZOMBIE: No Python callers
+#[allow(dead_code)]
 mod graph_cache;
+
 mod graph_centrality;
 mod graph_traverse;
+
+// ZOMBIE: No Python callers
+#[allow(dead_code)]
 mod h2_safari_preset;
+
+// ZOMBIE: No Python callers (Python path exists)
+#[allow(dead_code)]
 mod health;
+
+// ZOMBIE: No Python callers
+#[allow(dead_code)]
 mod hot_edges_rs;
+
+// ZOMBIE: No Python callers
+#[allow(dead_code)]
 mod html_parse;
+
+// ZOMBIE: No Python callers
+#[allow(dead_code)]
 mod int_counter_layout;
 mod ioc_cooccurrence_rs;
 mod ioc_dedup;
+// ZOMBIE: No Python callers (Python uses ioc module facade)
+#[allow(dead_code)]
 mod ioc_extract;
+
 mod ioc_extract_fast;
+
+// ZOMBIE: No Python callers
+#[allow(dead_code)]
 mod ioc_extract_simd;
+
 mod ioc_patterns;
 mod ioc_patterns_generated;
+
+// ZOMBIE: No Python callers
+#[allow(dead_code)]
 mod ioc_stream_scan;
+
 mod ip_parse;
 mod link_predictor;
+
+// ZOMBIE: No Python callers
+#[allow(dead_code)]
 mod lsh_index;
+
 mod memory;
+
+// ZOMBIE: No Python callers
+#[allow(dead_code)]
 mod native_db;
+
+// ZOMBIE: No Python callers
+#[allow(dead_code)]
 mod pipeline_compose;
+
+// ZOMBIE: No Python callers
+#[allow(dead_code)]
 mod quality_gate;
+
+// ZOMBIE: No Python callers
+#[allow(dead_code)]
 mod query_terms;
+
+// DEAD: collections_backup exists with register_functions() but is never declared in lib.rs
+// No Python callers, no registration call needed
+#[allow(dead_code)]
+mod collections_backup;
+
 mod rate_limit;
+
+// ZOMBIE: Marked as REMOVED but kept for potential future use
+// No Python callers, no registration call needed
+#[allow(dead_code)]
 mod regex_lz4;
+
 mod rolling_hash;
+
+// ZOMBIE: No Python callers
+#[allow(dead_code)]
 mod serde_json_rs;
+
+// ZOMBIE: No Python callers
+#[allow(dead_code)]
 mod signal_batch;
+
+// ZOMBIE: No Python callers
+#[allow(dead_code)]
 mod simd_similarity;
+
 #[cfg(feature = "simdjson")]
+// ZOMBIE: No Python callers
+#[allow(dead_code)]
 mod simdjson_extract;
+
+// ZOMBIE: No Python callers
+#[allow(dead_code)]
 mod simhash_ext;
+
 mod sprint_policies;
+
+// ZOMBIE: No Python callers
+#[allow(dead_code)]
 mod spsc_queue;
 
 // FIX: mpsc_pool was declared as file but never in lib.rs - added now
+// ZOMBIE: No Python callers
+#[allow(dead_code)]
 mod mpsc_pool;
+
+// ZOMBIE: No Python callers
+#[allow(dead_code)]
 mod telemetry_agg;
+
+// ZOMBIE: No Python callers
+#[allow(dead_code)]
 mod text_norm;
+
+// ZOMBIE: No Python callers
+#[allow(dead_code)]
 mod text_similarity;
+
+// ZOMBIE: No Python callers (Python fallback: tls_metadata)
+#[allow(dead_code)]
 mod tls13;
+
+// ZOMBIE: No Python callers
+#[allow(dead_code)]
 mod topology;
+
+// ZOMBIE: No Python callers (internal use only)
+#[allow(dead_code)]
 mod tracing;
+
 mod unicode_fingerprint;
+
+// ZOMBIE: No Python callers
+#[allow(dead_code)]
 mod unindexed_scanner;
+
+// ZOMBIE: No Python callers
+#[allow(dead_code)]
 mod url_engine;
+
+// ZOMBIE: No Python callers
+#[allow(dead_code)]
 mod url_ops;
+
 mod url_set;
+
+// ZOMBIE: No Python callers
+#[allow(dead_code)]
 mod warc_parser;
+
 mod xxhash_ext;
+
+// ZOMBIE: No Python callers
+#[allow(dead_code)]
 mod zero_copy;
 
 // ============================================================================
@@ -113,20 +394,28 @@ mod zero_copy;
 // ============================================================================
 
 #[cfg(feature = "data")]
+// ZOMBIE: No Python callers
+#[allow(dead_code)]
 mod arrow_batch_builder;
 
 #[cfg(feature = "data")]
+// ZOMBIE: No Python callers
+#[allow(dead_code)]
 mod arrow_c_data;
 
 #[cfg(feature = "data")]
+// ZOMBIE: No Python callers
+#[allow(dead_code)]
 mod arrow_ipc_mmap;
 
 // FIX: aimd_controller was declared as file but never in lib.rs - added now
-#[cfg(feature = "data")]
+// ZOMBIE: No Python callers
+#[allow(dead_code)]
 mod aimd_controller;
 
 // FIX: federated_qtable was declared as file but never in lib.rs - added now
-#[cfg(feature = "advanced")]
+// ZOMBIE: No Python callers
+#[allow(dead_code)]
 mod federated_qtable;
 
 // ============================================================================
@@ -137,18 +426,26 @@ mod federated_qtable;
 mod ane;
 
 #[cfg(all(target_os = "macos", feature = "metal"))]
+// ZOMBIE: No Python callers
+#[allow(dead_code)]
 mod metal_compute;
 
 #[cfg(all(target_os = "macos", feature = "metal"))]
+// DEPRECATED: No Python callers (metal_hashcrack module deprecated)
+#[allow(dead_code)]
 mod metal_hashcrack;
 
 #[cfg(all(target_os = "macos", feature = "metal_shared"))]
+// ZOMBIE: No Python callers
+#[allow(dead_code)]
 mod metal_shared_buf;
 
 #[cfg(all(target_os = "macos", feature = "iosurface"))]
 mod iosurface_bridge;
 
 #[cfg(all(target_os = "macos", feature = "nw_framework"))]
+// ZOMBIE: No Python callers
+#[allow(dead_code)]
 mod nw_connection;
 
 // ============================================================================
@@ -156,9 +453,13 @@ mod nw_connection;
 // ============================================================================
 
 #[cfg(feature = "shared_tokio")]
+// ZOMBIE: No Python callers
+#[allow(dead_code)]
 mod async_bridge;
 
 #[cfg(feature = "shared_tokio")]
+// ZOMBIE: No Python callers
+#[allow(dead_code)]
 mod async_query;
 
 #[cfg(feature = "shared_tokio")]
@@ -168,6 +469,8 @@ mod async_runtime;
 mod stealth_bridge;
 
 #[cfg(feature = "shared_tokio")]
+// ZOMBIE: No Python callers
+#[allow(dead_code)]
 mod swarm_dag;
 
 #[cfg(feature = "p2p_harvest")]
@@ -178,9 +481,13 @@ mod swarm_fabric;
 // ============================================================================
 
 #[cfg(feature = "dns")]
+// ZOMBIE: No Python callers
+#[allow(dead_code)]
 mod dns_tunnel;
 
 #[cfg(feature = "tls13")]
+// ZOMBIE: No Python callers
+#[allow(dead_code)]
 mod tls_metadata;
 
 // ============================================================================
@@ -188,6 +495,8 @@ mod tls_metadata;
 // ============================================================================
 
 #[cfg(feature = "p2p_harvest")]
+// ZOMBIE: No Python callers
+#[allow(dead_code)]
 mod p2p_harvest;
 
 // ============================================================================
@@ -195,9 +504,13 @@ mod p2p_harvest;
 // ============================================================================
 
 #[cfg(feature = "pdf")]
+// ZOMBIE: No Python callers (Python fallback: PyMuPDF)
+#[allow(dead_code)]
 mod pdf;
 
 #[cfg(feature = "office")]
+// ZOMBIE: No Python callers (Python fallback: python-docx + openpyxl)
+#[allow(dead_code)]
 mod office;
 
 // ============================================================================
@@ -213,6 +526,8 @@ mod arti_bridge;
 mod quic;
 
 #[cfg(feature = "embedded_tor")]
+// ZOMBIE: No Python callers
+#[allow(dead_code)]
 mod sendfile;
 
 // ============================================================================
@@ -220,6 +535,8 @@ mod sendfile;
 // ============================================================================
 
 #[cfg(feature = "mlx_bridge")]
+// ZOMBIE: No Python callers
+#[allow(dead_code)]
 mod mlx_bridge;
 
 #[cfg(feature = "mlx_bridge")]
@@ -233,6 +550,8 @@ mod whisper;
 // ============================================================================
 
 #[cfg(feature = "lmdb_dht")]
+// ZOMBIE: No Python callers
+#[allow(dead_code)]
 mod lmdb_dht;
 
 // ============================================================================
@@ -245,12 +564,14 @@ mod darwin_affinity;
 #[cfg(target_os = "macos")]
 mod madvise;
 
-#[cfg(target_os = "macos")]
-mod os_unfair_lock;
+// TEMPORARILY DISABLED: os_unfair_lock has PyO3 0.29 API incompatibilities
+// #[cfg(target_os = "macos")]
+// mod os_unfair_lock;
 
 // Mach kernel zero-copy remapping (macOS only)
-#[cfg(target_os = "macos")]
-mod mach_remap;
+// DISABLED: mach_vm_remap/mach_vm_allocate not available in libc crate
+// #[cfg(target_os = "macos")]
+// mod mach_remap;
 
 // ============================================================================
 // Version info
@@ -304,7 +625,7 @@ fn hledac_rust_extensions(m: &Bound<'_, PyModule>) -> PyResult<()> {
             features_str.split(',').filter(|s| !s.is_empty()).map(String::from).collect()
         }
         get_features
-    })?;
+    }?);
 
     m.add("__all__", Vec::<&str>::new())?;
 
@@ -317,6 +638,10 @@ fn hledac_rust_extensions(m: &Bound<'_, PyModule>) -> PyResult<()> {
 
     // DNS module (always compiled, conditionally feature-gated functions)
     dns::register_functions(&m)?;
+
+    // SIMD module (ARM NEON detection, dot product)
+    #[cfg(feature = "simdjson")]
+    simd::register(&m)?;
 
     // QUIC/HTTP3 module
     #[cfg(feature = "quic")]
@@ -377,6 +702,10 @@ fn hledac_rust_extensions(m: &Bound<'_, PyModule>) -> PyResult<()> {
         p2p_harvest::register(&m)?;
         swarm_fabric::register(&m)?;
     }
+
+    // STIX 2.1 bundle encoding + validation
+    #[cfg(feature = "stix")]
+    stix_2_1::register_functions(&m)?;
 
     // Native DB (MongoDB/Redis/Elasticsearch wire protocol)
     #[cfg(feature = "native_db")]
@@ -483,17 +812,17 @@ fn hledac_rust_extensions(m: &Bound<'_, PyModule>) -> PyResult<()> {
     #[cfg(target_os = "macos")]
     {
         madvise::register_functions(&m)?;
-        os_unfair_lock::register(&m)?;
-        mach_remap::add_module(&m)?;
+        // os_unfair_lock::register(&m); // DISABLED: PyO3 0.29 API incompatibilities
+        // mach_remap::add_module(&m); // DISABLED: mach_vm_* functions not in libc
     }
 
     // Arrow IPC mmap (data feature, platform-specific implementation)
     #[cfg(feature = "data")]
-    arrow_ipc_mmap::add_module(&m)?;
+    arrow_ipc_mmap::add_module(&m?);
 
     // Compound-gated (macOS + feature)
     #[cfg(all(target_os = "macos", feature = "ane"))]
-    ane::register_functions(&m)?;
+    ane::register_functions(&m?);
 
     Ok(())
 }

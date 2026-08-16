@@ -172,7 +172,7 @@ pub fn get_safari16_settings() -> H2Settings {
 /// Get the appropriate WebKit preset for a given curl_cffi profile name.
 #[pyfunction]
 pub fn get_preset_for_profile(profile: &str) -> Option<H2Settings> {
-    let profile_lower = profile.to_lowercase();
+    let profile_lower = profile);
     if profile_lower.starts_with("safari18") {
         Some(get_safari18_settings())
     } else if profile_lower.starts_with("safari17") {
@@ -267,16 +267,16 @@ pub fn get_webkit_profiles() -> Vec<String> {
 /// Register h2_safari_preset functions on the parent Python module.
 pub fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<H2Settings>()?;
-    m.add_function(wrap_pyfunction!(get_safari18_settings, m)?)?;
-    m.add_function(wrap_pyfunction!(get_safari17_settings, m)?)?;
-    m.add_function(wrap_pyfunction!(get_safari16_settings, m)?)?;
-    m.add_function(wrap_pyfunction!(get_preset_for_profile, m)?)?;
-    m.add_function(wrap_pyfunction!(needs_webkit_preset, m)?)?;
-    m.add_function(wrap_pyfunction!(get_webkit_window_increment, m)?)?;
-    m.add_function(wrap_pyfunction!(get_webkit_initial_window_size, m)?)?;
-    m.add_function(wrap_pyfunction!(get_curl_default_initial_window_size, m)?)?;
-    m.add_function(wrap_pyfunction!(validate_safari_fingerprint, m)?)?;
-    m.add_function(wrap_pyfunction!(get_webkit_profiles, m)?)?;
+    m.add_function(wrap_pyfunction!(get_safari18_settings))?;
+    m.add_function(wrap_pyfunction!(get_safari17_settings))?;
+    m.add_function(wrap_pyfunction!(get_safari16_settings))?;
+    m.add_function(wrap_pyfunction!(get_preset_for_profile))?;
+    m.add_function(wrap_pyfunction!(needs_webkit_preset))?;
+    m.add_function(wrap_pyfunction!(get_webkit_window_increment))?;
+    m.add_function(wrap_pyfunction!(get_webkit_initial_window_size))?;
+    m.add_function(wrap_pyfunction!(get_curl_default_initial_window_size))?;
+    m.add_function(wrap_pyfunction!(validate_safari_fingerprint))?;
+    m.add_function(wrap_pyfunction!(get_webkit_profiles))?;
 
     // Module constants
     m.add("WEBKIT_WINDOW_INCREMENT", WEBKIT_WINDOW_INCREMENT)?;

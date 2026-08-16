@@ -27,13 +27,11 @@ from contextlib import asynccontextmanager
 from enum import Enum, auto
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal, TypeVar
-
 if TYPE_CHECKING:
     from hledac.universal.brain.deephermes3_engine import DeepHermes3Engine
     from hledac.universal.brain.modernbert_adapter import ModernBertAdapter
     from hledac.universal.brain.coreml_embedder import CoreMLEmbedder
     from hledac.universal._core.model_runtime import ModelLifecycle
-
 from hledac.universal.brain.model_inference_guard import check_model_allowed, record_model_failure, record_model_success
 from hledac.universal.brain.quantization_selector import QuantizationSelector
 from hledac.universal.utils.asyncx import safe_create_task
@@ -41,11 +39,7 @@ from hledac.universal.utils.concurrency import adjust_fetch_workers
 from hledac.universal.utils.exceptions import MemoryPressureError
 from hledac.universal.utils.executor_decorator import offload_to
 from hledac.universal.utils.import_resolver import lazy
-
 T = TypeVar('T')
-
-# C1 FIX: Import from SSOT instead of hardcoded False
-# Uses importlib.metadata.version("mlx") detection — no mlx.core import at module load
 from hledac.universal.utils.mlx_memory import MLX_AVAILABLE
 from _core import aclose
 _MLXCEL_DETECTED: bool = False
@@ -82,7 +76,6 @@ def _mlxcel_is_available() -> bool:
     """Runtime check: mlxcel binary detected on system."""
     return _detect_mlxcel()
 
-
 def _log_inference_path() -> None:
     """
     C3 Fix: Log which inference path is active at startup.
@@ -100,9 +93,6 @@ def _log_inference_path() -> None:
         logger.info('[INFERENCE PATH] All MLX operations (Hermes, embeddings, NER) share in-process runtime')
         logger.info('[INFERENCE PATH] To enable mlxcel optimization: cargo install mlxcel')
         logger.info('[INFERENCE PATH] See pyproject.toml [mlx-lm Architecture Note] for details')
-
-
-# Log inference path on module import (once per process)
 _log_inference_path()
 _model_max_rss_gb: float = 6.0
 _MODEL_SIZES_GB = {'hermes': 1.75, 'modernbert': 0.5, 'gliner': 0.3}
@@ -119,8 +109,6 @@ def _load_unload_timeout() -> float:
         logger.warning('[P1E-B] HLEDAC_MODEL_UNLOAD_TIMEOUT_S=%r invalid, using default 5.0s', os.environ.get('HLEDAC_MODEL_UNLOAD_TIMEOUT_S'))
         return 5.0
 logger = logging.getLogger(__name__)
-
-# ISSUE [LLM-SEC-001]: Lazy import for LLM input sanitization
 sanitize_for_llm = lazy('.prompt_injection_validator.sanitize_for_llm')
 
 def set_model_memory_limit(max_rss_gb: float) -> None:
@@ -180,7 +168,6 @@ def _get_mlx_safe() -> Any:
     """Get mlx.core module via mlx_memory lazy init. Returns mx or None."""
     if MLX_AVAILABLE:
         try:
-            # C1 FIX: Use correct get_mx from _core (was non-existent _get_mlx_core)
             from hledac.universal.utils.mlx_memory._core import get_mx
             return get_mx()
         except Exception:
@@ -225,7 +212,7 @@ class MlxcelHermesAdapter:
         """Return a minimal config object matching DeepHermes3Engine expectations."""
         from dataclasses import dataclass
 
-        @dataclass(frozen=True)
+        @dataclass(frozen=True, slots=True)
         class _Cfg:
             model_path: str = 'mlx-community/DeepHermes-3-Llama-3-3B-Preview-4bit'
             max_tokens: int = 1024
@@ -296,7 +283,7 @@ class MlxcelHermesAdapter:
         return None
 
 @asynccontextmanager
-async def model_lifecycle(model_name: ModelName) -> ModelLifecycle:  # type: ignore[return-value]
+async def model_lifecycle(model_name: ModelName) -> ModelLifecycle:
     """
     Async context manager pro striktní 1-model-at-a-time lifecycle.
 
@@ -442,11 +429,7 @@ class ModelManager:
             RuntimeError: Pokud je memory pressure příliš vysoký.
         """
         try:
-            from hledac.universal._core.resource_governor import (
-                UMA_STATE_CRITICAL,
-                UMA_STATE_EMERGENCY,
-                sample_uma_status,
-    )
+            from hledac.universal._core.resource_governor import UMA_STATE_CRITICAL, UMA_STATE_EMERGENCY, sample_uma_status
         except ImportError:
             return
         try:
@@ -457,7 +440,7 @@ class ModelManager:
                 raise RuntimeError(f'[MEMORY ADMISSION] CRITICAL state ({status.system_used_gib:.2f} GiB) — model load BLOCKED to prevent OOM. Free up memory before retrying.')
         except RuntimeError:
             raise
-        except Exception:  # noqa: BLE001
+        except Exception:
             pass
 
     def _check_memory_pressure(self, threshold_gb: float=1.5) -> bool:
@@ -469,17 +452,14 @@ class ModelManager:
             if available < threshold_gb:
                 mx = _get_mlx_safe()
                 if MLX_AVAILABLE and mx is not None:
-                    # U2-02 FIX: offload mx.eval([]) + clear_cache() to thread —
-                    # direct calls block the event loop for 1-50ms during Metal GPU sync.
                     try:
                         _loop = asyncio.get_running_loop()
                         _loop.run_in_executor(None, _sync_eval_and_clear_cache)
                     except RuntimeError:
-                        # No event loop — fall back to direct sync call.
                         _sync_eval_and_clear_cache()
                 logger.warning(f'[MEMORY] Low RAM: {available:.2f}GB, MLX cache cleared')
                 return True
-        except Exception:  # noqa: BLE001
+        except Exception:
             pass
         return False
 
@@ -524,7 +504,7 @@ class ModelManager:
             return False
 
     @asynccontextmanager
-    async def acquire_model_ctx(self, model_name: str) -> Any:  # type: ignore[return-value]
+    async def acquire_model_ctx(self, model_name: str) -> Any:
         """
         Context manager that guarantees model unload on exit.
 
@@ -539,15 +519,13 @@ class ModelManager:
             await self.release_model(model_name)
             mx = _get_mlx_safe()
             if MLX_AVAILABLE and mx is not None:
-                # U2-02 FIX: offload mx.eval([]) + clear_cache() to thread —
-                # direct calls block the event loop for 1-50ms during Metal GPU sync.
                 try:
                     _loop = asyncio.get_running_loop()
                     _loop.run_in_executor(None, _sync_eval_and_clear_cache)
                 except RuntimeError:
                     _sync_eval_and_clear_cache()
 
-    async def with_model(self, model_name: ModelName) -> Any:  # type: ignore[return-value]
+    async def with_model(self, model_name: ModelName) -> Any:
         """
         Vrátí async context manager pro daný model.
 
@@ -604,11 +582,10 @@ class ModelManager:
             raise RuntimeError('mlx_lm required for Hermes model download')
         model_id = 'mlx-community/DeepHermes-3-Llama-3-3B-Preview-4bit'
         try:
-            # C2-FIX: mlx_lm.load() is blocking I/O. Wrapped in offload_to() to avoid blocking event loop.
             await offload_to('cpu_io_pool', mlx_lm.load, model_id)
             logger.info(f'[MODEL DOWNLOAD] Hermes-3 already cached at {model_id}')
             return
-        except Exception:  # noqa: BLE001
+        except Exception:
             pass
         logger.info(f'[MODEL DOWNLOAD] Hermes-3 not found, downloading {model_id}...')
         logger.info('[MODEL DOWNLOAD] Reducing HTTP worker pool to 3 during download')
@@ -663,7 +640,7 @@ class ModelManager:
         if MLX_AVAILABLE and mx is not None:
             try:
                 await asyncio.to_thread(_sync_maybe_eval)
-            except Exception:  # noqa: BLE001
+            except Exception:
                 pass
         return unload_task
 
@@ -804,19 +781,15 @@ class ModelManager:
                     context_len = self._estimate_context_length(engine._prompt_cache)
                     if context_len > 1024:
                         await engine._compress_kv_cache()
-            except Exception:  # noqa: BLE001
+            except Exception:
                 pass
         mx = _get_mlx_safe()
         if MLX_AVAILABLE and mx is not None:
             try:
-                # U2-02 FIX: offload mx.eval([]) + clear_cache() to thread — direct
-                # calls in async function block the event loop for 1-50ms.
                 await asyncio.to_thread(_sync_eval_and_clear_cache)
             except Exception as e:
                 logger.warning(f'Failed to clear MLX cache: {e}')
         gc.collect()
-
-    # ── Model Accessors ───────────────────────────────────────────────────────
 
     def get_model(self, model_name: ModelName) -> DeepHermes3Engine | ModernBertAdapter | CoreMLEmbedder | None:
         """
@@ -876,7 +849,7 @@ class ModelManager:
                 self._mlx_embedder = None
         return self._ane_embedder is not None
 
-    async def get_embedder(self, resource_allocator: Any = None) -> Any | None:
+    async def get_embedder(self, resource_allocator: Any=None) -> Any | None:
         """
         Vrátí funkci pro embeddování, která se rozhodne podle dostupnosti ANE a zátěže.
 
@@ -933,13 +906,7 @@ class ModelManager:
             await self._cleanup_memory_async(last_released, engine=last_engine)
             logger.info('✓ All models released')
 
-    async def generate_report(
-        self,
-        graph_summary: str,
-        hypotheses: list[str],
-        findings: list[Any] | None = None,
-        output_path: str | None = None,
-    ) -> str:
+    async def generate_report(self, graph_summary: str, hypotheses: list[str], findings: list[Any] | None=None, output_path: str | None=None) -> str:
         """
         P12: Generate final OSINT report from graph summary and hypotheses.
 
@@ -956,13 +923,11 @@ class ModelManager:
             Generated report as Markdown string
         """
         import os
-
         if output_path is None:
             output_path = os.path.expanduser('~/hledac_report.md')
         max_context = 4000
         max_hypotheses = 10
         max_findings = 20
-        # ISSUE [LLM-SEC-001]: Sanitize all user-controlled inputs before LLM consumption
         _sanitize = sanitize_for_llm()
         hypo_lines = []
         for i, h in enumerate(hypotheses[:max_hypotheses], 1):
@@ -974,40 +939,18 @@ class ModelManager:
             sanitized_f = _sanitize(str(f)[:300]) if _sanitize else str(f)[:300]
             finding_lines.append(f'- {sanitized_f}')
         finding_text = '\n'.join(finding_lines)
-        # Sanitize graph_summary (may contain raw web content)
         sanitized_graph = _sanitize(graph_summary[:max_context]) if _sanitize else graph_summary[:max_context]
-        prompt = (
-            f"Vytvoř strukturovaný OSINT report v Markdown formátu.\n\n"
-            f"Grafový souhrn:\n{sanitized_graph}\n\n"
-            f"Hypotézy:\n{hypo_text}\n\n"
-            f"Zjištění (findings):\n{finding_text if finding_text else 'Žádná zjištění'}\n\n"
-            f"Report musí obsahovat:\n"
-            f"1. # OSINT Report\n"
-            f"2. ## Shrnutí (Executive Summary) - max 3 věty\n"
-            f"3. ## Klíčová zjištění (Key Findings)\n"
-            f"4. ## Hypotézy a výsledky\n"
-            f"5. ## Doporučení (Recommendations)\n"
-            f"6. ## Metadata (timestamp, version)\n\n"
-            f"Piš v češtině, buď konkrétní a stručný."
-    )
-
+        prompt = f"Vytvoř strukturovaný OSINT report v Markdown formátu.\n\nGrafový souhrn:\n{sanitized_graph}\n\nHypotézy:\n{hypo_text}\n\nZjištění (findings):\n{(finding_text if finding_text else 'Žádná zjištění')}\n\nReport musí obsahovat:\n1. # OSINT Report\n2. ## Shrnutí (Executive Summary) - max 3 věty\n3. ## Klíčová zjištění (Key Findings)\n4. ## Hypotézy a výsledky\n5. ## Doporučení (Recommendations)\n6. ## Metadata (timestamp, version)\n\nPiš v češtině, buď konkrétní a stručný."
         async with self.acquire_model_ctx('hermes') as engine:
             try:
-                report = await engine.generate(
-                    prompt=prompt,
-                    temperature=0.3,
-                    max_tokens=2048,
-                    system_msg='Jsi OSINT research assistant. Vytvářej strukturované reporty v češtině.',
-    )
+                report = await engine.generate(prompt=prompt, temperature=0.3, max_tokens=2048, system_msg='Jsi OSINT research assistant. Vytvářej strukturované reporty v češtině.')
             except Exception as e:
                 logger.warning(f'[GENERATE_REPORT] Generation failed: {e}')
                 report = f'# Report Generation Failed\n\nError: {e}'
-
         timestamp = time.strftime('%Y-%m-%d %H:%M:%S')
         final_report = f'---\nGenerated: {timestamp}\nHledac OSINT Report\n---\n\n{report}'
         try:
             import aiofiles as _f273_af
-
             async with _f273_af.open(output_path, 'w', encoding='utf-8') as f:
                 await f.write(final_report)
             logger.info(f'[GENERATE_REPORT] Saved to {output_path}')
@@ -1015,7 +958,7 @@ class ModelManager:
             logger.warning(f'[GENERATE_REPORT] Failed to save: {e}')
         return final_report
 
-    async def with_phase(self, phase_name: str) -> Any:  # type: ignore[return-value]
+    async def with_phase(self, phase_name: str) -> Any:
         """
         Context manager pro fázové workflow.
 
@@ -1040,11 +983,10 @@ class ModelManager:
         logger.info(f'[PHASE START] {phase_name} -> using {model_name}')
 
         @asynccontextmanager
-        async def _phase_context() -> Any:  # type: ignore[return-value]
+        async def _phase_context() -> Any:
             async with model_lifecycle(model_name) as model:
                 yield model
             logger.info(f'[PHASE END] {phase_name}')
-
         return _phase_context()
 
     async def __aenter__(self) -> ModelManager:
@@ -1055,8 +997,6 @@ class ModelManager:
         """Async context manager exit - uvolní všechny modely."""
         await self.release_all()
 
-    # ── Embedding Lifecycle ───────────────────────────────────────────────────
-
     def load_embedding_model(self) -> bool:
         """
         Initialize the ModernBERTEmbedding singleton for embedding pipeline.
@@ -1066,7 +1006,6 @@ class ModelManager:
         """
         try:
             from hledac.universal.embedding_pipeline import _get_embedder
-
             embedder = _get_embedder()
             if embedder is not None:
                 logger.info('[EMBED] Embedding model loaded via ModelManager')
@@ -1084,14 +1023,13 @@ class ModelManager:
         """
         try:
             from hledac.universal.embedding_pipeline import _release_embedder
-
             _release_embedder()
             logger.info('[EMBED] Embedding model unloaded via ModelManager')
         except Exception as e:
             logger.debug(f'[EMBED] Failed to unload embedding model: {e}')
 
     @asynccontextmanager
-    async def embedding_lifecycle(self) -> Any:  # type: ignore[return-value]
+    async def embedding_lifecycle(self) -> Any:
         """
         Context manager for embedding model lifecycle.
 
@@ -1109,13 +1047,10 @@ class ModelManager:
             yield
         finally:
             self.unload_embedding_model()
-            # U2-02 FIX: offload eval+clear to thread — in async context (finally block
-            # of async contextmanager), direct mx.eval([]) blocks the event loop.
             try:
                 await asyncio.to_thread(_sync_eval_and_clear_cache)
-            except Exception:  # noqa: BLE001
+            except Exception:
                 pass
-
 
 def _sync_maybe_eval() -> None:
     """U2-02 FIX: sync throttled mx.eval([]) for asyncio.to_thread offload."""
@@ -1123,7 +1058,7 @@ def _sync_maybe_eval() -> None:
     _mx = _get_mlx_safe()
     if not MLX_AVAILABLE or _mx is None:
         return
-    _min_interval = 0.05  # 50ms throttle — matches _MIN_EVAL_INTERVAL in mlx_memory
+    _min_interval = 0.05
     try:
         _now = _time.monotonic()
         if not hasattr(_sync_maybe_eval, '_last_eval'):
@@ -1131,9 +1066,8 @@ def _sync_maybe_eval() -> None:
         if _now - _sync_maybe_eval._last_eval > _min_interval:
             _mx.eval([])
             _sync_maybe_eval._last_eval = _now
-    except Exception:  # noqa: BLE001
+    except Exception:
         pass
-
 
 def _sync_eval_and_clear_cache() -> None:
     """U2-02 FIX: sync eval+clear for asyncio.to_thread offload (no gc.collect)."""
@@ -1143,10 +1077,8 @@ def _sync_eval_and_clear_cache() -> None:
             _mx.eval([])
             if hasattr(_mx, 'clear_cache'):
                 _mx.clear_cache()
-        except Exception:  # noqa: BLE001
+        except Exception:
             pass
-
-
 _model_manager: ModelManager | None = None
 
 def get_model_manager() -> ModelManager:

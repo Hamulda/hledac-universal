@@ -436,6 +436,7 @@ except Exception:
 
 
 import sys as _sys
+from compat.msgspec_gc_compat import Struct
 from _core import aclose
 
 
@@ -465,7 +466,7 @@ compute_feed_branch_verdict = _make_rust_wrapper("feed_branch_verdict")
 
 # === Fallback Decision (moved from live_feed_pipeline.py) ===
 
-class FallbackDecision(msgspec.Struct, frozen=True, gc=False):
+class FallbackDecision(Struct, frozen=True):
     """Structured fallback decision output.
 
     reason: canonical reason tag for the decision

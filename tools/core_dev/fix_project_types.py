@@ -57,9 +57,9 @@ while i < len(lines):
 
             # Build new class line
             if has_frozen:
-                new_cls = f"class {cls_name}(msgspec.Struct, frozen=True, gc=False):"
+                new_cls = f"class {cls_name}(Struct, frozen=True):"
             else:
-                new_cls = f"class {cls_name}(msgspec.Struct, gc=False):"
+                new_cls = f"class {cls_name}(Struct):"
 
             if existing_bases:
                 # Has existing bases — prepend msgspec.Struct

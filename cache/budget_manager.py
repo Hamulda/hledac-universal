@@ -24,6 +24,7 @@ from datetime import UTC, datetime
 from enum import Enum
 from typing import Any
 import msgspec
+from compat.msgspec_gc_compat import Struct
 import numpy as np
 from ..tools.url_dedup import create_rotating_bloom_filter
 from ..utils.deduplication import SimHash
@@ -74,7 +75,7 @@ class FrequencyTracker:
     def size_mb(self):
         return self.counters.nbytes / (1024 * 1024)
 
-class BudgetConfig(msgspec.Struct, kw_only=True, gc=False):
+class BudgetConfig(Struct, kw_only=True):
     """Configuration for resource budgets"""
     max_iterations: int = 6
     max_docs: int = 30
@@ -83,7 +84,7 @@ class BudgetConfig(msgspec.Struct, kw_only=True, gc=False):
     min_confidence: float = 0.7
     stagnation_threshold: int = 2
 
-class BudgetState(msgspec.Struct, kw_only=True, gc=False):
+class BudgetState(Struct, kw_only=True):
     """Current state of resource consumption"""
     iteration: int = 0
     docs_collected: int = 0
@@ -93,7 +94,7 @@ class BudgetState(msgspec.Struct, kw_only=True, gc=False):
     stagnation_counter: int = 0
     current_confidence: float = 0.0
 
-class IterationSnapshot(msgspec.Struct, kw_only=True, gc=False):
+class IterationSnapshot(Struct, kw_only=True):
     """Log of evidence collected in an iteration"""
     iteration: int = 0
     entities: list[str] = msgspec.field(default_factory=list)
@@ -103,7 +104,7 @@ class IterationSnapshot(msgspec.Struct, kw_only=True, gc=False):
     confidence: float = 0.0
     timestamp: datetime = msgspec.field(default_factory=lambda: datetime.now(UTC))
 
-class BudgetStatus(msgspec.Struct, kw_only=True, gc=False):
+class BudgetStatus(Struct, kw_only=True):
     """Status report for logging and debugging"""
     should_stop: bool = False
     stop_reason: StopReason = StopReason.NONE

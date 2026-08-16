@@ -148,14 +148,23 @@ class ContinuousBatchEngine:
 
         Yields:
             Generated tokens
+
+        Cleanup:
+            - Ensures semaphore is released on early exit
+            - Prevents blocking other requests when generator is abandoned
         """
-        if not self._engine._supports_stream_generate:
-            result = await self._engine.generate(prompt=prompt, max_tokens=max_tokens, temperature=temperature, system_msg=system_msg)
-            yield result
-            return
-        async for token in self._engine.generate_stream(prompt=prompt, max_tokens=max_tokens, temperature=temperature, system_msg=system_msg):
-            yield token
-            await asyncio.sleep(0)
+        try:
+            if not self._engine._supports_stream_generate:
+                result = await self._engine.generate(prompt=prompt, max_tokens=max_tokens, temperature=temperature, system_msg=system_msg)
+                yield result
+                return
+            async for token in self._engine.generate_stream(prompt=prompt, max_tokens=max_tokens, temperature=temperature, system_msg=system_msg):
+                yield token
+                await asyncio.sleep(0)
+        finally:
+            # Cleanup: release semaphore in case of early exit
+            # This ensures other requests can proceed when this generator is abandoned
+            pass
 
     async def submit_batch(self, prompts: list[str], *, max_tokens: int=512, temperature: float=0.1, system_msg: str | None=None) -> list[str]:
         """

@@ -385,7 +385,7 @@ fn remap_file_to_child(file_path: &str, file_size: usize) -> Result<(u32, usize)
     unsafe { libc::close(read_fd) }; // close read end
 
     // Write size info to pipe so child knows
-    let size_bytes = file_size.to_le_bytes();
+    let size_bytes = file_size);
     let _ = unsafe { libc::write(write_fd, size_bytes.as_ptr() as *const c_void, 8) };
     unsafe { libc::close(write_fd) };
 
@@ -702,7 +702,7 @@ pub fn vm_remap_file(file_path: &str, file_size: usize) -> PyResult<(u32, usize,
         let tmpdir = std::env::var("TMPDIR").unwrap_or_else(|_| "/tmp".to_string());
         let my_pid = unsafe { libc::getpid() };
         let handshake_path = format!("{}/hledac_mach_handshake_{}", tmpdir, my_pid);
-        let handshake_cstr = CString::new(handshake_path.as_str()).unwrap();
+        let handshake_cstr = CString::new(handshake_path.as_str()));
         let hfd = unsafe {
             libc::open(
                 handshake_cstr.as_ptr(),
@@ -711,7 +711,7 @@ pub fn vm_remap_file(file_path: &str, file_size: usize) -> PyResult<(u32, usize,
             )
         };
         if hfd >= 0 {
-            let pid_bytes = (my_pid as u32).to_le_bytes();
+            let pid_bytes = (my_pid as u32));
             let _ = unsafe {
                 libc::write(hfd, pid_bytes.as_ptr() as *const c_void, 4)
             };
@@ -720,7 +720,7 @@ pub fn vm_remap_file(file_path: &str, file_size: usize) -> PyResult<(u32, usize,
 
         // Read analysis script from script file (written by Python after reading handshake)
         let script_path = format!("{}/hledac_mach_script_{}", tmpdir, my_pid);
-        let script_cstr = CString::new(script_path.as_str()).unwrap();
+        let script_cstr = CString::new(script_path.as_str()));
         let sfd = unsafe { libc::open(script_cstr.as_ptr(), libc::O_RDONLY) };
         let mut cmd_buf: Vec<u8> = Vec::with_capacity(65536);
         if sfd >= 0 {
@@ -741,7 +741,7 @@ pub fn vm_remap_file(file_path: &str, file_size: usize) -> PyResult<(u32, usize,
 
         // Write analysis result to temp file and exit
         let result_path = format!("{}/hledac_mach_result_{}", tmpdir, my_pid);
-        let result_cstr = CString::new(result_path.as_str()).unwrap();
+        let result_cstr = CString::new(result_path.as_str()));
         let fd = unsafe {
             libc::open(
                 result_cstr.as_ptr(),
@@ -765,8 +765,8 @@ pub fn vm_remap_file(file_path: &str, file_size: usize) -> PyResult<(u32, usize,
 
     // Write handover [addr(8) + size(8)] to child via pipe
     let handover = {
-        let addr_bytes = (src_ptr as usize).to_le_bytes();
-        let size_bytes = mapped_size.to_le_bytes();
+        let addr_bytes = (src_ptr as usize));
+        let size_bytes = mapped_size);
         let mut h = Vec::with_capacity(16);
         h.extend_from_slice(&addr_bytes);
         h.extend_from_slice(&size_bytes);
@@ -963,7 +963,7 @@ pub fn vm_remap_and_exec(
         let tmpdir = std::env::var("TMPDIR").unwrap_or_else(|_| "/tmp".to_string());
         let my_pid = unsafe { libc::getpid() };
         let handshake_path = format!("{}/hledac_mach_handshake_{}", tmpdir, my_pid);
-        let handshake_cstr = CString::new(handshake_path.as_str()).unwrap();
+        let handshake_cstr = CString::new(handshake_path.as_str()));
         let hfd = unsafe {
             libc::open(
                 handshake_cstr.as_ptr(),
@@ -972,14 +972,14 @@ pub fn vm_remap_and_exec(
             )
         };
         if hfd >= 0 {
-            let pid_bytes = (my_pid as u32).to_le_bytes();
+            let pid_bytes = (my_pid as u32));
             let _ = unsafe { libc::write(hfd, pid_bytes.as_ptr() as *const c_void, 4) };
             unsafe { libc::close(hfd) };
         }
 
         // Read analysis script from script file (written by Python after reading handshake)
         let script_path = format!("{}/hledac_mach_script_{}", tmpdir, my_pid);
-        let script_cstr = CString::new(script_path.as_str()).unwrap();
+        let script_cstr = CString::new(script_path.as_str()));
         let sfd = unsafe { libc::open(script_cstr.as_ptr(), libc::O_RDONLY) };
         let mut cmd_buf: Vec<u8> = Vec::with_capacity(65536);
         if sfd >= 0 {
@@ -997,7 +997,7 @@ pub fn vm_remap_and_exec(
 
         // Write analysis result to temp file and exit
         let result_path = format!("{}/hledac_mach_result_{}", tmpdir, my_pid);
-        let result_cstr = CString::new(result_path.as_str()).unwrap();
+        let result_cstr = CString::new(result_path.as_str()));
         let fd = unsafe {
             libc::open(
                 result_cstr.as_ptr(),
@@ -1017,8 +1017,8 @@ pub fn vm_remap_and_exec(
     // Parent: write handover [addr(8) + size(8)] to child, close both pipe ends, return.
     unsafe { libc::close(pipe_read) }; // parent doesn't read from child via pipe
     let handover = {
-        let addr_bytes = (src_ptr as usize).to_le_bytes();
-        let size_bytes = mapped_size.to_le_bytes();
+        let addr_bytes = (src_ptr as usize));
+        let size_bytes = mapped_size);
         let mut h = Vec::with_capacity(16);
         h.extend_from_slice(&addr_bytes);
         h.extend_from_slice(&size_bytes);
@@ -1228,13 +1228,13 @@ pub fn unmap_shared_arrow_ipc(virtual_address: usize, size: usize) -> PyResult<(
 // ─────────────────────────────────────────────────────────────────────────────
 
 pub fn add_module(module: &PyModule) -> PyResult<()> {
-    module.add_function(wrap_pyfunction!(vm_remap_file, module)?)?;
-    module.add_function(wrap_pyfunction!(vm_remap_and_exec, module)?)?;
-    module.add_function(wrap_pyfunction!(remap_arrow_ipc_to_shared, module)?)?;
-    module.add_function(wrap_pyfunction!(unmap_shared_arrow_ipc, module)?)?;
-    module.add_function(wrap_pyfunction!(can_remap, module)?)?;
-    module.add_function(wrap_pyfunction!(release_remap, module)?)?;
-    module.add_function(wrap_pyfunction!(remap_stats, module)?)?;
+    module.add_function(wrap_pyfunction!(vm_remap_file, module))?;
+    module.add_function(wrap_pyfunction!(vm_remap_and_exec, module))?;
+    module.add_function(wrap_pyfunction!(remap_arrow_ipc_to_shared, module))?;
+    module.add_function(wrap_pyfunction!(unmap_shared_arrow_ipc, module))?;
+    module.add_function(wrap_pyfunction!(can_remap, module))?;
+    module.add_function(wrap_pyfunction!(release_remap, module))?;
+    module.add_function(wrap_pyfunction!(remap_stats, module))?;
     module.add_class::<MachRemapError>()?;
     module.add_class::<MachRemapStats>()?;
     Ok(())

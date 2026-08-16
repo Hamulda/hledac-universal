@@ -26,6 +26,7 @@ Migration:
 """
 import asyncio
 import msgspec
+from compat.msgspec_gc_compat import Struct
 import msgspec.json as _json
 import logging
 from dataclasses import dataclass
@@ -45,7 +46,7 @@ class SmartSpawnedRole(Enum):
     CODER = 'coder'
     TESTER = 'tester'
 
-class SmartSpawnedAgent(msgspec.Struct, gc=False):
+class SmartSpawnedAgent(Struct):
     """Represents a smart-spawned agent"""
     agent_id: str
     name: str

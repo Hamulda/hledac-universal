@@ -18,6 +18,7 @@ from hledac.universal.utils.locks import LazyAsyncioLock
 from collections.abc import AsyncGenerator
 from dataclasses import dataclass
 import msgspec
+from compat.msgspec_gc_compat import Struct
 import httpx
 from hledac.universal.transport.circuit_breaker import checked_httpx_get as checked_aiohttp_get
 from hledac.universal.utils.asyncx import parallel
@@ -31,7 +32,7 @@ def _mask_secret(value: str) -> str:
     """Mask secrets via centralized DLP filter (SOVEREIGN-010)."""
     return _mask_secret_impl(value)
 
-class SecretFinding(msgspec.Struct, gc=False):
+class SecretFinding(Struct):
     pattern: str
     file_path: str
     line: int
@@ -200,31 +201,38 @@ async def _scan_commit_diffs(repo_full_name: str, session: httpx.AsyncClient) ->
         ctx="github_commit_scan",
     )
 
-    for commit_data in result.ok:
-        if not commit_data:
-            continue
-        files = commit_data.get('files', [])
-        for file_info in files:
-            patch = file_info.get('patch', '')
-            if not patch:
+    # PEP 479: Wrap yield in try/finally for proper cleanup on generator exit
+    try:
+        for commit_data in result.ok:
+            if not commit_data:
                 continue
-            file_path = file_info.get('filename', 'unknown')
-            for line_no, line in enumerate(patch.splitlines(), start=1):
-                if not line.startswith('+'):
+            files = commit_data.get('files', [])
+            for file_info in files:
+                patch = file_info.get('patch', '')
+                if not patch:
                     continue
-                scan_line = line[1:]
-                for pattern_label, compiled_re in _API_PATTERNS:
-                    matches = compiled_re.findall(scan_line)
-                    for _ in matches:
-                        if pattern_label == 'supabase_service_key':
-                            if not _has_supabase_context(scan_line):
-                                continue
-                        elif pattern_label == 'vercel_token':
-                            if not _has_vercel_context(scan_line):
-                                continue
-                        masked_line = _mask_secret(scan_line.strip())
-                        yield SecretFinding(pattern=pattern_label, file_path=file_path, line=line_no, context=masked_line)
-                        logger.debug(f'GitHub secret in {repo_full_name} commit {file_path}:{line_no} pattern={pattern_label}')
+                file_path = file_info.get('filename', 'unknown')
+                for line_no, line in enumerate(patch.splitlines(), start=1):
+                    if not line.startswith('+'):
+                        continue
+                    scan_line = line[1:]
+                    for pattern_label, compiled_re in _API_PATTERNS:
+                        matches = compiled_re.findall(scan_line)
+                        for _ in matches:
+                            if pattern_label == 'supabase_service_key':
+                                if not _has_supabase_context(scan_line):
+                                    continue
+                            elif pattern_label == 'vercel_token':
+                                if not _has_vercel_context(scan_line):
+                                    continue
+                            masked_line = _mask_secret(scan_line.strip())
+                            yield SecretFinding(pattern=pattern_label, file_path=file_path, line=line_no, context=masked_line)
+                            logger.debug(f'GitHub secret in {repo_full_name} commit {file_path}:{line_no} pattern={pattern_label}')
+    finally:
+        # PEP 479: Cleanup when generator is abandoned mid-stream
+        # Clear references to allow garbage collection
+        result = None
+        commit_coros = None
 
 async def scan_repo(repo_full_name: str) -> list[SecretFinding]:
     """Scan veřejný GitHub repozitář pro potenciální secrets.

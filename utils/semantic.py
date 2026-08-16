@@ -34,12 +34,13 @@ import logging
 import re
 from dataclasses import dataclass
 import msgspec
+from compat.msgspec_gc_compat import Struct
 from typing import Any
 import numpy as np
 from _core import aclose
 logger = logging.getLogger(__name__)
 
-class FilterResult(msgspec.Struct, gc=False):
+class FilterResult(Struct):
     """Result of semantic filtering."""
     passed: bool
     similarity: float

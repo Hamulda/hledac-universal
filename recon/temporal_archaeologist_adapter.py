@@ -24,6 +24,7 @@ import logging
 import time
 from dataclasses import dataclass
 import msgspec
+from compat.msgspec_gc_compat import Struct
 from typing import Any
 from hledac.universal.utils.msgspec_json import dumps_str as _msgspec_dumps_str
 from _core import aclose
@@ -50,7 +51,7 @@ try:
 except ImportError:
     CanonicalFinding = None
 
-class TimelineFindingResult(msgspec.Struct, gc=False):
+class TimelineFindingResult(Struct):
     """
     Result of timeline synthesis containing events and derived findings.
     """

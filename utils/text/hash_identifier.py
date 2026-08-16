@@ -13,6 +13,7 @@ import re
 from dataclasses import dataclass
 from pathlib import Path
 import msgspec
+from compat.msgspec_gc_compat import Struct
 from operator import attrgetter, itemgetter
 from _core import aclose
 logger = logging.getLogger(__name__)
@@ -27,7 +28,7 @@ _COMPILED_PATTERN_HASHES: tuple[tuple[re.Pattern[str], str, str], ...] = tuple((
 _HEX_HASH_SCAN_RE = re.compile('\\b[0-9a-fA-F]{32,128}\\b')
 _COMPILED_SCAN_PATTERN_HASHES: tuple[tuple[re.Pattern[str], str], ...] = tuple(((re.compile(pattern + '\\S+'), pattern) for pattern in PATTERN_HASHES.keys()))
 
-class HashMatch(msgspec.Struct, gc=False):
+class HashMatch(Struct):
     """Represents a hash algorithm match.
 
     Attributes:
@@ -47,7 +48,7 @@ class HashMatch(msgspec.Struct, gc=False):
     hashcat_mode: int | None
     john_format: str | None
 
-class HashFinding(msgspec.Struct, gc=False):
+class HashFinding(Struct):
     """Sprint F300: msgspec.Struct for hash found in text.
 
     Attributes:
@@ -61,7 +62,7 @@ class HashFinding(msgspec.Struct, gc=False):
     matches: list[HashMatch]
     context: str
 
-class HashConfig(msgspec.Struct, gc=False):
+class HashConfig(Struct):
     """Sprint F300: msgspec.Struct for hash identification configuration.
 
     Attributes:

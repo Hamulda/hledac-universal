@@ -24,7 +24,7 @@ from enum import Enum, auto
 from typing import TYPE_CHECKING, Any, Protocol
 
 from operator import attrgetter, itemgetter
-from msgspec import Struct
+from compat.msgspec_gc_compat import Struct
 from _core import aclose
 
 if TYPE_CHECKING:
@@ -539,6 +539,7 @@ class StreamingLinkPredictor:
         '_pending_nodes',
         '_adjacency',
         '_total_edges',
+        '_ioc_values',  # BREAKTHROUGH #2: IOC value mappings
     )
     
     # Maximum pending nodes before forced flush
@@ -641,13 +642,21 @@ class StreamingLinkPredictor:
             StreamingPrediction with edges and prefetch URLs
             
         BREAKTHROUGH #2: ~50ms latency per batch vs ~5s for batch mode
+        
+        Cleanup:
+            - Clears pending nodes after consumption
+            - Ensures proper resource cleanup on early exit
         """
-        if self._available and self._rust_module:
-            async for batch in self._stream_predictions_rust():
-                yield batch
-        else:
-            async for batch in self._stream_predictions_python():
-                yield batch
+        try:
+            if self._available and self._rust_module:
+                async for batch in self._stream_predictions_rust():
+                    yield batch
+            else:
+                async for batch in self._stream_predictions_python():
+                    yield batch
+        finally:
+            # Cleanup: clear any remaining pending nodes
+            self._pending_nodes.clear()
     
     async def _stream_predictions_rust(
         self,
@@ -731,7 +740,13 @@ class StreamingLinkPredictor:
     async def _stream_predictions_python(
         self,
     ) -> AsyncIterator['StreamingPrediction']:
-        """Python fallback streaming implementation."""
+        """
+        Python fallback streaming implementation.
+        
+        Cleanup:
+            - Clears pending list on early exit
+            - Ensures proper resource cleanup on cancellation
+        """
         import asyncio
         import math
         
@@ -739,115 +754,120 @@ class StreamingLinkPredictor:
         pending = list(self._pending_nodes)
         self._pending_nodes.clear()
         
-        # FIX: Generate URL candidates using IOC values when available
-        # This is consistent with Rust implementation behavior
-        def _generate_url_candidates(node_id: int) -> list[str]:
-            """Generate URL candidates for a node using IOC value or fallback."""
-            urls = []
-            paths = ["", "/", "/api", "/feed", "/robots.txt"]
-            
-            # Try to get IOC value
-            ioc_value = self._ioc_values.get(node_id)
-            if ioc_value:
-                # Normalize IOC value to host
-                normalized = ioc_value
-                if "://" in ioc_value:
-                    # Extract host from URL
-                    parts = ioc_value.split("://")
-                    if len(parts) > 1:
-                        host_part = parts[1].split("/")[0].split(":")[0]
-                        normalized = host_part.lower()
+        try:
+            # FIX: Generate URL candidates using IOC values when available
+            # This is consistent with Rust implementation behavior
+            def _generate_url_candidates(node_id: int) -> list[str]:
+                """Generate URL candidates for a node using IOC value or fallback."""
+                urls = []
+                paths = ["", "/", "/api", "/feed", "/robots.txt"]
+                
+                # Try to get IOC value
+                ioc_value = self._ioc_values.get(node_id)
+                if ioc_value:
+                    # Normalize IOC value to host
+                    normalized = ioc_value
+                    if "://" in ioc_value:
+                        # Extract host from URL
+                        parts = ioc_value.split("://")
+                        if len(parts) > 1:
+                            host_part = parts[1].split("/")[0].split(":")[0]
+                            normalized = host_part.lower()
+                        else:
+                            normalized = ioc_value.lower()
+                    elif "/" in ioc_value:
+                        normalized = ioc_value.split("/")[0].lower()
                     else:
                         normalized = ioc_value.lower()
-                elif "/" in ioc_value:
-                    normalized = ioc_value.split("/")[0].lower()
+                    
+                    # Generate URLs with real host
+                    for path in paths:
+                        urls.append(f"https://{normalized}{path}")
                 else:
-                    normalized = ioc_value.lower()
+                    # Fallback: use node_id as placeholder
+                    for path in paths:
+                        urls.append(f"https://node_{node_id}{path}")
                 
-                # Generate URLs with real host
-                for path in paths:
-                    urls.append(f"https://{normalized}{path}")
-            else:
-                # Fallback: use node_id as placeholder
-                for path in paths:
-                    urls.append(f"https://node_{node_id}{path}")
+                return urls
             
-            return urls
-        
-        # Process in batches
-        batch_size = self._config.max_pending_nodes
-        for i in range(0, len(pending), batch_size):
-            batch_nodes = pending[i:i + batch_size]
-            
-            edges: list[PredictedEdge] = []
-            prefetch_urls: list[str] = []
-            
-            for node_id in batch_nodes:
-                if node_id not in self._adjacency:
-                    continue
-                    
-                neighbors = self._adjacency[node_id]
+            # Process in batches
+            batch_size = self._config.max_pending_nodes
+            for i in range(0, len(pending), batch_size):
+                batch_nodes = pending[i:i + batch_size]
                 
-                # Find second-degree neighbors
-                candidates: dict[int, list[int]] = {}
-                for neighbor in neighbors:
-                    if neighbor not in self._adjacency:
+                edges: list[PredictedEdge] = []
+                prefetch_urls: list[str] = []
+                
+                for node_id in batch_nodes:
+                    if node_id not in self._adjacency:
                         continue
-                    for second in self._adjacency[neighbor]:
-                        if second == node_id or second in neighbors:
-                            continue
-                        if second not in candidates:
-                            candidates[second] = []
-                        candidates[second].append(neighbor)
-                
-                # Compute scores
-                for candidate, common in candidates.items():
-                    if not common:
-                        continue
-                    
-                    # Adamic-Adar
-                    adamic_adar = 0.0
-                    for cn in common:
-                        deg = len(self._adjacency.get(cn, []))
-                        if deg > 1:
-                            adamic_adar += 1.0 / math.log(deg)
-                    
-                    # Jaccard
-                    n_src = len(neighbors)
-                    n_dst = len(self._adjacency.get(candidate, []))
-                    union = n_src + n_dst - len(common)
-                    jaccard = len(common) / union if union > 0 else 0.0
-                    
-                    if adamic_adar >= self._config.min_adamic_adar and jaccard >= self._config.min_jaccard:
-                        edge = PredictedEdge(
-                            src_id=node_id,
-                            dst_id=candidate,
-                            adamic_adar=adamic_adar,
-                            preferential_attachment=float(n_src * n_dst),
-                            jaccard=jaccard,
-                            common_neighbors=len(common),
-                            method="adamic_adar" if adamic_adar > 0.3 else "jaccard",
-    )
-                        edges.append(edge)
-                        self._total_edges += 1
                         
-                        # FIX: Generate URL candidates using IOC values (consistent with Rust)
-                        if self._config.generate_url_candidates:
-                            for url in _generate_url_candidates(node_id):
-                                prefetch_urls.append(url)
-                            for url in _generate_url_candidates(candidate):
-                                prefetch_urls.append(url)
-            
-            yield StreamingPrediction(
-                edges=tuple(edges),
-                prefetch_urls=tuple(prefetch_urls[:self.URL_CANDIDATES_PER_EDGE * len(edges)]),
-                nodes_processed=len(batch_nodes),
-                total_edges=self._total_edges,
-                has_more=i + batch_size < len(pending),
-    )
-            
-            # Small delay for rate limiting
-            await asyncio.sleep(0.001)
+                    neighbors = self._adjacency[node_id]
+                    
+                    # Find second-degree neighbors
+                    candidates: dict[int, list[int]] = {}
+                    for neighbor in neighbors:
+                        if neighbor not in self._adjacency:
+                            continue
+                        for second in self._adjacency[neighbor]:
+                            if second == node_id or second in neighbors:
+                                continue
+                            if second not in candidates:
+                                candidates[second] = []
+                            candidates[second].append(neighbor)
+                    
+                    # Compute scores
+                    for candidate, common in candidates.items():
+                        if not common:
+                            continue
+                        
+                        # Adamic-Adar
+                        adamic_adar = 0.0
+                        for cn in common:
+                            deg = len(self._adjacency.get(cn, []))
+                            if deg > 1:
+                                adamic_adar += 1.0 / math.log(deg)
+                        
+                        # Jaccard
+                        n_src = len(neighbors)
+                        n_dst = len(self._adjacency.get(candidate, []))
+                        union = n_src + n_dst - len(common)
+                        jaccard = len(common) / union if union > 0 else 0.0
+                        
+                        if adamic_adar >= self._config.min_adamic_adar and jaccard >= self._config.min_jaccard:
+                            edge = PredictedEdge(
+                                src_id=node_id,
+                                dst_id=candidate,
+                                adamic_adar=adamic_adar,
+                                preferential_attachment=float(n_src * n_dst),
+                                jaccard=jaccard,
+                                common_neighbors=len(common),
+                                method="adamic_adar" if adamic_adar > 0.3 else "jaccard",
+            )
+                            edges.append(edge)
+                            self._total_edges += 1
+                            
+                            # FIX: Generate URL candidates using IOC values (consistent with Rust)
+                            if self._config.generate_url_candidates:
+                                for url in _generate_url_candidates(node_id):
+                                    prefetch_urls.append(url)
+                                for url in _generate_url_candidates(candidate):
+                                    prefetch_urls.append(url)
+                
+                yield StreamingPrediction(
+                    edges=tuple(edges),
+                    prefetch_urls=tuple(prefetch_urls[:self.URL_CANDIDATES_PER_EDGE * len(edges)]),
+                    nodes_processed=len(batch_nodes),
+                    total_edges=self._total_edges,
+                    has_more=i + batch_size < len(pending),
+            )
+                
+                # Small delay for rate limiting
+                await asyncio.sleep(0.001)
+        finally:
+            # Cleanup: clear pending list reference on early exit
+            # This helps garbage collection when generator is abandoned mid-iteration
+            pending.clear()
 
 
 @dataclass(frozen=True, slots=True)

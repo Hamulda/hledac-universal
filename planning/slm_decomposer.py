@@ -5,11 +5,32 @@ Podporuje paralelní běh, cache a validaci.
 
 import asyncio
 import hashlib
-import json
 import logging
 import psutil
 from hledac.universal.utils.asyncx import parallel_ok, safe_wait_for
 from _core import aclose
+
+# orjson fallback — 5-10× faster than stdlib json, M1 optimized
+try:
+    import orjson
+
+    def _json_loads(data: str | bytes):
+        return orjson.loads(data)
+
+    def _json_dumps(data, *, sort_keys=False):
+        opts = orjson.OPT_SORT_KEYS if sort_keys else 0
+        return orjson.dumps(data, option=opts).decode("utf-8")
+
+except ImportError:
+    import json as _stdlib_json
+
+    def _json_loads(data):
+        return _stdlib_json.loads(data)
+
+    def _json_dumps(data, *, sort_keys=False):
+        return _stdlib_json.dumps(data, sort_keys=sort_keys)
+
+
 logger = logging.getLogger(__name__)
 MLX_LM_AVAILABLE = True
 try:
@@ -96,7 +117,7 @@ class SLMDecomposer:
 
     def _build_prompts(self, task: str, context: dict, count: int) -> list[str]:
         """Vytvoří různé prompt varianty pro paralelní běh."""
-        base = f"Rozlož následující výzkumný úkol na posloupnost elementárních akcí.\nÚkol: {task}\nKontext: {json.dumps(context, ensure_ascii=False)}\nVrať JSON seznam akcí, každá s poli 'type', 'params' a 'priority' (1-10).\nPovolené typy: fetch, deep_read, branch, analyse, synthesize, hypothesis, explain.\n"
+        base = f"Rozlož následující výzkumný úkol na posloupnost elementárních akcí.\nÚkol: {task}\nKontext: {_json_dumps(context)}\nVrať JSON seznam akcí, každá s poli 'type', 'params' a 'priority' (1-10).\nPovolené typy: fetch, deep_read, branch, analyse, synthesize, hypothesis, explain.\n"
         variants = [base]
         if count >= 2:
             variants.append(base + '\nPreferuj rychlé, levné akce.')
@@ -114,7 +135,7 @@ class SLMDecomposer:
             end = response.rfind(']') + 1
             if start >= 0 and end > start:
                 json_str = response[start:end]
-                data = json.loads(json_str)
+                data = _json_loads(json_str)
                 if isinstance(data, list):
                     for item in data:
                         if not isinstance(item.get('type'), str):
@@ -129,5 +150,5 @@ class SLMDecomposer:
         return [{'type': 'fetch', 'params': {'url': '...'}, 'priority': 5}]
 
     def _cache_key(self, task: str, context: dict) -> str:
-        content = f'{task}:{json.dumps(context, sort_keys=True)}'
+        content = f'{task}:{_json_dumps(context, sort_keys=True)}'
         return hashlib.sha256(content.encode()).hexdigest()

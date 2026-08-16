@@ -154,7 +154,7 @@ pub fn lane_pool_allocate<'p>(
 
     // Copy existing entries
     for (k, v) in pool.iter() {
-        let key: String = k.extract().unwrap_or_default();
+        let key: String = k.extract());
         if key != lane_name {
             new_pool.set_item(&key, v)?;
         }
@@ -184,7 +184,7 @@ pub fn lane_pool_consume<'p>(
     let new_pool = PyDict::new(py);
 
     for (k, v) in pool.iter() {
-        let key: String = k.extract().unwrap_or_default();
+        let key: String = k.extract());
         if key != lane_name {
             new_pool.set_item(&key, v)?;
         }
@@ -213,7 +213,7 @@ pub fn lane_pool_release<'p>(
     let new_pool = PyDict::new(py);
 
     for (k, v) in pool.iter() {
-        let key: String = k.extract().unwrap_or_default();
+        let key: String = k.extract());
         if key != lane_name {
             new_pool.set_item(&key, v)?;
         }
@@ -264,7 +264,7 @@ pub fn lane_pool_get_stats<'p>(
 ) -> PyResult<Bound<'p, PyDict>> {
     let result = PyDict::new(py);
     for (key, value) in pool.iter() {
-        let lane_name: String = key.extract().unwrap_or_default();
+        let lane_name: String = key.extract());
         let stats = PyDict::new(py);
         if let Ok(list) = value.extract::<Vec<f64>>() {
             stats.set_item("allocated_s", list.get(0).copied().unwrap_or(0.0))?;
@@ -293,15 +293,15 @@ pub fn lane_pool_lane_count(pool: &Bound<'_, PyDict>) -> usize {
 // ---------------------------------------------------------------------------
 
 pub fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
-    m.add_function(wrap_pyfunction!(compute_feed_dominance, m)?)?;
-    m.add_function(wrap_pyfunction!(compute_feed_dominance_simple, m)?)?;
-    m.add_function(wrap_pyfunction!(create_lane_budget_pool, m)?)?;
-    m.add_function(wrap_pyfunction!(lane_pool_get, m)?)?;
-    m.add_function(wrap_pyfunction!(lane_pool_allocate, m)?)?;
-    m.add_function(wrap_pyfunction!(lane_pool_consume, m)?)?;
-    m.add_function(wrap_pyfunction!(lane_pool_release, m)?)?;
-    m.add_function(wrap_pyfunction!(lane_pool_get_utilization, m)?)?;
-    m.add_function(wrap_pyfunction!(lane_pool_get_stats, m)?)?;
-    m.add_function(wrap_pyfunction!(lane_pool_lane_count, m)?)?;
+    m.add_function(wrap_pyfunction!(compute_feed_dominance))?;
+    m.add_function(wrap_pyfunction!(compute_feed_dominance_simple))?;
+    m.add_function(wrap_pyfunction!(create_lane_budget_pool))?;
+    m.add_function(wrap_pyfunction!(lane_pool_get))?;
+    m.add_function(wrap_pyfunction!(lane_pool_allocate))?;
+    m.add_function(wrap_pyfunction!(lane_pool_consume))?;
+    m.add_function(wrap_pyfunction!(lane_pool_release))?;
+    m.add_function(wrap_pyfunction!(lane_pool_get_utilization))?;
+    m.add_function(wrap_pyfunction!(lane_pool_get_stats))?;
+    m.add_function(wrap_pyfunction!(lane_pool_lane_count))?;
     Ok(())
 }

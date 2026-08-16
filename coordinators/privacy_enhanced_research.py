@@ -26,6 +26,7 @@ from enum import Enum
 from typing import Any
 
 import msgspec
+from compat.msgspec_gc_compat import Struct
 
 from hledac.universal.project_types import PrivacyLevel
 from _core import aclose

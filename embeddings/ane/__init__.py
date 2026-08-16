@@ -24,17 +24,26 @@ Memory budget (M1 8GB):
     Total:           ~2.2–2.8 GB (within 3.5 GB budget)
 
 Canonical import: from hledac.universal.embeddings.ane import ane_embedder
+
+ISSUE-003 FIX: Module-level locks registered via @auto_register decorator.
 """
 import logging
 import threading
 from typing import Any
 from _core import aclose
+from _core.lock_registry import LockCategory, auto_register
+
 logger = logging.getLogger(__name__)
 _UNIFIED_BUDGET_BYTES: int = int(3.5 * 1024 * 1024 * 1024)
 _LRU_MAX_ENTRIES: int = 4
 _ANE_AVAILABLE: bool | None = None
 _ANE_CHECKED: bool = False
-_lock = threading.Lock()
+
+
+@auto_register(LockCategory.CACHE)
+def _ane_lock():
+    """Module-level lock for ANE availability checking (shared state)."""
+    return threading.Lock()
 
 # Lazy mlx.core singleton
 _MLX_CORE: Any | None = None
@@ -57,8 +66,12 @@ def _check_ane_available() -> bool:
     global _ANE_AVAILABLE, _ANE_CHECKED
     if _ANE_CHECKED:
         return _ANE_AVAILABLE
-    _ANE_CHECKED = True
-    import platform
+    with _ane_lock():
+        # Double-check after acquiring lock
+        if _ANE_CHECKED:
+            return _ANE_AVAILABLE
+        _ANE_CHECKED = True
+        import platform
     if platform.system() != 'Darwin' or platform.machine() != 'arm64':
         _ANE_AVAILABLE = False
         return False
@@ -88,7 +101,7 @@ class _UnifiedEmbedder:
     Tries CoreML ANE first, falls back to MLX/Metal ModernBERT.
     Both paths share a unified memory budget and track usage for LRU eviction.
     """
-    __slots__ = tuple(('_ane_active', '_ane_embedder', '_batch_size', '_budget_used_bytes', '_lock', '_lru_order', '_mlx_embedder', '_normalize'))
+    __slots__ = tuple(('_ane_active', '_ane_embedder', '_batch_size', '_budget_used_bytes', '_lru_order', '_mlx_embedder', '_normalize'))
 
     def __init__(self, normalize: bool=True, batch_size: int=16) -> None:
         self._ane_embedder: Any = None
@@ -96,7 +109,7 @@ class _UnifiedEmbedder:
         self._ane_active: bool = False
         self._normalize = normalize
         self._batch_size = batch_size
-        self._lock = threading.Lock()
+        # NOTE: No per-instance lock - uses module-level _ane_lock() instead
         self._budget_used_bytes: int = 0
         self._lru_order: list[str] = []
 
@@ -104,7 +117,7 @@ class _UnifiedEmbedder:
         """Lazily load ANE embedder."""
         if self._ane_embedder is not None:
             return self._ane_active
-        with self._lock:
+        with _ane_lock():
             if self._ane_embedder is not None:
                 return self._ane_active
             if _check_ane_available():
@@ -126,7 +139,7 @@ class _UnifiedEmbedder:
         """Lazily load MLX fallback embedder."""
         if self._mlx_embedder is not None:
             return self._mlx_embedder
-        with self._lock:
+        with _ane_lock():
             if self._mlx_embedder is not None:
                 return self._mlx_embedder
             try:
@@ -201,7 +214,12 @@ class _UnifiedEmbedder:
         """Return embedder statistics."""
         return {'budget_used_bytes': self._budget_used_bytes, 'budget_max_bytes': _UNIFIED_BUDGET_BYTES, 'ane_active': self._ane_active, 'mlx_loaded': self._mlx_embedder is not None, 'lru_order': list(self._lru_order)}
 _ane_embedder_instance: _UnifiedEmbedder | None = None
-_factory_lock = threading.Lock()
+
+
+@auto_register(LockCategory.CACHE)
+def _factory_lock():
+    """Module-level lock for singleton factory (ane_embedder)."""
+    return threading.Lock()
 
 def ane_embedder(normalize: bool=True, batch_size: int=16) -> _UnifiedEmbedder:
     """
@@ -218,7 +236,7 @@ def ane_embedder(normalize: bool=True, batch_size: int=16) -> _UnifiedEmbedder:
     """
     global _ane_embedder_instance
     if _ane_embedder_instance is None:
-        with _factory_lock:
+        with _factory_lock():
             if _ane_embedder_instance is None:
                 _ane_embedder_instance = _UnifiedEmbedder(normalize=normalize, batch_size=batch_size)
     return _ane_embedder_instance

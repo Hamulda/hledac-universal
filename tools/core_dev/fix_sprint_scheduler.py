@@ -44,9 +44,9 @@ while i < len(lines):
                 has_frozen = 'frozen=True' in deco_args
 
                 if has_frozen:
-                    new_cls = f"class {cls_name}(msgspec.Struct, frozen=True, gc=False):"
+                    new_cls = f"class {cls_name}(Struct, frozen=True):"
                 else:
-                    new_cls = f"class {cls_name}(msgspec.Struct, gc=False):"
+                    new_cls = f"class {cls_name}(Struct):"
 
                 print(f"  MIGRATE {cls_name}: frozen={has_frozen}")
                 new_lines.append(new_cls)

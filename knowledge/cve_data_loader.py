@@ -41,7 +41,6 @@ from __future__ import annotations
 import asyncio
 import gzip
 import hashlib
-import json
 import logging
 import os
 import time
@@ -54,6 +53,21 @@ from hledac.universal._core.env_config import ENV
 from _core import aclose
 
 logger = logging.getLogger(__name__)
+
+# orjson fallback — 5-10× faster than stdlib json, M1 optimized
+try:
+    import orjson
+
+    def _json_dump(obj: Any, file: Any, *, indent: bool = False) -> None:
+        data = orjson.dumps(obj, option=orjson.OPT_INDENT_2 if indent else 0)
+        file.write(data)
+
+except ImportError:
+    import json as _stdlib_json
+
+    def _json_dump(obj: Any, file: Any, *, indent: bool = False) -> None:
+        _stdlib_json.dump(obj, file, indent=2 if indent else None)
+
 
 # ── NVD API Config ─────────────────────────────────────────────────────────────
 _NVD_API_BASE = "https://services.nvd.nist.gov/rest/json/cves/2.0"
@@ -395,8 +409,8 @@ async def update_cve_matrix(
     logger.info(f"[CVE Loader] Collected {len(cve_records)} CVE records in {elapsed:.1f}s")
 
     # Save JSON backup
-    with gzip.open(output_gz, "wt") as f:
-        json.dump(cve_records, f)
+    with gzip.open(output_gz, "wb") as f:
+        _json_dump(cve_records, f)
     logger.info(f"[CVE Loader] Saved JSON backup: {output_gz} ({output_gz.stat().st_size / 1024:.1f} KB)")
 
     # Export to DuckDB

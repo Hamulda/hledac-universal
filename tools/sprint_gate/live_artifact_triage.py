@@ -17,6 +17,8 @@ import msgspec
 from enum import StrEnum
 from pathlib import Path
 from _core import aclose
+from compat.msgspec_gc_compat import Struct
+
 
 if TYPE_CHECKING:
     from typing import TypeAlias
@@ -54,7 +56,7 @@ class SprintFamily(StrEnum):
     F219 = 'F219'
     NONE = 'NONE'
 
-class TriageResult(msgspec.Struct, gc=False):
+class TriageResult(Struct):
     root_cause_class: RootCause
     confidence: float
     reasons: list[str]

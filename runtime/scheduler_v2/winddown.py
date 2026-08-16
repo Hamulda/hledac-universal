@@ -18,6 +18,7 @@ import asyncio
 import time as _time
 from dataclasses import dataclass, field
 import msgspec
+from compat.msgspec_gc_compat import Struct
 from typing import Any
 from hledac.universal.runtime.scheduler_v2._task_registry import (
     TaskScope,
@@ -53,7 +54,7 @@ def _maybe_call_pressure_relief(ctx: Any) -> None:
     except Exception:  # noqa: BLE001
         pass
 
-class WinddownPhaseResult(msgspec.Struct, gc=False):
+class WinddownPhaseResult(Struct):
     """Result from the winddown phase."""
     export_paths: list[str] = field(default_factory=list)
     synthesis_success: bool = False

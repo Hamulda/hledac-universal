@@ -38,6 +38,7 @@ import time
 from hledac.universal.utils.locks import LazyAsyncioLock
 from dataclasses import dataclass
 import msgspec
+from compat.msgspec_gc_compat import Struct
 from enum import Enum, auto
 from typing import Any
 from urllib.parse import urlparse
@@ -62,7 +63,7 @@ class TransportKind(Enum):
     CURL_CFFI_H3_TOR = auto()
     CURL_CFFI_H3_I2P = auto()
 
-class TransportPolicy(msgspec.Struct, frozen=True, gc=False):
+class TransportPolicy(Struct, frozen=True):
     """
     Policy that determines which transport to use.
 

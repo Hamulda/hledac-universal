@@ -27,50 +27,28 @@ WIRE: FetchCoordinator._do_step() -> EntityConfirmationService.is_confirmed_batc
 Feature flag: HLEDAC_ENABLE_ENTITY_CONFIRMATION=1 (default ON)
 Opt-out: 0 disables, falls back to "not confirmed"
 """
-
 from __future__ import annotations
-
 import asyncio
 import logging
 import os
 import time as _time
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
-
-from hledac.universal.utils.asyncx import _check_gathered  # F320
+from hledac.universal.utils.asyncx import _check_gathered
 from _core import aclose
-
 if TYPE_CHECKING:
     from hledac.universal.knowledge.duckdb_store import DuckDBShadowStore
-
 logger = logging.getLogger(__name__)
-
-# ---------------------------------------------------------------------------
-# Feature flag & bounds
-# ---------------------------------------------------------------------------
-_ENTITY_CONFIRMATION_ENABLED: bool = (
-    os.getenv("HLEDAC_ENABLE_ENTITY_CONFIRMATION", "1").lower()
-    in ("1", "true", "yes", "on")
-    )
-
-# Confirmation thresholds — mirrors RouteGraphService pattern
-_MIN_DISTINCT_SOURCES: int = 3  # COUNT(DISTINCT source_type) >= 3
-_MIN_MAX_CONFIDENCE: float = 0.7  # MAX(confidence) > 0.7
-
-# M1 8GB safety bounds
+_ENTITY_CONFIRMATION_ENABLED: bool = os.getenv('HLEDAC_ENABLE_ENTITY_CONFIRMATION', '1').lower() in ('1', 'true', 'yes', 'on')
+_MIN_DISTINCT_SOURCES: int = 3
+_MIN_MAX_CONFIDENCE: float = 0.7
 _CACHE_MAX_ENTRIES: int = 256
-_CACHE_TTL_SECONDS: float = 300.0  # 5 minutes
-_MAX_BATCH_SIZE: int = 500  # Max entities per batch query
+_CACHE_TTL_SECONDS: float = 300.0
+_MAX_BATCH_SIZE: int = 500
 
-
-# ---------------------------------------------------------------------------
-# Result DTO
-# ---------------------------------------------------------------------------
-
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class EntityConfirmation:
     """Immutable confirmation result for a single entity."""
-
     entity_value: str
     entity_type: str
     is_confirmed: bool
@@ -89,9 +67,9 @@ class EntityConfirmation:
         Returns 0.0-1.0 where higher = more confirmed.
         Used for prioritization when confirmation is borderline.
         """
-        source_score = min(self.distinct_sources / 5.0, 1.0)  # 5 sources = max
+        source_score = min(self.distinct_sources / 5.0, 1.0)
         conf_score = self.max_confidence
-        return (source_score * 0.4 + conf_score * 0.6)
+        return source_score * 0.4 + conf_score * 0.6
 
     @property
     def confidence_margin(self) -> float:
@@ -101,17 +79,11 @@ class EntityConfirmation:
         """
         return self.max_confidence - _MIN_MAX_CONFIDENCE
 
-
-# ---------------------------------------------------------------------------
-# In-memory cache
-# ---------------------------------------------------------------------------
-
 class _ConfirmationCache:
     """TTL-bounded LRU cache for entity confirmation results. M1 8GB: 256 entries max."""
+    __slots__ = ('_data', '_max_entries', '_ttl_s')
 
-    __slots__ = ("_data", "_max_entries", "_ttl_s")
-
-    def __init__(self, max_entries: int = 256, ttl_s: float = 300.0) -> None:
+    def __init__(self, max_entries: int=256, ttl_s: float=300.0) -> None:
         self._data: dict[str, tuple[float, EntityConfirmation]] = {}
         self._max_entries = max_entries
         self._ttl_s = ttl_s
@@ -138,11 +110,6 @@ class _ConfirmationCache:
     def clear(self) -> None:
         self._data.clear()
 
-
-# ---------------------------------------------------------------------------
-# EntityConfirmationService
-# ---------------------------------------------------------------------------
-
 class EntityConfirmationService:
     """Async service for IOC entity confirmation checks.
 
@@ -161,55 +128,27 @@ class EntityConfirmationService:
       confirmed, result = await service.is_confirmed("example.com", "domain")
       results = await service.is_confirmed_batch([("example.com", "domain"), ...])
     """
+    __slots__ = ('_store', '_enabled', '_cache', '_lock', '_stats')
 
-    __slots__ = (
-        "_store",
-        "_enabled",
-        "_cache",
-        "_lock",
-        "_stats",
-    )
-
-    def __init__(
-        self,
-        store: "DuckDBShadowStore | None" = None,
-    ) -> None:
+    def __init__(self, store: 'DuckDBShadowStore | None'=None) -> None:
         """Initialize EntityConfirmationService.
 
         Args:
             store: DuckDBShadowStore instance for persistence.
                    None = cache-only mode (no persistence checks).
         """
-        self._store: "DuckDBShadowStore | None" = store
+        self._store: 'DuckDBShadowStore | None' = store
         self._enabled: bool = _ENTITY_CONFIRMATION_ENABLED and store is not None
-        self._cache: _ConfirmationCache = _ConfirmationCache(
-            max_entries=_CACHE_MAX_ENTRIES,
-            ttl_s=_CACHE_TTL_SECONDS,
-    )
+        self._cache: _ConfirmationCache = _ConfirmationCache(max_entries=_CACHE_MAX_ENTRIES, ttl_s=_CACHE_TTL_SECONDS)
         self._lock: asyncio.Lock = asyncio.Lock()
-        self._stats: dict[str, int] = {
-            "queries": 0,
-            "entities_checked": 0,
-            "confirmed": 0,
-            "not_confirmed": 0,
-            "cache_hits": 0,
-            "cache_misses": 0,
-        }
+        self._stats: dict[str, int] = {'queries': 0, 'entities_checked': 0, 'confirmed': 0, 'not_confirmed': 0, 'cache_hits': 0, 'cache_misses': 0}
 
     @property
     def enabled(self) -> bool:
         """Whether entity confirmation is enabled."""
         return self._enabled
 
-    # ------------------------------------------------------------------
-    # Public API
-    # ------------------------------------------------------------------
-
-    async def is_confirmed(
-        self,
-        entity_value: str,
-        entity_type: str = "domain",
-    ) -> tuple[bool, EntityConfirmation | None]:
+    async def is_confirmed(self, entity_value: str, entity_type: str='domain') -> tuple[bool, EntityConfirmation | None]:
         """Check if a single entity is confirmed.
 
         Args:
@@ -228,10 +167,7 @@ class EntityConfirmationService:
             return (False, None)
         return (result.is_confirmed, result)
 
-    async def is_confirmed_batch(
-        self,
-        entity_tuples: list[tuple[str, str]],
-    ) -> dict[str, EntityConfirmation]:
+    async def is_confirmed_batch(self, entity_tuples: list[tuple[str, str]]) -> dict[str, EntityConfirmation]:
         """Batch check entity confirmation status.
 
         Args:
@@ -244,14 +180,10 @@ class EntityConfirmationService:
         """
         if not entity_tuples:
             return {}
-
-        self._stats["queries"] += 1
-        self._stats["entities_checked"] += len(entity_tuples)
-
-        # Check cache first — build uncached list (stats updated after DB query)
+        self._stats['queries'] += 1
+        self._stats['entities_checked'] += len(entity_tuples)
         uncached: list[tuple[str, str]] = []
         results: dict[str, EntityConfirmation] = {}
-
         async with self._lock:
             for ev, et in entity_tuples:
                 key = self._make_key(ev, et)
@@ -260,58 +192,30 @@ class EntityConfirmationService:
                     results[key] = cached
                 else:
                     uncached.append((ev, et))
-
-        # Update cache and stats after DB query
         if uncached:
-            self._stats["cache_misses"] += len(uncached)
-
+            self._stats['cache_misses'] += len(uncached)
         if not uncached:
-            self._stats["cache_hits"] += len(entity_tuples)
+            self._stats['cache_hits'] += len(entity_tuples)
             return results
-
-        # Query DuckDB for uncached entities
         if self._enabled and self._store is not None:
             try:
                 db_results = await self._query_confirmation_batch(uncached)
                 results.update(db_results)
-
-                # Update cache and stats (all under lock to prevent race)
                 async with self._lock:
                     for key, confirmation in db_results.items():
                         self._cache.put(key, confirmation)
-                        # Track confirmed vs not_confirmed
                         if confirmation.is_confirmed:
-                            self._stats["confirmed"] += 1
+                            self._stats['confirmed'] += 1
                         else:
-                            self._stats["not_confirmed"] += 1
-
+                            self._stats['not_confirmed'] += 1
             except Exception as e:
-                logger.debug(
-                    "[EntityConfirmation] Batch query failed (fail-soft): %s", e
-    )
-                # Fail-soft: return cached results only + not-confirmed placeholders
+                logger.debug('[EntityConfirmation] Batch query failed (fail-soft): %s', e)
                 for ev, et in uncached:
                     key = self._make_key(ev, et)
-                    results[key] = EntityConfirmation(
-                        entity_value=ev,
-                        entity_type=et,
-                        is_confirmed=False,
-                        distinct_sources=0,
-                        max_confidence=0.0,
-                        avg_confidence=0.0,
-                        observation_count=0,
-                        source_types=(),
-                        sprint_ids=(),
-                        last_observed_ts=0.0,
-    )
-
+                    results[key] = EntityConfirmation(entity_value=ev, entity_type=et, is_confirmed=False, distinct_sources=0, max_confidence=0.0, avg_confidence=0.0, observation_count=0, source_types=(), sprint_ids=(), last_observed_ts=0.0)
         return results
 
-    async def get_confirmation_details(
-        self,
-        entity_value: str,
-        entity_type: str = "domain",
-    ) -> EntityConfirmation | None:
+    async def get_confirmation_details(self, entity_value: str, entity_type: str='domain') -> EntityConfirmation | None:
         """Get full confirmation details for an entity.
 
         Unlike is_confirmed(), this always queries DuckDB for fresh data
@@ -322,20 +226,15 @@ class EntityConfirmationService:
         """
         if not self._enabled or self._store is None:
             return None
-
         try:
-            observations = await self._store.async_get_entity_observations_by_entity(
-                entity_value, limit=50
-    )
+            observations = await self._store.async_get_entity_observations_by_entity(entity_value, limit=50)
         except Exception:
             return None
-
         if not observations:
             return None
-
         return self._aggregate_observations(entity_value, entity_type, observations)
 
-    async def invalidate(self, entity_value: str, entity_type: str = "domain") -> None:
+    async def invalidate(self, entity_value: str, entity_type: str='domain') -> None:
         """Invalidate cached confirmation for an entity.
 
         Call this after a sprint completes to force re-check on next access.
@@ -351,103 +250,50 @@ class EntityConfirmationService:
         """Return telemetry counters."""
         return dict(self._stats)
 
-    # ------------------------------------------------------------------
-    # Private helpers
-    # ------------------------------------------------------------------
-
     @staticmethod
     def _make_key(entity_value: str, entity_type: str) -> str:
         """Create cache key from entity value and type."""
-        return f"{entity_type}:{entity_value}"
+        return f'{entity_type}:{entity_value}'
 
-    async def _query_confirmation_batch(
-        self,
-        entity_tuples: list[tuple[str, str]],
-    ) -> dict[str, EntityConfirmation]:
+    async def _query_confirmation_batch(self, entity_tuples: list[tuple[str, str]]) -> dict[str, EntityConfirmation]:
         """Query DuckDB for confirmation metrics on a batch of entities."""
         if not entity_tuples or self._store is None:
             return {}
-
         results: dict[str, EntityConfirmation] = {}
-
-        # Process in chunks to avoid overwhelming the DB
         for chunk_start in range(0, len(entity_tuples), _MAX_BATCH_SIZE):
             chunk = entity_tuples[chunk_start:chunk_start + _MAX_BATCH_SIZE]
             try:
                 chunk_results = await self._query_chunk(chunk)
                 results.update(chunk_results)
             except Exception as e:
-                logger.debug(
-                    "[EntityConfirmation] Chunk query failed: %s", e
-    )
-                # Continue with next chunk
-
+                logger.debug('[EntityConfirmation] Chunk query failed: %s', e)
         return results
 
-    async def _query_chunk(
-        self,
-        entity_tuples: list[tuple[str, str]],
-    ) -> dict[str, EntityConfirmation]:
+    async def _query_chunk(self, entity_tuples: list[tuple[str, str]]) -> dict[str, EntityConfirmation]:
         """Query a single chunk of entities in parallel using asyncio.gather."""
         if not entity_tuples:
             return {}
-
         results: dict[str, EntityConfirmation] = {}
 
-        # Process all entities in parallel — each query is independent
         async def _query_single(ev: str, et: str) -> tuple[str, EntityConfirmation]:
             try:
-                observations = await self._store.async_get_entity_observations_by_entity(
-                    ev, limit=50
-    )
+                observations = await self._store.async_get_entity_observations_by_entity(ev, limit=50)
                 if not observations:
-                    return (self._make_key(ev, et), EntityConfirmation(
-                        entity_value=ev,
-                        entity_type=et,
-                        is_confirmed=False,
-                        distinct_sources=0,
-                        max_confidence=0.0,
-                        avg_confidence=0.0,
-                        observation_count=0,
-                        source_types=(),
-                        sprint_ids=(),
-                        last_observed_ts=0.0,
-                    ))
+                    return (self._make_key(ev, et), EntityConfirmation(entity_value=ev, entity_type=et, is_confirmed=False, distinct_sources=0, max_confidence=0.0, avg_confidence=0.0, observation_count=0, source_types=(), sprint_ids=(), last_observed_ts=0.0))
                 return (self._make_key(ev, et), self._aggregate_observations(ev, et, observations))
             except Exception as e:
-                logger.debug(
-                    "[EntityConfirmation] Single entity query failed for %s: %s", ev, e
-    )
-                return (self._make_key(ev, et), EntityConfirmation(
-                    entity_value=ev,
-                    entity_type=et,
-                    is_confirmed=False,
-                    distinct_sources=0,
-                    max_confidence=0.0,
-                    avg_confidence=0.0,
-                    observation_count=0,
-                    source_types=(),
-                    sprint_ids=(),
-                    last_observed_ts=0.0,
-                ))
-
-        # Execute all queries in parallel using asyncio.gather
+                logger.debug('[EntityConfirmation] Single entity query failed for %s: %s', ev, e)
+                return (self._make_key(ev, et), EntityConfirmation(entity_value=ev, entity_type=et, is_confirmed=False, distinct_sources=0, max_confidence=0.0, avg_confidence=0.0, observation_count=0, source_types=(), sprint_ids=(), last_observed_ts=0.0))
         gathered = await asyncio.gather(*[_query_single(ev, et) for ev, et in entity_tuples], return_exceptions=True)
         ok_results, errors = _check_gathered(gathered)
         for err in errors:
-            logger.debug("[EntityConfirmation] gather item exception: %s", err)
+            logger.debug('[EntityConfirmation] gather item exception: %s', err)
         for item in ok_results:
             key, confirmation = item
             results[key] = confirmation
-
         return results
 
-    def _aggregate_observations(
-        self,
-        entity_value: str,
-        entity_type: str,
-        observations: list[dict[str, Any]],
-    ) -> EntityConfirmation:
+    def _aggregate_observations(self, entity_value: str, entity_type: str, observations: list[dict[str, Any]]) -> EntityConfirmation:
         """Aggregate observations into EntityConfirmation.
 
         Applies confirmation criteria:
@@ -458,52 +304,25 @@ class EntityConfirmationService:
         sprints: set[str] = set()
         confidences: list[float] = []
         max_ts: float = 0.0
-
         for obs in observations:
-            src = obs.get("source_type", "unknown")
-            sid = obs.get("sprint_id", "unknown")
-            conf = obs.get("confidence", 0.0)
-            ts = obs.get("ts", 0.0)
-
+            src = obs.get('source_type', 'unknown')
+            sid = obs.get('sprint_id', 'unknown')
+            conf = obs.get('confidence', 0.0)
+            ts = obs.get('ts', 0.0)
             sources.add(src)
             sprints.add(sid)
             confidences.append(conf)
             if ts > max_ts:
                 max_ts = ts
-
         distinct_sources = len(sources)
         max_confidence = max(confidences) if confidences else 0.0
         avg_confidence = sum(confidences) / len(confidences) if confidences else 0.0
-
-        # Apply confirmation criteria (mirrors RouteEdge.is_known_good pattern)
-        is_confirmed = (
-            distinct_sources >= _MIN_DISTINCT_SOURCES
-            and max_confidence > _MIN_MAX_CONFIDENCE
-    )
-
-        return EntityConfirmation(
-            entity_value=entity_value,
-            entity_type=entity_type,
-            is_confirmed=is_confirmed,
-            distinct_sources=distinct_sources,
-            max_confidence=max_confidence,
-            avg_confidence=avg_confidence,
-            observation_count=len(observations),
-            source_types=tuple(sorted(sources)),
-            sprint_ids=tuple(sorted(sprints)),
-            last_observed_ts=max_ts,
-    )
-
-
-# -- Singleton accessor --------------------------------------------------------
-
+        is_confirmed = distinct_sources >= _MIN_DISTINCT_SOURCES and max_confidence > _MIN_MAX_CONFIDENCE
+        return EntityConfirmation(entity_value=entity_value, entity_type=entity_type, is_confirmed=is_confirmed, distinct_sources=distinct_sources, max_confidence=max_confidence, avg_confidence=avg_confidence, observation_count=len(observations), source_types=tuple(sorted(sources)), sprint_ids=tuple(sorted(sprints)), last_observed_ts=max_ts)
 _entity_confirmation_service: EntityConfirmationService | None = None
 _service_lock = asyncio.Lock()
 
-
-async def get_entity_confirmation_service(
-    store: "DuckDBShadowStore | None" = None,
-) -> EntityConfirmationService:
+async def get_entity_confirmation_service(store: 'DuckDBShadowStore | None'=None) -> EntityConfirmationService:
     """Get the singleton EntityConfirmationService instance."""
     global _entity_confirmation_service
     async with _service_lock:
@@ -512,7 +331,6 @@ async def get_entity_confirmation_service(
         elif store is not None:
             _entity_confirmation_service._store = store
         return _entity_confirmation_service
-
 
 def get_entity_confirmation_service_sync() -> EntityConfirmationService:
     """Get the singleton EntityConfirmationService instance (sync version).

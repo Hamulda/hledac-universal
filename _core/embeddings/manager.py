@@ -20,6 +20,9 @@ from pathlib import Path
 from typing import Any, cast
 from collections.abc import AsyncIterator, Awaitable, Callable
 import numpy as np
+
+from _core.lock_registry import LockCategory, register_lock
+
 logger = logging.getLogger(__name__)
 
 class AdaptiveEmbeddingBatcher:
@@ -321,14 +324,19 @@ class GPUArbiter:
 
 
 _arbiter: GPUArbiter | None = None
-_arbiter_lock = threading.Lock()
+
+
+@register_lock(LockCategory.MPC)
+def _arbiter_lock() -> threading.Lock:
+    """Module-level lock for GPUArbiter singleton factory."""
+    return threading.Lock()
 
 
 def get_gpu_arbiter() -> GPUArbiter:
     """Global singleton GPU arbiter."""
     global _arbiter
     if _arbiter is None:
-        with _arbiter_lock:
+        with _arbiter_lock():
             if _arbiter is None:
                 _arbiter = GPUArbiter()
     return _arbiter
@@ -370,7 +378,12 @@ def _check_mlx_available() -> None:
     _lazy_mlx_init()
 _EMBED_CACHE_DIR = Path.home() / '.hledac' / 'cache' / 'mlx_embed'
 _EMBED_CACHE_DIR.mkdir(parents=True, exist_ok=True)
-_PREWARM_LOCK = threading.Lock()
+
+
+@register_lock(LockCategory.CACHE)
+def _PREWARM_LOCK() -> threading.Lock:
+    """Module-level lock for embedding prewarm."""
+    return threading.Lock()
 
 # A-07: Re-export canonical MLXEmbeddingManager from core/embeddings/legacy.py
 # Single Metal command queue = no double model loads on M1 8GB.

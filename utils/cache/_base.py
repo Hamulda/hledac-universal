@@ -14,33 +14,19 @@ Provides abstract base classes and shared data structures for cache implementati
 All implementations use these primitives to avoid code duplication.
 """
 from __future__ import annotations
-
 import threading
 import time
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from typing import Generic, TypeVar
 from _core import aclose
+K = TypeVar('K')
+V = TypeVar('V')
+__all__ = ['CacheMetrics', 'CacheStats', 'EvictionPolicy', 'LRUNode', '_OrderTracker']
 
-K = TypeVar("K")
-V = TypeVar("V")
-
-__all__ = [
-    "CacheMetrics",
-    "CacheStats",
-    "EvictionPolicy",
-    "LRUNode",
-    "_OrderTracker",
-]
-
-
-# ── Metrics & Stats ───────────────────────────────────────────────────────────
-
-
-@dataclass
+@dataclass(slots=True)
 class CacheMetrics:
     """Cache performance metrics."""
-
     hits: int = 0
     misses: int = 0
     evictions: int = 0
@@ -66,21 +52,8 @@ class CacheMetrics:
 
     def to_dict(self) -> dict[str, int | float]:
         """Convert to dictionary for serialization."""
-        return {
-            "hits": self.hits,
-            "misses": self.misses,
-            "evictions": self.evictions,
-            "expirations": self.expirations,
-            "hit_rate": self.hit_rate,
-        }
-
-
-# Alias for backward compatibility
+        return {'hits': self.hits, 'misses': self.misses, 'evictions': self.evictions, 'expirations': self.expirations, 'hit_rate': self.hit_rate}
 CacheStats = CacheMetrics
-
-
-# ── Eviction Policies ─────────────────────────────────────────────────────────
-
 
 class EvictionPolicy(ABC, Generic[K, V]):
     """
@@ -118,10 +91,6 @@ class EvictionPolicy(ABC, Generic[K, V]):
         """Reset policy state."""
         ...
 
-
-# ── LRU Order Tracker ─────────────────────────────────────────────────────────
-
-
 class _OrderTracker(Generic[K]):
     """
     Tracks LRU order using list with O(1) move_to_end.
@@ -134,8 +103,7 @@ class _OrderTracker(Generic[K]):
     - pop_mru(): O(1) - pop from back
     - contains(key): O(n) - linear search
     """
-
-    __slots__ = ("_order",)
+    __slots__ = ('_order',)
 
     def __init__(self) -> None:
         self._order: list[K] = []
@@ -147,7 +115,7 @@ class _OrderTracker(Generic[K]):
             if idx < len(self._order) - 1:
                 self._order.pop(idx)
                 self._order.append(key)
-        except ValueError:  # noqa: BLE001
+        except ValueError:
             pass
 
     def append(self, key: K) -> None:
@@ -187,14 +155,9 @@ class _OrderTracker(Generic[K]):
         """Return iterator over keys in LRU order."""
         return iter(self._order)
 
-
-# ── TTL Helpers ───────────────────────────────────────────────────────────────
-
-
-@dataclass
+@dataclass(slots=True)
 class TTLEntry(Generic[V]):
     """Entry with timestamp for TTL tracking."""
-
     value: V
     timestamp: float = field(default_factory=time.monotonic)
 
@@ -208,19 +171,13 @@ class TTLEntry(Generic[V]):
         """Refresh timestamp to current time."""
         self.timestamp = time.monotonic()
 
-
 def get_now() -> float:
     """Get current monotonic time for TTL calculations."""
     return time.monotonic()
 
-
-# ── Thread Safety ─────────────────────────────────────────────────────────────
-
-
 class _ThreadSafeMixin:
     """Mixin for adding optional thread safety via RLock."""
-
-    __slots__ = ("_lock",)
+    __slots__ = ('_lock',)
 
     def _init_lock(self, thread_safe: bool) -> None:
         self._lock = threading.RLock() if thread_safe else None
@@ -231,4 +188,4 @@ class _ThreadSafeMixin:
 
     def _release(self, lock: threading.RLock | None) -> None:
         """Release lock if it was acquired."""
-        pass  # Context manager handles this
+        pass

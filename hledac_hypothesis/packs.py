@@ -46,17 +46,18 @@ GHOST_INVARIANTS:
 import functools
 from dataclasses import dataclass, field
 import msgspec
+from compat.msgspec_gc_compat import Struct
 from typing import Any
 
 from operator import attrgetter, itemgetter
 from _core import aclose
-class SourceHint(msgspec.Struct, gc=False):
+class SourceHint(Struct):
     """Source recommendation with quality score."""
     source: str
     quality: float
     hint_type: str = 'general'
 
-class HypothesisPack(msgspec.Struct, frozen=True, gc=False):
+class HypothesisPack(Struct, frozen=True):
     """
     Bounded hypothesis/query pack from findings.
 

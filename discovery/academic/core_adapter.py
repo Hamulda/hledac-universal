@@ -22,6 +22,7 @@ import os
 import time
 from dataclasses import dataclass
 import msgspec
+from compat.msgspec_gc_compat import Struct
 from typing import NamedTuple
 from hledac.universal.knowledge.duckdb_store import CanonicalFinding
 from _core import aclose
@@ -35,7 +36,7 @@ def _get_api_key() -> str | None:
     """Get CORE API key from environment."""
     return os.environ.get('CORE_API_KEY') or os.environ.get('HLEDAC_CORE_API_KEY')
 
-class COREWork(msgspec.Struct, gc=False):
+class COREWork(Struct):
     """CORE.ac.uk academic work."""
     id: int
     title: str
@@ -50,7 +51,7 @@ class COREWork(msgspec.Struct, gc=False):
     topics: list[str]
     oai_ids: list[str]
 
-class COREPageResult(msgspec.Struct, frozen=True, gc=False):
+class COREPageResult(Struct, frozen=True):
     """A page of text with highlight markers."""
     text: str
     score: float

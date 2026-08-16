@@ -21,14 +21,14 @@ Usage:
     python -m tools.migrate_dataclass_to_msgspec --force file.py
 
 Migration rules (msgspec 0.21.1 — inheritance-based):
-  @dataclass(frozen=True, slots=True) → class Foo(msgspec.Struct, frozen=True, gc=False):
-  @dataclass(frozen=True)            → class Foo(msgspec.Struct, frozen=True, gc=False):
-  @dataclass(slots=True)             → class Foo(msgspec.Struct, gc=False):
-  @dataclass                         → class Foo(msgspec.Struct, gc=False):
+  @dataclass(frozen=True, slots=True) → class Foo(Struct, frozen=True):
+  @dataclass(frozen=True)            → class Foo(Struct, frozen=True):
+  @dataclass(slots=True)             → class Foo(Struct):
+  @dataclass                         → class Foo(Struct):
   field(default_factory=...)         → msgspec.field(default_factory=...)
 
 NOTE: msgspec 0.21.1 supports frozen=True and gc=False as class-inheritance
-keyword arguments (confirmed working: class F(msgspec.Struct, frozen=True, gc=False)).
+keyword arguments (confirmed working: class F(Struct, frozen=True)).
 
 LEAVE AS @dataclass when:
   - __post_init__ calls super()

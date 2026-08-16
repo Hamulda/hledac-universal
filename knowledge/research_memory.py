@@ -29,6 +29,7 @@ import logging
 import re
 import time as _time
 import msgspec
+from compat.msgspec_gc_compat import Struct
 from hledac.universal.compat.msgspec_gc_compat import Struct
 from typing import TYPE_CHECKING, Any
 
@@ -68,7 +69,7 @@ class EntityHistory(Struct):
     activity_trend: str
 
 
-class TemporalAnomaly(msgspec.Struct, gc=False):
+class TemporalAnomaly(Struct):
     entity_value: str
     anomaly_type: str
     severity: float
@@ -77,7 +78,7 @@ class TemporalAnomaly(msgspec.Struct, gc=False):
     ts: float
 
 
-class UnexploredAngle(msgspec.Struct, gc=False):
+class UnexploredAngle(Struct):
     angle: str
     rationale: str
     suggested_sources: list[str]

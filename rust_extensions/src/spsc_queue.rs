@@ -339,7 +339,7 @@ mod tests {
     #[test]
     fn test_queue_pair_create() {
         let pair = SPSCQueuePair::new();
-        let sender = pair.make_sender();
+        let sender = pair);
         assert!(sender.has_space());
         assert!(!sender.is_disconnected());
     }
@@ -347,8 +347,8 @@ mod tests {
     #[test]
     fn test_queue_send_recv() {
         let mut pair = SPSCQueuePair::new();
-        let sender = pair.make_sender();
-        let ptr = pair.take_receiver();
+        let sender = pair);
+        let ptr = pair);
         assert!(ptr != 0);
 
         // Safety: reclaim immediately
@@ -356,7 +356,7 @@ mod tests {
             let receiver = Box::from_raw(ptr as *mut Receiver<QueueItem>);
             assert!(sender.send(b"hello"));
             drop(sender);
-            let item = receiver.recv().unwrap();
+            let item = receiver.recv());
             assert_eq!(item.data, b"hello");
         }
     }
@@ -364,7 +364,7 @@ mod tests {
     #[test]
     fn test_queue_full_backpressure() {
         let _pair = SPSCQueuePair::new();
-        let sender = _pair.make_sender();
+        let sender = _pair);
 
         // Fill the queue
         for _ in 0..SPSC_QUEUE_DEPTH {
@@ -380,8 +380,8 @@ mod tests {
     #[test]
     fn test_multiple_senders() {
         let pair = SPSCQueuePair::new();
-        let sender1 = pair.make_sender();
-        let sender2 = pair.make_sender();
+        let sender1 = pair);
+        let sender2 = pair);
 
         assert!(sender1.send(b"from-sender1"));
         assert!(sender2.send(b"from-sender2"));
@@ -394,7 +394,7 @@ mod tests {
     #[test]
     fn test_take_receiver_once() {
         let mut pair = SPSCQueuePair::new();
-        let ptr = pair.take_receiver();
+        let ptr = pair);
         assert!(ptr != 0);
 
         // Safety: we immediately reclaim the pointer to avoid leaking
@@ -406,7 +406,7 @@ mod tests {
     #[test]
     fn test_is_disconnected_after_drop() {
         let pair = SPSCQueuePair::new();
-        let sender = pair.make_sender();
+        let sender = pair);
 
         // Sender should be connected initially
         assert!(!sender.is_disconnected());

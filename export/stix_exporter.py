@@ -27,6 +27,7 @@ import uuid
 from collections.abc import Mapping
 from dataclasses import dataclass
 import msgspec
+from compat.msgspec_gc_compat import Struct
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, cast
@@ -57,7 +58,7 @@ _ATTACK_TTP_MAP: dict[str, dict[str, Any]] = {'T1590.001': {'name': 'Domain Name
 _IOC_ATTACK_TECHNIQUES: dict[str, list[str]] = {'domain': ['T1590.001', 'T1590.002', 'T1590.003', 'T1590.004', 'T1584.001'], 'ip': ['T1016', 'T1595.001', 'T1595.002', 'T1584.004'], 'url': ['T1105', 'T1041'], 'email': ['T1589.002'], 'hash_md5': ['T1589.001'], 'hash_sha1': ['T1589.001'], 'hash_sha256': ['T1589.001'], 'cve': ['T1589.001'], 'username': ['T1589.003'], 'leak': ['T1589.001', 'T1589.002'], 'paste': ['T1589.001', 'T1589.002']}
 _PHASE_TO_TACTIC: dict[str, str] = {'reconnaissance': 'Reconnaissance', 'resource_development': 'Resource Development', 'initial_access': 'Initial Access', 'execution': 'Execution', 'persistence': 'Persistence', 'privilege_escalation': 'Privilege Escalation', 'defense_evasion': 'Defense Evasion', 'credential_access': 'Credential Access', 'discovery': 'Discovery', 'lateral_movement': 'Lateral Movement', 'collection': 'Collection', 'command_and_control': 'Command and Control', 'exfiltration': 'Exfiltration', 'impact': 'Impact'}
 
-class CTIExportInputs(msgspec.Struct, frozen=True, gc=False):
+class CTIExportInputs(Struct, frozen=True):
     """Frozen inputs for production CTI STIX export (F204F)."""
     findings: tuple[Any, ...]
     identity_candidates: tuple[dict[str, Any], ...]

@@ -23,6 +23,7 @@ import re
 from collections import Counter
 from dataclasses import dataclass, field
 import msgspec
+from compat.msgspec_gc_compat import Struct
 from enum import Enum
 from pathlib import Path
 from typing import Any
@@ -83,7 +84,7 @@ class Verdict(Enum):
     MALICIOUS = 'malicious'
     AMBIGUOUS = 'ambiguous'
 
-class DNSTunnelConfig(msgspec.Struct, gc=False):
+class DNSTunnelConfig(Struct):
     """Configuration for DNS tunneling detector.
 
     Attributes:
@@ -105,7 +106,7 @@ class DNSTunnelConfig(msgspec.Struct, gc=False):
     wavelet_levels: int = 4
     majority_vote_threshold: int = 2
 
-class NGramScore(msgspec.Struct, frozen=True, gc=False):
+class NGramScore(Struct, frozen=True):
     """N-gram analysis score.
 
     Attributes:
@@ -119,7 +120,7 @@ class NGramScore(msgspec.Struct, frozen=True, gc=False):
     char_distribution: float = 0.0
     anomaly_score: float = 0.0
 
-class TunnelingFinding(msgspec.Struct, gc=False):
+class TunnelingFinding(Struct):
     """DNS tunneling detection finding.
 
     Attributes:

@@ -29,6 +29,7 @@ import logging
 import math
 import os as _os
 import msgspec
+from compat.msgspec_gc_compat import Struct
 from typing import TYPE_CHECKING, Any
 from collections.abc import Iterator
 
@@ -220,7 +221,7 @@ def _get_SCIPY_AVAILABLE():
         SCIPY_AVAILABLE = _is_scipy_available()
     return SCIPY_AVAILABLE
 
-class QuantumPathConfig(msgspec.Struct, gc=False):
+class QuantumPathConfig(Struct):
     """Configuration for quantum-inspired pathfinding.
 
     Attributes:

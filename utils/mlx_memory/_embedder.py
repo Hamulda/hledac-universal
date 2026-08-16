@@ -24,6 +24,7 @@ from dataclasses import dataclass, field
 from typing import Any, Optional
 
 import msgspec
+from compat.msgspec_gc_compat import Struct
 
 from hledac.universal.utils._patterns import module_singleton_creator
 from _core import aclose
@@ -52,7 +53,7 @@ def _get_shared_buf_cls():
         return None
 
 
-class _MetalBuffer(msgspec.Struct, gc=False):
+class _MetalBuffer(Struct):
     """A single pre-allocated Metal buffer.
 
     SILICON-04: When _shared_buf is set, it backs a real MTLBuffer

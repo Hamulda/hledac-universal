@@ -66,6 +66,8 @@ from typing import Any
 
 import numpy as np
 
+from _core.lock_registry import LockCategory, register_lock
+
 logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
@@ -124,13 +126,18 @@ _RSS_GUARD_GIB: float = 5.5                  # skip GPU if process RSS above thi
 
 # Global allocated bytes tracker (atomic, thread-safe)
 _gpu_allocated: int = 0
-_gpu_alloc_lock = threading.Lock()
+
+
+@register_lock(LockCategory.MPC)
+def _gpu_alloc_lock() -> threading.Lock:
+    """Module-level lock for GPU allocation tracker."""
+    return threading.Lock()
 
 
 def _track_alloc(size: int) -> bool:
     """Thread-safe GPU allocation check. Returns False if over guard."""
     global _gpu_allocated
-    with _gpu_alloc_lock:
+    with _gpu_alloc_lock():
         if _gpu_allocated + size > _GPU_TOTAL_GUARD:
             return False
         _gpu_allocated += size
@@ -140,7 +147,7 @@ def _track_alloc(size: int) -> bool:
 def _track_free(size: int) -> None:
     """Thread-safe GPU deallocation."""
     global _gpu_allocated
-    with _gpu_alloc_lock:
+    with _gpu_alloc_lock():
         _gpu_allocated = max(0, _gpu_allocated - size)
 
 
@@ -148,7 +155,12 @@ def _track_free(size: int) -> None:
 # GPU kernels — compiled once, cached globally (thread-safe via GIL on 3.14+)
 # ---------------------------------------------------------------------------
 _mlx_kernels: dict[str, Any] = {}
-_kernels_lock = threading.Lock()  # guard against concurrent compilation
+
+
+@register_lock(LockCategory.MPC)
+def _kernels_lock() -> threading.Lock:
+    """Module-level lock for MLX kernel compilation cache."""
+    return threading.Lock()
 
 
 def _get_batch_cosine_kernel():
@@ -160,7 +172,7 @@ def _get_batch_cosine_kernel():
 
     Kernel is compiled once and cached. Thread-safe.
     """
-    with _kernels_lock:
+    with _kernels_lock():
         if "batch_cosine" in _mlx_kernels:
             return _mlx_kernels["batch_cosine"]
 

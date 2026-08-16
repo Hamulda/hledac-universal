@@ -36,6 +36,7 @@ import logging
 import time
 from dataclasses import dataclass, field
 import msgspec
+from compat.msgspec_gc_compat import Struct
 from enum import StrEnum
 from typing import TYPE_CHECKING, Any
 from hledac.universal.utils.asyncx import safe_create_task, safe_gather_fire_and_forget
@@ -126,14 +127,14 @@ def _redact_text(text: str) -> str:
         pass
     return result
 
-class LeakSourceResult(msgspec.Struct, gc=False):
+class LeakSourceResult(Struct):
     """Result from one leak source."""
     source: str
     findings: list[dict]
     errors: list[str]
     elapsed_s: float = 0.0
 
-class LeakSentinelStats(msgspec.Struct, gc=False):
+class LeakSentinelStats(Struct):
     """Statistics from a leak sentinel run."""
     sources_run: int = 0
     sources_succeeded: int = 0

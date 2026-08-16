@@ -24,6 +24,7 @@ import logging
 import time
 from dataclasses import dataclass
 import msgspec
+from compat.msgspec_gc_compat import Struct
 from typing import TYPE_CHECKING
 
 from hledac.universal._core.feature_flags import FeatureFlag, FeatureFlags
@@ -52,7 +53,7 @@ def _check_enabled() -> bool:
 # Local OCR Config
 # ─────────────────────────────────────────────────────────────────────────────
 
-class LocalOcrConfig(msgspec.Struct, gc=False):
+class LocalOcrConfig(Struct):
     """Configuration for local OCR CAPTCHA solving."""
     model_name: str = "microsoft/trocr-small-printed"
     use_mlx: bool = True  # Use MLX acceleration if available

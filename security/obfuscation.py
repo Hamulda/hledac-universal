@@ -15,6 +15,7 @@ import logging
 import secrets
 from dataclasses import dataclass, field
 import msgspec
+from compat.msgspec_gc_compat import Struct
 from datetime import UTC, datetime
 from typing import Any
 from _core import aclose
@@ -23,7 +24,7 @@ logger = logging.getLogger(__name__)
 # Crypto-safe jitter — F350M-R
 _JITTER_RNG = secrets.SystemRandom()
 
-class ObfuscationConfig(msgspec.Struct, gc=False):
+class ObfuscationConfig(Struct):
     """Konfigurace obfuskace"""
     mask_queries: bool = True
     generate_chaff: bool = True

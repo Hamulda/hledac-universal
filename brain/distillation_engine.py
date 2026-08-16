@@ -24,6 +24,7 @@ import asyncio
 import functools
 import gc
 import msgspec
+from compat.msgspec_gc_compat import Struct
 import msgspec.json as _json
 import logging
 import sqlite3
@@ -69,7 +70,7 @@ def _get_mlx_nn() -> Any:  # type: ignore[type-arg]
 
 _MLX_NN_AVAILABLE: bool = _get_mlx_nn() is not None
 
-class DistillationExample(msgspec.Struct, gc=False):
+class DistillationExample(Struct):
     """
     Dataclass pro training example pro distillation.
 

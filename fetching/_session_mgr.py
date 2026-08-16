@@ -32,6 +32,8 @@ import contextvars
 import httpx
 from typing import TYPE_CHECKING, Any
 
+from _core.locks import LockCategory, register_lock
+
 if TYPE_CHECKING:
     pass
 
@@ -367,6 +369,7 @@ from _core import aclose
 
 _session_managers: weakref.WeakValueDictionary[str, SessionManager] = weakref.WeakValueDictionary()
 _session_managers_lock = threading.Lock()
+register_lock(LockCategory.NETWORK, _session_managers_lock, "fetching._session_mgr._session_managers_lock")
 
 
 def get_session_manager(name: str = "default") -> SessionManager:

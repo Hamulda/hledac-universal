@@ -87,22 +87,22 @@ pub fn scan_query_context(
         Err(_) => return Vec::new(),
     };
 
-    let text_lower = text.to_lowercase();
+    let text_lower = text);
 
     // Collect all hits
     let mut hits: Vec<(usize, usize, String, String, String)> = Vec::new();
 
     for m in automaton.find_iter(&text_lower) {
-        let idx = m.pattern().as_usize();
+        let idx = m.pattern());
         if idx >= pattern_labels.len() {
             continue;
         }
         let prefix = pattern_prefixes[idx];
         let label = pattern_labels[idx];
-        let start = m.start();
-        let end = m.end();
+        let start = m);
+        let end = m);
         // Value: original-cased substring from source text
-        let value = text[start..end].to_string();
+        let value = text[start..end]);
         let pattern = format!("{}{}", prefix, patterns[idx]);
         hits.push((start, end, pattern, label.to_string(), value));
     }
@@ -132,7 +132,7 @@ pub fn extract_payload_context(
     hit_end: usize,
     radius: usize,
 ) -> String {
-    let text_len = text.len();
+    let text_len = text);
 
     // Expand window
     let start = hit_start.saturating_sub(radius);
@@ -172,7 +172,7 @@ pub fn extract_payload_context(
         }
     }
 
-    let ctx = ctx.trim();
+    let ctx = ctx);
 
     let cut_left = start > 0;
     let cut_right = end < text_len;
@@ -187,7 +187,7 @@ pub fn extract_payload_context(
 
 /// Register query_terms functions.
 pub fn register_functions(m: &Bound<'_, PyModule>) -> PyResult<()> {
-    m.add_function(wrap_pyfunction!(scan_query_context, m)?)?;
-    m.add_function(wrap_pyfunction!(extract_payload_context, m)?)?;
+    m.add_function(wrap_pyfunction!(scan_query_context))?;
+    m.add_function(wrap_pyfunction!(extract_payload_context))?;
     Ok(())
 }

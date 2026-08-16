@@ -22,6 +22,8 @@ import sys
 from dataclasses import dataclass, field
 import msgspec
 from _core import aclose
+from compat.msgspec_gc_compat import Struct
+
 
 __all__ = [
     'BoundarySnapshot', 'TraceResult', 'F208_FIELDS', 'TERMINALITY_FIELDS',
@@ -32,14 +34,14 @@ F208_FIELDS = ['measurement_id', 'status', 'run_quality_verdict', 'report_json_p
 TERMINALITY_FIELDS = ['acquisition_terminality_checked', 'acquisition_terminality_satisfied', 'acquisition_terminality_missing_lanes', 'acquisition_terminality_report']
 SHAPE_GAP_FIELDS = ['return_guard', 'windup_guard_observation', 'source_family_outcomes']
 
-class BoundarySnapshot(msgspec.Struct, gc=False):
+class BoundarySnapshot(Struct):
     """Field presence at one processing boundary."""
     source: str
     present: dict = field(default_factory=dict)
     missing: list = field(default_factory=list)
     nulls: list = field(default_factory=list)
 
-class TraceResult(msgspec.Struct, frozen=True, gc=False):
+class TraceResult(Struct, frozen=True):
     verdict: str
     drop_boundary: str | None
     boundary_snapshots: dict

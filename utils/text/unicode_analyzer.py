@@ -27,10 +27,11 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 import msgspec
+from compat.msgspec_gc_compat import Struct
 from _core import aclose
 logger = logging.getLogger(__name__)
 
-class UnicodeConfig(msgspec.Struct, gc=False):
+class UnicodeConfig(Struct):
     """Configuration for Unicode attack analysis."""
     detect_zero_width: bool = True
     detect_homoglyphs: bool = True
@@ -41,14 +42,14 @@ class UnicodeConfig(msgspec.Struct, gc=False):
     include_context: bool = True
     context_window: int = 20
 
-class ZeroWidthFinding(msgspec.Struct, gc=False):
+class ZeroWidthFinding(Struct):
     """Sprint F300: msgspec.Struct for zero-width character detection."""
     position: int
     char_code: str
     char_name: str
     context: str | None = None
 
-class HomoglyphFinding(msgspec.Struct, gc=False):
+class HomoglyphFinding(Struct):
     """Sprint F300: msgspec.Struct for homoglyph/confusable character detection."""
     position: int
     char: str
@@ -56,7 +57,7 @@ class HomoglyphFinding(msgspec.Struct, gc=False):
     confusable_with: list[str]
     char_code: str = ''
 
-class BidiFinding(msgspec.Struct, gc=False):
+class BidiFinding(Struct):
     """Sprint F300: msgspec.Struct for bidirectional text attack detection."""
     position: int
     char_code: str
@@ -64,7 +65,7 @@ class BidiFinding(msgspec.Struct, gc=False):
     description: str
     context: str | None = None
 
-class NormalizationFinding(msgspec.Struct, gc=False):
+class NormalizationFinding(Struct):
     """Sprint F300: msgspec.Struct for Unicode normalization anomaly detection."""
     position: int
     original: str
@@ -72,7 +73,7 @@ class NormalizationFinding(msgspec.Struct, gc=False):
     anomaly_type: str
     char_code: str = ''
 
-class UnicodeAnalysisResult(msgspec.Struct, gc=False):
+class UnicodeAnalysisResult(Struct):
     """Complete result of Unicode attack analysis."""
     zero_width_findings: list[ZeroWidthFinding] = field(default_factory=list)
     homoglyph_findings: list[HomoglyphFinding] = field(default_factory=list)

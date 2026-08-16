@@ -31,6 +31,8 @@ class Decision(StrEnum):
     BLOCKED_BY_UNKNOWN = 'BLOCKED_BY_UNKNOWN'
 from hledac.universal._core.resource_governor import get_swap_policy_tier
 from _core import aclose
+from compat.msgspec_gc_compat import Struct
+
 
 def _check_uma() -> dict:
     """
@@ -51,7 +53,7 @@ _F224_BLOCKING_PROBES = [('probe_f224a_worker_pool_import_seal', 'worker_pool_im
 _F224_WARNING_PROBES = [('probe_f224b_claims_extraction_v1', 'claims_extraction_v1.json'), ('probe_f224e_type_checking_hygiene', 'type_checking_hygiene.json')]
 _F224_BLOCKING_PROFILES = ('active300', 'nonfeed_diagnostic')
 
-class ProbeReport(msgspec.Struct, gc=False):
+class ProbeReport(Struct):
     path: str
     found: bool
     data: dict = field(default_factory=dict)
@@ -393,7 +395,7 @@ def _check_nonfeed_candidate_ledger(repo_root: Path) -> tuple[bool, str]:
         return (True, 'report present')
     return (False, 'report present but no bounding fields detected')
 
-class DecisionResult(msgspec.Struct, frozen=True, gc=False):
+class DecisionResult(Struct, frozen=True):
     decision: Decision
     live_allowed: bool
     reasons: list[str] = field(default_factory=list)

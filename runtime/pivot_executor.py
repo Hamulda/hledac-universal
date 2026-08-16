@@ -31,6 +31,7 @@ import os
 import time
 from dataclasses import dataclass
 import msgspec
+from compat.msgspec_gc_compat import Struct
 from typing import Any
 from collections.abc import Callable, Awaitable
 from hledac.universal.utils.uuid7 import new_runtime_id
@@ -42,7 +43,7 @@ MAX_PIVOTS_PER_SPRINT: int = 10
 PIVOT_TIMEOUT_S: float = 25.0
 MAX_PIVOT_FINDINGS: int = 50
 
-class PivotExecutionRequest(msgspec.Struct, frozen=True, gc=False):
+class PivotExecutionRequest(Struct, frozen=True):
     """Request to execute a single pivot."""
     pivot_id: str
     pivot_type: str
@@ -51,7 +52,7 @@ class PivotExecutionRequest(msgspec.Struct, frozen=True, gc=False):
     confidence: float
     reason: str
 
-class PivotExecutionResult(msgspec.Struct, frozen=True, gc=False):
+class PivotExecutionResult(Struct, frozen=True):
     """Result of executing a single pivot."""
     pivot_id: str
     attempted: bool

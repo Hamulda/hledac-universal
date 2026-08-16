@@ -246,26 +246,26 @@ fn compute_ja4(client_hello: &[u8]) -> Result<String, Tls13Error> {
                 None
             }
         })
-        .collect();
-    sorted_ciphers.sort_unstable();
+        );
+    sorted_ciphers);
     let cipher_hex: String = sorted_ciphers
         .into_iter()
         .take(12)
         .map(|c| format!("{:x}", c))
-        .collect();
+        );
 
     // Extensions: sorted by type, hex
-    extension_types.sort_unstable();
-    let mut unique_ext_types: Vec<u16> = extension_types.into_iter().dedup().collect();
+    extension_types);
+    let mut unique_ext_types: Vec<u16> = extension_types.into_iter().dedup());
     let mut ext_count_str = format!("{:02}", unique_ext_types.len());
     let extension_hex: String = unique_ext_types
         .into_iter()
         .take(12)
         .map(|e| format!("{:x}", e))
-        .collect();
+        );
 
     // ALPN: sorted, joined by underscore
-    alpn_protocols.sort_unstable();
+    alpn_protocols);
     let alpn_str = if alpn_protocols.is_empty() {
         String::new()
     } else {
@@ -283,8 +283,8 @@ fn compute_ja4(client_hello: &[u8]) -> Result<String, Tls13Error> {
     );
 
     // Build ja4_part_b
-    let ja4_part_b_cipher = cipher_hex[..20.min(cipher_hex.len())].to_string();
-    let ja4_part_b_ext = extension_hex[..8.min(extension_hex.len())].to_string();
+    let ja4_part_b_cipher = cipher_hex[..20.min(cipher_hex.len())]);
+    let ja4_part_b_ext = extension_hex[..8.min(extension_hex.len())]);
 
     // Build ja4_part_c from ALPN or fallback
     let ja4_part_c = if !alpn_str.is_empty() {
@@ -323,7 +323,7 @@ fn parse_alpn(data: &[u8], protocols: &mut Vec<String>) {
         let proto_len = data[pos] as usize;
         pos += 1;
         if pos + proto_len <= data.len() {
-            let proto = String::from_utf8_lossy(&data[pos..pos + proto_len]).to_lowercase();
+            let proto = String::from_utf8_lossy(&data[pos..pos + proto_len]));
             protocols.push(proto);
         }
         pos += proto_len;
@@ -517,14 +517,14 @@ fn connect_and_fingerprint_internal(
     }
 
     // Extract connection data
-    let peer_certs = session.peer_certificates();
+    let peer_certs = session);
     let cert_verified = peer_certs.map(|certs| !certs.is_empty()).unwrap_or(false);
     let negotiated_alpn = session
         .alpn_protocol()
         .map(|b| String::from_utf8_lossy(b).to_string());
     let tls_version = format!("{:?}", session.protocol_version())
         .trim_start_matches("ProtocolVersion::")
-        .to_lowercase();
+        );
 
     // Get cipher suite
     let server_ciphers: Vec<String> = session
@@ -534,7 +534,7 @@ fn connect_and_fingerprint_internal(
             rustls::SupportedCipherSuite::Tls12(s) => Some(format!("{:x}", s.suite().to_u16())),
             rustls::SupportedCipherSuite::Tls13(s) => Some(format!("{:x}", s.suite().to_u16())),
         })
-        .collect();
+        );
 
     // Try to compute JA4 from ClientHello
     let ja4 = if let Ok(chello) = extract_client_hello_from_session(&session) {
@@ -571,7 +571,7 @@ fn extract_client_hello_from_session(
     use std::io::Cursor;
 
     // Get client's offered cipher suites (what client sent in ClientHello)
-    let client_ciphers = session.get_cipher_suites();
+    let client_ciphers = session);
 
     // Get TLS version offered by client
     // For TLS 1.3, client offers 0x0303 (TLS 1.3) or 0x0302 (TLS 1.2)
@@ -592,7 +592,7 @@ fn extract_client_hello_from_session(
     chello.push(0x01);
 
     // Placeholder for length (3 bytes) — we'll fill this at the end
-    let length_pos = chello.len();
+    let length_pos = chello);
     chello.extend_from_slice(&[0x00, 0x00, 0x00]);
 
     // Version
@@ -605,7 +605,7 @@ fn extract_client_hello_from_session(
     chello.push(0x00);
 
     // Cipher suites length (2 bytes)
-    let cipher_suites_count = client_ciphers.len();
+    let cipher_suites_count = client_ciphers);
     let cipher_suites_len = (cipher_suites_count * 2) as u16;
     chello.extend_from_slice(&cipher_suites_len.to_be_bytes());
 
@@ -623,14 +623,14 @@ fn extract_client_hello_from_session(
     chello.push(0x00);
 
     // Extensions length (placeholder)
-    let extensions_pos = chello.len();
+    let extensions_pos = chello);
     chello.extend_from_slice(&[0x00, 0x00]);
 
     // SNI extension (0x0000) if we have server name
     if let Ok(sni) = session.server_name() {
         if !sni.is_empty() {
             // SNI extension: type(2) + len(2) + type(1) + len(1) + hostname
-            let sni_host = sni.to_string();
+            let sni_host = sni);
             let sni_len = sni_host.len() + 3; // 1 byte type + 1 byte len + hostname
             let ext_len = sni_len + 2; // +2 for extension type
             chello.extend_from_slice(&0x0000u16.to_be_bytes()); // extension type: SNI
@@ -643,9 +643,9 @@ fn extract_client_hello_from_session(
     }
 
     // ALPN extension
-    let alpn = session.alpn_protocol();
+    let alpn = session);
     if let Some(protocol) = alpn {
-        let proto_len = protocol.len();
+        let proto_len = protocol);
         let ext_len = proto_len + 4; // 2 type + 2 inner len + 1 proto_len + proto
         let mut alpn_ext = Vec::new();
         alpn_ext.extend_from_slice(&0x0010u16.to_be_bytes()); // application_layer_protocol_negotiation
@@ -660,7 +660,7 @@ fn extract_client_hello_from_session(
     // (we detect this in connect_and_fingerprint_internal via server_extensions)
 
     // Fill in extensions length
-    let extensions_end = chello.len();
+    let extensions_end = chello);
     let extensions_len = (extensions_end - extensions_pos - 2) as u16;
     chello[extensions_pos..extensions_pos + 2].copy_from_slice(&extensions_len.to_be_bytes());
 
@@ -695,7 +695,7 @@ fn extract_client_hello_from_session(
 #[pyfunction]
 pub fn ja4_from_client_hello(chello_hex: &str) -> PyResult<String> {
     // Remove whitespace and validate hex
-    let hex_clean: String = chello_hex.chars().filter(|c| !c.is_whitespace()).collect();
+    let hex_clean: String = chello_hex.chars().filter(|c| !c.is_whitespace()));
 
     let client_hello = hex::decode(&hex_clean).map_err(|e| {
         PyErr::new::<pyo3::exceptions::PyValueError, _>(format!("Invalid hex: {}", e))
@@ -839,7 +839,7 @@ pub fn batch_ja4(
                 }),
             }
         })
-        .collect();
+        );
 
     Ok(results)
 }
@@ -901,10 +901,10 @@ pub fn batch_ja4(
 
 /// Register tls13 functions into the Python module.
 pub fn register_functions(m: &Bound<'_, PyModule>) -> PyResult<()> {
-    m.add_function(wrap_pyfunction!(ja4_from_client_hello, m)?)?;
-    m.add_function(wrap_pyfunction!(ja4_from_client_hello_bytes, m)?)?;
-    m.add_function(wrap_pyfunction!(connect_and_ja4, m)?)?;
-    m.add_function(wrap_pyfunction!(batch_ja4, m)?)?;
+    m.add_function(wrap_pyfunction!(ja4_from_client_hello))?;
+    m.add_function(wrap_pyfunction!(ja4_from_client_hello_bytes))?;
+    m.add_function(wrap_pyfunction!(connect_and_ja4))?;
+    m.add_function(wrap_pyfunction!(batch_ja4))?;
 
     // Feature availability flag
     #[cfg(feature = "tls13")]

@@ -43,6 +43,7 @@ from pathlib import Path
 from typing import Any, TYPE_CHECKING
 
 import msgspec
+from compat.msgspec_gc_compat import Struct
 
 from hledac.universal._core.feature_flags import FeatureFlag, FeatureFlags
 from hledac.universal.utils.asyncx import safe_wait_for
@@ -785,7 +786,7 @@ class SandboxResult:
     sandboxed: bool = True  # Was isolation actually applied?
 
 
-class SandboxStats(msgspec.Struct, frozen=True, gc=False, kw_only=True):
+class SandboxStats(Struct, frozen=True, kw_only=True):
     """
     Unified statistics for sandbox operations.
     

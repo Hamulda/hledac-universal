@@ -132,6 +132,7 @@ import os
 import threading
 import weakref
 import msgspec
+from compat.msgspec_gc_compat import Struct
 from typing import TYPE_CHECKING, Any
 
 __all__ = [
@@ -267,7 +268,7 @@ _FORCE_RUST: bool = FeatureFlags.get(FeatureFlag.FORCE_RUST, default=False)
 # =============================================================================
 
 
-class AccelInfo(msgspec.Struct, frozen=True, gc=False):
+class AccelInfo(Struct, frozen=True):
     """
     Frozen accelerator backend info.
     Describes which backend is active and its capabilities.

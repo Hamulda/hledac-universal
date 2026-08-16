@@ -31,6 +31,7 @@ import logging
 import re
 from dataclasses import dataclass
 import msgspec
+from compat.msgspec_gc_compat import Struct
 from enum import Enum
 from typing import Any
 from operator import attrgetter, itemgetter
@@ -54,7 +55,7 @@ class PatternType(Enum):
     URL = 'url'
     PHONE = 'phone'
 
-class ExtractedEntity(msgspec.Struct, gc=False):
+class ExtractedEntity(Struct):
     """Extracted entity with metadata."""
     pattern_type: PatternType
     value: str

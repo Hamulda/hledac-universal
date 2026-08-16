@@ -19,8 +19,10 @@ import msgspec
 from pathlib import Path
 from typing import Any
 from _core import aclose
+from compat.msgspec_gc_compat import Struct
 
-class FunctionSpec(msgspec.Struct, gc=False):
+
+class FunctionSpec(Struct):
     """One KPI-related function."""
     name: str
     source_lines: tuple[int, int]

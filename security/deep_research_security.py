@@ -23,6 +23,7 @@ from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 import msgspec
+from compat.msgspec_gc_compat import Struct
 from datetime import UTC, datetime
 from typing import Any
 from .audit import AuditConfig, AuditEventType, AuditLevel, AuditLogger
@@ -33,7 +34,7 @@ from .stealth_communicator import StealthCommunicator
 from _core import aclose
 logger = logging.getLogger(__name__)
 
-class DeepSecurityConfig(msgspec.Struct, gc=False):
+class DeepSecurityConfig(Struct):
     """Konfigurace pro deep research security"""
     security_level: SecurityLevel = SecurityLevel.HIGH
     privacy_level: str = 'maximum'

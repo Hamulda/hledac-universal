@@ -46,7 +46,9 @@ from dataclasses import dataclass, field
 from typing import Any
 from collections.abc import Callable
 
+from _core.lock_registry import LockCategory, register_lock
 import msgspec
+from compat.msgspec_gc_compat import Struct
 
 from hledac.universal._core.env_config import ENV
 from _core import aclose
@@ -87,7 +89,7 @@ GLINER_MODEL_DEFAULT: str = "knowledgator/gliner-relex-large-v0.5"
 # ---------------------------------------------------------------------------
 
 
-class FetchSettings(msgspec.Struct, frozen=True, gc=False):
+class FetchSettings(Struct, frozen=True):
     """HTTP fetching configuration."""
 
     # curl_cffi / JA3 fingerprinting
@@ -130,7 +132,7 @@ class FetchSettings(msgspec.Struct, frozen=True, gc=False):
     )
 
 
-class MLXSettings(msgspec.Struct, frozen=True, gc=False):
+class MLXSettings(Struct, frozen=True):
     """MLX / LLM inference configuration."""
 
     # kv_bits and max_kv_size go into mlx_lm.generate(), NOT load()
@@ -194,7 +196,7 @@ class MLXSettings(msgspec.Struct, frozen=True, gc=False):
     )
 
 
-class DuckDBSettings(msgspec.Struct, frozen=True, gc=False):
+class DuckDBSettings(Struct, frozen=True):
     """DuckDB storage configuration."""
 
     in_process: bool = True   # HLEDAC_DUCKDB_INPROCESS (default ON, saves ~200MB RAM)
@@ -220,7 +222,7 @@ class DuckDBSettings(msgspec.Struct, frozen=True, gc=False):
     )
 
 
-class DedupSettings(msgspec.Struct, frozen=True, gc=False):
+class DedupSettings(Struct, frozen=True):
     """Deduplication configuration."""
 
     lmdb_map_size: int = 256 * 1024 * 1024   # 256 MB
@@ -236,7 +238,7 @@ class DedupSettings(msgspec.Struct, frozen=True, gc=False):
     )
 
 
-class TransportSettings(msgspec.Struct, frozen=True, gc=False):
+class TransportSettings(Struct, frozen=True):
     """Tor / I2P / Nym transport configuration."""
 
     tor_enabled: bool = False
@@ -271,7 +273,7 @@ class TransportSettings(msgspec.Struct, frozen=True, gc=False):
     )
 
 
-class MemorySettings(msgspec.Struct, frozen=True, gc=False):
+class MemorySettings(Struct, frozen=True):
     """Memory management / UMA pressure relief configuration."""
 
     # M1 8GB UMA limits
@@ -312,7 +314,7 @@ class MemorySettings(msgspec.Struct, frozen=True, gc=False):
     )
 
 
-class SprintSettings(msgspec.Struct, frozen=True, gc=False):
+class SprintSettings(Struct, frozen=True):
     """Sprint lifecycle / timing configuration."""
 
     default_duration_s: float = 1800.0   # 30 min
@@ -344,7 +346,7 @@ class SprintSettings(msgspec.Struct, frozen=True, gc=False):
     )
 
 
-class GraphSettings(msgspec.Struct, frozen=True, gc=False):
+class GraphSettings(Struct, frozen=True):
     """DuckPGQ / entity graph configuration."""
 
     graph_enabled: bool = False
@@ -362,7 +364,7 @@ class GraphSettings(msgspec.Struct, frozen=True, gc=False):
     )
 
 
-class SynthesisSettings(msgspec.Struct, frozen=True, gc=False):
+class SynthesisSettings(Struct, frozen=True):
     """Hermes3 / synthesis lane configuration."""
 
     hermes_enabled: bool = False
@@ -383,7 +385,7 @@ class SynthesisSettings(msgspec.Struct, frozen=True, gc=False):
     )
 
 
-class CooldownSettings(msgspec.Struct, frozen=True, gc=False):
+class CooldownSettings(Struct, frozen=True):
     """Source cooldown / circuit breaker settings."""
 
     # Circuit breaker (from CB_CONFIG_DEFAULTS)
@@ -431,7 +433,7 @@ class CooldownSettings(msgspec.Struct, frozen=True, gc=False):
 # ---------------------------------------------------------------------------
 
 
-class FeatureGates(msgspec.Struct, frozen=True, gc=False):
+class FeatureGates(Struct, frozen=True):
     """Feature flag gates — computed lazily once at first access."""
 
     # CT / threat intelligence
@@ -520,7 +522,7 @@ class FeatureGates(msgspec.Struct, frozen=True, gc=False):
 # Canonical Settings singleton
 # ---------------------------------------------------------------------------
 
-class Settings(msgspec.Struct, frozen=True, gc=False):
+class Settings(Struct, frozen=True):
     """
     Canonical Settings for Hledac Universal OSINT Orchestrator.
 
@@ -580,7 +582,12 @@ class Settings(msgspec.Struct, frozen=True, gc=False):
 # ---------------------------------------------------------------------------
 
 _settings: Settings | None = None
-_settings_lock = threading.Lock()
+
+
+@register_lock(LockCategory.CONFIG)
+def _settings_lock() -> threading.Lock:
+    """Module-level lock for Settings singleton factory."""
+    return threading.Lock()
 
 
 def settings() -> Settings:
@@ -592,7 +599,7 @@ def settings() -> Settings:
     """
     global _settings
     if _settings is None:
-        with _settings_lock:
+        with _settings_lock():
             if _settings is None:
                 _settings = Settings.from_env()
     return _settings

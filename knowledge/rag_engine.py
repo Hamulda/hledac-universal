@@ -31,6 +31,7 @@ from collections import defaultdict
 from dataclasses import dataclass, field
 import os
 import msgspec
+from compat.msgspec_gc_compat import Struct
 from hledac.universal.compat.msgspec_gc_compat import Struct
 from pathlib import Path
 from typing import TYPE_CHECKING, Any

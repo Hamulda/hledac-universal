@@ -49,6 +49,7 @@ import time
 from collections import OrderedDict, defaultdict
 from dataclasses import dataclass, field
 import msgspec
+from compat.msgspec_gc_compat import Struct
 from datetime import UTC, datetime
 from enum import Enum
 from pathlib import Path
@@ -203,7 +204,7 @@ class RelationshipType(Enum):
     MENTIONED_IN = 'mentioned_in'
     CO_OCCURS_WITH = 'co_occurs_with'
 
-class Entity(msgspec.Struct, gc=False):
+class Entity(Struct):
     """Represents an entity in the relationship graph."""
     id: str
     type: str | EntityType
@@ -223,7 +224,7 @@ class Entity(msgspec.Struct, gc=False):
         """Convert entity to dictionary."""
         return {'id': self.id, 'type': self.type.value if isinstance(self.type, EntityType) else self.type, 'attributes': self.attributes, 'sources': self.sources, 'created_at': self.created_at.isoformat() if self.created_at else None, 'updated_at': self.updated_at.isoformat() if self.updated_at else None}
 
-class Relationship(msgspec.Struct, gc=False):
+class Relationship(Struct):
     """Represents a relationship between two entities."""
     source: str
     target: str
@@ -258,7 +259,7 @@ class Relationship(msgspec.Struct, gc=False):
             return False
         return self.source == other.source and self.target == other.target and (self.type == other.type)
 
-class ConnectionPath(msgspec.Struct, gc=False):
+class ConnectionPath(Struct):
     """Represents a path between two entities through the graph."""
     entities: list[str]
     relationships: list[Relationship]
@@ -275,7 +276,7 @@ class ConnectionPath(msgspec.Struct, gc=False):
         """Convert path to dictionary."""
         return {'entities': self.entities, 'relationships': [r.to_dict() for r in self.relationships], 'total_strength': self.total_strength, 'path_length': self.path_length, 'confidence': self.confidence, 'path_type': self.path_type}
 
-class Community(msgspec.Struct, frozen=True, gc=False):
+class Community(Struct, frozen=True):
     """Represents a detected community in the graph."""
     id: int
     members: set[str]
@@ -288,7 +289,7 @@ class Community(msgspec.Struct, frozen=True, gc=False):
         """Convert community to dictionary."""
         return {'id': self.id, 'members': list(self.members), 'size': len(self.members), 'density': self.density, 'centrality': self.centrality, 'cohesion': self.cohesion, 'entity_types': self.entity_types}
 
-class AffinityMatrix(msgspec.Struct, frozen=True, gc=False):
+class AffinityMatrix(Struct, frozen=True):
     """Represents affinity scores between entities of a specific type."""
     entity_type: str
     entities: list[str]
@@ -305,7 +306,7 @@ class AffinityMatrix(msgspec.Struct, frozen=True, gc=False):
         """Convert affinity matrix to dictionary."""
         return {'entity_type': self.entity_type, 'entities': self.entities, 'matrix': self.matrix.tolist(), 'metric': self.metric}
 
-class Communication(msgspec.Struct, frozen=True, gc=False):
+class Communication(Struct, frozen=True):
     """Represents a communication event between entities."""
     sender: str
     recipients: list[str]
@@ -318,7 +319,7 @@ class Communication(msgspec.Struct, frozen=True, gc=False):
         """Convert communication to dictionary."""
         return {'sender': self.sender, 'recipients': self.recipients, 'timestamp': self.timestamp.isoformat() if self.timestamp else None, 'communication_type': self.communication_type, 'metadata': self.metadata, 'content_hash': self.content_hash}
 
-class Document(msgspec.Struct, frozen=True, gc=False):
+class Document(Struct, frozen=True):
     """Represents a document containing entity mentions."""
     id: str
     content: str
@@ -330,7 +331,7 @@ class Document(msgspec.Struct, frozen=True, gc=False):
         """Convert document to dictionary."""
         return {'id': self.id, 'content': self.content, 'entities': self.entities, 'timestamp': self.timestamp.isoformat() if self.timestamp else None, 'metadata': self.metadata}
 
-class InfluenceModel(msgspec.Struct, frozen=True, gc=False):
+class InfluenceModel(Struct, frozen=True):
     """Represents influence propagation model results."""
     seed_entities: list[str]
     influence_scores: dict[str, float]

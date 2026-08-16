@@ -21,6 +21,7 @@ from collections import deque
 from collections.abc import Callable
 from dataclasses import dataclass, field
 import msgspec
+from compat.msgspec_gc_compat import Struct
 from enum import Enum
 from typing import Any
 from .async_helpers import parallel_ok
@@ -42,7 +43,7 @@ class TaskStatus(Enum):
     FAILED = 'failed'
     SKIPPED = 'skipped'
 
-class Task(msgspec.Struct, gc=False):
+class Task(Struct):
     """Úkol ve workflow"""
     id: str
     name: str
@@ -92,7 +93,7 @@ class Task(msgspec.Struct, gc=False):
             return self.end_time - self.start_time
         return None
 
-class Workflow(msgspec.Struct, frozen=True, gc=False):
+class Workflow(Struct, frozen=True):
     """Workflow definice"""
     id: str
     name: str

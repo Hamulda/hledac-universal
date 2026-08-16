@@ -138,6 +138,8 @@ from functools import lru_cache
 
 from hledac.universal._core.resource_governor import CLEAN_SWAP_MAX_GIB, DIAGNOSTIC_SWAP_MAX_GIB
 from _core import aclose
+from compat.msgspec_gc_compat import Struct
+
 _BENCHMARK_TO_ACQUISITION_PROFILE: dict[str, str] = {'nonfeed_diagnostic180': 'nonfeed_diagnostic', 'active300': 'default', 'active600': 'default'}
 
 def _get_acquisition_profile_for_benchmark(benchmark_profile: str) -> str:
@@ -249,7 +251,7 @@ def _sample_uma() -> dict:
     except Exception as exc:
         return {'system_used_gib': 0.0, 'swap_used_gib': 0.0, 'swap_detected': False, 'uma_state': 'unknown', 'io_only': False, 'error': str(exc)}
 
-class F221ArtifactResult(msgspec.Struct, gc=False):
+class F221ArtifactResult(Struct):
     probe_dir: str
     filename: str
     found: bool
@@ -279,7 +281,7 @@ def _check_all_f221_artifacts(repo_root: Path) -> tuple[list[F221ArtifactResult]
             missing.append(result)
     return (results, missing)
 
-class F223ArtifactResult(msgspec.Struct, frozen=True, gc=False):
+class F223ArtifactResult(Struct, frozen=True):
     logical_name: str = ''
     probe_dir: str = ''
     filename: str = ''
@@ -416,7 +418,7 @@ def _has_fallback_schema(decision_data: dict | None) -> bool:
         return False
     return bool(decision_data.get('fallback_schema_blocked', False))
 
-class OneButtonResult(msgspec.Struct, frozen=True, gc=False):
+class OneButtonResult(Struct, frozen=True):
     verdict: OneButtonVerdict
     live_allowed: bool
     reasons: list[str] = field(default_factory=list)
@@ -1132,7 +1134,7 @@ def _render_markdown(result: OneButtonResult, profile: str, query: str) -> str:
     lines.extend(_USAGE_TEMPLATE)
     return '\n'.join(lines)
 
-class SelfTestResult(msgspec.Struct, frozen=True, gc=False):
+class SelfTestResult(Struct, frozen=True):
     """Machine-checkable self-test output (Sprint F224H)."""
     self_test_passed: bool
     artifact_matrix: list[dict]

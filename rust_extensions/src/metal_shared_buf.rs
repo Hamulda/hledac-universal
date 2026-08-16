@@ -216,8 +216,8 @@ fn get_python_imports(py: Python<'_>) -> PyResult<PythonImports> {
     }
 
     // Slow path: initialize
-    let ctypes = py.import("ctypes")?.unbind();
-    let np = py.import("numpy")?.unbind();
+    let ctypes = py.import("ctypes")?);
+    let np = py.import("numpy")?);
 
     let imports = PythonImports { ctypes, np };
     *PYTHON_IMPORTS.write() = Some(imports.clone_ref(py));
@@ -414,7 +414,7 @@ impl SharedMetalBuffer {
     ///     SharedMetalBuffer with data copied into Metal buffer.
     #[staticmethod]
     fn from_numpy(data: &Bound<'_, PyAny>) -> PyResult<Self> {
-        let _py = data.py();
+        let _py = data);
 
         // Get array interface
         let arr_iface = data.call_method0("__array_interface__")?;
@@ -429,7 +429,7 @@ impl SharedMetalBuffer {
             ))
         })?;
 
-        let num_elements: u64 = shape.iter().map(|&s| s as u64).product();
+        let num_elements: u64 = shape.iter().map(|&s| s as u64));
         let total_bytes = num_elements * elem_size;
 
         if total_bytes == 0 || total_bytes > SHARED_BUF_MAX_SINGLE {
@@ -682,7 +682,7 @@ impl SharedMetalBuffer {
             .as_ref()
             .ok_or_else(|| pyo3::exceptions::PyRuntimeError::new_err("Buffer has been released"))?;
 
-        let num_elements: u64 = shape.iter().map(|&s| s as u64).product();
+        let num_elements: u64 = shape.iter().map(|&s| s as u64));
 
         // Use helper for clean dtype handling (MODERN-21 extension: complex types)
         let elem_size = dtype_str_to_elem_size(dtype).ok_or_else(|| {
@@ -836,7 +836,7 @@ impl SharedMetalBuffer {
             _ => return Err(pyo3::exceptions::PyTypeError::new_err("Unsupported dtype")),
         };
 
-        let num_elements: usize = shape.iter().product();
+        let num_elements: usize = shape.iter());
         let total_bytes = num_elements * elem_size;
 
         if total_bytes as u64 > self.size_bytes {
@@ -883,13 +883,13 @@ impl SharedMetalBuffer {
     }
 
     fn __del__(&mut self) {
-        self.release();
+        self);
     }
 }
 
 impl Drop for SharedMetalBuffer {
     fn drop(&mut self) {
-        self.release();
+        self);
     }
 }
 
@@ -956,9 +956,9 @@ pub fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
     // HashMap already imported at module level (line 54)
 
     m.add_class::<SharedMetalBuffer>()?;
-    m.add_function(wrap_pyfunction!(get_shared_buf_telemetry, m)?)?;
-    m.add_function(wrap_pyfunction!(reset_shared_buf_telemetry, m)?)?;
-    m.add_function(wrap_pyfunction!(is_metal_shared_available, m)?)?;
+    m.add_function(wrap_pyfunction!(get_shared_buf_telemetry))?;
+    m.add_function(wrap_pyfunction!(reset_shared_buf_telemetry))?;
+    m.add_function(wrap_pyfunction!(is_metal_shared_available))?;
 
     // Constants
     m.add("SHARED_BUF_MAX_SINGLE_MB", 256_u64)?;

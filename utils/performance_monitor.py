@@ -19,10 +19,11 @@ import logging
 import time
 from dataclasses import dataclass, field
 import msgspec
+from compat.msgspec_gc_compat import Struct
 from typing import Any
 logger = logging.getLogger(__name__)
 
-class PerformanceMetrics(msgspec.Struct, gc=False):
+class PerformanceMetrics(Struct):
     """Metriky výkonu"""
     generation_count: int = 0
     total_tokens: int = 0
@@ -163,7 +164,7 @@ class MemoryPressure(Enum):
     HIGH = 'high'
     CRITICAL = 'critical'
 
-class SystemMetrics(msgspec.Struct, frozen=True, gc=False):
+class SystemMetrics(Struct, frozen=True):
     """Current system metrics."""
     cpu_percent: float
     memory_percent: float

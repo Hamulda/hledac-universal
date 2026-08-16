@@ -9,11 +9,12 @@ Bounded LIFO registry replacing WeakValueDictionary + deque dual-eviction.
 M1 8GB: No GC overhead — objects released deterministically.
 """
 import msgspec
+from compat.msgspec_gc_compat import Struct
 from typing import Any, Final
 from collections.abc import Callable
 from _core import aclose
 
-class OwnedResource(msgspec.Struct, gc=False):
+class OwnedResource(Struct):
     """Explicit lifecycle: acquire → use → release. Zero weakref.
 
     Replaces weakref.WeakValueDictionary pattern with deterministic

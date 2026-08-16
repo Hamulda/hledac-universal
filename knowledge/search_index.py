@@ -15,6 +15,7 @@ import re
 from collections import defaultdict
 from pathlib import Path
 import msgspec
+from compat.msgspec_gc_compat import Struct
 from hledac.universal.compat.msgspec_gc_compat import Struct
 from time import perf_counter
 from typing import Any

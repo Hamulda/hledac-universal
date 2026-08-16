@@ -41,6 +41,7 @@ import ssl
 from collections.abc import Callable
 from dataclasses import dataclass
 import msgspec
+from compat.msgspec_gc_compat import Struct
 from datetime import UTC, datetime
 from enum import Enum
 from typing import Any, Literal
@@ -66,7 +67,7 @@ class RecordType(Enum):
     SRV = 'SRV'
     CAA = 'CAA'
 
-class DNSRecord(msgspec.Struct, gc=False):
+class DNSRecord(Struct):
     """DNS record information."""
     record_type: RecordType
     name: str
@@ -74,7 +75,7 @@ class DNSRecord(msgspec.Struct, gc=False):
     ttl: int
     priority: int | None = None
 
-class WHOISData(msgspec.Struct, frozen=True, gc=False):
+class WHOISData(Struct, frozen=True):
     """WHOIS lookup results."""
     domain: str
     registrar: str | None
@@ -93,7 +94,7 @@ class WHOISData(msgspec.Struct, frozen=True, gc=False):
     tech_email: str | None
     raw_whois: str
 
-class SSLCertificate(msgspec.Struct, frozen=True, gc=False):
+class SSLCertificate(Struct, frozen=True):
     """SSL/TLS certificate information."""
     subject: dict[str, str]
     issuer: dict[str, str]
@@ -107,7 +108,7 @@ class SSLCertificate(msgspec.Struct, frozen=True, gc=False):
     is_valid: bool
     days_until_expiry: int
 
-class ServiceBanner(msgspec.Struct, frozen=True, gc=False):
+class ServiceBanner(Struct, frozen=True):
     """Service banner information."""
     port: int
     protocol: str
@@ -116,7 +117,7 @@ class ServiceBanner(msgspec.Struct, frozen=True, gc=False):
     version: str | None
     timestamp: float
 
-class HostInfo(msgspec.Struct, frozen=True, gc=False):
+class HostInfo(Struct, frozen=True):
     """Complete host information."""
     hostname: str
     ip_addresses: list[str]
@@ -973,7 +974,7 @@ class DHTProbe:
                 results.append((h, f'found_at:{nodes[0]}'))
         return results
 
-class CNAMERecord(msgspec.Struct, frozen=True, gc=False):
+class CNAMERecord(Struct, frozen=True):
     """CNAME chain record."""
     source: str
     target: str
@@ -1016,7 +1017,7 @@ async def resolve_cname_chain(domain: str, max_depth: int=10) -> list[CNAMERecor
         logger.debug(f'resolve_cname_chain({domain}): {e}')
     return chain
 
-class ASNInfo(msgspec.Struct, frozen=True, gc=False):
+class ASNInfo(Struct, frozen=True):
     """Autonomous System Number information."""
     asn: int
     prefix: str
@@ -1053,7 +1054,7 @@ async def lookup_asn(ip_or_prefix: str) -> list[ASNInfo]:
         logger.debug(f'lookup_asn({ip_or_prefix}): {e}')
     return results
 
-class CTRawCertificate(msgspec.Struct, frozen=True, gc=False):
+class CTRawCertificate(Struct, frozen=True):
     """Certificate Transparency log entry."""
     common_name: str
     name_value: str

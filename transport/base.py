@@ -51,6 +51,7 @@ from abc import ABC, abstractmethod
 from typing import TYPE_CHECKING
 
 import msgspec
+from compat.msgspec_gc_compat import Struct
 from _core import aclose
 
 if TYPE_CHECKING:
@@ -61,7 +62,7 @@ if TYPE_CHECKING:
     from .transport_router import Lane, TransportDecision, route_transport
 
 
-class TransportConfig(msgspec.Struct, frozen=True, gc=False):
+class TransportConfig(Struct, frozen=True):
     """
     Immutable configuration for a fetch operation.
 
@@ -81,7 +82,7 @@ class TransportConfig(msgspec.Struct, frozen=True, gc=False):
     suggested_concurrency: str = "medium"
 
 
-class TransportResult(msgspec.Struct, frozen=True, gc=False):
+class TransportResult(Struct, frozen=True):
     """
     Immutable result from a transport fetch operation.
 

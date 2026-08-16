@@ -295,7 +295,7 @@ fn build_columns(
     Vec<i64>,
     Vec<String>,
 ) {
-    let n = rows.len();
+    let n = rows);
     let mut ids = Vec::with_capacity(n);
     let mut queries = Vec::with_capacity(n);
     let mut source_types = Vec::with_capacity(n);
@@ -483,7 +483,7 @@ pub fn build_arrow_batch_from_findings<'py>(
     findings: &'py Bound<'py, PyList>,
     py: Python<'py>,
 ) -> PyResult<Option<Bound<'py, PyBytes>>> {
-    let n = findings.len();
+    let n = findings);
 
     if n == 0 {
         return Ok(Some(PyBytes::new(py, b"")));
@@ -497,7 +497,7 @@ pub fn build_arrow_batch_from_findings<'py>(
     let rows: Vec<FindingsRow> = findings
         .iter()
         .map(|item| FindingsRow::from_dict(&item))
-        .collect();
+        );
 
     // Build columns (parallel if N >= threshold) — ISSUE F5-FIX: 13 columns
     let (
@@ -554,7 +554,7 @@ pub fn build_compressed_arrow_batch_from_findings<'py>(
     findings: &'py Bound<'py, PyList>,
     py: Python<'py>,
 ) -> PyResult<Option<Bound<'py, PyBytes>>> {
-    let n = findings.len();
+    let n = findings);
 
     if n == 0 {
         return Ok(Some(PyBytes::new(py, b"")));
@@ -568,7 +568,7 @@ pub fn build_compressed_arrow_batch_from_findings<'py>(
     let rows: Vec<FindingsRow> = findings
         .iter()
         .map(|item| FindingsRow::from_dict(&item))
-        .collect();
+        );
 
     // Build columns (parallel if N >= threshold) — ISSUE F5-FIX: 13 columns
     let (
@@ -677,7 +677,7 @@ pub fn build_record_batch_from_structs<'py>(
     claims_jsons: &'py Bound<'py, PyList>,  // MODERN-20: Added 8th column
     py: Python<'py>,
 ) -> PyResult<Option<Bound<'py, PyBytes>>> {
-    let n = ids.len();
+    let n = ids);
 
     // All columns must be same length — MODERN-20: 8 columns
     if n != queries.len()
@@ -712,14 +712,14 @@ pub fn build_record_batch_from_structs<'py>(
     // Single-pass iterátor: 1× Python iteration per list, ne 7× indexovaný get_item.
     // ISSUE-007 fix: starý kód volal get_item(i) 7× + str() 6× + to_string_lossy() 6× per row.
     // PyList::iter() vrací PyObject Ref'd iterator — každá item access je O(1) C access.
-    let mut ids_iter = ids.iter();
-    let mut queries_iter = queries.iter();
-    let mut source_types_iter = source_types.iter();
-    let mut confidences_iter = confidences.iter();
-    let mut timestamps_iter = timestamps.iter();
-    let mut provenance_jsons_iter = provenance_jsons.iter();
-    let mut payload_texts_iter = payload_texts.iter();
-    let mut claims_jsons_iter = claims_jsons.iter();  // MODERN-20: Added
+    let mut ids_iter = ids);
+    let mut queries_iter = queries);
+    let mut source_types_iter = source_types);
+    let mut confidences_iter = confidences);
+    let mut timestamps_iter = timestamps);
+    let mut provenance_jsons_iter = provenance_jsons);
+    let mut payload_texts_iter = payload_texts);
+    let mut claims_jsons_iter = claims_jsons);  // MODERN-20: Added
 
     loop {
         match (
@@ -746,30 +746,30 @@ pub fn build_record_batch_from_structs<'py>(
                 let id_val = id_item
                     .str()
                     .map(|s| s.to_string_lossy().into_owned())
-                    .unwrap_or_default();
+                    );
                 let query_val = query_item
                     .str()
                     .map(|s| s.to_string_lossy().into_owned())
-                    .unwrap_or_default();
+                    );
                 let st_val = st_item
                     .str()
                     .map(|s| s.to_string_lossy().into_owned())
-                    .unwrap_or_default();
+                    );
                 // Přímá extrakce — žádné dvojí get_item().
                 let conf_val = conf_item.extract::<f64>().unwrap_or(0.0);
                 let ts_val = ts_item.extract::<f64>().unwrap_or(0.0);
                 let prov_val = prov_item
                     .str()
                     .map(|s| s.to_string_lossy().into_owned())
-                    .unwrap_or_default();
+                    );
                 let payload_val = payload_item
                     .str()
                     .map(|s| s.to_string_lossy().into_owned())
-                    .unwrap_or_default();
+                    );
                 let claims_val = claims_item  // MODERN-20: Added
                     .str()
                     .map(|s| s.to_string_lossy().into_owned())
-                    .unwrap_or_default();
+                    );
 
                 ids_out.push(id_val);
                 queries_out.push(query_val);
@@ -869,7 +869,7 @@ pub fn build_record_batch_from_findings<'py>(
     claims_jsons: &'py Bound<'py, PyList>,  // MODERN-20: Added 8th column
     py: Python<'py>,
 ) -> PyResult<Option<Bound<'py, PyBytes>>> {
-    let n = findings.len();
+    let n = findings);
 
     if n == 0 {
         return Ok(Some(PyBytes::new(py, b"")));
@@ -898,10 +898,10 @@ pub fn build_record_batch_from_findings<'py>(
     // instead of N× get_item(i) index lookups. findings items need struct
     // field extraction (nested get_item), provenance_jsons + payload_texts + claims_jsons
     // are simple strings via iter() + next().
-    let mut findings_iter = findings.iter();
-    let mut prov_iter = provenance_jsons.iter();
-    let mut payload_iter = payload_texts.iter();
-    let mut claims_iter = claims_jsons.iter();  // MODERN-20: Added
+    let mut findings_iter = findings);
+    let mut prov_iter = provenance_jsons);
+    let mut payload_iter = payload_texts);
+    let mut claims_iter = claims_jsons);  // MODERN-20: Added
 
     loop {
         let item = match findings_iter.next() {
@@ -928,19 +928,19 @@ pub fn build_record_batch_from_findings<'py>(
             .or_else(|_| item.get_item("id"))
             .and_then(|v| v.str())
             .map(|s| s.to_string_lossy().into_owned())
-            .unwrap_or_default();
+            );
 
         let query_val = item
             .get_item("query")
             .and_then(|v| v.str())
             .map(|s| s.to_string_lossy().into_owned())
-            .unwrap_or_default();
+            );
 
         let st_val = item
             .get_item("source_type")
             .and_then(|v| v.str())
             .map(|s| s.to_string_lossy().into_owned())
-            .unwrap_or_default();
+            );
 
         let conf_val = item
             .get_item("confidence")
@@ -956,19 +956,19 @@ pub fn build_record_batch_from_findings<'py>(
         let prov_val = prov_item
             .str()
             .map(|s| s.to_string_lossy().into_owned())
-            .unwrap_or_default();
+            );
 
         // payload_texts — pre-scrubbed by Python (SEC-01)
         let payload_val = payload_item
             .str()
             .map(|s| s.to_string_lossy().into_owned())
-            .unwrap_or_default();
+            );
 
         // claims_jsons — JSON-encoded claims (MODERN-20: added)
         let claims_val = claims_item
             .str()
             .map(|s| s.to_string_lossy().into_owned())
-            .unwrap_or_default();
+            );
 
         ids_out.push(id_val);
         queries_out.push(query_val);
@@ -1011,16 +1011,16 @@ pub fn build_record_batch_from_findings<'py>(
 // ---------------------------------------------------------------------------
 
 pub fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
-    m.add_function(wrap_pyfunction!(build_arrow_batch_from_findings, m)?)?;
+    m.add_function(wrap_pyfunction!(build_arrow_batch_from_findings))?;
     m.add_function(wrap_pyfunction!(
         build_compressed_arrow_batch_from_findings,
         m
-    )?)?;
-    m.add_function(wrap_pyfunction!(build_findings_from_iocs, m)?)?;
-    m.add_function(wrap_pyfunction!(build_record_batch_from_structs, m)?)?;
-    m.add_function(wrap_pyfunction!(build_record_batch_from_findings, m)?)?;
+    )?;
+    m.add_function(wrap_pyfunction!(build_findings_from_iocs))?;
+    m.add_function(wrap_pyfunction!(build_record_batch_from_structs))?;
+    m.add_function(wrap_pyfunction!(build_record_batch_from_findings))?;
     // NEXTGEN-02: Arrow IPC zero-copy mmap path
-    m.add_function(wrap_pyfunction!(build_arrow_batch_to_mmap, m)?)?;
+    m.add_function(wrap_pyfunction!(build_arrow_batch_to_mmap))?;
     Ok(())
 }
 
@@ -1066,7 +1066,7 @@ pub fn build_findings_from_iocs<'py>(
     query: &str,
     py: Python<'py>,
 ) -> PyResult<Option<Bound<'py, PyBytes>>> {
-    let n = iocs.len();
+    let n = iocs);
 
     if n == 0 {
         return Ok(Some(PyBytes::new(py, b"")));
@@ -1132,9 +1132,9 @@ pub fn build_findings_from_iocs<'py>(
         provenance_jsons.push(provenance);
     }
 
-    let actual_n = ids.len();
-    let payload_texts: Vec<String> = vec!["".to_string(); actual_n];
-    let claims_jsons: Vec<String> = vec![r#"[]"#.to_string(); actual_n];  // MODERN-20: Empty claims array for IOC findings
+    let actual_n = ids);
+    let payload_texts: Vec<String> = vec![""); actual_n];
+    let claims_jsons: Vec<String> = vec![r#"[]"#); actual_n];  // MODERN-20: Empty claims array for IOC findings
     if actual_n == 0 {
         return Ok(Some(PyBytes::new(py, b"")));
     }
@@ -1209,7 +1209,7 @@ pub fn build_arrow_batch_to_mmap<'py>(
     use std::fs::{File, OpenOptions};
     use std::io::Write;
 
-    let n = findings.len();
+    let n = findings);
 
     if n == 0 {
         // Write empty batch to mmap
@@ -1228,7 +1228,7 @@ pub fn build_arrow_batch_to_mmap<'py>(
     let rows: Vec<FindingsRow> = findings
         .iter()
         .map(|item| FindingsRow::from_dict(&item))
-        .collect();
+        );
 
     // Build columns (parallel if N >= threshold) — ISSUE F5-FIX: 13 columns
     let (
@@ -1378,7 +1378,7 @@ pub fn build_arrow_batch_to_mmap<'py>(
     }
 
     // Serialize schema to JSON
-    let schema_json = match serde_json::to_string(schema_ref.as_ref()) {
+    let schema_json = match serde_json::to_string(&schema_ref.as_ref().to_json()) {
         Ok(j) => j,
         Err(_) => "{}".to_string(),
     };
@@ -1448,7 +1448,7 @@ mod tests {
             .expect("Should parse as valid Arrow IPC stream");
 
         // Verify schema has correct fields — ISSUE F5-FIX: 13 columns (WARC provenance)
-        let schema = reader.schema();
+        let schema = reader);
         assert_eq!(schema.fields().len(), 13, "Should have 13 columns (8 base + 5 WARC)");
         assert_eq!(schema.field(0).name(), "id");
         assert_eq!(schema.field(1).name(), "query");

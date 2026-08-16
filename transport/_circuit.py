@@ -38,21 +38,17 @@ Usage:
     cb.record_failure()
 """
 from __future__ import annotations
-
 import logging
 import time
 from dataclasses import dataclass, field
 from _core import aclose
-
 logger = logging.getLogger(__name__)
-
 
 class CircuitOpenError(RuntimeError):
     """Raised when circuit is open and cannot execute."""
     pass
 
-
-@dataclass
+@dataclass(slots=True)
 class CircuitState:
     """Immutable state snapshot for debugging/telemetry."""
     failure_count: int
@@ -60,8 +56,7 @@ class CircuitState:
     opened_at: float | None
     is_open: bool
 
-
-@dataclass
+@dataclass(slots=True)
 class TransportCircuitBreaker:
     """
     Light-weight two-state circuit breaker for transport layer.
@@ -81,7 +76,6 @@ class TransportCircuitBreaker:
     """
     failure_threshold: int = 3
     recovery_timeout: float = 60.0
-
     _failure_count: int = field(default=0, init=False)
     _last_failure: float = field(default=0.0, init=False)
     _opened_at: float | None = field(default=None, init=False)
@@ -95,7 +89,6 @@ class TransportCircuitBreaker:
         """
         if self._opened_at is None:
             return True
-        # Self-healing: if timeout has passed, allow retry
         if time.monotonic() - self._opened_at >= self.recovery_timeout:
             return True
         return False
@@ -116,19 +109,16 @@ class TransportCircuitBreaker:
         now = time.monotonic()
         self._failure_count += 1
         self._last_failure = now
-
         if self._failure_count >= self.failure_threshold:
             if self._opened_at is None:
                 self._opened_at = now
-            # If already open, keep original _opened_at for correct timeout
 
     def reset(self) -> None:
         """
         Force reset to closed state. Used at phase boundaries.
         """
         if self._opened_at is not None or self._failure_count > 0:
-            logger.debug('[TransportCircuit] Reset: failures=%d, was_open=%s',
-                        self._failure_count, self._opened_at is not None)
+            logger.debug('[TransportCircuit] Reset: failures=%d, was_open=%s', self._failure_count, self._opened_at is not None)
         self._failure_count = 0
         self._opened_at = None
         self._last_failure = 0.0
@@ -136,17 +126,11 @@ class TransportCircuitBreaker:
     @property
     def state(self) -> CircuitState:
         """Return current state for debugging/telemetry."""
-        return CircuitState(
-            failure_count=self._failure_count,
-            last_failure=self._last_failure if self._last_failure > 0 else None,
-            opened_at=self._opened_at,
-            is_open=self._opened_at is not None,
-    )
+        return CircuitState(failure_count=self._failure_count, last_failure=self._last_failure if self._last_failure > 0 else None, opened_at=self._opened_at, is_open=self._opened_at is not None)
 
     def __repr__(self) -> str:
         if self._opened_at is None:
             return f'TransportCircuitBreaker(CLOSED, failures={self._failure_count})'
         elapsed = time.monotonic() - self._opened_at
         remaining = max(0, self.recovery_timeout - elapsed)
-        return (f'TransportCircuitBreaker(OPEN, failures={self._failure_count}, '
-                f'recovery_in={remaining:.1f}s)')
+        return f'TransportCircuitBreaker(OPEN, failures={self._failure_count}, recovery_in={remaining:.1f}s)'

@@ -85,10 +85,10 @@ impl RingBuffer {
     ///     The number of entries currently in the buffer after this push
     fn push(&mut self, entry: &Bound<'_, PyAny>) -> usize {
         // Clone to increment refcount — we store the clone in the ring
-        let owned: Py<PyAny> = entry.clone().unbind();
+        let owned: Py<PyAny> = entry.clone());
         if self.ring.len() >= self.capacity {
             // Evict oldest (front of VecDeque)
-            self.ring.pop_front();
+            self.ring);
         }
         self.ring.push_back(owned);
         self.ring.len()
@@ -146,7 +146,7 @@ impl RingBuffer {
     ///
     /// Does NOT deallocate the backing storage — capacity is preserved.
     fn clear(&mut self) {
-        self.ring.clear();
+        self.ring);
     }
 
     /// Return a debugging representation.

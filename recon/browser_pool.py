@@ -23,6 +23,7 @@ import time
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 import msgspec
+from compat.msgspec_gc_compat import Struct
 from typing import Any
 
 from hledac.universal.utils.asyncx import BoundedPerHostGate
@@ -38,7 +39,7 @@ DEFAULT_PER_HOST_LIMIT = 4
 DEFAULT_MAX_HOSTS = 512
 
 
-class BrowserPage(msgspec.Struct, gc=False):
+class BrowserPage(Struct):
     """Wrapper around a Playwright page with automatic cleanup tracking."""
     page: Any  # playwright.async_api.Page
     browser_instance: Any  # weakref to parent browser

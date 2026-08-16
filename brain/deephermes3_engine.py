@@ -39,10 +39,22 @@ from collections import deque
 from collections.abc import AsyncIterator, Callable, Iterator
 from dataclasses import dataclass
 import msgspec
+from compat.msgspec_gc_compat import Struct
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, TypeVar
 from hledac.universal.utils.asyncx import parallel_ok, safe_wait_for
 from hledac.universal._core.sync_bridge import stream_via_queue
+
+# ROADMAP-006: Pydantic v2 compatibility layer
+from hledac.universal.compat.pydantic_compat import (
+    model_validate as _pydantic_validate,
+    model_validate_json as _pydantic_validate_json,
+    model_construct as _pydantic_construct,
+    get_schema as _pydantic_get_schema,
+    get_model_fields as _get_model_fields,
+    is_pydantic_model,
+    is_msgspec_struct,
+)
 
 # MODERN-35 Fix: Import CPU affinity utilities for MLX Metal operations
 from hledac.universal.utils.cpu_affinity import (
@@ -366,7 +378,7 @@ M3_METAL_PRESSURE_BYTES = 2 * 1024 * 1024 * 1024
 STREAM_BUFFER_SIZE = 32
 STREAM_MIN_BUFFER = 8
 
-class DeepHermesConfig(msgspec.Struct, gc=False):
+class DeepHermesConfig(Struct):
     """Konfigurace pro DeepHermes-3"""
     model_path: str = 'mlx-community/DeepHermes-3-Llama-3-3B-Preview-4bit'
     temperature: float = 0.3
@@ -374,14 +386,14 @@ class DeepHermesConfig(msgspec.Struct, gc=False):
     context_window: int = 8192
     max_parallel_prefill: int = 1
 
-class _DecisionOutput(msgspec.Struct, frozen=True, gc=False):
+class _DecisionOutput(Struct, frozen=True):
     """Decision output for research agent — GC-free msgspec.Struct."""
     action: str
     reasoning: str
     params: dict[str, str] = msgspec.field(default_factory=dict)
     complete: bool = False
 
-class _SynthesisOutput(msgspec.Struct, frozen=True, gc=False):
+class _SynthesisOutput(Struct, frozen=True):
     """Synthesis output — GC-free msgspec.Struct."""
     report: str
     confidence: float = 0.0
@@ -1037,9 +1049,11 @@ class DeepHermes3Engine:
         if timeout_s is not None and timeout_s <= self._current_flush_interval() * 2:
             return False
         schema_cls = response_model if isinstance(response_model, type) else type(response_model)
-        if not hasattr(schema_cls, '__struct_fields__') and (not hasattr(schema_cls, 'model_validate_json')):
-            return False
-        return True
+        # ROADMAP-006: Use compat layer for type detection
+        # Batch-safe if it's msgspec.Struct or Pydantic model with model_validate_json
+        if is_msgspec_struct(schema_cls) or is_pydantic_model(schema_cls):
+            return True
+        return False
 
     def _compute_length_bin(self, prompt: str) -> str:
         """Sprint 7G: Length binning — short/medium/long to prevent padding waste."""
@@ -1265,9 +1279,7 @@ class DeepHermes3Engine:
                 return None, f'No JSON object found in output: {raw_text[:200]}'
             try:
                 data = _msgspec_decode(match.group())
-                if hasattr(schema_cls, 'model_validate'):
-                    return schema_cls.model_validate(data), None  # type: ignore[union-attr]
-                return schema_cls.model_construct(**data), None  # type: ignore[union-attr]
+                return _pydantic_validate(schema_cls, data), None
             except Exception as e:
                 # F-04: Extract structured error details for correction retry
                 error_detail = _extract_parse_error(e, raw_text, schema_cls)
@@ -1347,22 +1359,11 @@ class DeepHermes3Engine:
         snippet = raw_text[:300] if raw_text else '(empty)'
         error_parts.append(f'LLM output snippet: {snippet}')
         # Add schema field names to guide correction
-        # F-04 fix: msgspec.Struct has __struct_fields__, not model_fields
-        field_names: list[str] = []
+        # ROADMAP-006: Use unified compat layer for field extraction
         try:
-            # msgspec.Struct uses __struct_fields__ (list of field names)
-            if hasattr(schema_cls, '__struct_fields__'):
-                field_names = list(schema_cls.__struct_fields__)  # type: ignore[union-attr]
-            elif hasattr(schema_cls, 'model_fields'):
-                # Pydantic v2
-                fields = getattr(schema_cls, 'model_fields', {})
-                field_names = list(fields.keys()) if fields else []
-            elif hasattr(schema_cls, '__fields__'):
-                # Pydantic v1 fallback
-                fields = getattr(schema_cls, '__fields__', {})
-                field_names = list(fields.keys()) if fields else []
+            field_names = _get_model_fields(schema_cls)
         except Exception:  # noqa: BLE001
-            pass
+            field_names = []
         if field_names:
             error_parts.append(f'Expected fields: {field_names}')
         return ' | '.join(error_parts)
@@ -1404,10 +1405,8 @@ class DeepHermes3Engine:
             logger.debug(f'[F-04] Correction round {round_num}/{max_correction_rounds}: {parse_error[:200]}')
 
             # Build correction prompt with error context
-            try:
-                schema_str = _msgspec_encode_fast(response_model.model_json_schema()).decode()
-            except Exception:
-                schema_str = str(response_model)
+            # ROADMAP-006: Use unified compat layer for schema extraction
+            schema_str = _pydantic_get_schema(response_model)
 
             correction_prompt = (
                 f'{prompt}\n\n'
@@ -1438,17 +1437,16 @@ class DeepHermes3Engine:
 
             try:
                 data = _msgspec_decode(match.group())
-                if hasattr(schema_cls, 'model_validate'):
-                    return schema_cls.model_validate(data)  # type: ignore[union-attr]
-                return schema_cls.model_construct(**data)  # type: ignore[union-attr]
+                # ROADMAP-006: Use unified compat layer for validation
+                return _pydantic_validate(schema_cls, data)
             except Exception as e:
                 parse_error = self._extract_parse_error(e, text, schema_cls)
                 continue
 
         # All correction rounds exhausted — fall back to default
+        # ROADMAP-006: Use unified compat layer for construction
         logger.warning(f'[F-04] All correction rounds exhausted, using fallback for {schema_cls.__name__}')
-        fields = dict.fromkeys(getattr(schema_cls, 'model_fields', {}).keys())
-        return schema_cls.model_construct(**fields) if hasattr(schema_cls, 'model_construct') else schema_cls(**fields)  # type: ignore[union-attr]
+        return _pydantic_construct(schema_cls, **_get_model_fields(schema_cls))
 
     def _get_gpu_memory(self) -> int:
         """Get current GPU memory usage."""
@@ -2972,12 +2970,23 @@ class DeepHermes3Engine:
         Args:
             reason: Telemetrie label pro debugging (např. "model_swap_start", "model_swap_end")
         """
+        # ROADMAP-001: Sync all caches to manager and clear via UnifiedCacheManager
+        # Note: clear_all_sync() handles KV pool clearing internally - no redundant clears needed
+        self._cache_manager.sync_warmup_cache(self._warmup_cache)
+        self._cache_manager.sync_prompt_cache(self._prompt_cache)
+        self._cache_manager.sync_system_prompt_cache(self._system_prompt_cache)
+        self._cache_manager.sync_kv_cache(self._kv_cache_pool)
+        self._cache_manager.sync_session_cache(self._session_cache_pool)
+        self._cache_manager.sync_prefix_cache(self._prefix_cache)
+        self._cache_manager.clear_all_sync()
+        
+        # Reset engine's cache references (manager's refs already cleared by clear_all_sync)
         self._prompt_cache = None
         self._system_prompt_cache = None
         self._warmup_cache = None
         self._warmup_prompt_hash = None
-        self._kv_cache_pool.clear()
-        self._session_cache_pool.clear()
+        # Note: _kv_cache_pool, _session_cache_pool, _prefix_cache references remain
+        # but their contents are cleared by clear_all_sync() through manager
         self._mlx_clear_and_timestamp(force_clear=True)
         self._telemetry_counters['cache_invalidation_count'] += 1
         logger.debug(f'[M-08] All prompt caches invalidated: {reason}')
@@ -4498,12 +4507,14 @@ class DeepHermes3Engine:
                 future = await self._submit_structured_batch(prompt=prompt, response_model=response_model, priority=priority, temperature=temperature or 0.1, max_tokens=max_tokens or 1024, system_msg=system_msg)
                 result = await future
                 schema_cls = response_model if isinstance(response_model, type) else type(response_model)
-                if hasattr(schema_cls, '__struct_fields__'):
+                # ROADMAP-006: Use compat layer type detection
+                if is_msgspec_struct(schema_cls):
                     return result
                 else:
                     if isinstance(result, schema_cls):
                         return result
-                    return schema_cls.model_construct(**result) if isinstance(result, dict) else result
+                    # ROADMAP-006: Use unified compat layer for construction
+                    return _pydantic_construct(schema_cls, **result) if isinstance(result, dict) else result
             except Exception as e:
                 logger.debug(f'[STRUCTURED] Batch path failed: {e}, falling back to direct')
                 self._telemetry_counters['batch_fallback_single'] += 1
@@ -4517,7 +4528,9 @@ class DeepHermes3Engine:
                 def _do_outlines_generate() -> str:
                     return generator(prompt)
                 result = await self._submit_inference(timeout=30.0, fn=_do_outlines_generate)
-                return response_model.model_validate_json(result)
+                # ROADMAP-006: Use unified compat layer for JSON validation
+                # Note: model_validate_json is Pydantic v2 only, but Outlines path only applies to Pydantic models
+                return _pydantic_validate_json(response_model, result)
             except Exception as e:
                 logger.debug(f'[STRUCTURED] Outlines failed: {e}, falling back to JSON')
         import re
@@ -4525,8 +4538,10 @@ class DeepHermes3Engine:
         parse_error: str | None = None
         for attempt in range(max_retries + 1):
             # F-04: On retry, inject previous parse error context to guide correction
+            # ROADMAP-006: Use unified compat layer for schema extraction
+            # Note: model_json_schema() is Pydantic v2 only; msgspec.Struct falls back gracefully
+            schema_str = _pydantic_get_schema(response_model)
             if attempt > 0 and parse_error:
-                schema_str = _msgspec_encode_fast(response_model.model_json_schema()).decode()
                 json_prompt = (
                     f'{prompt}\n\n'
                     f'PREVIOUS OUTPUT WAS INVALID:\n{parse_error}\n\n'
@@ -4535,16 +4550,14 @@ class DeepHermes3Engine:
                     f'Do not include any explanation, only the JSON object.'
     )
             else:
-                schema_str = _msgspec_encode_fast(response_model.model_json_schema()).decode()
                 json_prompt = f'{prompt}\n\nRespond ONLY with valid JSON matching this schema:\n{schema_str}\n\nDo not include any other text. Output valid JSON only.'
             text = await self.generate(json_prompt, temperature=0.1, max_tokens=2048, system_msg=system_msg)
             match = re.search(r'\{.*\}', text, re.DOTALL)
             if match:
                 try:
                     data = _msgspec_decode(match.group())
-                    if hasattr(schema_cls, 'model_validate'):
-                        return schema_cls.model_validate(data)  # type: ignore[union-attr]
-                    return schema_cls.model_construct(**data)  # type: ignore[union-attr]
+                    # ROADMAP-006: Use unified compat layer for validation
+                    return _pydantic_validate(schema_cls, data)
                 except Exception as e:
                     # F-04: Extract structured error details for next correction round
                     parse_error = self._extract_parse_error(e, text, schema_cls)
@@ -4553,9 +4566,10 @@ class DeepHermes3Engine:
                         continue
             else:
                 parse_error = f'No JSON object found in output: {text[:200]}'
+        # All attempts exhausted — fall back to default construction
+        # ROADMAP-006: Use unified compat layer for fallback construction
         logger.warning(f'[STRUCTURED] All attempts failed, using fallback for {response_model.__name__}')
-        fields = dict.fromkeys(getattr(response_model, 'model_fields', {}).keys())
-        return response_model.model_construct(**fields) if hasattr(response_model, 'model_construct') else response_model(**fields)
+        return _pydantic_construct(response_model, **_get_model_fields(response_model))
 
     def invalidate_prefix_cache(self) -> None:
         """Clear the prefix cache (e.g., on model change)."""
@@ -4645,8 +4659,9 @@ class DeepHermes3Engine:
         if self._model is None:
             return [PlannerRuntimeResult(task_id=r.task_id, executed=False, skipped_panic=False, hermes_output=None, error='model_not_loaded') for r in requests]
         import msgspec
+from compat.msgspec_gc_compat import Struct
 
-        class GenericResult(msgspec.Struct, kw_only=True, gc=False):
+        class GenericResult(Struct, kw_only=True):
             result: str = ''
             confidence: float = 0.5
 
@@ -4723,10 +4738,25 @@ class DeepHermes3Engine:
     async def _unload_caches(self) -> None:
         """ROADMAP-001 Phase 3-6: Unified cache eviction via UnifiedCacheManager."""
         await self._save_cache()
+        
+        # ROADMAP-001: Sync engine caches to manager before clearing
+        self._cache_manager.sync_warmup_cache(self._warmup_cache)
+        self._cache_manager.sync_prompt_cache(self._prompt_cache)
+        self._cache_manager.sync_system_prompt_cache(self._system_prompt_cache)
+        
         # ROADMAP-001: Single call to clear_all() for complete cache cleanup
         cleared = await self._cache_manager.clear_all()
         logger.debug('[ROADMAP-001] Caches evicted: %s', list(cleared.keys()))
+        
+        # Reset engine's cache references to None
+        self._warmup_cache = None
+        self._prompt_cache = None
+        self._system_prompt_cache = None
         self._warmup_prompt_hash = None
+        
+        # ROADMAP-001: Reset cache stats
+        self._kv_cache_stats = {'cache_uses': 0, 'cache_prefills': 1, 'quantized_count': 0, 'parallel_prefills': 0}
+        self._session_cache_stats = {'session_cache_hits': 0, 'session_cache_misses': 0, 'session_cache_evictions': 0, 'session_cache_memory_mb': self._session_cache_memory_mb, 'session_cache_maxsize': self._session_cache_maxsize}
 
     def _unload_executors(self) -> None:
         """Phase 7: Shutdown thread executors (non-shared only)."""
@@ -5007,16 +5037,31 @@ class DeepHermes3Engine:
                 both pools are cleared (full reset — needed only when the model
                 itself changes or when a completely fresh slate is required).
         """
+        # ROADMAP-001: Sync caches to manager before partial clear
+        self._cache_manager.sync_warmup_cache(self._warmup_cache)
+        self._cache_manager.sync_prompt_cache(self._prompt_cache)
+        self._cache_manager.sync_system_prompt_cache(self._system_prompt_cache)
+        
         # ROADMAP-001: Reset MLX prompt caches via UnifiedCacheManager
         self._cache_manager.reset_prompt_caches()
+        
+        # Clear engine references
+        self._prompt_cache = None
+        self._system_prompt_cache = None
         self._system_prompt_hash = None
+        
         if not keep_cache_pool:
             # ROADMAP-001: Clear KV pools via UnifiedCacheManager
+            # Note: Manager's clear methods operate on the same cache objects (passed in __init__)
             self._cache_manager.clear_kv_cache()
             self._cache_manager.clear_session_cache()
+            # Engine references point to same objects - no need for redundant clear
             logger.debug('[F03][ROADMAP-001] KV cache pools cleared (keep_cache_pool=False)')
+        
         # ROADMAP-001: Always clear prefix cache (per-turn state)
+        # Note: Manager operates on the same cache object - no redundant clear needed
         self._cache_manager.clear_prefix_cache()
+        
         # NEW-M3 FIX: Offload blocking mx.eval([]) to thread pool when in async context.
         # mx.eval([]) is fast but can block the event loop if called frequently.
         # Check for running loop and use to_thread to avoid blocking.
@@ -5034,8 +5079,11 @@ class DeepHermes3Engine:
                     pool.submit(mx.eval, [])
         except Exception:  # noqa: BLE001
             pass
+        
+        # ROADMAP-001: Reset stats
         self._kv_cache_stats = {'cache_uses': 0, 'cache_prefills': 1, 'quantized_count': 0, 'parallel_prefills': 0}
         self._session_cache_stats = {'session_cache_hits': 0, 'session_cache_misses': 0, 'session_cache_evictions': 0, 'session_cache_memory_mb': self._session_cache_memory_mb, 'session_cache_maxsize': self._session_cache_maxsize}
+        
         if keep_cache_pool:
             logger.debug('[F03][ROADMAP-001] Hermes3 session reset (KV pools preserved for cross-turn reuse)')
         else:
@@ -5489,8 +5537,9 @@ class DeepHermes3Engine:
         try:
             import outlines.generate as og
             import msgspec
+from compat.msgspec_gc_compat import Struct
 
-            class _ProbeSchema(msgspec.Struct, gc=False):
+            class _ProbeSchema(Struct):
                 ok: bool
             gen = og.json(self._outlines_model, _ProbeSchema)
             return callable(gen)

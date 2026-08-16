@@ -19,6 +19,8 @@ from enum import StrEnum
 from pathlib import Path
 from hledac.universal.utils.serialization import _safe_dataclass_to_dict
 from _core import aclose
+from compat.msgspec_gc_compat import Struct
+
 
 class Grade(StrEnum):
     FEED_ONLY = 'FEED_ONLY'
@@ -66,7 +68,7 @@ class QualityGate(StrEnum):
     QUALITY_FAIL_NONFEED_ZERO = 'QUALITY_FAIL_NONFEED_ZERO'
     QUALITY_WARN_MULTISOURCE_SHALLOW = 'QUALITY_WARN_MULTISOURCE_SHALLOW'
 
-class EvidenceDepth(msgspec.Struct, gc=False):
+class EvidenceDepth(Struct):
     """F231M: Production evidence depth diagnostics from KPI field aliases."""
     claims_depth: float = 0.0
     public_candidate_depth: float = 0.0
@@ -78,7 +80,7 @@ class EvidenceDepth(msgspec.Struct, gc=False):
     advisory_clues_present: bool = False
     nonfeed_clues_without_acceptance: bool = False
 
-class ScoreComponents(msgspec.Struct, frozen=True, gc=False):
+class ScoreComponents(Struct, frozen=True):
     findings_volume_score: float
     source_diversity_score: float
     nonfeed_evidence_score: float
@@ -142,7 +144,7 @@ def _compute_evidence_depth(norm: dict, nonfeed: int) -> EvidenceDepth:
     nonfeed_clues_without_acceptance = (public_candidates_seen or ct_clues_present or advisory_clues_present) and nonfeed == 0
     return EvidenceDepth(claims_depth=round(claims_depth, 4), public_candidate_depth=round(public_candidate_depth, 4), ct_clue_depth=round(ct_clue_depth, 4), advisory_clue_depth=round(advisory_clue_depth, 4), claims_extracted=claims_extracted, public_candidates_seen=public_candidates_seen, ct_clues_present=ct_clues_present, advisory_clues_present=advisory_clues_present, nonfeed_clues_without_acceptance=nonfeed_clues_without_acceptance)
 
-class ResearchQualityScore(msgspec.Struct, frozen=True, gc=False):
+class ResearchQualityScore(Struct, frozen=True):
     total_quality_score: float
     grade: Grade
     components: ScoreComponents

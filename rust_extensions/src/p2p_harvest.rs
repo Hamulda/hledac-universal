@@ -260,7 +260,7 @@ fn findings_to_arrow_ipc(findings: &[HarvestFinding]) -> Result<Vec<u8>, String>
     use arrow::ipc::writer::StreamWriter;
     use std::sync::Arc;
 
-    let n = findings.len();
+    let n = findings);
     if n == 0 {
         return Ok(Vec::new());
     }
@@ -276,7 +276,7 @@ fn findings_to_arrow_ipc(findings: &[HarvestFinding]) -> Result<Vec<u8>, String>
     let mut claims_jsons = Vec::with_capacity(n);
 
     for f in findings {
-        let record = f.to_canonical_record();
+        let record = f);
         ids.push(record.0);
         queries.push(record.1);
         source_types.push(record.2);
@@ -353,8 +353,8 @@ pub fn harvest(
     duration_s: Option<u64>,
     max_results: Option<usize>,
 ) -> PyResult<Bound<'_, PyAny>> {
-    let keyword = keyword.clone();
-    let protocols = protocols.clone();
+    let keyword = keyword);
+    let protocols = protocols);
     let duration_s = duration_s.unwrap_or(120).min(MAX_CRAWL_DURATION_S);
     let max_results = max_results.unwrap_or(MAX_RESULTS_PER_HARVEST);
 
@@ -391,7 +391,7 @@ pub fn harvest(
 
             match findings {
                 Ok(mut f) => {
-                    stats.findings_count += f.len();
+                    stats.findings_count += f);
                     all_findings.append(&mut f);
                 }
                 Err(e) => {
@@ -407,17 +407,17 @@ pub fn harvest(
                 .into_iter()
                 .map(|f| {
                     let dict = pyo3::types::PyDict::new(py);
-                    dict.set_item("finding_id", f.finding_id).ok();
-                    dict.set_item("query", f.query).ok();
-                    dict.set_item("source_type", f.source_type).ok();
-                    dict.set_item("confidence", f.confidence).ok();
-                    dict.set_item("timestamp", f.ts).ok();
-                    dict.set_item("content_id", f.content_id).ok();
-                    dict.set_item("payload_text", f.payload_text).ok();
-                    dict.set_item("metadata", f.metadata).ok();
+                    dict.set_item("finding_id", f.finding_id));
+                    dict.set_item("query", f.query));
+                    dict.set_item("source_type", f.source_type));
+                    dict.set_item("confidence", f.confidence));
+                    dict.set_item("timestamp", f.ts));
+                    dict.set_item("content_id", f.content_id));
+                    dict.set_item("payload_text", f.payload_text));
+                    dict.set_item("metadata", f.metadata));
                     dict.into_any()
                 })
-                .collect();
+                );
 
             Ok(pyo3::types::PyList::new(py, &list).into_any())
         })
@@ -434,8 +434,8 @@ pub fn harvest_ipc(
     duration_s: Option<u64>,
     max_results: Option<usize>,
 ) -> PyResult<Bound<'_, PyAny>> {
-    let keyword = keyword.clone();
-    let protocols = protocols.clone();
+    let keyword = keyword);
+    let protocols = protocols);
     let duration_s = duration_s.unwrap_or(120).min(MAX_CRAWL_DURATION_S);
     let max_results = max_results.unwrap_or(MAX_RESULTS_PER_HARVEST);
 
@@ -596,7 +596,7 @@ async fn ipfs_gateway_crawl(
     // Generate potential CID from keyword (using SHA1 like IPFS does for some content)
     let mut hasher = Sha256::new();
     hasher.update(keyword.as_bytes());
-    let hash = hasher.finalize();
+    let hash = hasher);
     let cid = format!("Qm{}", hex::encode(&hash[..]));
 
     #[cfg(feature = "otel")] tracing::debug!("IPFS Gateway crawl: keyword={}, cid={}", keyword, cid);
@@ -807,7 +807,7 @@ async fn tor_consensus_crawl(
                             }
 
                             if let Some(rest) = line.strip_prefix("r ") {
-                                let parts: Vec<&str> = rest.split_whitespace().collect();
+                                let parts: Vec<&str> = rest.split_whitespace());
                                 if parts.len() >= 7 {
                                     let nickname = parts[0];
                                     let identity = parts[2];
@@ -893,7 +893,7 @@ async fn i2p_leaseset_crawl(
         }
     };
 
-    stream.set_read_timeout(Some(std::time::Duration::from_secs(5))).ok();
+    stream.set_read_timeout(Some(std::time::Duration::from_secs(5))));
 
     // Send HELLO
     let hello = format!("HELLO VERSION MIN=3.0 MAX=3.1\n");
@@ -1033,31 +1033,31 @@ fn build_bencode_query(query_type: &[u8], params: &[(&str, &[u8])]) -> Vec<u8> {
 
     let mut buf = Vec::new();
 
-    buf.write_all(b"d").unwrap();
+    buf.write_all(b"d"));
 
     let tid: [u8; 2] = rand::random();
-    buf.write_all(b"t").unwrap();
-    buf.write_all(b"2:").unwrap();
-    buf.write_all(&tid).unwrap();
+    buf.write_all(b"t"));
+    buf.write_all(b"2:"));
+    buf.write_all(&tid));
 
-    buf.write_all(b"y").unwrap();
-    buf.write_all(b"1:q").unwrap();
+    buf.write_all(b"y"));
+    buf.write_all(b"1:q"));
 
-    buf.write_all(b"q").unwrap();
-    buf.write_all(&format!("{}:", query_type.len()).into_bytes()).unwrap();
-    buf.write_all(query_type).unwrap();
+    buf.write_all(b"q"));
+    buf.write_all(&format!("{}:", query_type.len()).into_bytes()));
+    buf.write_all(query_type));
 
-    buf.write_all(b"a").unwrap();
-    buf.write_all(b"d").unwrap();
+    buf.write_all(b"a"));
+    buf.write_all(b"d"));
 
     for (key, value) in params {
-        buf.write_all(&format!("{}:", key.len()).into_bytes()).unwrap();
-        buf.write_all(key.as_bytes()).unwrap();
-        buf.write_all(&format!("{}:", value.len()).into_bytes()).unwrap();
-        buf.write_all(value).unwrap();
+        buf.write_all(&format!("{}:", key.len()).into_bytes()));
+        buf.write_all(key.as_bytes()));
+        buf.write_all(&format!("{}:", value.len()).into_bytes()));
+        buf.write_all(value));
     }
 
-    buf.write_all(b"ee").unwrap();
+    buf.write_all(b"ee"));
 
     buf
 }
@@ -1118,7 +1118,7 @@ async fn get_peers_for_keyword(
 
     let mut hasher = Sha256::new();
     hasher.update(keyword.as_bytes());
-    let result = hasher.finalize();
+    let result = hasher);
     let info_hash = hex::encode(result);
 
     let query = build_bencode_query(b"get_peers", &[
@@ -1186,7 +1186,7 @@ pub fn dht_crawl_async(
     duration_s: Option<u64>,
     max_results: Option<usize>,
 ) -> PyResult<Bound<'_, PyAny>> {
-    let keyword = keyword.clone();
+    let keyword = keyword);
     let duration_s = duration_s.unwrap_or(120).min(MAX_CRAWL_DURATION_S);
     let max_results = max_results.unwrap_or(MAX_RESULTS_PER_HARVEST);
 
@@ -1198,16 +1198,16 @@ pub fn dht_crawl_async(
                         .into_iter()
                         .map(|f| {
                             let dict = pyo3::types::PyDict::new(py);
-                            dict.set_item("finding_id", f.finding_id).ok();
-                            dict.set_item("query", f.query).ok();
-                            dict.set_item("source_type", f.source_type).ok();
-                            dict.set_item("confidence", f.confidence).ok();
-                            dict.set_item("timestamp", f.ts).ok();
-                            dict.set_item("content_id", f.content_id).ok();
-                            dict.set_item("payload_text", f.payload_text).ok();
+                            dict.set_item("finding_id", f.finding_id));
+                            dict.set_item("query", f.query));
+                            dict.set_item("source_type", f.source_type));
+                            dict.set_item("confidence", f.confidence));
+                            dict.set_item("timestamp", f.ts));
+                            dict.set_item("content_id", f.content_id));
+                            dict.set_item("payload_text", f.payload_text));
                             dict.into_any()
                         })
-                        .collect();
+                        );
                     Ok(pyo3::types::PyList::new(py, &list).into_any())
                 })
             }
@@ -1225,7 +1225,7 @@ pub fn ipfs_gateway_crawl_async(
     duration_s: Option<u64>,
     max_results: Option<usize>,
 ) -> PyResult<Bound<'_, PyAny>> {
-    let keyword = keyword.clone();
+    let keyword = keyword);
     let duration_s = duration_s.unwrap_or(120).min(MAX_CRAWL_DURATION_S);
     let max_results = max_results.unwrap_or(MAX_RESULTS_PER_HARVEST);
 
@@ -1237,16 +1237,16 @@ pub fn ipfs_gateway_crawl_async(
                         .into_iter()
                         .map(|f| {
                             let dict = pyo3::types::PyDict::new(py);
-                            dict.set_item("finding_id", f.finding_id).ok();
-                            dict.set_item("query", f.query).ok();
-                            dict.set_item("source_type", f.source_type).ok();
-                            dict.set_item("confidence", f.confidence).ok();
-                            dict.set_item("timestamp", f.ts).ok();
-                            dict.set_item("content_id", f.content_id).ok();
-                            dict.set_item("payload_text", f.payload_text).ok();
+                            dict.set_item("finding_id", f.finding_id));
+                            dict.set_item("query", f.query));
+                            dict.set_item("source_type", f.source_type));
+                            dict.set_item("confidence", f.confidence));
+                            dict.set_item("timestamp", f.ts));
+                            dict.set_item("content_id", f.content_id));
+                            dict.set_item("payload_text", f.payload_text));
                             dict.into_any()
                         })
-                        .collect();
+                        );
                     Ok(pyo3::types::PyList::new(py, &list).into_any())
                 })
             }
@@ -1264,7 +1264,7 @@ pub fn ipfs_gateway_crawl_ipc(
     duration_s: Option<u64>,
     max_results: Option<usize>,
 ) -> PyResult<Bound<'_, PyAny>> {
-    let keyword = keyword.clone();
+    let keyword = keyword);
     let duration_s = duration_s.unwrap_or(120).min(MAX_CRAWL_DURATION_S);
     let max_results = max_results.unwrap_or(MAX_RESULTS_PER_HARVEST);
 
@@ -1294,7 +1294,7 @@ pub fn tor_consensus_scrape_async(
     duration_s: Option<u64>,
     max_results: Option<usize>,
 ) -> PyResult<Bound<'_, PyAny>> {
-    let keyword = keyword.clone();
+    let keyword = keyword);
     let duration_s = duration_s.unwrap_or(120).min(MAX_CRAWL_DURATION_S);
     let max_results = max_results.unwrap_or(MAX_RESULTS_PER_HARVEST);
 
@@ -1306,16 +1306,16 @@ pub fn tor_consensus_scrape_async(
                         .into_iter()
                         .map(|f| {
                             let dict = pyo3::types::PyDict::new(py);
-                            dict.set_item("finding_id", f.finding_id).ok();
-                            dict.set_item("query", f.query).ok();
-                            dict.set_item("source_type", f.source_type).ok();
-                            dict.set_item("confidence", f.confidence).ok();
-                            dict.set_item("timestamp", f.ts).ok();
-                            dict.set_item("content_id", f.content_id).ok();
-                            dict.set_item("payload_text", f.payload_text).ok();
+                            dict.set_item("finding_id", f.finding_id));
+                            dict.set_item("query", f.query));
+                            dict.set_item("source_type", f.source_type));
+                            dict.set_item("confidence", f.confidence));
+                            dict.set_item("timestamp", f.ts));
+                            dict.set_item("content_id", f.content_id));
+                            dict.set_item("payload_text", f.payload_text));
                             dict.into_any()
                         })
-                        .collect();
+                        );
                     Ok(pyo3::types::PyList::new(py, &list).into_any())
                 })
             }
@@ -1332,7 +1332,7 @@ pub fn i2p_leaseset_resolve_async(
     b32_addr: String,
     duration_s: Option<u64>,
 ) -> PyResult<Bound<'_, PyAny>> {
-    let b32_addr = b32_addr.clone();
+    let b32_addr = b32_addr);
     let duration_s = duration_s.unwrap_or(30).min(60);
 
     future_into_py(py, async move {
@@ -1343,16 +1343,16 @@ pub fn i2p_leaseset_resolve_async(
                         .into_iter()
                         .map(|f| {
                             let dict = pyo3::types::PyDict::new(py);
-                            dict.set_item("finding_id", f.finding_id).ok();
-                            dict.set_item("query", f.query).ok();
-                            dict.set_item("source_type", f.source_type).ok();
-                            dict.set_item("confidence", f.confidence).ok();
-                            dict.set_item("timestamp", f.ts).ok();
-                            dict.set_item("content_id", f.content_id).ok();
-                            dict.set_item("payload_text", f.payload_text).ok();
+                            dict.set_item("finding_id", f.finding_id));
+                            dict.set_item("query", f.query));
+                            dict.set_item("source_type", f.source_type));
+                            dict.set_item("confidence", f.confidence));
+                            dict.set_item("timestamp", f.ts));
+                            dict.set_item("content_id", f.content_id));
+                            dict.set_item("payload_text", f.payload_text));
                             dict.into_any()
                         })
-                        .collect();
+                        );
                     Ok(pyo3::types::PyList::new(py, &list).into_any())
                 })
             }
@@ -1369,15 +1369,15 @@ pub fn i2p_leaseset_resolve_async(
 #[cfg(feature = "p2p_harvest")]
 pub fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
     // Unified harvest API
-    m.add_function(wrap_pyfunction!(harvest, m)?)?;
-    m.add_function(wrap_pyfunction!(harvest_ipc, m)?)?;
+    m.add_function(wrap_pyfunction!(harvest))?;
+    m.add_function(wrap_pyfunction!(harvest_ipc))?;
     
     // Individual protocol crawlers
-    m.add_function(wrap_pyfunction!(dht_crawl_async, m)?)?;
-    m.add_function(wrap_pyfunction!(ipfs_gateway_crawl_async, m)?)?;
-    m.add_function(wrap_pyfunction!(ipfs_gateway_crawl_ipc, m)?)?;
-    m.add_function(wrap_pyfunction!(tor_consensus_scrape_async, m)?)?;
-    m.add_function(wrap_pyfunction!(i2p_leaseset_resolve_async, m)?)?;
+    m.add_function(wrap_pyfunction!(dht_crawl_async))?;
+    m.add_function(wrap_pyfunction!(ipfs_gateway_crawl_async))?;
+    m.add_function(wrap_pyfunction!(ipfs_gateway_crawl_ipc))?;
+    m.add_function(wrap_pyfunction!(tor_consensus_scrape_async))?;
+    m.add_function(wrap_pyfunction!(i2p_leaseset_resolve_async))?;
 
     Ok(())
 }

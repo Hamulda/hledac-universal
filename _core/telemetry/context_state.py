@@ -25,12 +25,13 @@ import contextvars
 import uuid
 from typing import Any
 import msgspec
+from compat.msgspec_gc_compat import Struct
 from _core._util import aclose
 
 
 # ─── TelemetryContext (O-01) ─────────────────────────────────────────────────
 
-class TelemetryContext(msgspec.Struct, frozen=True, eq=False, gc=False):
+class TelemetryContext(Struct, frozen=True, eq=False):
     """
     Unified telemetry context — initialized once per sprint session.
 

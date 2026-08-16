@@ -41,7 +41,6 @@ Usage
     result = await cache.get("key")
 """
 from __future__ import annotations
-
 import asyncio
 import json
 import logging
@@ -53,46 +52,23 @@ from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
 from typing import Any
-
 import msgspec
-
 from ._sync import LRUCache
 from _core import aclose
-
 logger = logging.getLogger(__name__)
-
-__all__ = [
-    "IntelligentCache",
-    "MemoryOptimizedURLSet",
-    "CacheConfig",
-    "CacheEntry",
-    "CacheStats",
-    "EvictionStrategy",
-    "get_global_cache",
-]
-
-
-# ── MLX Support ────────────────────────────────────────────────────────────────
-
-# C1-X FIX: Import MLX_AVAILABLE from SSOT (zero-import detection)
+__all__ = ['IntelligentCache', 'MemoryOptimizedURLSet', 'CacheConfig', 'CacheEntry', 'CacheStats', 'EvictionStrategy', 'get_global_cache']
 try:
     from utils.mlx_memory import MLX_AVAILABLE as _MLX_AVAILABLE
 except ImportError:
     _MLX_AVAILABLE = False
 
-
 def _get_mlx() -> Any:
     """Lazy import MLX core - returns None if MLX not available."""
-    # C1-X FIX: Use centralized get_mx() from mlx_memory SSOT
     try:
         from utils.mlx_memory._core import get_mx as _get_mx_from_core
         return _get_mx_from_core()
     except ImportError:
         return None
-
-
-# ── Enums & Config ────────────────────────────────────────────────────────────
-
 
 class EvictionStrategy(Enum):
     """Cache eviction strategies."""
@@ -100,8 +76,7 @@ class EvictionStrategy(Enum):
     LFU = 'lfu'
     ADAPTIVE = 'adaptive'
 
-
-@dataclass
+@dataclass(slots=True)
 class CacheConfig:
     """Configuration for intelligent cache."""
     max_size_bytes: int = 100 * 1024 * 1024
@@ -113,8 +88,7 @@ class CacheConfig:
     warm_keys: list[str] | None = None
     warm_loader: Callable | None = None
 
-
-@dataclass
+@dataclass(slots=True)
 class CacheEntry:
     """Single cache entry with metadata."""
     key: str
@@ -125,8 +99,7 @@ class CacheEntry:
     access_count: int = 0
     last_accessed: float = field(default_factory=time.time)
 
-
-@dataclass
+@dataclass(slots=True)
 class CacheStats:
     """Cache performance statistics."""
     hits: int = 0
@@ -135,10 +108,6 @@ class CacheStats:
     total_size_bytes: int = 0
     entry_count: int = 0
     hit_rate: float = 0.0
-
-
-# ── ARC: Adaptive Replacement Cache ───────────────────────────────────────────
-
 
 class _ARC:
     """
@@ -154,10 +123,7 @@ class _ARC:
 
     Reference: ARC paper by Megiddo & Modha (2003)
     """
-    __slots__ = (
-        '_b1', '_b2', '_current_bytes', '_current_entries',
-        '_t1', '_t2', 'max_entries', 'max_size_bytes', '_key_to_size'
-    )
+    __slots__ = ('_b1', '_b2', '_current_bytes', '_current_entries', '_t1', '_t2', 'max_entries', 'max_size_bytes', '_key_to_size')
 
     def __init__(self, max_entries: int, max_size_bytes: int):
         self.max_entries = max_entries
@@ -166,7 +132,6 @@ class _ARC:
         self._t2: LRUCache = LRUCache(max_size=max_entries)
         self._b1: LRUCache = LRUCache(max_size=max_entries)
         self._b2: LRUCache = LRUCache(max_size=max_entries)
-        # Separate tracking for key->size since LRUCache values are tracked separately
         self._key_to_size: dict[str, int] = {}
         self._current_entries = 0
         self._current_bytes = 0
@@ -178,22 +143,18 @@ class _ARC:
     def on_access(self, key: str, size: int) -> None:
         """Record cache hit - move from T1 to T2 or update in T2."""
         if key in self._t1:
-            # Move from T1 to T2 on hit
             self._t1.pop(key)
-            self._t2[key] = True  # Track presence in T2
+            self._t2[key] = True
             self._key_to_size[key] = size
         elif key in self._t2:
-            # Already in T2, just move to end (mark as recently used)
             self._t2.move_to_end(key)
         elif key in self._b1:
-            # Ghost hit - found in B1, replace in T2
             self._b1.pop(key)
             self._t2[key] = True
             self._key_to_size[key] = size
             self._current_entries += 1
             self._current_bytes += size
         elif key in self._b2:
-            # Ghost hit - found in B2, replace in T2
             self._b2.pop(key)
             self._t2[key] = True
             self._key_to_size[key] = size
@@ -204,13 +165,13 @@ class _ARC:
         """Evict one item and return its key. Returns None if nothing to evict."""
         if len(self._t1) > len(self._t2) and len(self._t1) > 0:
             key, _ = self._t1.pop_lru()
-            self._b1[key] = True  # Move to ghost list
+            self._b1[key] = True
             self._current_entries -= 1
             self._current_bytes -= self._key_to_size.pop(key, 0)
             return key
         elif len(self._t2) > 0:
             key, _ = self._t2.pop_lru()
-            self._b2[key] = True  # Move to ghost list
+            self._b2[key] = True
             self._current_entries -= 1
             self._current_bytes -= self._key_to_size.pop(key, 0)
             return key
@@ -227,10 +188,10 @@ class _ARC:
             return
         if key in self._b1:
             self._b1.pop(key)
-            self._t2[key] = True  # Replace ghost in T2
+            self._t2[key] = True
         elif key in self._b2:
             self._b2.pop(key)
-            self._t2[key] = True  # Replace ghost in T2
+            self._t2[key] = True
         else:
             self._t1[key] = True
             self._current_entries += 1
@@ -247,25 +208,16 @@ class _ARC:
         self._current_entries = 0
         self._current_bytes = 0
 
-
-# ── Async Helpers ─────────────────────────────────────────────────────────────
-
-
-def safe_create_task(coro, *, name: str | None = None) -> asyncio.Task:
+def safe_create_task(coro, *, name: str | None=None) -> asyncio.Task:
     """Create task with error handling."""
     return asyncio.create_task(coro, name=name)
 
-
-async def safe_gather_fire_and_forget(*tasks: asyncio.Task, label: str = "") -> None:
+async def safe_gather_fire_and_forget(*tasks: asyncio.Task, label: str='') -> None:
     """Gather with fire-and-forget error handling."""
     results = await asyncio.gather(*tasks, return_exceptions=True)
     for i, r in enumerate(results):
         if isinstance(r, Exception):
-            logger.debug(f"{label}: task {i} raised {type(r).__name__}: {r}")
-
-
-# ── IntelligentCache ─────────────────────────────────────────────────────────
-
+            logger.debug(f'{label}: task {i} raised {type(r).__name__}: {r}')
 
 class IntelligentCache:
     """
@@ -285,14 +237,9 @@ class IntelligentCache:
         await cache.set("key", value, ttl=300)
         result = await cache.get("key")
     """
-    __slots__ = (
-        '_access_order', '_arc', '_background_tasks', '_cache',
-        '_cleanup_task', '_frequency', '_initialized', '_lock',
-        '_persistence_path', '_stats', '_warm_keys', '_warm_loader',
-        'config'
-    )
+    __slots__ = ('_access_order', '_arc', '_background_tasks', '_cache', '_cleanup_task', '_frequency', '_initialized', '_lock', '_persistence_path', '_stats', '_warm_keys', '_warm_loader', 'config')
 
-    def __init__(self, config: CacheConfig | None = None):
+    def __init__(self, config: CacheConfig | None=None):
         """
         Initialize intelligent cache.
 
@@ -309,9 +256,7 @@ class IntelligentCache:
         self._lock = asyncio.Lock()
         self._cleanup_task: asyncio.Task | None = None
         self._background_tasks: set[asyncio.Task] = set()
-        self._persistence_path: Path | None = (
-            Path(self.config.persistence_path) if self.config.persistence_path else None
-    )
+        self._persistence_path: Path | None = Path(self.config.persistence_path) if self.config.persistence_path else None
         self._warm_keys: list[str] | None = self.config.warm_keys
         self._warm_loader: Callable | None = self.config.warm_loader
 
@@ -391,7 +336,7 @@ class IntelligentCache:
             self._update_hit_rate()
             return entry.value
 
-    async def set(self, key: str, value: Any, ttl: int | None = None, size_bytes: int | None = None) -> bool:
+    async def set(self, key: str, value: Any, ttl: int | None=None, size_bytes: int | None=None) -> bool:
         """
         Set value in cache.
 
@@ -414,14 +359,7 @@ class IntelligentCache:
                 return False
             await self._evict_if_needed(size_bytes)
             now = time.time()
-            entry = CacheEntry(
-                key=key,
-                value=value,
-                size_bytes=size_bytes,
-                created_at=now,
-                expires_at=now + (ttl or self.config.default_ttl),
-                last_accessed=now
-    )
+            entry = CacheEntry(key=key, value=value, size_bytes=size_bytes, created_at=now, expires_at=now + (ttl or self.config.default_ttl), last_accessed=now)
             self._cache[key] = entry
             self._access_order[key] = None
             self._frequency[key] = 0
@@ -469,14 +407,9 @@ class IntelligentCache:
         """Eviction: prefer ARC-selected victim, fallback to LRU."""
         max_size = self.config.max_size_bytes
         max_entries = self.config.max_entries
-        while (
-            self._stats.total_size_bytes + required_bytes > max_size
-            or len(self._cache) >= max_entries
-        ) and self._cache:
-            # Try ARC eviction first (O(1))
+        while (self._stats.total_size_bytes + required_bytes > max_size or len(self._cache) >= max_entries) and self._cache:
             key_to_evict = self._arc.evict_one()
             if key_to_evict is None:
-                # Fallback: evict LRU from access_order
                 if len(self._access_order) == 0:
                     break
                 key_to_evict = self._access_order.pop_lru()
@@ -484,8 +417,7 @@ class IntelligentCache:
                 await self._remove_entry(key_to_evict)
                 self._stats.evictions += 1
             elif key_to_evict:
-                # Key in ARC but not in cache - should not happen
-                self._arc.evict_one()  # Try again
+                self._arc.evict_one()
 
     def _estimate_size(self, value: Any) -> int:
         """Estimate size of value in bytes using sys.getsizeof."""
@@ -522,15 +454,7 @@ class IntelligentCache:
         if not self._persistence_path:
             return
         try:
-            data = {
-                key: {
-                    'value': entry.value,
-                    'expires_at': entry.expires_at,
-                    'access_count': entry.access_count
-                }
-                for key, entry in self._cache.items()
-                if time.time() < entry.expires_at
-            }
+            data = {key: {'value': entry.value, 'expires_at': entry.expires_at, 'access_count': entry.access_count} for key, entry in self._cache.items() if time.time() < entry.expires_at}
             persist_file = self._persistence_path / 'cache_data.json'
             with open(persist_file, 'w') as f:
                 json.dump(data, f, default=str)
@@ -565,12 +489,7 @@ class IntelligentCache:
         for key, value in zip(keys, results, strict=False):
             if not isinstance(value, Exception):
                 await self.set(key, value)
-
-
-# ── Global Cache Instance ─────────────────────────────────────────────────────
-
 _global_cache: IntelligentCache | None = None
-
 
 async def get_global_cache() -> IntelligentCache:
     """Get global cache instance."""
@@ -579,10 +498,6 @@ async def get_global_cache() -> IntelligentCache:
         _global_cache = IntelligentCache()
         await _global_cache.initialize()
     return _global_cache
-
-
-# ── MemoryOptimizedURLSet ─────────────────────────────────────────────────────
-
 
 class MemoryOptimizedURLSet:
     """
@@ -603,7 +518,7 @@ class MemoryOptimizedURLSet:
     """
     __slots__ = ('_memory_usage', '_overhead_per_url', 'max_memory_mb', 'urls')
 
-    def __init__(self, max_memory_mb: int = 50):
+    def __init__(self, max_memory_mb: int=50):
         """
         Initialize memory-optimized URL set.
 
@@ -630,10 +545,7 @@ class MemoryOptimizedURLSet:
         estimated_size = len(url.encode('utf-8')) + self._overhead_per_url
         max_bytes = self.max_memory_mb * 1024 * 1024
         if self._memory_usage + estimated_size > max_bytes:
-            logger.warning(
-                f'Memory limit reached ({self.max_memory_mb}MB), '
-                f'cannot add more URLs (current: {len(self.urls)})'
-    )
+            logger.warning(f'Memory limit reached ({self.max_memory_mb}MB), cannot add more URLs (current: {len(self.urls)})')
             return False
         self.urls.add(url)
         self._memory_usage += estimated_size
@@ -673,12 +585,7 @@ class MemoryOptimizedURLSet:
 
     def get_statistics(self) -> dict[str, Any]:
         """Get URL set statistics."""
-        return {
-            'url_count': len(self.urls),
-            'memory_usage_mb': self.get_memory_usage_mb(),
-            'max_memory_mb': self.max_memory_mb,
-            'usage_percent': self._memory_usage / (self.max_memory_mb * 1024 * 1024) * 100
-        }
+        return {'url_count': len(self.urls), 'memory_usage_mb': self.get_memory_usage_mb(), 'max_memory_mb': self.max_memory_mb, 'usage_percent': self._memory_usage / (self.max_memory_mb * 1024 * 1024) * 100}
 
     def clear(self) -> None:
         """Clear all URLs and reset memory usage."""

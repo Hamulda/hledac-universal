@@ -13,6 +13,7 @@ from __future__ import annotations
 from enum import Enum, auto
 from typing import Literal
 import msgspec
+from compat.msgspec_gc_compat import Struct
 from _core import aclose
 
 class SourceTier(Enum):
@@ -52,7 +53,7 @@ class EarlyExitClass:
     ABORTED_BY_DEADLINE = 'aborted_by_deadline'
     ABORTED_BY_ERROR = 'aborted_by_error'
 
-class FeedDominanceGuardResult(msgspec.Struct, frozen=True, gc=False):
+class FeedDominanceGuardResult(Struct, frozen=True):
     """F214: Result of FeedDominanceGuard.compute()."""
     feed_dominance_ratio: float
     nonfeed_accepted_findings: int
@@ -63,14 +64,14 @@ class FeedDominanceGuardResult(msgspec.Struct, frozen=True, gc=False):
     reason: str
 LaneName = Literal['public', 'feed', 'ct', 'dns', 'passive', 'structured', 'deep', 'hot', 'warm', 'cold']
 
-class LaneBudgetAllocation(msgspec.Struct, gc=False):
+class LaneBudgetAllocation(Struct):
     lane_name: LaneName
     allocated_s: float = 0.0
     consumed_s: float = 0.0
     released_s: float = 0.0
     timeout_count: int = 0
 
-class LaneBudgetPool(msgspec.Struct, gc=False):
+class LaneBudgetPool(Struct):
     """Per-lane timeout accounting pool."""
     _allocations: dict = msgspec.field(default_factory=dict)
     _total_budget_s: float = 0.0

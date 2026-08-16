@@ -64,6 +64,7 @@ import tempfile
 import zipfile
 from dataclasses import dataclass, field
 import msgspec
+from compat.msgspec_gc_compat import Struct
 from datetime import datetime
 from enum import Enum
 from pathlib import Path
@@ -730,7 +731,7 @@ class MetadataCategory(Enum):
     DEVICE = 'device'
     CUSTOM = 'custom'
 
-class GeoLocation(msgspec.Struct, gc=False):
+class GeoLocation(Struct):
     """GPS coordinates extracted from EXIF."""
     latitude: float
     longitude: float
@@ -756,7 +757,7 @@ class GeoLocation(msgspec.Struct, gc=False):
         """Generate Google Maps URL."""
         return f'https://www.google.com/maps?q={self.latitude},{self.longitude}'
 
-class EXIFData(msgspec.Struct, frozen=True, gc=False):
+class EXIFData(Struct, frozen=True):
     """Comprehensive EXIF data from images."""
     camera_make: str | None = None
     camera_model: str | None = None
@@ -774,7 +775,7 @@ class EXIFData(msgspec.Struct, frozen=True, gc=False):
     shutter_speed: str | None = None
     raw_exif: dict[str, Any] = field(default_factory=dict)
 
-class DocumentMetadata(msgspec.Struct, frozen=True, gc=False):
+class DocumentMetadata(Struct, frozen=True):
     """Comprehensive document metadata."""
     file_hash_md5: str
     file_hash_sha1: str
@@ -805,7 +806,7 @@ class DocumentMetadata(msgspec.Struct, frozen=True, gc=False):
     hyperlinks_base: str | None = None
     raw_metadata: dict[str, Any] = field(default_factory=dict)
 
-class EmbeddedObject(msgspec.Struct, frozen=True, gc=False):
+class EmbeddedObject(Struct, frozen=True):
     """Represents an embedded object in a document."""
     object_type: str
     object_name: str
@@ -814,7 +815,7 @@ class EmbeddedObject(msgspec.Struct, frozen=True, gc=False):
     extracted_content: bytes | None = None
     metadata: dict[str, Any] = field(default_factory=dict)
 
-class DocumentAnalysis(msgspec.Struct, frozen=True, gc=False):
+class DocumentAnalysis(Struct, frozen=True):
     """Complete document analysis result."""
     metadata: DocumentMetadata
     embedded_objects: list[EmbeddedObject] = field(default_factory=list)
@@ -3039,7 +3040,7 @@ class DocumentIntelligenceEngine:
         keywords.update(tech_terms[:10])
         return list(keywords)[:20]
 
-class EntityMention(msgspec.Struct, frozen=True, gc=False):
+class EntityMention(Struct, frozen=True):
     """Mention of an entity in text."""
     text: str
     entity_type: str
@@ -3048,7 +3049,7 @@ class EntityMention(msgspec.Struct, frozen=True, gc=False):
     confidence: float
     context: str
 
-class CrossDocumentLink(msgspec.Struct, frozen=True, gc=False):
+class CrossDocumentLink(Struct, frozen=True):
     """Link between entities across documents."""
     entity_type: str
     value: str
@@ -3057,7 +3058,7 @@ class CrossDocumentLink(msgspec.Struct, frozen=True, gc=False):
     first_seen: str
     last_seen: str
 
-class TimelineEvent(msgspec.Struct, gc=False):
+class TimelineEvent(Struct):
     """Event extracted from document with temporal information."""
     date: datetime | None
     description: str
@@ -3065,7 +3066,7 @@ class TimelineEvent(msgspec.Struct, gc=False):
     entities_involved: list[str]
     confidence: float
 
-class LongContextAnalysis(msgspec.Struct, frozen=True, gc=False):
+class LongContextAnalysis(Struct, frozen=True):
     """Results from MLX long-context analysis."""
     total_chunks: int
     total_tokens: int

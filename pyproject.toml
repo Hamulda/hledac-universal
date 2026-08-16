@@ -67,13 +67,12 @@ dependencies = [
     "regex>=2024.0.0",  # OSINT-01: linear-time regex (vs `re` catastrophic backtracking)
     "orjson>=3.11.0,<4.0.0",   # 3.11+ obsahuje critical perf a memory optimalizace
     # msgspec: gc=True je default az do 0.21.x (confirmed stubs). Hot-path Structs mají
-    # explicit gc=False (333 upraveno v F350M-R upgrade). msgspec 0.22+ není na PyPI.
-    # [NEXUS]-018-007: msgspec 0.22+ removes `gc` kwarg → replaces with `weakref`
+    # explicit gc=False (333 upraveno v F350M-R upgrade).
+    # [NEXUS]-018-007 / ROADMAP-010: msgspec 0.22+ removes `gc` kwarg → replaces with `weakref`
     #   (gc=False ↔ weakref=False). compat/msgspec_gc_compat.py provides a drop-in
     #   `struct()` factory and `Struct` base class that translates `gc=False → weakref=False`
-    #   automatically. When msgspec>=0.22.0 lands on PyPI: upgrade upper bound to <0.24.0
-    #   and run migration to replace `msgspec.Struct(gc=False)` with `from compat.msgspec_gc_compat import struct`.
-    "msgspec>=0.21.1,<0.22.0",
+    #   automatically. All production classes migrated to compat layer.
+    "msgspec>=0.21.1,<0.24.0",
     # ── JSON Serialization Strategy (Issue M3) ───────────────────────────────
     # Wire format (typed structs with known schema): msgspec (msgspec.Struct)
     #   → encode/decode: msgspec.json.encode() / .decode() — 5-10× faster than stdlib json
@@ -847,6 +846,7 @@ allowed-unresolved-imports = [
 
 # ── Pytest ────────────────────────────────────────────────────────────────────
 # Consolidated from pytest.ini
+# ROADMAP-008: Optimized for M1 8GB with environment-aware parallelism
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = [".", "tests"]
@@ -858,7 +858,7 @@ pythonpath = [".", "tests"]
 #   - Resource exhaustion (memory/CPU thrashing)
 # Default: 300s per test. Override per-test with @pytest.mark.timeout(N).
 # timeout_method="thread": uses threading.Timer (works with asyncio tests).
-# NOTE: --timeout=30 in addopts below is CLI override; this is the canonical default.
+# NOTE: Default is 300s. CLI can override via --timeout=N or HLEDAC_TEST_TIMEOUT.
 timeout = 300
 timeout_method = "thread"
 
@@ -912,7 +912,18 @@ norecursedirs = [
     "tests/archive/utils/",
 ]
 
+# ── Resource-based markers (ROADMAP-008) ──────────────────────────────────────
+# Tests are classified by resource requirements for hardware-aware scheduling.
+#
+# Usage:
+#   pytest -m "not heavy"           # Run only light tests (M1 8GB default)
+#   pytest -m "light"              # Explicit light only
+#   pytest -m "heavy"              # Heavy tests only (explicit)
+#   pytest -m "ci"                # Full CI suite
+#   pytest                         # Default profile (configurable via --hledac-profile)
+#
 markers = [
+    # ── Test type markers (existing) ─────────────────────────────────────────
     "asyncio: async tests handled by pytest-asyncio",
     "slow: slow tests, exclude with -m \"not slow\"",
     "live: tests requiring live network or external services",
@@ -929,12 +940,34 @@ markers = [
     "archival: historical regression tests for old sprint contracts",
     "unit: unit tests, run in isolation without external dependencies",
     "parity: lane parity tests — must run sequentially (no xdist parallelism)",
+    # ── Resource classification markers (ROADMAP-008) ───────────────────────
+    # HEAVY: Requires >2GB RAM, MLX models, full DuckDB init, GPU ops
+    #        Examples: MLX model pool tests, large vector tests, memory profiling
+    "heavy: tests requiring >2GB RAM or MLX/GPU resources",
+    # LIGHT: Safe for M1 8GB constrained hardware
+    #        Examples: unit tests, mocks, pure Python logic, small data
+    "light: tests safe for M1 8GB constrained hardware",
+    # CI: Full test suite for CI/CD pipelines (all tests)
+    "ci: full test suite for CI/CD pipelines",
+    # PARALLEL_SAFE: Tests that can safely run in parallel with others
+    "parallel_safe: tests that don't conflict when run in parallel",
+    # SEQUENTIAL: Tests that must run alone (shared state, ports, resources)
+    "sequential: tests that must run alone (no parallelism)",
 ]
 
-# M1 4-performance-cores: -n 4 with loadscope distribution
-# --dist=loadscope: tests grouped by class/module, workers keep same module loaded
-# -ra: show summary of all test results
-addopts = "-ra --tb=short -n 4 --dist=loadscope --timeout=30 -m \"not parity\""
+# ── Parallelism configuration (ROADMAP-008) ───────────────────────────────────
+# Default: auto-detect based on available CPU cores and memory.
+# Override via CLI: pytest -n 2  OR  pytest -n auto
+# Override via env: HLEDAC_TEST_WORKERS=2
+#
+# The --dist=loadscope groups tests by module to maximize fixture reuse.
+# Session-scoped fixtures (DuckDB, OTel, event loop) are shared within each worker.
+#
+# NOTE: -n 4 with M1 8GB can cause OOM. Use --hledac-profile for presets:
+#   pytest --hledac-profile=m1-8gb   # 2 workers, light tests only
+#   pytest --hledac-profile=ci        # 4 workers, all tests
+#   pytest --hledac-profile=minimal   # serial, light tests only
+addopts = "-ra --tb=short --dist=loadscope"
 asyncio_mode = "auto"
 # Session-scoped event loop for pytest-asyncio (M1 8GB: reuse loop, avoid recreate)
 # CRITICAL FIX F350M-R: must match session_event_loop fixture scope below

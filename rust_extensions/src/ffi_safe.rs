@@ -217,10 +217,10 @@ where
 
 /// Module-level registration
 pub fn register_functions(m: &Bound<'_, PyModule>) -> PyResult<()> {
-    m.add_function(wrap_pyfunction!(ffi_circuit_is_open, m)?)?;
-    m.add_function(wrap_pyfunction!(ffi_record_failure, m)?)?;
-    m.add_function(wrap_pyfunction!(ffi_record_success, m)?)?;
-    m.add_function(wrap_pyfunction!(ffi_get_all_states, m)?)?;
-    m.add_function(wrap_pyfunction!(ffi_clear_all_states, m)?)?;
+    m.add_function(wrap_pyfunction!(ffi_circuit_is_open))?;
+    m.add_function(wrap_pyfunction!(ffi_record_failure))?;
+    m.add_function(wrap_pyfunction!(ffi_record_success))?;
+    m.add_function(wrap_pyfunction!(ffi_get_all_states))?;
+    m.add_function(wrap_pyfunction!(ffi_clear_all_states))?;
     Ok(())
 }

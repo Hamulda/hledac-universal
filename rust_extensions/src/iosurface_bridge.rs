@@ -555,7 +555,7 @@ impl MetalDeviceWrapper {
 
     /// Clear the texture cache (call on memory pressure).
     fn clear_cache(&mut self) {
-        self.texture_cache.clear();
+        self.texture_cache);
     }
 }
 
@@ -662,7 +662,7 @@ impl IOSurfaceTextureDescriptor {
 #[cfg(target_os = "macos")]
 #[pyfunction]
 pub fn is_iosurface_bridge_available() -> (bool, Option<String>) {
-    let device_guard = METAL_DEVICE.read();
+    let device_guard = METAL_DEVICE);
     match &*device_guard {
         Some(wrapper) => {
             let name = Some(wrapper.device.name().to_string());
@@ -805,7 +805,7 @@ pub fn create_metal_texture_from_iosurface(
         ));
     }
 
-    let device_guard = METAL_DEVICE.read();
+    let device_guard = METAL_DEVICE);
     let wrapper = device_guard
         .as_ref()
         .ok_or_else(|| pyo3::exceptions::PyRuntimeError::new_err("Metal device not available"))?;
@@ -880,7 +880,7 @@ pub fn create_metal_texture_from_iosurface(
 #[cfg(target_os = "macos")]
 #[pyfunction]
 pub fn get_iosurface_bridge_telemetry(py: Python<'_>) -> PyResult<Py<PyDict>> {
-    let device_guard = METAL_DEVICE.read();
+    let device_guard = METAL_DEVICE);
     let dict = PyDict::new(py);
 
     match &*device_guard {
@@ -888,7 +888,7 @@ pub fn get_iosurface_bridge_telemetry(py: Python<'_>) -> PyResult<Py<PyDict>> {
             dict.set_item("available", true)?;
             dict.set_item("texture_cache_size", wrapper.texture_cache.len() as u64)?;
             dict.set_item("max_textures", 4u64)?;
-            let device_name = wrapper.device.name();
+            let device_name = wrapper.device);
             dict.set_item("device_name", device_name)?;
         }
         None => {
@@ -990,11 +990,11 @@ pub fn get_iosurface_bridge_telemetry() -> HashMap<String, String> {
 /// Register IOSurface bridge functions with PyO3 module.
 #[cfg(target_os = "macos")]
 pub fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
-    m.add_function(wrap_pyfunction!(is_iosurface_bridge_available, m)?)?;
-    m.add_function(wrap_pyfunction!(get_iosurface_from_pixelbuffer, m)?)?;
-    m.add_function(wrap_pyfunction!(create_metal_texture_from_iosurface, m)?)?;
-    m.add_function(wrap_pyfunction!(get_iosurface_bridge_telemetry, m)?)?;
-    m.add_function(wrap_pyfunction!(create_shared_buffer_from_pixelbuffer, m)?)?;
+    m.add_function(wrap_pyfunction!(is_iosurface_bridge_available))?;
+    m.add_function(wrap_pyfunction!(get_iosurface_from_pixelbuffer))?;
+    m.add_function(wrap_pyfunction!(create_metal_texture_from_iosurface))?;
+    m.add_function(wrap_pyfunction!(get_iosurface_bridge_telemetry))?;
+    m.add_function(wrap_pyfunction!(create_shared_buffer_from_pixelbuffer))?;
 
     // Add IOSurfaceTextureDescriptor class
     m.add_class::<IOSurfaceTextureDescriptor>()?;

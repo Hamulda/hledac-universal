@@ -40,6 +40,8 @@ import threading
 from dataclasses import dataclass
 from typing import Final
 
+from _core.lock_registry import LockCategory, register_lock
+
 # ---------------------------------------------------------------------------
 # msglike types — frozen, gc=False for M1 memory efficiency
 # ---------------------------------------------------------------------------
@@ -56,7 +58,7 @@ except ImportError:
 # msgspec-based if available, else pure-dataclass fallback
 if _HAVE_MSGSPEC:
 
-    class CognitiveTarpitVerdict(msgspec.Struct, frozen=True, gc=False):  # type: ignore[valid-type,misc]
+    class CognitiveTarpitVerdict(Struct, frozen=True):  # type: ignore[valid-type,misc]
         """Detection result for LLM-generated honeypot text."""
         is_cognitive_tarpit: bool
         cognitive_tarpit_score: float  # 0.0 (human) — 1.0 (certain LLM honeypot)
@@ -100,6 +102,7 @@ else:
 
 # Feature gate — SWARM-010 compliant via FeatureFlags
 from hledac.universal._core.feature_flags import FeatureFlags, FeatureFlag
+from compat.msgspec_gc_compat import Struct
 from _core import aclose
 _COGNITIVE_TARPIT_ENABLED: Final[bool] = FeatureFlags.get(FeatureFlag.COGNITIVE_TARPIT)
 
@@ -142,7 +145,14 @@ _MAX_TEXT_ANALYSIS_CHARS: Final[int] = 50_000
 _SMOLLM_CHUNK_TOKENS: Final[int] = 512
 
 # Cached SmolLM model instance (lazy-loaded, thread-safe)
-_smollm_lock = threading.Lock()
+
+
+@register_lock(LockCategory.MPC)
+def _smollm_lock() -> threading.Lock:
+    """Module-level lock for SmolLM model singleton."""
+    return threading.Lock()
+
+
 _smollm_model: object | None = None
 _smollm_tokenizer: object | None = None
 
@@ -371,7 +381,7 @@ def _load_smollm() -> tuple[object, object] | tuple[None, None]:
     if _smollm_model is not None:
         return _smollm_model, _smollm_tokenizer
 
-    with _smollm_lock:
+    with _smollm_lock():
         if _smollm_model is not None:  # Double-check after acquiring lock
             return _smollm_model, _smollm_tokenizer
 
@@ -637,6 +647,6 @@ def cognitive_tarpit_score(text: str) -> CognitiveTarpitVerdict:
 def invalidate_smollm_cache() -> None:
     """Invalidate cached SmolLM model (call on M1 memory pressure)."""
     global _smollm_model, _smollm_tokenizer  # noqa: PLW0603
-    with _smollm_lock:
+    with _smollm_lock():
         _smollm_model = None
         _smollm_tokenizer = None

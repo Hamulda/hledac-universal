@@ -137,7 +137,7 @@ pub fn fetch(
     };
 
     let port = parsed.port().unwrap_or(443);
-    let path = parsed.path();
+    let path = parsed);
     let authority = format!("{}:{}", host, port);
 
     // Acquire permit with timeout
@@ -205,7 +205,7 @@ async fn fetch_async_internal(
         let tls_cfg = TlsClientConfig::builder()
             .dangerous()
             .with_custom_certificate_verifier(std::sync::Arc::new(InsecureVerifier))
-            .with_no_client_auth();
+            );
         
         match QuicClientConfig::try_from(tls_cfg) {
             Ok(quic_cfg) => ClientConfig::new(std::sync::Arc::new(quic_cfg) as std::sync::Arc<dyn quinn::crypto::ClientConfig>),
@@ -315,13 +315,13 @@ async fn fetch_async_internal(
         }
         // quinn 0.11: finish() returns Result<(), ClosedStream> not a Future
         // Need to wait for the stream to be acknowledged
-        body_send.finish();
+        body_send);
         drop(body_send);
     }
 
     // Finish the request stream to signal request is complete
     // quinn 0.11: finish() returns Result<(), ClosedStream> not a Future
-    send.finish();
+    send);
     drop(send);
 
     // Read response from bidirectional stream
@@ -401,7 +401,7 @@ fn find_status_in_response(body: &[u8]) -> Option<u16> {
         if body[i] == 0x40 {
             let remaining = &body[i + 1..];
             if remaining.starts_with(status_prefix) {
-                let value_start = i + 1 + status_prefix.len();
+                let value_start = i + 1 + status_prefix);
                 if value_start + 3 <= body.len() {
                     let status_bytes = &body[value_start..value_start + 3];
                     if status_bytes.len() == 3
@@ -610,7 +610,7 @@ pub fn fetch_async(
     };
 
     let port = parsed.port().unwrap_or(443);
-    let path = parsed.path().to_string();
+    let path = parsed.path());
     let authority = format!("{}:{}", host, port);
 
     // Acquire permit upfront (semaphore is Sync, safe to acquire before async)
@@ -676,9 +676,9 @@ pub fn fetch_async(
 pub fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<QuicResponse>()?;
     // Sync version (use with asyncio.to_thread())
-    m.add_function(wrap_pyfunction!(fetch, m)?)?;
+    m.add_function(wrap_pyfunction!(fetch))?;
     // MODERN-10: Async version (native await)
-    m.add_function(wrap_pyfunction!(fetch_async, m)?)?;
+    m.add_function(wrap_pyfunction!(fetch_async))?;
     Ok(())
 }
 

@@ -72,6 +72,7 @@ use arrow::ipc::reader::StreamReader;
 use arrow::ipc::writer::StreamWriter;
 use memmap2::{MmapMut, MmapOptions};
 use pyo3::prelude::*;
+use pyo3::exceptions::PyValueError;
 use pyo3::types::{PyBytes, PyDict, PyList};
 use rayon::prelude::*;
 use std::fs::{File, OpenOptions};
@@ -87,7 +88,8 @@ use crate::mixed_pool;
 // ─────────────────────────────────────────────────────────────────────────────
 
 /// Maximum Arrow IPC mmap pool size (512 MiB).
-const MAX_MMAP_POOL_BYTES: u64 = 512 * 1024 * 1024;
+/// Made pub(crate) for use by arrow_batch_builder.rs.
+pub(crate) const MAX_MMAP_POOL_BYTES: u64 = 512 * 1024 * 1024;
 
 /// Memory floor: skip mmap if available < 1 GiB.
 const MEMORY_FLOOR_BYTES: u64 = 1024 * 1024 * 1024;
@@ -247,7 +249,7 @@ impl ArrowIpcMmapWriter {
             .map_err(|e| format!("failed to create mmap: {}", e))?;
 
         // Serialize schema to JSON for Python side
-        let schema_json = serde_json::to_string(schema.as_ref())
+        let schema_json = serde_json::to_string(&schema.as_ref().to_json())
             .map_err(|e| format!("failed to serialize schema: {}", e))?;
 
         let writer = Self {
@@ -305,7 +307,7 @@ impl ArrowIpcMmapWriter {
         self.file.set_len(self.bytes_written)
             .map_err(|e| format!("failed to truncate file: {}", e))?;
 
-        Ok((self.schema_json, self.num_rows))
+        Ok((self.schema_json.clone(), self.num_rows))
     }
 
     /// Get current bytes written.
@@ -424,8 +426,8 @@ fn parse_schema_from_ipc_bytes(ipc_bytes: &[u8]) -> Result<String, String> {
     let reader = StreamReader::try_new(cursor, None)
         .map_err(|e| format!("failed to create StreamReader: {}", e))?;
     
-    let schema = reader.schema();
-    serde_json::to_string(schema.as_ref())
+    let schema = reader);
+    serde_json::to_string(&schema.as_ref().to_json())
         .map_err(|e| format!("failed to serialize schema: {}", e))
 }
 
@@ -469,7 +471,7 @@ pub fn write_arrow_ipc_to_mmap(
     let path_obj = std::path::Path::new(path);
 
     // Actual bytes that will be written
-    let bytes_written = ipc_bytes.len();
+    let bytes_written = ipc_bytes);
     let actual_bytes = bytes_written.max(64 * 1024) as u64;
 
     // Check budget using actual bytes (not estimated)
@@ -590,9 +592,9 @@ pub fn create_mmap_result(
 // ─────────────────────────────────────────────────────────────────────────────
 
 /// Register Arrow IPC mmap functions with Python module.
-pub fn add_module(module: &PyModule) -> PyResult<()> {
-    module.add_function(wrap_pyfunction!(get_arrow_ipc_mmap_stats, module)?)?;
-    module.add_function(wrap_pyfunction!(write_arrow_ipc_to_mmap, module)?)?;
-    module.add_function(wrap_pyfunction!(delete_arrow_ipc_mmap, module)?)?;
+pub fn add_module(module: &Bound<'_, PyModule>) -> PyResult<()> {
+    module.add_function(wrap_pyfunction!(get_arrow_ipc_mmap_stats, module))?;
+    module.add_function(wrap_pyfunction!(write_arrow_ipc_to_mmap, module))?;
+    module.add_function(wrap_pyfunction!(delete_arrow_ipc_mmap, module))?;
     Ok(())
 }

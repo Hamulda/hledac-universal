@@ -14,6 +14,7 @@ from .settings import HERMES_MODEL_DEFAULT, MODERNBERT_MODEL_DEFAULT, GLINER_MOD
 import os
 from dataclasses import dataclass, field
 import msgspec
+from compat.msgspec_gc_compat import Struct
 from pathlib import Path
 from typing import Any
 from hledac.universal.project_types import AgentManagerConfig, CommunicationConfig, CoordinationConfig, DeepResearchConfig, GhostConfig, MemoryConfig, ResearchConfig, ResearchMode
@@ -49,7 +50,7 @@ class ResearchPresets:
     def get_preset(cls, mode: ResearchMode) -> dict[str, Any]:
         return {ResearchMode.QUICK: cls.QUICK, ResearchMode.STANDARD: cls.STANDARD, ResearchMode.DEEP: cls.DEEP, ResearchMode.EXTREME: cls.EXTREME, ResearchMode.AUTONOMOUS: cls.AUTONOMOUS}.get(mode, cls.STANDARD)
 
-class SecurityConfig(msgspec.Struct, gc=False):
+class SecurityConfig(Struct):
     obfuscation_level: str = 'medium'
     generate_decoys: bool = True
     decoy_count: int = 20
@@ -65,7 +66,7 @@ class SecurityConfig(msgspec.Struct, gc=False):
     enable_audit_logging: bool = True
     anonymize_pii: bool = True
 
-class StealthConfig(msgspec.Struct, frozen=True, gc=False):
+class StealthConfig(Struct, frozen=True):
     browser_type: str = 'chromium'
     headless: bool = True
     pool_size: int = 2
@@ -84,7 +85,7 @@ class StealthConfig(msgspec.Struct, frozen=True, gc=False):
     enable_proxy_rotation: bool = False
     proxy_list: list[str] = field(default_factory=list)
 
-class PrivacyConfig(msgspec.Struct, frozen=True, gc=False):
+class PrivacyConfig(Struct, frozen=True):
     enable_vpn: bool = False
     vpn_config_path: str | None = None
     enable_tor: bool = False
@@ -96,7 +97,7 @@ class PrivacyConfig(msgspec.Struct, frozen=True, gc=False):
     enable_encryption: bool = True
     encryption_algorithm: str = 'fernet'
 
-class UniversalConfig(msgspec.Struct, frozen=True, gc=False):
+class UniversalConfig(Struct, frozen=True):
     mode: ResearchMode = ResearchMode.STANDARD
     research: ResearchConfig = field(default_factory=ResearchConfig)
     memory: MemoryConfig = field(default_factory=MemoryConfig)
@@ -321,8 +322,16 @@ __all__ = ['settings', 'Settings', 'FetchSettings', 'MLXSettings', 'DuckDBSettin
 import threading
 from typing import Final
 from _core import aclose
+from _core.lock_registry import LockCategory, register_lock
+
 _adaptive_patches: dict[tuple[str, str], int | float | str] = {}
-_adaptive_patches_lock = threading.Lock()
+
+
+@register_lock(LockCategory.CONFIG)
+def _adaptive_patches_lock() -> threading.Lock:
+    """Module-level lock for adaptive config patches dict."""
+    return threading.Lock()
+
 
 class AdaptiveConfig:
     """
@@ -338,7 +347,12 @@ class AdaptiveConfig:
     Thread-safe via threading.Lock for _patches updates.
     """
     _instance: AdaptiveConfig | None = None
-    _lock: Final[threading.Lock] = threading.Lock()
+
+
+@register_lock(LockCategory.CONFIG)
+def _adaptive_config_lock() -> threading.Lock:
+    """Module-level lock for AdaptiveConfig singleton factory."""
+    return threading.Lock()
 
     def __init__(self) -> None:
         pass
@@ -346,14 +360,14 @@ class AdaptiveConfig:
     @classmethod
     def get(cls) -> AdaptiveConfig:
         if cls._instance is None:
-            with cls._lock:
+            with _adaptive_config_lock():
                 if cls._instance is None:
                     cls._instance = cls.__new__(cls)
         return cls._instance
 
     def get_int(self, section: str, key: str, default: int, min_val: int, max_val: int) -> int:
         patch_key = (section, key)
-        with _adaptive_patches_lock:
+        with _adaptive_patches_lock():
             if patch_key in _adaptive_patches:
                 raw = _adaptive_patches[patch_key]
                 return self._clamp_int(raw, min_val, max_val, default)
@@ -365,7 +379,7 @@ class AdaptiveConfig:
 
     def get_float(self, section: str, key: str, default: float, min_val: float, max_val: float) -> float:
         patch_key = (section, key)
-        with _adaptive_patches_lock:
+        with _adaptive_patches_lock():
             if patch_key in _adaptive_patches:
                 raw = _adaptive_patches[patch_key]
                 return self._clamp_float(raw, min_val, max_val, default)
@@ -377,7 +391,7 @@ class AdaptiveConfig:
 
     def patch(self, section: str, key: str, value: int | float | str) -> None:
         patch_key = (section, key)
-        with _adaptive_patches_lock:
+        with _adaptive_patches_lock():
             _adaptive_patches[patch_key] = value
 
     def _clamp_int(self, raw: int | float | str, min_val: int, max_val: int, default: int) -> int:

@@ -37,6 +37,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any, cast
 
 import msgspec
+from compat.msgspec_gc_compat import Struct
 from hledac.universal.compat.msgspec_gc_compat import Struct
 from _core import aclose
 

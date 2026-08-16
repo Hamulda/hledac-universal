@@ -66,6 +66,7 @@ from hledac.universal.utils.locks import LazyAsyncioLock
 from hledac.universal.utils.executor_decorator import offload_to
 from dataclasses import dataclass
 import msgspec
+from compat.msgspec_gc_compat import Struct
 from enum import Enum
 from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 from _core._util import aclose
@@ -117,7 +118,7 @@ class StorageKind(str, Enum):
     KEYVALUE = 'kv'
     STRING = 'string'
 
-class StoragePolicy(msgspec.Struct, frozen=True, gc=False):
+class StoragePolicy(Struct, frozen=True):
     """Decision policy: which storage for which data type."""
     kind: StorageKind
     max_bytes: int

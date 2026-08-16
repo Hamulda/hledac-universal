@@ -29,6 +29,8 @@ import threading
 from collections.abc import Callable
 from typing import Any
 from _core import aclose
+from _core.lock_registry import LockCategory, register_lock
+
 logger = logging.getLogger(__name__)
 
 def _get_core_counts() -> dict:
@@ -68,7 +70,14 @@ def _set_cpu_qos() -> None:
 _cores = _get_core_counts()
 _io_pool: concurrent.futures.ThreadPoolExecutor | None = None
 _cpu_pool: concurrent.futures.ThreadPoolExecutor | None = None
-_pool_lock = threading.Lock()
+
+
+@register_lock(LockCategory.CACHE)
+def _pool_lock() -> threading.Lock:
+    """Module-level lock for thread pool singletons."""
+    return threading.Lock()
+
+
 _ane_pool: Any | None = None
 _db_pool: Any | None = None
 _STACK_SIZE_BYTES = 2512000
@@ -95,7 +104,7 @@ def get_io_pool() -> concurrent.futures.ThreadPoolExecutor:
     """MODERN-28 FIX: Získat I/O ThreadPoolExecutor (UTILITY QoS, E-cores)."""
     global _io_pool
     if _io_pool is None:
-        with _pool_lock:
+        with _pool_lock():
             if _io_pool is None:
                 _io_pool = concurrent.futures.ThreadPoolExecutor(max_workers=_cores['e_cores'], thread_name_prefix='io_worker', initializer=_set_io_qos)
     return _io_pool
@@ -104,7 +113,7 @@ def get_cpu_pool() -> concurrent.futures.ThreadPoolExecutor:
     """MODERN-28 FIX: Získat CPU ThreadPoolExecutor (USER_INITIATED QoS, P-cores)."""
     global _cpu_pool
     if _cpu_pool is None:
-        with _pool_lock:
+        with _pool_lock():
             if _cpu_pool is None:
                 _cpu_pool = concurrent.futures.ThreadPoolExecutor(max_workers=_cores['p_cores'], thread_name_prefix='cpu_worker', initializer=_set_cpu_qos)
     return _cpu_pool

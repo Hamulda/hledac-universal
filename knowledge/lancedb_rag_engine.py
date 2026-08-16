@@ -35,6 +35,7 @@ import logging
 import os
 from dataclasses import dataclass, field
 import msgspec
+from compat.msgspec_gc_compat import Struct
 from hledac.universal.compat.msgspec_gc_compat import Struct
 from pathlib import Path
 from typing import Any

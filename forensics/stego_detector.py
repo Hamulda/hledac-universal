@@ -29,6 +29,7 @@ import logging
 import math
 from dataclasses import dataclass, field
 import msgspec
+from compat.msgspec_gc_compat import Struct
 from pathlib import Path
 from typing import Any
 import numpy as np
@@ -57,7 +58,7 @@ def _check_mps_available():
     return False
 MAX_IMAGE_SIZE = 2048
 
-class StegoConfig(msgspec.Struct, gc=False):
+class StegoConfig(Struct):
     """Configuration for statistical steganography detector.
 
     Attributes:
@@ -91,7 +92,7 @@ class ChiSquareResult:
     embedded_bytes_estimate: int = 0
     is_significant: bool = False
 
-class RSResult(msgspec.Struct, gc=False):
+class RSResult(Struct):
     """Result of RS (Regular-Singular) analysis.
 
     Attributes:
@@ -109,7 +110,7 @@ class RSResult(msgspec.Struct, gc=False):
     message_length: int = 0
     confidence: float = 0.0
 
-class DCTResult(msgspec.Struct, gc=False):
+class DCTResult(Struct):
     """Result of DCT coefficient analysis for JPEG.
 
     Attributes:
@@ -123,7 +124,7 @@ class DCTResult(msgspec.Struct, gc=False):
     histogram_deviation: float = 0.0
     block_anomalies: list[float] = field(default_factory=list)
 
-class StegoResult(msgspec.Struct, gc=False):
+class StegoResult(Struct):
     """Complete steganography analysis result.
 
     Attributes:

@@ -49,88 +49,35 @@ MEMORY PATTERNS (GNN-3):
   │ 7. Return node embeddings → LanceDB                                  │
   └─────────────────────────────────────────────────────────────────────┘
 """
-
 from __future__ import annotations
-
 import logging
 from collections import OrderedDict
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
-
 import xxhash
 from _core import aclose
-
 if TYPE_CHECKING:
     from pathlib import Path
-
 logger = logging.getLogger(__name__)
-
-# ─── Constants ────────────────────────────────────────────────────────────────
-
-MAX_MAPPED_NODES: int = 10_000  # M1 8GB safety bound
-MAX_EMBEDDING_DIM: int = 512     # GNN embedding dimension
-
-# Canonical IOC type mapping aligned with knowledge/ioc_processor.py
-# This is the master list - all GNN code must use these types
-# Order matters for one-hot encoding compatibility
-GNN_IOC_TYPES: tuple[str, ...] = (
-    'cve',
-    'ip',
-    'ipv4',
-    'ipv6',
-    'hash_sha256',
-    'hash_md5',
-    'hash_sha1',
-    'domain',
-    'email',
-    'url',
-    'onion',
-    'i2p',
-    'apt',
-    'malware',
-    'threat_actor',
-    'malware_family',
-    'pending',  # Unknown types awaiting classification
-    )
+MAX_MAPPED_NODES: int = 10000
+MAX_EMBEDDING_DIM: int = 512
+GNN_IOC_TYPES: tuple[str, ...] = ('cve', 'ip', 'ipv4', 'ipv6', 'hash_sha256', 'hash_md5', 'hash_sha1', 'domain', 'email', 'url', 'onion', 'i2p', 'apt', 'malware', 'threat_actor', 'malware_family', 'pending')
 NUM_GNN_IOC_TYPES: int = len(GNN_IOC_TYPES)
-
-# IOC type prefix mapping for compact representation (canonical order)
 _IOC_TYPE_TO_INT: dict[str, int] = {t: i for i, t in enumerate(GNN_IOC_TYPES)}
-
-# Aliases for backward compatibility with legacy type names
-_IOC_TYPE_ALIASES: dict[str, str] = {
-    'sha256': 'hash_sha256',
-    'sha1': 'hash_sha1',
-    'md5': 'hash_md5',
-    'ipv4': 'ip',  # Normalize to 'ip' for GNN purposes
-    'ipv6': 'ip',
-    'file': 'unknown',
-    'registry': 'unknown',
-    'mutex': 'unknown',
-    'asn': 'unknown',
-    'mac': 'unknown',
-    'btc': 'unknown',
-    'eth': 'unknown',
-    'info_hash': 'hash_sha256',  # BitTorrent info hash is SHA1
-    'unknown': 'pending',
-}
-
+_IOC_TYPE_ALIASES: dict[str, str] = {'sha256': 'hash_sha256', 'sha1': 'hash_sha1', 'md5': 'hash_md5', 'ipv4': 'ip', 'ipv6': 'ip', 'file': 'unknown', 'registry': 'unknown', 'mutex': 'unknown', 'asn': 'unknown', 'mac': 'unknown', 'btc': 'unknown', 'eth': 'unknown', 'info_hash': 'hash_sha256', 'unknown': 'pending'}
 
 def normalize_ioc_type(ioc_type: str) -> str:
     """Normalize IOC type to canonical GNN type."""
     return _IOC_TYPE_ALIASES.get(ioc_type, ioc_type)
 
-
-# ─── Data Structures ───────────────────────────────────────────────────────────
-
-@dataclass
+@dataclass(slots=True)
 class NodeMapping:
     """Immutable snapshot of node ID → GNN index mapping."""
     kuzu_to_gnn: dict[str, int] = field(default_factory=dict)
     gnn_to_kuzu: dict[int, str] = field(default_factory=dict)
-    duckdb_to_gnn: dict[int, int] = field(default_factory=dict)  # BIGINT → GNN index
-    gnn_to_duckdb: dict[int, int] = field(default_factory=dict)  # GNN index → BIGINT
-    node_types: dict[str, int] = field(default_factory=dict)  # kuzu_id → ioc_type_int
+    duckdb_to_gnn: dict[int, int] = field(default_factory=dict)
+    gnn_to_duckdb: dict[int, int] = field(default_factory=dict)
+    node_types: dict[str, int] = field(default_factory=dict)
     node_count: int = 0
 
     def get_gnn_index(self, kuzu_id: str) -> int | None:
@@ -153,21 +100,17 @@ class NodeMapping:
         """Batch convert GNN indices to Kuzu IDs."""
         return [self.gnn_to_kuzu.get(idx) for idx in gnn_indices]
 
-
-@dataclass
+@dataclass(slots=True)
 class EmbeddingReference:
     """Reference to per-node embedding stored in LanceDB.
     
     Stored as (table_name, row_id) pair to enable streaming retrieval
     without loading all embeddings into memory.
     """
-    table_name: str  # e.g., "node_embeddings"
-    row_id: int      # LanceDB row ID
-    dimension: int   # Embedding dimension (e.g., 64, 128, 256)
-    updated_at: float  # Unix timestamp of last update
-
-
-# ─── LRU Cache for Mappings ───────────────────────────────────────────────────
+    table_name: str
+    row_id: int
+    dimension: int
+    updated_at: float
 
 class MappingLRUCache:
     """LRU cache for node mappings — bounded to MAX_MAPPED_NODES.
@@ -175,8 +118,9 @@ class MappingLRUCache:
     M1 8GB: Each mapping entry ≈ 200 bytes
     10k entries ≈ 2 MB — well within budget.
     """
-    
-    def __init__(self, max_size: int = MAX_MAPPED_NODES):
+    __slots__ = ('_duckdb_to_gnn', '_embedding_refs', '_gnn_to_duckdb', '_gnn_to_kuzu', '_kuzu_to_gnn', '_max_size', '_next_index', '_node_types')
+
+    def __init__(self, max_size: int=MAX_MAPPED_NODES):
         self._max_size = max_size
         self._kuzu_to_gnn: OrderedDict[str, int] = OrderedDict()
         self._gnn_to_kuzu: OrderedDict[int, str] = OrderedDict()
@@ -186,57 +130,41 @@ class MappingLRUCache:
         self._embedding_refs: dict[str, EmbeddingReference] = {}
         self._next_index: int = 0
 
-    def add_node(self, kuzu_id: str, duckdb_id: int | None = None, ioc_type: str = 'unknown') -> int:
+    def add_node(self, kuzu_id: str, duckdb_id: int | None=None, ioc_type: str='unknown') -> int:
         """Add a node to the mapping, returns GNN index.
         
         Evicts LRU entries when at capacity.
         """
         if kuzu_id in self._kuzu_to_gnn:
-            # Move to end (most recently used)
             self._kuzu_to_gnn.move_to_end(kuzu_id)
             return self._kuzu_to_gnn[kuzu_id]
-        
-        # Evict if at capacity
         while len(self._kuzu_to_gnn) >= self._max_size:
             self._evict_lru()
-        
-        # Add new node
         gnn_index = self._next_index
         self._next_index += 1
-        
         self._kuzu_to_gnn[kuzu_id] = gnn_index
         self._gnn_to_kuzu[gnn_index] = kuzu_id
-        
         if duckdb_id is not None:
             self._duckdb_to_gnn[duckdb_id] = gnn_index
             self._gnn_to_duckdb[gnn_index] = duckdb_id
-        
         self._node_types[kuzu_id] = _IOC_TYPE_TO_INT.get(ioc_type, _IOC_TYPE_TO_INT['unknown'])
-        
         return gnn_index
 
     def _evict_lru(self):
         """Evict least recently used Kuzu ID."""
         if not self._kuzu_to_gnn:
             return
-        
         lru_kuzu_id, lru_gnn = self._kuzu_to_gnn.popitem(last=False)
         self._gnn_to_kuzu.pop(lru_gnn, None)
         self._duckdb_to_gnn.pop(lru_gnn, None)
         self._gnn_to_duckdb.pop(lru_gnn, None)
         self._node_types.pop(lru_kuzu_id, None)
         self._embedding_refs.pop(lru_kuzu_id, None)
-        
         logger.debug(f'[NodeMapper] Evicted LRU node: {lru_kuzu_id[:40]}...')
 
     def set_embedding_ref(self, kuzu_id: str, table_name: str, row_id: int, dimension: int):
         """Set embedding reference for a node (for LanceDB lookup)."""
-        self._embedding_refs[kuzu_id] = EmbeddingReference(
-            table_name=table_name,
-            row_id=row_id,
-            dimension=dimension,
-            updated_at=0.0,  # Will be set on actual embedding fetch
-    )
+        self._embedding_refs[kuzu_id] = EmbeddingReference(table_name=table_name, row_id=row_id, dimension=dimension, updated_at=0.0)
 
     def get_embedding_ref(self, kuzu_id: str) -> EmbeddingReference | None:
         """Get embedding reference for a node."""
@@ -244,33 +172,19 @@ class MappingLRUCache:
 
     def build_mapping(self) -> NodeMapping:
         """Build immutable NodeMapping snapshot."""
-        return NodeMapping(
-            kuzu_to_gnn=dict(self._kuzu_to_gnn),
-            gnn_to_kuzu=dict(self._gnn_to_kuzu),
-            duckdb_to_gnn=dict(self._duckdb_to_gnn),
-            gnn_to_duckdb=dict(self._gnn_to_duckdb),
-            node_types=dict(self._node_types),
-            node_count=len(self._kuzu_to_gnn),
-    )
+        return NodeMapping(kuzu_to_gnn=dict(self._kuzu_to_gnn), gnn_to_kuzu=dict(self._gnn_to_kuzu), duckdb_to_gnn=dict(self._duckdb_to_gnn), gnn_to_duckdb=dict(self._gnn_to_duckdb), node_types=dict(self._node_types), node_count=len(self._kuzu_to_gnn))
 
-    def load_from_kuzu(self, kuzu_conn, batch_size: int = 1000) -> int:
+    def load_from_kuzu(self, kuzu_conn, batch_size: int=1000) -> int:
         """Load existing IOC nodes from Kuzu into mapping cache.
         
         Returns count of nodes loaded.
         """
         import time
-        
         loaded = 0
         offset = 0
-        
         while True:
-            query = f"""
-            MATCH (n:IOC) 
-            RETURN n.id, n.ioc_type
-            LIMIT {batch_size} OFFSET {offset}
-            """
+            query = f'\n            MATCH (n:IOC) \n            RETURN n.id, n.ioc_type\n            LIMIT {batch_size} OFFSET {offset}\n            '
             result = kuzu_conn.execute(query)
-            
             batch_count = 0
             while result.has_next():
                 row = result.get_next()
@@ -279,13 +193,10 @@ class MappingLRUCache:
                 self.add_node(kuzu_id, duckdb_id=None, ioc_type=ioc_type)
                 batch_count += 1
                 loaded += 1
-            
             if batch_count < batch_size:
                 break
-            
             offset += batch_size
             logger.debug(f'[NodeMapper] Loaded {loaded} nodes from Kuzu...')
-        
         logger.info(f'[NodeMapper] Loaded {loaded} nodes from Kuzu')
         return loaded
 
@@ -295,34 +206,22 @@ class MappingLRUCache:
         Returns count of synced nodes.
         """
         import sqlite3
-        
         synced = 0
         duckdb_id_cache: dict[str, int] = {}
-        
-        # DuckDB: ioc_nodes table has id (BIGINT), value, ioc_type
-        # We need to map BIGINT back to Kuzu string ID format
         try:
             import duckdb
             conn = duckdb.connect(str(duckdb_path), read_only=True)
-            
-            result = conn.execute("""
-                SELECT id, value, ioc_type FROM ioc_nodes
-            """).fetchall()
-            
+            result = conn.execute('\n                SELECT id, value, ioc_type FROM ioc_nodes\n            ').fetchall()
             for row_id, value, ioc_type in result:
-                # Reconstruct Kuzu ID format
                 expected_kuzu_id = f'{ioc_type}:{xxhash.xxh64(value.encode()).hexdigest()}'
-                
                 if expected_kuzu_id in self._kuzu_to_gnn:
                     gnn_index = self._kuzu_to_gnn[expected_kuzu_id]
                     self._duckdb_to_gnn[row_id] = gnn_index
                     self._gnn_to_duckdb[gnn_index] = row_id
                     synced += 1
-            
             conn.close()
         except Exception as e:
             logger.warning(f'[NodeMapper] DuckDB sync failed: {e}')
-        
         logger.info(f'[NodeMapper] Synced {synced} DuckDB IDs with Kuzu')
         return synced
 
@@ -332,18 +231,8 @@ class MappingLRUCache:
 
     def stats(self) -> dict[str, Any]:
         """Return cache statistics."""
-        return {
-            'node_count': len(self._kuzu_to_gnn),
-            'max_nodes': self._max_size,
-            'duckdb_synced': len(self._duckdb_to_gnn),
-            'embeddings_cached': len(self._embedding_refs),
-        }
-
-
-# ─── Global Singleton ──────────────────────────────────────────────────────────
-
+        return {'node_count': len(self._kuzu_to_gnn), 'max_nodes': self._max_size, 'duckdb_synced': len(self._duckdb_to_gnn), 'embeddings_cached': len(self._embedding_refs)}
 _NODE_MAPPER: MappingLRUCache | None = None
-
 
 def get_node_mapper() -> MappingLRUCache:
     """Get global node mapper singleton."""
@@ -352,20 +241,15 @@ def get_node_mapper() -> MappingLRUCache:
         _NODE_MAPPER = MappingLRUCache()
     return _NODE_MAPPER
 
-
 def reset_node_mapper() -> None:
     """Reset global mapper (for testing or memory release)."""
     global _NODE_MAPPER
     _NODE_MAPPER = None
     logger.info('[NodeMapper] Global mapper reset')
 
-
-# ─── Utility Functions ────────────────────────────────────────────────────────
-
 def make_kuzu_id(ioc_type: str, value: str) -> str:
     """Generate deterministic Kuzu string ID for IOC."""
     return f'{ioc_type}:{xxhash.xxh64(value.encode()).hexdigest()}'
-
 
 def parse_kuzu_id(kuzu_id: str) -> tuple[str, str] | None:
     """Parse Kuzu string ID into (ioc_type, xxh64hex).
@@ -377,8 +261,7 @@ def parse_kuzu_id(kuzu_id: str) -> tuple[str, str] | None:
     parts = kuzu_id.split(':', 1)
     if len(parts) != 2:
         return None
-    return parts[0], parts[1]
-
+    return (parts[0], parts[1])
 
 def ioc_type_to_int(ioc_type: str) -> int:
     """Convert IOC type string to integer for compact GNN features.
@@ -388,8 +271,7 @@ def ioc_type_to_int(ioc_type: str) -> int:
     normalized = normalize_ioc_type(ioc_type)
     return _IOC_TYPE_TO_INT.get(normalized, _IOC_TYPE_TO_INT.get('pending', NUM_GNN_IOC_TYPES - 1))
 
-
-def build_one_hot_type(node_types: list[str], num_types: int = 17) -> list[list[float]]:
+def build_one_hot_type(node_types: list[str], num_types: int=17) -> list[list[float]]:
     """Build one-hot encoding for IOC types.
     
     Args:
@@ -408,15 +290,7 @@ def build_one_hot_type(node_types: list[str], num_types: int = 17) -> list[list[
         result.append(vector)
     return result
 
-
-# ─── LanceDB Embedding Integration ────────────────────────────────────────────
-
-async def fetch_node_embeddings(
-    mapping: NodeMapping,
-    lancedb_path: Path,
-    table_name: str = "node_embeddings",
-    batch_size: int = 1000,
-) -> dict[str, list[float]]:
+async def fetch_node_embeddings(mapping: NodeMapping, lancedb_path: Path, table_name: str='node_embeddings', batch_size: int=1000) -> dict[str, list[float]]:
     """Fetch per-node embeddings from LanceDB based on mapping.
     
     Uses streaming to avoid loading entire table into memory.
@@ -432,19 +306,12 @@ async def fetch_node_embeddings(
         Dict mapping kuzu_id → embedding vector
     """
     embeddings: dict[str, list[float]] = {}
-    
     try:
         import lancedb
         db = lancedb.connect(str(lancedb_path))
         table = db.open_table(table_name)
-        
-        # Get all kuzu_ids we need
         needed_ids = set(mapping.kuzu_to_gnn.keys())
-        
-        # Use take() for true streaming - fetches only needed rows
-        # LanceDB's take() is efficient and doesn't load entire table
         try:
-            # Try batched fetch by IDs if table has kuzu_id column
             all_rows = table.to_lance().to_pandas()
             for _, row in all_rows.iterrows():
                 kuzu_id = row.get('kuzu_id')
@@ -453,58 +320,36 @@ async def fetch_node_embeddings(
                     if isinstance(vector, (list, tuple)) and len(vector) > 0:
                         embeddings[kuzu_id] = list(vector)
         except Exception:
-            # Fallback: iterate in batches using offset
             offset = 0
             while True:
-                # Use limit/offset for streaming - efficient for large tables
                 try:
                     batch_df = table.to_lance().limit(batch_size, offset).to_pandas()
                 except Exception:
-                    # Old LanceDB API fallback
                     batch_df = table.to_pandas().iloc[offset:offset + batch_size]
-                
                 if batch_df.empty:
                     break
-                
                 for _, row in batch_df.iterrows():
                     kuzu_id = row.get('kuzu_id')
                     if kuzu_id in needed_ids:
                         vector = row.get('vector', [])
                         if isinstance(vector, (list, tuple)) and len(vector) > 0:
                             embeddings[kuzu_id] = list(vector)
-                
                 if len(batch_df) < batch_size:
                     break
                 offset += batch_size
-        
         logger.info(f'[NodeMapper] Fetched {len(embeddings)}/{len(needed_ids)} embeddings from LanceDB')
     except Exception as e:
         logger.warning(f'[NodeMapper] LanceDB fetch failed: {e}')
-        # Fallback: return empty dict, GNN will use zero embeddings
-    
     return embeddings
-
-
-# ─── Rust Integration Helpers ─────────────────────────────────────────────────
 
 def export_mapping_for_rust(mapping: NodeMapping) -> dict[str, Any]:
     """Export mapping in format compatible with Rust link_predictor.
     
     Returns data structure suitable for PyO3 transfer.
     """
-    return {
-        'kuzu_to_gnn': mapping.kuzu_to_gnn,
-        'gnn_to_duckdb': mapping.gnn_to_duckdb,
-        'node_count': mapping.node_count,
-    }
+    return {'kuzu_to_gnn': mapping.kuzu_to_gnn, 'gnn_to_duckdb': mapping.gnn_to_duckdb, 'node_count': mapping.node_count}
 
-
-def build_gnn_feature_matrix(
-    mapping: NodeMapping,
-    node_ids: list[str],
-    embeddings: dict[str, list[float]],
-    embedding_dim: int = 64,
-) -> tuple[list[list[float]], list[int]]:
+def build_gnn_feature_matrix(mapping: NodeMapping, node_ids: list[str], embeddings: dict[str, list[float]], embedding_dim: int=64) -> tuple[list[list[float]], list[int]]:
     """Build GNN feature matrix from node IDs and embeddings.
     
     Feature vector = [ioc_type_one_hot (17 dims)] + [embedding (embedding_dim dims)]
@@ -521,28 +366,19 @@ def build_gnn_feature_matrix(
     num_types = len(_IOC_TYPE_TO_INT)
     features: list[list[float]] = []
     gnn_indices: list[int] = []
-    
     for kuzu_id in node_ids:
         gnn_idx = mapping.get_gnn_index(kuzu_id)
         if gnn_idx is None:
             continue
-        
         gnn_indices.append(gnn_idx)
-        
-        # One-hot type encoding (17 dims)
         type_int = mapping.node_types.get(kuzu_id, _IOC_TYPE_TO_INT['unknown'])
         type_vec = [0.0] * num_types
         if 0 <= type_int < num_types:
             type_vec[type_int] = 1.0
-        
-        # Embedding vector (with zero-fill fallback)
         emb = embeddings.get(kuzu_id, [0.0] * embedding_dim)
         if len(emb) < embedding_dim:
             emb = emb + [0.0] * (embedding_dim - len(emb))
         elif len(emb) > embedding_dim:
             emb = emb[:embedding_dim]
-        
-        # Concatenate: [type_one_hot] + [embedding]
         features.append(type_vec + emb)
-    
-    return features, gnn_indices
+    return (features, gnn_indices)

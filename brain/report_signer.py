@@ -35,6 +35,7 @@ import time
 from pathlib import Path
 from typing import Any
 from _core import aclose
+from _core.lock_registry import LockCategory, register_lock
 
 logger = logging.getLogger(__name__)
 
@@ -374,7 +375,12 @@ class ReportSigner:
 # ---------------------------------------------------------------------------
 
 _signer_instance: ReportSigner | None = None
-_signer_lock = threading.Lock()
+
+
+@register_lock(LockCategory.CACHE)
+def _signer_lock() -> threading.Lock:
+    """Module-level lock for ReportSigner singleton factory."""
+    return threading.Lock()
 
 
 def get_report_signer() -> ReportSigner:
@@ -388,7 +394,7 @@ def get_report_signer() -> ReportSigner:
     """
     global _signer_instance
     if _signer_instance is None:
-        with _signer_lock:
+        with _signer_lock():
             if _signer_instance is None:
                 _signer_instance = ReportSigner()
     return _signer_instance

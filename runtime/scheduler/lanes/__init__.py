@@ -23,6 +23,7 @@ import re
 from collections.abc import AsyncGenerator, Callable
 from dataclasses import dataclass, field
 import msgspec
+from compat.msgspec_gc_compat import Struct
 from enum import Enum, StrEnum
 from typing import TYPE_CHECKING, Any
 from hledac.universal.network.session_runtime import async_get_httpx_session
@@ -94,7 +95,7 @@ class RiskLevel(StrEnum):
     HIGH = 'high'
     CRITICAL = 'critical'
 
-class AcquisitionLanePlan(msgspec.Struct, frozen=True, gc=False):
+class AcquisitionLanePlan(Struct, frozen=True):
     """Plan for one acquisition lane."""
     lane: str
     enabled: bool
@@ -107,13 +108,13 @@ class AcquisitionLanePlan(msgspec.Struct, frozen=True, gc=False):
 # AcquisitionContext imported from acquisition_strategy_planner (canonical source)
 # RiskLevel imported from lane_constants (canonical source)
 
-class LaneSpec(msgspec.Struct, frozen=True, gc=False):
+class LaneSpec(Struct, frozen=True):
     """Static per-lane execution constants."""
     max_items: int
     timeout_s: int
     risk_level: str
 
-class LaneRule(msgspec.Struct, frozen=True, gc=False):
+class LaneRule(Struct, frozen=True):
     """Table-driven lane planning rule.
 
     One rule per AcquisitionLane.  The enabled/reason/concurrency logic
@@ -142,7 +143,7 @@ LaneSpecShodan = LaneSpec(max_items=20, timeout_s=30, risk_level=RiskLevel.MEDIU
 LaneSpecCensys = LaneSpec(max_items=20, timeout_s=45, risk_level=RiskLevel.MEDIUM)
 LaneSpecGreyNoise = LaneSpec(max_items=30, timeout_s=20, risk_level=RiskLevel.LOW)
 
-class NonfeedPlanDebug(msgspec.Struct, gc=False):
+class NonfeedPlanDebug(Struct):
     """[F207L] Diagnostic snapshot of nonfeed lane planning for live KPI debugging.
 
     Records what the acquisition planner decided and why,
@@ -239,7 +240,7 @@ class NonfeedSeedContext:
         """Return counts by non-empty seed kind."""
         return {k: len(v) for k, v in [('domains', self.domains), ('ips', self.ips), ('urls', self.urls), ('hashes', self.hashes), ('cves', self.cves)] if v}
 
-class AcquisitionStrategySnapshot(msgspec.Struct, gc=False):
+class AcquisitionStrategySnapshot(Struct):
     """Full acquisition strategy snapshot for one sprint/cycle."""
     query: str = ''
     duration_s: float = 0.0
@@ -256,7 +257,7 @@ class AcquisitionStrategySnapshot(msgspec.Struct, gc=False):
     nonfeed_candidate_ledger_summary: dict = field(default_factory=dict)
     has_domain: bool = False
 
-class MandatoryLaneTerminality(msgspec.Struct, gc=False):
+class MandatoryLaneTerminality(Struct):
     """[F208A] Canonical terminality contract for mandatory lanes.
 
     A mandatory lane must reach a terminal state (attempted, skipped, error, timeout)
@@ -566,7 +567,7 @@ def lane_skip_reason(snapshot: AcquisitionStrategySnapshot, lane_name: str) -> s
             return None if plan.enabled else plan.reason
     return None
 
-class SourceFamilyOutcome(msgspec.Struct, frozen=True, gc=False):
+class SourceFamilyOutcome(Struct, frozen=True):
     """Normalized outcome for one source family (lane) in the scheduler report.
 
     F207G: Unifies CTOutcome, PassiveDNSOutcome, WaybackDiffResult, and feed
@@ -723,7 +724,7 @@ def normalize_source_family_outcome(family: str, raw: dict) -> dict:
     _ts = _derive_terminal(_ts_raw, attempted, skipped, skip_reason, _error, _timeout, accepted_count)
     return SourceFamilyOutcome(family=_canonical_family, attempted=attempted, skipped=skipped, skip_reason=skip_reason, raw_count=raw_count, built_count=built_count, accepted_count=accepted_count, error=_error, timeout=_timeout, duration_s=_d.get('duration_s'), terminal_state=_ts).to_dict()
 
-class AcquisitionLaneOutcome(msgspec.Struct, frozen=True, gc=False):
+class AcquisitionLaneOutcome(Struct, frozen=True):
     lane: str
     enabled: bool
     attempted: bool
@@ -752,7 +753,7 @@ class AcquisitionLaneOutcome(msgspec.Struct, frozen=True, gc=False):
 _NONFEED_LANE_FAMILY_MAP = {'PUBLIC': AcquisitionLane.PUBLIC, 'CT': AcquisitionLane.CT, 'PIVOT_EXECUTOR': AcquisitionLane.PIVOT_EXECUTOR, 'WAYBACK': AcquisitionLane.WAYBACK, 'PASSIVE_DNS': AcquisitionLane.PASSIVE_DNS}
 _ACCEPTED_TERMINAL_STATES = frozenset(['success', 'success_empty', 'empty'])
 
-class NonfeedMissionSnapshot(msgspec.Struct, gc=False):
+class NonfeedMissionSnapshot(Struct):
     """F217B: Snapshot of nonfeed mission controller state at a point in time.
 
     This is a plain dataclass (not frozen) so that the scheduler can
@@ -1914,55 +1915,66 @@ async def run_enabled_acquisition_lanes_streaming(snapshot, query: str, store, u
         return AcquisitionLaneOutcome(lane=AcquisitionLane.STEALTH, enabled=plan.enabled, attempted=False, source_family='stealth', error='stealth_never_auto_run')
     lane_runners = {AcquisitionLane.CT: _run_ct_lane, AcquisitionLane.WAYBACK: _run_wayback_lane, AcquisitionLane.PASSIVE_DNS: _run_pdns_lane, AcquisitionLane.STEALTH: _stealth_never_run, AcquisitionLane.BLOCKCHAIN: _stealth_never_run, AcquisitionLane.ACADEMIC: _stealth_never_run, AcquisitionLane.IPFS: _stealth_never_run, AcquisitionLane.OPEN_SOURCE: _stealth_never_run, AcquisitionLane.DOH: _stealth_never_run, AcquisitionLane.SHODAN: _stealth_never_run, AcquisitionLane.CENSYS: _stealth_never_run, AcquisitionLane.GREYNOISE: _stealth_never_run}
     tasks: list[_asyncio.Task] = []
-    if snapshot is None:
-        yield tuple(outcomes)
-        return
-    for plan in snapshot.plans:
-        lane = plan.lane
-        if lane not in lane_runners:
-            continue
-        if not plan.enabled:
-            outcomes.append(AcquisitionLaneOutcome(lane=lane, enabled=False, attempted=False, source_family=_LANE_TO_FAMILY.get(lane, 'unknown')))
-            continue
-        if hardware_critical and lane in (AcquisitionLane.WAYBACK, AcquisitionLane.BLOCKCHAIN):
-            outcomes.append(AcquisitionLaneOutcome(lane=lane, enabled=False, attempted=False, error='hardware_critical', source_family=_LANE_TO_FAMILY.get(lane, 'unknown')))
-            continue
-        tasks.append(safe_create_task(lane_runners[lane](plan), name='acquisition:lane_runner'))
-    if not tasks:
-        yield tuple(outcomes)
-        return
-    pending: set[_asyncio.Task] = set(tasks)
-    finished_count = 0
-    while pending:
-        if min_finished > 0 and finished_count >= min_finished:
-            for t in pending:
-                t.cancel()
-            break
-        _, winner_task = await first_completed(*pending)
-        pending.discard(winner_task)
-        try:
-            result = winner_task.result()
-        except Exception as exc:
-            result = exc
-        if isinstance(result, AcquisitionLaneOutcome):
-            outcomes.append(result)
-        elif isinstance(result, Exception):
-            outcomes.append(AcquisitionLaneOutcome(lane='UNKNOWN', enabled=True, attempted=True, error=f'gather_error:{result}', source_family='unknown'))
-        finished_count += 1
-        if on_lane_complete is not None:
+    pending: set[_asyncio.Task] = set()
+    try:
+        if snapshot is None:
+            yield tuple(outcomes)
+            return
+        for plan in snapshot.plans:
+            lane = plan.lane
+            if lane not in lane_runners:
+                continue
+            if not plan.enabled:
+                outcomes.append(AcquisitionLaneOutcome(lane=lane, enabled=False, attempted=False, source_family=_LANE_TO_FAMILY.get(lane, 'unknown')))
+                continue
+            if hardware_critical and lane in (AcquisitionLane.WAYBACK, AcquisitionLane.BLOCKCHAIN):
+                outcomes.append(AcquisitionLaneOutcome(lane=lane, enabled=False, attempted=False, error='hardware_critical', source_family=_LANE_TO_FAMILY.get(lane, 'unknown')))
+                continue
+            tasks.append(safe_create_task(lane_runners[lane](plan), name='acquisition:lane_runner'))
+        if not tasks:
+            yield tuple(outcomes)
+            return
+        pending = set(tasks)
+        finished_count = 0
+        while pending:
+            if min_finished > 0 and finished_count >= min_finished:
+                for t in pending:
+                    t.cancel()
+                break
+            _, winner_task = await first_completed(*pending)
+            pending.discard(winner_task)
             try:
-                on_lane_complete(outcomes[-1])
-            except Exception:  # noqa: BLE001
-                pass
-        yield tuple(outcomes)
-    if pending:
-        remaining = await parallel_ok(*pending, label='acquisition_strategy:streaming_remainder')
-        for result in remaining:
+                result = winner_task.result()
+            except Exception as exc:
+                result = exc
             if isinstance(result, AcquisitionLaneOutcome):
                 outcomes.append(result)
             elif isinstance(result, Exception):
                 outcomes.append(AcquisitionLaneOutcome(lane='UNKNOWN', enabled=True, attempted=True, error=f'gather_error:{result}', source_family='unknown'))
-    yield tuple(outcomes)
+            finished_count += 1
+            if on_lane_complete is not None:
+                try:
+                    on_lane_complete(outcomes[-1])
+                except Exception:  # noqa: BLE001
+                    pass
+            yield tuple(outcomes)
+        if pending:
+            remaining = await parallel_ok(*pending, label='acquisition_strategy:streaming_remainder')
+            for result in remaining:
+                if isinstance(result, AcquisitionLaneOutcome):
+                    outcomes.append(result)
+                elif isinstance(result, Exception):
+                    outcomes.append(AcquisitionLaneOutcome(lane='UNKNOWN', enabled=True, attempted=True, error=f'gather_error:{result}', source_family='unknown'))
+        yield tuple(outcomes)
+    finally:
+        # PEP 479: Cleanup when generator is abandoned mid-stream
+        # Cancel any remaining pending tasks
+        for t in pending:
+            if not t.done():
+                t.cancel()
+        pending.clear()
+        outcomes.clear()
+        lane_runners.clear()
 
 
 def _hits_to_ct_findings(hits: tuple, query: str) -> list:

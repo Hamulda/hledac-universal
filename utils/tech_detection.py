@@ -15,6 +15,7 @@ M1-Optimized: Minimal dependencies, fast signature matching
 import logging
 import re
 import msgspec
+from compat.msgspec_gc_compat import Struct
 from typing import TypedDict, Any
 from _core import aclose
 
@@ -26,7 +27,7 @@ class FrameworkSignature(TypedDict):
     indicators: list[str]
     weight: float
 
-class TechStackResult(msgspec.Struct, gc=False):
+class TechStackResult(Struct):
     """Result of technology stack detection."""
     framework: str | None
     confidence: float

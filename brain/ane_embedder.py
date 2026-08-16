@@ -26,6 +26,7 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from enum import Enum
 import msgspec
+from compat.msgspec_gc_compat import Struct
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal
 import numpy as np
@@ -485,7 +486,7 @@ class ANEStatus(Enum):
     LOADED = 'loaded'
     LOAD_FAILED = 'load_failed'
 
-class ANEStatusResult(msgspec.Struct, gc=False):
+class ANEStatusResult(Struct):
     """Sprint F300: msgspec.Struct for ANE status result.
 
     Result of get_ane_status().

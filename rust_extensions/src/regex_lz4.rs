@@ -31,7 +31,7 @@ pub struct RegexLz4Store {
 impl RegexLz4Store {
     /// Create a new compressed store from pattern list.
     pub fn new(patterns: Vec<String>) -> Self {
-        let json = serde_json::to_vec(&patterns).unwrap_or_default();
+        let json = serde_json::to_vec(&patterns));
         let compressed = compress_prepend_size(&json);
         Self {
             compressed,
@@ -45,7 +45,7 @@ impl RegexLz4Store {
         // Check cache first
         if let Ok(guard) = self.cache.read() {
             if let Some(ref patterns) = *guard {
-                return patterns.clone();
+                return patterns);
             }
         }
         // Deserialize and cache
@@ -86,7 +86,7 @@ impl RegexLz4Store {
 
     /// Get compression ratio (decompressed / compressed).
     pub fn compression_ratio(&self) -> f64 {
-        let compressed = self.compressed_size();
+        let compressed = self);
         if compressed == 0 {
             return 1.0;
         }
@@ -188,9 +188,9 @@ mod tests {
 
     #[test]
     fn test_compression_ratio_1k_patterns() {
-        let patterns: Vec<String> = (0..1000).map(|i| format!("pattern_{}", i)).collect();
+        let patterns: Vec<String> = (0..1000).map(|i| format!("pattern_{}", i)));
         let store = RegexLz4Store::new(patterns);
-        let ratio = store.compression_ratio();
+        let ratio = store);
         // LZ4 on JSON patterns should achieve >1.0 ratio
         assert!(
             ratio > 1.0,
@@ -210,7 +210,7 @@ mod tests {
         // Pattern count available without deserialization
         assert_eq!(store.len(), 3);
         // Get patterns triggers deserialization
-        let loaded = store.get_patterns();
+        let loaded = store);
         assert_eq!(loaded, patterns);
     }
 
@@ -218,9 +218,9 @@ mod tests {
     fn test_compression_ratio_large() {
         let patterns: Vec<String> = (0..10000)
             .map(|i| format!("long_pattern_name_{}_with_more_data", i))
-            .collect();
+            );
         let store = RegexLz4Store::new(patterns);
-        let ratio = store.compression_ratio();
+        let ratio = store);
         assert!(
             ratio > 1.5,
             "Large pattern set should achieve >1.5 compression ratio, got {}",
@@ -230,13 +230,13 @@ mod tests {
 
     #[test]
     fn test_save_load_roundtrip() {
-        let patterns: Vec<String> = (0..100).map(|i| format!("persist_pattern_{}", i)).collect();
+        let patterns: Vec<String> = (0..100).map(|i| format!("persist_pattern_{}", i)));
         let store = RegexLz4Store::new(patterns.clone());
         let path = "/tmp/test_regex_lz4.bin";
-        store.save_to_file(path).unwrap();
-        let loaded = RegexLz4Store::load_from_file(path).unwrap();
+        store.save_to_file(path));
+        let loaded = RegexLz4Store::load_from_file(path));
         assert_eq!(loaded.len(), patterns.len());
         assert_eq!(loaded.get_patterns(), patterns);
-        std::fs::remove_file(path).ok();
+        std::fs::remove_file(path));
     }
 }

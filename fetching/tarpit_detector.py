@@ -37,6 +37,7 @@ from typing import Final
 from urllib.parse import urljoin, urlparse
 
 import msgspec
+from compat.msgspec_gc_compat import Struct
 
 from hledac.universal.utils.logging_config import get_logger
 from _core import aclose
@@ -48,7 +49,7 @@ logger = get_logger(__name__)
 # msgspec types — frozen, gc=False for M1 memory efficiency
 # ---------------------------------------------------------------------------
 
-class TarpitResult(msgspec.Struct, frozen=True, gc=False):
+class TarpitResult(Struct, frozen=True):
     """Detection result for a single page."""
     is_tarpit: bool
     tarpit_score: float  # 0.0 (safe) — 1.0 (certain tarpit)
@@ -65,7 +66,7 @@ class TarpitResult(msgspec.Struct, frozen=True, gc=False):
     domain: str = ''
 
 
-class DomainTimingRecord(msgspec.Struct, gc=False):
+class DomainTimingRecord(Struct):
     """Mutable per-domain timing record (not frozen — updated across requests)."""
     domain: str
     response_times: list[float]  # most recent N response times (ms)

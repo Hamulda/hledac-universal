@@ -58,6 +58,7 @@ from contextlib import asynccontextmanager
 from typing import TYPE_CHECKING, Any, TypeVar
 
 from _core._util import aclose
+from _core.lock_registry import LockCategory, auto_register
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator, Awaitable, Callable, Coroutine
@@ -73,7 +74,12 @@ logger = logging.getLogger(__name__)
 
 # DCLP singleton instance
 _MLX_INFERENCE_LOCK: MLXInferenceLock | None = None
-_MLX_INFERENCE_LOCK_INIT: threading.Lock = threading.Lock()
+
+
+@auto_register(LockCategory.MPC)
+def _mlx_inference_lock_init():
+    """DCLP initialization lock for MLXInferenceLock singleton."""
+    return threading.Lock()
 
 
 class MLXInferenceLock:
@@ -136,7 +142,7 @@ class MLXInferenceLock:
         - Telemetry: acquire/release tracking
         """
         if not self._semaphore_loaded:
-            with _MLX_INFERENCE_LOCK_INIT:
+            with _mlx_inference_lock_init():
                 if not self._semaphore_loaded:
                     from hledac.universal._core.concurrency import (
                         ConcurrencyCategory,
@@ -198,7 +204,7 @@ class MLXInferenceLock:
         For async contexts, prefer acquire().
         """
         if self._threading_lock is None:
-            with _MLX_INFERENCE_LOCK_INIT:
+            with _mlx_inference_lock_init():
                 if self._threading_lock is None:
                     self._threading_lock = threading.Lock()
         return self._threading_lock
@@ -326,7 +332,7 @@ def _get_inference_lock() -> MLXInferenceLock:
     """Get or create the module-level MLXInferenceLock singleton."""
     global _MLX_INFERENCE_LOCK
     if _MLX_INFERENCE_LOCK is None:
-        with _MLX_INFERENCE_LOCK_INIT:
+        with _mlx_inference_lock_init():
             if _MLX_INFERENCE_LOCK is None:
                 _MLX_INFERENCE_LOCK = MLXInferenceLock()
                 logger.debug("[MLXInferenceLock] Singleton created")
@@ -351,7 +357,12 @@ get_stats = lambda: _get_inference_lock().get_stats()
 
 # Module-level worker instance — lazily initialized
 _MLX_WORKER: MLXWorker | None = None
-_MLX_WORKER_LOCK: threading.Lock = threading.Lock()
+
+
+@auto_register(LockCategory.MPC)
+def _mlx_worker_lock():
+    """Module-level lock for MLXWorker singleton factory."""
+    return threading.Lock()
 
 
 class MLXWorker:
@@ -447,7 +458,7 @@ class MLXWorker:
         """Lazily start the worker thread."""
         if self._started:
             return
-        with threading.Lock():
+        with self._semaphore_lock:
             if self._started:
                 return
             self._ready = threading.Event()
@@ -597,7 +608,7 @@ def _get_mlx_worker() -> MLXWorker:
     """Get or create the module-level MLXWorker singleton."""
     global _MLX_WORKER
     if _MLX_WORKER is None:
-        with _MLX_WORKER_LOCK:
+        with _mlx_worker_lock():
             if _MLX_WORKER is None:
                 _MLX_WORKER = MLXWorker(name="mlx-inference", max_active_experts=1)
                 logger.debug("[MLXInferenceLock] MLXWorker singleton created")

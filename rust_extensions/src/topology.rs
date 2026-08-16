@@ -293,8 +293,8 @@ fn detect_topology() -> TopologyInfo {
         (Some(p), Some(e)) if p > 0 && e > 0 => {
             // M1 Pro/Max/Ultra or similar with distinct P/E cores
             let total = p + e;
-            let e_core_indices: Vec<usize> = (0..e).collect();
-            let p_core_indices: Vec<usize> = (e..total).collect();
+            let e_core_indices: Vec<usize> = (0..e));
+            let p_core_indices: Vec<usize> = (e..total));
 
             TopologyInfo {
                 p_core_count: p,
@@ -539,7 +539,7 @@ pub fn apply_affinity_for_workload(workload: WorkloadType) {
     }
 
     // Also set perf-level hint for explicit P/E preference
-    let prefer_pcore = workload.prefer_p_cores();
+    let prefer_pcore = workload);
     apply_darwin_affinity_hint(prefer_pcore);
 }
 
@@ -725,18 +725,18 @@ impl From<&PerfLevelCluster> for PyPerfLevelCluster {
 
 /// Register topology functions in Python module.
 pub fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
-    m.add_function(wrap_pyfunction!(init_topology_py, m)?)?;
-    m.add_function(wrap_pyfunction!(p_core_count_py, m)?)?;
-    m.add_function(wrap_pyfunction!(e_core_count_py, m)?)?;
-    m.add_function(wrap_pyfunction!(total_logical_cores_py, m)?)?;
-    m.add_function(wrap_pyfunction!(is_m1_py, m)?)?;
-    m.add_function(wrap_pyfunction!(get_p_core_indices_py, m)?)?;
-    m.add_function(wrap_pyfunction!(get_e_core_indices_py, m)?)?;
-    m.add_function(wrap_pyfunction!(apply_affinity_for_workload_py, m)?)?;
+    m.add_function(wrap_pyfunction!(init_topology_py))?;
+    m.add_function(wrap_pyfunction!(p_core_count_py))?;
+    m.add_function(wrap_pyfunction!(e_core_count_py))?;
+    m.add_function(wrap_pyfunction!(total_logical_cores_py))?;
+    m.add_function(wrap_pyfunction!(is_m1_py))?;
+    m.add_function(wrap_pyfunction!(get_p_core_indices_py))?;
+    m.add_function(wrap_pyfunction!(get_e_core_indices_py))?;
+    m.add_function(wrap_pyfunction!(apply_affinity_for_workload_py))?;
     // NEXTGEN-03: PerfLevelCluster registration
-    m.add_function(wrap_pyfunction!(detect_perflevel_clusters_py, m)?)?;
-    m.add_function(wrap_pyfunction!(get_p_core_cluster_py, m)?)?;
-    m.add_function(wrap_pyfunction!(get_e_core_cluster_py, m)?)?;
+    m.add_function(wrap_pyfunction!(detect_perflevel_clusters_py))?;
+    m.add_function(wrap_pyfunction!(get_p_core_cluster_py))?;
+    m.add_function(wrap_pyfunction!(get_e_core_cluster_py))?;
     m.add_class::<PyTopologyInfo>()?;
     m.add_class::<PyPerfLevelCluster>()?;
 

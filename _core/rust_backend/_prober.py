@@ -46,6 +46,7 @@ import os
 import platform
 import sys
 import msgspec
+from compat.msgspec_gc_compat import Struct
 from pathlib import Path as _Path
 
 # ISSUE-11: Import Rust extension exceptions for fail-closed behavior
@@ -471,7 +472,7 @@ def _get_rebuild_instruction() -> str:
     )
 
 
-class ProbeResult(msgspec.Struct, frozen=True, gc=False):
+class ProbeResult(Struct, frozen=True):
     """Frozen result of the Rust extension probe."""
 
     available: bool

@@ -89,7 +89,7 @@ fn format_value_ref(val: duckdb::types::ValueRef<'_>) -> String {
 #[pyfunction]
 pub fn duckdb_open_connection(db_path: String) -> PyResult<bool> {
     let path = std::path::Path::new(&db_path);
-    get_thread_connection(path)?;
+    get_thread_connection(path);
     Ok(true)
 }
 
@@ -105,8 +105,8 @@ pub fn duckdb_health_check(db_path: String) -> PyResult<String> {
 
 /// Register connection functions with Python module.
 pub fn register_functions(m: &Bound<'_, PyModule>) -> PyResult<()> {
-    m.add_function(wrap_pyfunction!(duckdb_open_connection, m)?)?;
-    m.add_function(wrap_pyfunction!(duckdb_health_check, m)?)?;
+    m.add_function(wrap_pyfunction!(duckdb_open_connection)?);
+    m.add_function(wrap_pyfunction!(duckdb_health_check)?);
     Ok(())
 }
 

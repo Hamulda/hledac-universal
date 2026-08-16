@@ -20,6 +20,7 @@ import logging
 import time
 from dataclasses import dataclass
 import msgspec
+from compat.msgspec_gc_compat import Struct
 from typing import NamedTuple
 import orjson
 from hledac.universal.knowledge.duckdb_store import CanonicalFinding
@@ -32,7 +33,7 @@ S2AG_AUTHOR_FIELDS = 'authorId,name,hIndex,paperCount,citationCount'
 RATE_LIMIT = 10
 REQUEST_TIMEOUT_S = 25.0
 
-class S2Paper(msgspec.Struct, gc=False):
+class S2Paper(Struct):
     """Semantic Scholar paper."""
     paper_id: str
     title: str
@@ -47,7 +48,7 @@ class S2Paper(msgspec.Struct, gc=False):
     doi: str | None
     tldr: str | None
 
-class CitationEdge(msgspec.Struct, frozen=True, gc=False):
+class CitationEdge(Struct, frozen=True):
     """Citation edge between papers."""
     source_id: str
     target_id: str

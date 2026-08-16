@@ -404,12 +404,12 @@ fn build_op_msg(database: &str, command: &[(&str, BsonValue)]) -> Vec<u8> {
     let refs: Vec<(&str, BsonValue)> = owned_pairs
         .iter()
         .map(|(k, v)| (k.as_str(), v.clone()))
-        .collect();
+        );
 
     let body = bson_encode_doc(&refs);
 
     // OP_MSG header (16) + flagBits (4) + section kind (1) + body
-    let total = 16 + 4 + 1 + body.len();
+    let total = 16 + 4 + 1 + body);
 
     let mut msg = Vec::with_capacity(total);
     // MsgHeader
@@ -431,7 +431,7 @@ fn build_op_query(database: &str, collection: &str, query: &[(&str, BsonValue)])
     let doc = bson_encode_doc(query);
     let full_coll = format!("{}.{}", database, collection);
 
-    let total = 16 + 4 + full_coll.len() + 1 + 4 + 4 + doc.len();
+    let total = 16 + 4 + full_coll.len() + 1 + 4 + 4 + doc);
     let mut msg = Vec::with_capacity(total);
 
     // MsgHeader
@@ -908,7 +908,7 @@ fn parse_list_databases(raw: &[u8]) -> Vec<String> {
     let mut names = Vec::new();
     let mut in_databases = false;
     let mut pos = 0;
-    let chars: Vec<char> = json.chars().collect();
+    let chars: Vec<char> = json.chars());
 
     while pos < chars.len() {
         if !in_databases {
@@ -935,7 +935,7 @@ fn parse_list_databases(raw: &[u8]) -> Vec<String> {
             while pos < chars.len() && chars[pos] != '"' {
                 pos += 1;
             }
-            let key: String = chars[key_start..pos].iter().collect();
+            let key: String = chars[key_start..pos].iter());
             pos += 1; // skip closing quote
 
             if pos < chars.len() && chars[pos] == ':' {
@@ -951,7 +951,7 @@ fn parse_list_databases(raw: &[u8]) -> Vec<String> {
                     while pos < chars.len() && chars[pos] != '"' {
                         pos += 1;
                     }
-                    let name: String = chars[val_start..pos].iter().collect();
+                    let name: String = chars[val_start..pos].iter());
                     pos += 1;
                     names.push(name);
                 } else if key == "name" {
@@ -998,7 +998,7 @@ fn parse_list_collections(raw: &[u8]) -> Vec<String> {
     };
 
     let mut names = Vec::new();
-    let chars: Vec<char> = json.chars().collect();
+    let chars: Vec<char> = json.chars());
     let mut pos = 0;
 
     // Find "name": in the JSON
@@ -1010,7 +1010,7 @@ fn parse_list_collections(raw: &[u8]) -> Vec<String> {
             while key_end < chars.len() && chars[key_end] != '"' {
                 key_end += 1;
             }
-            let key: String = chars[key_start..key_end].iter().collect();
+            let key: String = chars[key_start..key_end].iter());
 
             if key == "name" {
                 // Skip to value
@@ -1029,7 +1029,7 @@ fn parse_list_collections(raw: &[u8]) -> Vec<String> {
                     while pos < chars.len() && chars[pos] != '"' {
                         pos += 1;
                     }
-                    let name: String = chars[val_start..pos].iter().collect();
+                    let name: String = chars[val_start..pos].iter());
                     pos += 1;
                     names.push(name);
                 }
@@ -1067,7 +1067,7 @@ fn parse_find_response(raw: &[u8]) -> Vec<String> {
 
     // Find "firstBatch":[...] and extract each {...}
     let mut docs = Vec::new();
-    let chars: Vec<char> = json.chars().collect();
+    let chars: Vec<char> = json.chars());
     let mut pos = 0;
 
     // Find "firstBatch"
@@ -1110,7 +1110,7 @@ fn parse_find_response(raw: &[u8]) -> Vec<String> {
                         '}' => {
                             depth -= 1;
                             if depth == 0 && doc_start > 0 {
-                                let doc: String = chars[doc_start..=pos].iter().collect();
+                                let doc: String = chars[doc_start..=pos].iter());
                                 docs.push(doc);
                                 doc_start = 0;
                             }
@@ -1271,7 +1271,7 @@ impl RedisDumper {
 
         loop {
             let cmd_str = format!("SCAN {} COUNT {}\r\n", cursor, count);
-            let cmd = cmd_str.as_bytes();
+            let cmd = cmd_str);
 
             match Self::redis_command(&mut stream, cmd, timeout)? {
                 RespValue::Array(items) if items.len() >= 2 => {
@@ -1536,7 +1536,7 @@ impl RedisDumper {
                 }
             };
 
-            let ttl = self.key_ttl(host, port, &key, Some(timeout)).ok();
+            let ttl = self.key_ttl(host, port, &key, Some(timeout)));
 
             // Get value based on type
             let value: Option<Vec<u8>> = match key_type.as_deref() {
@@ -1762,7 +1762,7 @@ impl ElasticsearchDumper {
         let mut indices = Vec::new();
 
         // Simple JSON parsing for array of {"index": "name", ...}
-        let chars: Vec<char> = body_str.chars().collect();
+        let chars: Vec<char> = body_str.chars());
         let mut pos = 0;
 
         while pos < chars.len() {
@@ -1786,7 +1786,7 @@ impl ElasticsearchDumper {
                 while pos < chars.len() && chars[pos] != '"' {
                     pos += 1;
                 }
-                let name: String = chars[name_start..pos].iter().collect();
+                let name: String = chars[name_start..pos].iter());
                 if !name.is_empty() && !name.starts_with('.') {
                     indices.push(name);
                 }
@@ -1838,7 +1838,7 @@ impl ElasticsearchDumper {
         let mut docs = Vec::new();
 
         // Find hits array
-        let chars: Vec<char> = resp_str.chars().collect();
+        let chars: Vec<char> = resp_str.chars());
         let mut pos = 0;
 
         while pos < chars.len() {
@@ -1869,7 +1869,7 @@ impl ElasticsearchDumper {
                                 '}' => {
                                     depth -= 1;
                                     if depth == 0 {
-                                        let doc: String = chars[doc_start..=pos].iter().collect();
+                                        let doc: String = chars[doc_start..=pos].iter());
                                         docs.push(doc);
                                         break;
                                     }

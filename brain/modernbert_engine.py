@@ -25,6 +25,7 @@ import logging
 import sys
 from dataclasses import dataclass
 import msgspec
+from compat.msgspec_gc_compat import Struct
 import numpy as np
 from _core import aclose
 logger = logging.getLogger(__name__)
@@ -37,7 +38,7 @@ try:
 except Exception:
     _mlx_embeddings_ok = False
 
-class ModernBertConfig(msgspec.Struct, gc=False):
+class ModernBertConfig(Struct):
     """Configuration for ModernBertEngine."""
     mlx_model: str = 'nomic-ai/modernbert-embed-base'
     summary_top_k: int = 5

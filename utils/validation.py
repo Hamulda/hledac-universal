@@ -24,6 +24,7 @@ import re
 from collections.abc import Callable
 from dataclasses import dataclass
 import msgspec
+from compat.msgspec_gc_compat import Struct
 from datetime import UTC, datetime
 from enum import Enum
 from typing import Any, TypeVar
@@ -38,7 +39,7 @@ class ValidationSeverity(Enum):
     ERROR = 'error'
     CRITICAL = 'critical'
 
-class ValidationError(msgspec.Struct, gc=False):
+class ValidationError(Struct):
     """Structured validation error information."""
     field: str
     message: str

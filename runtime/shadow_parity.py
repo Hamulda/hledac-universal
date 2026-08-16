@@ -70,12 +70,13 @@ Canonical facts owners:
 import time
 from dataclasses import dataclass, field
 import msgspec
+from compat.msgspec_gc_compat import Struct
 from typing import TYPE_CHECKING, Any
 from _core import aclose
 if TYPE_CHECKING:
     from .shadow_inputs import GraphSummaryBundle, LifecycleSnapshotBundle, ModelControlFactsBundle
 
-class ParityArtifact(msgspec.Struct, gc=False):
+class ParityArtifact(Struct):
     """
     Diagnostic parity artifact — output of shadow mode comparison.
 

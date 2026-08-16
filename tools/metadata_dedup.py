@@ -25,12 +25,14 @@ import msgspec
 from difflib import SequenceMatcher
 from typing import Any
 from _core import aclose
+from compat.msgspec_gc_compat import Struct
+
 logger = logging.getLogger(__name__)
 TOP_K = 200
 MAX_COMPARISONS = 50000
 MAX_FIELD_REASONS = 5
 
-class MetadataEntry(msgspec.Struct, gc=False):
+class MetadataEntry(Struct):
     """A single metadata entry for deduplication."""
     url: str
     canonical_url: str = ''
@@ -58,7 +60,7 @@ class MetadataEntry(msgspec.Struct, gc=False):
         data = f'{self.canonical_url or self.url}|{self.title}|{self.description}'
         return hashlib.sha256(data.encode()).hexdigest()[:16]
 
-class DedupResult(msgspec.Struct, frozen=True, gc=False):
+class DedupResult(Struct, frozen=True):
     """Result of metadata deduplication."""
     winner: str
     loser_hash: str

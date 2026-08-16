@@ -39,37 +39,21 @@ MODERN-35 P-Core Affinity:
 Always-on, fail-safe, M1 8GB bounded.
 """
 from __future__ import annotations
-
 import asyncio
 import logging
 import time
 from typing import TYPE_CHECKING, Any
 from collections.abc import AsyncIterator
-
 if TYPE_CHECKING:
     from hledac.universal.brain.deephermes3_engine import DeepHermes3Engine
-
 logger = logging.getLogger(__name__)
-
-# R4-12 FIX: mlx.core cached per-call via OnceLock — prevents repeated import
-# overhead in the 500ms memory-pressure polling loop. Python-level equivalent
-# of Rust's std::sync::OnceLock pattern. Never hold the GIL across I/O.
-
-# ROADMAP-002 FIX: Use unified MLXInferenceLock instead of local threading.Lock
-# FIX Issue #1: Use module-level singleton functions, NOT new class instances
 from _core.mlx_inference_lock import threading_lock
 from dataclasses import dataclass
 
-
-@dataclass
+@dataclass(slots=True)
 class _MLXCache:
     mx: Any = None
-
-
 _mlx_cache: _MLXCache = _MLXCache()
-# FIX Issue #1: Removed redundant _mlx_inference_lock = MLXInferenceLock()
-# Use module-level threading_lock() function instead for singleton pattern
-
 
 def _clear_mlx_cache() -> None:
     """
@@ -82,85 +66,46 @@ def _clear_mlx_cache() -> None:
     try:
         mx = _get_mlx()
         if mx is not None:
-            # Sync GPU queue before clearing
             mx.eval([])
-            # Clear MLX cache
             if hasattr(mx, 'metal') and hasattr(mx.metal, 'clear_cache'):
                 mx.metal.clear_cache()
     except Exception as e:
-        logger.debug(f"[MLXBridge] Failed to clear MLX cache: {e}")
-    
-    # Reset the cached module reference
+        logger.debug(f'[MLXBridge] Failed to clear MLX cache: {e}')
     _mlx_cache.mx = None
-
 
 def _get_mlx() -> Any:
     """Lazily import and cache mlx.core. Thread-safe, import-only once."""
     if _mlx_cache.mx is None:
-        # ROADMAP-002 FIX Issue #1: Use module-level threading_lock() for singleton
         with threading_lock():
-            if _mlx_cache.mx is None:  # Double-check under lock
+            if _mlx_cache.mx is None:
                 import mlx.core as mx
-
                 _mlx_cache.mx = mx
     return _mlx_cache.mx
-
-
-# Default timeout for mlx bridge operations
 DEFAULT_MLX_BRIDGE_TIMEOUT_S: float = 30.0
-
-# MODERN-36 Fix: Import from SSOT instead of hardcoding
-# Old: _MAX_MEMORY_BYTES: int = 6_400 * 1024 * 1024  # 6.25 GiB in bytes
 from hledac.universal.utils.uma_budget import UmaBudget
 from _core import aclose
-
-_MAX_MEMORY_BYTES: int = int(UmaBudget.UMA_HARD_CEILING_GIB * 1024 * 1024 * 1024)  # 6.25 GiB in bytes
-
+_MAX_MEMORY_BYTES: int = int(UmaBudget.UMA_HARD_CEILING_GIB * 1024 * 1024 * 1024)
 
 def _get_mlx_bridge_config() -> dict[str, Any]:
     """Get MLX bridge configuration from Rust or Python fallback."""
     try:
         from hledac.universal._core.rust_backend import rust
-
         if rust.is_available:
-            cfg = rust.mlx.MLXBridgeConfig(
-                max_tokens=1024,
-                temperature=0.1,
-                chunk_size=0,  # 0 = adaptive
-                adaptive_chunk=True,
-                stream_buffer_size=8,
-                pressure_warning=0.70,
-                pressure_critical=0.85,
-    )
+            cfg = rust.mlx.MLXBridgeConfig(max_tokens=1024, temperature=0.1, chunk_size=0, adaptive_chunk=True, stream_buffer_size=8, pressure_warning=0.7, pressure_critical=0.85)
             return cfg
     except Exception as e:
-        logger.debug("[MLXBridge] Rust backend unavailable: %s", e)
-
-    # Python fallback: return config dict
-    return {
-        "max_tokens": 1024,
-        "temperature": 0.1,
-        "chunk_size": 0,
-        "adaptive_chunk": True,
-        "stream_buffer_size": 8,
-        "pressure_warning": 0.70,
-        "pressure_critical": 0.85,
-    }
-
+        logger.debug('[MLXBridge] Rust backend unavailable: %s', e)
+    return {'max_tokens': 1024, 'temperature': 0.1, 'chunk_size': 0, 'adaptive_chunk': True, 'stream_buffer_size': 8, 'pressure_warning': 0.7, 'pressure_critical': 0.85}
 
 def _create_mlx_bridge(engine: Any, tokenizer: Any) -> Any:
     """Create MLX bridge from Rust or Python fallback."""
     try:
         from hledac.universal._core.rust_backend import rust
-
         if rust.is_available:
             return rust.mlx.MLXBridge(engine, tokenizer)
     except Exception as e:
-        logger.debug("[MLXBridge] Rust bridge unavailable: %s", e)
-
-    # Python fallback: return engine directly
+        logger.debug('[MLXBridge] Rust bridge unavailable: %s', e)
     return engine
-
 
 class AdaptiveChunkBuffer:
     """
@@ -176,17 +121,16 @@ class AdaptiveChunkBuffer:
             if buffer.should_yield():
                 yield buffer.flush()
     """
+    __slots__ = ('_buffer', '_chunk_size', '_total_generated', '_pressure', '_min_size')
 
-    __slots__ = ("_buffer", "_chunk_size", "_total_generated", "_pressure", "_min_size")
-
-    def __init__(self, chunk_size: int = 64, min_size: int = 8) -> None:
+    def __init__(self, chunk_size: int=64, min_size: int=8) -> None:
         self._buffer: list[str] = []
         self._chunk_size: int = chunk_size
         self._total_generated: int = 0
-        self._pressure: str = "normal"
-        self._min_size: int = min_size  # Minimum tokens before first yield
+        self._pressure: str = 'normal'
+        self._min_size: int = min_size
 
-    def push(self, token: str, pressure: str = "normal") -> None:
+    def push(self, token: str, pressure: str='normal') -> None:
         """Push a token into the buffer."""
         self._buffer.append(token)
         self._total_generated += 1
@@ -213,16 +157,16 @@ class AdaptiveChunkBuffer:
         Returns:
             (joined_text, total_generated, pressure)
         """
-        text = "".join(self._buffer)
+        text = ''.join(self._buffer)
         total = self._total_generated
         pressure = self._pressure
         self._buffer = []
-        return text, total, pressure
+        return (text, total, pressure)
 
     def update_chunk_size(self, new_size: int) -> None:
         """Update chunk size (called when memory pressure changes)."""
         if new_size != self._chunk_size:
-            logger.debug("[MLXBridge] Chunk size: %d -> %d", self._chunk_size, new_size)
+            logger.debug('[MLXBridge] Chunk size: %d -> %d', self._chunk_size, new_size)
             self._chunk_size = new_size
 
     @property
@@ -233,13 +177,11 @@ class AdaptiveChunkBuffer:
     def pressure(self) -> str:
         return self._pressure
 
-
 def _check_stream_cancelled(engine: DeepHermes3Engine) -> bool:
     """Check if stream has been cancelled."""
-    if hasattr(engine, "_stream_cancelled") and isinstance(engine._stream_cancelled, asyncio.Event):
+    if hasattr(engine, '_stream_cancelled') and isinstance(engine._stream_cancelled, asyncio.Event):
         return engine._stream_cancelled.is_set()
     return False
-
 
 def _update_pressure_from_level(bridge, buffer, level: str) -> None:
     """Update bridge and buffer based on pressure level."""
@@ -247,38 +189,28 @@ def _update_pressure_from_level(bridge, buffer, level: str) -> None:
         return
     try:
         mx = _get_mlx()
-        mx.eval([])  # Sync barrier before reading
-        if hasattr(mx.metal, "get_active_memory"):
+        mx.eval([])
+        if hasattr(mx.metal, 'get_active_memory'):
             active = mx.metal.get_active_memory()
-            mx.eval([])  # Sync after read
+            mx.eval([])
             bridge.update_pressure_metal(active, _MAX_MEMORY_BYTES)
             buffer.update_chunk_size(bridge.get_chunk_size())
         else:
             _set_bridge_pressure(bridge, level)
-    except Exception:  # noqa: BLE001
+    except Exception:
         _set_bridge_pressure(bridge, level)
-
 
 def _set_bridge_pressure(bridge, level: str) -> None:
     """Set bridge pressure based on level string."""
     level_upper = level.upper() if hasattr(level, 'upper') else str(level).upper()
-    if level_upper == "CRITICAL":
+    if level_upper == 'CRITICAL':
         bridge.update_pressure(0.9)
-    elif level_upper == "WARNING":
+    elif level_upper == 'WARNING':
         bridge.update_pressure(0.75)
     else:
         bridge.update_pressure(0.5)
 
-
-async def generate_stream_adaptive(
-    engine: DeepHermes3Engine,
-    prompt: str,
-    max_tokens: int = 512,
-    temperature: float | None = None,
-    system_msg: str | None = None,
-    *,
-    thinking: bool = True,
-) -> AsyncIterator[tuple[str, int, str]]:
+async def generate_stream_adaptive(engine: DeepHermes3Engine, prompt: str, max_tokens: int=512, temperature: float | None=None, system_msg: str | None=None, *, thinking: bool=True) -> AsyncIterator[tuple[str, int, str]]:
     """
     Adaptive token streaming generator.
 
@@ -303,35 +235,22 @@ async def generate_stream_adaptive(
     MBridge.4: Respects _stream_cancelled Event
     """
     from hledac.universal.brain.deephermes3_engine import DeepHermes3Engine
-
     temp = temperature if temperature is not None else 0.1
-
-    # Create adaptive buffer
     buffer = AdaptiveChunkBuffer(chunk_size=64)
-
-    # Create MLX bridge for memory feedback (MBridge.5)
     bridge = None
     try:
         from hledac.universal._core.rust_backend import rust
         if rust.is_available:
             bridge = rust.mlx.MLXBridge(engine, None)
-    except Exception:  # noqa: BLE001
+    except Exception:
         pass
-
-    # Sample memory pressure periodically
     last_pressure_check = time.monotonic()
-    current_pressure = "normal"
-
+    current_pressure = 'normal'
     try:
-        async for token in engine.generate_stream(
-            prompt, max_tokens=max_tokens, temperature=temp, system_msg=system_msg, thinking=thinking,
-        ):
-            # Check cancellation (MBridge.4)
+        async for token in engine.generate_stream(prompt, max_tokens=max_tokens, temperature=temp, system_msg=system_msg, thinking=thinking):
             if _check_stream_cancelled(engine):
-                logger.debug("[MLXBridge] Stream cancelled")
+                logger.debug('[MLXBridge] Stream cancelled')
                 break
-
-            # Get memory pressure periodically (MBridge.5)
             now = time.monotonic()
             if now - last_pressure_check > 0.5:
                 last_pressure_check = now
@@ -339,33 +258,27 @@ async def generate_stream_adaptive(
                     from hledac.universal.utils.mlx_memory import get_mlx_memory_pressure
                     _, level = get_mlx_memory_pressure()
                     current_pressure = level.lower()
-                    # NEW-FIX: Offload blocking mx.eval([]) to thread pool
                     await asyncio.to_thread(_update_pressure_from_level, bridge, buffer, level)
-                except Exception:  # noqa: BLE001
+                except Exception:
                     pass
-
-            # Push token to buffer
             buffer.push(token, current_pressure)
-
-            # Yield if buffer is ready
             if buffer.should_yield():
                 yield buffer.flush()
-
-        # Final flush
         if buffer.total_generated > 0:
             yield buffer.flush()
-
     except asyncio.CancelledError:
-        logger.debug("[MLXBridge] Stream cancelled via CancelledError")
+        logger.debug('[MLXBridge] Stream cancelled via CancelledError')
         if _check_stream_cancelled(engine):
             engine._stream_cancelled.set()
         raise
     except Exception as e:
-        logger.warning("[MLXBridge] Stream error: %s", e)
+        logger.warning('[MLXBridge] Stream error: %s', e)
         if buffer.total_generated > 0:
             yield buffer.flush()
         raise
-
+    finally:
+        buffer = None
+        bridge = None
 
 def get_adaptive_chunk_size(pressure: str) -> int:
     """
@@ -377,19 +290,13 @@ def get_adaptive_chunk_size(pressure: str) -> int:
     Returns:
         Chunk size in tokens
     """
-    if pressure == "critical":
+    if pressure == 'critical':
         return 512
-    elif pressure == "warning":
+    elif pressure == 'warning':
         return 256
     return 64
 
-
-async def stream_with_prefetch(
-    engine: DeepHermes3Engine,
-    prompt: str,
-    prefetch_prompt: str | None = None,
-    **kwargs: Any,
-) -> AsyncIterator[tuple[str, int, str]]:
+async def stream_with_prefetch(engine: DeepHermes3Engine, prompt: str, prefetch_prompt: str | None=None, **kwargs: Any) -> AsyncIterator[tuple[str, int, str]]:
     """
     Streaming with prefetch/prefill optimization.
 
@@ -404,30 +311,19 @@ async def stream_with_prefetch(
         prefetch_prompt: Next prompt to prefetch (optional)
         **kwargs: Passed to generate_stream_adaptive
     """
-    # Start prefetch task if prompt provided
     prefetch_task = None
     if prefetch_prompt:
-        # F350M-R ISSUE #31: safe_create_task with eager_start=True (KV cache prefetch is hot path)
         from hledac.universal.utils.asyncx import safe_create_task
-        prefetch_task = safe_create_task(
-            _prefetch_kv_cache(engine, prefetch_prompt), eager_start=True
-    )
-
-    # Stream current prompt
+        prefetch_task = safe_create_task(_prefetch_kv_cache(engine, prefetch_prompt), eager_start=True)
     async for chunk in generate_stream_adaptive(engine, prompt, **kwargs):
         yield chunk
-
-    # Wait for prefetch to complete
     if prefetch_task:
         try:
             await prefetch_task
         except Exception as e:
-            logger.debug("[MLXBridge] Prefetch error: %s", e)
+            logger.debug('[MLXBridge] Prefetch error: %s', e)
 
-
-async def _prefetch_kv_cache(
-    engine: DeepHermes3Engine, prompt: str
-) -> None:
+async def _prefetch_kv_cache(engine: DeepHermes3Engine, prompt: str) -> None:
     """
     Prefetch KV cache for a prompt.
 
@@ -435,14 +331,10 @@ async def _prefetch_kv_cache(
     Uses minimal tokens=1 to just compute prefill.
     """
     try:
-        # Just compute prefill, don't generate tokens
-        prefilled = await asyncio.to_thread(
-            _sync_prefetch, engine, prompt
-    )
-        logger.debug("[MLXBridge] Prefetch complete: %s", prefilled[:50])
+        prefilled = await asyncio.to_thread(_sync_prefetch, engine, prompt)
+        logger.debug('[MLXBridge] Prefetch complete: %s', prefilled[:50])
     except Exception as e:
-        logger.debug("[MLXBridge] Prefetch failed: %s", e)
-
+        logger.debug('[MLXBridge] Prefetch failed: %s', e)
 
 def _sync_prefetch(engine: DeepHermes3Engine, prompt: str) -> str:
     """
@@ -464,52 +356,24 @@ def _sync_prefetch(engine: DeepHermes3Engine, prompt: str) -> str:
     """
     try:
         from hledac.universal.utils.mlx_memory import get_mlx_memory_pressure
-
         _, level = get_mlx_memory_pressure()
-        if level == "CRITICAL":
-            logger.debug("[MLXBridge] Prefetch skipped: CRITICAL memory pressure")
-            return ""
-
+        if level == 'CRITICAL':
+            logger.debug('[MLXBridge] Prefetch skipped: CRITICAL memory pressure')
+            return ''
         if engine._model is None or engine._tokenizer is None:
-            logger.debug("[MLXBridge] Prefetch skipped: model not loaded")
-            return ""
-
-        messages = [
-            {"role": "system", "content": "You are a helpful assistant."},
-            {"role": "user", "content": prompt},
-        ]
-        formatted = engine._tokenizer.apply_chat_template(
-            messages, tokenize=False, add_generation_prompt=True
-    )
-
-        # Tokenize the formatted prompt (returns list of token IDs)
+            logger.debug('[MLXBridge] Prefetch skipped: model not loaded')
+            return ''
+        messages = [{'role': 'system', 'content': 'You are a helpful assistant.'}, {'role': 'user', 'content': prompt}]
+        formatted = engine._tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
         tokens = engine._tokenizer.encode(formatted)
-
-        # Create KV cache and prefill (correct mlx_lm pattern)
-        # P1-9 FIX: Compute prefill but don't cache (unused cache was wasteful)
         from mlx_lm.models.cache import make_prompt_cache
-
         cache = make_prompt_cache(engine._model)
         import mlx.core as mx
-
-        # Prefill: compute attention keys/values, store in cache
-        # Cache goes out of scope after this function returns — memory reclaimed
         engine._model(mx.array([tokens]), cache=cache)
         mx.eval(cache)
-        logger.debug("[MLXBridge] Prefill computed for: %s", prompt[:50])
+        logger.debug('[MLXBridge] Prefill computed for: %s', prompt[:50])
         return prompt
     except Exception as e:
-        logger.debug("[MLXBridge] Prefetch error: %s", e)
-        return ""
-
-
-__all__ = [
-    "AdaptiveChunkBuffer",
-    "generate_stream_adaptive",
-    "get_adaptive_chunk_size",
-    "stream_with_prefetch",
-    "_get_mlx_bridge_config",
-    "_create_mlx_bridge",
-    # MODERN-36: Memory cleanup
-    "_clear_mlx_cache",
-]
+        logger.debug('[MLXBridge] Prefetch error: %s', e)
+        return ''
+__all__ = ['AdaptiveChunkBuffer', 'generate_stream_adaptive', 'get_adaptive_chunk_size', 'stream_with_prefetch', '_get_mlx_bridge_config', '_create_mlx_bridge', '_clear_mlx_cache']

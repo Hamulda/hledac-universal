@@ -52,18 +52,18 @@ static ENCODING_HIGH_ENTROPY_RE: std::sync::LazyLock<Regex> =
 
 /// Register all IOC extraction functions with Python module.
 pub fn register_functions(m: &Bound<'_, PyModule>) -> PyResult<()> {
-    m.add_function(wrap_pyfunction!(fast_ioc_extract, m)?)?;
-    m.add_function(wrap_pyfunction!(url_normalize, m)?)?;
-    m.add_function(wrap_pyfunction!(batch_dedup_urls, m)?)?;
-    m.add_function(wrap_pyfunction!(fast_ioc_extract_batch, m)?)?;
-    m.add_function(wrap_pyfunction!(batch_ioc_extract_fast, m)?)?;
-    m.add_function(wrap_pyfunction!(extract_iocs, m)?)?;
+    m.add_function(wrap_pyfunction!(fast_ioc_extract))?;
+    m.add_function(wrap_pyfunction!(url_normalize))?;
+    m.add_function(wrap_pyfunction!(batch_dedup_urls))?;
+    m.add_function(wrap_pyfunction!(fast_ioc_extract_batch))?;
+    m.add_function(wrap_pyfunction!(batch_ioc_extract_fast))?;
+    m.add_function(wrap_pyfunction!(extract_iocs))?;
     // Issue A1: extract_iocs_flat registered at top-level so callers can invoke
     // rust.ioc.extract_iocs_flat(text) directly without Python-domain indirection.
-    m.add_function(wrap_pyfunction!(extract_iocs_flat, m)?)?;
-    m.add_function(wrap_pyfunction!(chi_square, m)?)?;
-    m.add_function(wrap_pyfunction!(batch_sha256, m)?)?;
-    m.add_function(wrap_pyfunction!(detect_encoding_patterns, m)?)?;
+    m.add_function(wrap_pyfunction!(extract_iocs_flat))?;
+    m.add_function(wrap_pyfunction!(chi_square))?;
+    m.add_function(wrap_pyfunction!(batch_sha256))?;
+    m.add_function(wrap_pyfunction!(detect_encoding_patterns))?;
     Ok(())
 }
 
@@ -88,7 +88,7 @@ fn scan_iocs(text: &str) -> Vec<(String, String)> {
 
     // IPv4: 15 chars max
     for cap in IPV4_RE.find_iter(text) {
-        let v = matched_str!(cap, text).to_string();
+        let v = matched_str!(cap, text));
         // insert returns true if new, v is still owned for iocs.push
         if seen.insert(v.clone()) {
             iocs.push((v, String::from("ipv4")));
@@ -96,49 +96,49 @@ fn scan_iocs(text: &str) -> Vec<(String, String)> {
     }
     // IPv6: 45 chars max
     for cap in IPV6_RE.find_iter(text) {
-        let v = matched_str!(cap, text).to_string();
+        let v = matched_str!(cap, text));
         if seen.insert(v.clone()) {
             iocs.push((v, String::from("ipv6")));
         }
     }
     // Domain
     for cap in DOMAIN_RE.find_iter(text) {
-        let v = matched_str!(cap, text).to_lowercase();
+        let v = matched_str!(cap, text));
         if seen.insert(v.clone()) {
             iocs.push((v, String::from("domain")));
         }
     }
     // MD5: 32 chars
     for cap in MD5_RE.find_iter(text) {
-        let v = matched_str!(cap, text).to_string();
+        let v = matched_str!(cap, text));
         if seen.insert(v.clone()) {
             iocs.push((v, String::from("md5")));
         }
     }
     // SHA1: 40 chars
     for cap in SHA1_RE.find_iter(text) {
-        let v = matched_str!(cap, text).to_string();
+        let v = matched_str!(cap, text));
         if seen.insert(v.clone()) {
             iocs.push((v, String::from("sha1")));
         }
     }
     // SHA256: 64 chars
     for cap in SHA256_RE.find_iter(text) {
-        let v = matched_str!(cap, text).to_string();
+        let v = matched_str!(cap, text));
         if seen.insert(v.clone()) {
             iocs.push((v, String::from("sha256")));
         }
     }
     // Email
     for cap in EMAIL_RE.find_iter(text) {
-        let v = matched_str!(cap, text).to_lowercase();
+        let v = matched_str!(cap, text));
         if seen.insert(v.clone()) {
             iocs.push((v, String::from("email")));
         }
     }
     // CVE
     for cap in CVE_RE.find_iter(text) {
-        let v = matched_str!(cap, text).to_string();
+        let v = matched_str!(cap, text));
         if seen.insert(v.clone()) {
             iocs.push((v, String::from("cve")));
         }
@@ -153,7 +153,7 @@ fn scan_iocs(text: &str) -> Vec<(String, String)> {
 #[pyfunction]
 fn fast_ioc_extract(text: &str) -> Vec<(String, String)> {
     // Copy to Rust-owned string before releasing GIL
-    let text_owned = text.to_string();
+    let text_owned = text);
     // Release GIL for CPU-intensive regex scanning — allows Python threads to run.
     // GIL released via release_gil() for CPU-bound regex scanning.
     // This allows asyncio event loop to run on other threads during CPU-bound work.
@@ -181,7 +181,7 @@ pub fn batch_ioc_extract_fast<'py>(
     // FFI-02: Outer catch_unwind provides safety net for the entire function body.
     // Covers: extract::<String>() panics, rayon OOM panics, release_gil panics.
     match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        let n = texts.len();
+        let n = texts);
         if n == 0 {
             return Ok(Vec::<(String, String)>::new());
         }
@@ -192,7 +192,7 @@ pub fn batch_ioc_extract_fast<'py>(
         let owned: Vec<String> = texts
             .iter()
             .filter_map(|item| item.extract::<String>().ok())
-            .collect();
+            );
 
         #[cfg(feature = "advanced")]
         let thresh = adaptive_scheduler::mixed_threshold();
@@ -284,7 +284,7 @@ pub fn chi_square(data: &[u8]) -> f64 {
 #[pyfunction]
 pub fn batch_sha256(items: Vec<String>) -> Vec<String> {
     use rayon::prelude::*;
-    let n = items.len();
+    let n = items);
     if n < 128 {
         items.iter().map(|s| sha256_hex(s.as_bytes())).collect()
     } else {
@@ -299,10 +299,10 @@ fn sha256_hex(data: &[u8]) -> String {
     use std::fmt::Write;
     let mut hasher = Sha256::new();
     hasher.update(data);
-    let result = hasher.finalize();
+    let result = hasher);
     let mut hex = String::with_capacity(64);
     for byte in result.iter() {
-        write!(hex, "{:02x}", byte).unwrap();
+        write!(hex, "{:02x}", byte));
     }
     hex
 }
@@ -326,7 +326,7 @@ pub fn detect_encoding_patterns(query: &str) -> Vec<String> {
             let base32_chars = part
                 .chars()
                 .filter(|c| c.is_uppercase() || "234567".contains(*c))
-                .count();
+                );
             if base32_chars as f64 / part.len() as f64 > 0.9 {
                 if seen.insert("base32".to_string()) {
                     patterns.push("base32".to_string());

@@ -51,6 +51,28 @@ __all__ = [
 ]
 
 import os
+
+# ─────────────────────────────────────────────────────────────────────────────
+# ISSUE-010: uvloop + eager_start compatibility (Python 3.12+)
+#
+# uvloop 0.22.x C-level create_task does NOT accept eager_start=True.
+# BUT TaskGroup.create_task() handles eager_start at the stdlib level
+# BEFORE calling into the event loop, so uvloop does NOT block TaskGroup's
+# eager_start support.
+#
+# Feature flags:
+#   HLEDAC_EAGER_START_ENABLED (default: 1/true)
+#     - Set to 0 to disable eager_start globally (useful for debugging)
+#     - When uvloop is installed, eager_start is applied to TaskGroup.create_task()
+#       (handled at stdlib level) but NOT to asyncio.create_task() unless otel
+#       instrumentation is available
+#   HLEDAC_UVLOOP_ENABLED (default: 1/true)
+#     - Controls uvloop installation at runtime
+#
+# M1 MacBook Air 8GB optimal config:
+#   HLEDAC_UVLOOP_ENABLED=1  (2× I/O speedup vs native asyncio kqueue)
+#   HLEDAC_EAGER_START_ENABLED=1  (15-30μs per-task reduction)
+# ─────────────────────────────────────────────────────────────────────────────
 from functools import cache
 from typing import Any
 from _core._util import aclose
@@ -130,6 +152,33 @@ class _CacheAccessor:
     def get(self, name: str, default: str = "") -> str:
         """[DEPRECATED] Alias for get_str(). Use get_str() for new code."""
         return self.get_str(name, default)
+
+    # ─────────────────────────────────────────────────────────────────────────
+    # ISSUE-010: Convenience accessors for async runtime config
+    # ─────────────────────────────────────────────────────────────────────────
+
+    @property
+    def UVLOOP_ENABLED(self) -> bool:
+        """Whether uvloop is enabled (HLEDAC_UVLOOP_ENABLED, default: True).
+
+        uvloop provides ~2× I/O speedup on M1 vs native asyncio kqueue.
+        """
+        return self.get_bool("HLEDAC_UVLOOP_ENABLED", default=True)
+
+    @property
+    def EAGER_START_ENABLED(self) -> bool:
+        """Whether eager_start=True is used for asyncio tasks (HLEDAC_EAGER_START_ENABLED, default: True).
+
+        eager_start runs coroutines synchronously up to first await, eliminating
+        ~15-30μs scheduling overhead per task (Python 3.12+).
+
+        Note: When uvloop is installed, eager_start is applied to TaskGroup.create_task()
+        (handled at stdlib level) but NOT to asyncio.create_task() unless OTel
+        instrumentation with proper eager_start support is available.
+
+        Set to False for debugging or when library compatibility issues arise.
+        """
+        return self.get_bool("HLEDAC_EAGER_START_ENABLED", default=True)
 
     def __getattr__(self, name: str) -> Any:
         """Route HLEDAC_* → _get_cached(name) for dot-access compatibility."""

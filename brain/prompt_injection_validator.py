@@ -38,6 +38,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 import msgspec
+from compat.msgspec_gc_compat import Struct
 
 # ISSUE [ULTIMATE]-005: Unicode fingerprint extraction before stripping
 from hledac.universal._core.rust_backend.unicode_fingerprint import (
@@ -196,7 +197,7 @@ _ALL_PATTERNS: list[tuple[str, re.Pattern[str]]] = (
 # Data structures
 # ---------------------------------------------------------------------------
 
-class PromptInjectionValidationResult(msgspec.Struct, frozen=True, gc=False):
+class PromptInjectionValidationResult(Struct, frozen=True):
     """Result of prompt injection validation."""
     safe_text: str
     suspicious: bool

@@ -28,6 +28,7 @@ import logging
 import secrets
 from dataclasses import dataclass, field
 import msgspec
+from compat.msgspec_gc_compat import Struct
 from typing import Any, Protocol, runtime_checkable
 
 from hledac.universal.utils.asyncx import safe_create_task
@@ -68,7 +69,7 @@ class StealthStrategy(Protocol):
 # ─────────────────────────────────────────────────────────────────────────────
 
 
-class UARotationConfig(msgspec.Struct, gc=False):
+class UARotationConfig(Struct):
     rotate_on_each_request: bool = False
     min_rotation_interval: float = 300.0  # 5 minutes
     pool: tuple[str, ...] = field(
@@ -138,7 +139,7 @@ class UARotationStrategy:
 # ─────────────────────────────────────────────────────────────────────────────
 
 
-class HeaderRandomizationConfig(msgspec.Struct, gc=False):
+class HeaderRandomizationConfig(Struct):
     enabled: bool = True
     randomize_order: bool = True
     add_chaff_headers: bool = False
@@ -223,7 +224,7 @@ class HeaderRandomizationStrategy:
 # ─────────────────────────────────────────────────────────────────────────────
 
 
-class CircuitManagementConfig(msgspec.Struct, gc=False):
+class CircuitManagementConfig(Struct):
     enabled: bool = False
     tor_control_port: int = 9051
     tor_control_host: str = "127.0.0.1"
@@ -323,7 +324,7 @@ class CircuitManagementStrategy:
 # ─────────────────────────────────────────────────────────────────────────────
 
 
-class FingerprintMuterConfig(msgspec.Struct, gc=False):
+class FingerprintMuterConfig(Struct):
     enabled: bool = True
     mute_canvas: bool = True
     mute_webgl: bool = True
@@ -421,7 +422,7 @@ class FingerprintMuterStrategy:
 # ─────────────────────────────────────────────────────────────────────────────
 
 
-class CaptchaSolvingConfig(msgspec.Struct, gc=False):
+class CaptchaSolvingConfig(Struct):
     """Configuration for CAPTCHA solving strategy.
 
     M1 8GB: Primary = third-party API (2captcha), Secondary = Vision/CoreML.

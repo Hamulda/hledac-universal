@@ -26,6 +26,7 @@ from dataclasses import field
 from typing import Any
 
 import msgspec
+from compat.msgspec_gc_compat import Struct
 from hledac.universal.compat.msgspec_gc_compat import Struct
 
 from hledac.universal.utils.asyncx import first_completed, parallel, safe_create_task  # ISSUE-15

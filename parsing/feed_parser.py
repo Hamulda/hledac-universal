@@ -38,6 +38,7 @@ except ImportError:
     _SELECTOLAX_AVAILABLE = False
 
 import msgspec
+from compat.msgspec_gc_compat import Struct
 import xxhash
 from _core import aclose
 
@@ -46,7 +47,7 @@ from _core import aclose
 # DTO — msgspec.Struct for zero-allocation downstream consumption
 # ---------------------------------------------------------------------------
 
-class FeedEntry(msgspec.Struct, frozen=True, gc=False):
+class FeedEntry(Struct, frozen=True):
     """Single parsed feed entry — msgspec.Struct for direct FeedPipelineEntryResult use."""
 
     feed_url: str
@@ -750,7 +751,7 @@ except Exception:
     _batch_sanitize_xml = None  # type: ignore[assignment]
 
 
-class _FeedParseTask(msgspec.Struct, frozen=True, gc=False):
+class _FeedParseTask(Struct, frozen=True):
     """Single feed parse task for batch processing. M1 8GB: msgspec.Struct for 5-7× faster init + no GC overhead."""
     text: str
     feed_url: str

@@ -558,50 +558,50 @@ pub fn get_memory_snapshot(py: Python<'_>) -> PyResult<Bound<'_, PyDict>> {
     let pressure = memory_pressure_level();
 
     let dict = PyDict::new(py);
-    dict.set_item("rss_bytes", rss_bytes).unwrap();
+    dict.set_item("rss_bytes", rss_bytes));
     dict.set_item("rss_gib", rss_bytes as f64 / (1024.0_f64.powi(3)))
-        .unwrap();
-    dict.set_item("peak_rss_bytes", peak_rss_bytes_val).unwrap();
+        );
+    dict.set_item("peak_rss_bytes", peak_rss_bytes_val));
     dict.set_item("available_memory_gib", available_memory_gib)
-        .unwrap();
-    dict.set_item("total_memory_gib", total_memory_gib).unwrap();
+        );
+    dict.set_item("total_memory_gib", total_memory_gib));
     dict.set_item("metal_active_bytes", metal_active_bytes)
-        .unwrap();
-    dict.set_item("metal_active_gib", metal_active_gib).unwrap();
-    dict.set_item("pressure_level", pressure).unwrap();
+        );
+    dict.set_item("metal_active_gib", metal_active_gib));
+    dict.set_item("pressure_level", pressure));
     Ok(dict)
 }
 
 /// Register memory module functions.
 pub fn register_functions(m: &Bound<'_, PyModule>) -> PyResult<()> {
-    m.add_function(wrap_pyfunction!(get_process_rss_gib, m)?)?;
-    m.add_function(wrap_pyfunction!(get_total_memory_gib, m)?)?;
-    m.add_function(wrap_pyfunction!(get_available_memory_gib, m)?)?;
-    m.add_function(wrap_pyfunction!(current_rss_bytes, m)?)?;
-    m.add_function(wrap_pyfunction!(peak_rss_bytes, m)?)?;
-    m.add_function(wrap_pyfunction!(memory_pressure_level, m)?)?;
+    m.add_function(wrap_pyfunction!(get_process_rss_gib))?;
+    m.add_function(wrap_pyfunction!(get_total_memory_gib))?;
+    m.add_function(wrap_pyfunction!(get_available_memory_gib))?;
+    m.add_function(wrap_pyfunction!(current_rss_bytes))?;
+    m.add_function(wrap_pyfunction!(peak_rss_bytes))?;
+    m.add_function(wrap_pyfunction!(memory_pressure_level))?;
     #[cfg(target_os = "macos")]
-    m.add_function(wrap_pyfunction!(advise_free, m)?)?;
-    m.add_function(wrap_pyfunction!(get_metal_active_memory_bytes, m)?)?;
-    m.add_function(wrap_pyfunction!(get_metal_active_memory_gib, m)?)?;
-    m.add_function(wrap_pyfunction!(get_memory_snapshot, m)?)?;
+    m.add_function(wrap_pyfunction!(advise_free))?;
+    m.add_function(wrap_pyfunction!(get_metal_active_memory_bytes))?;
+    m.add_function(wrap_pyfunction!(get_metal_active_memory_gib))?;
+    m.add_function(wrap_pyfunction!(get_memory_snapshot))?;
     // ISSUE-7.2: AtomicU8 UMA state for fast non-blocking reads
-    m.add_function(wrap_pyfunction!(get_uma_state_u8, m)?)?;
-    m.add_function(wrap_pyfunction!(set_uma_state_u8, m)?)?;
+    m.add_function(wrap_pyfunction!(get_uma_state_u8))?;
+    m.add_function(wrap_pyfunction!(set_uma_state_u8))?;
     // A5-01 FIX: threshold sync from Python SSOT
-    m.add_function(wrap_pyfunction!(set_memory_pressure_thresholds, m)?)?;
+    m.add_function(wrap_pyfunction!(set_memory_pressure_thresholds))?;
     // MODERN-42 Fix: atomic allocator ledger
-    m.add_function(wrap_pyfunction!(allocate_bytes, m)?)?;
-    m.add_function(wrap_pyfunction!(release_bytes, m)?)?;
-    m.add_function(wrap_pyfunction!(get_allocation_stats, m)?)?;
-    m.add_function(wrap_pyfunction!(set_allocation_ceiling, m)?)?;
+    m.add_function(wrap_pyfunction!(allocate_bytes))?;
+    m.add_function(wrap_pyfunction!(release_bytes))?;
+    m.add_function(wrap_pyfunction!(get_allocation_stats))?;
+    m.add_function(wrap_pyfunction!(set_allocation_ceiling))?;
     // MODERN-43: Atomic MLX ledger functions
-    m.add_function(wrap_pyfunction!(mlx_alloc_bytes_add, m)?)?;
-    m.add_function(wrap_pyfunction!(mlx_alloc_bytes_sub, m)?)?;
-    m.add_function(wrap_pyfunction!(mlx_alloc_bytes_get, m)?)?;
-    m.add_function(wrap_pyfunction!(mlx_cache_hit, m)?)?;
-    m.add_function(wrap_pyfunction!(mlx_cache_miss, m)?)?;
-    m.add_function(wrap_pyfunction!(mlx_cache_stats, m)?)?;
-    m.add_function(wrap_pyfunction!(mlx_cache_stats_reset, m)?)?;
+    m.add_function(wrap_pyfunction!(mlx_alloc_bytes_add))?;
+    m.add_function(wrap_pyfunction!(mlx_alloc_bytes_sub))?;
+    m.add_function(wrap_pyfunction!(mlx_alloc_bytes_get))?;
+    m.add_function(wrap_pyfunction!(mlx_cache_hit))?;
+    m.add_function(wrap_pyfunction!(mlx_cache_miss))?;
+    m.add_function(wrap_pyfunction!(mlx_cache_stats))?;
+    m.add_function(wrap_pyfunction!(mlx_cache_stats_reset))?;
     Ok(())
 }

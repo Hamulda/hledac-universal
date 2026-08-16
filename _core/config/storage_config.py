@@ -27,10 +27,11 @@ import os
 from typing import ClassVar
 
 import msgspec
+from compat.msgspec_gc_compat import Struct
 from _core._util import aclose
 
 
-class StorageConfig(msgspec.Struct, frozen=True, kw_only=True, gc=False):
+class StorageConfig(Struct, frozen=True, kw_only=True):
     """
     Immutable typed storage configuration.
 

@@ -24,15 +24,18 @@ import sys
 import threading
 from dataclasses import dataclass
 import msgspec
+from compat.msgspec_gc_compat import Struct
 from typing import Any, TextIO
 from _core import aclose
+from _core.lock_registry import LockCategory, register_lock
+
 _MAX_QUEUE_SIZE: int = 2048
 _MAX_EXPORT_BATCH: int = 64
 _SCHEDULE_DELAY_MS: int = 2000
 _MAX_ATTRS_PER_SPAN: int = 32
 _RING_BUFFER_CAPACITY: int = 4096
 
-class TelemetryConfig(msgspec.Struct, frozen=True, gc=False):
+class TelemetryConfig(Struct, frozen=True):
     """Immutable telemetry configuration. F350M-R: gc=False for M1 8GB."""
     exporter_kind: str = 'stdout'
     service_name: str = 'hledac-universal'
@@ -63,7 +66,12 @@ _PROCESSOR: Any = None
 _EXPORTER: Any = None
 _CONFIG: TelemetryConfig | None = None
 _DUCKDB_CONN: Any = None  # TEL-01: track DuckDB conn for proper shutdown
-_LOCK = threading.Lock()
+
+
+@register_lock(LockCategory.METRICS)
+def _setup_lock() -> threading.Lock:
+    """Module-level lock for OTel setup initialization."""
+    return threading.Lock()
 
 def is_initialized() -> bool:
     return _INITIALIZED
@@ -250,7 +258,7 @@ def init_telemetry(cfg: TelemetryConfig | None=None) -> bool:
     falls back to NoOp tracer — sprint never crashes because of tracing.
     """
     global _INITIALIZED, _PROVIDER, _PROCESSOR, _EXPORTER, _CONFIG
-    with _LOCK:
+    with _setup_lock():
         if _INITIALIZED:
             return True
         cfg = cfg or TelemetryConfig.from_env()
@@ -313,7 +321,7 @@ def init_telemetry(cfg: TelemetryConfig | None=None) -> bool:
 def shutdown_telemetry(timeout_ms: int=5000) -> None:
     """Flush + shutdown. Idempotent. Safe to call from finally/atexit."""
     global _INITIALIZED, _PROVIDER, _PROCESSOR, _EXPORTER, _DUCKDB_CONN
-    with _LOCK:
+    with _setup_lock():
         if not _INITIALIZED:
             return
         try:

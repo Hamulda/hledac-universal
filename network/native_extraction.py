@@ -55,6 +55,7 @@ import os
 from typing import Any
 
 import msgspec
+from compat.msgspec_gc_compat import Struct
 from _core import aclose
 
 logger = logging.getLogger(__name__)
@@ -75,7 +76,7 @@ _BATCH_CONCURRENCY: int = 5         # Parallel extraction cap (M1 8GB budget)
 
 # ── DTOs ────────────────────────────────────────────────────────────────────
 
-class NativeExtractionResult(msgspec.Struct, frozen=True, gc=False):
+class NativeExtractionResult(Struct, frozen=True):
     """Canonical result of native database extraction for a single service.
 
     All fields except host/port/service are optional — the struct captures

@@ -31,6 +31,7 @@ import logging
 import time
 from dataclasses import dataclass
 import msgspec
+from compat.msgspec_gc_compat import Struct
 from typing import Any
 import httpx
 from hledac.universal.network.session_runtime import async_get_httpx_session
@@ -75,7 +76,7 @@ _rdap_cache = _RDAPCache()
 RDAP_BOOTSTRAP: dict[str, str] = {'arin': 'https://rdap.arin.net/registry/ip', 'ripe': 'https://rdap.ripe.net/rdap/ip', 'apnic': 'https://rdap.apnic.net/ip', 'lacnic': 'https://rdap.lacnic.net/rdap/ip', 'afrinic': 'https://rdap.afrinic.net/rdap/ip'}
 WHOIS_SERVERS: dict[str, str] = {'arin': 'whois.arin.net', 'ripe': 'whois.ripe.net', 'apnic': 'whois.apnic.net'}
 
-class IPv6Result(msgspec.Struct, gc=False):
+class IPv6Result(Struct):
     target: str
     rdap: dict[str, Any]
     whois: dict[str, Any]

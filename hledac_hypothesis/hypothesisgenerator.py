@@ -13,6 +13,7 @@ import os
 import re
 from dataclasses import dataclass, field
 import msgspec
+from compat.msgspec_gc_compat import Struct
 from typing import TYPE_CHECKING, Any
 from _core import aclose
 if TYPE_CHECKING:
@@ -23,7 +24,7 @@ MAX_SEEDS_PER_HYPOTHESIS = 5
 MAX_EXTRACTS_PER_TYPE = 1000
 HLEDAC_ENABLE_DSPY = os.environ.get('HLEDAC_ENABLE_DSPY', '').lower() in ('1', 'true', 'yes')
 
-class ResearchHypothesis(msgspec.Struct, frozen=True, gc=False):
+class ResearchHypothesis(Struct, frozen=True):
     """Single research hypothesis produced by HypothesisGenerator."""
     hypothesis_text: str
     confidence: float

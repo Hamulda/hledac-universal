@@ -32,6 +32,7 @@ from collections import Counter, OrderedDict
 import collections.abc
 from dataclasses import dataclass
 import msgspec
+from compat.msgspec_gc_compat import Struct
 from hledac.universal.compat.msgspec_gc_compat import Struct
 from logging import Logger
 from typing import TYPE_CHECKING

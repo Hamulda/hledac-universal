@@ -69,7 +69,7 @@ fn get_lmdb_env<'py>(py: Python<'py>, path: &str) -> PyResult<Bound<'py, PyAny>>
     // Slow path: open new env and cache it
     let lmdb = PyModule::import(py, "lmdb")?;
     let open_fn: Bound<'py, PyAny> = lmdb.getattr("open")?;
-    let env: Bound<'py, PyAny> = open_fn.call1((path,))?.into();
+    let env: Bound<'py, PyAny> = open_fn.call1((path,))?);
 
     // Store Arc-wrapped Py<PyAny> in cache — clone before unbind since
     // env is consumed by unbind() but we still need the bound reference.
@@ -182,7 +182,7 @@ pub fn lmdb_dht_put_node<'py>(
         Python::attach(|py| {
             let env = unsafe { Bound::from_borrowed_ptr(py, env_owned.as_ptr()) };
             let neigh_key = {
-                let mut k = b"neighbors:".to_vec();
+                let mut k = b"neighbors:");
                 k.extend_from_slice(&key);
                 k
             };
@@ -210,7 +210,7 @@ pub fn lmdb_dht_get_node<'py>(
     let env = get_lmdb_env(py, &path)?;
     let env_owned: Py<PyAny> = Py::clone_ref(&env.unbind(), py);
     let neigh_key = {
-        let mut k = b"neighbors:".to_vec();
+        let mut k = b"neighbors:");
         k.extend_from_slice(&key);
         k
     };
@@ -250,7 +250,7 @@ pub fn lmdb_dht_put_dht_node<'py>(
 ) -> PyResult<()> {
     let env = get_lmdb_env(py, &path)?;
     let env_owned: Py<PyAny> = Py::clone_ref(&env.unbind(), py);
-    let mut key = b"dht_node:".to_vec();
+    let mut key = b"dht_node:");
     key.extend_from_slice(&node_id);
     // RUST-PANIC-001 FIX: release_gil_py wraps py.detach in catch_unwind
     release_gil_py(py, move || {
@@ -275,7 +275,7 @@ pub fn lmdb_dht_get_dht_node<'py>(
 ) -> PyResult<Option<Vec<u8>>> {
     let env = get_lmdb_env(py, &path)?;
     let env_owned: Py<PyAny> = Py::clone_ref(&env.unbind(), py);
-    let mut key = b"dht_node:".to_vec();
+    let mut key = b"dht_node:");
     key.extend_from_slice(&node_id);
     // RUST-PANIC-001 FIX: release_gil_py wraps py.detach in catch_unwind
     release_gil_py(py, move || {
@@ -300,7 +300,7 @@ pub fn lmdb_dht_get_all_dht_nodes<'py>(
     let env = get_lmdb_env(py, &path)?;
     let env_owned: Py<PyAny> = Py::clone_ref(&env.unbind(), py);
     let limit = limit.min(100_000);
-    let prefix = b"dht_node:".to_vec();
+    let prefix = b"dht_node:");
 
     // RUST-PANIC-001 FIX: release_gil_py wraps py.detach in catch_unwind
     release_gil_py(py, move || {
@@ -354,7 +354,7 @@ pub fn lmdb_dht_get_all_dht_nodes<'py>(
 pub fn lmdb_dht_count_dht_nodes<'py>(py: Python<'py>, path: String) -> PyResult<usize> {
     let env = get_lmdb_env(py, &path)?;
     let env_owned: Py<PyAny> = Py::clone_ref(&env.unbind(), py);
-    let prefix = b"dht_node:".to_vec();
+    let prefix = b"dht_node:");
 
     // RUST-PANIC-001 FIX: release_gil_py wraps py.detach in catch_unwind
     release_gil_py(py, move || {
@@ -403,7 +403,7 @@ pub fn lmdb_dht_count_dht_nodes<'py>(py: Python<'py>, path: String) -> PyResult<
 pub fn lmdb_dht_clear_dht_nodes<'py>(py: Python<'py>, path: String) -> PyResult<()> {
     let env = get_lmdb_env(py, &path)?;
     let env_owned: Py<PyAny> = Py::clone_ref(&env.unbind(), py);
-    let prefix = b"dht_node:".to_vec();
+    let prefix = b"dht_node:");
 
     // B-14: all LMDB I/O runs in py.detach() — GIL released during cursor
     // iteration and write transaction.
@@ -525,7 +525,7 @@ pub fn lmdb_dht_scan_all_nodes<'py>(
     let env = get_lmdb_env(py, &path)?;
     let env_owned: Py<PyAny> = Py::clone_ref(&env.unbind(), py);
     let limit = limit.min(100_000);
-    let neigh_prefix = b"neighbors:".to_vec();
+    let neigh_prefix = b"neighbors:");
 
     // RUST-PANIC-001 FIX: release_gil_py wraps py.detach in catch_unwind
     release_gil_py(py, move || {
@@ -601,7 +601,7 @@ pub fn lmdb_dht_bfs_traverse<'py>(
     let env = get_lmdb_env(py, &path)?;
     let env_owned: Py<PyAny> = Py::clone_ref(&env.unbind(), py);
     let max_hops = max_hops.min(10);
-    let neigh_prefix = b"neighbors:".to_vec();
+    let neigh_prefix = b"neighbors:");
 
     // B-14: entire BFS traversal runs in detached closure — GIL released
     // during all LMDB reads and JSON parsing.
@@ -621,7 +621,7 @@ pub fn lmdb_dht_bfs_traverse<'py>(
 
                 for key in frontier {
                     let neigh_key = {
-                        let mut k = neigh_prefix.clone();
+                        let mut k = neigh_prefix);
                         k.extend_from_slice(&key);
                         k
                     };
@@ -638,7 +638,7 @@ pub fn lmdb_dht_bfs_traverse<'py>(
                     if let Some(data) = neigh_data {
                         if let Ok(neighbors) = serde_json::from_slice::<Vec<String>>(&data) {
                             for neighbor in neighbors {
-                                let n_bytes = neighbor.into_bytes();
+                                let n_bytes = neighbor);
                                 if visited.insert(n_bytes.clone()) {
                                     next_frontier.push(n_bytes);
                                 }
@@ -789,7 +789,7 @@ pub fn lmdb_async_put_batch<'py>(
                     Ok(())
                 })();
                 if result.is_ok() {
-                    total_written += chunk.len();
+                    total_written += chunk);
                 } else {
                     break;
                 }
@@ -952,7 +952,7 @@ fn _resolve_env<'py>(
         // It's a path string — open new env
         let lmdb = PyModule::import(py, "lmdb")?;
         let open_fn: Bound<'py, PyAny> = lmdb.getattr("open")?;
-        let env: Bound<'py, PyAny> = open_fn.call1((path_str,))?.into();
+        let env: Bound<'py, PyAny> = open_fn.call1((path_str,))?);
         Ok(env)
     } else {
         // It's already an env
@@ -965,25 +965,25 @@ fn _resolve_env<'py>(
 // ─────────────────────────────────────────────────────────────────────────────
 
 pub fn register_functions(m: &Bound<'_, PyModule>) -> PyResult<()> {
-    m.add_function(wrap_pyfunction!(lmdb_dht_put_node, m)?)?;
-    m.add_function(wrap_pyfunction!(lmdb_dht_get_node, m)?)?;
-    m.add_function(wrap_pyfunction!(lmdb_dht_put_dht_node, m)?)?;
-    m.add_function(wrap_pyfunction!(lmdb_dht_get_dht_node, m)?)?;
-    m.add_function(wrap_pyfunction!(lmdb_dht_get_all_dht_nodes, m)?)?;
-    m.add_function(wrap_pyfunction!(lmdb_dht_count_dht_nodes, m)?)?;
-    m.add_function(wrap_pyfunction!(lmdb_dht_clear_dht_nodes, m)?)?;
-    m.add_function(wrap_pyfunction!(lmdb_dht_save_routing_snapshot, m)?)?;
-    m.add_function(wrap_pyfunction!(lmdb_dht_load_routing_snapshot, m)?)?;
-    m.add_function(wrap_pyfunction!(lmdb_dht_scan_all_nodes, m)?)?;
-    m.add_function(wrap_pyfunction!(lmdb_dht_bfs_traverse, m)?)?;
-    m.add_function(wrap_pyfunction!(lmdb_dht_close_env, m)?)?;
+    m.add_function(wrap_pyfunction!(lmdb_dht_put_node))?;
+    m.add_function(wrap_pyfunction!(lmdb_dht_get_node))?;
+    m.add_function(wrap_pyfunction!(lmdb_dht_put_dht_node))?;
+    m.add_function(wrap_pyfunction!(lmdb_dht_get_dht_node))?;
+    m.add_function(wrap_pyfunction!(lmdb_dht_get_all_dht_nodes))?;
+    m.add_function(wrap_pyfunction!(lmdb_dht_count_dht_nodes))?;
+    m.add_function(wrap_pyfunction!(lmdb_dht_clear_dht_nodes))?;
+    m.add_function(wrap_pyfunction!(lmdb_dht_save_routing_snapshot))?;
+    m.add_function(wrap_pyfunction!(lmdb_dht_load_routing_snapshot))?;
+    m.add_function(wrap_pyfunction!(lmdb_dht_scan_all_nodes))?;
+    m.add_function(wrap_pyfunction!(lmdb_dht_bfs_traverse))?;
+    m.add_function(wrap_pyfunction!(lmdb_dht_close_env))?;
     // P4-3: Generic async LMDB operations
-    m.add_function(wrap_pyfunction!(lmdb_async_put, m)?)?;
-    m.add_function(wrap_pyfunction!(lmdb_async_get, m)?)?;
-    m.add_function(wrap_pyfunction!(lmdb_async_put_batch, m)?)?;
-    m.add_function(wrap_pyfunction!(lmdb_async_get_many, m)?)?;
-    m.add_function(wrap_pyfunction!(lmdb_async_scan_prefix, m)?)?;
-    m.add_function(wrap_pyfunction!(lmdb_async_delete, m)?)?;
+    m.add_function(wrap_pyfunction!(lmdb_async_put))?;
+    m.add_function(wrap_pyfunction!(lmdb_async_get))?;
+    m.add_function(wrap_pyfunction!(lmdb_async_put_batch))?;
+    m.add_function(wrap_pyfunction!(lmdb_async_get_many))?;
+    m.add_function(wrap_pyfunction!(lmdb_async_scan_prefix))?;
+    m.add_function(wrap_pyfunction!(lmdb_async_delete))?;
     Ok(())
 }
 

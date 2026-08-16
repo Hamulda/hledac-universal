@@ -17,24 +17,20 @@ M1 8GB: LoRA adapters occupy ~50-200 MB Metal SRAM.
 KV cache is halved when LoRA is active to stay within budget.
 """
 from __future__ import annotations
-
 import asyncio
 import logging
 from dataclasses import dataclass
 from typing import Any
 from _core import aclose
-
 logger = logging.getLogger(__name__)
 
-
-@dataclass
+@dataclass(slots=True)
 class LoRAStats:
     """LoRA cache and application statistics."""
     lora_cache_hits: int = 0
     lora_cache_misses: int = 0
     lora_cache_evictions: int = 0
     lora_applications: int = 0
-
 
 class LoRAManager:
     """
@@ -43,6 +39,7 @@ class LoRAManager:
     Extracted from DeepHermes3Engine for better separation of concerns.
     Thread-compatible: async methods for event loop, sync for emergencies.
     """
+    __slots__ = ('_adapter_path', '_stats')
 
     def __init__(self) -> None:
         self._adapter_path: str | None = None
@@ -75,14 +72,12 @@ class LoRAManager:
             self._adapter_path = None
             logger.debug('[LoRA] Switched to base model (no adapter)')
             return
-
         lora_result = cache.get_lora(adapter_path)
         if lora_result is not None:
             self._adapter_path = adapter_path
             self._stats.lora_cache_hits += 1
             logger.debug(f'[LoRA] Cache hit (LRU updated): {adapter_path}')
             return
-
         try:
             import mlx_lm
             logger.info(f'[LoRA] Loading adapter: {adapter_path}')
@@ -95,12 +90,7 @@ class LoRAManager:
             logger.warning(f'[LoRA] Failed to load adapter {adapter_path}: {e}')
             self._adapter_path = None
 
-    async def apply_lora_adapter_async(
-        self,
-        adapter_path: str | None,
-        model: Any,
-        cache: Any,
-    ) -> None:
+    async def apply_lora_adapter_async(self, adapter_path: str | None, model: Any, cache: Any) -> None:
         """
         Async version of apply_lora_adapter.
 
@@ -118,20 +108,16 @@ class LoRAManager:
             self._adapter_path = None
             logger.debug('[LoRA] Switched to base model (no adapter)')
             return
-
         lora_result = cache.get_lora(adapter_path)
         if lora_result is not None:
             self._adapter_path = adapter_path
             self._stats.lora_cache_hits += 1
             logger.debug(f'[LoRA] Cache hit (LRU updated): {adapter_path}')
             return
-
         try:
             import mlx_lm
             logger.info(f'[LoRA] Loading adapter: {adapter_path}')
-            lora_model, lora_tokenizer = await asyncio.to_thread(
-                mlx_lm.lora.load_lora_model, model, adapter_path
-    )
+            lora_model, lora_tokenizer = await asyncio.to_thread(mlx_lm.lora.load_lora_model, model, adapter_path)
             cache.put_lora(adapter_path, lora_model, lora_tokenizer)
             self._adapter_path = adapter_path
             self._stats.lora_cache_misses += 1
@@ -166,10 +152,8 @@ class LoRAManager:
         """
         if self._adapter_path is None:
             return base_kwargs
-
         if 'max_kv_size' not in base_kwargs:
             return base_kwargs
-
         current_size = base_kwargs.get('max_kv_size', 8192)
         reduced_size = max(2048, current_size // 2)
         self._stats.lora_applications += 1

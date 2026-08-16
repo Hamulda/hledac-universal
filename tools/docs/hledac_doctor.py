@@ -31,6 +31,8 @@ from enum import Enum
 from typing import Any
 from hledac.universal.utils.serialization import _safe_dataclass_to_dict
 from _core import aclose
+from compat.msgspec_gc_compat import Struct
+
 
 class DepCategory(Enum):
     """Mirror of platform_info.DepCategory for self-contained diagnostics."""
@@ -43,7 +45,7 @@ class OutputFormat(Enum):
     MARKDOWN = 'markdown'
     JSON = 'json'
 
-class DepStatus(msgspec.Struct, gc=False):
+class DepStatus(Struct):
     """Status for a single dependency."""
     name: str
     import_name: str
@@ -53,7 +55,7 @@ class DepStatus(msgspec.Struct, gc=False):
     install_hint: str | None
     extra: str | None
 
-class DoctorReport(msgspec.Struct, frozen=True, gc=False):
+class DoctorReport(Struct, frozen=True):
     """Full doctor report."""
     python_version: str
     platform: str

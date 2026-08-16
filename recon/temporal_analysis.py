@@ -24,6 +24,7 @@ Time-series analysis for research data with M1 optimization.
 import logging
 from dataclasses import dataclass, field
 import msgspec
+from compat.msgspec_gc_compat import Struct
 from datetime import UTC, datetime
 from enum import Enum
 import numpy as np
@@ -46,7 +47,7 @@ class PatternType(Enum):
     RANDOM = 'random'
     STEP_CHANGE = 'step_change'
 
-class TrendAnalysis(msgspec.Struct, gc=False):
+class TrendAnalysis(Struct):
     """Result of trend analysis."""
     direction: TrendDirection
     strength: float
@@ -56,7 +57,7 @@ class TrendAnalysis(msgspec.Struct, gc=False):
     end_value: float
     time_period_days: int
 
-class TemporalPattern(msgspec.Struct, gc=False):
+class TemporalPattern(Struct):
     """Detected temporal pattern."""
     pattern_type: PatternType
     period_days: int | None
@@ -64,7 +65,7 @@ class TemporalPattern(msgspec.Struct, gc=False):
     confidence: float
     description: str
 
-class CausalEvent(msgspec.Struct, frozen=True, gc=False):
+class CausalEvent(Struct, frozen=True):
     """Event in causal chain."""
     timestamp: datetime
     event: str
@@ -72,7 +73,7 @@ class CausalEvent(msgspec.Struct, frozen=True, gc=False):
     lag_days: int
     evidence: list[str] = field(default_factory=list)
 
-class Scenario(msgspec.Struct, frozen=True, gc=False):
+class Scenario(Struct, frozen=True):
     """Future scenario projection."""
     name: str
     probability: float
@@ -81,7 +82,7 @@ class Scenario(msgspec.Struct, frozen=True, gc=False):
     implications: str
     time_horizon_days: int
 
-class TurningPoint(msgspec.Struct, frozen=True, gc=False):
+class TurningPoint(Struct, frozen=True):
     """Detected turning point in time series."""
     timestamp: datetime
     significance: float
@@ -89,7 +90,7 @@ class TurningPoint(msgspec.Struct, frozen=True, gc=False):
     before_trend: TrendDirection
     after_trend: TrendDirection
 
-class TemporalAnalysisResult(msgspec.Struct, frozen=True, gc=False):
+class TemporalAnalysisResult(Struct, frozen=True):
     """Complete temporal analysis result."""
     query: str
     timestamp: datetime

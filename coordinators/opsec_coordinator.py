@@ -28,6 +28,7 @@ from enum import Enum
 from typing import Any
 
 import msgspec
+from compat.msgspec_gc_compat import Struct
 from hledac.universal.compat.msgspec_gc_compat import Struct
 
 from .base import DecisionResponse, ExecutionResult, OperationResult, OperationType, UniversalCoordinator

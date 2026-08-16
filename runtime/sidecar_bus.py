@@ -33,6 +33,7 @@ GHOST_INVARIANTS enforced:
 import asyncio
 
 import msgspec
+from compat.msgspec_gc_compat import Struct
 import orjson
 import msgspec.json as _json
 try:
@@ -112,7 +113,7 @@ def _sidecar_profile_allows(sidecar_name: str, profile: str | None) -> tuple[boo
         return (True, '')
     return (False, f"profile '{profile}' disallows active-network sidecar '{sidecar_name}'")
 
-class SidecarBatch(msgspec.Struct, gc=False):
+class SidecarBatch(Struct):
     """Batch of accepted findings submitted to the sidecar bus. F350M-R: gc=False for M1 8GB."""
     findings: list
     query: str
@@ -132,7 +133,7 @@ class SidecarBatch(msgspec.Struct, gc=False):
                 outcomes[f'sidecar_{r.sidecar_name}'] = {'attempted': False, 'skipped_reason': r.skipped_reason or 'unknown', 'elapsed_ms': round(r.elapsed_ms, 1)}
         return outcomes
 
-class SidecarRunResult(msgspec.Struct, gc=False):
+class SidecarRunResult(Struct):
     """Sidecar run result record. F350M-R: gc=False for M1 8GB."""
     sidecar_name: str
     attempted: bool

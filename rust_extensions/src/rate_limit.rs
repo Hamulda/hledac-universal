@@ -150,7 +150,7 @@ impl NvdRateLimiter {
             let interval = Duration::from_secs_f64(WINDOW_SECS);
             loop {
                 std::thread::sleep(interval);
-                state_clone.refill();
+                state_clone);
             }
         });
 
@@ -223,7 +223,7 @@ impl RustGeneralRateLimiter {
             let interval = Duration::from_secs(30); // Refill every 30s
             loop {
                 std::thread::sleep(interval);
-                state_clone.refill();
+                state_clone);
             }
         });
 
@@ -254,7 +254,7 @@ impl RustGeneralRateLimiter {
 pub fn register_module(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<NvdRateLimiter>()?;
     m.add_class::<RustGeneralRateLimiter>()?;
-    m.add_function(wrap_pyfunction!(create_nvd_limiter, m)?)?;
+    m.add_function(wrap_pyfunction!(create_nvd_limiter))?;
     Ok(())
 }
 

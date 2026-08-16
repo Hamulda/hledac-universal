@@ -51,7 +51,10 @@ from collections import deque
 from typing import TYPE_CHECKING, Any, Literal, Protocol, runtime_checkable
 
 import msgspec
+from compat.msgspec_gc_compat import Struct
 from msgspec import field
+
+from _core.lock_registry import LockCategory, register_lock
 
 if TYPE_CHECKING:
     from hledac.universal._core.resource_governor import GovernorDecision
@@ -86,21 +89,32 @@ from _core import aclose
 _GC_THRESHOLD = BOOT_THRESHOLD
 _GC_FREEZE_ENABLED: bool = _BLITZ_GC_FREEZE_NATIVE
 _configured = False
-_configure_lock = threading.Lock()
+
+
+@register_lock(LockCategory.CONFIG)
+def _configure_lock() -> threading.Lock:
+    """Module-level lock for GC configuration initialization."""
+    return threading.Lock()
+
 
 # FIX-B4: 10s TTL cache for system-wide virtual_memory() — mirrors _rss_gib pattern.
 # Called from get_recommended_concurrency() on every AIMD evaluation tick.
 # Using the same 10s TTL prevents psutil syscall storm on M1 event loop.
 _SYSTEM_MEM_CACHE_TTL_S: float = 10.0
 _SYSTEM_MEM_CACHE: tuple[float, float] | None = None  # (timestamp, percent)
-_SYSTEM_MEM_LOCK: threading.Lock = threading.Lock()
+
+
+@register_lock(LockCategory.METRICS)
+def _SYSTEM_MEM_LOCK() -> threading.Lock:
+    """Module-level lock for system memory cache."""
+    return threading.Lock()
 
 
 def _get_system_memory_percent() -> float:
     """System-wide memory percent with 10s TTL cache (thread-safe)."""
     global _SYSTEM_MEM_CACHE
     now = _time_module.monotonic()
-    with _SYSTEM_MEM_LOCK:
+    with _SYSTEM_MEM_LOCK():
         if _SYSTEM_MEM_CACHE is not None:
             ts, val = _SYSTEM_MEM_CACHE
             if now - ts < _SYSTEM_MEM_CACHE_TTL_S:
@@ -113,7 +127,7 @@ def _get_system_memory_percent() -> float:
             percent = float(_psutil.virtual_memory().percent)
     except Exception:  # noqa: BLE001
         pass
-    with _SYSTEM_MEM_LOCK:
+    with _SYSTEM_MEM_LOCK():
         _SYSTEM_MEM_CACHE = (now, percent)
     return percent
 
@@ -127,7 +141,7 @@ def _ensure_configured() -> None:
     global _configured
     if _configured:
         return
-    with _configure_lock:
+    with _configure_lock():
         if _configured:
             return
         _apply_gc_config()
@@ -270,7 +284,7 @@ AIMD_EXTRACTION_MIN = 1
 AIMD_EXTRACTION_MAX = 8
 
 
-class AIMDController(msgspec.Struct, gc=False):
+class AIMDController(Struct):
     """
     Unified AIMD (Additive Increase/Multiplicative Decrease) controller.
 
@@ -415,7 +429,7 @@ _MIN_CLEARNET = 1
 _MAX_CLEARNET_FROM_GOVERNOR = 20
 
 
-class BackpressureDecision(msgspec.Struct, frozen=True, gc=False):
+class BackpressureDecision(Struct, frozen=True):
     """
     Backpressure decision for the fetch lane.
     Derived from GovernorDecision but scoped to fetch concurrency only.
@@ -578,7 +592,7 @@ class BackpressureMonitor:
 MAX_PENDING_RESOURCE_REQUESTS = 1000
 
 
-class CapacitySnapshot(msgspec.Struct, frozen=True, gc=False):
+class CapacitySnapshot(Struct, frozen=True):
     """Immutable snapshot of M1 resource capacity with TTL tracking."""
     cpu_percent: float
     gpu_memory: float

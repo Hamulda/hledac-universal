@@ -22,13 +22,13 @@ Search:
 """
 import asyncio
 import hashlib
-import json
 import logging
 import os
 import time
 import uuid
 from dataclasses import dataclass, field
 import msgspec
+from compat.msgspec_gc_compat import Struct
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 from hledac.universal.utils.msgspec_json import dumps_str as _msgspec_dumps_str, loads as _msgspec_loads
@@ -48,7 +48,7 @@ _WAL_MAX_SIZE_MB = 64
 # Schema version for migration handling (ISSUE #11)
 _SCHEMA_VERSION = 1
 
-class FTSDocument(msgspec.Struct, gc=False):
+class FTSDocument(Struct):
     """Jeden dokument k indexaci."""
     doc_id: str
     title: str = ''
@@ -58,7 +58,7 @@ class FTSDocument(msgspec.Struct, gc=False):
     fetched_at: float = field(default_factory=time.time)
     metadata_json: str = '{}'
 
-class FTSSearchResult(msgspec.Struct, gc=False):
+class FTSSearchResult(Struct):
     """Jeden vysledek FTS dotazu."""
     doc_id: str
     title: str
@@ -204,7 +204,7 @@ class DuckDBFTSStore:
                     try:
                         parsed = _msgspec_loads(line)
                         entries.append((parsed['op'], parsed['doc']))
-                    except (json.JSONDecodeError, KeyError):
+                    except (ValueError, KeyError):
                         continue
         except Exception:
             return

@@ -15,6 +15,7 @@ M1 safe: pure Python, no model load, no JS renderer.
 import re
 from dataclasses import dataclass, field
 import msgspec
+from compat.msgspec_gc_compat import Struct
 from typing import TYPE_CHECKING, Any
 from _core import aclose
 __all__ = ['KillChainTag', 'KillChainTagger', 'create_kill_chain_tagger', 'ioc_to_technique_ids']
@@ -65,7 +66,7 @@ _add_pattern('Resource Development', 'T1588.003', 'Obtain Code Signing Certifica
 _add_pattern('Resource Development', 'T1588.004', 'Obtain Digital Certificates', 'resource_development', 0.6, 'ssl certificate purchase', 'buy certificate', 'domain validated cert', 'wildcard cert', 'letsencrypt.*automation', 'acme.*protocol', 'certificate authority', 'ca cert')
 _add_pattern('Resource Development', 'T1588.005', 'Obtain Exploits', 'resource_development', 0.5, 'exploitdb', 'metasploit module', 'cve-20\\d\\d', 'edb-id', 'exploit purchase', '0-day exploit', 'pentest-exploit', 'poc.*exploit', 'proof of concept.*exploit')
 
-class KillChainTag(msgspec.Struct, frozen=True, gc=False):
+class KillChainTag(Struct, frozen=True):
     """
     MITRE ATT&CK kill chain tag attached to an OSINT finding.
 

@@ -32,14 +32,14 @@ from enum import StrEnum
 from pathlib import Path
 _SPRINT_ID_RE = re.compile('^F(\\d{3,})[A-Z]?(?:_[A-Z_]+)?$')
 
-class SprintIdCollision(msgspec.Struct, gc=False):
+class SprintIdCollision(Struct):
     sprint_id: str
     aliases: list[str] = field(default_factory=list)
     probe_dirs: list[str] = field(default_factory=list)
     report_paths: list[str] = field(default_factory=list)
     json_paths: list[str] = field(default_factory=list)
 
-class SprintCollisionReport(msgspec.Struct, frozen=True, gc=False):
+class SprintCollisionReport(Struct, frozen=True):
     has_collisions: bool = False
     collisions: list[SprintIdCollision] = field(default_factory=list)
     total_probes_scanned: int = 0
@@ -132,7 +132,7 @@ def render_collision_warning(report: SprintCollisionReport) -> list[str]:
         lines.append(f'**Action:** Operator reports may show ambiguous labels. Use full alias (e.g. `{coll.aliases[0]}`) to disambiguate. **Live is NOT blocked** — required artifact paths are explicit.')
     return lines
 
-class SprintIdCollisionWarning(msgspec.Struct, frozen=True, gc=False):
+class SprintIdCollisionWarning(Struct, frozen=True):
     has_collisions: bool = False
     collision_count: int = 0
     total_probes_scanned: int = 0
@@ -163,7 +163,7 @@ class NextAction(StrEnum):
     FIX_PROVIDER_SURFACE = 'fix_provider_surface'
     FIX_CONTRACT_GATE = 'fix_contract_gate'
 
-class UmaState(msgspec.Struct, frozen=True, gc=False):
+class UmaState(Struct, frozen=True):
     system_used_gib: float = 0.0
     swap_used_gib: float = 0.0
     swap_detected: bool = False
@@ -174,7 +174,7 @@ class UmaState(msgspec.Struct, frozen=True, gc=False):
     swap_policy_tier: str = 'unknown'
     swap_gate_reason: str = ''
 
-class CockpitResult(msgspec.Struct, frozen=True, gc=False):
+class CockpitResult(Struct, frozen=True):
     verdict: Verdict
     live_allowed: bool
     next_action: NextAction
@@ -212,6 +212,8 @@ class CockpitResult(msgspec.Struct, frozen=True, gc=False):
         return {'verdict': self.verdict.value, 'live_allowed': self.live_allowed, 'next_action': self.next_action.value, 'next_action_detail': self.next_action_detail, 'gate': {'decision': self.gate_decision, 'live_allowed': self.gate_live_allowed, 'reasons': self.gate_reasons, 'warnings': self.gate_warnings}, 'artifacts': {'total': self.artifact_count, 'ready': self.artifact_ready, 'missing': self.artifact_missing, 'stale': self.artifact_stale}, 'uma': {'system_used_gib': self.uma.system_used_gib, 'swap_used_gib': self.uma.swap_used_gib, 'swap_detected': self.uma.swap_detected, 'uma_state': self.uma.uma_state, 'io_only': self.uma.io_only, 'error': self.uma.error, 'hardware_constrained': self.uma.hardware_constrained, 'swap_policy_tier': self.uma.swap_policy_tier, 'swap_gate_reason': self.uma.swap_gate_reason}, 'provider_surface_ok': self.provider_surface_ok, 'missing_required_probes': self.missing_required_probes, 'fallback_schema_blocked': self.fallback_schema_blocked, 'hardware_constrained': self.hardware_constrained, 'swap_policy_tier': self.swap_policy_tier, 'swap_gate_reason': self.swap_gate_reason, 'merge_log': self.merge_log, 'sprint_collision': self.sprint_collision.to_dict() if self.sprint_collision else None, 'f224_core_ready': self.f224_core_ready, 'f224_warnings': self.f224_warnings, 'missing_f224_artifacts': self.missing_f224_artifacts, 'f231_core_ready': self.f231_core_ready, 'f231_warnings': self.f231_warnings, 'missing_f231_artifacts': self.missing_f231_artifacts, 'feed_baseline_allowed': self.feed_baseline_allowed, 'capability_live_allowed': self.capability_live_allowed, 'capability_blockers': self.capability_blockers, 'next_action_feed_baseline': self.next_action_feed_baseline, 'next_action_capability': self.next_action_capability}
 from hledac.universal._core.resource_governor import CLEAN_SWAP_MAX_GIB, DIAGNOSTIC_SWAP_MAX_GIB, HARD_BLOCK_SWAP_GIB
 from _core import aclose
+from compat.msgspec_gc_compat import Struct
+
 _EXPECTED_REPO_ROOT = '/Users/vojtechhamada/PycharmProjects/Hledac'
 _UNIVERSAL_ROOT = f'{_EXPECTED_REPO_ROOT}/hledac/universal'
 

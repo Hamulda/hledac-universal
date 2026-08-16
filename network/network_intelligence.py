@@ -28,13 +28,14 @@ from hledac.universal.utils.asyncx import safe_create_task  # ISSUE-15: asyncio.
 import time
 from collections import deque
 import msgspec
+from compat.msgspec_gc_compat import Struct
 from _core import aclose
 logger = logging.getLogger(__name__)
 MAX_NETWORKINTEL_TARGETS: int = 20
 NETWORKINTEL_TIMEOUT_S: float = 30.0
 MAX_FINDINGS_PER_TARGET: int = 100
 
-class NetworkIntelResult(msgspec.Struct, gc=False):
+class NetworkIntelResult(Struct):
     target: str
     passive_dns: list[dict]
     passive_fingerprint: list[dict]

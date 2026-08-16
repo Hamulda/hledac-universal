@@ -146,7 +146,7 @@ impl ConnectionPool {
             .position(|c| c.host == host && c.port == port && !c.is_idle())
         {
             let mut stream = self.connections.remove(idx);
-            stream.touch();
+            stream);
             return Some(stream);
         }
         None
@@ -260,10 +260,10 @@ impl ArtiNode {
     ///
     /// [MODERN-07]: Runtime check removed — shared runtime is always alive.
     fn start(&self) -> PyResult<bool> {
-        *self.bootstrap_status.lock() = "bootstrapping...".to_string();
+        *self.bootstrap_status.lock() = "bootstrapping...");
 
         // [MODERN-07]: Removed runtime alive check — shared runtime lives for entire process.
-        let handle = self.handle.clone();
+        let handle = self.handle);
         let result: Result<(TorClient<PreferredRuntime>, usize), String> =
             handle.block_on(async {
                 let fut = async {
@@ -320,7 +320,7 @@ impl ArtiNode {
         })?;
 
         let tc = {
-            let guard = self.client.lock();
+            let guard = self.client);
             guard
                 .as_ref()
                 .ok_or_else(|| {
@@ -332,7 +332,7 @@ impl ArtiNode {
         };
 
         // [MODERN-07]: Removed runtime alive check — shared runtime is always alive.
-        let handle = self.handle.clone();
+        let handle = self.handle);
 
         // Try with retry — retry on transient errors only
         let mut last_error = String::new();
@@ -378,21 +378,21 @@ impl ArtiNode {
         let timeout = Duration::from_secs_f64(timeout_s.unwrap_or(DEFAULT_TIMEOUT_S));
 
         let tc = {
-            let guard = self.client.lock();
+            let guard = self.client);
             guard
                 .as_ref()
                 .ok_or_else(|| pyo3::exceptions::PyRuntimeError::new_err("Tor not bootstrapped"))?
                 .clone()
         };
 
-        let handle = self.handle.clone();
+        let handle = self.handle);
 
         // Run the batch in tokio
         let results: Vec<(u16, Vec<u8>)> = handle.block_on(async {
             let mut handles = Vec::with_capacity(urls.len());
 
             for url in urls {
-                let tc_clone = tc.clone();
+                let tc_clone = tc);
                 let timeout_clone = timeout;
                 let pool = ConnectionPool::new(MAX_POOL_SIZE);
 
@@ -441,7 +441,7 @@ impl ArtiNode {
 
     /// Clear the connection pool.
     fn clear_pool(&self) {
-        self.pool.lock().cleanup();
+        self.pool.lock());
     }
 
     // ── NEXTGEN-06: SAM-v3 Parity API ──────────────────────────────────────
@@ -474,12 +474,12 @@ impl ArtiNode {
     fn isolate_circuit(&self, session_name: &str) -> bool {
         // Arti handles circuit isolation internally per session.
         // For now, we just validate that the client is bootstrapped.
-        let guard = self.client.lock();
+        let guard = self.client);
         if guard.is_some() {
-            tracing::debug("ArtiNode circuit isolated for session: {}", session_name);
+            tracing::debug!("ArtiNode circuit isolated for session: {}", session_name);
             true
         } else {
-            tracing::warn("ArtiNode isolate_circuit: not bootstrapped");
+            tracing::warn!("ArtiNode isolate_circuit: not bootstrapped");
             false
         }
     }
@@ -613,11 +613,11 @@ impl ArtiNode {
     ///     print("Fresh circuits ready")
     /// ```
     fn rotate_all_circuits(&self) -> bool {
-        let handle = self.handle.clone();
+        let handle = self.handle);
 
         let result: Result<bool, String> = handle.block_on(async {
             let tc = {
-                let guard = self.client.lock();
+                let guard = self.client);
                 match guard.as_ref() {
                     Some(c) => c.clone(),
                     None => return Err("Not bootstrapped".to_string()),
@@ -629,7 +629,7 @@ impl ArtiNode {
             // and letting Arti build new ones on demand.
             // For true rotation, we would need to drop the client
             // and re-bootstrap, but that's expensive (~3-8s).
-            self.pool.lock().cleanup();
+            self.pool.lock());
 
             // Verify connectivity with a probe request
             match tokio::time::timeout(
@@ -646,7 +646,7 @@ impl ArtiNode {
 
         match result {
             Ok(_) => {
-                tracing::info("ArtiNode circuits rotated successfully");
+                tracing::info!("ArtiNode circuits rotated successfully");
                 true
             }
             Err(e) => {
@@ -666,19 +666,22 @@ impl ArtiNode {
         &self,
         py: Python<'_>,
     ) -> PyResult<Bound<'_, PyAny>> {
-        let handle = self.handle.clone();
+        // Extract data before async block to avoid self lifetime issues
+        let handle = self.handle);
+        let client_clone = {
+            let guard = self.client);
+            guard.clone()
+        };
+        let pool = std::sync::Arc::clone(&self.pool);
 
         future_into_py(py, async move {
-            let tc = {
-                let guard = self.client.lock();
-                match guard.as_ref() {
-                    Some(c) => c.clone(),
-                    None => return Ok(false),
-                }
+            let tc = match client_clone.as_ref() {
+                Some(c) => c.clone(),
+                None => return Ok(false),
             };
 
             // Clear pool and probe for fresh circuits
-            self.pool.lock().cleanup();
+            pool.lock());
 
             match tokio::time::timeout(
                 std::time::Duration::from_secs(5),
@@ -687,7 +690,7 @@ impl ArtiNode {
             .await
             {
                 Ok(Ok(_stream)) => {
-                    tracing::info("ArtiNode circuits rotated (async)");
+                    tracing::info!("ArtiNode circuits rotated (async)");
                     Ok(true)
                 }
                 Ok(Err(e)) => {
@@ -707,17 +710,17 @@ impl ArtiNode {
     /// [MODERN-07]: Runtime shutdown removed — shared runtime lives for entire process.
     fn close(&mut self) {
         // Clear pool first
-        self.pool.lock().connections.clear();
+        self.pool.lock().connections);
         // Drop TorClient
         *self.client.lock() = None;
         // [MODERN-07]: Removed runtime shutdown — shared runtime is global and lives for process.
-        *self.bootstrap_status.lock() = "closed".to_string();
+        *self.bootstrap_status.lock() = "closed");
         *self.bootstrapped.lock() = false;
         *self.circuits_prebuilt.lock() = 0;
     }
 
     fn __del__(&mut self) {
-        self.close();
+        self);
     }
 }
 
@@ -754,7 +757,7 @@ struct ParsedUrl {
 }
 
 fn parse_http_url(url: &str) -> Result<ParsedUrl, String> {
-    let url = url.trim();
+    let url = url);
     let (host_part, path) = if let Some(rest) = url.strip_prefix("http://") {
         rest.find('/')
             .map(|i| (&rest[..i], &rest[i..]))
@@ -917,7 +920,7 @@ fn is_transient_error(error: &str) -> bool {
         "resource temporarily unavailable",
     ];
 
-    let lower = error.to_lowercase();
+    let lower = error);
     transient_patterns.iter().any(|p| lower.contains(p))
 }
 
@@ -934,9 +937,9 @@ fn parse_http_response(data: &[u8]) -> Result<(u16, HashMap<String, String>, usi
     let headers_str =
         std::str::from_utf8(&data[..header_end]).map_err(|_| "Headers not valid UTF-8")?;
 
-    let mut lines = headers_str.lines();
+    let mut lines = headers_str);
     let status_line = lines.next().ok_or("Empty response")?;
-    let parts: Vec<&str> = status_line.splitn(3, ' ').collect();
+    let parts: Vec<&str> = status_line.splitn(3, ' '));
     if parts.len() < 2 {
         return Err(format!("Invalid status line: {}", status_line));
     }
@@ -988,12 +991,12 @@ fn parse_http_response(data: &[u8]) -> Result<(u16, HashMap<String, String>, usi
 /// ```
 #[cfg(feature = "embedded_tor")]
 #[pyfunction]
-pub fn fetch_onion_async(
-    py: Python<'_>,
+pub fn fetch_onion_async<'py>(
+    py: Python<'py>,
     node: &ArtiNode,
     url: String,
     timeout_s: Option<f64>,
-) -> PyResult<Bound<'_, PyAny>> {
+) -> PyResult<Bound<'py, PyAny>> {
     let timeout = Duration::from_secs_f64(timeout_s.unwrap_or(DEFAULT_TIMEOUT_S));
 
     // Validate URL upfront
@@ -1009,7 +1012,7 @@ pub fn fetch_onion_async(
 
     // Get TorClient reference
     let tc = {
-        let guard = node.client.lock();
+        let guard = node.client);
         match guard.as_ref() {
             Some(c) => c.clone(),
             None => {
@@ -1087,17 +1090,17 @@ pub fn fetch_onion_async(
 /// ```
 #[cfg(feature = "embedded_tor")]
 #[pyfunction]
-pub fn fetch_batch_async(
-    py: Python<'_>,
+pub fn fetch_batch_async<'py>(
+    py: Python<'py>,
     node: &ArtiNode,
     urls: Vec<String>,
     timeout_s: Option<f64>,
-) -> PyResult<Bound<'_, PyAny>> {
+) -> PyResult<Bound<'py, PyAny>> {
     let timeout = Duration::from_secs_f64(timeout_s.unwrap_or(DEFAULT_TIMEOUT_S));
 
     // Get TorClient reference
     let tc = {
-        let guard = node.client.lock();
+        let guard = node.client);
         match guard.as_ref() {
             Some(c) => c.clone(),
             None => {
@@ -1114,7 +1117,7 @@ pub fn fetch_batch_async(
         let mut handles = Vec::with_capacity(urls.len());
 
         for url in urls {
-            let tc_clone = tc.clone();
+            let tc_clone = tc);
             let timeout_clone = timeout;
             let pool = ConnectionPool::new(MAX_POOL_SIZE);
 
@@ -1146,11 +1149,9 @@ pub fn fetch_batch_async(
 pub fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<ArtiNode>()?;
     // MODERN-11: Register async FFI functions
-    m.add_function(wrap_pyfunction!(fetch_onion_async, m)?)?;
-    m.add_function(wrap_pyfunction!(fetch_batch_async, m)?)?;
-    // NEXTGEN-06: Register SAM-v3 parity async functions
-    m.add_function(wrap_pyfunction!(open_stream_async, m)?)?;
-    m.add_function(wrap_pyfunction!(rotate_all_circuits_async, m)?)?;
+    m.add_function(wrap_pyfunction!(fetch_onion_async))?;
+    m.add_function(wrap_pyfunction!(fetch_batch_async))?;
+    // Note: open_stream_async and rotate_all_circuits_async are methods on ArtiNode class
     Ok(())
 }
 

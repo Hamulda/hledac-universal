@@ -43,7 +43,7 @@ def struct(
     kw_only: bool = False,
     unsafe_hash: bool = False,
     order: bool = False,
-) -> type[object]:
+) -> type:
     """
     msgspec.Struct factory with gc=False → weakref=False translation.
 
@@ -70,32 +70,33 @@ def struct(
             to conflicting values.
     """
     # Translate gc → weakref for msgspec >= 0.22
+    kwargs: dict[str, object] = {
+        "frozen": frozen,
+        "kw_only": kw_only,
+        "unsafe_hash": unsafe_hash,
+        "order": order,
+    }
+
     if _MSGSPEC_V022_PLUS:
         if gc is not None:
             # gc=False → weakref=False, gc=True → weakref=True (identity mapping)
             if weakref and not gc:
                 raise ValueError(
                     "conflicting values: gc=False but weakref=True"
-    )
+                )
             if not weakref and gc:
                 raise ValueError(
                     "conflicting values: gc=True but weakref=False"
-    )
+                )
             weakref = gc  # identity: gc=False sets weakref=False, gc=True sets weakref=True
-        return msgspec.Struct(
-            frozen=frozen,
-            weakref=weakref,
-            kw_only=kw_only,
-            unsafe_hash=unsafe_hash,
-            order=order,
-    )
+        kwargs["weakref"] = weakref
+        return type("AnonymousStruct", (msgspec.Struct,), kwargs)
     else:
         # msgspec < 0.22: pass gc through directly (native support)
         # msgspec 0.21.x accepts `gc` kwarg: gc=False = no GC tracking (fast path)
-        kwargs: dict[str, object] = {"frozen": frozen, "kw_only": kw_only}
         if gc is not None:
             kwargs["gc"] = gc
-        return msgspec.Struct(**kwargs)
+        return type("AnonymousStruct", (msgspec.Struct,), kwargs)
 
 
 # Alias for direct subclassing pattern
@@ -111,7 +112,6 @@ class Struct(msgspec.Struct, gc=False):
     All `gc=False` usages in the codebase should migrate to `Struct` or use
     ``struct(gc=False)`` as the base class.
     """
-    __slots__ = ()
 
     def __init_subclass__(cls, gc: bool | None = None, **kwargs: object) -> None:
         """

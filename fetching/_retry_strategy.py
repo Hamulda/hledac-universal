@@ -240,27 +240,33 @@ TTFB_TIMEOUT_S: Final[float] = 1.5
 # --- Blitz mode dead host tracking ---
 import threading
 from _core import aclose
+from _core.lock_registry import LockCategory, register_lock
 
 _blitz_dead_hosts: set[str] = set()
-_blitz_dead_hosts_lock: threading.Lock = threading.Lock()
+
+
+@register_lock(LockCategory.NETWORK)
+def _blitz_dead_hosts_lock() -> threading.Lock:
+    """Module-level lock for blitz dead host tracking."""
+    return threading.Lock()
 
 
 def mark_blitz_host_dead(host: str) -> None:
     """BLITZ-15: Mark a host as dead for the sprint duration after retry exhaustion."""
-    with _blitz_dead_hosts_lock:
+    with _blitz_dead_hosts_lock():
         _blitz_dead_hosts.add(host)
 
 
 def is_blitz_host_dead(host: str) -> bool:
     """BLITZ-15: Check if a host has been marked dead in blitz mode."""
-    with _blitz_dead_hosts_lock:
+    with _blitz_dead_hosts_lock():
         return host in _blitz_dead_hosts
 
 
 def reset_blitz_dead_hosts() -> None:
     """BLITZ-15: Clear dead-host tracking (called at sprint start)."""
     global _blitz_dead_hosts
-    with _blitz_dead_hosts_lock:
+    with _blitz_dead_hosts_lock():
         _blitz_dead_hosts.clear()
 
 

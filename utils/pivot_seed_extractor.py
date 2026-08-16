@@ -13,6 +13,7 @@ No network, no ML, no heavy imports.
 import re
 from dataclasses import dataclass
 import msgspec
+from compat.msgspec_gc_compat import Struct
 from typing import Final
 from _core import aclose
 
@@ -32,7 +33,7 @@ MAX_SEEDS: Final[int] = 256
 # ----------------------------------------------------------------------
 # Dataclasses
 # ----------------------------------------------------------------------
-class PivotSeed(msgspec.Struct, frozen=True, gc=False):
+class PivotSeed(Struct, frozen=True):
     """A single pivot seed extracted from feed payload text."""
 
     value: str
@@ -42,7 +43,7 @@ class PivotSeed(msgspec.Struct, frozen=True, gc=False):
     reason: str
 
 
-class PivotSeedExtractionResult(msgspec.Struct, frozen=True, gc=False):
+class PivotSeedExtractionResult(Struct, frozen=True):
     """Result of a pivot seed extraction run."""
 
     seeds: tuple[PivotSeed, ...]

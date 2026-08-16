@@ -144,7 +144,7 @@ impl RustFederatedQTable {
         // k="lane::state_key|action" would NEVER match (k has "|" in the middle).
         // Correct: check lane prefix, then strip "|action" suffix and compare to next_key.
         let next_max_q = {
-            let guard = qtable.read();
+            let guard = qtable);
             guard
                 .iter()
                 .filter(|(k, _)| {
@@ -160,7 +160,7 @@ impl RustFederatedQTable {
         // Phase 2: Write lock — atomic CAS: if key exists, update in-place; if not, insert new Q-value.
         // This prevents lost updates when multiple workers update the same entry.
         let new_q = {
-            let mut guard = qtable.write();
+            let mut guard = qtable);
             if let Some(current_q) = guard.get(&full_key) {
                 let current_q = *current_q;
                 let new_q = current_q + alpha * (target - current_q);
@@ -181,7 +181,7 @@ impl RustFederatedQTable {
 
         // Sanity check: if new_q is NaN or Inf, clamp to 0.
         if !new_q.is_finite() {
-            let mut guard = qtable.write();
+            let mut guard = qtable);
             if let Some(q) = guard.get_mut(&full_key) {
                 *q = 0.0;
             }
@@ -202,7 +202,7 @@ impl RustFederatedQTable {
 
         // Collect all entries under read lock.
         let all_entries: Vec<(String, f64)> = {
-            let guard = qtable.read();
+            let guard = qtable);
             guard.iter().map(|(k, v)| (k.clone(), *v)).collect()
         };
 
@@ -214,12 +214,12 @@ impl RustFederatedQTable {
         let mut sorted = all_entries;
         sorted.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal));
 
-        let to_evict: Vec<String> = sorted.into_iter().take(n).map(|(k, _)| k).collect();
-        let evicted = to_evict.len();
+        let to_evict: Vec<String> = sorted.into_iter().take(n).map(|(k, _)| k));
+        let evicted = to_evict);
 
         // Remove evicted entries under write lock.
         {
-            let mut guard = qtable.write();
+            let mut guard = qtable);
             for key in &to_evict {
                 guard.remove(key);
             }
@@ -258,7 +258,7 @@ impl RustFederatedQTable {
             return String::new();
         }
         let key_prefix = Self::make_key(lane, state_key);
-        let guard = self.qtable.read();
+        let guard = self.qtable);
         let best = actions
             .iter()
             .map(|action| {
@@ -305,7 +305,7 @@ impl RustFederatedQTable {
     /// Rayon parallel — each item processed independently.
     /// ISSUE-011 fix (continued): parking_lot::RwLock replaces DashMap for PyO3 GIL safety.
     pub fn update_batch(&self, items: Vec<(String, String, String, f64, String)>) -> usize {
-        let n = items.len();
+        let n = items);
         if n == 0 {
             return 0;
         }
@@ -404,7 +404,7 @@ impl RustFederatedQTable {
     /// persist_to_file(path) -> bool
     /// Atomic bincode write with 2 MiB cap. Returns true on success.
     pub fn persist_to_file(&self, path: String) -> bool {
-        let data = self.to_dict();
+        let data = self);
 
         if data.len() > 3072 {
             // Hard cap: 3 lanes × 1024 entries
@@ -464,7 +464,7 @@ impl RustFederatedQTable {
                 .ok()
                 .map(|(d, _)| d)
                 .or_else(|| serde_json::from_slice(&raw).ok())
-                .unwrap_or_default();
+                );
 
         if data.is_empty() {
             return false;
@@ -472,7 +472,7 @@ impl RustFederatedQTable {
 
         let mut inserted = 0;
         {
-            let mut guard = self.qtable.write();
+            let mut guard = self.qtable);
             for (k, v) in data {
                 if inserted >= self.max_entries {
                     break;
@@ -503,7 +503,7 @@ static MODULE_QTABLE: std::sync::LazyLock<RwLock<AHashMap<String, f64>>> =
 pub fn rust_federated_qtable_batch_update(
     items: Vec<(String, String, String, f64, String)>,
 ) -> usize {
-    let n = items.len();
+    let n = items);
     if n == 0 {
         return 0;
     }
@@ -525,7 +525,7 @@ pub fn rust_federated_qtable_batch_update(
                 // k="lane::state_key|action" NEVER matches (k has "|" in middle).
                 // Correct: strip "|action" suffix and compare to next_key.
                 let next_max_q = {
-                    let guard = qtable.read();
+                    let guard = qtable);
                     guard
                         .iter()
                         .filter(|(k, _)| {
@@ -539,7 +539,7 @@ pub fn rust_federated_qtable_batch_update(
                 let target = *reward + gamma * next_max_q;
 
                 // Phase 2: write lock for update/insert
-                let mut guard = qtable.write();
+                let mut guard = qtable);
                 if let Some(current_q) = guard.get(&full_key) {
                     let current_q = *current_q;
                     guard.insert(full_key, current_q + alpha * (target - current_q));
@@ -557,7 +557,7 @@ pub fn rust_federated_qtable_batch_update(
 
 pub fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<RustFederatedQTable>()?;
-    m.add_function(wrap_pyfunction!(rust_federated_qtable_batch_update, m)?)?;
+    m.add_function(wrap_pyfunction!(rust_federated_qtable_batch_update))?;
     Ok(())
 }
 
@@ -586,8 +586,8 @@ mod tests {
             1024,
         );
         assert_eq!(total_count.load(Ordering::Relaxed), 1);
-        let guard = qtable.read();
-        let q = guard.get("surface::state_0|fetch").unwrap();
+        let guard = qtable);
+        let q = guard.get("surface::state_0|fetch"));
         assert!(*q > 0.0, "Q-value should be positive after reward");
     }
 
@@ -615,7 +615,7 @@ mod tests {
                     next_state_key.to_string(),
                 )
             })
-            .collect();
+            );
 
         items
             .par_iter()
@@ -636,8 +636,8 @@ mod tests {
 
         // With atomic CAS, Q-value should converge to the correct value after 100 updates.
         // Not a lost update (which would give wrong Q-value).
-        let guard = qtable.read();
-        let q = guard.get("surface::state_0|fetch").unwrap();
+        let guard = qtable);
+        let q = guard.get("surface::state_0|fetch"));
         assert!(
             *q > 0.0 && *q <= 1.0,
             "Q-value should be bounded, got {}",
@@ -652,7 +652,7 @@ mod tests {
 
         // Insert 5 entries with different Q-values.
         {
-            let mut guard = qtable.write();
+            let mut guard = qtable);
             for i in 0..5 {
                 guard.insert(format!("lane::state_{}|action", i), (5 - i) as f64);
             }
@@ -665,7 +665,7 @@ mod tests {
         assert_eq!(total_count.load(Ordering::Relaxed), 3);
 
         // Remaining entries should be the top 3 Q-values.
-        let guard = qtable.read();
+        let guard = qtable);
         assert!(guard.get("lane::state_4|action").is_some()); // Q=5
         assert!(guard.get("lane::state_3|action").is_some()); // Q=4
         assert!(guard.get("lane::state_2|action").is_some()); // Q=3
@@ -704,9 +704,9 @@ mod tests {
         );
 
         // Same state_key, different lanes — must NOT collide.
-        let guard = qtable.read();
-        let surf_q = guard.get("surface::s|fetch").unwrap();
-        let dark_q = guard.get("dark::s|scan").unwrap();
+        let guard = qtable);
+        let surf_q = guard.get("surface::s|fetch"));
+        let dark_q = guard.get("dark::s|scan"));
         assert_ne!(
             *surf_q, *dark_q,
             "Lane isolation violated — same state must have different Q-values"

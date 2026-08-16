@@ -23,6 +23,8 @@ import msgspec
 from enum import Enum
 from pathlib import Path
 from _core import aclose
+from compat.msgspec_gc_compat import Struct
+
 
 class ClaimStatus(Enum):
     OPEN = 'OPEN'
@@ -32,7 +34,7 @@ class ClaimStatus(Enum):
     FALSE_POSITIVE = 'FALSE_POSITIVE'
     UNKNOWN = 'UNKNOWN'
 
-class ClaimResult(msgspec.Struct, frozen=True, gc=False):
+class ClaimResult(Struct, frozen=True):
     claim_id: str
     original_text: str
     status: ClaimStatus

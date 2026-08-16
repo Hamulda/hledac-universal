@@ -12,10 +12,11 @@ from __future__ import annotations
 
 
 import msgspec
+from compat.msgspec_gc_compat import Struct
 from _core import aclose
 
 
-class ActionResult(msgspec.Struct, gc=False):
+class ActionResult(Struct):
     """Unified result from any research action.
 
     Msgspec.Struct benefits:

@@ -37,6 +37,7 @@ import logging
 import traceback
 from dataclasses import dataclass
 import msgspec
+from compat.msgspec_gc_compat import Struct
 from typing import TYPE_CHECKING, Any
 from collections.abc import Awaitable, Callable
 from hledac.universal.utils.asyncx import safe_wait_for
@@ -45,14 +46,14 @@ if TYPE_CHECKING:
     from collections.abc import Iterable
 logger = logging.getLogger(__name__)
 
-class TwoPassPipelineConfig(msgspec.Struct, gc=False):
+class TwoPassPipelineConfig(Struct):
     """Configuration for a two-pass pipeline."""
     queue_size: int = 512
     label: str = 'two_pass'
     consumer_concurrency: int = 8
     timeout_s: float | None = None
 
-class PipelineStats(msgspec.Struct, gc=False):
+class PipelineStats(Struct):
     """Runtime statistics for a two-pass pipeline."""
     produced: int = 0
     consumed: int = 0

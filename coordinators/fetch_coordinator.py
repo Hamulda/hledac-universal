@@ -35,6 +35,7 @@ from typing import Any
 from operator import attrgetter, itemgetter
 import httpx
 import msgspec
+from compat.msgspec_gc_compat import Struct
 from hledac.universal.compat.msgspec_gc_compat import Struct
 import orjson
 from cachetools import TTLCache

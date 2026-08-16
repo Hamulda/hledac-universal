@@ -15,6 +15,7 @@ import os
 import time
 from dataclasses import dataclass, field
 import msgspec
+from compat.msgspec_gc_compat import Struct
 import httpx
 from hledac.universal._core.concurrency import ConcurrencyCategory, get_semaphore
 from hledac.universal.utils.asyncx import parallel_ok
@@ -28,7 +29,7 @@ RATE_LIMIT_DELAY = 5.0
 OSINT_INSTANCES = ['https://infosec.exchange', 'https://mastodon.social', 'https://scholar.social', 'https://fosstodon.org', 'https://hachyderm.io']
 DEFAULT_INSTANCES = OSINT_INSTANCES[:2]
 
-class FediversePost(msgspec.Struct, gc=False):
+class FediversePost(Struct):
     """Single Mastodon/Fediverse status, normalised to OSINT-friendly fields.
 
     `to_dict()` reconstructs the legacy dict shape consumed by
@@ -58,7 +59,7 @@ class FediversePost(msgspec.Struct, gc=False):
         author_handle = self.author or ''
         return {'url': self.url, 'id': post_id, 'content': self.content, 'created_at': self.created_at, 'account': {'username': author_handle, 'display_name': author_handle}}
 
-class FediverseResult(msgspec.Struct, frozen=True, gc=False):
+class FediverseResult(Struct, frozen=True):
     """Result envelope for a single (instance, query) cell.
 
     `posts` is always a list (empty on error). `error` is `None` on
@@ -70,7 +71,7 @@ class FediverseResult(msgspec.Struct, frozen=True, gc=False):
     posts: list[FediversePost] = field(default_factory=list)
     error: str | None = None
 
-class FediverseAdapter(msgspec.Struct, frozen=True, gc=False):
+class FediverseAdapter(Struct, frozen=True):
     """Search public Mastodon/Fediverse for OSINT signals.
 
     Strategy: Use multiple public instances to avoid rate limits.

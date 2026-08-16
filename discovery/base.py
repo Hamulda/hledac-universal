@@ -25,6 +25,7 @@ from typing import TYPE_CHECKING
 from collections.abc import AsyncIterator
 
 import msgspec
+from compat.msgspec_gc_compat import Struct
 from tenacity import (
     retry,
     retry_if_exception_type,
@@ -42,7 +43,7 @@ logger = logging.getLogger(__name__)
 # DiscoveryResult — canonical output type
 # -----------------------------------------------------------------------
 
-class DiscoveryResult(msgspec.Struct, frozen=True, gc=False):
+class DiscoveryResult(Struct, frozen=True):
     """
     Canonical output type for all discovery adapters.
 
@@ -210,7 +211,7 @@ class RateLimiter:
 # DiscoveryHit — shared DTO for batch-oriented adapters (SSOT, F350M-R)
 # -----------------------------------------------------------------------
 
-class DiscoveryHit(msgspec.Struct, frozen=True, gc=False):
+class DiscoveryHit(Struct, frozen=True):
     """
     Single web discovery result for batch-oriented adapters.
 
@@ -238,7 +239,7 @@ class DiscoveryHit(msgspec.Struct, frozen=True, gc=False):
     ct_common_name: str | None = None
 
 
-class DiscoveryBatchResult(msgspec.Struct, frozen=True, gc=False):
+class DiscoveryBatchResult(Struct, frozen=True):
     """
     Result surface for a single discovery call.
 
@@ -423,6 +424,9 @@ class BaseDiscoveryMixin(ABC):
                 self.retry_attempts,
                 exc,
     )
+        finally:
+            # PEP 479: Cleanup when generator is abandoned mid-stream
+            results = None
 
     async def health_check(self) -> bool:
         """

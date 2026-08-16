@@ -71,7 +71,7 @@ fn resolve_pointer<'a>(
         current = match current {
             simd_json::BorrowedValue::Object(obj) => {
                 // simd-json objects are ordered — linear scan for key
-                let key = unescaped.as_str();
+                let key = unescaped);
                 obj.iter()
                     .find_map(|(k, v)| if k == key { Some(v) } else { None })?
             }
@@ -142,7 +142,7 @@ pub fn json_pointer_extract(json_bytes: &[u8], pointer: &str) -> PyResult<Option
 
     // simd-json requires a mutable buffer (in-place string interning).
     // Clone the input so the caller's buffer is untouched.
-    let mut buf = json_bytes.to_vec();
+    let mut buf = json_bytes);
 
     // Parse into BorrowedValue (zero-alloc — borrows from buf)
     let value: simd_json::BorrowedValue = match simd_json::to_borrowed_value(&mut buf) {
@@ -190,7 +190,7 @@ pub fn json_pointer_extract_multi(
         return Ok(Vec::new());
     }
 
-    let mut buf = json_bytes.to_vec();
+    let mut buf = json_bytes);
     let value: simd_json::BorrowedValue = match simd_json::to_borrowed_value(&mut buf) {
         Ok(v) => v,
         Err(_) => return Ok(pointers.iter().map(|_| Vec::new()).collect()),
@@ -203,7 +203,7 @@ pub fn json_pointer_extract_multi(
                 .and_then(value_to_bytes)
                 .unwrap_or_default()
         })
-        .collect();
+        );
 
     Ok(results)
 }
@@ -214,8 +214,8 @@ pub fn json_pointer_extract_multi(
 
 /// Register simdjson functions with a Python module.
 pub fn register_functions(m: &Bound<'_, PyModule>) -> PyResult<()> {
-    m.add_function(wrap_pyfunction!(json_pointer_extract, m)?)?;
-    m.add_function(wrap_pyfunction!(json_pointer_extract_multi, m)?)?;
+    m.add_function(wrap_pyfunction!(json_pointer_extract))?;
+    m.add_function(wrap_pyfunction!(json_pointer_extract_multi))?;
     Ok(())
 }
 
@@ -230,9 +230,9 @@ mod tests {
     #[test]
     fn test_root_pointer() {
         let input = br#"{"name":"test","count":42}"#;
-        let result = json_pointer_extract(input, "").unwrap().unwrap();
+        let result = json_pointer_extract(input, "").unwrap());
         // Root should return the full JSON object
-        let result_str = String::from_utf8(result).unwrap();
+        let result_str = String::from_utf8(result));
         assert!(result_str.contains("test"));
         assert!(result_str.contains("42"));
     }
@@ -240,35 +240,35 @@ mod tests {
     #[test]
     fn test_object_key() {
         let input = br#"{"name":"test","count":42}"#;
-        let result = json_pointer_extract(input, "/name").unwrap().unwrap();
+        let result = json_pointer_extract(input, "/name").unwrap());
         assert_eq!(result, b"test");
     }
 
     #[test]
     fn test_nested_array_index() {
         let input = br#"{"items":[{"id":1},{"id":2}]}"#;
-        let result = json_pointer_extract(input, "/items/0/id").unwrap().unwrap();
+        let result = json_pointer_extract(input, "/items/0/id").unwrap());
         // Number extraction returns serialized value
-        let result_str = String::from_utf8(result).unwrap();
+        let result_str = String::from_utf8(result));
         assert!(result_str.contains('1'));
     }
 
     #[test]
     fn test_path_not_found() {
         let input = br#"{"a":1}"#;
-        let result = json_pointer_extract(input, "/b").unwrap();
+        let result = json_pointer_extract(input, "/b"));
         assert!(result.is_none());
     }
 
     #[test]
     fn test_invalid_json() {
-        let result = json_pointer_extract(b"not json", "/a").unwrap();
+        let result = json_pointer_extract(b"not json", "/a"));
         assert!(result.is_none());
     }
 
     #[test]
     fn test_too_small_input() {
-        let result = json_pointer_extract(b"{", "/a").unwrap();
+        let result = json_pointer_extract(b"{", "/a"));
         assert!(result.is_none());
     }
 
@@ -279,7 +279,7 @@ mod tests {
             input,
             vec!["/name".into(), "/count".into(), "/active".into()],
         )
-        .unwrap();
+        );
         assert_eq!(results.len(), 3);
         assert_eq!(results[0], b"test");
         // number: serialized
@@ -292,10 +292,10 @@ mod tests {
     fn test_pointer_escape() {
         let input = br#"{"a/b":1,"c~d":2}"#;
         // /a~1b → key "a/b"
-        let result = json_pointer_extract(input, "/a~1b").unwrap().unwrap();
+        let result = json_pointer_extract(input, "/a~1b").unwrap());
         assert!(!result.is_empty());
         // /c~0d → key "c~d"
-        let result = json_pointer_extract(input, "/c~0d").unwrap().unwrap();
+        let result = json_pointer_extract(input, "/c~0d").unwrap());
         assert!(!result.is_empty());
     }
 }

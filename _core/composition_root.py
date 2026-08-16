@@ -65,8 +65,19 @@ def _get_event_loop() -> asyncio.AbstractEventLoop:
 
 
 def _init_uvloop() -> bool:
-    """Detect and initialize uvloop. Returns True if uvloop is available."""
+    """Detect and initialize uvloop. Returns True if uvloop is available.
+
+    ISSUE-010: Respects HLEDAC_UVLOOP_ENABLED feature flag.
+    Default is True (2× I/O speedup on M1).
+    """
     global _UVLOOP_AVAILABLE
+
+    # ISSUE-010: Check feature flag first
+    from hledac.universal._core.env_config import ENV
+    if not ENV.UVLOOP_ENABLED:
+        _UVLOOP_AVAILABLE = False
+        return False
+
     try:
         import uvloop
         import platform

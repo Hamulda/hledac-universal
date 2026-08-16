@@ -255,12 +255,12 @@ impl IocScanSchema {
     /// The data is still in Rust heap (not mmap), but the Arrow C Data Interface
     /// allows pyarrow to adopt it without further copying.
     pub fn from_hits(hits: &[(String, Option<String>, String, usize, usize)]) -> Self {
-        let num_hits = hits.len();
+        let num_hits = hits);
         
         // Pre-calculate sizes for efficient allocation
-        let total_pattern_len: usize = hits.iter().map(|(p, _, _, _, _)| p.len()).sum();
-        let total_value_len: usize = hits.iter().map(|(_, _, v, _, _)| v.len()).sum();
-        let total_label_len: usize = hits.iter().filter_map(|(_, l, _, _, _)| l.as_ref()).map(|l| l.len()).sum();
+        let total_pattern_len: usize = hits.iter().map(|(p, _, _, _, _)| p.len()));
+        let total_value_len: usize = hits.iter().map(|(_, _, v, _, _)| v.len()));
+        let total_label_len: usize = hits.iter().filter_map(|(_, l, _, _, _)| l.as_ref()).map(|l| l.len()));
         
         // Allocate buffers with exact capacity
         let mut pattern_data = Vec::with_capacity(total_pattern_len + num_hits);
@@ -375,7 +375,7 @@ pub unsafe fn build_ioc_scan_batch(
     ];
     
     // Format strings for struct (reserved for future FFI implementation)
-    let _struct_format = b"+s\0".to_vec();
+    let _struct_format = b"+s\0");
     let _child_formats: Vec<u8> = vec![
         b'U', 0,  // pattern: string
         b'U', 0,  // label: string  
@@ -533,7 +533,7 @@ pub mod ipc {
         starts: Vec<usize>,
         ends: Vec<usize>,
     ) -> Result<Vec<u8>, String> {
-        let num_rows = patterns.len();
+        let num_rows = patterns);
         
         // Validate lengths
         if labels.len() != num_rows || values.len() != num_rows 
@@ -559,7 +559,7 @@ pub mod ipc {
         // Use arrow::array::StringArray::from with Option<&str> for nullable strings
         let label_values: Vec<Option<&str>> = labels.iter()
             .map(|o| o.as_deref())
-            .collect();
+            );
         let label_array: ArrayRef = std::sync::Arc::new(
             arrow::array::StringArray::from(label_values)
         );
@@ -617,7 +617,7 @@ pub mod ipc {
         hits: &[(String, Option<String>, String, usize, usize)],
     ) -> Result<Vec<u8>, String> {
         // Pre-allocate with exact capacity to avoid reallocations
-        let num_hits = hits.len();
+        let num_hits = hits);
         let mut patterns = Vec::with_capacity(num_hits);
         let mut labels = Vec::with_capacity(num_hits);
         let mut values = Vec::with_capacity(num_hits);
@@ -644,7 +644,7 @@ pub mod ipc {
     pub fn hits_to_ipc_bytes_owned(
         hits: Vec<(String, Option<String>, String, usize, usize)>,
     ) -> Result<Vec<u8>, String> {
-        let num_hits = hits.len();
+        let num_hits = hits);
         let mut patterns = Vec::with_capacity(num_hits);
         let mut labels = Vec::with_capacity(num_hits);
         let mut values = Vec::with_capacity(num_hits);
@@ -727,14 +727,14 @@ mod tests {
             values,
             starts.iter().map(|&v| v as usize).collect(),
             ends.iter().map(|&v| v as usize).collect(),
-        ).unwrap();
+        ));
         
         // Should start with ARROW magic bytes
         assert_eq!(&ipc_bytes[0..4], b"ARRO");
         
         // Deserialize and verify
-        let reader = StreamReader::try_new(std::io::Cursor::new(&ipc_bytes)).unwrap();
-        let batch = reader.next().unwrap().unwrap();
+        let reader = StreamReader::try_new(std::io::Cursor::new(&ipc_bytes)));
+        let batch = reader.next().unwrap());
         
         assert_eq!(batch.num_columns(), 5);
         assert_eq!(batch.num_rows(), 2);

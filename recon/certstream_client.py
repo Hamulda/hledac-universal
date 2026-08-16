@@ -46,6 +46,7 @@ from collections.abc import Callable
 from typing import Any
 
 import msgspec
+from compat.msgspec_gc_compat import Struct
 from _core import aclose
 
 logger = logging.getLogger(__name__)
@@ -66,7 +67,7 @@ CLOSE_TIMEOUT = 5.0
 # Data Structures
 # ============================================================================
 
-@msgspec.Struct(frozen=True, gc=False)
+@Struct(frozen=True)
 class CertstreamCertificate:
     """Parsed certificate from Certstream WebSocket.
 
@@ -90,7 +91,7 @@ class CertstreamCertificate:
     seen: float
 
 
-@msgspec.Struct(frozen=False, gc=False)
+@Struct(frozen=False)
 class CertstreamStats:
     """Real-time statistics for Certstream monitoring.
 

@@ -21,6 +21,7 @@ from collections.abc import Awaitable, Callable
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 import msgspec
+from compat.msgspec_gc_compat import Struct
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
@@ -40,7 +41,7 @@ def _get_mlx() -> Any | None:  # type: ignore[type-arg]
             _mlx = None
     return _mlx
 
-class ModelEntry(msgspec.Struct, gc=False):
+class ModelEntry(Struct):
     """ISSUE #15: Přidána weakref pro referenční počítání."""
     model: MLXModel
     tokenizer: MLXTokenizer | None = None
@@ -50,7 +51,7 @@ class ModelEntry(msgspec.Struct, gc=False):
     ref_count: int = 1  # ISSUE #15: Reference count pro pool management
     weak_ref: Any = None  # type: ignore[assignment]  # ISSUE #15: weakref pro GC-safe referenci
 
-class MLXModelPoolConfig(msgspec.Struct, gc=False):
+class MLXModelPoolConfig(Struct):
     budget_gb: float = 4.0
     min_eviction_interval_s: float = 1.0
     auto_clear_cache: bool = True

@@ -53,6 +53,15 @@ class BrainCoordinator:
     M1 8GB: Lazy initialization of components. Nothing is loaded until first use.
     """
 
+    __slots__ = (
+        '_hypothesis',
+        '_hypothesis_engine',
+        '_llm',
+        '_llm_engine',
+        '_prompt',
+        '_prompt_builder',
+    )
+
     def __init__(
         self,
         llm_engine: GenerationFacade,

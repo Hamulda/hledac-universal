@@ -45,6 +45,7 @@ from __future__ import annotations
 
 import contextvars
 import msgspec
+from compat.msgspec_gc_compat import Struct
 from typing import Any
 from _core import aclose
 
@@ -54,7 +55,7 @@ from _core import aclose
 # ─────────────────────────────────────────────────────────────────────────────
 
 
-class RuntimeState(msgspec.Struct, frozen=True, gc=False):
+class RuntimeState(Struct, frozen=True):
     """
     Canonical runtime state — single source of truth for global runtime flags.
 
@@ -109,7 +110,7 @@ def mark_uvloop_installed() -> None:
 # ─────────────────────────────────────────────────────────────────────────────
 
 
-class ResearchContextSnapshot(msgspec.Struct, frozen=True, gc=False):
+class ResearchContextSnapshot(Struct, frozen=True):
     """
     Immutable snapshot of ResearchContext at sprint start.
 
@@ -172,7 +173,7 @@ class ResearchContextSnapshot(msgspec.Struct, frozen=True, gc=False):
 # ─────────────────────────────────────────────────────────────────────────────
 
 
-class SprintMetrics(msgspec.Struct, frozen=True, gc=False):
+class SprintMetrics(Struct, frozen=True):
     """
     Per-sprint atomic counters — replaces mutable SprintSchedulerResult fields.
 
@@ -328,7 +329,7 @@ def reset_sprint_metrics() -> None:
 # ─────────────────────────────────────────────────────────────────────────────
 
 
-class SprintRunSnapshot(msgspec.Struct, frozen=True, gc=False):
+class SprintRunSnapshot(Struct, frozen=True):
     """
     Immutable snapshot of all sprint state at a point in time.
 

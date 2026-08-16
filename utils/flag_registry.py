@@ -23,11 +23,12 @@ Section 3.1 (implication rules), 3.2 (mutual exclusion),
 import os
 from dataclasses import dataclass, replace
 import msgspec
+from compat.msgspec_gc_compat import Struct
 from typing import Literal
 FlagGroup = Literal['network', 'brain', 'storage', 'dark_surface', 'intelligence_apis', 'forensics', 'stealth', 'system']
 VALID_GROUPS: frozenset[str] = frozenset({'network', 'brain', 'storage', 'dark_surface', 'intelligence_apis', 'forensics', 'stealth', 'system'})
 
-class FlagSpec(msgspec.Struct, frozen=True, gc=False):
+class FlagSpec(Struct, frozen=True):
     """Canonical specification of a single HLEDAC_* feature flag.
 
     Attributes:

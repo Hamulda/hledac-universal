@@ -22,6 +22,7 @@ import logging
 import threading
 from dataclasses import dataclass, field
 import msgspec
+from compat.msgspec_gc_compat import Struct
 from enum import IntEnum
 from typing import Any, Generic, TypeVar
 from collections.abc import Callable
@@ -72,7 +73,7 @@ _MAX_ENTRIES_ELEVATED = 50_000
 _MAX_ENTRIES_CRITICAL = 10_000
 
 
-class AdaptiveCacheConfig(msgspec.Struct, gc=False):
+class AdaptiveCacheConfig(Struct):
     """
     Konfigurácia adaptívnej cache.
 
@@ -92,7 +93,7 @@ class AdaptiveCacheConfig(msgspec.Struct, gc=False):
     pressure_threshold_critical_gib: float = 1.0
 
 
-class CacheStats(msgspec.Struct, gc=False):
+class CacheStats(Struct):
     """Cache statistics."""
     hits: int = 0
     misses: int = 0

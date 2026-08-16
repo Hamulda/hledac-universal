@@ -38,6 +38,8 @@ from dataclasses import dataclass, field
 import msgspec
 from pathlib import Path
 from _core import aclose
+from compat.msgspec_gc_compat import Struct
+
 
 # ---------------------------------------------------------------------------
 # sys.path bootstrap — must run BEFORE any hledac.* / utils.* import.
@@ -82,7 +84,7 @@ _SKIP_PATH_FRAGMENTS = (
     )
 
 
-class FlagReport(msgspec.Struct, gc=False):
+class FlagReport(Struct):
     """Per-flag result.
 
     ``slots=True`` keeps the report footprint bounded — each instance

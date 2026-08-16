@@ -21,6 +21,7 @@ M1 8GB constraints:
 """
 import logging
 import msgspec
+from compat.msgspec_gc_compat import Struct
 import os
 import time
 from dataclasses import dataclass
@@ -32,7 +33,7 @@ from hledac.universal.utils._patterns import lazy_property
 from _core import aclose
 RAM_THRESHOLD = 0.7
 
-class HypothesisResult(msgspec.Struct, gc=False):
+class HypothesisResult(Struct):
     """Result of hypothesis generation run."""
     enabled: bool
     hypotheses_generated: int

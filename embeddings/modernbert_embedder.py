@@ -18,6 +18,7 @@ import logging
 import threading
 from dataclasses import dataclass
 import msgspec
+from compat.msgspec_gc_compat import Struct
 import numpy as np
 from _core import aclose
 logger = logging.getLogger(__name__)
@@ -79,7 +80,7 @@ except ImportError:
     MLX_EMBEDDINGS_AVAILABLE = False
     _ModernBERTMLXLoader = None
 
-class ModernBERTConfig(msgspec.Struct, gc=False):
+class ModernBERTConfig(Struct):
     """Configuration for ModernBERT embedder."""
     model_path: str = 'nomic-ai/modernbert-embed-base'
     max_seq_len: int = 512

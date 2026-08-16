@@ -34,6 +34,7 @@ import re
 import time
 from dataclasses import dataclass
 import msgspec
+from compat.msgspec_gc_compat import Struct
 from _core import aclose
 logger = logging.getLogger(__name__)
 MAX_RESPONSE_BYTES: int = 50 * 1024 * 1024
@@ -54,7 +55,7 @@ GTYPE_TN3270 = 'T'
 GTYPE_GIF = 'g'
 GTYPE_IMAGE = 'I'
 
-class GopherResponse(msgspec.Struct, gc=False):
+class GopherResponse(Struct):
     """Response from a Gopher request."""
     selector: str
     content: bytes
@@ -71,7 +72,7 @@ class GopherResponse(msgspec.Struct, gc=False):
     def size(self) -> int:
         return len(self.content)
 
-class GopherItem(msgspec.Struct, gc=False):
+class GopherItem(Struct):
     """Single item in a Gopher directory listing."""
     item_type: str
     display_string: str
@@ -88,7 +89,7 @@ class GopherItem(msgspec.Struct, gc=False):
     def is_file(self) -> bool:
         return self.item_type == GTYPE_FILE
 
-class GopherFinding(msgspec.Struct, gc=False):
+class GopherFinding(Struct):
     """Sprint F300: msgspec.Struct for gopher findings.
 
     Represents parsed gopher content as a finding for OSINT.

@@ -29,6 +29,7 @@ from pathlib import Path
 from typing import Any
 
 import msgspec
+from compat.msgspec_gc_compat import Struct
 
 # ── Re-export from scheduler/core/types.py for convenience ─────────────────────
 from hledac.universal.runtime.scheduler.core.types import (
@@ -42,7 +43,7 @@ from hledac.universal.runtime.scheduler.core.types import (
 # ULTIMATE-001: Court-admissible reproducibility via seed capture
 
 
-class SprintSeedState(msgspec.Struct, frozen=True, gc=False):
+class SprintSeedState(Struct, frozen=True):
     """
     ULTIMATE-001: Captures all sources of non-determinism for forensic replay.
 

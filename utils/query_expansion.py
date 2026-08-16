@@ -21,11 +21,12 @@ import itertools
 import logging
 from dataclasses import dataclass
 import msgspec
+from compat.msgspec_gc_compat import Struct
 from typing import Any
 from operator import attrgetter, itemgetter
 logger = logging.getLogger(__name__)
 
-class ExpansionConfig(msgspec.Struct, gc=False):
+class ExpansionConfig(Struct):
     """Configuration for query expansion"""
     max_variations: int = 50
     synonym_depth: int = 2
@@ -243,7 +244,7 @@ class ExpansionStrategy(ABC):
         """Get strategy type identifier."""
         pass
 
-class QueryVariation(msgspec.Struct, frozen=True, gc=False):
+class QueryVariation(Struct, frozen=True):
     """A single query variation with metadata."""
     query: str
     strategy: str

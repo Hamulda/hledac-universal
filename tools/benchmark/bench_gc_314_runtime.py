@@ -46,19 +46,21 @@ import time
 from dataclasses import dataclass, field
 import msgspec
 from _core import aclose
+from compat.msgspec_gc_compat import Struct
+
 try:
     import psutil
 except ImportError:
     psutil = None
 
-class GCSnapshot(msgspec.Struct, gc=False):
+class GCSnapshot(Struct):
     """Point-in-time GC state."""
     threshold: tuple[int, int, int]
     count: tuple[int, int, int]
     stats: list[dict]
     collections_total: int = 0
 
-class MemorySnapshot(msgspec.Struct, frozen=True, gc=False):
+class MemorySnapshot(Struct, frozen=True):
     """Point-in-time memory state."""
     rss_mb: float
     swap_mb: float
@@ -66,7 +68,7 @@ class MemorySnapshot(msgspec.Struct, frozen=True, gc=False):
     vm_available_gb: float
     timestamp: float = field(default_factory=time.monotonic)
 
-class PhaseResult(msgspec.Struct, frozen=True, gc=False):
+class PhaseResult(Struct, frozen=True):
     """Result of a benchmark phase."""
     name: str
     wall_clock_s: float
@@ -78,7 +80,7 @@ class PhaseResult(msgspec.Struct, frozen=True, gc=False):
     mem_peak_mb: float
     errors: list[str] = field(default_factory=list)
 
-class BenchmarkReport(msgspec.Struct, frozen=True, gc=False):
+class BenchmarkReport(Struct, frozen=True):
     """Full benchmark report."""
     python_version: str
     python_version_info: tuple[int, int, int, str, int]

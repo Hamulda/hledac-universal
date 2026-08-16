@@ -35,6 +35,7 @@ import time
 from collections.abc import Generator
 from dataclasses import dataclass, field
 import msgspec
+from compat.msgspec_gc_compat import Struct
 from typing import TYPE_CHECKING
 from hledac.universal.utils.msgspec_json import loads as _msgspec_loads, dumps_str as _msgspec_dumps_str
 from hledac.universal.utils.asyncx import parallel_ok
@@ -78,7 +79,7 @@ def reset_correlator_stats() -> None:
     _stats.clear()
     _stats.update({'assets_registered': 0, 'signals_extracted': 0, 'correlations_run': 0, 'findings_produced': 0, 'exposed_hosts_found': 0, 'open_buckets_found': 0, 'infra_clusters_found': 0, 'subdomain_takeovers_found': 0})
 
-class AssetSignal(msgspec.Struct, gc=False):
+class AssetSignal(Struct):
     """A single signal associated with an asset."""
     signal_type: str
     asset_key: str
@@ -86,7 +87,7 @@ class AssetSignal(msgspec.Struct, gc=False):
     metadata: dict
     finding_id: str
 
-class Asset(msgspec.Struct, gc=False):
+class Asset(Struct):
     """An asset (host, domain, IP) with collected signals."""
     key: str
     signals: list[AssetSignal] = field(default_factory=list)
@@ -107,7 +108,7 @@ class Asset(msgspec.Struct, gc=False):
     def has_dns(self) -> bool:
         return any((s.signal_type == SIGNAL_TYPE_PASSIVE_DNS for s in self.signals))
 
-class ExposureFinding(msgspec.Struct, gc=False):
+class ExposureFinding(Struct):
     """A correlated exposure finding with evidence."""
     corr_type: str
     asset_key: str
@@ -216,13 +217,24 @@ async def _detect_open_buckets_async(entity_name: str) -> list[dict]:
     return findings
 
 async def _async_candidate_gen(candidates, max_items: int):
-    """Async generator that yields from an iterator with a cap."""
+    """
+    Async generator that yields from an iterator with a cap.
+    
+    Cleanup:
+        - Properly handles early exit via try/finally
+        - Ensures no resource leaks on cancellation
+    """
     count = 0
-    for candidate in candidates:
-        if count >= max_items:
-            break
-        yield candidate
-        count += 1
+    try:
+        for candidate in candidates:
+            if count >= max_items:
+                break
+            yield candidate
+            count += 1
+    finally:
+        # Cleanup: clear reference to candidates on early exit
+        # This helps garbage collection when generator is abandoned mid-iteration
+        del candidates
 
 def _detect_open_buckets(entity_name: str) -> list[dict]:
     """
@@ -334,7 +346,7 @@ def _classify_jarm_hosting(jarm_hash: str, http_status: int) -> str:
         return 'real_content'
     return 'unknown'
 
-class OpenStorageResult(msgspec.Struct, gc=False):
+class OpenStorageResult(Struct):
     """Normalized DTO for open storage scan results."""
     url: str
     status: int

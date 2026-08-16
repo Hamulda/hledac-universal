@@ -15,9 +15,9 @@ Persistence: DuckDB (canonical) or JSON snapshot, env-gated.
 
 No ML hot path. Pure Python. M1-safe.
 """
-import json
 import os
 import msgspec
+from compat.msgspec_gc_compat import Struct
 import time
 from collections import deque
 from dataclasses import dataclass, field
@@ -25,11 +25,33 @@ from pathlib import Path
 from typing import Any
 from operator import attrgetter, itemgetter
 from _core import aclose
+
+# orjson fallback — 5-10× faster than stdlib json, M1 optimized
+try:
+    import orjson
+
+    def _json_loads(data: str | bytes) -> Any:
+        return orjson.loads(data)
+
+    def _json_dumps(data: Any, *, indent: bool = False) -> str:
+        opts = orjson.OPT_INDENT_2 if indent else 0
+        return orjson.dumps(data, option=opts).decode("utf-8")
+
+except ImportError:
+    import json as _stdlib_json
+
+    def _json_loads(data: str | bytes) -> Any:
+        return _stdlib_json.loads(data)
+
+    def _json_dumps(data: Any, *, indent: bool = False) -> str:
+        return _stdlib_json.dumps(data, indent=2) if indent else _stdlib_json.dumps(data)
+
+
 _EWMA_ALPHA = 0.3
 _MAX_ERRORS_STORED = 50
 _MIN_RELIABILITY = 0.01
 
-class ProviderStats(msgspec.Struct, gc=False):
+class ProviderStats(Struct):
     """
     Per-provider EWMA statistics.
 
@@ -230,7 +252,7 @@ class ProviderStatsRegistry:
             return
         payload = {name: stats.to_dict() for name, stats in self._stats.items()}
         tmp = path.with_suffix('.tmp')
-        tmp.write_text(json.dumps(payload, indent=2))
+        tmp.write_text(_json_dumps(payload, indent=True))
         tmp.rename(path)
         self._snapshot_path = path
         self._last_save_time = time.monotonic()
@@ -242,10 +264,10 @@ class ProviderStatsRegistry:
         if path is None or not path.exists():
             return
         try:
-            payload = json.loads(path.read_text())
+            payload = _json_loads(path.read_text())
             for name, d in payload.items():
                 self._stats[name] = ProviderStats.from_dict(d)
-        except (json.JSONDecodeError, KeyError, TypeError):  # noqa: BLE001
+        except (ValueError, KeyError, TypeError):  # noqa: BLE001
             pass
 
     def reset(self) -> None:

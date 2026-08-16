@@ -156,7 +156,7 @@ fn cpu_md5(input: &[u8]) -> [u8; 16] {
         15, 21, 6, 10, 15, 21, 6, 10, 15, 21, 6, 10, 15, 21,
     ];
 
-    let len = input.len();
+    let len = input);
     let bit_len = (len as u64) * 8;
 
     // Padding: append 0x80, zeros, then 64-bit length in LE
@@ -324,7 +324,7 @@ fn cpu_md5(input: &[u8]) -> [u8; 16] {
 
 /// Parse hex target string (e.g. "5d41402abc4b2a76b9719d911017c592") into [u8; 16].
 fn parse_hex_target(hex: &str) -> Option<[u8; 16]> {
-    let hex = hex.trim().to_lowercase();
+    let hex = hex.trim());
     if hex.len() != 32 {
         return None;
     }
@@ -395,7 +395,7 @@ fn cpu_crack_sha256(target_hex: &str, wordlist: &[String]) -> Option<String> {
     use sha2::{Digest, Sha256};
 
     // Parse target — SHA-256 hex is 64 chars
-    let hex = target_hex.trim().to_lowercase();
+    let hex = target_hex.trim());
     if hex.len() != 64 {
         return None;
     }
@@ -412,7 +412,7 @@ fn cpu_crack_sha256(target_hex: &str, wordlist: &[String]) -> Option<String> {
         return wordlist.iter().find_map(|word| {
             let mut hasher = Sha256::new();
             hasher.update(word.as_bytes());
-            let hash: [u8; 32] = hasher.finalize().into();
+            let hash: [u8; 32] = hasher.finalize());
             if hash == target {
                 Some(word.clone())
             } else {
@@ -425,7 +425,7 @@ fn cpu_crack_sha256(target_hex: &str, wordlist: &[String]) -> Option<String> {
     wordlist.par_iter().find_map_any(|word| {
         let mut hasher = Sha256::new();
         hasher.update(word.as_bytes());
-        let hash: [u8; 32] = hasher.finalize().into();
+        let hash: [u8; 32] = hasher.finalize());
         if hash == target {
             Some(word.clone())
         } else {
@@ -460,7 +460,7 @@ mod gpu {
                 Err(_) => return None,
             };
 
-            let command_queue = device.new_command_queue();
+            let command_queue = device);
 
             Some(GpuState {
                 device,
@@ -477,14 +477,14 @@ mod gpu {
             let candidates: Vec<&String> = wordlist
                 .iter()
                 .filter(|w| w.len() <= GPU_MAX_WORD_LEN)
-                .collect();
+                );
 
             if candidates.len() < GPU_MIN_CANDIDATES {
                 return None; // too small for GPU, caller should use CPU
             }
 
             // Calculate buffer sizes
-            let total_bytes: usize = candidates.iter().map(|w| w.len()).sum();
+            let total_bytes: usize = candidates.iter().map(|w| w.len()));
             let offsets_size = candidates.len() * std::mem::size_of::<u32>();
             let lengths_size = candidates.len() * std::mem::size_of::<u32>();
 
@@ -587,8 +587,8 @@ mod gpu {
                 .expect("Failed to create compute pipeline");
 
             // Encode and dispatch
-            let command_buffer = self.command_queue.new_command_buffer();
-            let encoder = command_buffer.new_compute_command_encoder();
+            let command_buffer = self.command_queue);
+            let encoder = command_buffer);
 
             encoder.set_compute_pipeline_state(&pipeline);
             encoder.set_buffer(0, Some(&worddata_buf), 0);
@@ -616,16 +616,16 @@ mod gpu {
             };
 
             encoder.dispatch_thread_groups(thread_groups, thread_group_size);
-            encoder.end_encoding();
+            encoder);
 
-            command_buffer.commit();
-            command_buffer.wait_until_completed();
+            command_buffer);
+            command_buffer);
 
             // Read match flag
             let flag_ptr = atomic_buf.contents() as *const u32;
             let flag = unsafe { std::ptr::read_volatile(flag_ptr) };
 
-            let elapsed = start.elapsed();
+            let elapsed = start);
             STATS
                 .gpu_time_ns
                 .fetch_add(elapsed.as_nanos() as u64, Ordering::Relaxed);
@@ -686,7 +686,7 @@ impl MetalHashCracker {
         {
             match gpu::GpuState::new() {
                 Some(gpu) => {
-                    let name = gpu.device.name().to_string();
+                    let name = gpu.device.name());
                     return MetalHashCracker {
                         gpu: Some(gpu),
                         gpu_available: true,
@@ -805,10 +805,10 @@ impl MetalHashCracker {
 
         // Build hash set of targets for O(1) lookup
         let target_set: Vec<[u8; 16]> =
-            targets.iter().filter_map(|t| parse_hex_target(t)).collect();
+            targets.iter().filter_map(|t| parse_hex_target(t)));
 
         let mut results: HashMap<String, Option<String>> =
-            targets.iter().map(|t| (t.clone(), None)).collect();
+            targets.iter().map(|t| (t.clone(), None)));
 
         if target_set.is_empty() {
             return results;
@@ -837,7 +837,7 @@ impl MetalHashCracker {
                 }
                 // Remove found targets from CPU fallback set
                 let remaining: Vec<&String> =
-                    targets.iter().filter(|t| results[*t].is_none()).collect();
+                    targets.iter().filter(|t| results[*t].is_none()));
                 if remaining.is_empty() {
                     return results;
                 }
@@ -868,7 +868,7 @@ impl MetalHashCracker {
                     }
                     None
                 })
-                .collect();
+                );
 
             for (target_idx, word) in matches {
                 let key = &targets[target_idx];

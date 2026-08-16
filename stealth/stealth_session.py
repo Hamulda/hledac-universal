@@ -15,6 +15,7 @@ import asyncio
 import secrets
 from dataclasses import dataclass, field
 import msgspec
+from compat.msgspec_gc_compat import Struct
 from _core import aclose
 
 # Crypto-safe jitter + UA selection — F350M-R
@@ -23,7 +24,7 @@ _STEALTH_UA_POOL: tuple[str, ...] = ('Mozilla/5.0 (Macintosh; Intel Mac OS X 10_
 _JITTER_MIN_S: float = 0.05
 _JITTER_MAX_S: float = 0.5
 
-class StealthResponse(msgspec.Struct, gc=False):
+class StealthResponse(Struct):
     """Response from stealth HTTP request."""
     status: int
     final_url: str

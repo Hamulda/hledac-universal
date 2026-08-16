@@ -17,6 +17,8 @@ from typing import Any
 import msgspec
 from _core import aclose
 
+from compat.msgspec_gc_compat import Struct
+
 
 def _utc_now() -> datetime:
     """Module-level factory for UTC now — required for msgspec default_factory."""
@@ -34,7 +36,7 @@ class TestType(Enum):
     PREDICTION_TEST = "prediction_test"
 
 
-class TestResult(msgspec.Struct, gc=False):
+class TestResult(Struct):
     """Result of executing a test against a hypothesis."""
     test_type: str
     result: str  # passed, failed, inconclusive
@@ -48,7 +50,7 @@ class TestResult(msgspec.Struct, gc=False):
             self.timestamp = datetime.fromisoformat(self.timestamp)
 
 
-class TestDesign(msgspec.Struct, gc=False):
+class TestDesign(Struct):
     """Design for testing a hypothesis."""
     test_type: str
     description: str
@@ -59,7 +61,7 @@ class TestDesign(msgspec.Struct, gc=False):
     cost_estimate: float = 1.0  # Estimated computational cost
 
 
-class FalsificationResult(msgspec.Struct, gc=False):
+class FalsificationResult(Struct):
     """Result of a falsification attempt."""
     falsified: bool
     confidence: float

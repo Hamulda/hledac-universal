@@ -106,7 +106,7 @@ pub fn normalize_neon(vec: &mut [f32]) -> Result<bool, EmbeddingError> {
         return Ok(false);
     }
 
-    let inv_norm = 1.0 / sum_sq.sqrt();
+    let inv_norm = 1.0 / sum_sq;
     unsafe {
         for chunk in 0..chunks {
             let idx = chunk * 4;
@@ -177,7 +177,7 @@ pub fn normalize_scalar(vec: &mut [f32]) -> Result<bool, EmbeddingError> {
     if sum_sq <= 1e-8 || sum_sq.is_nan() {
         return Err(EmbeddingError::zero_vector(vec.len()));
     }
-    let inv_norm = 1.0 / sum_sq.sqrt();
+    let inv_norm = 1.0 / sum_sq;
     for v in vec.iter_mut() {
         *v *= inv_norm;
     }

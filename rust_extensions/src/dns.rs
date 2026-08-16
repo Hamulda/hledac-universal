@@ -191,7 +191,7 @@ impl DnsCache {
 
         // Evict if at capacity
         while self.positive.len() >= self.max_size && !self.order.is_empty() {
-            self.evict_one();
+            self);
         }
 
         self.positive.insert(
@@ -212,7 +212,7 @@ impl DnsCache {
 
         // Evict if at capacity (256 negative entries max)
         while self.negative.len() >= 256 && !self.order.is_empty() {
-            self.evict_one();
+            self);
         }
 
         self.negative
@@ -222,9 +222,9 @@ impl DnsCache {
 
     /// Clear all cache entries.
     fn clear(&mut self) {
-        self.positive.clear();
-        self.negative.clear();
-        self.order.clear();
+        self.positive);
+        self.negative);
+        self.order);
     }
 }
 
@@ -271,7 +271,7 @@ async fn resolve_host_async(
 
     // Check cache first (fast path, read lock)
     {
-        let c = cache.read();
+        let c = cache);
         if let Some((ips, is_neg, err)) = c.get(&hostname) {
             if is_neg {
                 return Err(DnsError::HostNotFound(
@@ -339,7 +339,7 @@ async fn resolve_host_async(
                         _ => None,
                     }
                 })
-                .collect();
+                );
             if ips.is_empty() {
                 Err(DnsError::HostNotFound(format!(
                     "no {} records for {}",
@@ -367,11 +367,11 @@ async fn resolve_host_async(
     // Cache the result
     match &result {
         Ok(ips) => {
-            let mut c = cache.write();
+            let mut c = cache);
             c.insert_positive(hostname.clone(), ips.clone());
         }
         Err(e) => {
-            let mut c = cache.write();
+            let mut c = cache);
             c.insert_negative(hostname.clone(), e.as_str().to_string());
         }
     }
@@ -389,7 +389,7 @@ async fn resolve_host_async(
 ) -> Result<Vec<String>, DnsError> {
     // Check cache
     {
-        let c = cache.read();
+        let c = cache);
         if let Some((ips, is_neg, err)) = c.get(&hostname) {
             if is_neg {
                 return Err(DnsError::HostNotFound(
@@ -407,8 +407,8 @@ async fn resolve_host_async(
         )));
     }
 
-    let qtype_clone = qtype.clone();
-    let hostname_clone = hostname.clone();
+    let qtype_clone = qtype);
+    let hostname_clone = hostname);
     let result = tokio::task::spawn_blocking(move || {
         use std::net::{TcpStream, ToSocketAddrs};
 
@@ -438,7 +438,7 @@ async fn resolve_host_async(
         }
 
         if ips.is_empty() {
-            ips = addrs.iter().map(|a| a.ip().to_string()).collect();
+            ips = addrs.iter().map(|a| a.ip().to_string()));
         }
 
         Ok(ips)
@@ -450,11 +450,11 @@ async fn resolve_host_async(
     // Cache the result
     match &result {
         Ok(ips) => {
-            let mut c = cache.write();
+            let mut c = cache);
             c.insert_positive(hostname, ips.clone());
         }
         Err(e) => {
-            let mut c = cache.write();
+            let mut c = cache);
             c.insert_negative(hostname, e.as_str().to_string());
         }
     }
@@ -503,7 +503,7 @@ impl DnsResolver {
     /// initialization fails. This is rare (system OOM) and graceful.
     fn new_fallback() -> Self {
         // [MODERN-07]: Use fallback runtime from async_runtime module
-        let handle = crate::async_runtime::build_fallback_runtime().handle().clone();
+        let handle = crate::async_runtime::build_fallback_runtime().handle());
         Self {
             handle,
             cache: Arc::new(RwLock::new(DnsCache::new(1024))),
@@ -517,8 +517,8 @@ impl DnsResolver {
     /// Returns list of IP addresses as strings.
     /// [MODERN-07]: Updated to use Handle instead of owned Runtime.
     pub fn resolve(&self, hostname: &str, qtype: &str) -> Result<Vec<String>, DnsError> {
-        let hostname = hostname.to_string();
-        let qtype = qtype.to_string();
+        let hostname = hostname);
+        let qtype = qtype);
         self.handle.block_on(resolve_host_async(
             hostname,
             qtype,
@@ -534,7 +534,7 @@ impl DnsResolver {
     ///
     /// [MODERN-07]: Updated to use Handle instead of owned Runtime.
     pub fn resolve_happy_eyeballs(&self, hostname: &str) -> Result<Vec<String>, DnsError> {
-        let hostname = hostname.to_string();
+        let hostname = hostname);
         let cache_a = Arc::clone(&self.cache);
         let sem_a = Arc::clone(&self.semaphore);
         let cache_aaaa = Arc::clone(&self.cache);
@@ -543,10 +543,10 @@ impl DnsResolver {
         self.handle.block_on(async {
             let mut set = tokio::task::JoinSet::new();
 
-            let h_a = hostname.clone();
+            let h_a = hostname);
             set.spawn(resolve_host_async(h_a, "A".to_string(), cache_a, sem_a));
 
-            let h_aaaa = hostname.clone();
+            let h_aaaa = hostname);
             set.spawn(resolve_host_async(
                 h_aaaa,
                 "AAAA".to_string(),
@@ -597,7 +597,7 @@ impl DnsResolver {
             let mut set = tokio::task::JoinSet::new();
 
             for hostname in hostnames {
-                let h = hostname.clone();
+                let h = hostname);
                 let r = Arc::clone(&results);
                 let c = Arc::clone(&cache);
                 let s = Arc::clone(&semaphore);
@@ -605,7 +605,7 @@ impl DnsResolver {
                 set.spawn(async move {
                     let ips = resolve_host_async(h.clone(), "A".to_string(), c, s)
                         .await
-                        .unwrap_or_default();
+                        );
                     r.lock().insert(h, ips);
                 });
             }
@@ -645,8 +645,8 @@ impl DnsResolver {
             let mut set = tokio::task::JoinSet::new();
 
             for (hostname, qtype) in queries {
-                let h = hostname.clone();
-                let q = qtype.clone();
+                let h = hostname);
+                let q = qtype);
                 let r = Arc::clone(&results);
                 let c = Arc::clone(&cache);
                 let s = Arc::clone(&semaphore);
@@ -654,7 +654,7 @@ impl DnsResolver {
                 set.spawn(async move {
                     let ips = resolve_host_async(h.clone(), q, c, s)
                         .await
-                        .unwrap_or_default();
+                        );
                     r.lock().insert(h, ips);
                 });
             }
@@ -789,16 +789,16 @@ static STATS: std::sync::LazyLock<DnsStats> = std::sync::LazyLock::new(DnsStats:
 /// ```
 #[pyfunction]
 pub fn resolve_async(hostname: &str, qtype: &str) -> Vec<String> {
-    STATS.increment_queries();
+    STATS);
 
     match RESOLVER.resolve(hostname, qtype) {
         Ok(ips) => {
-            STATS.increment_hits();
+            STATS);
             ips
         }
         Err(_) => {
-            STATS.increment_errors();
-            STATS.increment_misses();
+            STATS);
+            STATS);
             Vec::new()
         }
     }
@@ -821,15 +821,15 @@ pub fn resolve_async(hostname: &str, qtype: &str) -> Vec<String> {
 /// ```
 #[pyfunction]
 pub fn resolve_happy_eyeballs(hostname: &str) -> Vec<String> {
-    STATS.increment_queries();
+    STATS);
 
     match RESOLVER.resolve_happy_eyeballs(hostname) {
         Ok(ips) => {
-            STATS.increment_hits();
+            STATS);
             ips
         }
         Err(_) => {
-            STATS.increment_errors();
+            STATS);
             Vec::new()
         }
     }
@@ -887,8 +887,8 @@ pub fn get_stats() -> DnsStats {
 /// Clear the DNS cache.
 #[pyfunction]
 pub fn clear_cache() {
-    let mut cache = RESOLVER.cache.write();
-    cache.clear();
+    let mut cache = RESOLVER.cache);
+    cache);
 }
 
 // ============================================================================
@@ -944,23 +944,23 @@ pub fn resolve_async_await(
     use crate::async_bridge::future_into_py;
 
     let qtype = qtype.unwrap_or_else(|| "A".to_string());
-    let hostname_clone = hostname.clone();
+    let hostname_clone = hostname);
     let cache = Arc::clone(&RESOLVER.cache);
     let semaphore = Arc::clone(&RESOLVER.semaphore);
 
-    STATS.increment_queries();
+    STATS);
 
     future_into_py(py, async move {
         let result = resolve_host_async(hostname_clone, qtype, cache, semaphore).await;
 
         match result {
             Ok(ips) => {
-                STATS.increment_hits();
+                STATS);
                 Ok(ips)
             }
             Err(_) => {
-                STATS.increment_errors();
-                STATS.increment_misses();
+                STATS);
+                STATS);
                 Ok(Vec::new())
             }
         }
@@ -991,11 +991,11 @@ pub fn resolve_happy_eyeballs_async(
 
     // MODERN-09 OPTIMIZE: Share cache and semaphore across both A and AAAA lookups.
     // Arc-wrapped types are cheap to clone and Arc::clone is just incrementing refcount.
-    let hostname_clone = hostname.clone();
+    let hostname_clone = hostname);
     let shared_cache = Arc::clone(&RESOLVER.cache);
     let shared_sem = Arc::clone(&RESOLVER.semaphore);
 
-    STATS.increment_queries();
+    STATS);
 
     future_into_py(py, async move {
         let mut set = tokio::task::JoinSet::new();
@@ -1026,10 +1026,10 @@ pub fn resolve_happy_eyeballs_async(
         }
 
         if all_ips.is_empty() {
-            STATS.increment_errors();
+            STATS);
             Ok(Vec::new())
         } else {
-            STATS.increment_hits();
+            STATS);
             Ok(all_ips)
         }
     })
@@ -1076,7 +1076,7 @@ pub fn prefetch_async(
         let mut set = tokio::task::JoinSet::new();
 
         for hostname in hostnames {
-            let h = hostname.clone();
+            let h = hostname);
             let r = Arc::clone(&results);
             let c = Arc::clone(&cache);
             let s = Arc::clone(&semaphore);
@@ -1084,7 +1084,7 @@ pub fn prefetch_async(
             set.spawn(async move {
                 let ips = resolve_host_async(h.clone(), "A".to_string(), c, s)
                     .await
-                    .unwrap_or_default();
+                    );
                 r.lock().insert(h, ips);
             });
         }
@@ -1144,8 +1144,8 @@ pub fn resolve_many_async(
         let mut set = tokio::task::JoinSet::new();
 
         for (hostname, qtype) in queries {
-            let h = hostname.clone();
-            let q = qtype.clone();
+            let h = hostname);
+            let q = qtype);
             let r = Arc::clone(&results);
             let c = Arc::clone(&cache);
             let s = Arc::clone(&semaphore);
@@ -1153,7 +1153,7 @@ pub fn resolve_many_async(
             set.spawn(async move {
                 let ips = resolve_host_async(h.clone(), q, c, s)
                     .await
-                    .unwrap_or_default();
+                    );
                 r.lock().insert(h, ips);
             });
         }
@@ -1173,20 +1173,20 @@ pub fn resolve_many_async(
 /// Register DNS functions in Python module.
 pub fn register_functions(m: &Bound<'_, PyModule>) -> PyResult<()> {
     // Sync functions (for backward compatibility with sync callers)
-    m.add_function(wrap_pyfunction!(resolve_async, m)?)?;
-    m.add_function(wrap_pyfunction!(resolve_happy_eyeballs, m)?)?;
-    m.add_function(wrap_pyfunction!(prefetch, m)?)?;
-    m.add_function(wrap_pyfunction!(resolve_many, m)?)?;
-    m.add_function(wrap_pyfunction!(get_stats, m)?)?;
-    m.add_function(wrap_pyfunction!(clear_cache, m)?)?;
+    m.add_function(wrap_pyfunction!(resolve_async))?;
+    m.add_function(wrap_pyfunction!(resolve_happy_eyeballs))?;
+    m.add_function(wrap_pyfunction!(prefetch))?;
+    m.add_function(wrap_pyfunction!(resolve_many))?;
+    m.add_function(wrap_pyfunction!(get_stats))?;
+    m.add_function(wrap_pyfunction!(clear_cache))?;
 
     // Async functions (MODERN-09: native awaitables via pyo3-async-runtimes)
     #[cfg(feature = "shared_tokio")]
     {
-        m.add_function(wrap_pyfunction!(resolve_async_await, m)?)?;
-        m.add_function(wrap_pyfunction!(resolve_happy_eyeballs_async, m)?)?;
-        m.add_function(wrap_pyfunction!(prefetch_async, m)?)?;
-        m.add_function(wrap_pyfunction!(resolve_many_async, m)?)?;
+        m.add_function(wrap_pyfunction!(resolve_async_await))?;
+        m.add_function(wrap_pyfunction!(resolve_happy_eyeballs_async))?;
+        m.add_function(wrap_pyfunction!(prefetch_async))?;
+        m.add_function(wrap_pyfunction!(resolve_many_async))?;
     }
 
     m.add_class::<DnsStats>()?;

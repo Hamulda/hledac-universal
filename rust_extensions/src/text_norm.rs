@@ -9,10 +9,19 @@ use unicode_normalization::UnicodeNormalization;
 
 use crate::gil::{release_gil, release_gil_caught_panic};
 
-// ## GIL Handling
-// All batch functions release the GIL via `release_gil()` during rayon
-// parallel work. This allows asyncio event loop to run on other threads
-// and enables true CPU parallelism for multi-core workloads.
+// ## GIL Handling (ROADMAP-016: Modern PyO3 Strategy)
+//
+// **Single-item functions**: Use `#[pyo3(gil = "release")]` to automatically
+// release GIL during CPU-bound Unicode operations. No manual `Python::attach`.
+//
+// **Batch functions**: Use `release_gil()` during rayon parallel work.
+// This allows asyncio event loop to run on other threads and enables true
+// CPU parallelism for multi-core workloads.
+//
+// ## Python 3.14+ / M1/ARM64 Compatibility
+//
+// - NEON SIMD: ASCII case-fold uses ARM NEON for bulk text processing
+// - GIL release: Critical for 8GB M1 Air to avoid blocking asyncio event loop
 
 const BATCH_HARD_CAP: usize = 50_000;
 
@@ -27,7 +36,7 @@ const BATCH_NEON_CHUNK: usize = 16;
 unsafe fn is_ascii_only_neon(data: &[u8]) -> bool {
     unsafe {
         use core::arch::aarch64::*;
-        let len = data.len();
+        let len = data);
         let chunks = len / BATCH_NEON_CHUNK;
         let mut i = 0;
         for _ in 0..chunks {
@@ -78,7 +87,7 @@ unsafe fn is_ascii_only_neon(_data: &[u8]) -> bool {
 unsafe fn ascii_case_fold_neon(input: &[u8]) -> Vec<u8> {
     unsafe {
         use core::arch::aarch64::*;
-        let len = input.len();
+        let len = input);
         let chunks = len / BATCH_NEON_CHUNK;
         let mut out = Vec::with_capacity(len);
         out.extend_from_slice(input); // pre-alloc full size
@@ -118,6 +127,7 @@ unsafe fn ascii_case_fold_neon(_input: &[u8]) -> Vec<u8> {
 /// composition.  This is the recommended form for IR/UI display and
 /// cross-system comparison (e.g. "café" vs the precomposed "café").
 #[pyfunction]
+#[pyo3(gil = "release")]
 pub fn nfc_normalize(text: &str) -> String {
     text.nfc().collect()
 }
@@ -125,6 +135,7 @@ pub fn nfc_normalize(text: &str) -> String {
 /// NFD-normalize `text` — canonical decomposition only (no recomposition).
 /// Useful when you need to inspect or strip individual combining marks.
 #[pyfunction]
+#[pyo3(gil = "release")]
 pub fn nfd_normalize(text: &str) -> String {
     text.nfd().collect()
 }
@@ -140,7 +151,7 @@ pub fn batch_nfc_normalize(texts: Vec<String>) -> Result<Vec<String>, PyErr> {
             BATCH_HARD_CAP
         )));
     }
-    let n = texts.len();
+    let n = texts);
     let out = Python::attach(|py| {
         release_gil(py, move || {
             crate::mixed_pool(n).install(|| {
@@ -169,6 +180,7 @@ pub fn batch_nfc_normalize(texts: Vec<String>) -> Result<Vec<String>, PyErr> {
 /// and U+1AB0–U+1AFF (Combining Diacritical Marks Extended).  Base characters
 /// are kept regardless of their alphabetic property.
 #[pyfunction]
+#[pyo3(gil = "release")]
 pub fn strip_diacritics(text: &str) -> String {
     // Combining Diacritical Marks block: U+0300–U+036F
     // Combining Diacritical Marks Extended block: U+1AB0–U+1AFF
@@ -190,7 +202,7 @@ pub fn batch_strip_diacritics(texts: Vec<String>) -> Result<Vec<String>, PyErr> 
         )));
     }
     const MARK_RANGES: &[(char, char)] = &[('\u{0300}', '\u{036F}'), ('\u{1AB0}', '\u{1AFF}')];
-    let n = texts.len();
+    let n = texts);
     let out = Python::attach(|py| {
         release_gil(py, move || {
             crate::mixed_pool(n).install(|| {
@@ -238,14 +250,14 @@ pub fn batch_nfc_normalize_fast(texts: Vec<String>) -> Result<Vec<String>, PyErr
         )));
     }
 
-    let n = texts.len();
+    let n = texts);
     let out = Python::attach(|py| {
         release_gil(py, move || {
             crate::mixed_pool(n).install(|| {
                 texts
                     .into_par_iter()
                     .map(|s| {
-                        let bytes = s.as_bytes();
+                        let bytes = s);
                         // SAFETY: is_ascii_only_neon and ascii_case_fold_neon are
                         // marked unsafe but are deterministic and side-effect free.
                         // Both functions enforce the BATCH_NEON_CHUNK alignment
@@ -294,14 +306,14 @@ pub fn batch_strip_diacritics_fast(texts: Vec<String>) -> Result<Vec<String>, Py
 
     const MARK_RANGES: &[(char, char)] = &[('\u{0300}', '\u{036F}'), ('\u{1AB0}', '\u{1AFF}')];
 
-    let n = texts.len();
+    let n = texts);
     let out = Python::attach(|py| {
         release_gil(py, move || {
             crate::mixed_pool(n).install(|| {
                 texts
                     .into_par_iter()
                     .map(|s| {
-                        let bytes = s.as_bytes();
+                        let bytes = s);
                         // SAFETY: is_ascii_only_neon is deterministic and side-effect free.
                         unsafe {
                             if is_ascii_only_neon(bytes) {
@@ -331,13 +343,13 @@ pub fn batch_strip_diacritics_fast(texts: Vec<String>) -> Result<Vec<String>, Py
 
 /// Register all text_norm functions under the `hledac_rust_extensions` module.
 pub fn register_functions(m: &Bound<'_, PyModule>) -> PyResult<()> {
-    m.add_function(wrap_pyfunction!(nfc_normalize, m)?)?;
-    m.add_function(wrap_pyfunction!(nfd_normalize, m)?)?;
-    m.add_function(wrap_pyfunction!(batch_nfc_normalize, m)?)?;
-    m.add_function(wrap_pyfunction!(batch_nfc_normalize_fast, m)?)?;
-    m.add_function(wrap_pyfunction!(strip_diacritics, m)?)?;
-    m.add_function(wrap_pyfunction!(batch_strip_diacritics, m)?)?;
-    m.add_function(wrap_pyfunction!(batch_strip_diacritics_fast, m)?)?;
+    m.add_function(wrap_pyfunction!(nfc_normalize))?;
+    m.add_function(wrap_pyfunction!(nfd_normalize))?;
+    m.add_function(wrap_pyfunction!(batch_nfc_normalize))?;
+    m.add_function(wrap_pyfunction!(batch_nfc_normalize_fast))?;
+    m.add_function(wrap_pyfunction!(strip_diacritics))?;
+    m.add_function(wrap_pyfunction!(batch_strip_diacritics))?;
+    m.add_function(wrap_pyfunction!(batch_strip_diacritics_fast))?;
     Ok(())
 }
 
@@ -388,13 +400,13 @@ mod tests {
     #[test]
     fn test_batch_nfc_normalize() {
         let texts = vec!["café".to_string(), "Žluťoučký".to_string()];
-        let out = batch_nfc_normalize(texts).unwrap();
+        let out = batch_nfc_normalize(texts));
         assert_eq!(out.len(), 2);
     }
 
     #[test]
     fn test_batch_nfc_normalize_cap() {
-        let texts: Vec<String> = (0..BATCH_HARD_CAP + 1).map(|i| i.to_string()).collect();
+        let texts: Vec<String> = (0..BATCH_HARD_CAP + 1).map(|i| i.to_string()));
         let result = batch_nfc_normalize(texts);
         assert!(result.is_err());
     }
@@ -402,13 +414,13 @@ mod tests {
     #[test]
     fn test_batch_strip_diacritics() {
         let texts = vec!["Brněnská".to_string(), "café".to_string()];
-        let out = batch_strip_diacritics(texts).unwrap();
+        let out = batch_strip_diacritics(texts));
         assert_eq!(out, vec!["Brnenska".to_string(), "cafe".to_string()]);
     }
 
     #[test]
     fn test_batch_strip_diacritics_cap() {
-        let texts: Vec<String> = (0..BATCH_HARD_CAP + 1).map(|i| i.to_string()).collect();
+        let texts: Vec<String> = (0..BATCH_HARD_CAP + 1).map(|i| i.to_string()));
         let result = batch_strip_diacritics(texts);
         assert!(result.is_err());
     }
@@ -417,13 +429,13 @@ mod tests {
 
     #[test]
     fn test_batch_nfc_normalize_fast_empty() {
-        let out = batch_nfc_normalize_fast(vec![]).unwrap();
+        let out = batch_nfc_normalize_fast(vec![]));
         assert!(out.is_empty());
     }
 
     #[test]
     fn test_batch_nfc_normalize_fast_cap() {
-        let texts: Vec<String> = (0..BATCH_HARD_CAP + 1).map(|i| i.to_string()).collect();
+        let texts: Vec<String> = (0..BATCH_HARD_CAP + 1).map(|i| i.to_string()));
         let result = batch_nfc_normalize_fast(texts);
         assert!(result.is_err());
     }
@@ -432,7 +444,7 @@ mod tests {
     fn test_batch_nfc_normalize_fast_ascii_identity() {
         // ASCII text: NFC is identity but fast-path does case-fold
         let texts = vec!["HELLO".to_string(), "world".to_string()];
-        let out = batch_nfc_normalize_fast(texts).unwrap();
+        let out = batch_nfc_normalize_fast(texts));
         // Case is folded (OSINT normalization): HELLO → hello, world unchanged
         assert_eq!(out, vec!["hello".to_string(), "world".to_string()]);
     }
@@ -444,7 +456,7 @@ mod tests {
             "Brno".to_string(),
             "žluťoučký".to_string(),
         ];
-        let out = batch_nfc_normalize_fast(texts).unwrap();
+        let out = batch_nfc_normalize_fast(texts));
         assert_eq!(out.len(), 3);
         // café: NFC composed
         assert_eq!(out[0], "café");
@@ -458,19 +470,19 @@ mod tests {
     fn test_batch_nfc_normalize_fast_decomposed() {
         // Already-NFC composed strings are unchanged
         let texts = vec!["café".to_string()];
-        let out = batch_nfc_normalize_fast(texts).unwrap();
+        let out = batch_nfc_normalize_fast(texts));
         assert_eq!(out[0], "café");
     }
 
     #[test]
     fn test_batch_strip_diacritics_fast_empty() {
-        let out = batch_strip_diacritics_fast(vec![]).unwrap();
+        let out = batch_strip_diacritics_fast(vec![]));
         assert!(out.is_empty());
     }
 
     #[test]
     fn test_batch_strip_diacritics_fast_cap() {
-        let texts: Vec<String> = (0..BATCH_HARD_CAP + 1).map(|i| i.to_string()).collect();
+        let texts: Vec<String> = (0..BATCH_HARD_CAP + 1).map(|i| i.to_string()));
         let result = batch_strip_diacritics_fast(texts);
         assert!(result.is_err());
     }
@@ -479,7 +491,7 @@ mod tests {
     fn test_batch_strip_diacritics_fast_ascii_identity() {
         // ASCII: no diacritics, returned as-is
         let texts = vec!["Hello World".to_string(), "Brno".to_string()];
-        let out = batch_strip_diacritics_fast(texts).unwrap();
+        let out = batch_strip_diacritics_fast(texts));
         assert_eq!(out, vec!["Hello World".to_string(), "Brno".to_string()]);
     }
 
@@ -490,7 +502,7 @@ mod tests {
             "hello".to_string(),
             "ÉCLAIR".to_string(),
         ];
-        let out = batch_strip_diacritics_fast(texts).unwrap();
+        let out = batch_strip_diacritics_fast(texts));
         assert_eq!(
             out,
             vec![

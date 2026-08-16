@@ -682,18 +682,18 @@ pub fn get_hugepage_size() -> usize {
 /// Use madvise_lmdb_mmap(path, advice=1) for MAP_NOCACHE on LMDB/DuckDB files,
 /// or madvise_on_mmap_region(addr, length, advice) for already-mapped regions.
 pub fn register_functions(m: &Bound<'_, PyModule>) -> PyResult<()> {
-    m.add_function(wrap_pyfunction!(madvise_lmdb_mmap, m)?)?;
-    m.add_function(wrap_pyfunction!(madvise_on_mmap_region, m)?)?;
-    m.add_function(wrap_pyfunction!(madvise_hugepage, m)?)?;
-    m.add_function(wrap_pyfunction!(mmap_alloc_with_hugepage, m)?)?;
-    m.add_function(wrap_pyfunction!(mmap_free_hugepage, m)?)?;
-    m.add_function(wrap_pyfunction!(mmap_hugepage, m)?)?;
-    m.add_function(wrap_pyfunction!(munmap_hugepage, m)?)?;
-    m.add_function(wrap_pyfunction!(get_hugepage_size, m)?)?;
-    m.add_function(wrap_pyfunction!(madvise_free_reusable, m)?)?;
+    m.add_function(wrap_pyfunction!(madvise_lmdb_mmap))?;
+    m.add_function(wrap_pyfunction!(madvise_on_mmap_region))?;
+    m.add_function(wrap_pyfunction!(madvise_hugepage))?;
+    m.add_function(wrap_pyfunction!(mmap_alloc_with_hugepage))?;
+    m.add_function(wrap_pyfunction!(mmap_free_hugepage))?;
+    m.add_function(wrap_pyfunction!(mmap_hugepage))?;
+    m.add_function(wrap_pyfunction!(munmap_hugepage))?;
+    m.add_function(wrap_pyfunction!(get_hugepage_size))?;
+    m.add_function(wrap_pyfunction!(madvise_free_reusable))?;
     // ISSUE-P7-001: mlock — lock key material in RAM (no swap, no core dump)
-    m.add_function(wrap_pyfunction!(mlock_key_region, m)?)?;
-    m.add_function(wrap_pyfunction!(munlock_key_region, m)?)?;
-    m.add_function(wrap_pyfunction!(madvise_dontdump_region, m)?)?;
+    m.add_function(wrap_pyfunction!(mlock_key_region))?;
+    m.add_function(wrap_pyfunction!(munlock_key_region))?;
+    m.add_function(wrap_pyfunction!(madvise_dontdump_region))?;
     Ok(())
 }

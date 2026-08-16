@@ -36,6 +36,7 @@ import re
 import time
 from dataclasses import dataclass
 import msgspec
+from compat.msgspec_gc_compat import Struct
 from typing import Any
 import httpx
 from hledac.universal._core.concurrency import ConcurrencyCategory, get_semaphore
@@ -64,7 +65,7 @@ def _is_private_ip(ip: str) -> bool:
     """Check if IP is RFC1918/loopback/private."""
     return bool(_PRIVATE_IP_RE.match(ip))
 
-class BGPFinding(msgspec.Struct, gc=False):
+class BGPFinding(Struct):
     """BGP intelligence finding from RIPE/BGP.tools."""
     ip: str = ''
     asn: int = 0
@@ -87,7 +88,7 @@ class BGPFinding(msgspec.Struct, gc=False):
         except Exception:
             return None
 
-class PDNSRecord(msgspec.Struct, frozen=True, gc=False):
+class PDNSRecord(Struct, frozen=True):
     """Passive DNS record."""
     domain: str = ''
     record_type: str = ''

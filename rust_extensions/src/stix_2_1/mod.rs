@@ -54,10 +54,10 @@ pub use validation::ValidationResult;
 /// # Fail-soft Invariant
 /// All functions return empty/err values on error — never raises.
 pub fn register_functions(m: &Bound<'_, PyModule>) -> PyResult<()> {
-    m.add_function(wrap_pyfunction!(crate::stix_2_1::encode_finding, m)?)?;
-    m.add_function(wrap_pyfunction!(crate::stix_2_1::encode_findings_batch, m)?)?;
-    m.add_function(wrap_pyfunction!(crate::stix_2_1::encode_finding_pretty, m)?)?;
-    m.add_function(wrap_pyfunction!(crate::stix_2_1::decode_bundle, m)?)?;
-    m.add_function(wrap_pyfunction!(crate::stix_2_1::validate_json, m)?)?;
+    m.add_function(wrap_pyfunction!(crate::stix_2_1::encode_finding)?);
+    m.add_function(wrap_pyfunction!(crate::stix_2_1::encode_findings_batch)?);
+    m.add_function(wrap_pyfunction!(crate::stix_2_1::encode_finding_pretty)?);
+    m.add_function(wrap_pyfunction!(crate::stix_2_1::decode_bundle)?);
+    m.add_function(wrap_pyfunction!(crate::stix_2_1::validate_json)?);
     Ok(())
 }

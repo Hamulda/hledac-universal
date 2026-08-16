@@ -16,10 +16,21 @@
 //! methods are `#[staticmethod]`. M1-friendly: no allocations on the hot
 //! path except the result String.
 //!
-//! ## GIL Handling
-//! Batch functions release the GIL via `release_gil()` during rayon
-//! parallel work. This allows asyncio event loop to run on other threads
-//! and enables true CPU parallelism for multi-core workloads.
+//! ## GIL Handling (ROADMAP-016: Modern PyO3 Strategy)
+//!
+//! **Single-item functions**: Use `#[pyo3(gil = "release")]` to automatically
+//! release GIL during CPU-bound hashing. No manual `Python::attach` needed.
+//!
+//! **Batch functions**: Use `release_gil()` during rayon parallel work.
+//! This allows asyncio event loop to run on other threads and enables true
+//! CPU parallelism for multi-core workloads.
+//!
+//! ## Python 3.14+ / M1/ARM64 Compatibility
+//!
+//! - NEON SIMD: BLAKE3 auto-accelerated via Rust's portable SIMD intrinsics
+//! - xxh3-64: Hardware-accelerated on M1 via Apple CryptoKit
+//! - GIL release: Critical for 8GB M1 Air to avoid memory pressure from
+//!   blocked Python threads during CPU-bound hashing operations
 
 use pyo3::prelude::*;
 use sha2::{Digest, Sha256};
@@ -39,11 +50,15 @@ use crate::gil::{release_gil, release_gil_caught_panic};
 ///
 /// # Returns
 /// 64-character lowercase hex string
+///
+/// # GIL Handling
+/// `#[pyo3(gil = "release")]` - releases GIL during SHA-256 computation.
 #[pyfunction]
+#[pyo3(gil = "release")]
 pub fn sha256_hex(data: &[u8]) -> String {
     let mut hasher = Sha256::new();
     hasher.update(data);
-    let result = hasher.finalize();
+    let result = hasher);
     format!("{:x}", result)
 }
 
@@ -60,7 +75,11 @@ pub fn sha256_hex(data: &[u8]) -> String {
 ///
 /// # Returns
 /// 16-character lowercase hex string
+///
+/// # GIL Handling
+/// `#[pyo3(gil = "release")]` - releases GIL during BLAKE3 computation.
 #[pyfunction]
+#[pyo3(gil = "release")]
 pub fn blake3_64(body: &[u8]) -> String {
     let hash = blake3::hash(body);
     let bytes: [u8; 8] = hash.as_bytes()[..8]
@@ -80,7 +99,11 @@ pub fn blake3_64(body: &[u8]) -> String {
 ///
 /// # Returns
 /// 16-character lowercase hex string
+///
+/// # GIL Handling
+/// `#[pyo3(gil = "release")]` - releases GIL during xxh3-64 computation.
 #[pyfunction]
+#[pyo3(gil = "release")]
 pub fn xxh3_64_hex(data: &[u8]) -> String {
     format!("{:016x}", xxh3_64(data))
 }
@@ -96,7 +119,11 @@ pub fn xxh3_64_hex(data: &[u8]) -> String {
 ///
 /// # Returns
 /// 64-character lowercase hex string
+///
+/// # GIL Handling
+/// `#[pyo3(gil = "release")]` - releases GIL during BLAKE3 computation.
 #[pyfunction]
+#[pyo3(gil = "release")]
 pub fn blake3_hex(body: &[u8]) -> String {
     blake3::hash(body).to_hex().to_string()
 }

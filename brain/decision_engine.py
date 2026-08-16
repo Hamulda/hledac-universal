@@ -13,6 +13,7 @@ import logging
 import math
 from dataclasses import dataclass
 import msgspec
+from compat.msgspec_gc_compat import Struct
 from enum import Enum
 from typing import TYPE_CHECKING, Any
 from _core import aclose
@@ -30,7 +31,7 @@ class DecisionType(Enum):
     ERROR = 'error'
     COMPLETE = 'complete'
 
-class Decision(msgspec.Struct, gc=False):
+class Decision(Struct):
     """Rozhodnutí orchestrátoru"""
     decision_type: DecisionType
     action: str

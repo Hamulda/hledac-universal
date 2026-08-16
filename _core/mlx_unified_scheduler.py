@@ -48,6 +48,7 @@ from enum import IntEnum
 from typing import TYPE_CHECKING, Any
 from collections.abc import Callable
 import msgspec
+from compat.msgspec_gc_compat import Struct
 
 # F350M-R: Import from core.protocols (breaks runtime ↔ core cycle)
 from _core.protocols import shutdown_aclose
@@ -78,7 +79,7 @@ class LanePriority(IntEnum):
     EMBEDDING = 1
     BACKGROUND = 2
 
-class SchedulerStats(msgspec.Struct, gc=False):
+class SchedulerStats(Struct):
     """Mutable unified scheduler telemetry — O(1) in-place inc(), no allocation.
 
     NOTE: msgspec.Struct without frozen=True allows field mutations.
@@ -111,14 +112,14 @@ class SchedulerStats(msgspec.Struct, gc=False):
         """Return frozen copy for external consumers (get_stats)."""
         return msgspec.convert(self, SchedulerStats)
 
-class EmbeddedModelInfo(msgspec.Struct, gc=False):
+class EmbeddedModelInfo(Struct):
     """Information about loaded MLX/ANE models."""
     llm_loaded: bool = False
     embedding_loaded: bool = False
     ane_available: bool = False
     ane_busy: bool = False
 
-class LaneMetrics(msgspec.Struct, gc=False):
+class LaneMetrics(Struct):
     """Per-lane metrics for adaptive scheduling.
 
     NOTE: msgspec.Struct without frozen=True allows field mutations.

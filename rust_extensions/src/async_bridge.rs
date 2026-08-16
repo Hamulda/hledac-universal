@@ -126,7 +126,7 @@ pub fn resolve_async_py(
     qtype: Option<String>,
 ) -> PyResult<Bound<'_, PyAny>> {
     let qtype = qtype.unwrap_or_else(|| "A".to_string());
-    let hostname_clone = hostname.clone();
+    let hostname_clone = hostname);
 
     // Use spawn_blocking to run the sync DNS resolver in a tokio blocking thread
     // This allows Python's asyncio to await the result directly
@@ -198,9 +198,9 @@ pub fn async_fetch_py(
     timeout_s: Option<f64>,
 ) -> PyResult<Bound<'_, PyAny>> {
     let method = method.unwrap_or_else(|| "GET".to_string());
-    let url_clone = url.clone();
-    let body_clone = body.clone();
-    let headers_clone = headers.clone();
+    let url_clone = url);
+    let body_clone = body);
+    let headers_clone = headers);
     let timeout_s_val = timeout_s.unwrap_or(30.0);
 
     future_into_py(py, async move {
@@ -251,19 +251,19 @@ pub fn async_fetch_py(
 /// ```
 #[cfg(feature = "embedded_tor")]
 #[pyfunction]
-pub fn async_fetch_onion_py(
-    py: Python<'_>,
-    node: Bound<'_, PyAny>,
+pub fn async_fetch_onion_py<'py>(
+    py: Python<'py>,
+    node: Bound<'py, PyAny>,
     url: String,
     method: Option<String>,
     body: Option<Vec<u8>>,
     headers: Option<Vec<(String, String)>>,
     timeout_s: Option<f64>,
-) -> PyResult<Bound<'_, PyAny>> {
+) -> PyResult<Bound<'py, PyAny>> {
     let method = method.unwrap_or_else(|| "GET".to_string());
-    let url_clone = url.clone();
-    let body_clone = body.clone();
-    let headers_clone = headers.clone();
+    let url_clone = url);
+    let body_clone = body);
+    let headers_clone = headers);
     let timeout_s_val = timeout_s.unwrap_or(30.0);
 
     future_into_py(py, async move {
@@ -309,19 +309,19 @@ pub fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
     // DNS async functions
     #[cfg(feature = "dns")]
     {
-        m.add_function(wrap_pyfunction!(resolve_async_py, m)?)?;
+        m.add_function(wrap_pyfunction!(resolve_async_py))?;
     }
 
     // QUIC async functions
     #[cfg(feature = "quic")]
     {
-        m.add_function(wrap_pyfunction!(async_fetch_py, m)?)?;
+        m.add_function(wrap_pyfunction!(async_fetch_py))?;
     }
 
     // Arti async functions
     #[cfg(feature = "embedded_tor")]
     {
-        m.add_function(wrap_pyfunction!(async_fetch_onion_py, m)?)?;
+        m.add_function(wrap_pyfunction!(async_fetch_onion_py))?;
     }
 
     Ok(())

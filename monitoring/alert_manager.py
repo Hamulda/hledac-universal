@@ -22,6 +22,7 @@ from hledac.universal.utils.locks import LazyAsyncioLock
 from collections import deque
 from dataclasses import dataclass, field
 import msgspec
+from compat.msgspec_gc_compat import Struct
 from enum import Enum
 from collections.abc import Callable
 import psutil
@@ -34,7 +35,7 @@ class AlertSeverity(Enum):
     CRITICAL = 'critical'
     INFO = 'info'
 
-class Alert(msgspec.Struct, frozen=True, gc=False):
+class Alert(Struct, frozen=True):
     """Structured alert — immutable, hashable."""
     alert_id: str
     severity: AlertSeverity

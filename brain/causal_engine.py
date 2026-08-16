@@ -24,25 +24,27 @@ import time
 import msgspec
 from typing import Any
 from _core import aclose
+
+from compat.msgspec_gc_compat import Struct
 MAX_ENTITIES: int = 5000
 MAX_FINDINGS: int = 5000
 MAX_HYPOTHESES: int = 500
 _TYPE_MAP: dict[str, str] = {'ipv4': 'ip', 'ipv6': 'ip'}
 
-class Entity(msgspec.Struct, gc=False):
+class Entity(Struct):
     """Single entity in the causal graph."""
     entity_id: str
     entity_type: str
     value: str = ''
     attributes: dict[str, Any] = msgspec.field(default_factory=dict)
 
-class EntityCluster(msgspec.Struct, frozen=True, gc=False):
+class EntityCluster(Struct, frozen=True):
     """Group of related entities (e.g. all hosts in the same ASN)."""
     cluster_id: str
     entities: list[Entity] = msgspec.field(default_factory=list)
     cohesion: float = 0.0
 
-class TemporalSequence(msgspec.Struct, frozen=True, gc=False):
+class TemporalSequence(Struct, frozen=True):
     """Ordered sequence of events with timestamps."""
     sequence_id: str
     events: list[tuple[float, str]] = msgspec.field(default_factory=list)
@@ -57,7 +59,7 @@ class TemporalSequence(msgspec.Struct, frozen=True, gc=False):
         """Timestamps in order."""
         return [ts for ts, _ in self.events]
 
-class AnomalySignal(msgspec.Struct, frozen=True, gc=False):
+class AnomalySignal(Struct, frozen=True):
     """Flag raised when a cluster deviates from baseline behaviour."""
     signal_id: str
     cluster_id: str
@@ -66,7 +68,7 @@ class AnomalySignal(msgspec.Struct, frozen=True, gc=False):
     anomaly_type: str = ''
     entities: tuple[str, ...] = ()
 
-class CausalHypothesis(msgspec.Struct, frozen=True, gc=False):
+class CausalHypothesis(Struct, frozen=True):
     """Hypothesis linking (cluster, event) -> downstream effect."""
     hypothesis_id: str
     cause_cluster_id: str
@@ -76,7 +78,7 @@ class CausalHypothesis(msgspec.Struct, frozen=True, gc=False):
     source_entity: str = ''
     target_entity: str = ''
 
-class Contradiction(msgspec.Struct, frozen=True, gc=False):
+class Contradiction(Struct, frozen=True):
     """Two hypotheses that cannot both be true."""
     contradiction_id: str
     a: str

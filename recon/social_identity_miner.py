@@ -21,17 +21,33 @@ GHOST_INVARIANTS enforced:
 - Fail-soft: malformed HTML/payload silently skipped
 """
 import asyncio
-import json
 import re
 import time as _time
 from dataclasses import dataclass
 import msgspec
+from compat.msgspec_gc_compat import Struct
 from typing import TYPE_CHECKING, Any
 from urllib.parse import urlparse
 from hledac.universal.utils.asyncx import parallel_ok
 from hledac.universal.utils.uma_budget import get_uma_snapshot
 from .confidence_policy import compute_confidence as _compute_confidence
 from _core import aclose
+
+# orjson fallback — 5-10× faster than stdlib json, M1 optimized
+try:
+    import orjson
+
+    def _json_dumps(data, *, sort_keys=False):
+        opts = orjson.OPT_SORT_KEYS if sort_keys else 0
+        return orjson.dumps(data, option=opts).decode("utf-8")
+
+except ImportError:
+    import json as _stdlib_json
+
+    def _json_dumps(data, *, sort_keys=False):
+        return _stdlib_json.dumps(data, sort_keys=sort_keys)
+
+
 _AC_MATCHER: Any = None
 
 def _get_ac_matcher() -> Any:
@@ -89,7 +105,7 @@ def _get_bloom_filter() -> Any:
             _BLOOM = BloomFilter(capacity=_SOCIAL_BLOOM_CAPACITY, fp_rate=0.01)
     return _BLOOM
 
-class SocialIdentityFacet(msgspec.Struct, frozen=True, gc=False):
+class SocialIdentityFacet(Struct, frozen=True):
     """A single social identity profile extracted from findings."""
     finding_id: str
     platform: str
@@ -101,7 +117,7 @@ class SocialIdentityFacet(msgspec.Struct, frozen=True, gc=False):
     confidence: float
     evidence_kind: str = 'url_in_payload'
 
-class SocialIdentityResult(msgspec.Struct, frozen=True, gc=False):
+class SocialIdentityResult(Struct, frozen=True):
     """Outcome of a social identity mining scan."""
     facets: tuple[SocialIdentityFacet, ...]
     scanned_count: int
@@ -362,7 +378,7 @@ class SocialIdentityMiner:
                     urls.extend(self._scan_text_for_urls(env['raw_text']))
                 elif 'text' in env:
                     urls.extend(self._scan_text_for_urls(env['text']))
-            except (json.JSONDecodeError, TypeError):
+            except (ValueError, TypeError):
                 urls.extend(self._scan_text_for_urls(payload))
             finding_str = str(finding)
             urls.extend(self._scan_text_for_urls(finding_str))
@@ -456,7 +472,7 @@ class SocialIdentityMiner:
             from hledac.universal.knowledge.duckdb_store import CanonicalFinding
             findings: list[CanonicalFinding] = []
             for facet in facets:
-                payload = json.dumps({'platform': facet.platform, 'username': facet.username, 'display_name': facet.display_name, 'profile_url': facet.profile_url, 'linked_domains': list(facet.linked_domains), 'linked_emails': list(facet.linked_emails), 'confidence': facet.confidence, 'source_finding_id': facet.finding_id, 'evidence_kind': facet.evidence_kind if hasattr(facet, 'evidence_kind') else 'url_in_payload'})
+                payload = _json_dumps({'platform': facet.platform, 'username': facet.username, 'display_name': facet.display_name, 'profile_url': facet.profile_url, 'linked_domains': list(facet.linked_domains), 'linked_emails': list(facet.linked_emails), 'confidence': facet.confidence, 'source_finding_id': facet.finding_id, 'evidence_kind': facet.evidence_kind if hasattr(facet, 'evidence_kind') else 'url_in_payload'})
                 finding = CanonicalFinding(finding_id=f'social:{facet.platform}:{facet.username[:32]}', source_type='social_identity_surface', query=query, confidence=facet.confidence, ts=_time.time(), provenance=('social_identity_miner', facet.platform), payload_text=payload)
                 findings.append(finding)
             if hasattr(store, 'submit_findings'):

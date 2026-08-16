@@ -22,6 +22,7 @@ import logging
 import time
 from dataclasses import dataclass
 import msgspec
+from compat.msgspec_gc_compat import Struct
 from typing import NamedTuple
 import orjson
 from hledac.universal.knowledge.duckdb_store import CanonicalFinding
@@ -33,7 +34,7 @@ REQUEST_TIMEOUT_S = 5.0
 MAX_RESULTS = 20
 FIELD_CONCEPTS = {'cs': 'C164176025', 'ai': 'C39432361', 'ml': 'C185592260', 'security': 'C162324750', 'crypto': 'C2777199784'}
 
-class OpenAlexWork(msgspec.Struct, gc=False):
+class OpenAlexWork(Struct):
     """OpenAlex academic work."""
     id: str
     title: str
@@ -48,7 +49,7 @@ class OpenAlexWork(msgspec.Struct, gc=False):
     abstract: str
     publication_date: str | None
 
-class OpenAlexInstitution(msgspec.Struct, frozen=True, gc=False):
+class OpenAlexInstitution(Struct, frozen=True):
     """OpenAlex institution."""
     id: str
     display_name: str
@@ -57,7 +58,7 @@ class OpenAlexInstitution(msgspec.Struct, frozen=True, gc=False):
     homepage: str | None
     works_count: int
 
-class OpenAlexAuthor(msgspec.Struct, frozen=True, gc=False):
+class OpenAlexAuthor(Struct, frozen=True):
     """OpenAlex author."""
     id: str
     display_name: str
@@ -65,7 +66,7 @@ class OpenAlexAuthor(msgspec.Struct, frozen=True, gc=False):
     institutions: list[str]
     works_count: int
 
-class InstitutionNetwork(msgspec.Struct, frozen=True, gc=False):
+class InstitutionNetwork(Struct, frozen=True):
     """Collaboration network for an institution."""
     institution: OpenAlexInstitution
     collaborators: list[tuple[OpenAlexInstitution, int]]

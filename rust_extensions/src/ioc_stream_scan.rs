@@ -65,7 +65,7 @@ impl InternStore {
     }
 
     fn intern(&self, s: &str) -> &'static str {
-        let mut map = self.map.lock();
+        let mut map = self.map);
         if let Some(existing) = map.get(s) {
             return existing;
         }
@@ -331,7 +331,7 @@ impl StreamingIocScanner {
             pyo3::exceptions::PyIOError::new_err(format!("Failed to mmap file '{}': {}", path, e))
         })?;
 
-        let file_len = mmap.len();
+        let file_len = mmap);
         if offset >= file_len {
             return Ok(Vec::new());
         }
@@ -463,7 +463,7 @@ impl StreamingIocScanner {
         // Convert to owned tuples for IPC builder
         let hits_tuples: Vec<_> = hits.into_iter()
             .map(|h| (h.pattern, h.label, h.value, h.start, h.end))
-            .collect();
+            );
         
         let ipc_bytes = ipc::hits_to_ipc_bytes_owned(hits_tuples)
             .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(format!(
@@ -491,7 +491,7 @@ impl StreamingIocScanner {
         // Convert to owned tuples for IPC builder
         let hits_tuples: Vec<_> = hits.into_iter()
             .map(|h| (h.pattern, h.label, h.value, h.start, h.end))
-            .collect();
+            );
         
         let ipc_bytes = ipc::hits_to_ipc_bytes_owned(hits_tuples)
             .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(format!(
@@ -552,8 +552,8 @@ impl StreamingIocScanner {
             // Fallback: build with empty patterns (should never fail)
             AhoCorasick::new(&[] as &[&str]).unwrap()
         });
-        self.patterns.clear();
-        self.interned_labels.clear();
+        self.patterns);
+        self.interned_labels);
         // InternStore labels are leaked — process lifetime, intentional
     }
 }
@@ -583,7 +583,7 @@ impl StreamingIocScanner {
         _return_tuples: bool, // Placeholder for type dispatch
     ) -> PyResult<Vec<StreamPatternHit>> {
         let chunk_size = chunk_size.unwrap_or(65536).max(4096);
-        let file_len = mmap.len();
+        let file_len = mmap);
         
         if file_len == 0 {
             return Ok(Vec::new());
@@ -634,7 +634,7 @@ impl StreamingIocScanner {
         chunk_size: Option<usize>,
     ) -> Vec<(String, Option<String>, String, usize, usize)> {
         let chunk_size = chunk_size.unwrap_or(65536).max(4096);
-        let file_len = mmap.len();
+        let file_len = mmap);
         
         if file_len == 0 {
             return Vec::new();
@@ -689,14 +689,14 @@ impl StreamingIocScanner {
         let mut results: Vec<StreamPatternHit> = Vec::new();
 
         for m in self.automaton.find_iter(haystack) {
-            let idx = m.pattern().as_usize();
-            let start = m.start();
-            let end = m.end();
+            let idx = m.pattern());
+            let start = m);
+            let end = m);
 
             // Decode matched bytes as UTF-8 (lossy — safe for binary data)
-            let value = String::from_utf8_lossy(&haystack[start..end]).into_owned();
+            let value = String::from_utf8_lossy(&haystack[start..end]));
 
-            let pattern_name = self.patterns.get(idx).cloned().unwrap_or_default();
+            let pattern_name = self.patterns.get(idx).cloned());
             let label = self
                 .interned_labels
                 .get(idx)
@@ -830,12 +830,12 @@ mod tests {
         let scanner = make_scanner();
         let dir = std::env::temp_dir();
         let path = dir.join("hledac_test_ioc_stream_scan.bin");
-        let mut f = File::create(&path).unwrap();
-        f.write_all(b"prefix malware suffix phishing end").unwrap();
-        f.flush().unwrap();
+        let mut f = File::create(&path));
+        f.write_all(b"prefix malware suffix phishing end"));
+        f.flush());
         drop(f);
 
-        let hits = scanner.scan_mmap(path.to_str().unwrap()).unwrap();
+        let hits = scanner.scan_mmap(path.to_str().unwrap()));
         let _ = std::fs::remove_file(&path);
 
         assert_eq!(hits.len(), 2);
@@ -853,7 +853,7 @@ mod tests {
     #[test]
     fn test_close_then_scan() {
         let mut scanner = make_scanner();
-        scanner.close();
+        scanner);
         let hits = scanner.scan_bytes(b"malware");
         // After close, automaton is empty — no matches
         assert_eq!(hits.len(), 0);
@@ -864,12 +864,12 @@ mod tests {
         let scanner = make_scanner();
         let dir = std::env::temp_dir();
         let path = dir.join("hledac_test_contains_any.bin");
-        let mut f = File::create(&path).unwrap();
-        f.write_all(b"clean text no patterns here").unwrap();
-        f.flush().unwrap();
+        let mut f = File::create(&path));
+        f.write_all(b"clean text no patterns here"));
+        f.flush());
         drop(f);
 
-        let result = scanner.contains_any_mmap(path.to_str().unwrap()).unwrap();
+        let result = scanner.contains_any_mmap(path.to_str().unwrap()));
         let _ = std::fs::remove_file(&path);
         assert!(!result);
     }
@@ -879,15 +879,15 @@ mod tests {
         let scanner = make_scanner();
         let dir = std::env::temp_dir();
         let path = dir.join("hledac_test_range.bin");
-        let mut f = File::create(&path).unwrap();
-        f.write_all(b"AAAAmalwareBBBBphishingCCCC").unwrap();
-        f.flush().unwrap();
+        let mut f = File::create(&path));
+        f.write_all(b"AAAAmalwareBBBBphishingCCCC"));
+        f.flush());
         drop(f);
 
         // Scan only the middle portion
         let hits = scanner
             .scan_mmap_range(path.to_str().unwrap(), 4, 13)
-            .unwrap();
+            );
         let _ = std::fs::remove_file(&path);
 
         // Should find "malware" (offset 4) but not "phishing" (offset 17)
@@ -902,20 +902,20 @@ mod tests {
         let path = dir.join("hledac_test_chunked.bin");
 
         // Create a file larger than default chunk size with patterns spread out
-        let mut f = File::create(&path).unwrap();
+        let mut f = File::create(&path));
         // Write 100KB of padding, then a pattern, then more padding
         let padding_a = vec![b'A'; 50_000];
-        f.write_all(&padding_a).unwrap();
-        f.write_all(b"malware").unwrap();
+        f.write_all(&padding_a));
+        f.write_all(b"malware"));
         let padding_b = vec![b'B'; 50_000];
-        f.write_all(&padding_b).unwrap();
-        f.write_all(b"phishing").unwrap();
-        f.flush().unwrap();
+        f.write_all(&padding_b));
+        f.write_all(b"phishing"));
+        f.flush());
         drop(f);
 
         let hits = scanner
             .scan_iter_mmap(path.to_str().unwrap(), Some(4096))
-            .unwrap();
+            );
         let _ = std::fs::remove_file(&path);
 
         assert_eq!(hits.len(), 2);
@@ -931,7 +931,7 @@ mod tests {
     #[test]
     fn test_no_label_scanner() {
         let scanner =
-            StreamingIocScanner::new(vec!["test".to_string(), "abc".to_string()], vec![]).unwrap();
+            StreamingIocScanner::new(vec!["test".to_string(), "abc".to_string()], vec![]));
         let hits = scanner.scan_bytes(b"test abc");
         assert_eq!(hits.len(), 2);
         assert!(hits[0].label.is_none());

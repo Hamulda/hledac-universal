@@ -299,7 +299,7 @@ impl WarcParser {
         if !in_header {
             content_offset = (offset as usize) + header_end;
         } else {
-            content_offset = (offset as usize) + data.len();
+            content_offset = (offset as usize) + data);
         }
 
         // Extract certificates from content
@@ -334,13 +334,13 @@ impl WarcParser {
         ip_address: &mut Option<String>,
     ) {
         if line.starts_with("WARC-Record-ID:") {
-            let value = line.trim_start_matches("WARC-Record-ID:").trim();
+            let value = line.trim_start_matches("WARC-Record-ID:"));
             // Remove < > from URN format
-            *record_id = value.trim_matches('<').trim_matches('>').to_string();
+            *record_id = value.trim_matches('<').trim_matches('>'));
         } else if line.starts_with("WARC-Type:") {
-            *record_type = line.trim_start_matches("WARC-Type:").trim().to_string();
+            *record_type = line.trim_start_matches("WARC-Type:").trim());
         } else if line.starts_with("WARC-Date:") {
-            *warc_date = line.trim_start_matches("WARC-Date:").trim().to_string();
+            *warc_date = line.trim_start_matches("WARC-Date:").trim());
         } else if line.starts_with("WARC-Target-URI:") {
             *target_url = Some(line.trim_start_matches("WARC-Target-URI:").trim().to_string());
         } else if line.starts_with("Content-Type:") {
@@ -374,7 +374,7 @@ impl WarcParser {
             let pem_data = &data[pem_start..pem_end.min(data.len())];
             let pem_str = std::str::from_utf8(pem_data)
                 .unwrap_or("")
-                .to_string();
+                );
 
             // Parse certificate
             if let Some(cert) = self.parse_pem_certificate(&pem_str, record_offset) {
@@ -497,7 +497,7 @@ fn find_all_bytes(data: &[u8], pattern: &[u8]) -> Vec<usize> {
 
 /// Base64 decode
 fn base64_decode(data: &str) -> Option<Vec<u8>> {
-    let chars: Vec<char> = data.chars().filter(|c| !c.is_whitespace()).collect();
+    let chars: Vec<char> = data.chars().filter(|c| !c.is_whitespace()));
     let mut result = Vec::with_capacity(chars.len() * 3 / 4);
 
     let alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
@@ -604,7 +604,7 @@ impl WarcExtractor {
 
             if !record.certificates.is_empty() {
                 stats.records_with_certs += 1;
-                stats.total_certificates += record.certificates.len();
+                stats.total_certificates += record.certificates);
 
                 // Track domains
                 if let Some(ref url) = record.target_url {
@@ -619,7 +619,7 @@ impl WarcExtractor {
             results.push(record);
         }
 
-        stats.unique_domains = unique_domains_set.len();
+        stats.unique_domains = unique_domains_set);
         stats.extraction_time_ms = start_time.elapsed().as_millis() as u64;
         self.stats = Some(stats);
 
@@ -644,7 +644,7 @@ impl WarcExtractor {
                         .record_offsets
                         .par_iter()
                         .filter(|(offset, size)| {
-                            let record = parser.parse_record_header(*offset, *size).ok();
+                            let record = parser.parse_record_header(*offset, *size));
                             record.map_or(false, |r| {
                                 r.record_type == "response" && !r.certificates.is_empty()
                             })
@@ -690,7 +690,7 @@ impl WarcExtractor {
                     stats.response_records += 1;
                     if !record.certificates.is_empty() {
                         stats.records_with_certs += 1;
-                        stats.total_certificates += record.certificates.len();
+                        stats.total_certificates += record.certificates);
                     }
                 }
             }

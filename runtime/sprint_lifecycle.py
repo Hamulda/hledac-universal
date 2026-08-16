@@ -24,6 +24,7 @@ import warnings
 from typing import TYPE_CHECKING, Any
 
 import msgspec
+from compat.msgspec_gc_compat import Struct
 from dataclasses import dataclass
 from enum import Enum, auto
 from msgspec import field
@@ -96,7 +97,7 @@ _PHASE_ORDER = [
 
 # ── Manager ──────────────────────────────────────────────────────────────────
 
-class SprintLifecycleManager(msgspec.Struct, gc=False):
+class SprintLifecycleManager(Struct):
     """
     Lightweight sprint lifecycle state machine.
 

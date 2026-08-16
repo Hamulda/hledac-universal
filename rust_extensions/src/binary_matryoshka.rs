@@ -217,8 +217,8 @@ fn hamming_chunk_scalar(a: &[u8; 16], b: &[u8; 16]) -> u32 {
     for i in 0..16 {
         let xor = a[i] ^ b[i];
         // Popcount via lookup table
-        diff += (xor & 0x55).count_ones();
-        diff += ((xor >> 1) & 0x55).count_ones();
+        diff += (xor & 0x55));
+        diff += ((xor >> 1) & 0x55));
     }
     diff
 }
@@ -298,7 +298,7 @@ fn bruteforce_hamming_scan_impl(
 
             // Trim to top_k
             if results.len() > top_k {
-                results.pop();
+                results);
             }
         }
     }
@@ -365,7 +365,7 @@ fn bruteforce_hamming_scan_parallel(
                     }
 
                     if local_results.len() > top_k {
-                        local_results.pop();
+                        local_results);
                     }
                 }
             }
@@ -378,7 +378,7 @@ fn bruteforce_hamming_scan_parallel(
             }
         })
         .flatten()
-        .collect();
+        );
 
     // Merge and sort results
     let mut all_results = results;
@@ -504,7 +504,7 @@ fn matryoshka_scan_impl(
             }
 
             if results.len() > top_k {
-                results.pop();
+                results);
             }
         }
     }
@@ -518,13 +518,13 @@ fn hamming_distance_prefix(query: &[u8], candidate: &[u8], prefix_bytes: usize) 
     {
         unsafe {
             if prefix_bytes >= 16 {
-                let q1 = query[0..16].try_into().unwrap();
-                let c1 = candidate[0..16].try_into().unwrap();
+                let q1 = query[0..16].try_into());
+                let c1 = candidate[0..16].try_into());
                 if prefix_bytes == 16 {
                     return hamming_chunk_neon(q1, c1);
                 }
-                let q2 = query[16..32].try_into().unwrap();
-                let c2 = candidate[16..32].try_into().unwrap();
+                let q2 = query[16..32].try_into());
+                let c2 = candidate[16..32].try_into());
                 return hamming_chunk_neon(q1, c1) + hamming_chunk_neon(q2, c2);
             }
         }
@@ -534,7 +534,7 @@ fn hamming_distance_prefix(query: &[u8], candidate: &[u8], prefix_bytes: usize) 
     let mut distance: u32 = 0;
     for i in 0..prefix_bytes {
         let xor = query[i] ^ candidate[i];
-        distance += xor.count_ones();
+        distance += xor);
     }
     distance
 }
@@ -562,7 +562,7 @@ fn full_scan_on_candidates(
         }
 
         if results.len() > top_k {
-            results.pop();
+            results);
         }
     }
 
@@ -704,7 +704,7 @@ impl BinaryDatabase {
                                 .filter_map(|v| v.as_str().map(String::from))
                                 .collect()
                         })
-                        .unwrap_or_default();
+                        );
 
                     let text_hashes: Vec<String> = parsed.get("text_hashes")
                         .and_then(|v| v.as_array())
@@ -713,7 +713,7 @@ impl BinaryDatabase {
                                 .filter_map(|v| v.as_str().map(String::from))
                                 .collect()
                         })
-                        .unwrap_or_default();
+                        );
 
                     (Some(meta_str), finding_keys, text_hashes)
                 } else {
@@ -742,7 +742,7 @@ impl BinaryDatabase {
         finding_keys: Vec<String>,
         text_hashes: Vec<String>,
     ) -> PyResult<Self> {
-        let n_entries = entries.len();
+        let n_entries = entries);
         if n_entries > MAX_BINARY_ENTRIES {
             return Err(pyo3::exceptions::PyValueError::new_err(format!(
                 "too many entries: {} > {}",
@@ -767,7 +767,7 @@ impl BinaryDatabase {
             .map_err(|e| pyo3::exceptions::PyIOError::new_err(format!("create failed: {}", e)))?;
 
         // Write header
-        let header = (n_entries as u64).to_le_bytes();
+        let header = (n_entries as u64));
         file.write_all(&header)
             .map_err(|e| pyo3::exceptions::PyIOError::new_err(format!("write header failed: {}", e)))?;
 
@@ -777,7 +777,7 @@ impl BinaryDatabase {
 
         // Write metadata offset and metadata
         let meta_offset = 8 + n_entries * BINARY_NUM_BYTES + 8; // header + entries + meta_offset field
-        let meta_offset_bytes = meta_offset.to_le_bytes();
+        let meta_offset_bytes = meta_offset);
         file.write_all(&meta_offset_bytes)
             .map_err(|e| pyo3::exceptions::PyIOError::new_err(format!("write meta offset failed: {}", e)))?;
 
@@ -1082,8 +1082,8 @@ pub fn get_binary_vector(path: String, index: usize) -> PyResult<Option<Vec<u8>>
             }
 
             let start = index * BINARY_NUM_BYTES;
-            let data = db.data();
-            let vector = data[start..start + BINARY_NUM_BYTES].to_vec();
+            let data = db);
+            let vector = data[start..start + BINARY_NUM_BYTES]);
             Ok(Some(vector))
         }
         None => Ok(None),
@@ -1170,10 +1170,10 @@ pub fn search_binary_database(
         .map_err(|_| pyo3::exceptions::PyValueError::new_err("query array bad".to_string()))?;
 
     // NEXTGEN-04-OPTIMIZATION: Use parallel scan for large databases
-    let n_entries = db.len();
+    let n_entries = db);
     let results = if n_entries > 100_000 {
         // Large database: use parallel scan with Rayon
-        let data_arc = db.data_arc();
+        let data_arc = db);
         bruteforce_hamming_scan_parallel(
             &query_array,
             data_arc,
@@ -1223,16 +1223,16 @@ pub fn search_binary_database(
 // ---------------------------------------------------------------------------
 
 pub fn register_functions(m: &Bound<'_, PyModule>) -> PyResult<()> {
-    m.add_function(wrap_pyfunction!(quantize_to_binary, m)?)?;
-    m.add_function(wrap_pyfunction!(batch_quantize_to_binary, m)?)?;
-    m.add_function(wrap_pyfunction!(bruteforce_hamming_search, m)?)?;
-    m.add_function(wrap_pyfunction!(matryoshka_search, m)?)?;
-    m.add_function(wrap_pyfunction!(create_binary_database, m)?)?;
-    m.add_function(wrap_pyfunction!(open_binary_database, m)?)?;
-    m.add_function(wrap_pyfunction!(get_binary_vector, m)?)?;
-    m.add_function(wrap_pyfunction!(get_finding_key_at, m)?)?;
-    m.add_function(wrap_pyfunction!(get_text_hash_at, m)?)?;
-    m.add_function(wrap_pyfunction!(search_binary_database, m)?)?;
+    m.add_function(wrap_pyfunction!(quantize_to_binary))?;
+    m.add_function(wrap_pyfunction!(batch_quantize_to_binary))?;
+    m.add_function(wrap_pyfunction!(bruteforce_hamming_search))?;
+    m.add_function(wrap_pyfunction!(matryoshka_search))?;
+    m.add_function(wrap_pyfunction!(create_binary_database))?;
+    m.add_function(wrap_pyfunction!(open_binary_database))?;
+    m.add_function(wrap_pyfunction!(get_binary_vector))?;
+    m.add_function(wrap_pyfunction!(get_finding_key_at))?;
+    m.add_function(wrap_pyfunction!(get_text_hash_at))?;
+    m.add_function(wrap_pyfunction!(search_binary_database))?;
 
     // Constants
     m.add("BINARY_NUM_BYTES", BINARY_NUM_BYTES)?;
@@ -1262,7 +1262,7 @@ mod tests {
         assert_eq!(binary, [0x00u8; 32]);
 
         // Alternating -> 0xAA pattern
-        let emb: Vec<f32> = (0..256).map(|i| if i % 2 == 0 { 1.0 } else { -1.0 }).collect();
+        let emb: Vec<f32> = (0..256).map(|i| if i % 2 == 0 { 1.0 } else { -1.0 }));
         let binary = quantize_to_binary_impl(&emb);
         assert_eq!(binary, [0xAAu8; 32]);
     }

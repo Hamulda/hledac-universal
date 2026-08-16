@@ -19,6 +19,7 @@ import time
 from collections import OrderedDict
 from dataclasses import dataclass, field
 import msgspec
+from compat.msgspec_gc_compat import Struct
 from enum import Enum, StrEnum
 from typing import Any
 from hledac.universal.utils.msgspec_json import dumps_str, loads as _msgspec_loads
@@ -70,7 +71,7 @@ class OperationStatus(Enum):
     FAILED = 'failed'
     CANCELLED = 'cancelled'
 
-class IntelligenceTarget(msgspec.Struct, gc=False):
+class IntelligenceTarget(Struct):
     """Unified intelligence target configuration."""
     target_id: str
     name: str
@@ -83,14 +84,14 @@ class IntelligenceTarget(msgspec.Struct, gc=False):
     compliance_level: str = 'strict'
     stealth_level: str = 'high'
 
-class TechIntelligence(msgspec.Struct, frozen=True, gc=False):
+class TechIntelligence(Struct, frozen=True):
     """Tech stack intelligence inferred from job postings."""
     detected_technologies: dict[str, int]
     hiring_patterns: list[str]
     seniority_distribution: dict[str, int]
     inferred_pain_points: list[str]
 
-class IntelligenceResult(msgspec.Struct, gc=False):
+class IntelligenceResult(Struct):
     """Comprehensive intelligence result."""
     operation_id: str
     target_id: str

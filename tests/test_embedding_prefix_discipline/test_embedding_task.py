@@ -93,6 +93,8 @@ class TestEmbeddingTask:
         assert should_normalize(EmbeddingTask.CLASSIFICATION) is False
 
 
+@pytest.mark.heavy  # ROADMAP-008: MLX tests require >2GB RAM
+@pytest.mark.mlx  # Apple Silicon MLX tests
 class TestMLXProviderCapabilities:
     """Testy pro MLX provider capability guard."""
 

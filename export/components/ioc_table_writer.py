@@ -95,3 +95,6 @@ async def stream_ioc_table_section(
     if total >= max_rows:
         yield f" (cap: {max_rows})"
     yield "\n"
+    # PEP 479: Cleanup on generator exit (normal or abandoned)
+    chunk_acc.clear()
+    chunk_acc = None

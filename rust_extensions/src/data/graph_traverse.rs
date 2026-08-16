@@ -135,7 +135,7 @@ pub fn batch_graph_traverse(
     _max_results_per_root: usize,
 ) -> PyResult<Py<PyDict>> {
     // M1 8GB: Enforce batch size cap to prevent OOM
-    let values: Vec<String> = root_values.into_iter().take(MAX_BATCH_SIZE).collect();
+    let values: Vec<String> = root_values.into_iter().take(MAX_BATCH_SIZE);
     let n = values.len();
 
     if n == 0 {
@@ -218,8 +218,8 @@ pub fn graph_stats(py: Python<'_>, db_path: String) -> PyResult<Py<PyDict>> {
 
 /// Register graph_traverse functions with Python module.
 pub fn register_functions(m: &Bound<'_, PyModule>) -> PyResult<()> {
-    m.add_function(wrap_pyfunction!(batch_graph_traverse, m)?)?;
-    m.add_function(wrap_pyfunction!(graph_stats, m)?)?;
+    m.add_function(wrap_pyfunction!(batch_graph_traverse)?);
+    m.add_function(wrap_pyfunction!(graph_stats)?);
     Ok(())
 }
 

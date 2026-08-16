@@ -41,6 +41,7 @@ import time as _time
 from typing import TYPE_CHECKING, Any
 
 import msgspec
+from compat.msgspec_gc_compat import Struct
 from hledac.universal.compat.msgspec_gc_compat import Struct
 
 from hledac.universal.utils.logging_config import get_logger

@@ -20,6 +20,7 @@ import re
 import time
 from dataclasses import dataclass
 import msgspec
+from compat.msgspec_gc_compat import Struct
 from enum import Enum
 from pathlib import Path
 import httpx
@@ -177,7 +178,7 @@ class CTProviderStatus(Enum):
     COOLDOWN_ACTIVE = 'cooldown_active'
     PROVIDER_FAILURE = 'provider_failure'
 
-class CTProviderStatusReport(msgspec.Struct, frozen=True, gc=False):
+class CTProviderStatusReport(Struct, frozen=True):
     """
     F217D: Explicit CT provider status report with bounded error sampling.
     F219E adds cooldown fields.
@@ -214,7 +215,7 @@ class CTProviderStatusReport(msgspec.Struct, frozen=True, gc=False):
     stale_cache_preferred: bool = False
     provider_attempt_suppressed: bool = False
 
-class CTOutcome(msgspec.Struct, frozen=True, gc=False):
+class CTOutcome(Struct, frozen=True):
     """
     Normalized CT adapter outcome — F207F, extended F217D with cache fields.
 

@@ -21,6 +21,7 @@ from collections.abc import Callable, Coroutine
 from typing import Any
 from hledac.universal.utils.asyncx import safe_create_task, parallel
 from hledac.universal._core.constants import MLX
+from hledac.universal.compat.pydantic_compat import is_pydantic_model, is_msgspec_struct
 from _core import aclose
 logger = logging.getLogger(__name__)
 
@@ -180,9 +181,11 @@ class BatchScheduler:
         if timeout_s is not None and timeout_s <= self._current_flush_interval() * 2:
             return False
         schema_cls = response_model if isinstance(response_model, type) else type(response_model)
-        if not hasattr(schema_cls, '__struct_fields__') and (not hasattr(schema_cls, 'model_validate_json')):
-            return False
-        return True
+        # ROADMAP-006: Use compat layer for type detection
+        # Batch-safe if it's msgspec.Struct or Pydantic model with model_validate_json
+        if is_msgspec_struct(schema_cls) or is_pydantic_model(schema_cls):
+            return True
+        return False
 
     async def flush(self, timeout: float=5.0) -> int:
         """

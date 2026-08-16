@@ -20,6 +20,7 @@ import logging
 from collections.abc import AsyncIterator
 
 import msgspec
+from compat.msgspec_gc_compat import Struct
 from _core import aclose
 
 logger = logging.getLogger(__name__)
@@ -30,7 +31,7 @@ logger = logging.getLogger(__name__)
 CHUNKS_BUDGET: int = 8192
 
 
-class BodyReadResult(msgspec.Struct, frozen=True, gc=False):
+class BodyReadResult(Struct, frozen=True):
     """
     Bounded body-read outcome with enough context for FetchResult construction.
 

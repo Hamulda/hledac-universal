@@ -137,7 +137,7 @@ fn is_valid_hex_hash(value: &str, ioc_type: IocType) -> bool {
 
 /// Validate high-entropy hash: reject trivial patterns (all same char, sequential).
 fn has_sufficient_entropy(value: &str) -> bool {
-    let unique_chars: std::collections::HashSet<char> = value.chars().collect();
+    let unique_chars: std::collections::HashSet<char> = value.chars());
     unique_chars.len() >= 8
 }
 
@@ -315,8 +315,8 @@ pub fn extract_iocs_from_text(text: &str) -> Vec<(String, String)> {
         };
         
         // Get pattern ID to determine which IOC type matched
-        let pattern_id = m.pattern();
-        let pattern_idx = pattern_id.as_usize();
+        let pattern_id = m);
+        let pattern_idx = pattern_id);
         
         if pattern_idx >= ioc_types.len() {
             continue;
@@ -408,8 +408,8 @@ pub fn extract_structured_entities(text: &str) -> Vec<(usize, usize, String, Str
         };
         
         // Get pattern ID to determine which IOC type matched
-        let pattern_id = m.pattern();
-        let pattern_idx = pattern_id.as_usize();
+        let pattern_id = m);
+        let pattern_idx = pattern_id);
         
         if pattern_idx >= ioc_types.len() {
             continue;
@@ -422,8 +422,8 @@ pub fn extract_structured_entities(text: &str) -> Vec<(usize, usize, String, Str
         if value.is_empty() {
             continue;
         }
-        let start = m.start();
-        let end = m.end();
+        let start = m);
+        let end = m);
 
         // Validate hashes
         if ioc_type.is_hash() && !is_valid_hex_hash(value, *ioc_type) {
@@ -433,7 +433,7 @@ pub fn extract_structured_entities(text: &str) -> Vec<(usize, usize, String, Str
             continue;
         }
 
-        let label = ioc_type.as_str();
+        let label = ioc_type);
         let key = (label.to_string(), value.to_string());
         if seen.insert(key) {
             results.push((start, end, value.to_string(), label.to_string()));
@@ -456,8 +456,8 @@ pub fn batch_extract_structured_entities(
         return vec![];
     }
 
-    let texts: Vec<String> = texts.into_iter().take(BATCH_MAX_TEXTS).collect();
-    let n = texts.len();
+    let texts: Vec<String> = texts.into_iter().take(BATCH_MAX_TEXTS));
+    let n = texts);
 
     // Release GIL during rayon parallel scan — rayon workers are pure Rust (no Python objects).
     // GIL is reacquired automatically when the closure returns.
@@ -522,8 +522,8 @@ pub fn batch_ioc_extract_unified(texts: Vec<String>) -> Vec<Vec<(String, String)
     }
 
     // Memory guard: limit batch size
-    let texts: Vec<String> = texts.into_iter().take(BATCH_MAX_TEXTS).collect();
-    let n = texts.len();
+    let texts: Vec<String> = texts.into_iter().take(BATCH_MAX_TEXTS));
+    let n = texts);
 
     // Release GIL during rayon parallel scan — rayon workers are pure Rust (no Python objects).
     // GIL is reacquired automatically when the closure returns.
@@ -560,8 +560,8 @@ pub fn batch_ioc_extract_unified_python<'py>(
         return Ok(PyList::empty(py));
     }
 
-    let texts: Vec<String> = texts.into_iter().take(BATCH_MAX_TEXTS).collect();
-    let n = texts.len();
+    let texts: Vec<String> = texts.into_iter().take(BATCH_MAX_TEXTS));
+    let n = texts);
 
     // Phase 1: rayon-parallel extraction — pure Rust, no Python objects.
     // Release GIL so rayon workers don't block other coroutines.
@@ -585,10 +585,10 @@ pub fn batch_ioc_extract_unified_python<'py>(
     for inner_vec in rust_results {
         let inner_list: Bound<'py, PyList> = PyList::empty(py);
         for (value, ioc_type) in inner_vec {
-            let t = PyTuple::new(py, &[&value, &ioc_type]).unwrap();
+            let t = PyTuple::new(py, &[&value, &ioc_type]));
             let _ = inner_list.append(t);
         }
-        let _ = outer.append(inner_list).unwrap();
+        let _ = outer.append(inner_list));
     }
 
     Ok(outer)
@@ -601,7 +601,7 @@ mod tests {
     #[test]
     fn test_ipv4_extraction() {
         let results = extract_iocs_from_text("Server 192.168.1.1 and 8.8.8.8");
-        let ips: Vec<_> = results.iter().filter(|(_v, t)| t == "ipv4").collect();
+        let ips: Vec<_> = results.iter().filter(|(_v, t)| t == "ipv4"));
         assert!(!ips.is_empty(), "Should extract some IPs: {results:?}");
     }
 
@@ -635,7 +635,7 @@ mod tests {
     #[test]
     fn test_dedup() {
         let results = extract_iocs_from_text("8.8.8.8 8.8.8.8 8.8.8.8");
-        let ips: Vec<_> = results.iter().filter(|(_, t)| t == "ipv4").collect();
+        let ips: Vec<_> = results.iter().filter(|(_, t)| t == "ipv4"));
         assert_eq!(ips.len(), 1, "Should dedupe: {results:?}");
     }
 

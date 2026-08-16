@@ -23,6 +23,7 @@ from enum import Enum
 from typing import TYPE_CHECKING, Any
 
 import msgspec
+from compat.msgspec_gc_compat import Struct
 import msgspec.json as _json
 import numpy as np
 import psutil
@@ -60,7 +61,7 @@ class TaskType(Enum):
     NETWORK_INTENSIVE = 'network_intensive'
     MIXED = 'mixed'
 
-class TaskMetrics(msgspec.Struct, gc=False):
+class TaskMetrics(Struct):
     """Task execution metrics"""
     task_id: str
     task_type: TaskType
@@ -73,7 +74,7 @@ class TaskMetrics(msgspec.Struct, gc=False):
     worker_id: str | None = None
     parallel_group: str | None = None
 
-class WorkerMetrics(msgspec.Struct, gc=False):
+class WorkerMetrics(Struct):
     """Worker performance metrics"""
     worker_id: str
     cpu_cores: int
@@ -84,7 +85,7 @@ class WorkerMetrics(msgspec.Struct, gc=False):
     efficiency_score: float
     last_updated: datetime
 
-class ParallelGroup(msgspec.Struct, gc=False):
+class ParallelGroup(Struct):
     """Parallel execution group"""
     group_id: str
     tasks: list[Any]
@@ -857,7 +858,7 @@ class OptimizationLevel(Enum):
     BALANCED = 'balanced'
     AGGRESSIVE = 'aggressive'
 
-class ResourceMetrics(msgspec.Struct, gc=False):
+class ResourceMetrics(Struct):
     """Current resource utilization metrics."""
     cpu_percent: float = 0.0
     memory_percent: float = 0.0
@@ -869,7 +870,7 @@ class ResourceMetrics(msgspec.Struct, gc=False):
     network_bytes_recv: int = 0
     timestamp: float = field(default_factory=time.time)
 
-class ResourceLimits(msgspec.Struct, gc=False):
+class ResourceLimits(Struct):
     """Resource utilization limits for M1 8GB systems."""
     max_cpu_percent: float = 80.0
     max_memory_percent: float = 85.0
@@ -1218,7 +1219,7 @@ async def main():
 if __name__ == '__main__':
     asyncio.run(main())
 
-class CacheEntry(msgspec.Struct, gc=False):
+class CacheEntry(Struct):
     """Entry in predictive cache."""
     key: str
     value: Any

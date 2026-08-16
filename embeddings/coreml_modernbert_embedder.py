@@ -21,6 +21,7 @@ import logging
 import os
 from dataclasses import dataclass, field
 import msgspec
+from compat.msgspec_gc_compat import Struct
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 from _core import aclose
@@ -67,7 +68,7 @@ def _check_coreml_engine_available() -> bool:
     logger.info(f'[CoreML-ANE] Engine available — model: {_ANE_MODEL_PATH}')
     return True
 
-class CoreMLModernBERTConfig(msgspec.Struct, gc=False):
+class CoreMLModernBERTConfig(Struct):
     """Configuration for CoreML ANE ModernBERT embedder."""
     model_path: Path = field(default_factory=lambda: _ANE_MODEL_PATH)
     max_seq_len: int = 512

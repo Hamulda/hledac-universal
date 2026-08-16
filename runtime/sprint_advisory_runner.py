@@ -37,6 +37,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import msgspec
+from compat.msgspec_gc_compat import Struct
 import msgspec.json as _json
 from functools import lru_cache
 from typing import Any
@@ -101,7 +102,7 @@ def build_search_documents_from_findings(findings: list) -> list:
         docs.append(doc)
     return docs
 
-class AdvisoryRunOutcome(msgspec.Struct, frozen=True, gc=False):
+class AdvisoryRunOutcome(Struct, frozen=True):
     """
     Result of a full advisory run (all 6 advisory steps).
 

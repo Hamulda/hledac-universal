@@ -24,6 +24,7 @@ import re
 import time
 from dataclasses import dataclass, field
 import msgspec
+from compat.msgspec_gc_compat import Struct
 from typing import Any
 from hledac.universal.transport.gopher_transport import GopherItem, GopherTransport, get_gopher_transport
 from hledac.universal.utils.asyncx import parallel_ok
@@ -35,7 +36,7 @@ CRAWL_TIMEOUT_S: float = 30.0
 MAX_CONCURRENT: int = 4
 SEED_SERVERS: list[tuple[str, int]] = [('gopher.floodgap.com', 70), ('gopher.quux.org', 70)]
 
-class GopherCrawlResult(msgspec.Struct, gc=False):
+class GopherCrawlResult(Struct):
     """Result from a single gopher crawl operation."""
     host: str
     port: int
@@ -43,7 +44,7 @@ class GopherCrawlResult(msgspec.Struct, gc=False):
     errors: list[str] = field(default_factory=list)
     crawled_at: float = field(default_factory=time.time)
 
-class GopherCrawlItem(msgspec.Struct, frozen=True, gc=False):
+class GopherCrawlItem(Struct, frozen=True):
     """Structured item extracted from Gopher crawl."""
     host: str
     port: int

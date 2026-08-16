@@ -18,6 +18,8 @@ import msgspec
 from pathlib import Path
 from operator import attrgetter, itemgetter
 from _core import aclose
+from compat.msgspec_gc_compat import Struct
+
 REPO_ROOT = Path('/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal')
 QODER_ROOT_DEFAULT = REPO_ROOT / '.qoder/repowiki/en/content'
 OUTPUT_JSON_DEFAULT = REPO_ROOT / 'probe_qoder_reality/qoder_reality_matrix.json'
@@ -67,7 +69,7 @@ HAS_SECRET_EXPORT_RISK = {'security/pq_export_encryption.py', 'security/pq_expor
 PRIVATE_HELPER_PATHS = {}
 PRODUCTION_CALL_PATHS = {'runtime/sprint_scheduler.py': {'core/__main__.py', 'core/__main__.py:run_sprint'}, 'runtime/sprint_lifecycle.py': {'core/__main__.py'}, 'runtime/sprint_lifecycle_runner.py': {'runtime/sprint_scheduler.py'}, 'runtime/sprint_advisory_runner.py': {'runtime/sprint_scheduler.py'}, 'runtime/sidecar_bus.py': {'runtime/sprint_scheduler.py'}, 'runtime/sidecar_dispatcher.py': {'runtime/sprint_scheduler.py'}, 'knowledge/duckdb_store.py': {'core/__main__.py'}, 'knowledge/semantic_store.py': {'core/__main__.py'}, 'export/sprint_exporter.py': {'core/__main__.py'}, 'transport/circuit_breaker.py': {'runtime/sprint_scheduler.py', 'coordinators/fetch_coordinator.py'}, 'transport/transport_resolver.py': {'pipeline/live_public_pipeline.py'}, 'transport/tor_transport.py': {'core/__main__.py'}}
 
-class ModuleReality(msgspec.Struct, gc=False):
+class ModuleReality(Struct):
     path: str
     exists: bool
     verdict: str
@@ -76,7 +78,7 @@ class ModuleReality(msgspec.Struct, gc=False):
     risks: list[str] = field(default_factory=list)
     recommended_action: str = ''
 
-class Overclaim(msgspec.Struct, frozen=True, gc=False):
+class Overclaim(Struct, frozen=True):
     doc_path: str
     claim: str
     referenced_path: str
@@ -86,7 +88,7 @@ class Overclaim(msgspec.Struct, frozen=True, gc=False):
     examples: list[str] = field(default_factory=list)
     group_key: str = ''
 
-class HighRiskGap(msgspec.Struct, frozen=True, gc=False):
+class HighRiskGap(Struct, frozen=True):
     gap_type: str
     description: str
     affected_paths: list[str]

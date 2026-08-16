@@ -71,6 +71,8 @@ from datetime import UTC, datetime
 from enum import Enum
 from typing import TYPE_CHECKING, Any, Self
 from _core import aclose
+
+from compat.msgspec_gc_compat import Struct
 # ISSUE-015: Import canonical model constants
 from config.settings import HERMES_MODEL_DEFAULT, MODERNBERT_MODEL_DEFAULT, GLINER_MODEL_DEFAULT
 if TYPE_CHECKING:
@@ -209,7 +211,7 @@ class ReasoningMode(Enum):
     TREE_OF_THOUGHTS = 'tree_of_thoughts'
     HYBRID_TOT_MOE = 'hybrid_tot_moe'
 
-class ModelConfig(msgspec.Struct, gc=False):
+class ModelConfig(Struct):
     """Model configuration for M1 8GB - 3 model stack only
     
     ISSUE-015: Uses canonical model constants from config.settings.
@@ -221,7 +223,7 @@ class ModelConfig(msgspec.Struct, gc=False):
     EMBED_DIM: int = 768
     GLINER_MODEL: str = GLINER_MODEL_DEFAULT
 
-class ResearchConfig(msgspec.Struct, gc=False):
+class ResearchConfig(Struct):
     """Research execution configuration
     
     ISSUE-015: Uses canonical model constants from config.settings.
@@ -251,7 +253,7 @@ class ResearchConfig(msgspec.Struct, gc=False):
     max_concurrent_agents: int = 3
     agent_timeout: int = 300
 
-class MemoryConfig(msgspec.Struct, gc=False):
+class MemoryConfig(Struct):
     """Memory management configuration (from InfrastructureOrchestrator)"""
     memory_limit_mb: float = 5500.0
     max_rss_gb: float = 5.5
@@ -261,7 +263,7 @@ class MemoryConfig(msgspec.Struct, gc=False):
     recovery_interval_seconds: float = 30.0
     health_check_interval_seconds: float = 5.0
 
-class GhostConfig(msgspec.Struct, gc=False):
+class GhostConfig(Struct):
     """Ghost layer configuration"""
     max_steps: int = 20
     enable_vault: bool = True
@@ -270,7 +272,7 @@ class GhostConfig(msgspec.Struct, gc=False):
     stagnation_threshold: int = 3
     enable_loot_manager: bool = True
 
-class SecurityConfig(msgspec.Struct, gc=False):
+class SecurityConfig(Struct):
     """Security configuration for privacy protection"""
     enable_audit: bool = True
     privacy_level: str = 'high'
@@ -290,7 +292,7 @@ class SecurityConfig(msgspec.Struct, gc=False):
     enable_timing_jitter: bool = True
     jitter_percent: float = 50.0
 
-class StealthConfig(msgspec.Struct, gc=False):
+class StealthConfig(Struct):
     """Stealth mode configuration"""
     enabled: bool = True
     chaff_ratio: float = 0.3
@@ -350,14 +352,14 @@ class StealthConfig(msgspec.Struct, gc=False):
     scroll_max: int = 50
     scroll_pause: float = 0.2
 
-class CoordinationConfig(msgspec.Struct, gc=False):
+class CoordinationConfig(Struct):
     """Coordination layer configuration"""
     max_context_length: int = 1024
     temperature: float = 0.1
     max_tokens_response: int = 100
     enable_delegation: bool = True
 
-class AgentManagerConfig(msgspec.Struct, gc=False):
+class AgentManagerConfig(Struct):
     """Agent management configuration (from EnhancedUnifiedOrchestrator)"""
     max_concurrent_agents: int = 6
     memory_threshold_mb: float = 512.0
@@ -366,7 +368,7 @@ class AgentManagerConfig(msgspec.Struct, gc=False):
     agent_pool_size: int = 2
     auto_optimize_interval: int = 300
 
-class ExecutionContext(msgspec.Struct, gc=False):
+class ExecutionContext(Struct):
     """Context for research execution (from v1 + v2)"""
     query: str
     current_step: int = 0
@@ -387,7 +389,7 @@ class ExecutionContext(msgspec.Struct, gc=False):
         """Add action to log"""
         self.action_log.append({'step': self.current_step, 'action': action_type.value, 'timestamp': datetime.now(UTC).isoformat(), 'details': details})
 
-class DecisionContext(msgspec.Struct, gc=False):
+class DecisionContext(Struct):
     """Context for decision making (from Hermes3)"""
     research_id: str
     goal: str
@@ -396,7 +398,7 @@ class DecisionContext(msgspec.Struct, gc=False):
     max_iterations: int = 20
     context_data: dict[str, Any] = msgspec.field(default_factory=dict)
 
-class SubAgentResult(msgspec.Struct, gc=False):
+class SubAgentResult(Struct):
     """Result from sub-agent execution"""
     agent_type: SubAgentType
     success: bool
@@ -406,7 +408,7 @@ class SubAgentResult(msgspec.Struct, gc=False):
     execution_time: float
     state: AgentState
 
-class ResearchResult(msgspec.Struct, gc=False):
+class ResearchResult(Struct):
     """Final research result"""
     success: bool
     query: str
@@ -434,7 +436,7 @@ class ResearchResult(msgspec.Struct, gc=False):
         import json
         return json.dumps(d, indent=2, default=str)
 
-class DecisionRequest(msgspec.Struct, gc=False):
+class DecisionRequest(Struct):
     """Request for decision making (from DeepSeek R1)"""
     operation_type: OperationType
     context: dict[str, Any]
@@ -442,7 +444,7 @@ class DecisionRequest(msgspec.Struct, gc=False):
     timeout_seconds: float = 30.0
     requires_delegation: bool = True
 
-class DecisionResponse(msgspec.Struct, gc=False):
+class DecisionResponse(Struct):
     """Response from decision making"""
     decision_id: str
     operation_type: OperationType
@@ -452,7 +454,7 @@ class DecisionResponse(msgspec.Struct, gc=False):
     coordinator_id: str | None = None
     reasoning: str | None = None
 
-class ActionResult(msgspec.Struct, gc=False):
+class ActionResult(Struct):
     """Result from Ghost action execution"""
     action: ActionType
     success: bool
@@ -461,7 +463,7 @@ class ActionResult(msgspec.Struct, gc=False):
     stagnation_detected: bool = False
     stored_in_vault: bool = False
 
-class SystemMetrics(msgspec.Struct, gc=False):
+class SystemMetrics(Struct):
     """System health metrics (from InfrastructureOrchestrator)"""
     memory_used_mb: float
     memory_available_mb: float
@@ -470,7 +472,7 @@ class SystemMetrics(msgspec.Struct, gc=False):
     state: SystemState
     timestamp: float
 
-class AgentMetrics(msgspec.Struct, gc=False):
+class AgentMetrics(Struct):
     """Agent performance metrics"""
     agent_type: SubAgentType
     success_rate: float
@@ -479,7 +481,7 @@ class AgentMetrics(msgspec.Struct, gc=False):
     consecutive_failures: int
     total_executions: int
 
-class ComplexityAnalysis(msgspec.Struct, gc=False):
+class ComplexityAnalysis(Struct):
     """Complexity analysis result for ToT decision making"""
     score: float
     requires_multi_step: bool
@@ -487,7 +489,7 @@ class ComplexityAnalysis(msgspec.Struct, gc=False):
     tot_recommended: bool
     indicators: dict[str, float]
 
-class AnalyzerResult(msgspec.Struct, gc=False):
+class AnalyzerResult(Struct):
     """
     Structured output from AutonomousAnalyzer.
 
@@ -685,7 +687,7 @@ class ContentSource(Enum):
     SEARCH_CACHE = 'search_cache'
     SOCIAL_ARCHIVE = 'social_archive'
 
-class ObfuscationResult(msgspec.Struct, gc=False):
+class ObfuscationResult(Struct):
     """Result of string obfuscation"""
     original_hash: str
     obfuscated_data: str
@@ -693,7 +695,7 @@ class ObfuscationResult(msgspec.Struct, gc=False):
     decoy_count: int
     success: bool
 
-class DestructionResult(msgspec.Struct, gc=False):
+class DestructionResult(Struct):
     """Result of secure data destruction"""
     file_path: str
     standard: WipeStandard
@@ -702,7 +704,7 @@ class DestructionResult(msgspec.Struct, gc=False):
     verification_passed: bool
     timestamp: float
 
-class StealthSession(msgspec.Struct, gc=False):
+class StealthSession(Struct):
     """Stealth browsing session"""
     session_id: str
     browser_type: BrowserType
@@ -711,7 +713,7 @@ class StealthSession(msgspec.Struct, gc=False):
     risk_level: RiskLevel
     created_at: float
 
-class CaptchaSolution(msgspec.Struct, gc=False):
+class CaptchaSolution(Struct):
     """CAPTCHA solving result"""
     solution: str
     solved_at: float
@@ -719,7 +721,7 @@ class CaptchaSolution(msgspec.Struct, gc=False):
     confidence: float
     provider: str
 
-class PrivacyStatus(msgspec.Struct, gc=False):
+class PrivacyStatus(Struct):
     """Current privacy/anonymity status"""
     vpn_connected: bool
     tor_active: bool
@@ -728,7 +730,7 @@ class PrivacyStatus(msgspec.Struct, gc=False):
     encryption_enabled: bool
     overall_level: PrivacyLevel
 
-class DeepResearchConfig(msgspec.Struct, gc=False):
+class DeepResearchConfig(Struct):
     """Configuration for deep research"""
     max_depth: int = 10
     strategy: ExplorationStrategy = ExplorationStrategy.HYBRID
@@ -737,7 +739,7 @@ class DeepResearchConfig(msgspec.Struct, gc=False):
     max_threads: int = 5
     citation_types: list[str] = msgspec.field(default_factory=lambda: ['academic', 'patent', 'preprint', 'dataset'])
 
-class ExplorationNode(msgspec.Struct, gc=False):
+class ExplorationNode(Struct):
     """Node in deep research exploration graph"""
     node_id: str
     url: str
@@ -748,7 +750,7 @@ class ExplorationNode(msgspec.Struct, gc=False):
     citations: list[str] = msgspec.field(default_factory=list)
     quality_score: float = 0.0
 
-class GhostAction(msgspec.Struct, gc=False):
+class GhostAction(Struct):
     """GhostDirector action"""
     action_type: ActionType
     parameters: dict[str, Any]
@@ -756,7 +758,7 @@ class GhostAction(msgspec.Struct, gc=False):
     requires_stealth: bool = False
     vault_storage: bool = True
 
-class GhostMission(msgspec.Struct, gc=False):
+class GhostMission(Struct):
     """GhostDirector mission"""
     mission_id: str
     goal: str
@@ -765,7 +767,7 @@ class GhostMission(msgspec.Struct, gc=False):
     acquired_loot: list[dict[str, Any]] = msgspec.field(default_factory=list)
     anti_loop_counter: int = 0
 
-class DataLeakAlert(msgspec.Struct, gc=False):
+class DataLeakAlert(Struct):
     """Data leak detection alert"""
     alert_id: str
     source: LeakSource
@@ -774,7 +776,7 @@ class DataLeakAlert(msgspec.Struct, gc=False):
     leaked_data: dict[str, Any]
     timestamp: float
 
-class ArchiveSnapshot(msgspec.Struct, gc=False):
+class ArchiveSnapshot(Struct):
     """Web archive snapshot"""
     url: str
     timestamp: str
@@ -809,7 +811,7 @@ class ProtocolType(Enum):
     ZK_PROOF = 'zk_proof'
     MPC = 'mpc'
 
-class PrivacyConfig(msgspec.Struct, gc=False):
+class PrivacyConfig(Struct):
     """Privacy layer configuration"""
     level: PrivacyLevel = PrivacyLevel.STANDARD
     enable_privacy_manager: bool = True
@@ -845,7 +847,7 @@ class MessagePriority(Enum):
     LOW = 4
     BACKGROUND = 5
 
-class CommunicationConfig(msgspec.Struct, gc=False):
+class CommunicationConfig(Struct):
     """Communication layer configuration"""
     enable_agent_messaging: bool = True
     enable_model_bridge: bool = True
@@ -878,7 +880,7 @@ class ProcessingState(Enum):
     CONSOLIDATING = 'consolidating'
     SLEEPING = 'sleeping'
 
-class SpikeData(msgspec.Struct, frozen=True, gc=False):
+class SpikeData(Struct, frozen=True):
     """Immutable spike event data"""
     neuron_id: int
     timestamp: float
@@ -899,7 +901,7 @@ class NeuralEvent:
         if self.timestamp == 0:
             object.__setattr__(self, 'timestamp', datetime.now(UTC).timestamp())
 
-class ProcessingMetrics(msgspec.Struct, gc=False):
+class ProcessingMetrics(Struct):
     """Metrics for neuromorphic processing"""
     energy_consumption_joules: float = 0.0
     spike_count: int = 0
@@ -908,7 +910,7 @@ class ProcessingMetrics(msgspec.Struct, gc=False):
     processing_time_ms: float = 0.0
     memory_used_bytes: int = 0
 
-class ProcessingResult(msgspec.Struct, gc=False):
+class ProcessingResult(Struct):
     """Result from neuromorphic processing"""
     success: bool
     state: ProcessingState
@@ -917,7 +919,7 @@ class ProcessingResult(msgspec.Struct, gc=False):
     output_pattern: np.ndarray | None = None
     error_message: str | None = None
 
-class SNNConfig(msgspec.Struct, gc=False):
+class SNNConfig(Struct):
     """Configuration for Spiking Neural Network"""
     n_neurons: int = 1000
     connection_prob: float = 0.1
@@ -929,7 +931,7 @@ class SNNConfig(msgspec.Struct, gc=False):
     dt: float = 1.0
     refractory_period: float = 2.0
 
-class STDPParams(msgspec.Struct, gc=False):
+class STDPParams(Struct):
     """STDP (Spike-Timing-Dependent Plasticity) parameters"""
     A_plus: float = 0.01
     A_minus: float = -0.0105
@@ -938,7 +940,7 @@ class STDPParams(msgspec.Struct, gc=False):
     w_min: float = -1.0
     w_max: float = 1.0
 
-class NeuronParameters(msgspec.Struct, gc=False):
+class NeuronParameters(Struct):
     """Biological parameters for LIF neurons"""
     v_rest: float = -65.0
     v_reset: float = -65.0
@@ -948,7 +950,7 @@ class NeuronParameters(msgspec.Struct, gc=False):
     resistance: float = 1.0
     noise_std: float = 0.5
 
-class NeuromorphicEnergyReport(msgspec.Struct, gc=False):
+class NeuromorphicEnergyReport(Struct):
     """Energy efficiency report for neuromorphic computing"""
     total_energy_joules: float
     energy_per_spike_joules: float
@@ -959,7 +961,7 @@ class NeuromorphicEnergyReport(msgspec.Struct, gc=False):
     trees_equivalent: float = 0.0
     timestamp: float = msgspec.field(default_factory=lambda: datetime.now(UTC).timestamp())
 
-class ReservoirConfig(msgspec.Struct, gc=False):
+class ReservoirConfig(Struct):
     """Configuration for Reservoir Computing (ESN/LSM)"""
     reservoir_size: int = 1000
     input_scaling: float = 1.0
@@ -969,7 +971,7 @@ class ReservoirConfig(msgspec.Struct, gc=False):
     use_metal: bool = True
     reservoir_type: str = 'esn'
 
-class SNNEncryptedContainer(msgspec.Struct, gc=False):
+class SNNEncryptedContainer(Struct):
     """Encrypted container using SNN-based cryptography"""
     ciphertext: bytes
     neural_signature: np.ndarray
@@ -988,7 +990,7 @@ class SNNEncryptedContainer(msgspec.Struct, gc=False):
         import base64
         return cls(ciphertext=base64.b64decode(data['ciphertext']), neural_signature=np.frombuffer(base64.b64decode(data['neural_signature']), dtype=np.float32), key_id=data['key_id'], timestamp=data['timestamp'], entropy_used=data.get('entropy_used', 0))
 
-class RunCorrelation(msgspec.Struct, frozen=True, gc=False):
+class RunCorrelation(Struct, frozen=True):
     """
     Immutable correlation identity for a single research run.
 
@@ -1019,7 +1021,7 @@ class RunCorrelation(msgspec.Struct, frozen=True, gc=False):
         """Serialize to dict for ledger injection."""
         return {'run_id': self.run_id, 'branch_id': self.branch_id, 'provider_id': self.provider_id, 'action_id': self.action_id}
 
-class ProviderRequest(msgspec.Struct, gc=False):
+class ProviderRequest(Struct):
     """
     Canonical input to LLM provider (mlx_lm, openai, anthropic, etc.).
 
@@ -1042,7 +1044,7 @@ class ProviderRequest(msgspec.Struct, gc=False):
     def to_dict(self) -> dict[str, Any]:
         return {'prompt': self.prompt, 'model': self.model, 'temperature': self.temperature, 'max_tokens': self.max_tokens, 'correlation': self.correlation.to_dict() if self.correlation else None}
 
-class ProviderResult(msgspec.Struct, gc=False):
+class ProviderResult(Struct):
     """
     Canonical output from LLM provider.
 
@@ -1076,7 +1078,7 @@ class ProviderResult(msgspec.Struct, gc=False):
     def to_dict(self) -> dict[str, Any]:
         return {'text': self.text, 'model': self.model, 'usage': self.usage, 'latency_ms': self.latency_ms, 'correlation': self.correlation.to_dict() if self.correlation else None}
 
-class ExecutionRequest(msgspec.Struct, gc=False):
+class ExecutionRequest(Struct):
     """
     Canonical request to execute an action/tool.
 
@@ -1097,7 +1099,7 @@ class ExecutionRequest(msgspec.Struct, gc=False):
     def to_dict(self) -> dict[str, Any]:
         return {'action_type': self.action_type, 'parameters': self.parameters, 'priority': self.priority, 'correlation': self.correlation.to_dict() if self.correlation else None}
 
-class ExecutionResult(msgspec.Struct, gc=False):
+class ExecutionResult(Struct):
     """
     Canonical result from action execution.
 
@@ -1125,7 +1127,7 @@ class ExecutionResult(msgspec.Struct, gc=False):
     def to_dict(self) -> dict[str, Any]:
         return {'action_type': self.action_type, 'success': self.success, 'data': self.data, 'execution_time': self.execution_time, 'error': self.error, 'correlation': self.correlation.to_dict() if self.correlation else None}
 
-class BranchDecision(msgspec.Struct, gc=False):
+class BranchDecision(Struct):
     """
     Canonical decision about research branch routing.
 
@@ -1150,7 +1152,7 @@ class BranchDecision(msgspec.Struct, gc=False):
     def to_dict(self) -> dict[str, Any]:
         return {'decision_id': self.decision_id, 'branch_id': self.branch_id, 'alternatives': self.alternatives, 'reasoning': self.reasoning, 'confidence': self.confidence, 'correlation': self.correlation.to_dict() if self.correlation else None}
 
-class ExportHandoff(msgspec.Struct, gc=False):
+class ExportHandoff(Struct):
     """
     Canonical handoff from windup phase to export phase.
 
@@ -1231,7 +1233,7 @@ class ExportHandoff(msgspec.Struct, gc=False):
         rt = 'yes' if self.runtime_truth else 'no'
         return f'ExportHandoff(sprint_id={self.sprint_id!r}, top_nodes={rn}, scorecard_keys={sc_keys}, runtime_truth={rt})'
 
-class CanonicalGroundingHints(msgspec.Struct, frozen=True, gc=False):
+class CanonicalGroundingHints(Struct, frozen=True):
     """
     Canonical minimal grounding hints for deep research handoff.
 
@@ -1293,7 +1295,7 @@ class CanonicalGroundingHints(msgspec.Struct, frozen=True, gc=False):
 # UNIFIED-004: Micro-Sprint Types for Entropy Feedback Loop
 # ─────────────────────────────────────────────────────────────────────────────
 
-class MicroSprintPlan(msgspec.Struct, frozen=True, gc=False):
+class MicroSprintPlan(Struct, frozen=True):
     """
     Lightweight targeted re-fetch plan for high-entropy entities.
 
@@ -1348,7 +1350,7 @@ class MicroSprintPlan(msgspec.Struct, frozen=True, gc=False):
     )
 
 
-class MicroSprintResult(msgspec.Struct, frozen=True, gc=False):
+class MicroSprintResult(Struct, frozen=True):
     """
     Result of a micro-sprint execution.
 

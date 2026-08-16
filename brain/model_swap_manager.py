@@ -33,13 +33,14 @@ import logging
 import time
 from typing import TYPE_CHECKING, Any, TypeVar
 import msgspec
+from compat.msgspec_gc_compat import Struct
 from _core import aclose
 if TYPE_CHECKING:
     pass
 logger = logging.getLogger(__name__)
 T = TypeVar('T', default=Any)
 
-class ModelLifecycleProtocol(msgspec.Struct, frozen=True, gc=False):
+class ModelLifecycleProtocol(Struct, frozen=True):
     """
     Protocol contract for model lifecycle management.
 
@@ -78,7 +79,7 @@ class ModelLifecycleProtocol(msgspec.Struct, frozen=True, gc=False):
         """
         return False
 
-class SwapResult(msgspec.Struct, frozen=True, gc=False):
+class SwapResult(Struct, frozen=True):
     """
     Result of a model swap operation.
 
@@ -107,7 +108,7 @@ class SwapResult(msgspec.Struct, frozen=True, gc=False):
     error: str | None = None
     duration_ms: float = 0.0
 
-class SwapStatus(msgspec.Struct, frozen=True, gc=False):
+class SwapStatus(Struct, frozen=True):
     """Lightweight snapshot of swap manager state."""
     current_model: str | None
     swap_in_progress: bool
@@ -115,7 +116,7 @@ class SwapStatus(msgspec.Struct, frozen=True, gc=False):
     failed_swaps: int
     last_swap_ms: float | None
 
-class DrainResult(msgspec.Struct, frozen=True, gc=False):
+class DrainResult(Struct, frozen=True):
     """Result of a drain operation."""
     cancelled_count: int
     timed_out: bool

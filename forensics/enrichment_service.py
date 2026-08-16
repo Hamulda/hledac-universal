@@ -38,6 +38,7 @@ import logging
 import socket
 import ssl
 import msgspec
+from compat.msgspec_gc_compat import Struct
 from pathlib import Path
 from typing import Any
 from hledac.universal.utils.asyncx import parallel
@@ -194,7 +195,7 @@ def _extract_domain_from_url(url: str | None) -> str | None:
         pass
     return None
 
-class ForensicsResult(msgspec.Struct, gc=False):
+class ForensicsResult(Struct):
     """
     Sprint F198B: Typed forensics enrichment result.
 

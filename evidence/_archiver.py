@@ -7,6 +7,8 @@ Court-admissible forensic evidence storage with compressed offsets.
 Architecture (Sprint Split-Brain):
 - WARCArchiver: WARC writing, snippet extraction, global path registry
 - WarcWriteResult: ISO 28500 WARC record metadata
+
+ISSUE-003 FIX: Module-level locks registered via @auto_register decorator.
 """
 
 from __future__ import annotations
@@ -22,19 +24,26 @@ from pathlib import Path
 from typing import Any
 
 import msgspec
+from compat.msgspec_gc_compat import Struct
+from _core.lock_registry import LockCategory, auto_register
 
 logger = logging.getLogger(__name__)
 
 # Global WARC paths for sprint_exporter discovery
 _warc_paths_global: list[str] = []
-_warc_paths_lock = threading.Lock()
 _warc_snippets_global: list[dict[str, Any]] = []
+
+
+@auto_register(LockCategory.GRAPH)
+def _warc_paths_lock():
+    """Module-level lock for WARC paths and snippets global state."""
+    return threading.Lock()
 
 
 def _append_warc_snippet(snippet: dict[str, Any]) -> None:
     """Append a WARC snippet to the global singleton (thread-safe)."""
     global _warc_snippets_global
-    with _warc_paths_lock:
+    with _warc_paths_lock():
         _warc_snippets_global.append(snippet)
         if len(_warc_snippets_global) > 500:
             _warc_snippets_global.pop(0)
@@ -42,25 +51,25 @@ def _append_warc_snippet(snippet: dict[str, Any]) -> None:
 
 def get_warc_paths() -> list[str]:
     """Return copy of globally registered WARC file paths."""
-    with _warc_paths_lock:
+    with _warc_paths_lock():
         return list(_warc_paths_global)
 
 
 def get_warc_snippets() -> list[dict[str, Any]]:
     """Return copy of globally registered WARC snippets."""
-    with _warc_paths_lock:
+    with _warc_paths_lock():
         return list(_warc_snippets_global)
 
 
 def _clear_warc_globals() -> None:
     """Clear global WARC state between sprints."""
     global _warc_paths_global, _warc_snippets_global
-    with _warc_paths_lock:
+    with _warc_paths_lock():
         _warc_paths_global.clear()
         _warc_snippets_global.clear()
 
 
-class WarcWriteResult(msgspec.Struct, frozen=True, kw_only=True, gc=False):
+class WarcWriteResult(Struct, frozen=True, kw_only=True):
     """ISO 28500 WARC record metadata."""
     record_id: str = ""
     byte_offset: int = 0

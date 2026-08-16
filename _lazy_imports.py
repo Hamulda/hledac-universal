@@ -36,10 +36,21 @@ from __future__ import annotations
 import logging
 import sys
 from typing import TYPE_CHECKING, Any
-from _core import aclose
 
 if TYPE_CHECKING:
-    from types import ModuleType
+    # ROADMAP-009: TYPE_CHECKING guards to prevent circular imports
+    # These are only used for type hints, not runtime imports.
+    # NOTE: The actual classes are loaded via factory functions below,
+    # not via these TYPE_CHECKING imports. This prevents ImportError at
+    # runtime when optional dependencies are not installed.
+    from brain.deephermes3_engine import DeepHermes3Engine as DeepHermes3EngineHint
+    from runtime.sidecar_orchestrator import SidecarOrchestrator as SidecarOrchestratorHint
+    from runtime.resource_governor import M1ResourceGovernor as M1ResourceGovernorHint
+else:
+    # Module-level None defaults - loaded on-demand via factory functions
+    DeepHermes3EngineHint: Any = None
+    SidecarOrchestratorHint: Any = None
+    M1ResourceGovernorHint: Any = None
 
 __all__ = [
     "get_DuckDBShadowStore",

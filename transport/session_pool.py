@@ -49,6 +49,7 @@ from enum import Enum
 from typing import TYPE_CHECKING, Any
 
 import msgspec
+from compat.msgspec_gc_compat import Struct
 
 from hledac.universal.utils.asyncx import safe_create_task
 from hledac.universal.utils.locks import LazyAsyncioLock
@@ -165,7 +166,7 @@ def _patch_socket_keepalive(sock: socket.socket) -> None:
 # ConnectionPreset — Adaptive limits based on UMA memory pressure (ISSUE-013)
 # =============================================================================
 
-class ConnectionPreset(msgspec.Struct, frozen=True, gc=False):
+class ConnectionPreset(Struct, frozen=True):
     """
     ISSUE-013: Immutable connection preset derived from UMA memory pressure state.
 

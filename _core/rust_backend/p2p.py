@@ -62,29 +62,19 @@ i2p_findings = await harvester.i2p_resolve("example.b32.i2p")
 - shared_tokio runtime
 - Python fallback: dht/kademlia_node.py (simulated mode)
 """
-
 from __future__ import annotations
-
 import asyncio
 import logging
 import os
 from typing import TYPE_CHECKING, Any
 from collections.abc import AsyncIterator
-
 from hledac.universal.knowledge.duckdb_store import CanonicalFinding
 from hledac.universal.utils.source_types import SourceType
 from _core._util import aclose
-
 if TYPE_CHECKING:
     pass
-
 logger = logging.getLogger(__name__)
-
-# Feature gate
-_P2P_HARVEST_ENABLED: bool = os.getenv(
-    "HLEDAC_ENABLE_P2P_HARVEST", "0"
-).lower() in ("1", "true", "yes", "on")
-
+_P2P_HARVEST_ENABLED: bool = os.getenv('HLEDAC_ENABLE_P2P_HARVEST', '0').lower() in ('1', 'true', 'yes', 'on')
 
 def _get_rust_p2p_module():
     """Get the Rust p2p_harvest module if available."""
@@ -94,7 +84,6 @@ def _get_rust_p2p_module():
     except ImportError:
         return None
 
-
 def _get_stealth_bridge_module():
     """Get the stealth_bridge module if available."""
     try:
@@ -102,7 +91,6 @@ def _get_stealth_bridge_module():
         return _mod
     except ImportError:
         return None
-
 
 class P2PHarvester:
     """
@@ -114,13 +102,9 @@ class P2PHarvester:
     - Arrow IPC streaming to Python
     - M1 8GB memory safety (bounded concurrency)
     """
+    __slots__ = ('_bridge_module', '_rust_module', 'default_duration_s', 'default_max_results', 'max_concurrent_peers')
 
-    def __init__(
-        self,
-        max_concurrent_peers: int = 20,
-        default_duration_s: int = 120,
-        default_max_results: int = 100,
-    ):
+    def __init__(self, max_concurrent_peers: int=20, default_duration_s: int=120, default_max_results: int=100):
         """
         Initialize P2P Harvester.
 
@@ -132,16 +116,10 @@ class P2PHarvester:
         self.max_concurrent_peers = max_concurrent_peers
         self.default_duration_s = default_duration_s
         self.default_max_results = default_max_results
-
-        # Check Rust module availability
         self._rust_module = _get_rust_p2p_module()
         self._bridge_module = _get_stealth_bridge_module()
-
         if self._rust_module is None and self._bridge_module is None:
-            logger.warning(
-                "[P2P] Rust p2p_harvest module not available. "
-                "Set HLEDAC_ENABLE_P2P_HARVEST=1 or compile with --features p2p_harvest"
-    )
+            logger.warning('[P2P] Rust p2p_harvest module not available. Set HLEDAC_ENABLE_P2P_HARVEST=1 or compile with --features p2p_harvest')
 
     @property
     def is_available(self) -> bool:
@@ -159,23 +137,10 @@ class P2PHarvester:
             try:
                 return dict(self._bridge_module.get_p2p_protocol_status())
             except Exception as e:
-                logger.debug(f"[P2P] get_protocol_status error: {e}")
+                logger.debug(f'[P2P] get_protocol_status error: {e}')
+        return {'bt_dht': True, 'ipfs': _P2P_HARVEST_ENABLED, 'tor': _P2P_HARVEST_ENABLED, 'i2p': _P2P_HARVEST_ENABLED}
 
-        # Fallback: check environment
-        return {
-            "bt_dht": True,  # Always available (Python fallback)
-            "ipfs": _P2P_HARVEST_ENABLED,
-            "tor": _P2P_HARVEST_ENABLED,
-            "i2p": _P2P_HARVEST_ENABLED,
-        }
-
-    async def harvest(
-        self,
-        keyword: str,
-        protocols: list[str] | None = None,
-        duration_s: int | None = None,
-        max_results: int | None = None,
-    ) -> list[CanonicalFinding]:
+    async def harvest(self, keyword: str, protocols: list[str] | None=None, duration_s: int | None=None, max_results: int | None=None) -> list[CanonicalFinding]:
         """
         Unified P2P harvest — searches multiple protocols concurrently.
 
@@ -193,51 +158,29 @@ class P2PHarvester:
             List of CanonicalFinding from all protocols
         """
         if protocols is None:
-            protocols = ["bt_dht"]
-
+            protocols = ['bt_dht']
         duration_s = duration_s or self.default_duration_s
         max_results = max_results or self.default_max_results
-
         if not self.is_available:
-            logger.warning("[P2P] Rust module unavailable, using Python fallback")
+            logger.warning('[P2P] Rust module unavailable, using Python fallback')
             return await self._python_fallback_harvest(keyword, protocols, duration_s, max_results)
-
-        # Use Rust implementation
         if self._rust_module is not None:
             try:
-                findings = await self._rust_module.harvest(
-                    keyword=keyword,
-                    protocols=protocols,
-                    duration_s=duration_s,
-                    max_results=max_results,
-    )
+                findings = await self._rust_module.harvest(keyword=keyword, protocols=protocols, duration_s=duration_s, max_results=max_results)
                 return self._convert_to_canonical_findings(findings, keyword)
             except Exception as e:
-                logger.warning(f"[P2P] Rust harvest failed: {e}, falling back to Python")
+                logger.warning(f'[P2P] Rust harvest failed: {e}, falling back to Python')
                 return await self._python_fallback_harvest(keyword, protocols, duration_s, max_results)
-
-        # Use stealth_bridge delegation
         if self._bridge_module is not None:
             try:
-                findings = await self._bridge_module.p2p_harvest_bridge(
-                    keyword=keyword,
-                    protocols=protocols,
-                    duration_s=duration_s,
-                    max_results=max_results,
-    )
+                findings = await self._bridge_module.p2p_harvest_bridge(keyword=keyword, protocols=protocols, duration_s=duration_s, max_results=max_results)
                 return self._convert_to_canonical_findings(findings, keyword)
             except Exception as e:
-                logger.warning(f"[P2P] Bridge harvest failed: {e}, falling back to Python")
+                logger.warning(f'[P2P] Bridge harvest failed: {e}, falling back to Python')
                 return await self._python_fallback_harvest(keyword, protocols, duration_s, max_results)
-
         return []
 
-    async def dht_crawl(
-        self,
-        keyword: str,
-        duration_s: int | None = None,
-        max_results: int | None = None,
-    ) -> list[CanonicalFinding]:
+    async def dht_crawl(self, keyword: str, duration_s: int | None=None, max_results: int | None=None) -> list[CanonicalFinding]:
         """
         BitTorrent DHT crawler — native Tokio implementation.
 
@@ -249,19 +192,9 @@ class P2PHarvester:
         Returns:
             List of CanonicalFinding from BT DHT
         """
-        return await self.harvest(
-            keyword=keyword,
-            protocols=["bt_dht"],
-            duration_s=duration_s,
-            max_results=max_results,
-    )
+        return await self.harvest(keyword=keyword, protocols=['bt_dht'], duration_s=duration_s, max_results=max_results)
 
-    async def ipfs_crawl(
-        self,
-        keyword: str,
-        duration_s: int | None = None,
-        max_results: int | None = None,
-    ) -> list[CanonicalFinding]:
+    async def ipfs_crawl(self, keyword: str, duration_s: int | None=None, max_results: int | None=None) -> list[CanonicalFinding]:
         """
         IPFS Kademlia + BitSwap crawler.
 
@@ -273,19 +206,9 @@ class P2PHarvester:
         Returns:
             List of CanonicalFinding from IPFS network
         """
-        return await self.harvest(
-            keyword=keyword,
-            protocols=["ipfs"],
-            duration_s=duration_s,
-            max_results=max_results,
-    )
+        return await self.harvest(keyword=keyword, protocols=['ipfs'], duration_s=duration_s, max_results=max_results)
 
-    async def tor_scrape(
-        self,
-        keyword: str,
-        duration_s: int | None = None,
-        max_results: int | None = None,
-    ) -> list[CanonicalFinding]:
+    async def tor_scrape(self, keyword: str, duration_s: int | None=None, max_results: int | None=None) -> list[CanonicalFinding]:
         """
         Tor consensus directory scraper.
 
@@ -297,18 +220,9 @@ class P2PHarvester:
         Returns:
             List of CanonicalFinding from Tor network
         """
-        return await self.harvest(
-            keyword=keyword,
-            protocols=["tor"],
-            duration_s=duration_s,
-            max_results=max_results,
-    )
+        return await self.harvest(keyword=keyword, protocols=['tor'], duration_s=duration_s, max_results=max_results)
 
-    async def i2p_resolve(
-        self,
-        b32_addr: str,
-        duration_s: int | None = None,
-    ) -> list[CanonicalFinding]:
+    async def i2p_resolve(self, b32_addr: str, duration_s: int | None=None) -> list[CanonicalFinding]:
         """
         I2P LeaseSet resolver.
 
@@ -320,29 +234,19 @@ class P2PHarvester:
             List of CanonicalFinding from I2P network
         """
         duration_s = duration_s or 30
-
         if not self.is_available:
-            logger.warning("[P2P] Rust module unavailable for I2P")
+            logger.warning('[P2P] Rust module unavailable for I2P')
             return []
-
         if self._rust_module is not None:
             try:
-                findings = await self._rust_module.i2p_leaseset_resolve_async(
-                    b32_addr=b32_addr,
-                    duration_s=duration_s,
-    )
+                findings = await self._rust_module.i2p_leaseset_resolve_async(b32_addr=b32_addr, duration_s=duration_s)
                 return self._convert_to_canonical_findings(findings, b32_addr)
             except Exception as e:
-                logger.warning(f"[P2P] I2P resolve failed: {e}")
+                logger.warning(f'[P2P] I2P resolve failed: {e}')
                 return []
-
         return []
 
-    def _convert_to_canonical_findings(
-        self,
-        raw_findings: list[dict[str, Any]],
-        keyword: str,
-    ) -> list[CanonicalFinding]:
+    def _convert_to_canonical_findings(self, raw_findings: list[dict[str, Any]], keyword: str) -> list[CanonicalFinding]:
         """
         Convert raw Rust findings to CanonicalFinding list.
 
@@ -355,85 +259,41 @@ class P2PHarvester:
         """
         findings: list[CanonicalFinding] = []
         import time
-
         for raw in raw_findings:
             try:
-                source_type = self._protocol_to_source_type(raw.get("protocol", "bt_dht"))
-                confidence = float(raw.get("confidence", 0.5))
-
-                finding = CanonicalFinding(
-                    finding_id=raw.get("finding_id", f"p2p-{keyword[:8]}"),
-                    query=keyword,
-                    source_type=source_type,
-                    confidence=confidence,
-                    ts=float(raw.get("timestamp", time.time())),
-                    provenance=(f"p2p:{raw.get('protocol', 'unknown')}",),
-                    payload_text=raw.get("payload", ""),
-    )
+                source_type = self._protocol_to_source_type(raw.get('protocol', 'bt_dht'))
+                confidence = float(raw.get('confidence', 0.5))
+                finding = CanonicalFinding(finding_id=raw.get('finding_id', f'p2p-{keyword[:8]}'), query=keyword, source_type=source_type, confidence=confidence, ts=float(raw.get('timestamp', time.time())), provenance=(f"p2p:{raw.get('protocol', 'unknown')}",), payload_text=raw.get('payload', ''))
                 findings.append(finding)
             except Exception as e:
-                logger.debug(f"[P2P] Finding conversion error: {e}")
-
+                logger.debug(f'[P2P] Finding conversion error: {e}')
         return findings
 
     def _protocol_to_source_type(self, protocol: str) -> SourceType:
         """Map P2P protocol to SourceType."""
-        mapping = {
-            "bt_dht": SourceType.DHT_METADATA,
-            "ipfs": SourceType.DHT_METADATA,  # TODO: Add IPFS source type
-            "tor": SourceType.DHT_METADATA,   # TODO: Add Tor source type
-            "i2p": SourceType.DHT_METADATA,  # TODO: Add I2P source type
-        }
+        mapping = {'bt_dht': SourceType.DHT_METADATA, 'ipfs': SourceType.DHT_METADATA, 'tor': SourceType.DHT_METADATA, 'i2p': SourceType.DHT_METADATA}
         return mapping.get(protocol, SourceType.DHT_METADATA)
 
-    async def _python_fallback_harvest(
-        self,
-        keyword: str,
-        protocols: list[str],
-        duration_s: int,
-        max_results: int,
-    ) -> list[CanonicalFinding]:
+    async def _python_fallback_harvest(self, keyword: str, protocols: list[str], duration_s: int, max_results: int) -> list[CanonicalFinding]:
         """
         Python fallback for P2P harvest when Rust module unavailable.
 
         Uses dht/kademlia_node.py in simulated mode.
         """
         findings: list[CanonicalFinding] = []
-
-        if "bt_dht" in protocols:
+        if 'bt_dht' in protocols:
             try:
                 from hledac.universal.dht.kademlia_node import crawl_dht_for_keyword
-                results = await crawl_dht_for_keyword(
-                    keyword=keyword,
-                    duration_s=duration_s,
-                    max_results=max_results,
-                    harvest_metadata=False,
-    )
+                results = await crawl_dht_for_keyword(keyword=keyword, duration_s=duration_s, max_results=max_results, harvest_metadata=False)
                 import time
                 for r in results:
-                    finding = CanonicalFinding(
-                        finding_id=f"bt-dht-{r.get('info_hash', '')[:16]}",
-                        query=keyword,
-                        source_type=SourceType.DHT_METADATA,
-                        confidence=0.5,  # Lower confidence for Python fallback
-                        ts=time.time(),
-                        provenance=("bt_dht:python_fallback",),
-                        payload_text=str(r),
-    )
+                    finding = CanonicalFinding(finding_id=f"bt-dht-{r.get('info_hash', '')[:16]}", query=keyword, source_type=SourceType.DHT_METADATA, confidence=0.5, ts=time.time(), provenance=('bt_dht:python_fallback',), payload_text=str(r))
                     findings.append(finding)
             except Exception as e:
-                logger.warning(f"[P2P] Python DHT fallback failed: {e}")
-
+                logger.warning(f'[P2P] Python DHT fallback failed: {e}')
         return findings[:max_results]
 
-
-# Convenience function for quick harvest
-async def harvest_p2p(
-    keyword: str,
-    protocols: list[str] | None = None,
-    duration_s: int = 120,
-    max_results: int = 100,
-) -> list[CanonicalFinding]:
+async def harvest_p2p(keyword: str, protocols: list[str] | None=None, duration_s: int=120, max_results: int=100) -> list[CanonicalFinding]:
     """
     Quick P2P harvest — convenience function.
 
@@ -449,15 +309,7 @@ async def harvest_p2p(
     harvester = P2PHarvester(default_duration_s=duration_s, default_max_results=max_results)
     return await harvester.harvest(keyword, protocols, duration_s, max_results)
 
-
 def get_harvester_status() -> dict[str, Any]:
     """Get P2P harvester status for monitoring."""
     harvester = P2PHarvester()
-    return {
-        "available": harvester.is_available,
-        "rust_module": _get_rust_p2p_module() is not None,
-        "bridge_module": _get_stealth_bridge_module() is not None,
-        "protocol_status": harvester.get_protocol_status(),
-        "max_concurrent_peers": harvester.max_concurrent_peers,
-        "gate": "HLEDAC_ENABLE_P2P_HARVEST",
-    }
+    return {'available': harvester.is_available, 'rust_module': _get_rust_p2p_module() is not None, 'bridge_module': _get_stealth_bridge_module() is not None, 'protocol_status': harvester.get_protocol_status(), 'max_concurrent_peers': harvester.max_concurrent_peers, 'gate': 'HLEDAC_ENABLE_P2P_HARVEST'}

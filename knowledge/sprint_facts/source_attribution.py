@@ -17,6 +17,7 @@ from __future__ import annotations
 from typing import Any
 
 import msgspec
+from compat.msgspec_gc_compat import Struct
 from hledac.universal.compat.msgspec_gc_compat import Struct
 from _core import aclose
 
@@ -67,7 +68,7 @@ class SprintScorecard(Struct, frozen=True):
     ioc_nodes: int
 
 
-class SprintDelta(msgspec.Struct, frozen=True, gc=False):
+class SprintDelta(Struct, frozen=True):
     """
     Per-sprint delta metrics.
 

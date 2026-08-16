@@ -18,6 +18,8 @@ from dataclasses import dataclass
 import msgspec
 from urllib.parse import urlparse
 from _core import aclose
+from compat.msgspec_gc_compat import Struct
+
 logger = logging.getLogger(__name__)
 try:
     import aioftp
@@ -31,7 +33,7 @@ MAX_ENTRIES = 200
 MAX_BYTES = 256 * 1024
 ALLOWED_EXTENSIONS = {'.txt', '.csv', '.json', '.log', '.md', '.xml', '.yaml', '.yml'}
 
-class FTPListingItem(msgspec.Struct, gc=False):
+class FTPListingItem(Struct):
     """Represents a single item in FTP directory listing."""
     path: str
     is_dir: bool

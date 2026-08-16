@@ -53,6 +53,7 @@ if TYPE_CHECKING:
     from hledac.universal.brain.deephermes3_engine import DeepHermes3Engine
 
 import msgspec
+from compat.msgspec_gc_compat import Struct
 
 from operator import attrgetter, itemgetter
 
@@ -92,7 +93,7 @@ def _is_mlx_available() -> bool:
         return False
 MLX_AVAILABLE = _is_mlx_available()
 
-class InferenceEvidence(msgspec.Struct, frozen=False, gc=False):
+class InferenceEvidence(Struct, frozen=False):
     """Single piece of evidence with metadata."""
     fact: str
     confidence: float
@@ -112,7 +113,7 @@ class InferenceEvidence(msgspec.Struct, frozen=False, gc=False):
         """Convert to dictionary representation."""
         return {'evidence_id': self.evidence_id, 'fact': self.fact, 'confidence': self.confidence, 'source': self.source, 'timestamp': self.timestamp, 'metadata': self.metadata}
 
-class InferenceStep(msgspec.Struct, frozen=True, gc=False):
+class InferenceStep(Struct, frozen=True):
     """Single step in an inference chain."""
     from_statement: str
     to_statement: str
@@ -124,7 +125,7 @@ class InferenceStep(msgspec.Struct, frozen=True, gc=False):
     def to_dict(self) -> dict[str, Any]:
         return {'step_number': self.step_number, 'from': self.from_statement, 'to': self.to_statement, 'rule': self.rule, 'confidence': self.confidence, 'evidence_ids': self.evidence_ids}
 
-class Hypothesis(msgspec.Struct, frozen=False, gc=False):
+class Hypothesis(Struct, frozen=False):
     """Generated hypothesis with probabilistic assessment."""
     statement: str
     prior_probability: float
@@ -152,7 +153,7 @@ class Hypothesis(msgspec.Struct, frozen=False, gc=False):
     def to_dict(self) -> dict[str, Any]:
         return {'hypothesis_id': self.hypothesis_id, 'statement': self.statement, 'prior_probability': self.prior_probability, 'posterior_probability': self.posterior_probability, 'supporting_evidence': self.supporting_evidence, 'conflicting_evidence': self.conflicting_evidence, 'inference_chain': [step.to_dict() for step in self.inference_chain], 'created_at': self.created_at, 'metadata': self.metadata}
 
-class ResolvedEntity(msgspec.Struct, frozen=True, gc=False):
+class ResolvedEntity(Struct, frozen=True):
     """Result of probabilistic entity resolution."""
     entity_id: str
     canonical_name: str
@@ -166,7 +167,7 @@ class ResolvedEntity(msgspec.Struct, frozen=True, gc=False):
     def to_dict(self) -> dict[str, Any]:
         return {'entity_id': self.entity_id, 'canonical_name': self.canonical_name, 'aliases': self.aliases, 'fragment_count': len(self.fragments), 'confidence': self.confidence, 'resolution_method': self.resolution_method, 'attributes': self.attributes, 'source_evidence': self.source_evidence}
 
-class InferenceRule(msgspec.Struct, frozen=False, gc=False):
+class InferenceRule(Struct, frozen=False):
     """Definition of an inference rule."""
     name: str
     description: str
@@ -190,7 +191,7 @@ class InferenceType(Enum):
     CAUSAL = 'causal'
     MULTI_HOP = 'multi_hop'
 
-class HopStep(msgspec.Struct, frozen=False, gc=False):
+class HopStep(Struct, frozen=False):
     """Single step in a multi-hop reasoning chain.
 
     Represents one inference hop from one entity to another,
@@ -218,7 +219,7 @@ class HopStep(msgspec.Struct, frozen=False, gc=False):
     def to_dict(self) -> dict[str, Any]:
         return {'step_number': self.step_number, 'from_entity': self.from_entity, 'to_entity': self.to_entity, 'relation': self.relation, 'confidence': self.confidence, 'evidence': self.evidence}
 
-class MultiHopPath(msgspec.Struct, frozen=False, gc=False):
+class MultiHopPath(Struct, frozen=False):
     """Complete multi-hop reasoning path between entities.
 
     Represents a full inference chain from a start entity to an end entity,
@@ -303,7 +304,7 @@ class MultiHopPath(msgspec.Struct, frozen=False, gc=False):
             lines.append(f'    {hop.step_number}. {hop.from_entity} --[{hop.relation}]-> {hop.to_entity} (confidence: {hop.confidence:.3f})')
         return '\n'.join(lines)
 
-class _BFSNode(msgspec.Struct, frozen=False, gc=False):
+class _BFSNode(Struct, frozen=False):
     """SOVEREIGN-006: Node for cost-weighted BFS with information gain tracking.
 
     Attributes:
@@ -1913,12 +1914,164 @@ class MultiHopReasoner:
         cyclic_count = sum((1 for p in paths if p.is_cyclic))
         return {'total_paths': len(paths), 'avg_confidence': sum(confidences) / len(confidences), 'avg_path_length': sum(lengths) / len(lengths), 'cyclic_paths': cyclic_count, 'confidence_range': (min(confidences), max(confidences)), 'path_length_range': (min(lengths), max(lengths))}
 
+    # ═══════════════════════════════════════════════════════════════════════════
+    # ISSUE-005: Parallel Inference Pipeline Integration
+    # ═══════════════════════════════════════════════════════════════════════════
+
+    async def parallel_abductive_reasoning(
+        self,
+        observations: list[InferenceEvidence],
+        max_hypotheses: int = 10,
+    ) -> list[Hypothesis]:
+        """
+        ISSUE-005: Parallel abductive reasoning using ANE/GPU pipeline.
+
+        Uses the InferencePipeline for parallel execution across:
+        - ANE (Apple Neural Engine) for small batches (≤16 items)
+        - MLX GPU for large batches (>16 items)
+
+        Falls back to sequential reasoning if pipeline fails.
+
+        Args:
+            observations: List of observed evidence
+            max_hypotheses: Maximum number of hypotheses to generate
+
+        Returns:
+            List of ranked hypotheses sorted by posterior probability
+        """
+        try:
+            from hledac.universal.brain.inference_pipeline import (
+                InferencePipeline,
+                create_inference_pipeline,
+            )
+
+            # Create parallel pipeline
+            pipeline = create_inference_pipeline()
+
+            # Run parallel inference
+            result = await pipeline.infer(observations)
+
+            # Convert to Hypothesis objects
+            hypotheses = []
+            for step in result.inference_steps:
+                if step.get("confidence", 0) >= self.min_confidence_threshold:
+                    chain = [
+                        InferenceStep(
+                            from_statement=step.get("from_statement", ""),
+                            to_statement=step.get("to_statement", ""),
+                            rule=step.get("rule", "parallel_inference"),
+                            confidence=step.get("confidence", 0),
+                            step_number=step.get("step_number", 0),
+                            evidence_ids=step.get("evidence_ids", []),
+                        )
+                    ]
+                    hypothesis = Hypothesis(
+                        statement=result.statement,
+                        prior_probability=result.confidence,
+                        posterior_probability=result.confidence,
+                        supporting_evidence=result.supporting_evidence,
+                        conflicting_evidence=[],
+                        inference_chain=chain,
+                    )
+                    hypotheses.append(hypothesis)
+
+            # Sort by posterior probability
+            hypotheses.sort(key=attrgetter("posterior_probability"), reverse=True)
+
+            logger.info(
+                "[InferenceEngine] Parallel reasoning: %d observations → %d hypotheses (stats: %s)",
+                len(observations),
+                len(hypotheses),
+                result.accelerator_stats,
+            )
+
+            return hypotheses[:max_hypotheses]
+
+        except Exception as e:
+            logger.warning(
+                "[InferenceEngine] Parallel reasoning failed, falling back to sequential: %s",
+                e,
+            )
+            # Fallback to sequential
+            return self.abductive_reasoning(observations, max_hypotheses)
+
+    async def parallel_evidence_chaining(
+        self,
+        start: str,
+        target: str,
+        max_depth: int = 5,
+    ) -> list[InferenceStep] | None:
+        """
+        ISSUE-005: Parallel evidence chaining using ANE/GPU pipeline.
+
+        Finds inference chain connecting start to target through evidence
+        using parallel execution for maximum throughput.
+
+        Args:
+            start: Starting statement or evidence ID
+            target: Target statement or evidence ID
+            max_depth: Maximum chain depth
+
+        Returns:
+            List of inference steps or None if no chain found
+        """
+        # Extract evidence for chaining
+        start_ids = self._find_evidence_by_content(start)
+        target_ids = self._find_evidence_by_content(target)
+
+        if not start_ids or not target_ids:
+            return self.evidence_chaining(start, target, max_depth)
+
+        # Collect evidence
+        evidence_list = []
+        for sid in start_ids:
+            if ev := self._evidence.get(sid):
+                evidence_list.append(ev)
+        for tid in target_ids:
+            if ev := self._evidence.get(tid):
+                if ev not in evidence_list:
+                    evidence_list.append(ev)
+
+        if not evidence_list:
+            return None
+
+        try:
+            from hledac.universal.brain.inference_pipeline import (
+                create_inference_pipeline,
+            )
+
+            pipeline = create_inference_pipeline()
+            result = await pipeline.infer(evidence_list)
+
+            # Convert to InferenceSteps
+            steps = []
+            for step_data in result.inference_steps:
+                step = InferenceStep(
+                    from_statement=step_data.get("from_statement", ""),
+                    to_statement=step_data.get("to_statement", ""),
+                    rule=step_data.get("rule", "parallel_chaining"),
+                    confidence=step_data.get("confidence", 0),
+                    step_number=step_data.get("step_number", 0),
+                    evidence_ids=step_data.get("evidence_ids", []),
+                )
+                steps.append(step)
+
+            return steps if steps else None
+
+        except Exception as e:
+            logger.warning(
+                "[InferenceEngine] Parallel chaining failed, falling back to sequential: %s",
+                e,
+            )
+            return self.evidence_chaining(start, target, max_depth)
+
+
 def create_inference_tool(engine: InferenceEngine, execute_fn=None):
     """Create a ToolRegistry-compatible Tool from InferenceEngine."""
     import msgspec
     from ..tool_registry import Tool
 
-    class InferenceArgs(msgspec.Struct, kw_only=True, gc=False):
+    class InferenceArgs(Struct, kw_only=True):
         """Inference arguments for the tool."""
         mode: str = ''
         query: str = ''
@@ -1927,7 +2080,7 @@ def create_inference_tool(engine: InferenceEngine, execute_fn=None):
         hypothesis: str = ''
         max_hops: int = 3
 
-    class InferenceResult(msgspec.Struct, kw_only=True, gc=False):
+    class InferenceResult(Struct, kw_only=True):
         """Inference result."""
         result: dict[str, Any] = msgspec.field(default_factory=dict)
 

@@ -34,6 +34,7 @@ import time as _time
 from collections import deque
 from dataclasses import dataclass
 import msgspec
+from compat.msgspec_gc_compat import Struct
 from typing import TYPE_CHECKING, Any
 from hledac.universal.utils.msgspec_json import dumps_str as _msgspec_dumps_str
 import httpx
@@ -49,7 +50,7 @@ RIR_CONCURRENCY: int = 3
 MAX_RIR_CACHE_ENTRIES: int = 1000
 _RIR_API_URL = 'http://ip-api.com/batch'
 
-class RIRCorrelation(msgspec.Struct, frozen=True, gc=False):
+class RIRCorrelation(Struct, frozen=True):
     """Single RIR/ASN/WHOIS correlation result for one IOC."""
     ioc_value: str
     ioc_type: str
@@ -60,7 +61,7 @@ class RIRCorrelation(msgspec.Struct, frozen=True, gc=False):
     confidence: float
     evidence_ids: tuple[str, ...]
 
-class RIRCorrelationResult(msgspec.Struct, frozen=True, gc=False):
+class RIRCorrelationResult(Struct, frozen=True):
     """Outcome of a full RIR correlation run."""
     correlations: tuple[RIRCorrelation, ...]
     queried_count: int

@@ -39,6 +39,7 @@ from .services import (
     FetchServiceRegistry,
     )
 from _core import aclose
+from compat.msgspec_gc_compat import Struct
 
 logger = logging.getLogger(__name__)
 

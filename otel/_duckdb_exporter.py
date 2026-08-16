@@ -25,7 +25,6 @@ DuckDB analytical queries:
 
 
 import hashlib
-import json
 import threading
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any
@@ -34,6 +33,20 @@ from opentelemetry.sdk.trace import Span
 from opentelemetry.sdk.trace.export import SpanExporter, SpanExportResult
 from opentelemetry.trace import Status, StatusCode
 from _core import aclose
+
+# orjson fallback — 5-10× faster than stdlib json, M1 optimized
+try:
+    import orjson
+
+    def _json_dumps(data: Any) -> str:
+        return orjson.dumps(data).decode("utf-8")
+
+except ImportError:
+    import json as _stdlib_json
+
+    def _json_dumps(data: Any) -> str:
+        return _stdlib_json.dumps(data)
+
 
 if TYPE_CHECKING:
     pass
@@ -357,12 +370,12 @@ class DuckDBSpanExporter(SpanExporter):
         end_ns = span.end_time or 0
         duration_ms = (end_ns - start_ns) / 1_000_000.0  # type: ignore[operator]
 
-        attributes_json = json.dumps(dict(span.attributes) if span.attributes else {})
+        attributes_json = _json_dumps(dict(span.attributes) if span.attributes else {})
         resource_json = json.dumps(
             {k: str(v) for k, v in span.resource.attributes.items()}
             if span.resource and span.resource.attributes
             else {}
-    )
+        )
 
         return {
             "trace_id": trace_id,

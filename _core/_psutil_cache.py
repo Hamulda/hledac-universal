@@ -38,6 +38,7 @@ import time as _time_module
 from collections.abc import Callable
 from typing import Any
 from _core._util import aclose
+from _core.lock_registry import LockCategory, register_lock
 
 # Deferred import — psutil is a hard dependency of the M1 8GB stack but we
 # fail-safe rather than crash if it's somehow absent.
@@ -54,8 +55,13 @@ except ImportError:  # noqa: BLE001
 # 1-second TTL cache — shared with resource_governor._psutil_cache
 # ----------------------------------------------------------------------------------------------------------------------
 _psutil_cache: dict[str, tuple[Any, float]] = {}  # key → (result, timestamp)
-_psutil_meta_lock = threading.Lock()  # guards dict operations only
 _CACHE_TTL_S: float = 1.0
+
+
+@register_lock(LockCategory.METRICS)
+def _psutil_meta_lock() -> threading.Lock:
+    """Module-level lock for psutil cache dict operations."""
+    return threading.Lock()
 
 
 # ----------------------------------------------------------------------------------------------------------------------
@@ -123,7 +129,7 @@ def _get_cached(key: str, reader_fn: Callable[[], Any]) -> Any:
             return result
 
     # Slow path — dict write needs the lock
-    with _psutil_meta_lock:
+    with _psutil_meta_lock():
         # Re-check after acquiring lock (another thread may have populated it)
         entry = _psutil_cache.get(key)
         if entry is not None:
@@ -148,7 +154,7 @@ def _get_cached(key: str, reader_fn: Callable[[], Any]) -> Any:
 
 def reset() -> None:
     """Clear the entire cache. Use when entering a new execution phase."""
-    with _psutil_meta_lock:
+    with _psutil_meta_lock():
         _psutil_cache.clear()
 
 

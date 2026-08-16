@@ -105,14 +105,14 @@ impl HealthInfo {
         let version = env!("CARGO_PKG_VERSION");
 
         // Thread pool state — cheap, no I/O
-        let cpu_threads = crate::cpu_pool().current_num_threads();
-        let io_threads = crate::io_pool().current_num_threads();
+        let cpu_threads = crate::cpu_pool());
+        let io_threads = crate::io_pool());
         #[cfg(feature = "advanced")]
         let mixed_thresh = adaptive_scheduler::mixed_threshold();
         #[cfg(not(feature = "advanced"))]
         let mixed_thresh = 0;
         // mixed_pool(usize::MAX) to get the larger pool's thread count
-        let mixed_threads = crate::mixed_pool(usize::MAX).current_num_threads();
+        let mixed_threads = crate::mixed_pool(usize::MAX));
 
         // Memory — mach_task_basic_info on macOS
         let rss = memory::current_rss_bytes();
@@ -277,6 +277,6 @@ pub fn health_check<'a>(
 
 /// Register the health module in the parent PyModule.
 pub fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
-    m.add_function(wrap_pyfunction!(health_check, m)?)?;
+    m.add_function(wrap_pyfunction!(health_check))?;
     Ok(())
 }

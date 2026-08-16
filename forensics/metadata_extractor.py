@@ -45,6 +45,7 @@ ISSUE-001 Phase 2: SQLite3 → DuckDB Migration
 """
 from __future__ import annotations
 import msgspec
+from compat.msgspec_gc_compat import Struct
 
 from operator import attrgetter, itemgetter
 import asyncio
@@ -173,7 +174,7 @@ MAX_RECEIVED_HEADERS: int = 20
 MAX_EMAIL_HEADERS: int = 200
 MAX_MACRO_URLS: int = 50
 
-class GPSCoordinates(msgspec.Struct, gc=False):
+class GPSCoordinates(Struct):
     """GPS coordinates with accuracy information."""
     latitude: float
     longitude: float
@@ -185,7 +186,7 @@ class GPSCoordinates(msgspec.Struct, gc=False):
         """Convert to dictionary."""
         return {'latitude': self.latitude, 'longitude': self.longitude, 'altitude': self.altitude, 'accuracy': self.accuracy, 'timestamp': self.timestamp.isoformat() if self.timestamp else None}
 
-class TimelineEvent(msgspec.Struct, gc=False):
+class TimelineEvent(Struct):
     """Single timeline event from metadata."""
     timestamp: datetime
     event_type: str
@@ -196,7 +197,7 @@ class TimelineEvent(msgspec.Struct, gc=False):
         """Convert to dictionary."""
         return {'timestamp': self.timestamp.isoformat(), 'event_type': self.event_type, 'source': self.source, 'confidence': self.confidence}
 
-class AttributionData(msgspec.Struct, gc=False):
+class AttributionData(Struct):
     """Attribution data extracted from metadata."""
     software: str | None = None
     device: str | None = None
@@ -210,7 +211,7 @@ class AttributionData(msgspec.Struct, gc=False):
         """Convert to dictionary."""
         return {'software': self.software, 'device': self.device, 'device_serial': self.device_serial, 'author': self.author, 'copyright': self.copyright, 'organization': self.organization, 'version': self.version}
 
-class ScrubbingAnalysis(msgspec.Struct, gc=False):
+class ScrubbingAnalysis(Struct):
     """Analysis of potential metadata scrubbing."""
     is_scrubbed: bool
     confidence: float
@@ -222,7 +223,7 @@ class ScrubbingAnalysis(msgspec.Struct, gc=False):
         """Convert to dictionary."""
         return {'is_scrubbed': self.is_scrubbed, 'confidence': self.confidence, 'indicators': self.indicators, 'missing_expected_fields': self.missing_expected_fields, 'suspicious_patterns': self.suspicious_patterns}
 
-class ImageMetadata(msgspec.Struct, gc=False):
+class ImageMetadata(Struct):
     """Image-specific metadata."""
     width: int | None = None
     height: int | None = None
@@ -246,7 +247,7 @@ class ImageMetadata(msgspec.Struct, gc=False):
         """Convert to dictionary."""
         return {'width': self.width, 'height': self.height, 'format': self.format, 'mode': self.mode, 'exif': self.exif, 'gps': self.gps.to_dict() if self.gps else None, 'camera_make': self.camera_make, 'camera_model': self.camera_model, 'lens': self.lens, 'focal_length': self.focal_length, 'exposure_time': self.exposure_time, 'f_number': self.f_number, 'iso': self.iso, 'flash': self.flash, 'orientation': self.orientation, 'caption': self.caption, 'tags': self.tags}
 
-class PDFMetadata(msgspec.Struct, gc=False):
+class PDFMetadata(Struct):
     """PDF document metadata."""
     title: str | None = None
     author: str | None = None
@@ -265,7 +266,7 @@ class PDFMetadata(msgspec.Struct, gc=False):
         """Convert to dictionary."""
         return {'title': self.title, 'author': self.author, 'subject': self.subject, 'creator': self.creator, 'producer': self.producer, 'creation_date': self.creation_date.isoformat() if self.creation_date else None, 'modification_date': self.modification_date.isoformat() if self.modification_date else None, 'num_pages': self.num_pages, 'pdf_version': self.pdf_version, 'is_encrypted': self.is_encrypted, 'permissions': self.permissions, 'embedded_files': self.embedded_files}
 
-class DocxMetadata(msgspec.Struct, gc=False):
+class DocxMetadata(Struct):
     """DOCX document metadata."""
     title: str | None = None
     author: str | None = None
@@ -286,7 +287,7 @@ class DocxMetadata(msgspec.Struct, gc=False):
         """Convert to dictionary."""
         return {'title': self.title, 'author': self.author, 'subject': self.subject, 'keywords': self.keywords, 'category': self.category, 'comments': self.comments, 'created': self.created.isoformat() if self.created else None, 'modified': self.modified.isoformat() if self.modified else None, 'last_modified_by': self.last_modified_by, 'revision': self.revision, 'company': self.company, 'manager': self.manager, 'template': self.template, 'total_editing_time': self.total_editing_time}
 
-class AudioMetadata(msgspec.Struct, gc=False):
+class AudioMetadata(Struct):
     """Audio file metadata."""
     title: str | None = None
     artist: str | None = None
@@ -313,7 +314,7 @@ class AudioMetadata(msgspec.Struct, gc=False):
         """Convert to dictionary."""
         return {'title': self.title, 'artist': self.artist, 'album': self.album, 'album_artist': self.album_artist, 'genre': self.genre, 'year': self.year, 'track_number': self.track_number, 'total_tracks': self.total_tracks, 'disc_number': self.disc_number, 'total_discs': self.total_discs, 'composer': self.composer, 'publisher': self.publisher, 'copyright': self.copyright, 'comments': self.comments, 'lyrics': self.lyrics, 'duration': self.duration, 'bitrate': self.bitrate, 'sample_rate': self.sample_rate, 'channels': self.channels, 'codec': self.codec}
 
-class VideoMetadata(msgspec.Struct, gc=False):
+class VideoMetadata(Struct):
     """Video file metadata."""
     title: str | None = None
     duration: float | None = None
@@ -334,7 +335,7 @@ class VideoMetadata(msgspec.Struct, gc=False):
         """Convert to dictionary."""
         return {'title': self.title, 'duration': self.duration, 'bitrate': self.bitrate, 'width': self.width, 'height': self.height, 'fps': self.fps, 'video_codec': self.video_codec, 'video_bitrate': self.video_bitrate, 'audio_codec': self.audio_codec, 'audio_bitrate': self.audio_bitrate, 'audio_channels': self.audio_channels, 'audio_sample_rate': self.audio_sample_rate, 'container_format': self.container_format, 'creation_time': self.creation_time.isoformat() if self.creation_time else None}
 
-class ArchiveMetadata(msgspec.Struct, gc=False):
+class ArchiveMetadata(Struct):
     """Archive file metadata."""
     archive_type: str | None = None
     num_files: int | None = None
@@ -348,7 +349,7 @@ class ArchiveMetadata(msgspec.Struct, gc=False):
         """Convert to dictionary."""
         return {'archive_type': self.archive_type, 'num_files': self.num_files, 'uncompressed_size': self.uncompressed_size, 'is_encrypted': self.is_encrypted, 'compression_ratio': self.compression_ratio, 'comment': self.comment, 'files': self.files}
 
-class PPTXMetadata(msgspec.Struct, gc=False):
+class PPTXMetadata(Struct):
     """Presentation metadata (PPTX/ODP) - FOCA-style forensics."""
     author: str | None = None
     last_modified_by: str | None = None
@@ -368,7 +369,7 @@ class PPTXMetadata(msgspec.Struct, gc=False):
     def to_dict(self) -> dict[str, Any]:
         return {'author': self.author, 'last_modified_by': self.last_modified_by, 'title': self.title, 'subject': self.subject, 'company': self.company, 'template_path': self.template_path, 'slide_count': self.slide_count, 'has_macros': self.has_macros, 'macro_urls': self.macro_urls, 'speaker_notes': self.speaker_notes, 'hidden_slides': self.hidden_slides, 'macro_analysis': self.macro_analysis, 'embedded_fonts': self.embedded_fonts, 'internal_paths': self.internal_paths}
 
-class EmailMetadata(msgspec.Struct, gc=False):
+class EmailMetadata(Struct):
     """Email header forensics - FOCA-style infrastructure analysis."""
     from_addr: str | None = None
     reply_to: str | None = None
@@ -386,7 +387,7 @@ class EmailMetadata(msgspec.Struct, gc=False):
     def to_dict(self) -> dict[str, Any]:
         return {'from_addr': self.from_addr, 'reply_to': self.reply_to, 'subject': self.subject, 'date': self.date, 'message_id_domain': self.message_id_domain, 'originating_ip': self.originating_ip, 'dkim_domain': self.dkim_domain, 'spf_result': self.spf_result, 'received_chain': self.received_chain, 'headers': self.headers, 'has_attachments': self.has_attachments, 'attachment_count': self.attachment_count}
 
-class CADMetadata(msgspec.Struct, gc=False):
+class CADMetadata(Struct):
     """CAD/technical drawing metadata (DXF, DWG, SVG) - FOCA-style."""
     author: str | None = None
     title: str | None = None
@@ -402,7 +403,7 @@ class CADMetadata(msgspec.Struct, gc=False):
     def to_dict(self) -> dict[str, Any]:
         return {'author': self.author, 'title': self.title, 'description': self.description, 'autocad_version': self.autocad_version, 'insertion_base': self.insertion_base, 'coordinate_extents': self.coordinate_extents, 'viewBox': self.viewBox, 'width': self.width, 'height': self.height, 'internal_paths': self.internal_paths}
 
-class GenericMetadata(msgspec.Struct, gc=False):
+class GenericMetadata(Struct):
     """Generic file metadata from filesystem."""
     file_name: str
     file_path: str
@@ -429,7 +430,7 @@ class GenericMetadata(msgspec.Struct, gc=False):
         """Convert to dictionary."""
         return {'file_name': self.file_name, 'file_path': self.file_path, 'file_size': self.file_size, 'file_extension': self.file_extension, 'mime_type': self.mime_type, 'created': self.created.isoformat() if self.created else None, 'modified': self.modified.isoformat() if self.modified else None, 'accessed': self.accessed.isoformat() if self.accessed else None, 'permissions': self.permissions, 'owner': self.owner, 'group': self.group, 'inode': self.inode, 'device_id': self.device_id, 'hard_links': self.hard_links, 'blocks': self.blocks, 'block_size': self.block_size, 'md5_hash': self.md5_hash, 'sha256_hash': self.sha256_hash, 'sha1_hash': self.sha1_hash, 'entropy': self.entropy}
 
-class SteganalysisMetadata(msgspec.Struct, gc=False):
+class SteganalysisMetadata(Struct):
     """Steganalysis results for images."""
     lsb_suspicious: bool = False
     lsb_score: float = 0.0
@@ -444,7 +445,7 @@ class SteganalysisMetadata(msgspec.Struct, gc=False):
     def to_dict(self) -> dict[str, Any]:
         return {'lsb_suspicious': self.lsb_suspicious, 'lsb_score': self.lsb_score, 'histogram_suspicious': self.histogram_suspicious, 'histogram_score': self.histogram_score, 'chi_square_score': self.chi_square_score, 'stegdetect_result': self.stegdetect_result, 'stegdetect_available': self.stegdetect_available, 'overall_suspicious': self.overall_suspicious, 'confidence': self.confidence}
 
-class MetadataResult(msgspec.Struct, gc=False):
+class MetadataResult(Struct):
     """Complete metadata extraction result."""
     file_path: str
     success: bool

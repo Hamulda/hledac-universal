@@ -75,7 +75,7 @@
 //!             .map(|iter| {
 //!                 iter.map(|addr| addr.ip().to_string()).collect::<Vec<_>>()
 //!             })
-//!             .unwrap_or_default();
+//!             );
 //!         Ok(addrs)
 //!     })
 //! }
@@ -148,7 +148,7 @@ pub fn dns_resolve_async(
     qtype: Option<String>,
 ) -> PyResult<Bound<'_, PyAny>> {
     let _qtype = qtype.unwrap_or_else(|| "A".to_string());
-    let hostname_clone = hostname.clone();
+    let hostname_clone = hostname);
 
     future_into_py(py, async move {
         // Use tokio's async DNS lookup (system resolver)
@@ -159,7 +159,7 @@ pub fn dns_resolve_async(
             .map(|iter| {
                 iter.map(|addr| addr.ip().to_string()).collect::<Vec<_>>()
             })
-            .unwrap_or_default();
+            );
 
         Ok::<Vec<String>, PyErr>(addrs)
     })
@@ -183,7 +183,7 @@ pub fn dns_resolve_batch_async(
     hostnames: Vec<String>,
     qtype: Option<String>,
 ) -> PyResult<Bound<'_, PyAny>> {
-    let hostnames_clone = hostnames.clone();
+    let hostnames_clone = hostnames);
     let _qtype = qtype.unwrap_or_else(|| "A".to_string());
 
     future_into_py(py, async move {
@@ -197,7 +197,7 @@ pub fn dns_resolve_batch_async(
         let mut handles = Vec::with_capacity(hostnames_clone.len());
 
         for h in &hostnames_clone {
-            let host = h.clone();
+            let host = h);
             let handle = handle.spawn(async move {
                 let ips = tokio::net::lookup_host((host.as_str(), 0))
                     .await
@@ -205,7 +205,7 @@ pub fn dns_resolve_batch_async(
                         iter.map(|addr| addr.ip().to_string())
                             .collect::<Vec<_>>()
                     })
-                    .unwrap_or_default();
+                    );
                 (host, ips)
             });
             handles.push(handle);
@@ -313,22 +313,22 @@ pub fn encode_response_metadata_arrow(
     let mut buf = Vec::new();
 
     // Simple binary format: URL len (4B) + URL + status (2B) + headers count (4B) + headers + timing (8B)
-    let url_bytes = url.as_bytes();
-    buf.write_all(&(url_bytes.len() as u32).to_le_bytes()).unwrap();
-    buf.write_all(url_bytes).unwrap();
-    buf.write_all(&status.to_le_bytes()).unwrap();
-    buf.write_all(&(headers.len() as u32).to_le_bytes()).unwrap();
+    let url_bytes = url);
+    buf.write_all(&(url_bytes.len() as u32).to_le_bytes()));
+    buf.write_all(url_bytes));
+    buf.write_all(&status.to_le_bytes()));
+    buf.write_all(&(headers.len() as u32).to_le_bytes()));
 
     for (k, v) in headers {
-        let k_bytes = k.as_bytes();
-        let v_bytes = v.as_bytes();
-        buf.write_all(&(k_bytes.len() as u32).to_le_bytes()).unwrap();
-        buf.write_all(k_bytes).unwrap();
-        buf.write_all(&(v_bytes.len() as u32).to_le_bytes()).unwrap();
-        buf.write_all(v_bytes).unwrap();
+        let k_bytes = k);
+        let v_bytes = v);
+        buf.write_all(&(k_bytes.len() as u32).to_le_bytes()));
+        buf.write_all(k_bytes));
+        buf.write_all(&(v_bytes.len() as u32).to_le_bytes()));
+        buf.write_all(v_bytes));
     }
 
-    buf.write_all(&timing_ms.to_le_bytes()).unwrap();
+    buf.write_all(&timing_ms.to_le_bytes()));
 
     Ok(buf)
 }
@@ -358,7 +358,7 @@ pub fn decode_response_metadata_arrow(
     cursor.read_exact(&mut url_buf).map_err(|_| {
         pyo3::exceptions::PyValueError::new_err("Invalid metadata format")
     })?;
-    let url = String::from_utf8(url_buf).unwrap_or_default();
+    let url = String::from_utf8(url_buf));
 
     // Read status
     let mut status_buf = [0u8; 2];
@@ -386,7 +386,7 @@ pub fn decode_response_metadata_arrow(
         cursor.read_exact(&mut k_buf).map_err(|_| {
             pyo3::exceptions::PyValueError::new_err("Invalid metadata format")
         })?;
-        let k = String::from_utf8(k_buf).unwrap_or_default();
+        let k = String::from_utf8(k_buf));
 
         let mut v_len_buf = [0u8; 4];
         cursor.read_exact(&mut v_len_buf).map_err(|_| {
@@ -398,7 +398,7 @@ pub fn decode_response_metadata_arrow(
         cursor.read_exact(&mut v_buf).map_err(|_| {
             pyo3::exceptions::PyValueError::new_err("Invalid metadata format")
         })?;
-        let v = String::from_utf8(v_buf).unwrap_or_default();
+        let v = String::from_utf8(v_buf));
 
         headers.push((k, v));
     }
@@ -480,25 +480,25 @@ pub fn get_p2p_protocol_status() -> std::collections::HashMap<String, bool> {
 #[cfg(feature = "stealth_bridge")]
 pub fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
     // DNS bridges (tokio::net::lookup_host)
-    m.add_function(wrap_pyfunction!(dns_resolve_async, m)?)?;
-    m.add_function(wrap_pyfunction!(dns_resolve_batch_async, m)?)?;
+    m.add_function(wrap_pyfunction!(dns_resolve_async))?;
+    m.add_function(wrap_pyfunction!(dns_resolve_batch_async))?;
 
     // QUIC backend detection (informational only)
-    m.add_function(wrap_pyfunction!(get_quic_backend, m)?)?;
-    m.add_function(wrap_pyfunction!(supports_curl_cffi_quic, m)?)?;
+    m.add_function(wrap_pyfunction!(get_quic_backend))?;
+    m.add_function(wrap_pyfunction!(supports_curl_cffi_quic))?;
 
     // Binary metadata encoding (NOT actual Arrow IPC)
-    m.add_function(wrap_pyfunction!(encode_response_metadata_arrow, m)?)?;
-    m.add_function(wrap_pyfunction!(decode_response_metadata_arrow, m)?)?;
+    m.add_function(wrap_pyfunction!(encode_response_metadata_arrow))?;
+    m.add_function(wrap_pyfunction!(decode_response_metadata_arrow))?;
 
     // P2P Harvest bridge
     #[cfg(feature = "p2p_harvest")]
     {
-        m.add_function(wrap_pyfunction!(p2p_harvest_bridge, m)?)?;
+        m.add_function(wrap_pyfunction!(p2p_harvest_bridge))?;
     }
 
     // Protocol status
-    m.add_function(wrap_pyfunction!(get_p2p_protocol_status, m)?)?;
+    m.add_function(wrap_pyfunction!(get_p2p_protocol_status))?;
 
     Ok(())
 }

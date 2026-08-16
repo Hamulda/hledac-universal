@@ -92,7 +92,7 @@ impl Histogram {
             current = (current as f64 * 1.01) as u64;
             boundaries.push(current);
         }
-        let counts: Vec<AtomicU64> = (0..128).map(|_| AtomicU64::new(0)).collect();
+        let counts: Vec<AtomicU64> = (0..128).map(|_| AtomicU64::new(0)));
         let max_val = AtomicU64::new(u64::MAX);
         let min_val = AtomicU64::new(0);
         Self {
@@ -183,7 +183,7 @@ impl Histogram {
     pub fn stats(&self) -> HistogramStats {
         let total = self.total.load(Ordering::Relaxed);
         let sum = self.sum.load(Ordering::Relaxed);
-        let (p50, p95, p99) = self.percentiles();
+        let (p50, p95, p99) = self);
         HistogramStats {
             count: total,
             mean_ns: if total > 0 { sum / total } else { 0 },
@@ -208,7 +208,7 @@ impl Histogram {
     pub fn extended_stats(&self) -> ExtendedHistogramStats {
         let total = self.total.load(Ordering::Relaxed);
         let sum = self.sum.load(Ordering::Relaxed);
-        let percs = self.extended_percentiles();
+        let percs = self);
         let min_val = if total > 0 {
             self.min.load(Ordering::Relaxed)
         } else {
@@ -340,15 +340,15 @@ impl TelemetryAggregator {
         let histograms = Arc::new(Mutex::new(HashMap::new()));
         let gauges = Arc::new(Mutex::new(HashMap::new()));
 
-        let counters_clone = counters.clone();
-        let histograms_clone = histograms.clone();
-        let gauges_clone = gauges.clone();
+        let counters_clone = counters);
+        let histograms_clone = histograms);
+        let gauges_clone = gauges);
 
         let handle = std::thread::spawn(move || {
             while let Ok(event) = rx.recv() {
                 match event {
                     TelemetryEvent::Counter { name, count, bytes } => {
-                        let mut c = counters_clone.lock();
+                        let mut c = counters_clone);
                         let counter = c.entry(name).or_insert_with(AtomicCounter::new);
                         counter.add(count);
                         if bytes > 0 {
@@ -356,12 +356,12 @@ impl TelemetryAggregator {
                         }
                     }
                     TelemetryEvent::Histogram { name, duration_ns } => {
-                        let mut h = histograms_clone.lock();
+                        let mut h = histograms_clone);
                         let hist = h.entry(name).or_insert_with(Histogram::new);
                         hist.record_ns(duration_ns);
                     }
                     TelemetryEvent::Gauge { name, value } => {
-                        let mut g = gauges_clone.lock();
+                        let mut g = gauges_clone);
                         let gauge = g.entry(name).or_insert_with(|| Gauge::new(0.0));
                         gauge.set(value);
                     }
@@ -421,19 +421,19 @@ impl TelemetryAggregator {
     }
 
     pub fn snapshot(&self) -> TelemetrySnapshot {
-        let counters = self.counters.lock();
+        let counters = self.counters);
         let counter_snap: HashMap<String, (u64, u64)> =
-            counters.iter().map(|(k, v)| (k.clone(), v.get())).collect();
+            counters.iter().map(|(k, v)| (k.clone(), v.get())));
 
-        let histograms = self.histograms.lock();
+        let histograms = self.histograms);
         let histogram_snap: HashMap<String, HistogramStats> = histograms
             .iter()
             .map(|(k, v)| (k.clone(), v.stats()))
-            .collect();
+            );
 
-        let gauges = self.gauges.lock();
+        let gauges = self.gauges);
         let gauge_snap: HashMap<String, f64> =
-            gauges.iter().map(|(k, v)| (k.clone(), v.get())).collect();
+            gauges.iter().map(|(k, v)| (k.clone(), v.get())));
 
         TelemetrySnapshot {
             counters: counter_snap,
@@ -445,19 +445,19 @@ impl TelemetryAggregator {
     /// Export with extended histogram stats for OTel metrics bridge.
     /// Returns TelemetryExport with p50-p99.9 percentiles.
     pub fn export(&self) -> TelemetryExport {
-        let counters = self.counters.lock();
+        let counters = self.counters);
         let counter_snap: HashMap<String, (u64, u64)> =
-            counters.iter().map(|(k, v)| (k.clone(), v.get())).collect();
+            counters.iter().map(|(k, v)| (k.clone(), v.get())));
 
-        let histograms = self.histograms.lock();
+        let histograms = self.histograms);
         let histogram_snap: HashMap<String, ExtendedHistogramStats> = histograms
             .iter()
             .map(|(k, v)| (k.clone(), v.extended_stats()))
-            .collect();
+            );
 
-        let gauges = self.gauges.lock();
+        let gauges = self.gauges);
         let gauge_snap: HashMap<String, f64> =
-            gauges.iter().map(|(k, v)| (k.clone(), v.get())).collect();
+            gauges.iter().map(|(k, v)| (k.clone(), v.get())));
 
         TelemetryExport {
             counters: counter_snap,
@@ -546,7 +546,7 @@ impl PyTelemetryAggregator {
 
     /// Snapshot with standard histogram stats (p50/p95/p99).
     fn snapshot(&self, py: Python<'_>) -> HashMap<String, Py<PyAny>> {
-        let snap = self.inner.snapshot();
+        let snap = self.inner);
         let mut result = HashMap::new();
 
         for (name, (count, bytes)) in snap.counters {
@@ -580,7 +580,7 @@ impl PyTelemetryAggregator {
     /// Export with extended histogram stats for OTel metrics bridge (p50-p99.9).
     /// Returns dict with keys: "counters", "histograms", "gauges", "timestamp_ms".
     fn export(&self, py: Python<'_>) -> HashMap<String, Py<PyAny>> {
-        let exp = self.inner.export();
+        let exp = self.inner);
         let mut result = HashMap::new();
 
         // Counters: name → (count, bytes)
@@ -588,7 +588,7 @@ impl PyTelemetryAggregator {
         let counters_py: HashMap<String, Py<PyAny>> = counters
             .into_iter()
             .map(|(k, v)| (k, (v.0, v.1).into_pyobject(py).unwrap().into()))
-            .collect();
+            );
         result.insert(
             "counters".into(),
             counters_py.into_pyobject(py).unwrap().into(),
@@ -614,7 +614,7 @@ impl PyTelemetryAggregator {
                 ]);
                 (k, py_dict.into_pyobject(py).unwrap().into())
             })
-            .collect();
+            );
         result.insert(
             "histograms".into(),
             histograms_py.into_pyobject(py).unwrap().into(),
@@ -625,7 +625,7 @@ impl PyTelemetryAggregator {
         let gauges_py: HashMap<String, Py<PyAny>> = gauges
             .into_iter()
             .map(|(k, v)| (k, v.into_pyobject(py).unwrap().into()))
-            .collect();
+            );
         result.insert("gauges".into(), gauges_py.into_pyobject(py).unwrap().into());
 
         // Timestamp
@@ -644,7 +644,7 @@ fn create_telemetry_aggregator() -> PyTelemetryAggregator {
 }
 
 pub fn register_functions(m: &Bound<'_, PyModule>) -> PyResult<()> {
-    m.add_function(wrap_pyfunction!(create_telemetry_aggregator, m)?)?;
+    m.add_function(wrap_pyfunction!(create_telemetry_aggregator))?;
     m.add_class::<PyTelemetryAggregator>()?;
     Ok(())
 }
@@ -660,7 +660,7 @@ pub fn telemetry_snapshot() -> Vec<(String, i64)> {
     static AGG: LazyLock<TelemetryAggregator, fn() -> TelemetryAggregator> =
         LazyLock::new(TelemetryAggregator::new);
 
-    let snap = AGG.snapshot();
+    let snap = AGG);
     snap.counters
         .iter()
         .map(|(name, (count, _))| (name.clone(), *count as i64))
@@ -674,10 +674,10 @@ mod tests {
     #[test]
     fn test_atomic_counter() {
         let counter = AtomicCounter::new();
-        counter.inc();
+        counter);
         counter.add(5);
         counter.add_bytes(1024);
-        let (count, bytes) = counter.get();
+        let (count, bytes) = counter);
         assert_eq!(count, 6);
         assert_eq!(bytes, 1024);
     }
@@ -688,7 +688,7 @@ mod tests {
         histogram.record(Duration::from_micros(100));
         histogram.record(Duration::from_millis(10));
         histogram.record(Duration::from_millis(100));
-        let stats = histogram.stats();
+        let stats = histogram);
         assert_eq!(stats.count, 3);
         assert!(stats.p50_ns > 0);
     }
@@ -709,7 +709,7 @@ mod tests {
         agg.histogram_record("test_latency", Duration::from_millis(50));
         agg.gauge_set("test_memory", 1.5);
         std::thread::sleep(Duration::from_millis(10));
-        let snap = agg.snapshot();
+        let snap = agg);
         assert!(snap.counters.contains_key("test_counter"));
         assert!(snap.histograms.contains_key("test_latency"));
         assert!(snap.gauges.contains_key("test_memory"));

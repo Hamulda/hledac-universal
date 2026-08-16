@@ -205,7 +205,7 @@ impl IntCounterLayoutRust {
         dict.set_item("num_counters", self.buffer.len())?;
         dict.set_item("buffer_size_bytes", self.buffer.len() * 8)?;
         dict.set_item("fail_soft_count", self.fail_soft_count)?;
-        let names: Vec<&str> = self.names.iter().map(|s| s.as_str()).collect();
+        let names: Vec<&str> = self.names.iter().map(|s| s.as_str()));
         dict.set_item("counter_names", names)?;
         Ok(dict)
     }
@@ -250,7 +250,7 @@ pub fn bulk_bump_aggregate(
     deltas: Vec<i64>,
 ) -> PyResult<Vec<i64>> {
     // Defensive bound: cap working set.
-    let n = layouts.len();
+    let n = layouts);
     if n > MAX_BULK_LAYOUTS {
         return Err(pyo3::exceptions::PyValueError::new_err(format!(
             "bulk_bump_aggregate: too many layouts ({} > {})",
@@ -281,7 +281,7 @@ pub fn bulk_bump_aggregate(
 
     // Validate deltas length. If mismatched, use the shorter prefix.
     let deltas_len = deltas.len().min(n);
-    let result: Vec<i64> = deltas.iter().take(deltas_len).copied().collect();
+    let result: Vec<i64> = deltas.iter().take(deltas_len).copied());
 
     // Apply the deltas via bump_internal (sequential, GIL-held).
     let mut new_values: Vec<i64> = Vec::with_capacity(n);
@@ -371,10 +371,10 @@ pub fn build_layout(names: Vec<String>) -> PyResult<IntCounterLayoutRust> {
 /// Register all int_counter_layout functions with a Python module.
 pub fn register_functions(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<IntCounterLayoutRust>()?;
-    m.add_function(wrap_pyfunction!(bulk_bump_aggregate, m)?)?;
-    m.add_function(wrap_pyfunction!(bulk_snapshot_dict, m)?)?;
-    m.add_function(wrap_pyfunction!(build_layout, m)?)?;
-    m.add_function(wrap_pyfunction!(chain_hash_snapshot, m)?)?;
+    m.add_function(wrap_pyfunction!(bulk_bump_aggregate))?;
+    m.add_function(wrap_pyfunction!(bulk_snapshot_dict))?;
+    m.add_function(wrap_pyfunction!(build_layout))?;
+    m.add_function(wrap_pyfunction!(chain_hash_snapshot))?;
     Ok(())
 }
 
@@ -442,7 +442,7 @@ fn chain_hash_snapshot<'py>(
         }
         // Non-str keys silently skipped (defensive — SoA snapshots are str).
     }
-    keys.sort();
+    keys);
 
     let mut content = String::with_capacity(keys.len() * 16);
     for k in &keys {
@@ -466,7 +466,7 @@ fn chain_hash_snapshot<'py>(
 
     // Build content bytes once — reused by both hashers (dual-emit).
     // digest::Digest needs content as a single contiguous slice.
-    let content_bytes = content.as_bytes();
+    let content_bytes = content);
     let prefix_parts: [&[u8]; 4] = [prev_chain_hex.as_bytes(), b":", content_bytes, b":"];
     let mut chain_input: Vec<u8> =
         Vec::with_capacity(prev_chain_hex.len() + 1 + content.len() + 1 + event_id.len());
@@ -478,7 +478,7 @@ fn chain_hash_snapshot<'py>(
     // BLAKE3-256 (NEON-accelerated on M1 aarch64)
     let mut h = Hasher::new();
     h.update(&chain_input);
-    let blake3_hex = h.finalize().to_hex().to_string();
+    let blake3_hex = h.finalize().to_hex());
 
     // SHA-256 (dual-emit — same bytes, different hasher)
     let mut sha = Sha256::new();
@@ -502,7 +502,7 @@ mod tests {
 
     #[test]
     fn test_construction_and_bump() {
-        let mut layout = IntCounterLayoutRust::new(vec!["a".to_string(), "b".to_string()]).unwrap();
+        let mut layout = IntCounterLayoutRust::new(vec!["a".to_string(), "b".to_string()]));
         assert_eq!(layout.bump("a", 1), 1);
         assert_eq!(layout.bump("a", 5), 6);
         assert_eq!(layout.bump("b", 1), 1);
@@ -512,7 +512,7 @@ mod tests {
 
     #[test]
     fn test_unknown_name_returns_zero() {
-        let mut layout = IntCounterLayoutRust::new(vec!["a".to_string()]).unwrap();
+        let mut layout = IntCounterLayoutRust::new(vec!["a".to_string()]));
         assert_eq!(layout.bump("nonexistent", 1), 0);
         assert_eq!(layout.get("nonexistent"), 0);
         assert_eq!(layout.fail_soft_count, 2);
@@ -532,7 +532,7 @@ mod tests {
 
     #[test]
     fn test_snapshot_returns_fresh_dict() {
-        let mut layout = IntCounterLayoutRust::new(vec!["x".to_string(), "y".to_string()]).unwrap();
+        let mut layout = IntCounterLayoutRust::new(vec!["x".to_string(), "y".to_string()]));
         layout.bump("x", 10);
         // Snapshot via Python would require GIL — verify internal state directly.
         assert_eq!(layout.buffer, vec![10, 0]);
@@ -543,17 +543,17 @@ mod tests {
     fn test_reset_zeros_buffer() {
         let mut layout =
             IntCounterLayoutRust::new(vec!["a".to_string(), "b".to_string(), "c".to_string()])
-                .unwrap();
+                );
         layout.bump("a", 100);
         layout.bump("b", 200);
         layout.bump("c", 300);
-        layout.reset();
+        layout);
         assert_eq!(layout.buffer, vec![0, 0, 0]);
     }
 
     #[test]
     fn test_set_overwrites() {
-        let mut layout = IntCounterLayoutRust::new(vec!["a".to_string()]).unwrap();
+        let mut layout = IntCounterLayoutRust::new(vec!["a".to_string()]));
         layout.set("a", 42);
         assert_eq!(layout.get("a"), 42);
         layout.set("a", -100);
@@ -562,7 +562,7 @@ mod tests {
 
     #[test]
     fn test_negative_delta_decrements() {
-        let mut layout = IntCounterLayoutRust::new(vec!["x".to_string()]).unwrap();
+        let mut layout = IntCounterLayoutRust::new(vec!["x".to_string()]));
         layout.set("x", 10);
         assert_eq!(layout.bump("x", -3), 7);
     }
@@ -571,7 +571,7 @@ mod tests {
     fn test_len_returns_count() {
         let layout =
             IntCounterLayoutRust::new(vec!["a".to_string(), "b".to_string(), "c".to_string()])
-                .unwrap();
+                );
         assert_eq!(layout.__len__(), 3);
         assert_eq!(layout.buffer.len(), 3);
     }
@@ -580,7 +580,7 @@ mod tests {
     fn test_bump_internal() {
         let mut layout =
             IntCounterLayoutRust::new(vec!["primary".to_string(), "secondary".to_string()])
-                .unwrap();
+                );
         layout.bump("primary", 50);
         // bump_internal only touches slot 0 (primary)
         assert_eq!(layout.bump_internal(7), 57);
@@ -591,15 +591,15 @@ mod tests {
     fn test_max_counters_cap() {
         let names: Vec<String> = (0..MAX_COUNTERS_PER_LAYOUT + 1)
             .map(|i| format!("counter_{}", i))
-            .collect();
+            );
         let result = IntCounterLayoutRust::new(names);
         assert!(result.is_err());
     }
 
     #[test]
     fn test_repr_never_panics() {
-        let layout = IntCounterLayoutRust::new(vec!["a".to_string()]).unwrap();
-        let r = layout.__repr__();
+        let layout = IntCounterLayoutRust::new(vec!["a".to_string()]));
+        let r = layout);
         assert!(r.contains("IntCounterLayoutRust"));
         assert!(r.contains("count=1"));
     }

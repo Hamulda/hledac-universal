@@ -46,6 +46,7 @@ import logging
 import time
 from dataclasses import dataclass
 import msgspec
+from compat.msgspec_gc_compat import Struct
 from typing import TYPE_CHECKING
 from hledac.universal.utils.asyncx import parallel_ok, safe_wait_for
 from _core import aclose
@@ -57,7 +58,7 @@ PORT_TIMEOUTS: dict[int, float] = {21: 5.0, 22: 8.0, 25: 8.0, 80: 5.0, 443: 5.0,
 TOR_PORTS: frozenset[int] = frozenset({22, 25, 3389})
 CURL_PORTS: frozenset[int] = frozenset({80, 443, 8080, 8443, 993})
 
-class BannerResult(msgspec.Struct, gc=False):
+class BannerResult(Struct):
     ip: str
     port: int
     banner: str

@@ -62,6 +62,7 @@ import threading
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
 import msgspec
+from compat.msgspec_gc_compat import Struct
 from typing import TYPE_CHECKING
 
 import numpy as np
@@ -143,7 +144,7 @@ def _try_rust_text_norm(texts: list[str]) -> list[str] | None:
 # ---------------------------------------------------------------------------
 
 
-class _BatchResult(msgspec.Struct, gc=False):
+class _BatchResult(Struct):
     """Result of a single batch embed operation."""
     ids: list[str]
     embeddings: np.ndarray | None

@@ -15,6 +15,7 @@ import time
 from typing import Literal
 
 import msgspec
+from compat.msgspec_gc_compat import Struct
 from hledac.universal._core.psutil_shim import psutil
 
 logger = logging.getLogger(__name__)
@@ -36,7 +37,7 @@ _CURL_CFFI_POOL_SIZE = int(os.environ.get("HLEDAC_CURL_CFFI_POOL_SIZE", "4"))
 BrowserTier = Literal["camoufox", "nodriver", "deferred", "skip_js"]
 
 
-class BrowserDecision(msgspec.Struct, frozen=True, gc=False):
+class BrowserDecision(Struct, frozen=True):
     tier: BrowserTier
     allowed: bool
     rss_gib: float

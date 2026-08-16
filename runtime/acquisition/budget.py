@@ -24,6 +24,7 @@ from __future__ import annotations
 import os
 
 import msgspec
+from compat.msgspec_gc_compat import Struct
 from _core import aclose
 
 
@@ -51,7 +52,7 @@ _NONFEED_PROFILE_FEED_CAP_THRESHOLDS: dict[str, int] = {
 # ── FeedDominanceBudget ─────────────────────────────────────────────────────────
 
 
-class FeedDominanceBudget(msgspec.Struct, frozen=True, gc=False):
+class FeedDominanceBudget(Struct, frozen=True):
     """
     F216E / Sprint C: Canonical feed dominance budget policy.
 

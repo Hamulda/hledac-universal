@@ -53,6 +53,7 @@ from pathlib import Path
 from typing import Any, Literal
 
 import msgspec
+from compat.msgspec_gc_compat import Struct
 from _core import aclose
 
 logger = logging.getLogger(__name__)
@@ -149,7 +150,7 @@ class TranscriptionEngine(Enum):
     NONE = "none"
 
 
-class TranscriptionSegment(msgspec.Struct, frozen=True, gc=False):
+class TranscriptionSegment(Struct, frozen=True):
     """Single transcribed segment."""
     start_s: float = 0.0
     end_s: float = 0.0
@@ -157,7 +158,7 @@ class TranscriptionSegment(msgspec.Struct, frozen=True, gc=False):
     confidence: float = 0.0
 
 
-class TranscriptionResult(msgspec.Struct, frozen=True, gc=False):
+class TranscriptionResult(Struct, frozen=True):
     """Unified transcription result from any engine."""
     text: str = ""
     language: str = "en"

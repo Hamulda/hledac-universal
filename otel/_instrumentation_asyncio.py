@@ -41,10 +41,40 @@ __all__ = ['TaskContext', 'task_context', 'current_otel_context', 'create_task_w
 # _MAX_TASK_CACHE raised from 256 → 512 for better hit rate.
 _MAX_TASK_CACHE = 512
 
-# Cached version/uvloop checks — computed once at module load, not per call.
+# ISSUE-010: uvloop + eager_start compatibility (Python 3.12+)
+# - uvloop 0.22.x C-level create_task does NOT accept eager_start
+# - BUT TaskGroup.create_task() handles eager_start at the stdlib level
+#   BEFORE calling into the event loop, so uvloop does NOT block this
+# - Feature flag HLEDAC_EAGER_START_ENABLED controls global eager_start behavior
 _PY_312_PLUS: bool = sys.version_info >= (3, 12)
 _UVLOOP_INSTALLED: bool = sys.modules.get('uvloop') is not None
-_EAGER_START_SUPPORTED: bool = _PY_312_PLUS and (not _UVLOOP_INSTALLED)
+
+# eager_start is supported when Python >= 3.12 (stdlib TaskGroup.create_task
+# handles it natively, independent of whether uvloop is installed)
+# Note: This is for asyncio.create_task(). For TaskGroup.create_task(),
+# eager_start always works on Python 3.12+ regardless of uvloop.
+_EAGER_START_SUPPORTED: bool = _PY_312_PLUS
+
+
+def _should_use_eager_start() -> bool:
+    """Determine if eager_start should be used based on feature flags.
+
+    Returns:
+        True if eager_start should be enabled, False otherwise.
+
+    Logic:
+        1. Must be Python 3.12+ (eager_start not available earlier)
+        2. HLEDAC_EAGER_START_ENABLED must be True (default True)
+        3. When uvloop is installed, eager_start is handled via try/except
+           fallback (see create_task_with_context)
+    """
+    if not _EAGER_START_SUPPORTED:
+        return False
+
+    # Import lazily to avoid circular imports and allow env override at runtime
+    from hledac.universal._core.env_config import ENV
+
+    return ENV.EAGER_START_ENABLED
 
 if _LRU_AVAILABLE:
     _task_context_cache = _LRUCache(maxsize=_MAX_TASK_CACHE)  # type: ignore[assignment, misc]
@@ -85,6 +115,8 @@ def create_task_with_context(coro: Any, *, name: str | None=None, eager_start: b
     """
     Create an asyncio.Task with OTel trace context propagation.
 
+    ISSUE-010: Respects HLEDAC_EAGER_START_ENABLED feature flag.
+
     This is the canonical task-creation path used by utils/async_helpers.
     safe_create_task, which is called from ~15+ sites across the codebase.
 
@@ -97,10 +129,15 @@ def create_task_with_context(coro: Any, *, name: str | None=None, eager_start: b
         coro:        The coroutine to wrap.
         name:        Optional task name.
         eager_start: Pass eager_start=True to asyncio.create_task (3.12+).
+                    When feature flag is disabled, this is overridden.
         otel_trace:  Capture and propagate OTel trace context (default True).
 
     Returns:
         asyncio.Task wrapping the coroutine.
+
+    Note:
+        When uvloop is installed, asyncio.create_task() may not support eager_start
+        (C-level limitation). The try/except handles this gracefully.
     """
     captured: dict[str, Any] = {}
     if otel_trace:
@@ -113,13 +150,19 @@ def create_task_with_context(coro: Any, *, name: str | None=None, eager_start: b
             return await coro
         finally:
             _current_task_context.set(None)
-    if eager_start and _EAGER_START_SUPPORTED:
+
+    # ISSUE-010: Apply feature flag to eager_start decision
+    should_eager = eager_start and _should_use_eager_start()
+
+    if should_eager:
         try:
             task: asyncio.Task[Any] = asyncio.create_task(_otel_wrapped(), name=name, eager_start=True)
         except TypeError:
+            # Fallback: uvloop or other event loop doesn't support eager_start
             task = asyncio.create_task(_otel_wrapped(), name=name)
     else:
         task = asyncio.create_task(_otel_wrapped(), name=name)
+
     task_id = id(task)
     _task_context_cache[task_id] = captured if captured else {}
 

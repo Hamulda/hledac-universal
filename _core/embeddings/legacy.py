@@ -23,6 +23,9 @@ import warnings
 from pathlib import Path
 from typing import Any
 import numpy as np
+
+from _core.lock_registry import LockCategory, register_lock
+
 logger = logging.getLogger(__name__)
 
 def _get_rss_gb() -> float:
@@ -31,7 +34,12 @@ def _get_rss_gb() -> float:
     return _shared_get_rss_gb()
 _EMBED_CACHE_DIR = Path.home() / '.hledac' / 'cache' / 'mlx_embed'
 _EMBED_CACHE_DIR.mkdir(parents=True, exist_ok=True)
-_PREWARM_LOCK = threading.Lock()
+
+
+@register_lock(LockCategory.CACHE)
+def _PREWARM_LOCK() -> threading.Lock:
+    """Module-level lock for MLX embedding prewarm."""
+    return threading.Lock()
 
 # C1-X FIX: Import MLX_AVAILABLE from SSOT (zero-import detection)
 # Uses importlib.metadata.version("mlx") — no mlx.core import at module load
@@ -530,17 +538,22 @@ def is_embedding_model_prewarmed() -> bool:
 _default_manager: MLXEmbeddingManager | None = None
 _init_logged: bool = False
 _task_logged: bool = False
-_init_lock = threading.Lock()
+
+
+@register_lock(LockCategory.CACHE)
+def _init_lock() -> threading.Lock:
+    """Module-level lock for MLX embedding manager singleton."""
+    return threading.Lock()
 
 
 def get_mlx_embedder() -> MLXEmbeddingManager:
     """Vrátí globální instanci MLX embedding manageru (singleton)."""
     global _default_manager, _init_logged, _task_logged
     if _default_manager is None:
-        with _init_lock:
+        with _init_lock():
             if _default_manager is None:
                 _default_manager = MLXEmbeddingManager(lazy_load=True)
-    with _init_lock:
+    with _init_lock():
         if not _init_logged:
             mgr = _default_manager
             metal_status = 'unknown'

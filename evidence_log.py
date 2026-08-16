@@ -37,10 +37,12 @@ from typing import Any, Literal, cast
 from collections.abc import Iterator
 import aiosqlite
 import msgspec
+from compat.msgspec_gc_compat import Struct
 import orjson
 from hledac.universal._core.env_config import ENV
 from hledac.universal.runtime.protocols.cleanup_protocol import shutdown_aclose
 from hledac.universal.utils.asyncx import safe_create_task, safe_wait_for
+from hledac.universal._core.locks import LockCategory, register_lock
 
 # ─── Sprint Split-Brain: Import split components ───────────────────────────────
 # New components are available for migration. EvidenceLog currently maintains
@@ -74,6 +76,7 @@ _structlog: Any = None
 # Cleared at sprint start by _clear_warc_globals() to prevent cross-sprint accumulation.
 _warc_paths_global: list[str] = []
 _warc_paths_lock = threading.Lock()
+register_lock(LockCategory.WAL, _warc_paths_lock, "evidence_log._warc_paths_lock")
 
 
 def _clear_warc_globals() -> None:
@@ -135,6 +138,7 @@ def _append_warc_snippet(snippet: dict[str, Any]) -> None:
 # EvidenceLog is sync + thread-safe, so threading.Lock is both correct and simpler).
 _archive_http_elog: Any = None
 _archive_http_elog_lock = threading.Lock()
+register_lock(LockCategory.WAL, _archive_http_elog_lock, "evidence_log._archive_http_elog_lock")
 
 
 def _get_archive_http_elog() -> EvidenceLog | None:
@@ -693,7 +697,7 @@ def _parse_warc_record_from_bytes(
 
 # ISSUE [FINAL]-019-04: WARC Provenance Chain — structured provenance for court-admissible evidence
 # ISSUE [FINAL]-019-10: WarcWriteResult — msgspec.Struct with full write metadata + success field
-class WarcWriteResult(msgspec.Struct, frozen=True, kw_only=True, gc=False):
+class WarcWriteResult(Struct, frozen=True, kw_only=True):
     """
     Court-admissible provenance record for a WARC write operation.
 
@@ -1091,7 +1095,7 @@ class WARCWriter:
         return self._current_size
 
 
-class EvidenceEvent(msgspec.Struct, frozen=False, gc=False):
+class EvidenceEvent(Struct, frozen=False):
     """
     Událost v evidence logu — msgspec.Struct pro 10× rychlejší (de)serializaci.
 

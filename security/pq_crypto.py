@@ -29,6 +29,7 @@ Verification semantic:
 import logging
 from dataclasses import dataclass
 import msgspec
+from compat.msgspec_gc_compat import Struct
 from enum import Enum
 from typing import Protocol, runtime_checkable
 from _core import aclose
@@ -46,7 +47,7 @@ class PQSecurityLevel(Enum):
     """ML-DSA security levels (NIST FIPS 204)."""
     ML_DSA_65 = 65
 
-class PQStatus(msgspec.Struct, gc=False):
+class PQStatus(Struct):
     """Current status of the post-quantum backend."""
     availability: PQAvailability = PQAvailability.DISABLED
     backend_name: str = 'null'
@@ -56,14 +57,14 @@ class PQStatus(msgspec.Struct, gc=False):
     signed_batch_digest: str | None = None
     chunk_count: int = 0
 
-class PQSignature(msgspec.Struct, frozen=True, gc=False):
+class PQSignature(Struct, frozen=True):
     """A single ML-DSA signature over a canonical batch digest."""
     algorithm: str
     signature: bytes
     backend_name: str
     security_level: int
 
-class HybridSignatureSet(msgspec.Struct, frozen=True, gc=False):
+class HybridSignatureSet(Struct, frozen=True):
     """
     Hybrid signature set containing P-256 + optional ML-DSA.
 

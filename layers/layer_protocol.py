@@ -20,6 +20,7 @@ import logging
 import socket
 
 import msgspec
+from compat.msgspec_gc_compat import Struct
 from abc import abstractmethod
 from collections.abc import Callable, Coroutine, Set
 from dataclasses import dataclass, field
@@ -115,7 +116,7 @@ class LayerContext:
         """Cancellation event for this sprint."""
         return self._meta.get('cancel_event', asyncio.Event())
 
-class LayerEvent(msgspec.Struct, gc=False):
+class LayerEvent(Struct):
     """Event that propagates through the LayerStack. F350M-R: gc=False for M1 8GB."""
     type: str
     data: dict[str, Any] = field(default_factory=dict)
@@ -299,6 +300,7 @@ class _UDSProtocol(asyncio.Protocol):
         self._buffer.extend(data)
         try:
             import msgspec
+from compat.msgspec_gc_compat import Struct
             msg = msgspec.msgpack.decode(self._buffer, type=LayerEvent)
             safe_create_task(self._handler(msg), name='layer_protocol:msg_handler')
         except Exception:
@@ -327,6 +329,7 @@ async def uds_fetch(path: str, message: LayerEvent, timeout: float=5.0) -> Layer
     """
     try:
         import msgspec
+from compat.msgspec_gc_compat import Struct
         reader, writer = await safe_wait_for(asyncio.open_unix_connection(path), timeout=timeout, label='uds_connect')
         try:
             writer.write(msgspec.msgpack.encode(message))

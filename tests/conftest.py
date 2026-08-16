@@ -279,6 +279,276 @@ import threading
 
 import pytest
 
+# ── ROADMAP-008: Environment-aware parallelism configuration ──────────────────
+
+_HLEDAC_PROFILES = {
+    # CI profile: Full parallelism for CI/CD pipelines
+    "ci": {
+        "workers": "auto",
+        "markers": None,  # All tests
+        "timeout": 300,
+        "description": "Full CI suite with maximum parallelism",
+    },
+    # M1 8GB profile: 2 workers, light tests only
+    "m1-8gb": {
+        "workers": 2,
+        "markers": ["not heavy"],
+        "timeout": 300,
+        "description": "M1 8GB constrained hardware profile",
+    },
+    # M1 16GB profile: 4 workers, light tests only
+    "m1-16gb": {
+        "workers": 4,
+        "markers": ["not heavy"],
+        "timeout": 300,
+        "description": "M1 16GB profile with MLX support",
+    },
+    # Minimal profile: Serial execution, light tests only
+    "minimal": {
+        "workers": 0,  # Serial (no -n)
+        "markers": ["not heavy", "not slow", "not live"],
+        "timeout": 60,
+        "description": "Minimal tests for quick feedback",
+    },
+    # Heavy profile: Only heavy tests
+    "heavy": {
+        "workers": 1,  # Serial for heavy tests
+        "markers": ["heavy"],
+        "timeout": 600,
+        "description": "Heavy tests requiring >2GB RAM",
+    },
+    # Local development profile (default for M1 8GB)
+    "local": {
+        "workers": 2,
+        "markers": ["not heavy", "not slow", "not live", "not parity"],
+        "timeout": 120,
+        "description": "Local development: fast feedback on M1 8GB",
+    },
+}
+
+
+def _detect_hardware_profile() -> str:
+    """Auto-detect hardware profile based on available resources.
+    
+    Detection logic:
+    - CI environment (CI env var set) → ci
+    - M1 Mac with 8GB RAM → m1-8gb
+    - M1 Mac with 16GB+ RAM → m1-16gb
+    - Linux with GPU/nvidia → check for GPU profile
+    - Otherwise → local
+    
+    Note: Falls back to m1-8gb on arm64 if psutil unavailable,
+    but will not mis-detect non-M1 arm64 (e.g., AWS Graviton).
+    """
+    # Check for explicit CI environment first
+    if os.environ.get("CI") == "true":
+        return "ci"
+    
+    # Check for Apple Silicon (M1/M2/M3)
+    is_darwin = platform.system() == "Darwin"
+    is_arm64 = platform.machine() == "arm64"
+    
+    if is_darwin and is_arm64:
+        # Try to detect memory size using psutil
+        try:
+            import psutil
+            mem_gb = psutil.virtual_memory().total / (1024**3)
+            if mem_gb <= 10:  # 8GB or less
+                return "m1-8gb"
+            elif mem_gb <= 18:  # 16GB
+                return "m1-16gb"
+        except ImportError:
+            # psutil unavailable - use sysctl as fallback on macOS
+            try:
+                import subprocess
+                result = subprocess.run(
+                    ["sysctl", "-n", "hw.memsize"],
+                    capture_output=True,
+                    text=True,
+                    timeout=5,
+                )
+                if result.returncode == 0:
+                    mem_bytes = int(result.stdout.strip())
+                    mem_gb = mem_bytes / (1024**3)
+                    if mem_gb <= 10:
+                        return "m1-8gb"
+                    else:
+                        return "m1-16gb"
+            except Exception:
+                pass
+        
+        # Fallback: assume M1 8GB (safe default for Apple Silicon)
+        return "m1-8gb"
+    
+    # Non-Apple Silicon: use local profile
+    return "local"
+
+
+def pytest_addoption(parser: pytest.Parser) -> None:
+    """Add custom pytest options for hardware-aware test execution (ROADMAP-008)."""
+    group = parser.getgroup("hledac", "Hledac test configuration")
+    
+    group.addoption(
+        "--hledac-profile",
+        action="store",
+        dest="hledac_profile",
+        default=None,  # None = auto-detect
+        choices=list(_HLEDAC_PROFILES.keys()),
+        help=(
+            "Hledac test profile for hardware-aware execution. "
+            f"Options: {', '.join(_HLEDAC_PROFILES.keys())}. "
+            "Default: auto-detect based on hardware. "
+            "Override: HLEDAC_TEST_PROFILE=ci|m1-8gb|m1-16gb|minimal|heavy|local"
+        ),
+    )
+    
+    group.addoption(
+        "--hledac-workers",
+        action="store",
+        dest="hledac_workers",
+        type=int,
+        default=None,
+        help=(
+            "Override number of pytest-xdist workers. "
+            "0 = serial execution (no -n flag). "
+            "Default: determined by profile. "
+            "Override: HLEDAC_TEST_WORKERS=2"
+        ),
+    )
+    
+    group.addoption(
+        "--hledac-markers",
+        action="store",
+        dest="hledac_markers",
+        default=None,
+        help=(
+            "Override test markers filter. "
+            "Example: 'not heavy' or 'light or unit'. "
+            "Default: determined by profile. "
+            "Override: HLEDAC_TEST_MARKERS='not heavy'"
+        ),
+    )
+
+
+def pytest_configure(config: pytest.Config) -> None:
+    """Apply hledac profile configuration (ROADMAP-008).
+    
+    This hook runs after pytest_addoption and applies:
+    1. Profile selection (auto-detect or explicit)
+    2. Worker count (-n flag)
+    3. Marker filtering (-m flag)
+    4. Timeout adjustment
+    5. Validation of conflicting options
+    """
+    # Get profile (from CLI, env, or auto-detect)
+    profile_name = (
+        config.getoption("--hledac-profile") or
+        os.environ.get("HLEDAC_TEST_PROFILE") or
+        _detect_hardware_profile()
+    )
+    
+    profile = _HLEDAC_PROFILES.get(profile_name, _HLEDAC_PROFILES["local"])
+    
+    # Store profile info for fixtures
+    config._hledac_profile = profile_name
+    config._hledac_profile_info = profile
+    
+    # Apply worker count
+    workers = (
+        config.getoption("--hledac-workers") if config.getoption("--hledac-workers") is not None
+        else int(os.environ.get("HLEDAC_TEST_WORKERS", profile["workers"]))
+    )
+    
+    # Validation: Check for conflicting options
+    warnings = []
+    
+    if profile_name == "heavy" and workers > 1:
+        warnings.append(
+            f"[ROADMAP-008] Warning: profile='heavy' with workers={workers} may cause OOM. "
+            f"Consider using workers=1 for heavy tests."
+        )
+    
+    if workers >= 4 and platform.system() == "Darwin" and platform.machine() == "arm64":
+        # Check memory (if psutil available)
+        try:
+            import psutil
+            mem_gb = psutil.virtual_memory().total / (1024**3)
+            if mem_gb <= 10:
+                warnings.append(
+                    f"[ROADMAP-008] Warning: {workers} workers on 8GB M1 may cause OOM. "
+                    f"Consider using --hledac-profile=m1-8gb or --hledac-workers=2"
+                )
+        except Exception:
+            pass
+    
+    if user_cli_markers := config.getoption("--hledac-markers"):
+        # If user sets markers explicitly, profile markers are ignored
+        pass
+    elif profile.get("markers") and profile_name != "ci":
+        # Check if profile might exclude most tests
+        markers_str = str(profile["markers"])
+        if "not " in markers_str:
+            # This profile excludes some tests
+            pass
+    
+    if workers == 0:
+        # Serial execution - remove -n flag if present
+        pass
+    elif workers > 0:
+        # Add -n flag
+        config.option.n = workers
+        if hasattr(config.option, "dist"):
+            config.option.dist = "loadscope"
+    
+    # Apply marker filter
+    # Check if user explicitly set markers via CLI (not from profile/env)
+    user_cli_markers = config.getoption("--hledac-markers")
+    env_markers = os.environ.get("HLEDAC_TEST_MARKERS")
+    
+    if user_cli_markers:
+        # Explicit CLI override takes highest priority
+        config.option.markexpr = user_cli_markers
+    elif env_markers:
+        # Environment variable as secondary priority
+        config.option.markexpr = env_markers
+    elif profile["markers"]:
+        # Only apply profile markers if no explicit override
+        # FIX: Check for empty string, not just falsy (markexpr="" is set by pytest by default)
+        current_markers = getattr(config.option, "markexpr", None)
+        if not current_markers or current_markers == "":
+            config.option.markexpr = profile["markers"]
+    
+    # Apply timeout
+    timeout_override = int(os.environ.get("HLEDAC_TEST_TIMEOUT", profile["timeout"]))
+    config.option.timeout = timeout_override
+    
+    # Store config for pytest_report_header
+    config._hledac_config = {
+        "profile": profile_name,
+        "workers": workers if workers > 0 else "serial",
+        "markers": user_cli_markers or env_markers or profile["markers"] or "all",
+        "timeout": timeout_override,
+        "warnings": warnings,
+    }
+
+
+def pytest_report_header(config: pytest.Config) -> list[str]:
+    """Add hledac profile info to pytest header (ROADMAP-008)."""
+    if hasattr(config, "_hledac_config"):
+        cfg = config._hledac_config
+        header = [
+            f"[ROADMAP-008] Hledac profile: {cfg['profile']}",
+            f"[ROADMAP-008] Workers: {cfg['workers']}",
+            f"[ROADMAP-008] Markers: {cfg['markers']}",
+            f"[ROADMAP-008] Timeout: {cfg['timeout']}s",
+        ]
+        # Add warnings if any
+        if cfg.get("warnings"):
+            header.extend(cfg["warnings"])
+        return header
+    return []
+
+
 _TEST_TIMEOUT_ENV = int(os.environ.get("HLEDAC_TEST_TIMEOUT", "120"))
 _IS_UNIX = platform.system() != "Windows"
 
@@ -476,7 +746,9 @@ def session_otel_tracer():
 # ---------------------------------------------------------------------------
 
 import gc  # noqa: E402
-from _core import aclose
+
+# NOTE: aclose from _core was removed - unused import that caused issues
+# If needed, use: from hledac.universal._core.resource_governor import aclose
 
 # Import mock cleanup utilities (lazy, fail-soft)
 try:

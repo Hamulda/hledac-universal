@@ -22,6 +22,7 @@ from typing import Any
 
 import pytest
 from _core import aclose
+from compat.msgspec_gc_compat import Struct
 
 
 class TestGILReleaseFunctionExists:
@@ -331,7 +332,7 @@ class TestM1Optimization:
             import msgspec
 
             # msgspec.Struct with gc=False should minimize GIL overhead
-            class TestStruct(msgspec.Struct, frozen=True, gc=False):
+            class TestStruct(Struct, frozen=True):
                 field: str
 
             s = TestStruct(field="test")

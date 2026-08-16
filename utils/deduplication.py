@@ -26,7 +26,6 @@ Optimized for M1 Mac with memory-efficient implementations.
 import asyncio
 import hashlib
 from hledac.universal.utils.hashing import xxh3_64_hex, sha256_hex, blake3_64_hex
-import json
 import logging
 import os
 import re
@@ -40,6 +39,7 @@ from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 import msgspec
+from compat.msgspec_gc_compat import Struct
 from datetime import datetime
 from difflib import SequenceMatcher
 from enum import Enum
@@ -73,6 +73,32 @@ except ImportError:
 
 logger = logging.getLogger(__name__)
 
+# orjson fallback — 5-10× faster than stdlib json, M1 optimized
+try:
+    import orjson
+
+    def _json_loads(data: str | bytes) -> Any:
+        return orjson.loads(data)
+
+    def _json_dumps(data: Any) -> str:
+        return orjson.dumps(data).decode("utf-8")
+
+    def _json_dump(data: Any, file: Any) -> None:
+        file.write(orjson.dumps(data))
+
+except ImportError:
+    import json as _stdlib_json
+
+    def _json_loads(data: str | bytes) -> Any:
+        return _stdlib_json.loads(data)
+
+    def _json_dumps(data: Any) -> str:
+        return _stdlib_json.dumps(data)
+
+    def _json_dump(data: Any, file: Any) -> None:
+        _stdlib_json.dump(data, file)
+
+
 class DeduplicationStrategy(Enum):
     """Deduplication strategy types."""
     SEMANTIC = 'semantic'
@@ -80,7 +106,7 @@ class DeduplicationStrategy(Enum):
     METADATA = 'metadata'
     HYBRID = 'hybrid'
 
-class DeduplicationConfig(msgspec.Struct, gc=False):
+class DeduplicationConfig(Struct):
     """Configuration for deduplication engine."""
     semantic_threshold: float = 0.85
     content_threshold: float = 0.9
@@ -101,7 +127,7 @@ class DeduplicationConfig(msgspec.Struct, gc=False):
     enable_monitoring: bool = True
     log_level: str = 'INFO'
 
-class QueryItem(msgspec.Struct, gc=False):
+class QueryItem(Struct):
     """Item for deduplication processing."""
     id: str
     title: str
@@ -117,14 +143,14 @@ class QueryItem(msgspec.Struct, gc=False):
         combined = f'{self.title}{self.content}'
         return xxh3_64_hex(combined)[:12]
 
-class SimilarityScore(msgspec.Struct, gc=False):
+class SimilarityScore(Struct):
     """Similarity score with details."""
     score: float
     strategy: DeduplicationStrategy
     confidence: float
     details: dict[str, Any] = field(default_factory=dict)
 
-class DeduplicationStats(msgspec.Struct, gc=False):
+class DeduplicationStats(Struct):
     """Statistics for deduplication."""
     total_items_processed: int = 0
     items_kept: int = 0
@@ -138,7 +164,7 @@ class DeduplicationStats(msgspec.Struct, gc=False):
     cache_misses: int = 0
 
 
-class DeduplicationMatch(msgspec.Struct, gc=False):
+class DeduplicationMatch(Struct):
     """Match between two items."""
     original_item: QueryItem
     matched_item: QueryItem
@@ -147,7 +173,7 @@ class DeduplicationMatch(msgspec.Struct, gc=False):
     decision: str = 'pending'
 
 
-class DeduplicationResult(msgspec.Struct, gc=False):
+class DeduplicationResult(Struct):
     """Result of deduplication process."""
     original_items: list[QueryItem]
     unique_items: list[QueryItem]
@@ -876,7 +902,7 @@ class DeduplicationEngine:
         self.metadata_dedup.executor.shutdown(wait=False)
         self.logger.info('DeduplicationEngine thread pools closed (non-blocking)')
 
-class DomainStats(msgspec.Struct, gc=False):
+class DomainStats(Struct):
     """Per-domain statistiky pro yield tracking a domain diversity - M1 8GB."""
     domain: str
     requests: int = 0
@@ -985,7 +1011,7 @@ class DomainStatsManager:
         if path.exists():
             try:
                 with open(path) as f:
-                    data: dict[str, Any] = json.load(f)
+                    data: dict[str, Any] = _json_loads(f.read())
                 for domain, stats_data in data.items():
                     self._stats[domain] = DomainStats.from_dict(stats_data)
                 logger.info(f'[DOMAIN STATS] Loaded {len(self._stats)} domains from disk')
@@ -998,7 +1024,7 @@ class DomainStatsManager:
             path = self._get_storage_path()
             data = {domain: stats.to_dict() for domain, stats in self._stats.items()}
             with open(path, 'w') as f:
-                json.dump(data, f)
+                _json_dump(data, f)
             logger.debug(f'[DOMAIN STATS] Saved {len(self._stats)} domains to disk')
         except Exception as e:
             logger.warning(f'Failed to save domain stats: {e}')

@@ -44,6 +44,7 @@ from asyncio import CancelledError
 from html.parser import HTMLParser
 from typing import TYPE_CHECKING, Any
 import msgspec
+from compat.msgspec_gc_compat import Struct
 import xxhash
 import xml.etree.ElementTree as _ET
 
@@ -61,7 +62,7 @@ if TYPE_CHECKING:
     from hledac.universal.fetching.public_fetcher import FetchResult
 logger = logging.getLogger(__name__)
 
-class FeedEntryHit(msgspec.Struct, frozen=True, gc=False):
+class FeedEntryHit(Struct, frozen=True):
     """Single parsed feed entry."""
     feed_url: str
     entry_url: str
@@ -84,7 +85,7 @@ class FeedEntryHit(msgspec.Struct, frozen=True, gc=False):
     source_priority_bias: float = 0.0
     time_signal_reason: str = ''
 
-class FeedBatchResult(msgspec.Struct, frozen=True, gc=False):
+class FeedBatchResult(Struct, frozen=True):
     """Result of fetching and parsing one feed."""
     feed_url: str
     entries: tuple[FeedEntryHit, ...]
@@ -92,7 +93,7 @@ class FeedBatchResult(msgspec.Struct, frozen=True, gc=False):
     source_accessibility_error: str | None = None
     raw_xml: str | None = None
 
-class FeedDiscoveryHit(msgspec.Struct, frozen=True, gc=False):
+class FeedDiscoveryHit(Struct, frozen=True):
     """Single feed URL discovered from an HTML page."""
     page_url: str
     feed_url: str
@@ -102,13 +103,13 @@ class FeedDiscoveryHit(msgspec.Struct, frozen=True, gc=False):
     source: str
     discovered_ts: float
 
-class FeedDiscoveryBatchResult(msgspec.Struct, frozen=True, gc=False):
+class FeedDiscoveryBatchResult(Struct, frozen=True):
     """Result of discovering feed URLs from an HTML page."""
     page_url: str
     hits: tuple[FeedDiscoveryHit, ...]
     error: str | None = None
 
-class FeedSeed(msgspec.Struct, frozen=True, gc=False):
+class FeedSeed(Struct, frozen=True):
     """
     Single curated OSINT-relevant RSS/Atom feed seed.
 
@@ -124,7 +125,7 @@ class FeedSeed(msgspec.Struct, frozen=True, gc=False):
     source: str
     priority: int = 0
 
-class MergedFeedSource(msgspec.Struct, frozen=True, gc=False):
+class MergedFeedSource(Struct, frozen=True):
     """A feed source after merging discovered and seeded sources."""
     feed_url: str
     label: str

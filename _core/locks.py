@@ -62,6 +62,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import functools
 import platform
 import threading
 import weakref
@@ -77,6 +78,51 @@ if TYPE_CHECKING:
 
 _KT = TypeVar("_KT")
 _VT = TypeVar("_VT")
+
+# ==============================================================================
+# REGISTER_LOCK DECORATOR (from lock_registry.py pattern)
+# ==============================================================================
+
+
+def auto_register(category: LockCategory) -> Callable[[Callable[[], threading.Lock]], Callable[[], threading.Lock]]:
+    """
+    Decorator that auto-registers a lock factory.
+
+    This is the preferred decorator for module-level lock registration.
+
+    Usage:
+        @auto_register(LockCategory.CACHE)
+        def _my_lock():
+            return threading.Lock()
+
+        # Later in code:
+        lock = _my_lock()
+        with lock:
+            ...
+
+    Args:
+        category: LockCategory enum value
+
+    Returns:
+        Decorator function
+    """
+    def decorator(func: Callable[[], threading.Lock]) -> Callable[[], threading.Lock]:
+        @functools.wraps(func)
+        def wrapper() -> threading.Lock:
+            # Generate lock name from function module and name
+            lock_name = f"{func.__module__}.{func.__name__}"
+            lock = func()
+            # Register if not already registered
+            with _REGISTRY_LOCK:
+                if lock_name not in _LockRegistry:
+                    _register_lock(category, lock, lock_name, f"{func.__module__}:{func.__name__}")
+            return lock
+        return wrapper
+    return decorator
+
+
+# Alias for auto_register
+register_lock_decorator = auto_register
 
 # ==============================================================================
 # LOCK CATEGORY REGISTRY
@@ -520,6 +566,93 @@ def make_counter(initial: int = 0) -> _PythonCounter:
 
 
 # ==============================================================================
+# RUST-BACKED ATOMIC COUNTER (Lock-Free ~1ns)
+# ==============================================================================
+
+_counter_backend: Any = None
+
+
+def _get_counter_backend() -> Any:
+    """Lazy load Rust atomic counter backend."""
+    global _counter_backend
+    if _counter_backend is None:
+        try:
+            from hledac.universal._core.rust_backend import rust
+            if rust is not None and hasattr(rust.raw, "int_counter"):
+                _counter_backend = rust.raw.int_counter.IntCounter
+        except Exception:
+            pass
+    return _counter_backend
+
+
+class AtomicCounter:
+    """
+    Lock-free atomic counter with Rust AtomicU64 backend.
+
+    Uses Rust AtomicU64 for ~1ns lock-free operations when available.
+    Falls back to threading.Lock if Rust backend unavailable.
+
+    Usage:
+        counter = AtomicCounter()
+        counter.fetch_add(1)
+        value = counter.get()
+    """
+    __slots__ = ("_value", "_lock", "_rust_counter")
+
+    def __init__(self, initial: int = 0) -> None:
+        self._rust_counter = _get_counter_backend()
+        if self._rust_counter is not None:
+            self._value = self._rust_counter(initial)
+            self._lock = None  # type: ignore[assignment]
+        else:
+            self._value = initial
+            self._lock = threading.Lock()
+
+    def fetch_add(self, delta: int = 1) -> int:
+        """Atomically add delta and return previous value."""
+        if self._rust_counter is not None:
+            return self._rust_counter.fetch_add(self._value, delta)
+        with self._lock:  # type: ignore[union-attr]
+            result = self._value  # type: ignore[union-attr]
+            self._value = result + delta  # type: ignore[union-attr]
+            return result
+
+    def fetch_sub(self, delta: int = 1) -> int:
+        """Atomically subtract delta and return previous value."""
+        return self.fetch_add(-delta)
+
+    def get(self) -> int:
+        """Get current value."""
+        if self._rust_counter is not None:
+            return self._rust_counter.get(self._value)
+        with self._lock:  # type: ignore[union-attr]
+            return self._value  # type: ignore[union-attr]
+
+    def set(self, value: int) -> None:
+        """Set value."""
+        if self._rust_counter is not None:
+            self._rust_counter.set(self._value, value)
+        with self._lock:  # type: ignore[union-attr]
+            self._value = value  # type: ignore[union-attr]
+
+
+def make_atomic_counter(initial: int = 0) -> AtomicCounter:
+    """
+    Create a lock-free atomic counter.
+
+    Uses Rust AtomicU64 backend if available for ~1ns lock-free operations.
+    Falls back to threading.Lock if Rust backend unavailable.
+
+    Args:
+        initial: Initial counter value (default 0)
+
+    Returns:
+        AtomicCounter instance
+    """
+    return AtomicCounter(initial)
+
+
+# ==============================================================================
 # MAKE_LOCK FACTORY — Darwin os_unfair_lock + Auto-Registration (ISSUE-008)
 # ==============================================================================
 
@@ -602,18 +735,27 @@ def make_lock(
 # ==============================================================================
 
 __all__ = [
+    # Registry core
     "LockCategory",
     "LockInfo",
     "register_lock",
+    "auto_register",
+    "register_lock_decorator",
+    # Multi-lock acquisition
     "acquire_in_order",
-    "acquire_in_order_async",  # NEW: async variant for asyncio code
+    "acquire_in_order_async",
+    # Registry queries
     "get_registered_locks",
     "get_locks_by_category",
+    "get_lock_by_name",
     "assert_lock_registered",
+    # Async helpers
     "AsyncLockDCLP",
     "make_async_lock_dclp",
+    # Factories
     "make_counter",
     "make_lock",
-    # Internal for advanced usage:
-    "get_lock_by_name",
+    "make_atomic_counter",
+    # Atomic counter
+    "AtomicCounter",
 ]

@@ -16,6 +16,14 @@ Integrated from stealth_osint/data_leak_hunter.py:
 
 M1 8GB Optimized: Streaming processing, minimal memory footprint
 """
+
+# ROADMAP-005: tenacity for centralized retry patterns
+from tenacity import (
+    AsyncRetrying,
+    retry_if_exception_type,
+    stop_after_attempt,
+    wait_fixed,
+)
 import asyncio
 import hashlib
 from hledac.universal.utils.asyncx import safe_create_task
@@ -24,6 +32,7 @@ import time
 import uuid
 from dataclasses import dataclass
 import msgspec
+from compat.msgspec_gc_compat import Struct
 from datetime import UTC, datetime
 from enum import Enum
 from pathlib import Path
@@ -60,7 +69,7 @@ class LeakSource(Enum):
     PUBLIC_RECORDS = 'public_records'
     HACKER_FORUM = 'hacker_forum'
 
-class LeakAlert(msgspec.Struct, gc=False):
+class LeakAlert(Struct):
     """Data leak alert"""
     alert_id: str
     timestamp: datetime
@@ -73,7 +82,7 @@ class LeakAlert(msgspec.Struct, gc=False):
     raw_sample: str | None = None
     url: str | None = None
 
-class MonitoringTarget(msgspec.Struct, frozen=True, gc=False):
+class MonitoringTarget(Struct, frozen=True):
     """Target to monitor for leaks"""
     target_id: str
     value: str
@@ -83,7 +92,7 @@ class MonitoringTarget(msgspec.Struct, frozen=True, gc=False):
     last_check: datetime | None = None
     alert_count: int = 0
 
-class BreachAPIConfig(msgspec.Struct, frozen=True, gc=False):
+class BreachAPIConfig(Struct, frozen=True):
     """Configuration for breach APIs"""
     haveibeenpwned_api_key: str | None = None
     dehashed_api_key: str | None = None
@@ -367,7 +376,7 @@ class DataLeakHunter:
             async with self._session.post(config['url'], headers=headers, json=search_payload, timeout=httpx.Timeout(total=30)) as resp:
                 self._api_calls += 1
                 if resp.status == 429:
-                    logger.W('IntelligenceX API rate limited')
+                    logger.warning('IntelligenceX API rate limited')
                     return alerts
                 if resp.status != 200:
                     logger.debug(f'IntelligenceX search: {resp.status}')
@@ -381,28 +390,42 @@ class DataLeakHunter:
             logger.debug(f'IntelligenceX search failed: {e}')
             return alerts
         result_url = f"{config['url']}/result?id={search_id}&limit=20&offset=0"
-        for attempt in range(3):
-            await asyncio.sleep(2.0)
-            try:
-                async with self._session.get(result_url, headers=headers, timeout=httpx.Timeout(total=30)) as resp:
-                    if resp.status == 429:
-                        logger.W(f'IntelligenceX poll attempt {attempt + 1} rate limited')
+
+        # ROADMAP-005: Polling retry with tenacity (fixed 2s delay, 3 attempts)
+        class _RateLimitedError(Exception):
+            """Raised when IntelligenceX returns 429."""
+            __slots__ = ()
+        class _PollError(Exception):
+            """Raised on other poll failures."""
+            __slots__ = ()
+
+        async def _poll_once() -> None:
+            async with self._session.get(result_url, headers=headers, timeout=httpx.Timeout(total=30)) as resp:
+                if resp.status == 429:
+                    raise _RateLimitedError(f"IntelligenceX rate limited")
+                if resp.status != 200:
+                    raise _PollError(f"IntelligenceX poll: {resp.status}")
+                poll_result = await resp.json()
+                records = poll_result.get('results', []) or poll_result.get('records', [])
+                for r in records[:20]:
+                    try:
+                        alert = LeakAlert(alert_id=str(uuid.uuid4()), target=value, target_type=target_type, source=LeakSource.BREACH_API, severity=AlertSeverity.HIGH, breach_name=f"IntelligenceX:{r.get('type', 'unknown')}", leaked_data={'bucket': r.get('bucket', ''), 'date': r.get('date', ''), 'content': r.get('content', '')[:500], 'url': r.get('url', '')}, url=r.get('url', ''))
+                        alerts.append(alert)
+                    except Exception:
                         continue
-                    if resp.status != 200:
-                        logger.debug(f'IntelligenceX poll: {resp.status}')
-                        break
-                    poll_result = await resp.json()
-                    records = poll_result.get('results', []) or poll_result.get('records', [])
-                    for r in records[:20]:
-                        try:
-                            alert = LeakAlert(alert_id=str(uuid4()), target=value, target_type=target_type, source=LeakSource.BREACH_API, severity=AlertSeverity.HIGH, breach_name=f"IntelligenceX:{r.get('type', 'unknown')}", leaked_data={'bucket': r.get('bucket', ''), 'date': r.get('date', ''), 'content': r.get('content', '')[:500], 'url': r.get('url', '')}, url=r.get('url', ''))
-                            alerts.append(alert)
-                        except Exception:
-                            continue
-                    break
-            except Exception as e:
-                logger.debug(f'IntelligenceX poll attempt {attempt + 1} failed: {e}')
-                continue
+
+        try:
+            async for _ in AsyncRetrying(
+                stop=stop_after_attempt(3),
+                wait=wait_fixed(2.0),
+                retry=retry_if_exception_type((_RateLimitedError, _PollError)),
+                reraise=True,
+            ):
+                with _:
+                    await _poll_once()
+        except (_RateLimitedError, _PollError):
+            # Exhausted retries
+            pass
         return alerts
 
     async def _check_grep_app(self, query: str) -> list[LeakAlert]:
@@ -417,7 +440,7 @@ class DataLeakHunter:
             async with curl_cffi.httpx.AsyncClient(headers={'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'}, timeout=httpx.Timeout(total=15)) as session:
                 async with session.get(url) as resp:
                     if resp.status == 429:
-                        logger.W('GREP.app rate limited')
+                        logger.warning('GREP.app rate limited')
                         return alerts
                     if resp.status != 200:
                         logger.debug(f'GREP.app: {resp.status}')
@@ -431,7 +454,7 @@ class DataLeakHunter:
                             file = src.get('filename', src.get('path', 'unknown'))
                             content = src.get('content', '')
                             snippet = content[:200] + ('...' if len(content) > 200 else '')
-                            alert = LeakAlert(alert_id=str(uuid4()), target=query, target_type='code_leak', source=LeakSource.BREACH_API, severity=AlertSeverity.MEDIUM, breach_name=f'grep_app:{repo}', leaked_data={'repo': repo, 'file': file, 'snippet': snippet}, url=src.get('url', ''))
+                            alert = LeakAlert(alert_id=str(uuid.uuid4()), target=query, target_type='code_leak', source=LeakSource.BREACH_API, severity=AlertSeverity.MEDIUM, breach_name=f'grep_app:{repo}', leaked_data={'repo': repo, 'file': file, 'snippet': snippet}, url=src.get('url', ''))
                             alerts.append(alert)
                         except Exception:
                             continue

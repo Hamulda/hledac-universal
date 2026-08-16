@@ -50,13 +50,14 @@ _MAX_DOH_RETRIES: int = 2
 _DOH_RETRY_DELAY_S: float = 0.5
 from dataclasses import dataclass
 import msgspec
+from compat.msgspec_gc_compat import Struct
 from _core import aclose
 
 class RetryableError(Exception):
     """Signals a retriable error for retry_backoff_async."""
 
 
-class _ResolverHealth(msgspec.Struct, gc=False):
+class _ResolverHealth(Struct):
     """Per-resolver health state for circuit breaker."""
     consecutive_failures: int = 0
     last_failure_ts: float = 0.0

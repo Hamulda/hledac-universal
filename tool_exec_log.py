@@ -35,6 +35,7 @@ import os
 from collections import deque
 from dataclasses import dataclass
 import msgspec
+from compat.msgspec_gc_compat import Struct
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -63,7 +64,7 @@ def normalize_correlation(corr: dict[str, str | None] | None) -> dict[str, str |
         return None
     return {k: corr.get(k) for k in SHARED_CORRELATION_KEYS if k in corr}
 
-class ToolExecEvent(msgspec.Struct, frozen=True, gc=False):
+class ToolExecEvent(Struct, frozen=True):
     """
     Tool execution event - bounded metadata only.
 

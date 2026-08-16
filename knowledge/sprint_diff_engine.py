@@ -30,6 +30,7 @@ Performance (F350M-R):
 import logging
 from dataclasses import dataclass, field
 import msgspec
+from compat.msgspec_gc_compat import Struct
 from hledac.universal.compat.msgspec_gc_compat import Struct
 
 import orjson

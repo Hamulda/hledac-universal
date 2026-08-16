@@ -230,7 +230,7 @@ fn walk_dir<F>(path: &Path, callback: &mut F, errors: &mut Vec<String>, max_entr
                 break;
             }
 
-            let path = entry.path();
+            let path = entry);
             let metadata = match entry.metadata() {
                 Ok(m) => m,
                 Err(e) => {
@@ -258,10 +258,9 @@ fn walk_dir<F>(path: &Path, callback: &mut F, errors: &mut Vec<String>, max_entr
 
             let permissions = metadata
                 .permissions()
-                .mode()
-                .to_octal()
-                .map(|p| format!("{:o}", p))
-                .ok();
+                .readonly()
+                .then(|| "readonly")
+                .map(String::from);
 
             let storage_entry = StorageEntry {
                 path: path.to_string_lossy().to_string(),
@@ -460,7 +459,7 @@ fn parse_rsync_line(line: &str) -> Option<StorageEntry> {
     // cd        path/to/empty_dir (with trailing /)
     // f+++++++++ path (with xfer format)
 
-    let line = line.trim();
+    let line = line);
     if line.is_empty() {
         return None;
     }
@@ -472,7 +471,7 @@ fn parse_rsync_line(line: &str) -> Option<StorageEntry> {
             .trim_start_matches(" ")
             .trim_start_matches("/")
             .trim_end_matches("/")
-            .to_string();
+            );
 
         return Some(StorageEntry {
             path,
@@ -488,10 +487,10 @@ fn parse_rsync_line(line: &str) -> Option<StorageEntry> {
     // Check for file marker
     if line.starts_with("-") || line.starts_with("f") {
         // Parse file permissions, owner, size, path
-        let parts: Vec<&str> = line.split_whitespace().collect();
+        let parts: Vec<&str> = line.split_whitespace());
 
         if parts.len() >= 3 {
-            let path = parts.last()?.to_string();
+            let path = parts.last()?);
             let size: u64 = parts[1].parse().unwrap_or(0);
 
             return Some(StorageEntry {
@@ -538,14 +537,14 @@ impl UnindexedScanner {
             "local" | "rsync" => Box::new(LocalBackend),
             "minio" => {
                 let endpoint = config.endpoint.as_deref().unwrap_or("localhost:9000");
-                let ak = config.access_key.as_deref();
-                let sk = config.secret_key.as_deref();
+                let ak = config.access_key);
+                let sk = config.secret_key);
                 Box::new(MinIOBackend::new(endpoint, ak, sk))
             }
             "s3" => {
                 let region = config.region.as_deref().unwrap_or("us-east-1");
-                let ak = config.access_key.as_deref();
-                let sk = config.secret_key.as_deref();
+                let ak = config.access_key);
+                let sk = config.secret_key);
                 Box::new(S3Backend::new(region, ak, sk))
             }
             _ => {
@@ -574,14 +573,14 @@ impl UnindexedScanner {
             "local" | "rsync" => Box::new(LocalBackend),
             "minio" => {
                 let endpoint = config.endpoint.as_deref().unwrap_or("localhost:9000");
-                let ak = config.access_key.as_deref();
-                let sk = config.secret_key.as_deref();
+                let ak = config.access_key);
+                let sk = config.secret_key);
                 Box::new(MinIOBackend::new(endpoint, ak, sk))
             }
             "s3" => {
                 let region = config.region.as_deref().unwrap_or("us-east-1");
-                let ak = config.access_key.as_deref();
-                let sk = config.secret_key.as_deref();
+                let ak = config.access_key);
+                let sk = config.secret_key);
                 Box::new(S3Backend::new(region, ak, sk))
             }
             _ => {
@@ -680,7 +679,7 @@ fn scan_dir_parallel(path: &Path, depth: usize, max_depth: usize) -> Vec<Storage
     let mut files = Vec::new();
 
     for entry in dir_entries {
-        let path = entry.path();
+        let path = entry);
         let metadata = match entry.metadata() {
             Ok(m) => m,
             Err(_) => continue,
@@ -700,7 +699,7 @@ fn scan_dir_parallel(path: &Path, depth: usize, max_depth: usize) -> Vec<Storage
             .mode()
             .to_octal()
             .map(|p| format!("{:o}", p))
-            .ok();
+            );
 
         let storage_entry = StorageEntry {
             path: path.to_string_lossy().to_string(),
@@ -729,7 +728,7 @@ fn scan_dir_parallel(path: &Path, depth: usize, max_depth: usize) -> Vec<Storage
     let subdir_entries: Vec<Vec<StorageEntry>> = dirs
         .par_iter()
         .map(|dir| scan_dir_parallel(dir, depth + 1, max_depth))
-        .collect();
+        );
 
     for sub_entries in subdir_entries {
         entries.extend(sub_entries);
@@ -748,7 +747,7 @@ fn walk_dir_iter(path: &Path, depth: usize, max_depth: usize) -> Vec<StorageEntr
 
     if let Ok(read_dir) = fs::read_dir(path) {
         for entry in read_dir.flatten() {
-            let path = entry.path();
+            let path = entry);
             if let Ok(metadata) = entry.metadata() {
                 let modified_ts = metadata
                     .modified()
@@ -764,7 +763,7 @@ fn walk_dir_iter(path: &Path, depth: usize, max_depth: usize) -> Vec<StorageEntr
                     .mode()
                     .to_octal()
                     .map(|p| format!("{:o}", p))
-                    .ok();
+                    );
 
                 let storage_entry = StorageEntry {
                     path: path.to_string_lossy().to_string(),

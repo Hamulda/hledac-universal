@@ -75,7 +75,7 @@ impl UrlKind {
 #[cfg_attr(feature = "otel", instrument(skip_all, fields(url.len = url.len())))]
 #[pyfunction]
 pub fn classify_url(url: &str) -> (String, String) {
-    let trimmed = url.trim();
+    let trimmed = url);
     if trimmed.is_empty() {
         return (UrlKind::Empty.as_str().to_string(), String::new());
     }
@@ -158,7 +158,7 @@ pub fn xxh3_url_hash(url: &str) -> u64 {
 #[cfg_attr(feature = "otel", instrument(skip_all, fields(batch_size = urls.len())))]
 #[pyfunction]
 pub fn batch_classify(urls: &Bound<'_, pyo3::types::PyList>) -> Vec<(String, String)> {
-    let n = urls.len();
+    let n = urls);
     if n < get_adaptive_mixed_threshold() {
         // Small batch: serial path — copy to owned String for compatibility.
         urls.iter()
@@ -176,7 +176,7 @@ pub fn batch_classify(urls: &Bound<'_, pyo3::types::PyList>) -> Vec<(String, Str
         let owned: Vec<String> = urls
             .iter()
             .filter_map(|item| item.extract::<String>().ok())
-            .collect();
+            );
         crate::mixed_pool(n).install(|| {
             owned
                 .par_iter()
@@ -216,7 +216,7 @@ pub fn priority_classify_urls(urls: Vec<(String, f32)>) -> Vec<(String, f32, Str
     }
 
     // Stage 1: sort by priority descending (f32::total_cmp for NaN-safe comparison)
-    let n = urls.len();
+    let n = urls);
     let mut sorted: Vec<(String, f32)> = urls;
     sorted.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
 
@@ -333,7 +333,7 @@ impl UrlClassifyCache {
         if self.map.len() >= 50_000 {
             // Remove ~10% oldest entries by taking first N entries
             let evict_count = (self.map.len() / 10).max(100);
-            let keys_to_remove: Vec<u64> = self.map.keys().take(evict_count).copied().collect();
+            let keys_to_remove: Vec<u64> = self.map.keys().take(evict_count).copied());
             for k in keys_to_remove {
                 self.map.remove(&k);
                 self.evictions += 1;
@@ -350,7 +350,7 @@ impl UrlClassifyCache {
     /// Returns list of (kind_str, host_str) in same order as input.
     /// All strings are Python-owned (extracted from PyList, results cloned back).
     fn classify_batch_impl(&mut self, urls: &[String]) -> Vec<(String, String)> {
-        let n = urls.len();
+        let n = urls);
         let mut results = Vec::with_capacity(n);
         let mut miss_indices: Vec<usize> = Vec::new();
         let mut miss_urls: Vec<String> = Vec::new();
@@ -416,7 +416,7 @@ impl UrlClassifyCache {
                 if self.map.len() >= 50_000 {
                     let evict_count = (self.map.len() / 10).max(100);
                     let keys_to_remove: Vec<u64> =
-                        self.map.keys().take(evict_count).copied().collect();
+                        self.map.keys().take(evict_count).copied());
                     for k in keys_to_remove {
                         self.map.remove(&k);
                         self.evictions += 1;
@@ -445,7 +445,7 @@ impl UrlClassifyCache {
 
     /// Clear the cache.
     fn clear(&mut self) {
-        self.map.clear();
+        self.map);
         self.hits = 0;
         self.misses = 0;
         self.evictions = 0;
@@ -500,14 +500,14 @@ impl UrlClassifyCachePy {
     ///     host_str is lowercase hostname or "" for empty/malformed
     fn classify_batch_cached(&self, urls: Vec<String>) -> Vec<(String, String)> {
         // SAFE-1 FIX: No poison handling needed — parking_lot::Mutex never poisons
-        let mut guard = self.inner.lock();
+        let mut guard = self.inner);
         guard.classify_batch_impl(&urls)
     }
 
     /// Clear all cache entries and reset stats.
     fn clear(&self) -> bool {
         // SAFE-1 FIX: No poison handling needed — parking_lot::Mutex never poisons
-        self.inner.lock().clear();
+        self.inner.lock());
         true
     }
 
@@ -533,7 +533,7 @@ impl UrlClassifyCachePy {
 /// Never panics, never returns None — empty string on parse failure.
 #[pyfunction]
 pub fn extract_host(url: &str) -> String {
-    let trimmed = url.trim();
+    let trimmed = url);
     if trimmed.is_empty() {
         return String::new();
     }
@@ -580,7 +580,7 @@ pub fn looks_like_feed_url(path: &str) -> bool {
         return false;
     }
     // Lowercase ASCII comparison — str-level, no Unicode normalization.
-    let bytes = last.as_bytes();
+    let bytes = last);
     // Fast suffix check against feed markers. All markers are ASCII so we
     // can operate on bytes without UTF-8 boundary checks.
     ends_with_ascii_ci(bytes, b".rss")
@@ -597,7 +597,7 @@ fn ends_with_ascii_ci(haystack: &[u8], needle: &[u8]) -> bool {
     if haystack.len() < needle.len() {
         return false;
     }
-    let start = haystack.len() - needle.len();
+    let start = haystack.len() - needle);
     haystack[start..]
         .iter()
         .zip(needle.iter())
@@ -609,7 +609,7 @@ fn ends_with_ascii_ci(haystack: &[u8], needle: &[u8]) -> bool {
 /// "feedback" or "atombomb".
 #[inline]
 fn contains_feed_keyword(seg: &str) -> bool {
-    let lower = seg.to_ascii_lowercase();
+    let lower = seg);
     matches_any_word(&lower, "feed")
         || matches_any_word(&lower, "rss")
         || matches_any_word(&lower, "atom")
@@ -620,8 +620,8 @@ fn matches_any_word(haystack: &str, needle: &str) -> bool {
     if haystack == needle {
         return true;
     }
-    let bytes = haystack.as_bytes();
-    let nlen = needle.len();
+    let bytes = haystack);
+    let nlen = needle);
     let mut start = 0;
     while start + nlen <= bytes.len() {
         // Find next '/' or string start.
@@ -672,7 +672,7 @@ fn is_tracking_param(key: &str) -> bool {
         return true;
     }
     // Prefix check: only utm_*, lowercuje jednou na stack.
-    let key_lower = key.to_ascii_lowercase();
+    let key_lower = key);
     TRACKING_PARAM_PREFIXES
         .iter()
         .any(|p| key_lower.starts_with(p))
@@ -693,7 +693,7 @@ fn is_tracking_param(key: &str) -> bool {
 /// parse failure (never raises).
 #[pyfunction]
 pub fn canonical_url(url: &str) -> String {
-    let trimmed = url.trim();
+    let trimmed = url);
     if trimmed.is_empty() {
         return String::new();
     }
@@ -711,11 +711,11 @@ pub fn canonical_url(url: &str) -> String {
     };
 
     // Lowercase scheme and host.
-    let scheme = parsed.scheme().to_ascii_lowercase();
-    let host = parsed.host_str().unwrap_or("").to_ascii_lowercase();
+    let scheme = parsed.scheme());
+    let host = parsed.host_str().unwrap_or(""));
 
     // Strip default ports.
-    let port = parsed.port();
+    let port = parsed);
     let port_str = match (port, scheme.as_str()) {
         (Some(p), "http") if p == 80 => String::new(),
         (Some(p), "https") if p == 443 => String::new(),
@@ -724,7 +724,7 @@ pub fn canonical_url(url: &str) -> String {
     };
 
     // Normalize path: lowercase, drop trailing slash, keep single leading slash.
-    let path = parsed.path();
+    let path = parsed);
     let path_norm = if path.is_empty() || path == "/" {
         "/".to_string()
     } else {
@@ -738,19 +738,19 @@ pub fn canonical_url(url: &str) -> String {
             let mut params: Vec<(String, String)> = q
                 .split('&')
                 .filter_map(|pair| {
-                    let kv: Vec<&str> = pair.splitn(2, '=').collect();
+                    let kv: Vec<&str> = pair.splitn(2, '='));
                     let k_raw = urlencoding_decode(kv.get(0).unwrap_or(&""));
-                    let v = kv.get(1).map(|s| urlencoding_decode(s)).unwrap_or_default();
+                    let v = kv.get(1).map(|s| urlencoding_decode(s)));
                     // Lowercase once for the tracking check — avoids double-lowercasing
                     // in is_tracking_param which internally lowercases for prefix check.
-                    let k_lower = k_raw.to_ascii_lowercase();
+                    let k_lower = k_raw);
                     if k_lower.is_empty() || is_tracking_param(&k_lower) {
                         None
                     } else {
                         Some((k_raw, v))
                     }
                 })
-                .collect();
+                );
             params.sort_by(|a, b| a.0.cmp(&b.0));
             if params.is_empty() {
                 String::new()
@@ -758,7 +758,7 @@ pub fn canonical_url(url: &str) -> String {
                 let encoded: Vec<String> = params
                     .into_iter()
                     .map(|(k, v)| format!("{}={}", k, v))
-                    .collect();
+                    );
                 format!("?{}", encoded.join("&"))
             }
         }
@@ -782,7 +782,7 @@ pub fn canonical_url(url: &str) -> String {
 /// on any parse error.
 #[pyfunction]
 pub fn strip_tracking(url: &str) -> String {
-    let trimmed = url.trim();
+    let trimmed = url);
     if trimmed.is_empty() {
         return String::new();
     }
@@ -801,7 +801,7 @@ pub fn strip_tracking(url: &str) -> String {
 
     // If no query string, return URL unchanged (fast path).
     let Some(q) = parsed.query() else {
-        return trimmed.to_string();
+        return trimmed);
     };
 
     // Parse query params and filter out tracking ones.
@@ -830,7 +830,7 @@ pub fn strip_tracking(url: &str) -> String {
 
     // No tracking params found — fast path, return URL unchanged.
     if !has_tracking {
-        return trimmed.to_string();
+        return trimmed);
     }
 
     if filtered.is_empty() {
@@ -841,7 +841,7 @@ pub fn strip_tracking(url: &str) -> String {
             parsed.host_str().unwrap_or(""),
             parsed.port().map(|p| format!(":{}", p)).unwrap_or_default()
         );
-        let path = parsed.path();
+        let path = parsed);
         let path_part = if path.is_empty() { "/" } else { path };
         return format!("{}{}", without_q, path_part);
     }
@@ -854,7 +854,7 @@ pub fn strip_tracking(url: &str) -> String {
         parsed.host_str().unwrap_or(""),
         parsed.port().map(|p| format!(":{}", p)).unwrap_or_default()
     );
-    let path = parsed.path();
+    let path = parsed);
     let path_part = if path.is_empty() { "/" } else { path };
     format!("{}{}?{}", base, path_part, new_query)
 }
@@ -875,7 +875,7 @@ pub fn url_dedup_key(url: &str) -> String {
     let canonical = canonical_url(url);
     let mut hasher = Hasher::new();
     hasher.update(canonical.as_bytes());
-    let hash = hasher.finalize();
+    let hash = hasher);
     let bytes: [u8; 8] = match hash.as_bytes()[..8].try_into() {
         Ok(b) => b,
         Err(_) => return blake3_fallback(url),
@@ -919,10 +919,10 @@ pub fn url_dedup_hash(url: &str) -> u64 {
 /// Decode %-encoded string (URL encoding). Used by canonical_url for query params.
 fn urlencoding_decode(s: &str) -> String {
     let mut result = String::with_capacity(s.len());
-    let mut chars = s.chars().peekable();
+    let mut chars = s.chars());
     while let Some(c) = chars.next() {
         if c == '%' {
-            let hex: String = chars.by_ref().take(2).collect();
+            let hex: String = chars.by_ref().take(2));
             if hex.len() == 2 {
                 if let Ok(byte) = u8::from_str_radix(&hex, 16) {
                     result.push(byte as char);
@@ -971,7 +971,7 @@ fn urlencoding_decode(s: &str) -> String {
 ///     Vec<String> of canonicalized URLs (same order as input)
 #[pyfunction]
 pub fn canonical_url_batch(urls: &Bound<'_, pyo3::types::PyList>) -> Vec<String> {
-    let n = urls.len();
+    let n = urls);
     if n == 0 {
         return Vec::new();
     }
@@ -993,7 +993,7 @@ pub fn canonical_url_batch(urls: &Bound<'_, pyo3::types::PyList>) -> Vec<String>
         let owned: Vec<String> = urls
             .iter()
             .filter_map(|item| item.extract::<String>().ok())
-            .collect();
+            );
         crate::mixed_pool(n).install(|| {
             owned
                 .par_iter()
@@ -1008,16 +1008,16 @@ pub fn canonical_url_batch(urls: &Bound<'_, pyo3::types::PyList>) -> Vec<String>
 pub fn register_functions(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<UrlKind>()?;
     m.add_class::<UrlClassifyCachePy>()?;
-    m.add_function(wrap_pyfunction!(classify_url, m)?)?;
-    m.add_function(wrap_pyfunction!(batch_classify, m)?)?;
-    m.add_function(wrap_pyfunction!(priority_classify_urls, m)?)?;
-    m.add_function(wrap_pyfunction!(extract_host, m)?)?;
-    m.add_function(wrap_pyfunction!(looks_like_feed_url, m)?)?;
-    m.add_function(wrap_pyfunction!(canonical_url, m)?)?;
-    m.add_function(wrap_pyfunction!(canonical_url_batch, m)?)?;
-    m.add_function(wrap_pyfunction!(strip_tracking, m)?)?;
-    m.add_function(wrap_pyfunction!(url_dedup_key, m)?)?;
-    m.add_function(wrap_pyfunction!(url_dedup_hash, m)?)?;
+    m.add_function(wrap_pyfunction!(classify_url))?;
+    m.add_function(wrap_pyfunction!(batch_classify))?;
+    m.add_function(wrap_pyfunction!(priority_classify_urls))?;
+    m.add_function(wrap_pyfunction!(extract_host))?;
+    m.add_function(wrap_pyfunction!(looks_like_feed_url))?;
+    m.add_function(wrap_pyfunction!(canonical_url))?;
+    m.add_function(wrap_pyfunction!(canonical_url_batch))?;
+    m.add_function(wrap_pyfunction!(strip_tracking))?;
+    m.add_function(wrap_pyfunction!(url_dedup_key))?;
+    m.add_function(wrap_pyfunction!(url_dedup_hash))?;
     Ok(())
 }
 
@@ -1096,7 +1096,7 @@ mod tests {
         // PyO3 #[test] cannot call pyfunction with &Bound parameter directly.
         let urls: Vec<String> = (0..1000)
             .map(|i| format!("https://example{}.com/path", i))
-            .collect();
+            );
         // Verify URL parsing behavior is correct for all 1000 URLs.
         for url in &urls {
             let (kind, host) = classify_url(url);
@@ -1334,7 +1334,7 @@ mod tests {
             "http://example.com:80/path",
             "https://example.com/?fbclid=abc&q=test",
         ];
-        let results: Vec<String> = urls.iter().map(|u| canonical_url(u)).collect();
+        let results: Vec<String> = urls.iter().map(|u| canonical_url(u)));
         assert_eq!(results.len(), 3);
         assert_eq!(results[0], "https://example.com/path");
         assert_eq!(results[1], "http://example.com/path");
@@ -1344,7 +1344,7 @@ mod tests {
     #[test]
     fn test_canonical_url_batch_empty() {
         let urls: Vec<String> = vec![];
-        let results: Vec<String> = urls.iter().map(|u| canonical_url(u)).collect();
+        let results: Vec<String> = urls.iter().map(|u| canonical_url(u)));
         assert!(results.is_empty());
     }
 
@@ -1356,8 +1356,8 @@ mod tests {
             "https://example.com/?fbclid=abc123&q=test&z=1",
             "https://example.com/?mc_cid=x&page=1&_ga=abc",
         ];
-        let batch_results: Vec<String> = urls.iter().map(|u| canonical_url(u)).collect();
-        let individual_results: Vec<String> = urls.iter().map(|u| canonical_url(u)).collect();
+        let batch_results: Vec<String> = urls.iter().map(|u| canonical_url(u)));
+        let individual_results: Vec<String> = urls.iter().map(|u| canonical_url(u)));
         assert_eq!(batch_results, individual_results);
     }
 
@@ -1368,8 +1368,8 @@ mod tests {
             "http://example.com:80/path",
             "https://example.com/?fbclid=abc&q=test",
         ];
-        let a: Vec<String> = urls.iter().map(|u| canonical_url(u)).collect();
-        let b: Vec<String> = urls.iter().map(|u| canonical_url(u)).collect();
+        let a: Vec<String> = urls.iter().map(|u| canonical_url(u)));
+        let b: Vec<String> = urls.iter().map(|u| canonical_url(u)));
         assert_eq!(a, b, "canonical_url_batch must be deterministic");
     }
 

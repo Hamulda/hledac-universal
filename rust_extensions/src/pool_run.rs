@@ -220,7 +220,7 @@ fn mixed_sender() -> &'static parking_lot::Mutex<Option<Sender<WorkItem>>> {
 /// Dispatchers are I/O-bound (queue polling, recv operations).
 /// This keeps P-cores available for CPU-intensive rayon work.
 fn spawn_dispatcher(pool_name: &str, rx: Arc<Receiver<WorkItem>>) {
-    let pool_name_owned = pool_name.to_string();
+    let pool_name_owned = pool_name.to_owned();
     thread::Builder::new()
         .name(format!("hledac-dispatch-{}", pool_name_owned))
         .stack_size(4_194_304) // 4 MiB
@@ -365,7 +365,7 @@ pub(crate) fn execute_work_item(work: WorkItem) {
             "Task was cancelled before starting",
         )));
         shared.state.swap(STATE_READY, Ordering::AcqRel);
-        shared.condvar.notify_one();
+        shared.condvar.notify_all();
         return;
     }
 
@@ -393,7 +393,7 @@ pub(crate) fn execute_work_item(work: WorkItem) {
         *guard = Some(py_result);
     }
 
-    shared.condvar.notify_one();
+    shared.condvar.notify_all();
 }
 
 // ---------------------------------------------------------------------------
@@ -644,8 +644,7 @@ pub fn rayon_join_channel_(
                 let expected = STATE_PENDING;
                 let we_own = shared
                     .state
-                    .compare_exchange(expected, STATE_ABORTED, Ordering::AcqRel, Ordering::Acquire)
-                    .is_ok();
+                    .compare_exchange(expected, STATE_ABORTED, Ordering::AcqRel, Ordering::Acquire);
                 drop(guard);
 
                 if we_own {
@@ -659,14 +658,14 @@ pub fn rayon_join_channel_(
                 }
                 // else: worker won the race — don't overwrite its valid result
 
-                let result = shared.result.lock().take();
+                let result = shared.result.lock();
                 match result {
                     Some(Ok(py_obj)) => Ok(py_obj.into_pyobject(py).unwrap().into()),
                     Some(Err(err)) => Err(err),
                     None => Ok(py.None().into_pyobject(py).unwrap().into()),
                 }
             } else {
-                let result = (*guard).take();
+                let result = (*guard).clone();
                 match result {
                     Some(Ok(py_obj)) => Ok(py_obj.into_pyobject(py).unwrap().into()),
                     Some(Err(err)) => Err(err),
@@ -739,18 +738,15 @@ pub fn rayon_shutdown_channel_() -> PyResult<()> {
     // so we use a scoped block to drop the guard immediately after use.
     {
         let mut tx = cpu_sender().lock();
-
-        let _ = tx.take();
+        *tx = None;
     }
     {
         let mut tx = io_sender().lock();
-
-        let _ = tx.take();
+        *tx = None;
     }
     {
         let mut tx = mixed_sender().lock();
-
-        let _ = tx.take();
+        *tx = None;
     }
 
     Ok(())
@@ -785,7 +781,7 @@ pub fn rayon_drop_channel_(py: Python<'_>, handle: &Bound<'_, PyAny>) -> PyResul
     
     // If not a usize, try PyCapsule handling
     // Get Py<PyAny> via AsRef trait, then extract raw pointer
-    let py_ref: &Py<PyAny> = <Bound<'_, PyAny> as AsRef<Py<PyAny>>>::as_ref(handle).as_ref();
+    let py_ref: &Py<PyAny> = <Bound<'_, PyAny> as AsRef<Py<PyAny>>>::as_ref(&handle);
     let raw_ptr: *mut pyo3::ffi::PyObject = py_ref.as_ptr() as *mut _;
     let capsule_name = RAYON_HANDLE_CAPSULE_NAME.as_ptr() as *const std::ffi::c_char;
     
@@ -812,15 +808,15 @@ pub fn rayon_drop_channel_(py: Python<'_>, handle: &Bound<'_, PyAny>) -> PyResul
 
 pub fn register_functions(m: &Bound<'_, PyModule>) -> PyResult<()> {
     // GIL wrappers — sync fast path for tiny workloads (no pool used)
-    m.add_function(wrap_pyfunction!(cpu_pool_run_, m)?)?;
-    m.add_function(wrap_pyfunction!(io_pool_run_, m)?)?;
-    m.add_function(wrap_pyfunction!(mixed_pool_run_, m)?)?;
+    m.add_function(wrap_pyfunction!(cpu_pool_run_))?;
+    m.add_function(wrap_pyfunction!(io_pool_run_))?;
+    m.add_function(wrap_pyfunction!(mixed_pool_run_))?;
     // Channel-based dispatch to rayon pools (~5μs/task)
-    m.add_function(wrap_pyfunction!(rayon_submit_channel_, m)?)?;
-    m.add_function(wrap_pyfunction!(rayon_join_channel_, m)?)?;
-    m.add_function(wrap_pyfunction!(rayon_abort_channel_, m)?)?;
-    m.add_function(wrap_pyfunction!(rayon_shutdown_channel_, m)?)?;
+    m.add_function(wrap_pyfunction!(rayon_submit_channel_))?;
+    m.add_function(wrap_pyfunction!(rayon_join_channel_))?;
+    m.add_function(wrap_pyfunction!(rayon_abort_channel_))?;
+    m.add_function(wrap_pyfunction!(rayon_shutdown_channel_))?;
     // NEW-M1 FIX: Explicit Arc drop for manual cleanup + PyCapsule RAII support
-    m.add_function(wrap_pyfunction!(rayon_drop_channel_, m)?)?;
+    m.add_function(wrap_pyfunction!(rayon_drop_channel_))?;
     Ok(())
 }

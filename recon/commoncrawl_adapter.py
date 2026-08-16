@@ -21,6 +21,7 @@ import time as time_mod
 from dataclasses import dataclass, field
 from collections.abc import AsyncIterator
 import msgspec
+from compat.msgspec_gc_compat import Struct
 
 from hledac.universal.utils.asyncx import _check_gathered
 try:
@@ -50,7 +51,7 @@ _SOURCE_TYPE = 'commoncrawl_cdx'
 _SOURCE_TYPE_CONTENT = 'commoncrawl_warc'
 _WAYBACK_BASE_URL = 'https://web.archive.org'
 
-class CCSearchResult(msgspec.Struct, gc=False):
+class CCSearchResult(Struct):
     """
     Single row from CommonCrawl CDX.
 
@@ -99,7 +100,7 @@ class CCSearchResult(msgspec.Struct, gc=False):
             logger.debug(f'[commoncrawl] to_canonical_finding failed: {e}')
             return None
 
-class CommonCrawlResult(msgspec.Struct, frozen=True, gc=False):
+class CommonCrawlResult(Struct, frozen=True):
     """Result of a CommonCrawl fetch (mirrors CDXDeepSearchResult)."""
     query: str
     match_type: str = 'domain'

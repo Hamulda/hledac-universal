@@ -136,7 +136,7 @@ impl HotEdgeCounterRust {
             let (src, dst) = unpack_key(*key);
             result.push((src, dst, count));
         }
-        self.counts.clear();
+        self.counts);
         self.dirty_count = 0;
         Ok(result)
     }
@@ -148,7 +148,7 @@ impl HotEdgeCounterRust {
 
     /// Reset all counts and dirty state.
     pub fn clear(&mut self) {
-        self.counts.clear();
+        self.counts);
         self.dirty_count = 0;
     }
 
@@ -197,10 +197,10 @@ mod tests {
         assert_eq!(buf.pending_count(), 2);
         assert!(!buf.should_flush());
 
-        let drained = buf.drain_dirty().unwrap();
+        let drained = buf.drain_dirty());
         // Order of HashMap iteration is unspecified; check both possible orderings.
         let mut drained = drained;
-        drained.sort();
+        drained);
         assert_eq!(drained, vec![(1, 2, 5), (3, 4, 10)]);
         assert_eq!(buf.pending_count(), 0);
         assert!(buf.drain_dirty().unwrap().is_empty());
@@ -209,11 +209,11 @@ mod tests {
     #[test]
     fn test_should_flush_threshold() {
         let mut buf = HotEdgeCounterRust::new(3);
-        buf.bump_edge(1, 2, 1).unwrap();
+        buf.bump_edge(1, 2, 1));
         assert!(!buf.should_flush());
-        buf.bump_edge(2, 3, 1).unwrap();
+        buf.bump_edge(2, 3, 1));
         assert!(!buf.should_flush());
-        buf.bump_edge(3, 4, 1).unwrap();
+        buf.bump_edge(3, 4, 1));
         assert!(buf.should_flush());
     }
 
@@ -255,7 +255,7 @@ mod tests {
             // This would panic if we didn't have the guard — which we must not.
             let mut tiny = HotEdgeCounterRust::new(usize::MAX);
             // We can at least verify that a legitimate bump doesn't panic.
-            tiny.bump_edge(99, 99, 1).unwrap();
+            tiny.bump_edge(99, 99, 1));
         });
         assert!(cap_result.is_ok());
     }
@@ -263,17 +263,17 @@ mod tests {
     #[test]
     fn test_wrapping_add() {
         let mut buf = HotEdgeCounterRust::new(50);
-        buf.bump_edge(1, 1, i64::MAX).unwrap();
+        buf.bump_edge(1, 1, i64::MAX));
         assert_eq!(buf.bump_edge(1, 1, 1).unwrap(), i64::MIN); // wrapped
     }
 
     #[test]
     fn test_clear_resets_dirty_count() {
         let mut buf = HotEdgeCounterRust::new(50);
-        buf.bump_edge(1, 2, 5).unwrap();
-        buf.bump_edge(3, 4, 7).unwrap();
+        buf.bump_edge(1, 2, 5));
+        buf.bump_edge(3, 4, 7));
         assert_eq!(buf.pending_count(), 2);
-        buf.clear();
+        buf);
         assert_eq!(buf.pending_count(), 0);
         assert!(buf.drain_dirty().unwrap().is_empty());
     }

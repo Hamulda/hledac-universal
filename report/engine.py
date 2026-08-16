@@ -7,13 +7,14 @@ Coordinates all renderers and provides streaming write for M1 8GB disk bottlenec
 """
 from dataclasses import dataclass, field
 import msgspec
+from compat.msgspec_gc_compat import Struct
 from typing import TYPE_CHECKING, Any
 from _core import aclose
 if TYPE_CHECKING:
     from pathlib import Path
 __all__ = ['ReportEngine', 'get_report_engine', 'ReportOutput']
 
-class ReportOutput(msgspec.Struct, gc=False):
+class ReportOutput(Struct):
     """Result of a render operation."""
     path: Path | None = None
     content: str | bytes | None = None
@@ -21,7 +22,7 @@ class ReportOutput(msgspec.Struct, gc=False):
     success: bool = False
     error: str | None = None
 
-class ReportEngine(msgspec.Struct, frozen=True, gc=False):
+class ReportEngine(Struct, frozen=True):
     """
     Unified reporting engine — emits {json, md, html, svg, pdf}.
 

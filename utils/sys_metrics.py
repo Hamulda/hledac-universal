@@ -18,6 +18,7 @@ M1 8GB safe: ~0 bytes extra RAM, async by design.
 import asyncio
 import logging
 import msgspec
+from compat.msgspec_gc_compat import Struct
 from typing import TYPE_CHECKING
 
 from hledac.universal._core.resource_governor import _get_cached_psutil_async, _read_virtual_memory_sync, _read_swap_memory_sync
@@ -34,7 +35,7 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 
 
-class SystemMemory(msgspec.Struct, frozen=True, gc=False):
+class SystemMemory(Struct, frozen=True):
     """Immutable snapshot of system memory."""
 
     total_gib: float
@@ -56,7 +57,7 @@ class SystemMemory(msgspec.Struct, frozen=True, gc=False):
     )
 
 
-class SwapMemory(msgspec.Struct, frozen=True, gc=False):
+class SwapMemory(Struct, frozen=True):
     """Immutable snapshot of swap usage."""
 
     total_gib: float

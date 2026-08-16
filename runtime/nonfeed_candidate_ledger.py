@@ -48,6 +48,7 @@ import time
 from collections import deque
 from dataclasses import field
 import msgspec
+from compat.msgspec_gc_compat import Struct
 from typing import Any, Final
 from _core import aclose
 
@@ -98,7 +99,7 @@ STAGE_STORED: Final[str] = 'stored'
 STAGE_ACCEPTED: Final[str] = 'accepted'
 STAGE_PROVIDER_FAILED: Final[str] = 'provider_failed'
 
-class LedgerRecord(msgspec.Struct, frozen=True, gc=False):
+class LedgerRecord(Struct, frozen=True):
     """
     Sprint F217E: Bounded nonfeed candidate lifecycle record.
 
@@ -123,7 +124,7 @@ class LedgerRecord(msgspec.Struct, frozen=True, gc=False):
     sample_value: str
     ts_monotonic: float
 
-class NonfeedCandidateLedger(msgspec.Struct, gc=False):
+class NonfeedCandidateLedger(Struct):
     """
     Sprint F217E: Bounded in-memory nonfeed candidate evidence ledger.
 
@@ -274,7 +275,7 @@ class NonfeedCandidateLedger(msgspec.Struct, gc=False):
         Returns dict with counts per family, per stage, and key booleans.
         Does NOT include full records (prevents payload leakage in reports).
         """
-        with threading.Lock():
+        with self._lock:
             records = tuple(self._records)
         by_family: dict[str, int] = {}
         by_stage: dict[str, int] = {}
@@ -442,7 +443,7 @@ def _is_valid_domain_candidate(domain: str) -> bool:
 _DEDUP_DOMAIN_RE = re.compile('(?:[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?\\.)+[a-zA-Z]{2,}')
 _URL_PREFIX_RE = re.compile('https?://|[a-zA-Z][a-zA-Z0-9+.-]*://|www\\.')
 
-class DomainCandidate(msgspec.Struct, frozen=True, gc=False):
+class DomainCandidate(Struct, frozen=True):
     """
     F214: Domain candidate extracted from feed/public findings text.
 

@@ -366,9 +366,9 @@ fn apply_cpu_affinity_py(_p_cores: usize) {}
 /// Register darwin_affinity functions in Python module.
 #[cfg(target_os = "macos")]
 pub fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
-    m.add_function(wrap_pyfunction!(apply_pcore_affinity_py, m)?)?;
-    m.add_function(wrap_pyfunction!(apply_ecore_affinity_py, m)?)?;
-    m.add_function(wrap_pyfunction!(apply_cpu_affinity_py, m)?)?;
+    m.add_function(wrap_pyfunction!(apply_pcore_affinity_py))?;
+    m.add_function(wrap_pyfunction!(apply_ecore_affinity_py))?;
+    m.add_function(wrap_pyfunction!(apply_cpu_affinity_py))?;
     Ok(())
 }
 

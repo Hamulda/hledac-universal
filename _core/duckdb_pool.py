@@ -40,6 +40,7 @@ from collections import deque
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 from _core._util import aclose
+from _core.lock_registry import LockCategory, register_lock
 
 if TYPE_CHECKING:
     pass
@@ -462,14 +463,19 @@ class _DuckDBRWPool:
 # Global pool instances (lazily initialized)
 _ro_pool: _DuckDBROPool | None = None
 _rw_pool: _DuckDBRWPool | None = None
-_pools_lock = threading.Lock()
+
+
+@register_lock(LockCategory.GRAPH)
+def _pools_lock() -> threading.Lock:
+    """Module-level lock for DuckDB pool singletons."""
+    return threading.Lock()
 
 
 def _get_ro_pool() -> _DuckDBROPool:
     """Get the global RO pool singleton."""
     global _ro_pool
     if _ro_pool is None:
-        with _pools_lock:
+        with _pools_lock():
             if _ro_pool is None:
                 _ro_pool = _DuckDBROPool()
     return _ro_pool
@@ -479,7 +485,7 @@ def _get_rw_pool() -> _DuckDBRWPool:
     """Get the global RW pool singleton."""
     global _rw_pool
     if _rw_pool is None:
-        with _pools_lock:
+        with _pools_lock():
             if _rw_pool is None:
                 _rw_pool = _DuckDBRWPool()
     return _rw_pool

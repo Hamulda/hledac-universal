@@ -67,6 +67,7 @@ Future owners:
 import os
 from dataclasses import dataclass, field
 import msgspec
+from compat.msgspec_gc_compat import Struct
 from typing import TYPE_CHECKING, Any, ClassVar
 from _core import aclose
 if TYPE_CHECKING:
@@ -135,7 +136,7 @@ class RuntimeMode:
         """True if running in legacy runtime mode (default)."""
         return cls.get_current() == cls.LEGACY_RUNTIME
 
-class WorkflowPhase(msgspec.Struct, frozen=True, gc=False):
+class WorkflowPhase(Struct, frozen=True):
     """
     Workflow phase — řídí celý sprint lifecycle.
 
@@ -153,7 +154,7 @@ class WorkflowPhase(msgspec.Struct, frozen=True, gc=False):
         """Extract from SprintLifecycleManager.snapshot() dict."""
         return cls(phase=snap.get('current_phase', 'UNKNOWN'), entered_at_monotonic=snap.get('entered_phase_at'), started_at_monotonic=snap.get('started_at_monotonic'), sprint_duration_s=snap.get('sprint_duration_s', 1800.0), windup_lead_s=snap.get('windup_lead_s', 180.0))
 
-class ControlPhase(msgspec.Struct, frozen=True, gc=False):
+class ControlPhase(Struct, frozen=True):
     """
     Control phase — tool pruning / resource governance decisions.
 
@@ -175,7 +176,7 @@ class ControlPhase(msgspec.Struct, frozen=True, gc=False):
         remaining = lifecycle.remaining_time(now_monotonic)
         return cls(mode=mode, thermal_state=thermal_state, remaining_s=remaining)
 
-class WindupLocalPhase(msgspec.Struct, frozen=True, gc=False):
+class WindupLocalPhase(Struct, frozen=True):
     """
     Windup-local synthesis mode — special режим внутри WINDUP fáze.
 
@@ -192,7 +193,7 @@ class WindupLocalPhase(msgspec.Struct, frozen=True, gc=False):
     error_encountered: bool = False
     synthesis_engine: str = 'unknown'
 
-class LifecycleSnapshotBundle(msgspec.Struct, gc=False):
+class LifecycleSnapshotBundle(Struct):
     """
     Bundle všech lifecycle-related shadow inputs.
 
@@ -224,7 +225,7 @@ class LifecycleSnapshotBundle(msgspec.Struct, gc=False):
     def to_dict(self) -> dict[str, Any]:
         return {'workflow_phase': self.workflow_phase.phase, 'workflow_phase_entered_at': self.workflow_phase.entered_at_monotonic, 'workflow_phase_started_at': self.workflow_phase.started_at_monotonic, 'control_phase_mode': self.control_phase.mode, 'control_phase_thermal': self.control_phase.thermal_state, 'control_phase_remaining_s': self.control_phase.remaining_s, 'windup_local_mode': self.windup_local_phase.mode if self.windup_local_phase else None, 'windup_local_synthesis_engine': self.windup_local_phase.synthesis_engine if self.windup_local_phase else None, 'fact_stability': self.fact_stability, 'future_owner': self.__future_owner__, '__compat_note__': self.__compat_note__}
 
-class GraphSummaryBundle(msgspec.Struct, frozen=True, gc=False):
+class GraphSummaryBundle(Struct, frozen=True):
     """
     Bundle graph-related shadow inputs.
 
@@ -275,7 +276,7 @@ class GraphSummaryBundle(msgspec.Struct, frozen=True, gc=False):
     def to_dict(self) -> dict[str, Any]:
         return {'graph_nodes': self.node_count, 'graph_edges': self.edge_count, 'graph_pgq_active': self.pgq_active, 'graph_backend': self.backend, 'graph_top_nodes': self.top_nodes, 'graph_fact_stability': self.fact_stability, 'future_owner': self.__future_owner__, '__compat_note__': self.__compat_note__}
 
-class ModelControlFactsBundle(msgspec.Struct, frozen=True, gc=False):
+class ModelControlFactsBundle(Struct, frozen=True):
     """
     Bundle model/control-related shadow inputs.
 
@@ -429,7 +430,7 @@ def collect_export_handoff_facts(handoff: ExportHandoff | None=None, scorecard: 
         return result
     return {'sprint_id': sprint_id, 'synthesis_engine': 'unknown', 'gnn_predictions': 0, 'top_nodes_count': 0, 'ranked_parquet_present': False, 'phase_durations': {}, 'fact_stability': 'UNKNOWN', '__compat_note__': 'no handoff and no scorecard provided', 'future_owner': 'export/COMPAT_HANDOFF.py'}
 
-class ProviderRuntimeFactsBundle(msgspec.Struct, frozen=True, gc=False):
+class ProviderRuntimeFactsBundle(Struct, frozen=True):
     """
     Bundle provider/model runtime-related shadow inputs.
 

@@ -38,6 +38,7 @@ from hledac.universal.utils.asyncx import safe_wait_for
 import logging
 from dataclasses import dataclass
 import msgspec
+from compat.msgspec_gc_compat import Struct
 from enum import Enum, auto
 from typing import Any, cast
 from hledac.universal.utils.cache import PyCacheDict
@@ -163,7 +164,7 @@ class SourceTransportMap:
         """Return True if suffix MUST use Tor (e.g. .onion)."""
         return cls._map.get(suffix) is Transport.TOR
 
-class TransportContext(msgspec.Struct, gc=False):
+class TransportContext(Struct):
     """Runtime context for transport selection."""
     requires_anonymity: bool = False
     risk_level: str = 'medium'

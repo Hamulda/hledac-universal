@@ -36,6 +36,7 @@ from enum import StrEnum
 from typing import Any
 
 import msgspec
+from compat.msgspec_gc_compat import Struct
 from hledac.universal.compat.msgspec_gc_compat import Struct
 
 from hledac.universal._core.system_metrics import get_system_snapshot

@@ -3,18 +3,26 @@ Deep Research Utilities for Hledac Universal Platform
 Link rot detection, content extraction, and processing utilities
 """
 
+# ROADMAP-005: tenacity for centralized retry patterns
+from tenacity import (
+    AsyncRetrying,
+    retry_if_exception_type,
+    stop_after_attempt,
+    wait_exponential,
+)
 
 import asyncio
 import logging
 import re
 from dataclasses import dataclass
 import msgspec
+from compat.msgspec_gc_compat import Struct
 from typing import Any
 from hledac.universal.utils.asyncx import parallel_ok
 from _core import aclose
 logger = logging.getLogger(__name__)
 
-class LinkCheckResult(msgspec.Struct, gc=False):
+class LinkCheckResult(Struct):
     """Result of link rot check"""
     url: str
     is_alive: bool
@@ -66,46 +74,67 @@ class LinkRotDetector:
         await self.close()
 
     async def check(self, url: str) -> LinkCheckResult:
-        """
-        Check if URL has link rot (is dead).
+        """Check if URL has link rot (is dead).
 
         Args:
             url: URL to check
 
         Returns:
             LinkCheckResult with status information
+
+        ROADMAP-005: Uses tenacity for retry logic.
         """
         import time
         start_time = time.time()
+        session = await self._get_session()
+
+        # ROADMAP-005: Custom exception for retryable failures
+        class _RetryableError(Exception):
+            """Marks a check failure as retryable."""
+            __slots__ = ()
+            def __init__(self, error_msg: str) -> None:
+                super().__init__(error_msg)
+                self.error_msg = error_msg
+
+        async def _attempt_check() -> LinkCheckResult:
+            """Single attempt at checking URL status."""
+            try:
+                async with session.head(url, allow_redirects=True, verify=False) as response:
+                    status = response.status
+                    redirect_url = str(response.url) if response.url != url else None
+                    if 200 <= status < 400:
+                        return LinkCheckResult(url=url, is_alive=True, status_code=status, redirect_url=redirect_url, response_time_ms=(time.time() - start_time) * 1000)
+                    if status in (404, 410):
+                        return LinkCheckResult(url=url, is_alive=False, status_code=status, error=f'HTTP {status} - Content not found')
+                    if status >= 400:
+                        async with session.get(url, allow_redirects=True, verify=False) as get_response:
+                            get_status = get_response.status
+                            if 200 <= get_status < 400:
+                                return LinkCheckResult(url=url, is_alive=True, status_code=get_status, redirect_url=str(get_response.url) if get_response.url != url else None, response_time_ms=(time.time() - start_time) * 1000)
+                            elif get_status in (404, 410):
+                                return LinkCheckResult(url=url, is_alive=False, status_code=get_status, error=f'HTTP {get_status} - Content not found')
+                            else:
+                                return LinkCheckResult(url=url, is_alive=False, status_code=get_status, error=f'HTTP {get_status}')
+            except TimeoutError as e:
+                raise _RetryableError(str(e)) from e
+            except Exception as e:
+                # Non-retryable exceptions return immediately
+                return LinkCheckResult(url=url, is_alive=False, error=str(e))
+
         try:
-            session = await self._get_session()
-            for attempt in range(self.max_retries):
-                try:
-                    async with session.head(url, allow_redirects=True, verify=False) as response:
-                        status = response.status
-                        redirect_url = str(response.url) if response.url != url else None
-                        if 200 <= status < 400:
-                            return LinkCheckResult(url=url, is_alive=True, status_code=status, redirect_url=redirect_url, response_time_ms=(time.time() - start_time) * 1000)
-                        if status in (404, 410):
-                            return LinkCheckResult(url=url, is_alive=False, status_code=status, error=f'HTTP {status} - Content not found')
-                        if status >= 400:
-                            async with session.get(url, allow_redirects=True, verify=False) as get_response:
-                                get_status = get_response.status
-                                if 200 <= get_status < 400:
-                                    return LinkCheckResult(url=url, is_alive=True, status_code=get_status, redirect_url=str(get_response.url) if get_response.url != url else None, response_time_ms=(time.time() - start_time) * 1000)
-                                elif get_status in (404, 410):
-                                    return LinkCheckResult(url=url, is_alive=False, status_code=get_status, error=f'HTTP {get_status} - Content not found')
-                                else:
-                                    return LinkCheckResult(url=url, is_alive=False, status_code=get_status, error=f'HTTP {get_status}')
-                except TimeoutError:
-                    if attempt == self.max_retries - 1:
-                        return LinkCheckResult(url=url, is_alive=False, error=f'Timeout after {self.max_retries} attempts')
-                    await asyncio.sleep(0.5 * (attempt + 1))
-                except Exception as e:
-                    if attempt == self.max_retries - 1:
-                        return LinkCheckResult(url=url, is_alive=False, error=str(e))
-                    await asyncio.sleep(0.5 * (attempt + 1))
-            return LinkCheckResult(url=url, is_alive=False, error='All attempts failed')
+            async for attempt in AsyncRetrying(
+                stop=stop_after_attempt(self.max_retries),
+                wait=wait_exponential(multiplier=0.5, min=0.5, max=4.0),
+                retry=retry_if_exception_type(_RetryableError),
+                reraise=True,
+            ):
+                with attempt:
+                    result = await _attempt_check()
+                    # Non-retryable error results are returned immediately
+                    # (they're wrapped in LinkCheckResult, not raised as _RetryableError)
+                    return result
+        except _RetryableError:
+            return LinkCheckResult(url=url, is_alive=False, error=f'Timeout after {self.max_retries} attempts')
         except Exception as e:
             return LinkCheckResult(url=url, is_alive=False, error=str(e))
 

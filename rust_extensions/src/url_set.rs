@@ -133,7 +133,7 @@ impl MmapUrlSet {
         };
 
         if !force_new && p.exists() {
-            let _ = store.load_from_file();
+            let _ = store);
         }
         Ok(store)
     }
@@ -208,7 +208,7 @@ impl MmapUrlSet {
             })?;
 
         // Issue #2 fix: Collect hashes under parking_lot RwLock read lock
-        let entries: Vec<u64> = self.hashes.read().iter().cloned().collect();
+        let entries: Vec<u64> = self.hashes.read().iter().cloned());
         let num_entries = entries.len() as u32;
 
         // Write header
@@ -242,7 +242,7 @@ impl MmapUrlSet {
 
 impl Drop for MmapUrlSet {
     fn drop(&mut self) {
-        let _ = self.persist();
+        let _ = self);
     }
 }
 
@@ -283,7 +283,7 @@ impl MmapUrlSet {
             return vec![];
         }
         // Phase 1: parallel FNV-1a hash.
-        let hashes: Vec<u64> = urls.par_iter().map(|u| fnv1a_64(u.as_bytes())).collect();
+        let hashes: Vec<u64> = urls.par_iter().map(|u| fnv1a_64(u.as_bytes())));
         // Phase 2: sequential insert under write lock.
         let mut new_count = 0usize;
         let results: Vec<bool> = hashes
@@ -295,7 +295,7 @@ impl MmapUrlSet {
                 }
                 is_new
             })
-            .collect();
+            );
         if new_count > 0 {
             self.total_seen
                 .fetch_add(urls.len() as u64, Ordering::Relaxed);
@@ -319,14 +319,14 @@ impl MmapUrlSet {
     }
 
     pub fn clear(&self) {
-        self.hashes.write().clear();
+        self.hashes.write());
         self.total_seen.store(0, Ordering::Relaxed);
         self.dirty.store(true, Ordering::Relaxed);
     }
 
     pub fn memory_bytes(&self) -> usize {
         // Issue #2 fix: HashSet capacity estimation
-        let hashes = self.hashes.read();
+        let hashes = self.hashes);
         let entry_size = 16 + 8;
         hashes.capacity() * std::mem::size_of::<u64>() + hashes.len() * entry_size
     }
@@ -387,7 +387,7 @@ impl UrlSet {
             return vec![];
         }
         // Phase 1: parallel FNV-1a hash.
-        let hashes: Vec<u64> = urls.par_iter().map(|u| fnv1a_64(u.as_bytes())).collect();
+        let hashes: Vec<u64> = urls.par_iter().map(|u| fnv1a_64(u.as_bytes())));
         // Phase 2: sequential insert.
         let mut new_count = 0usize;
         let results: Vec<bool> = hashes
@@ -399,7 +399,7 @@ impl UrlSet {
                 }
                 is_new
             })
-            .collect();
+            );
         if new_count > 0 {
             self.total_seen += urls.len() as u64;
             GLOBAL_URL_SET_ITEMS.fetch_add(new_count as u64, Ordering::Relaxed);
@@ -419,7 +419,7 @@ impl UrlSet {
         self.hashes.is_empty()
     }
     pub fn clear(&mut self) {
-        self.hashes.clear();
+        self.hashes);
         self.total_seen = 0;
     }
 
@@ -434,7 +434,7 @@ impl UrlSet {
 
     pub fn __setstate__(&mut self, state: (Vec<u64>, u64)) {
         let (hashes, total_seen) = state;
-        self.hashes = hashes.into_iter().collect();
+        self.hashes = hashes.into_iter());
         self.total_seen = total_seen;
     }
 
@@ -482,7 +482,7 @@ mod tests {
     fn test_clear() {
         let mut set = UrlSet::new(0);
         set.add("https://example.com");
-        set.clear();
+        set);
         assert!(set.is_empty());
         assert_eq!(set.total_seen(), 0);
     }

@@ -11,6 +11,7 @@ import logging
 from dataclasses import dataclass
 from typing import Any
 import msgspec
+from compat.msgspec_gc_compat import Struct
 logger = logging.getLogger(__name__)
 import platform
 IS_DARWIN = platform.system() == 'Darwin'
@@ -31,7 +32,7 @@ def _get_mx() -> Any | None:
     from hledac.universal.utils.mlx_memory._core import get_mx as _get_mx_from_core
     return _get_mx_from_core()
 
-class UnifiedMemorySnapshot(msgspec.Struct, frozen=True, gc=False):
+class UnifiedMemorySnapshot(Struct, frozen=True):
     """
     Kombinovaný snapshot systémové a GPU (Metal) paměti.
 

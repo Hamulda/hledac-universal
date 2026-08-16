@@ -25,9 +25,7 @@ M1 8GB budget: ~250ms bytearray scan, ~50ms mlock audit, ~5ms madvise,
 Fail-safe: every step catches Exception and continues. Idempotent.
 Telemetry: [WIPE] annihilated=<N>_buffers=<bytes>KiB munlock=<R> gc2=<ms>
 """
-
 from __future__ import annotations
-
 import ctypes
 import gc
 import logging
@@ -37,39 +35,14 @@ import shutil
 import sys
 import time
 from typing import Final
-
 from hledac.universal._core.feature_flags import FeatureFlag, FeatureFlags
 from _core import aclose
-
-__all__ = [
-    "EphemeralStateAnnihilator",
-    "register_mlock_region",
-    "unregister_mlock_region",
-]
-
+__all__ = ['EphemeralStateAnnihilator', 'register_mlock_region', 'unregister_mlock_region']
 logger = logging.getLogger(__name__)
-
-# ---------------------------------------------------------------------------
-# Flag gates
-# ---------------------------------------------------------------------------
 _HLEDAC_ENABLE_EPHEMERAL_WIPE: Final[bool] = FeatureFlags.get(FeatureFlag.EPHEMERAL_WIPE, default=True)
-"""Default ON for all profiles. OFF for --audit runs that want post-sprint
-inspection. Set HLEDAC_ENABLE_EPHEMERAL_WIPE=0 to disable."""
-
-# ---------------------------------------------------------------------------
-# mlock registry — tracks all mlock'd regions for TEARDOWN unlock
-# ---------------------------------------------------------------------------
-# ADVERSARY-005: key_manager._key_material_guard calls register_mlock_region()
-# at lock time and unregister_mlock_region() at unlock time. TEARDOWN calls
-# kv_cache_munlock() to batch-unlock everything that might have been missed.
-#
-# Thread-safety: list operations are atomic on CPython (GIL), lock only needed
-# for concurrent async modification which shouldn't happen during TEARDOWN.
+'Default ON for all profiles. OFF for --audit runs that want post-sprint\ninspection. Set HLEDAC_ENABLE_EPHEMERAL_WIPE=0 to disable.'
 _mlock_registry: list[tuple[int, int]] = []
-"""List of (address, length) tuples for mlock'd regions. Appended by
-register_mlock_region(), cleared by unregister_mlock_region() and
-kv_cache_munlock()."""
-
+"List of (address, length) tuples for mlock'd regions. Appended by\nregister_mlock_region(), cleared by unregister_mlock_region() and\nkv_cache_munlock()."
 
 def register_mlock_region(addr: int, length: int) -> None:
     """
@@ -85,7 +58,6 @@ def register_mlock_region(addr: int, length: int) -> None:
     if addr > 0 and length > 0:
         _mlock_registry.append((addr, length))
 
-
 def unregister_mlock_region(addr: int, length: int) -> None:
     """
     Unregister an mlock'd region when it's explicitly unlocked.
@@ -99,38 +71,22 @@ def unregister_mlock_region(addr: int, length: int) -> None:
     """
     try:
         _mlock_registry.remove((addr, length))
-    except ValueError:  # noqa: BLE001
+    except ValueError:
         pass
-
-
-# ---------------------------------------------------------------------------
-# Rust madvise FFI — lazy import (M1 safe)
-# ---------------------------------------------------------------------------
 _rust_madvise: object | None = None
-
 
 def _get_rust_madvise():
     """Lazy import rust.madvise. Returns None if unavailable."""
     global _rust_madvise
     if _rust_madvise is None:
         try:
-            import rust  # type: ignore[attr-defined]
-
+            import rust
             _rust_madvise = rust.madvise
         except ImportError:
             _rust_madvise = None
     return _rust_madvise
 
-
-# ---------------------------------------------------------------------------
-# Sub-routine 1: wipe bytearrays in all loaded modules
-# ---------------------------------------------------------------------------
-
-
-def wipe_bytearrays_in_namespace(
-    root_module: object | None = None,
-    min_size: int = 16,
-) -> tuple[int, int]:
+def wipe_bytearrays_in_namespace(root_module: object | None=None, min_size: int=16) -> tuple[int, int]:
     """
     Walk all loaded modules' __dict__ and secure_zero every bytearray ≥ min_size.
 
@@ -157,54 +113,44 @@ def wipe_bytearrays_in_namespace(
         tuple[int, int]: (number_of_buffers_wiped, total_bytes_wiped)
     """
     from hledac.universal.utils.secure_zero import secure_zero, secure_zero_typed
-
     wiped_count = 0
     wiped_bytes = 0
     root = root_module if root_module is not None else sys.modules
 
     def _process_object(obj: object) -> None:
         nonlocal wiped_count, wiped_bytes
-
-        # --- bare bytearray ---
         if isinstance(obj, bytearray):
             if len(obj) >= min_size:
                 secure_zero(obj)
                 wiped_count += 1
                 wiped_bytes += len(obj)
             return
-
-        # --- memoryview backed by bytearray ---
-        if isinstance(obj, memoryview) and not obj.readonly:
+        if isinstance(obj, memoryview) and (not obj.readonly):
             backing = obj.tobytes()
             if isinstance(backing, bytearray) and len(backing) >= min_size:
                 secure_zero(backing)
                 wiped_count += 1
                 wiped_bytes += len(backing)
             return
-
-        # --- typed containers (msgspec.Struct / duck-typed) ---
-        if hasattr(obj, "__slots__") or hasattr(obj, "__dict__"):
+        if hasattr(obj, '__slots__') or hasattr(obj, '__dict__'):
             try:
                 secure_zero_typed(obj)
-            except Exception:  # noqa: BLE001
-                pass  # fail-safe
+            except Exception:
+                pass
 
     def _walk_dict(d: dict) -> None:
         """Recursively walk a module dict, processing values."""
         try:
             for name, val in d.items():
-                # Skip private/built-in module internals
-                if name.startswith("_"):
+                if name.startswith('_'):
                     continue
-                # Skip modules (recursion guard)
-                if hasattr(val, "__module__") and hasattr(val, "__file__"):
+                if hasattr(val, '__module__') and hasattr(val, '__file__'):
                     try:
-                        mod_file = getattr(val, "__file__", "")
-                        if mod_file and ("site-packages" in str(mod_file) or "/.venv/" in str(mod_file)):
-                            continue  # skip stdlib/vendor
-                    except Exception:  # noqa: BLE001
+                        mod_file = getattr(val, '__file__', '')
+                        if mod_file and ('site-packages' in str(mod_file) or '/.venv/' in str(mod_file)):
+                            continue
+                    except Exception:
                         pass
-
                 if isinstance(val, dict):
                     _walk_dict(val)
                 elif isinstance(val, (list, tuple)):
@@ -213,27 +159,18 @@ def wipe_bytearrays_in_namespace(
                             _process_object(item)
                 else:
                     _process_object(val)
-        except Exception:  # noqa: BLE001
-            pass  # fail-safe
-
+        except Exception:
+            pass
     if isinstance(root, dict):
         _walk_dict(root)
     else:
         try:
             _walk_dict(vars(root))
-        except Exception:  # noqa: BLE001
+        except Exception:
             pass
-
-    return wiped_count, wiped_bytes
-
-
-# ---------------------------------------------------------------------------
-# Sub-routine 2: tempfs purge
-# ---------------------------------------------------------------------------
-
-_HLEDAC_TEMP_PREFIXES: Final[tuple[str, ...]] = ("hledac_", "hl_", "hlcache_")
-"""Subdirectory/file prefixes matched by tempfs_purge()."""
-
+    return (wiped_count, wiped_bytes)
+_HLEDAC_TEMP_PREFIXES: Final[tuple[str, ...]] = ('hledac_', 'hl_', 'hlcache_')
+'Subdirectory/file prefixes matched by tempfs_purge().'
 
 def tempfs_purge() -> tuple[int, int]:
     """
@@ -260,18 +197,15 @@ def tempfs_purge() -> tuple[int, int]:
     """
     dirs_removed = 0
     files_deleted = 0
-
     try:
         import tempfile as _tempfile
         temp_root = _tempfile.gettempdir()
     except Exception:
-        temp_root = "/tmp"
+        temp_root = '/tmp'
 
     def _matches_prefix(path: str) -> bool:
         basename = os.path.basename(path)
-        return any(basename.startswith(p) for p in _HLEDAC_TEMP_PREFIXES)
-
-    # --- Phase 1: remove matching directories ---
+        return any((basename.startswith(p) for p in _HLEDAC_TEMP_PREFIXES))
     try:
         for entry in os.scandir(temp_root):
             if not entry.is_dir():
@@ -279,18 +213,14 @@ def tempfs_purge() -> tuple[int, int]:
             if not _matches_prefix(entry.path):
                 continue
             try:
-                # Secure wipe files inside first
                 _purge_directory_contents(entry.path)
-                # Then remove the directory
                 shutil.rmtree(entry.path, ignore_errors=True)
                 dirs_removed += 1
-                logger.debug(f"[WIPE] removed temp dir: {entry.path}")
+                logger.debug(f'[WIPE] removed temp dir: {entry.path}')
             except Exception as exc:
-                logger.debug(f"[WIPE] failed to remove temp dir {entry.path}: {exc}")
+                logger.debug(f'[WIPE] failed to remove temp dir {entry.path}: {exc}')
     except Exception as exc:
-        logger.debug(f"[WIPE] tempfs scan failed: {exc}")
-
-    # --- Phase 2: remove matching large files in temp root ---
+        logger.debug(f'[WIPE] tempfs scan failed: {exc}')
     try:
         for entry in os.scandir(temp_root):
             if not entry.is_file():
@@ -299,21 +229,18 @@ def tempfs_purge() -> tuple[int, int]:
                 continue
             try:
                 size = entry.stat().st_size
-                if size >= 10 * 1024:  # ≥ 10 KB
+                if size >= 10 * 1024:
                     _secure_delete_file(entry.path)
                     files_deleted += 1
-                    logger.debug(f"[WIPE] secure-deleted temp file: {entry.path} ({size} bytes)")
+                    logger.debug(f'[WIPE] secure-deleted temp file: {entry.path} ({size} bytes)')
                 else:
-                    # Small file: just unlink
                     os.unlink(entry.path)
                     files_deleted += 1
             except Exception as exc:
-                logger.debug(f"[WIPE] failed to delete temp file {entry.path}: {exc}")
+                logger.debug(f'[WIPE] failed to delete temp file {entry.path}: {exc}')
     except Exception as exc:
-        logger.debug(f"[WIPE] temp file scan failed: {exc}")
-
-    return dirs_removed, files_deleted
-
+        logger.debug(f'[WIPE] temp file scan failed: {exc}')
+    return (dirs_removed, files_deleted)
 
 def _purge_directory_contents(dir_path: str) -> None:
     """Recursively secure-delete all files inside a directory."""
@@ -329,13 +256,12 @@ def _purge_directory_contents(dir_path: str) -> None:
                 except Exception:
                     try:
                         os.unlink(entry.path)
-                    except Exception:  # noqa: BLE001
+                    except Exception:
                         pass
             elif entry.is_dir():
                 _purge_directory_contents(entry.path)
-    except Exception:  # noqa: BLE001
+    except Exception:
         pass
-
 
 def _secure_delete_file(file_path: str) -> None:
     """
@@ -354,30 +280,19 @@ def _secure_delete_file(file_path: str) -> None:
         file_path: Absolute path to file to securely delete.
     """
     import shutil as _shutil
-
-    # Try Darwin rm -P first (native, hardware-accelerated on Apple Silicon)
     try:
-        _shutil.which("rm")
+        _shutil.which('rm')
         result = os.system(f'rm -P "{file_path}" 2>/dev/null')
         if result == 0:
             return
-    except Exception:  # noqa: BLE001
+    except Exception:
         pass
-
-    # Fallback: Python multi-pass overwrite
     try:
         file_size = os.path.getsize(file_path)
         if file_size == 0:
             os.unlink(file_path)
             return
-
-        passes = [
-            lambda: bytes(secrets.randbelow(256) for _ in range(file_size)),
-            lambda: bytes(0 for _ in range(file_size)),
-            lambda: bytes(255 for _ in range(file_size)),
-            lambda: bytes(0 for _ in range(file_size)),
-        ]
-
+        passes = [lambda: bytes((secrets.randbelow(256) for _ in range(file_size))), lambda: bytes((0 for _ in range(file_size))), lambda: bytes((255 for _ in range(file_size))), lambda: bytes((0 for _ in range(file_size)))]
         for i, data_fn in enumerate(passes):
             fd = None
             try:
@@ -388,24 +303,16 @@ def _secure_delete_file(file_path: str) -> None:
                     os.fsync(fd)
                 finally:
                     os.close(fd)
-            except Exception:  # noqa: BLE001
+            except Exception:
                 pass
-    except Exception:  # noqa: BLE001
+    except Exception:
         pass
     finally:
         try:
             os.unlink(file_path)
-        except Exception:  # noqa: BLE001
+        except Exception:
             pass
-
-
-# ---------------------------------------------------------------------------
-# Sub-routine 3: mlock batch unlock + madvise
-# ---------------------------------------------------------------------------
-
-# Re-export tempfile from builtins for _get_tempdir
-tempfile = __import__("tempfile")
-
+tempfile = __import__('tempfile')
 
 def kv_cache_munlock() -> int:
     """
@@ -427,53 +334,38 @@ def kv_cache_munlock() -> int:
         int: Number of regions successfully unlocked.
     """
     global _mlock_registry
-
     if not _mlock_registry:
         return 0
-
     rust = _get_rust_madvise()
     unlocked = 0
-
-    # Take a snapshot and clear the registry (idempotent — multiple calls OK)
     regions = list(_mlock_registry)
     _mlock_registry.clear()
-
     for addr, length in regions:
         if addr <= 0 or length <= 0:
             continue
-
         try:
             if rust is not None:
-                # munlock
                 try:
                     rust.munlock_key_region(addr, length)
-                except Exception:  # noqa: BLE001
+                except Exception:
                     pass
-
-                # MADV_FREE_REUSABLE (make pages reclaimable immediately)
                 try:
                     rust.madvise_free_reusable(addr, length, 0)
-                except Exception:  # noqa: BLE001
+                except Exception:
                     pass
-
-                # Linux: madvise_dontdump_region after munlock
                 try:
                     rust.madvise_dontdump_region(addr, length)
-                except Exception:  # noqa: BLE001
+                except Exception:
                     pass
             else:
-                # Python fallback: use ctypes directly
                 _ctypes_mlock_unlock(addr, length, unlock=True)
                 _ctypes_madvise_free_reusable(addr, length)
-
             unlocked += 1
         except Exception as exc:
-            logger.debug(f"[WIPE] munlock region @0x{addr:x} len={length} failed: {exc}")
-
+            logger.debug(f'[WIPE] munlock region @0x{addr:x} len={length} failed: {exc}')
     return unlocked
 
-
-def _ctypes_mlock_unlock(addr: int, length: int, unlock: bool = False) -> bool:
+def _ctypes_mlock_unlock(addr: int, length: int, unlock: bool=False) -> bool:
     """Python fallback for munlock when Rust module unavailable."""
     try:
         libc = ctypes.CDLL(None)
@@ -483,35 +375,22 @@ def _ctypes_mlock_unlock(addr: int, length: int, unlock: bool = False) -> bool:
     except Exception:
         return False
 
-
 def _ctypes_madvise_free_reusable(addr: int, length: int) -> bool:
     """Python fallback for madvise_free_reusable when Rust unavailable."""
     try:
-        if sys.platform == "darwin":
-            advice = 7  # MADV_FREE_REUSABLE (Darwin)
-        elif sys.platform == "linux":
-            advice = 15  # MADV_FREE_REUSABLE (Linux)
+        if sys.platform == 'darwin':
+            advice = 7
+        elif sys.platform == 'linux':
+            advice = 15
         else:
             return False
-
         libc = ctypes.CDLL(None)
-        # int madvise(void *addr, size_t length, int advice);
-        result = libc.madvise(
-            ctypes.c_void_p(addr),
-            ctypes.c_size_t(length),
-            advice,
-    )
+        result = libc.madvise(ctypes.c_void_p(addr), ctypes.c_size_t(length), advice)
         return result == 0
     except Exception:
         return False
 
-
-# ---------------------------------------------------------------------------
-# Sub-routine 4: GC collect + madvise DONTNEED heap discard
-# ---------------------------------------------------------------------------
-
-
-def gc_collect_with_madvise(skip_gc: bool = False) -> float:
+def gc_collect_with_madvise(skip_gc: bool=False) -> float:
     """
     Final GC pass + madvise(MADV_DONTNEED) on entire process heap.
 
@@ -533,54 +412,33 @@ def gc_collect_with_madvise(skip_gc: bool = False) -> float:
         float: Elapsed time in milliseconds for the GC step only.
     """
     gc_start = time.monotonic()
-
-    # --- Memory-pressure guard: skip GC if RSS > 5.0 GiB ---
     if not skip_gc:
         try:
             import psutil
-
             process = psutil.Process()
             rss_bytes = process.memory_info().rss
-            rss_gib = rss_bytes / (1024**3)
+            rss_gib = rss_bytes / 1024 ** 3
             if rss_gib > 5.0:
-                logger.debug(
-                    f"[WIPE] RSS={rss_gib:.1f}GiB > 5.0GiB: skipping GC, running madvise only"
-    )
+                logger.debug(f'[WIPE] RSS={rss_gib:.1f}GiB > 5.0GiB: skipping GC, running madvise only')
                 skip_gc = True
-        except Exception:  # noqa: BLE001
-            pass  # psutil unavailable — proceed with GC
-
-    # --- GC collect (generation 2 = all generations) ---
+        except Exception:
+            pass
     if not skip_gc:
-        gc.collect(2)  # generation 2 = all generations, one call
-
-    # --- MLX Metal cache clear ---
+        gc.collect(2)
     try:
         import mlx.core as mx
-
-        mx.eval([])  # eval barrier before clear_cache
-        if hasattr(mx.metal, "clear_cache"):
+        mx.eval([])
+        if hasattr(mx.metal, 'clear_cache'):
             mx.metal.clear_cache()
-    except ImportError:  # noqa: BLE001
+    except ImportError:
         pass
-    except Exception:  # noqa: BLE001
+    except Exception:
         pass
-
-    # --- madvise DONTNEED on entire process heap ---
-    # NOTE: rust.madvise_free_reusable(0, 0, advice) is a NO-OP.
-    # The Rust guard `if length == 0 || addr == 0 { return 0; }` at
-    # rust_extensions/src/madvise.rs:526-527 makes it return success
-    # WITHOUT calling madvise(2). We use ctypes directly here to bypass
-    # the guard. On both Darwin and Linux, madvise(0, 0, MADV_DONTNEED)
-    # applies to the whole address space; the kernel filters inapplicable
-    # regions and discards only heap pages.
     try:
         _ctypes_madvise_dontneed_heap()
     except Exception as exc:
-        logger.debug(f"[WIPE] madvise DONTNEED heap failed: {exc}")
-
+        logger.debug(f'[WIPE] madvise DONTNEED heap failed: {exc}')
     return (time.monotonic() - gc_start) * 1000
-
 
 def _ctypes_madvise_dontneed_heap() -> bool:
     """
@@ -595,21 +453,10 @@ def _ctypes_madvise_dontneed_heap() -> bool:
     """
     try:
         libc = ctypes.CDLL(None)
-        # advice=4 → MADV_DONTNEED (both Darwin and Linux)
-        result = libc.madvise(
-            ctypes.c_void_p(0),  # addr=0: whole address space (kernel filters to heap pages)
-            ctypes.c_size_t(0),  # length=0: whole address space
-            4,  # MADV_DONTNEED
-    )
+        result = libc.madvise(ctypes.c_void_p(0), ctypes.c_size_t(0), 4)
         return result == 0
     except Exception:
         return False
-
-
-# ---------------------------------------------------------------------------
-# EphemeralStateAnnihilator — orchestrator
-# ---------------------------------------------------------------------------
-
 
 class EphemeralStateAnnihilator:
     """
@@ -639,6 +486,7 @@ class EphemeralStateAnnihilator:
         from hledac.universal.security.ephemeral_wipe import EphemeralStateAnnihilator
         await EphemeralStateAnnihilator().annihilate()
     """
+    __slots__ = ('_enabled',)
 
     def __init__(self) -> None:
         self._enabled: bool = _HLEDAC_ENABLE_EPHEMERAL_WIPE == 1
@@ -666,69 +514,37 @@ class EphemeralStateAnnihilator:
               skipped: True if HLEDAC_ENABLE_EPHEMERAL_WIPE=0
         """
         start_total = time.monotonic()
-        result: dict[str, int | float] = {
-            "buffers_wiped": 0,
-            "bytes_wiped": 0,
-            "munlock_count": 0,
-            "dirs_removed": 0,
-            "files_deleted": 0,
-            "gc_ms": 0.0,
-            "total_ms": 0.0,
-            "skipped": not self._enabled,
-        }
-
+        result: dict[str, int | float] = {'buffers_wiped': 0, 'bytes_wiped': 0, 'munlock_count': 0, 'dirs_removed': 0, 'files_deleted': 0, 'gc_ms': 0.0, 'total_ms': 0.0, 'skipped': not self._enabled}
         if not self._enabled:
-            logger.debug("[WIPE] disabled (HLEDAC_ENABLE_EPHEMERAL_WIPE=0)")
+            logger.debug('[WIPE] disabled (HLEDAC_ENABLE_EPHEMERAL_WIPE=0)')
             return result
-
-        logger.debug("[WIPE] starting ephemeral state annihilation...")
-
-        # --- Step 1: munlock all tracked mlock regions ---
+        logger.debug('[WIPE] starting ephemeral state annihilation...')
         try:
-            result["munlock_count"] = kv_cache_munlock()
+            result['munlock_count'] = kv_cache_munlock()
         except Exception as exc:
-            logger.debug(f"[WIPE] kv_cache_munlock failed: {exc}")
-
-        # --- Step 2: wipe bytearrays in all loaded modules ---
+            logger.debug(f'[WIPE] kv_cache_munlock failed: {exc}')
         try:
             import asyncio
-
-            buffers, bytes_wiped = await asyncio.to_thread(
-                wipe_bytearrays_in_namespace, sys.modules
-    )
-            result["buffers_wiped"] = buffers
-            result["bytes_wiped"] = bytes_wiped
+            buffers, bytes_wiped = await asyncio.to_thread(wipe_bytearrays_in_namespace, sys.modules)
+            result['buffers_wiped'] = buffers
+            result['bytes_wiped'] = bytes_wiped
         except Exception as exc:
-            logger.debug(f"[WIPE] wipe_bytearrays_in_namespace failed: {exc}")
-
-        # --- Step 3: purge tempfs artifacts ---
+            logger.debug(f'[WIPE] wipe_bytearrays_in_namespace failed: {exc}')
         try:
             import asyncio
-
             dirs, files = await asyncio.to_thread(tempfs_purge)
-            result["dirs_removed"] = dirs
-            result["files_deleted"] = files
+            result['dirs_removed'] = dirs
+            result['files_deleted'] = files
         except Exception as exc:
-            logger.debug(f"[WIPE] tempfs_purge failed: {exc}")
-
-        # --- Step 4: GC + madvise DONTNEED ---
+            logger.debug(f'[WIPE] tempfs_purge failed: {exc}')
         gc_start = time.monotonic()
         try:
             import asyncio
-
             await asyncio.to_thread(gc_collect_with_madvise)
         except Exception as exc:
-            logger.debug(f"[WIPE] gc_collect_with_madvise failed: {exc}")
-        result["gc_ms"] = (time.monotonic() - gc_start) * 1000
-
-        result["total_ms"] = (time.monotonic() - start_total) * 1000
-
-        # --- Telemetry ---
-        bytes_kib = result["bytes_wiped"] / 1024
-        logger.info(
-            f"[WIPE] annihilated={result['buffers_wiped']}_buffers="
-            f"{bytes_kib:.1f}KiB munlock={result['munlock_count']} "
-            f"gc2={result['gc_ms']:.0f}ms"
-    )
-
+            logger.debug(f'[WIPE] gc_collect_with_madvise failed: {exc}')
+        result['gc_ms'] = (time.monotonic() - gc_start) * 1000
+        result['total_ms'] = (time.monotonic() - start_total) * 1000
+        bytes_kib = result['bytes_wiped'] / 1024
+        logger.info(f"[WIPE] annihilated={result['buffers_wiped']}_buffers={bytes_kib:.1f}KiB munlock={result['munlock_count']} gc2={result['gc_ms']:.0f}ms")
         return result

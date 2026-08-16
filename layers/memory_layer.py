@@ -50,6 +50,16 @@ Refactored with internal classes for M1 8GB optimization:
 - _StealthMemoryManager: Entropy masking for stealth operations
 - _ThermalSampler: Offload-only thermal sampling (not canonical Uma owner)
 """
+
+# Deprecation warning
+import warnings
+warnings.warn(
+    "layers.memory_layer is deprecated and scheduled for consolidation into layers.core.monitoring. "
+    "This module will be merged with the monitoring layer in a future version.",
+    DeprecationWarning,
+    stacklevel=2,
+)
+
 import atexit
 import asyncio
 import gc
@@ -62,6 +72,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 import msgspec
+from compat.msgspec_gc_compat import Struct
 from typing import Any
 _MLX_CORE = None
 
@@ -79,7 +90,7 @@ from hledac.universal.project_types import MemoryConfig, MemoryPressureError, Or
 from hledac.universal.utils.asyncx import safe_create_task
 logger = logging.getLogger(__name__)
 
-class ThermalSnapshot(msgspec.Struct, frozen=True, gc=False):
+class ThermalSnapshot(Struct, frozen=True):
     """Immutable snapshot of thermal reading with TTL tracking."""
     celsius: float | None
     sampled_at_monotonic: float
@@ -229,7 +240,7 @@ class _MemoryStateManager:
             except asyncio.CancelledError:
                 break
             except Exception as e:
-                logger.error(f'Health check error: {e}')
+                logger.error("Health check error: %s", e)
                 await asyncio.sleep(5)
 
     async def _perform_health_check(self) -> SystemMetrics:
@@ -243,7 +254,7 @@ class _MemoryStateManager:
             temperature_c = await self._get_temperature()
             return SystemMetrics(memory_used_mb=memory_used_mb, memory_available_mb=memory_available_mb, cpu_percent=cpu_percent, temperature_c=temperature_c, state=self._current_state, timestamp=__import__('time').time())
         except Exception as e:
-            logger.warning(f'Failed to collect metrics: {e}')
+            logger.warning("Failed to collect metrics: %s", e)
             return SystemMetrics(memory_used_mb=0, memory_available_mb=self.config.memory_limit_mb, cpu_percent=0, temperature_c=None, state=self._current_state, timestamp=__import__('time').time())
 
     async def _get_temperature(self) -> float | None:
@@ -268,14 +279,14 @@ class _MemoryStateManager:
 
     async def _handle_state_transition(self, old_state: SystemState, new_state: SystemState, metrics: SystemMetrics) -> None:
         """Handle system state transition."""
-        logger.warning(f'🚨 System state transition: {old_state.value} → {new_state.value} (Memory: {metrics.memory_used_mb:.0f}MB, CPU: {metrics.cpu_percent:.1f}%)')
+        logger.warning("🚨 System state transition: %s → %s (Memory: %.0fMB, CPU: %.1f%%)", old_state.value, new_state.value, metrics.memory_used_mb, metrics.cpu_percent)
         self._current_state = new_state
         self._state_transitions[new_state.value] += 1
         for callback in self._state_change_callbacks:
             try:
                 callback(old_state, new_state)
             except Exception as e:
-                logger.warning(f'State change callback error: {e}')
+                logger.warning("State change callback error: %s", e)
 
     def on_state_change(self, callback: Callable[[SystemState, SystemState], None]) -> None:
         """Register callback for system state changes."""
@@ -320,7 +331,7 @@ class _StorageCoordinator:
             self._shared_memory_manager = SharedMemoryManager(max_memory_mb=self.config.memory_limit_mb // 2)
             logger.info('✅ SharedMemoryManager initialized')
         except Exception as e:
-            logger.warning(f'⚠️ SharedMemoryManager not available: {e}')
+            logger.warning("⚠️ SharedMemoryManager not available: %s", e)
             self._shared_memory_manager = None
 
     def create_ramdisk(self, size_mb: int | None=None) -> RAMDiskManager:
@@ -339,7 +350,7 @@ class _StorageCoordinator:
             try:
                 return self._shared_memory_manager.create_shared_block(data, data_type, metadata)
             except Exception as e:
-                logger.error(f'Failed to create shared block: {e}')
+                logger.error("Failed to create shared block: %s", e)
         return None
 
     def get_shared_data(self, block_id: str) -> bytes | None:
@@ -391,7 +402,7 @@ class _StealthMemoryManager:
             self._entropy_masking_manager = EntropyMaskingManager(noise_size_mb=50)
             logger.info('✅ EntropyMaskingManager initialized')
         except Exception as e:
-            logger.warning(f'⚠️ EntropyMaskingManager not available: {e}')
+            logger.warning("⚠️ EntropyMaskingManager not available: %s", e)
             self._entropy_masking_manager = None
 
     def inject_entropy_noise(self) -> str | None:
@@ -400,7 +411,7 @@ class _StealthMemoryManager:
             try:
                 return self._entropy_masking_manager.inject_entropy_noise()
             except Exception as e:
-                logger.error(f'Failed to inject entropy noise: {e}')
+                logger.error("Failed to inject entropy noise: %s", e)
         return None
 
     def get_entropy_stats(self) -> dict[str, Any]:
@@ -479,7 +490,7 @@ class MemoryLayer:
         self._deep_hermes_engine = deep_hermes_engine
         self._ctx: Any = None  # Layer Protocol: set in mount()
         self._state_manager.on_state_change(self._on_state_change)
-        logger.info(f'MemoryLayer initialized (limit: {self.config.memory_limit_mb}MB)')
+        logger.info("MemoryLayer initialized (limit: %sMB)", self.config.memory_limit_mb)
     layer_name: str = 'memory'
 
     async def mount(self, ctx: Any) -> None:
@@ -518,7 +529,7 @@ class MemoryLayer:
 
     def _on_state_change(self, old_state: SystemState, new_state: SystemState) -> None:
         """Handle state changes from internal state manager."""
-        logger.debug(f'MemoryLayer state change: {old_state.value} → {new_state.value}')
+        logger.debug("MemoryLayer state change: %s → %s", old_state.value, new_state.value)
 
     async def initialize(self) -> bool:
         """
@@ -537,14 +548,14 @@ class MemoryLayer:
                 else:
                     logger.warning('⚠️ MLX not available - running in CPU mode')
             except Exception as e:
-                logger.warning(f'⚠️ MLX Metal not fully available: {e}')
+                logger.warning("⚠️ MLX Metal not fully available: %s", e)
             await self._storage.initialize()
             await self._stealth.initialize()
             await self._state_manager.start_monitoring()
             logger.info('✅ MemoryLayer initialized successfully')
             return True
         except Exception as e:
-            logger.error(f'❌ MemoryLayer initialization failed: {e}')
+            logger.error("❌ MemoryLayer initialization failed: %s", e)
             return False
 
     def create_ramdisk(self, size_mb: int | None=None) -> RAMDiskManager:
@@ -617,20 +628,20 @@ class MemoryLayer:
             old_state: Previous orchestrator state
             new_state: New orchestrator state
         """
-        logger.info(f'🔄 Context swap: {old_state.value} → {new_state.value}')
+        logger.info("🔄 Context swap: %s → %s", old_state.value, new_state.value)
         try:
             await self._unload_models_for_state(old_state)
             await self._force_gc()
             await self._clear_mlx_cache()
             await self._load_models_for_state(new_state)
             self._context_swaps += 1
-            logger.info(f'✅ Context swap complete (#{self._context_swaps})')
+            logger.info("✅ Context swap complete (#%s)", self._context_swaps)
         except MemoryPressureError:
             logger.error('❌ Memory pressure during transition')
             await self._enter_recovery_mode()
             raise
         except Exception as e:
-            logger.error(f'❌ Context swap failed: {e}')
+            logger.error("❌ Context swap failed: %s", e)
             raise
 
     async def _unload_models_for_state(self, state: OrchestratorState) -> None:
@@ -638,7 +649,7 @@ class MemoryLayer:
         models_to_unload = self._get_models_for_state(state)
         for model_name in models_to_unload:
             if model_name in self._loaded_models:
-                logger.info(f'📤 Unloading model: {model_name}')
+                logger.info("📤 Unloading model: %s", model_name)
                 self._model_states[model_name] = self._save_model_state(model_name)
                 await self._unload_model(model_name)
                 del self._loaded_models[model_name]
@@ -648,7 +659,7 @@ class MemoryLayer:
         models_to_load = self._get_models_for_state(state)
         for model_name in models_to_load:
             if model_name not in self._loaded_models:
-                logger.info(f'📥 Loading model: {model_name}')
+                logger.info("📥 Loading model: %s", model_name)
                 if not await self._check_memory_available():
                     raise MemoryPressureError(f'Not enough memory to load {model_name}')
                 model = await self._load_model(model_name)
@@ -667,7 +678,7 @@ class MemoryLayer:
         Previously loaded a separate BF16 Hermes-3 directly via mlx_lm.load(),
         causing ~6GB Metal allocation independent of DeepHermes3Engine.
         """
-        logger.debug(f'Loading model: {model_name}')
+        logger.debug("Loading model: %s", model_name)
         if model_name == 'hermes-3':
             # M-05: Use the injected engine's already-loaded model reference.
             # DeepHermes3Engine loads via HermesModelCache (4bit, ~2GB) and
@@ -683,7 +694,7 @@ class MemoryLayer:
                     await engine._ensure_model_loaded()
                     model = engine.model
                 except Exception as e:
-                    logger.error(f'M-05: failed to ensure Hermes-3 model loaded: {e}')
+                    logger.error("M-05: failed to ensure Hermes-3 model loaded: %s", e)
                     return None
             if model is not None:
                 logger.debug('M-05: Hermes-3 model shared from DeepHermes3Engine')
@@ -694,7 +705,7 @@ class MemoryLayer:
 
     async def _unload_model(self, model_name: str) -> None:
         """Unload a model"""
-        logger.debug(f'Unloading model: {model_name}')
+        logger.debug("Unloading model: %s", model_name)
 
     def _save_model_state(self, model_name: str) -> dict[str, Any]:
         """Save model state for later restoration"""
@@ -704,7 +715,7 @@ class MemoryLayer:
         """Force garbage collection"""
         gc.collect()
         self._gc_calls += 1
-        logger.debug(f'🗑️ Garbage collection #{self._gc_calls}')
+        logger.debug("🗑️ Garbage collection #%s", self._gc_calls)
 
     async def _clear_mlx_cache(self) -> None:
         """Clear MLX cache"""
@@ -714,11 +725,11 @@ class MemoryLayer:
                 mx.eval([])
                 mx.clear_cache()
                 self._cache_clears += 1
-                logger.debug(f'🧹 MLX cache cleared #{self._cache_clears}')
+                logger.debug("🧹 MLX cache cleared #%s", self._cache_clears)
             else:
                 logger.debug('🧹 MLX not available - skipping cache clear')
         except Exception as e:
-            logger.warning(f'⚠️ Failed to clear MLX cache: {e}')
+            logger.warning("⚠️ Failed to clear MLX cache: %s", e)
 
     async def _apply_memory_mitigation(self) -> None:
         """Apply memory pressure mitigation"""
@@ -800,7 +811,7 @@ import msgspec
 from _core import aclose
 
 
-class RAMDiskConfig(msgspec.Struct, frozen=True, kw_only=True, gc=False):
+class RAMDiskConfig(Struct, frozen=True, kw_only=True):
     """
     Configuration for RAM disk creation (ISSUE-033: migrated from @dataclass to msgspec.Struct).
 
@@ -820,7 +831,7 @@ class RAMDiskConfig(msgspec.Struct, frozen=True, kw_only=True, gc=False):
     min_memory_mb: int = 1024
     max_memory_usage_percent: float = 0.3
 
-class SharedMemoryBlock(msgspec.Struct, frozen=True, gc=False):
+class SharedMemoryBlock(Struct, frozen=True):
     """Metadata for a shared memory block."""
     block_id: str
     size: int
@@ -829,7 +840,7 @@ class SharedMemoryBlock(msgspec.Struct, frozen=True, gc=False):
     data_type: str
     metadata: dict[str, Any]
 
-class ProcessMessage(msgspec.Struct, frozen=True, gc=False):
+class ProcessMessage(Struct, frozen=True):
     """Inter-process communication message."""
     message_type: str
     block_id: str | None = None
@@ -895,7 +906,7 @@ class RAMDiskManager:
             raise MemoryError(f'Insufficient memory: {available_mb}MB available, {self.config.min_memory_mb}MB required')
         max_size_mb = int(available_mb * self.config.max_memory_usage_percent)
         optimal_size = min(self.config.size_mb, max_size_mb)
-        logger.info(f'Available memory: {available_mb}MB, RAM disk size: {optimal_size}MB')
+        logger.info("Available memory: %sMB, RAM disk size: %sMB", available_mb, optimal_size)
         return optimal_size
 
     def create_ramdisk(self, size_mb: int | None=None) -> str:
@@ -929,8 +940,8 @@ class RAMDiskManager:
             self.is_attached = True
             if self.device_path:
                 _mngr_registry[self.device_path] = self
-            logger.info(f'RAM disk created: {self.device_path} -> {self.mount_path}')
-            logger.info(f'Size: {size_mb}MB, Speed: ~60GB/s')
+            logger.info("RAM disk created: %s -> %s", self.device_path, self.mount_path)
+            logger.info("Size: %sMB, Speed: ~60GB/s", size_mb)
             return str(self.mount_path)
         except Exception as e:
             if isinstance(e, subprocess.CalledProcessError):
@@ -955,7 +966,7 @@ class RAMDiskManager:
         paths = self.get_integration_paths()
         for name, path in paths.items():
             Path(path).mkdir(parents=True, exist_ok=True)
-            logger.debug(f'Created directory: {name} -> {path}')
+            logger.debug("Created directory: %s -> %s", name, path)
         return paths
 
     def get_performance_stats(self) -> dict[str, Any]:
@@ -970,7 +981,7 @@ class RAMDiskManager:
                 stats = {'status': 'attached_no_mount'}
             return stats
         except Exception as e:
-            logger.error(f'Error getting stats: {e}')
+            logger.error("Error getting stats: %s", e)
             return {'status': 'error', 'error': str(e)}
 
     def nuke(self) -> bool:
@@ -998,7 +1009,7 @@ class RAMDiskManager:
             self.mount_path = None
             return True
         except subprocess.CalledProcessError as e:
-            logger.error(f'RAM disk nuke failed: {e.stderr}')
+            logger.error("RAM disk nuke failed: %s", e.stderr)
             self.is_attached = False
             self.device_path = None
             self.mount_path = None
@@ -1027,7 +1038,7 @@ class RAMDiskManager:
         """Context manager exit - always nuke on exit"""
         self.nuke()
         if exc_type:
-            logger.error(f'RAM disk error: {exc_val}')
+            logger.error("RAM disk error: %s", exc_val)
 
     def shutdown(self) -> bool:
         """Explicit shutdown – calls nuke() if attached."""
@@ -1081,27 +1092,27 @@ class SharedMemoryManager:
             current_usage = sum((block.size for block in self.active_blocks.values()))
             if current_usage > self.stats['peak_memory_usage']:
                 self.stats['peak_memory_usage'] = current_usage
-            logger.info(f'Created shared block {block_id}: {len(data)} bytes ({data_type})')
+            logger.info("Created shared block %s: %s bytes (%s)", block_id, len(data), data_type)
             return block_id
         except Exception as e:
-            logger.error(f'Failed to create shared block: {e}')
+            logger.error("Failed to create shared block: %s", e)
             raise
 
     def get_shared_data(self, block_id: str) -> bytes | None:
         """Retrieve data from shared memory block (zero-copy read)."""
         try:
             if block_id not in self.shared_memory_objects:
-                logger.warning(f'Shared block {block_id} not found')
+                logger.warning("Shared block %s not found", block_id)
                 return None
             shared_mem = self.shared_memory_objects[block_id]
             block_info = self.active_blocks[block_id]
             if block_info is None:
                 return None
             data = bytes(shared_mem.buf[:block_info.size])
-            logger.debug(f'Retrieved {len(data)} bytes from block {block_id}')
+            logger.debug("Retrieved %s bytes from block %s", len(data), block_id)
             return data
         except Exception as e:
-            logger.error(f'Failed to retrieve shared data from {block_id}: {e}')
+            logger.error("Failed to retrieve shared data from %s: %s", block_id, e)
             return None
 
     def release_block(self, block_id: str) -> bool:
@@ -1116,11 +1127,11 @@ class SharedMemoryManager:
                 del self.active_blocks[block_id]
                 self.stats['active_blocks'] = len(self.active_blocks)
                 self.stats['cleanup_operations'] += 1
-                logger.info(f'Released shared block {block_id}: {block_info.size} bytes')
+                logger.info("Released shared block %s: %s bytes", block_id, block_info.size)
                 return True
             return False
         except Exception as e:
-            logger.error(f'Failed to release block {block_id}: {e}')
+            logger.error("Failed to release block %s: %s", block_id, e)
             return False
 
     def cleanup_all_blocks(self) -> int:
@@ -1130,7 +1141,7 @@ class SharedMemoryManager:
         for block_id in block_ids:
             if self.release_block(block_id):
                 cleaned_count += 1
-        logger.info(f'Cleaned up {cleaned_count} shared memory blocks')
+        logger.info("Cleaned up %s shared memory blocks", cleaned_count)
         return cleaned_count
 
     def get_statistics(self) -> dict[str, Any]:
@@ -1168,7 +1179,7 @@ class EntropyMaskingManager:
         self.noise_blocks: dict[str, mmap.mmap] = {}
         self.noise_content = self._generate_noise_content()
         self.active_masking = False
-        logger.info(f'EntropyMaskingManager initialized with {noise_size_mb}MB noise buffer')
+        logger.info("EntropyMaskingManager initialized with %sMB noise buffer", noise_size_mb)
 
     def _generate_noise_content(self) -> bytes:
         """Generate repetitive content that appears as normal application data."""
@@ -1202,11 +1213,11 @@ class EntropyMaskingManager:
             with open(temp_path, 'r+b') as f:
                 noise_mmap = mmap.mmap(f.fileno(), 0)
                 self.noise_blocks[block_id] = noise_mmap
-            logger.info(f'Injected entropy noise block {block_id}: {self.noise_size_bytes} bytes')
+            logger.info("Injected entropy noise block %s: %s bytes", block_id, self.noise_size_bytes)
             self.active_masking = True
             return block_id
         except Exception as e:
-            logger.error(f'Failed to inject entropy noise: {e}')
+            logger.error("Failed to inject entropy noise: %s", e)
             raise
 
     def calculate_shannon_entropy(self, data: bytes) -> float:

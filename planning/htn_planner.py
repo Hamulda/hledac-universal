@@ -13,6 +13,7 @@ import time
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 import msgspec
+from compat.msgspec_gc_compat import Struct
 from hledac.universal._core.resource_governor import Priority, ResourceGovernor
 from hledac.universal.utils.asyncx import parallel_ok
 if TYPE_CHECKING:
@@ -24,7 +25,7 @@ from hledac.universal.utils._patterns import async_cleanup  # F320: DRY cleanup 
 from _core import aclose
 logger = logging.getLogger(__name__)
 
-class PlannerRuntimeRequest(msgspec.Struct, frozen=True, gc=False):
+class PlannerRuntimeRequest(Struct, frozen=True):
     """Typed request from planner to Hermes runtime. Replaces raw task dicts."""
     task_id: str
     task_type: str
@@ -34,7 +35,7 @@ class PlannerRuntimeRequest(msgspec.Struct, frozen=True, gc=False):
     remaining_time_s: float | None
     is_panic_deprioritized: bool
 
-class PlannerRuntimeResult(msgspec.Struct, frozen=True, gc=False):
+class PlannerRuntimeResult(Struct, frozen=True):
     """Typed result from Hermes runtime back to caller."""
     task_id: str
     executed: bool

@@ -53,7 +53,7 @@ pub fn dot_product_f32(a: Vec<f32>, b: Vec<f32>) -> f32 {
 
 /// Register simd module.
 pub fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
-    m.add_function(wrap_pyfunction!(simd_feature_level, m)?)?;
-    m.add_function(wrap_pyfunction!(dot_product_f32, m)?)?;
+    m.add_function(wrap_pyfunction!(simd_feature_level)?);
+    m.add_function(wrap_pyfunction!(dot_product_f32)?);
     Ok(())
 }

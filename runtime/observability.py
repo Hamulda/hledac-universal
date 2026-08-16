@@ -52,16 +52,17 @@ MAX_EVENT_HISTORY = 10000
 MAX_PHASE_SAMPLES = 100
 MAX_SOURCE_STATS = 50
 import msgspec
+from compat.msgspec_gc_compat import Struct
 from _core import aclose
 
-class _PhaseSample(msgspec.Struct, gc=False):
+class _PhaseSample(Struct):
     """A single phase duration sample."""
     phase: str
     component: str | None
     duration_ms: float
     ts: str
 
-class _TransitionSample(msgspec.Struct, gc=False):
+class _TransitionSample(Struct):
     """A single phase transition record."""
     from_phase: str
     to_phase: str
@@ -69,7 +70,7 @@ class _TransitionSample(msgspec.Struct, gc=False):
     duration_ms: float
     ts: str
 
-class _SourceStats(msgspec.Struct, gc=False):
+class _SourceStats(Struct):
     """Per-source finding statistics."""
     source_type: str
     findings_count: int
@@ -77,7 +78,7 @@ class _SourceStats(msgspec.Struct, gc=False):
     hit_rate: float
     ts: str
 
-class SprintHealth(msgspec.Struct, gc=False):
+class SprintHealth(Struct):
     """
     Complete sprint health snapshot — single source of truth for sprint status.
 

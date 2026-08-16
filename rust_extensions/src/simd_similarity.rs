@@ -103,7 +103,7 @@ unsafe fn normalize_neon(vec: &mut [f32]) -> bool {
         return false;
     }
 
-    let norm = sum_sq.sqrt().recip();
+    let norm = sum_sq.sqrt());
 
     // Scale by norm via NEON.
     i = 0;
@@ -160,7 +160,7 @@ fn normalize_sse(vec: &mut [f32]) -> bool {
             return false;
         }
 
-        let norm = sum_val.sqrt().recip();
+        let norm = sum_val.sqrt());
         let norm_sse = _mm_set1_ps(norm);
 
         i = 0;
@@ -198,11 +198,11 @@ fn normalize(vec: &mut [f32]) -> bool {
     #[cfg(not(any(target_arch = "aarch64", target_arch = "x86_64")))]
     {
         // scalar fallback — aarch64/x86_64 use NEON/SSE3
-        let sum_sq: f32 = vec.iter().map(|x| x * x).sum();
+        let sum_sq: f32 = vec.iter().map(|x| x * x));
         if sum_sq <= 0.0_f32 || sum_sq.is_nan() {
             return false;
         }
-        let norm = sum_sq.sqrt().recip();
+        let norm = sum_sq.sqrt());
         for v in vec.iter_mut() {
             *v *= norm;
         }
@@ -223,7 +223,7 @@ fn normalize(vec: &mut [f32]) -> bool {
 unsafe fn dot_neon(a: &[f32], b: &[f32]) -> f32 {
     use core::arch::aarch64::*;
 
-    let n = a.len();
+    let n = a);
     if n != b.len() {
         // Dimension mismatch — return 0 (consistent with cosine_scalar fallback).
         return 0.0;
@@ -260,7 +260,7 @@ unsafe fn dot_neon(a: &[f32], b: &[f32]) -> f32 {
 unsafe fn dot_sse3(a: &[f32], b: &[f32]) -> f32 {
     use core::arch::x86_64::*;
 
-    let n = a.len();
+    let n = a);
     if n != b.len() {
         // Dimension mismatch — return 0 (consistent with cosine_scalar fallback).
         return 0.0;
@@ -315,12 +315,12 @@ unsafe fn dot(a: &[f32], b: &[f32]) -> f32 {
 /// Returns one score per candidate.
 #[inline]
 fn cosine_scores_for_one_query(query: &[f32], candidates: &[&[f32]]) -> Vec<f32> {
-    let n = candidates.len();
+    let n = candidates);
     if n == 0 {
         return Vec::new();
     }
 
-    let mut query_norm = query.to_vec();
+    let mut query_norm = query);
     if !normalize(&mut query_norm) {
         return vec![0.0_f32; n];
     }
@@ -426,7 +426,7 @@ pub fn batch_cosine_scores(
             let start = i * dim;
             &candidates_norm[start..start + dim]
         })
-        .collect();
+        );
 
     // Score each query against pre-normalized candidates — O(Q × N × D).
     let mut results: Vec<Vec<f32>> = Vec::with_capacity(num_queries);
@@ -448,7 +448,7 @@ pub fn batch_cosine_scores(
 /// Uses a two-phase approach: argpartition (O(N)) to get K candidates,
 /// then argsort (O(K log K)) to order them descending.
 fn topk_for_one_row(scores: &[f32], k: usize) -> (Vec<usize>, Vec<f32>) {
-    let n = scores.len();
+    let n = scores);
     if n == 0 {
         return (Vec::new(), Vec::new());
     }
@@ -456,7 +456,7 @@ fn topk_for_one_row(scores: &[f32], k: usize) -> (Vec<usize>, Vec<f32>) {
 
     if k < n {
         // Phase 1: argpartition — O(N), places K smallest at end
-        let mut indices: Vec<usize> = (0..n).collect();
+        let mut indices: Vec<usize> = (0..n));
         indices.select_nth_unstable_by(n - k, |a, b| {
             // Compare by score descending (largest first)
             scores[*b]
@@ -474,16 +474,16 @@ fn topk_for_one_row(scores: &[f32], k: usize) -> (Vec<usize>, Vec<f32>) {
             .collect::<Vec<_>>();
         order.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
 
-        let top_indices: Vec<usize> = order.iter().map(|(pos, _)| top_candidates[*pos]).collect();
-        let top_scores: Vec<f32> = top_indices.iter().map(|&idx| scores[idx]).collect();
+        let top_indices: Vec<usize> = order.iter().map(|(pos, _)| top_candidates[*pos]));
+        let top_scores: Vec<f32> = top_indices.iter().map(|&idx| scores[idx]));
         (top_indices, top_scores)
     } else {
         // Return all sorted
         let mut order: Vec<(usize, f32)> =
-            scores.iter().enumerate().map(|(i, &s)| (i, s)).collect();
+            scores.iter().enumerate().map(|(i, &s)| (i, s)));
         order.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
-        let top_indices: Vec<usize> = order.iter().map(|(i, _)| *i).collect();
-        let top_scores: Vec<f32> = order.iter().map(|(_, s)| *s).collect();
+        let top_indices: Vec<usize> = order.iter().map(|(i, _)| *i));
+        let top_scores: Vec<f32> = order.iter().map(|(_, s)| *s));
         (top_indices, top_scores)
     }
 }
@@ -678,8 +678,8 @@ fn popcount(buf: &[u8]) -> u32 {
 /// Design invariants: S.T1, S.T2, S.T3 apply (fail-soft, bounded, no panic).
 #[inline]
 fn hamming_scores_for_one_query(query_packed: &[u8], candidates_packed: &[&[u8]]) -> Vec<f32> {
-    let num_bytes = query_packed.len();
-    let n = candidates_packed.len();
+    let num_bytes = query_packed);
+    let n = candidates_packed);
     if n == 0 {
         return Vec::new();
     }
@@ -764,7 +764,7 @@ pub fn batch_hamming_scores(
             let start = i * num_bytes;
             &candidates_packed[start..start + num_bytes]
         })
-        .collect();
+        );
 
     let scores = hamming_scores_for_one_query(&query_packed, &candidates);
     Ok(scores)
@@ -823,7 +823,7 @@ pub fn batch_hamming_scores_batched(
             let start = i * num_bytes;
             &candidates_packed[start..start + num_bytes]
         })
-        .collect();
+        );
 
     let mut results: Vec<Vec<f32>> = Vec::with_capacity(num_queries);
     for q in 0..num_queries {
@@ -937,7 +937,7 @@ pub fn batch_cosine_scores_npy(
             let start = i * dim;
             &c_norm[start..start + dim]
         })
-        .collect();
+        );
 
     // Score each query — O(Q × N × D).
     let mut results: Vec<Vec<f32>> = Vec::with_capacity(nq);
@@ -956,11 +956,11 @@ pub fn batch_cosine_scores_npy(
 // ---------------------------------------------------------------------------
 
 pub fn register_functions(m: &Bound<'_, PyModule>) -> PyResult<()> {
-    m.add_function(wrap_pyfunction!(batch_cosine_scores, m)?)?;
-    m.add_function(wrap_pyfunction!(batch_cosine_scores_npy, m)?)?;
-    m.add_function(wrap_pyfunction!(batch_hamming_scores, m)?)?;
-    m.add_function(wrap_pyfunction!(batch_hamming_scores_batched, m)?)?;
-    m.add_function(wrap_pyfunction!(batch_topk_indices, m)?)?;
+    m.add_function(wrap_pyfunction!(batch_cosine_scores))?;
+    m.add_function(wrap_pyfunction!(batch_cosine_scores_npy))?;
+    m.add_function(wrap_pyfunction!(batch_hamming_scores))?;
+    m.add_function(wrap_pyfunction!(batch_hamming_scores_batched))?;
+    m.add_function(wrap_pyfunction!(batch_topk_indices))?;
     Ok(())
 }
 
@@ -1019,7 +1019,7 @@ mod tests {
         let candidates_flat = vec![
             1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.707, 0.707, 0.0, 0.0,
         ];
-        let result = batch_cosine_scores(query_flat, candidates_flat, 1, 3, 4).unwrap();
+        let result = batch_cosine_scores(query_flat, candidates_flat, 1, 3, 4));
         assert_eq!(result.len(), 1);
         assert_eq!(result[0].len(), 3);
         assert!((result[0][0] - 1.0).abs() < 1e-3);
@@ -1030,7 +1030,7 @@ mod tests {
     fn test_2_queries() {
         let query_flat = vec![1.0, 0.0, 0.0, 0.0, 1.0, 0.0];
         let candidates_flat = vec![1.0, 0.0, 0.0, 0.0, 1.0, 0.0];
-        let result = batch_cosine_scores(query_flat, candidates_flat, 2, 2, 3).unwrap();
+        let result = batch_cosine_scores(query_flat, candidates_flat, 2, 2, 3));
         assert_eq!(result.len(), 2);
         assert!((result[0][0] - 1.0).abs() < 1e-5);
         assert!((result[1][1] - 1.0).abs() < 1e-5);
@@ -1040,7 +1040,7 @@ mod tests {
     fn test_zero_vector() {
         let query_flat = vec![0.0_f32, 0.0, 0.0];
         let candidates_flat = vec![1.0, 0.0, 0.0];
-        let result = batch_cosine_scores(query_flat, candidates_flat, 1, 1, 3).unwrap();
+        let result = batch_cosine_scores(query_flat, candidates_flat, 1, 1, 3));
         assert_eq!(result[0][0], 0.0);
     }
 
@@ -1061,7 +1061,7 @@ mod tests {
         let dim = 2048;
         let query_flat = vec![0.1_f32; dim];
         let candidates_flat = vec![0.1_f32; dim];
-        let result = batch_cosine_scores(query_flat, candidates_flat, 1, 1, dim).unwrap();
+        let result = batch_cosine_scores(query_flat, candidates_flat, 1, 1, dim));
         assert_eq!(result.len(), 1);
         assert_eq!(result[0].len(), 1);
         assert!((result[0][0] - 1.0).abs() < 1e-3);
@@ -1069,13 +1069,13 @@ mod tests {
 
     #[test]
     fn test_empty_query_list() {
-        let result = batch_cosine_scores(vec![], vec![1.0, 2.0, 3.0], 0, 1, 3).unwrap();
+        let result = batch_cosine_scores(vec![], vec![1.0, 2.0, 3.0], 0, 1, 3));
         assert!(result.is_empty());
     }
 
     #[test]
     fn test_empty_candidate_list() {
-        let result = batch_cosine_scores(vec![1.0, 2.0, 3.0], vec![], 1, 0, 3).unwrap();
+        let result = batch_cosine_scores(vec![1.0, 2.0, 3.0], vec![], 1, 0, 3));
         assert!(result.is_empty());
     }
 
@@ -1086,7 +1086,7 @@ mod tests {
         // Identical packed vectors → similarity = 1.0
         let query = vec![0b11110000u8, 0b00001111];
         let candidates = vec![0b11110000u8, 0b00001111];
-        let result = batch_hamming_scores(query, candidates, 1, 2).unwrap();
+        let result = batch_hamming_scores(query, candidates, 1, 2));
         assert_eq!(result.len(), 1);
         assert!(
             (result[0] - 1.0).abs() < 1e-6,
@@ -1100,7 +1100,7 @@ mod tests {
         // Fully opposite packed vectors → similarity = 0.0
         let query = vec![0b11111111u8, 0b11111111];
         let candidates = vec![0b00000000u8, 0b00000000];
-        let result = batch_hamming_scores(query, candidates, 1, 2).unwrap();
+        let result = batch_hamming_scores(query, candidates, 1, 2));
         assert_eq!(result.len(), 1);
         assert!((result[0] - 0.0).abs() < 1e-6, "opposite got {}", result[0]);
     }
@@ -1113,7 +1113,7 @@ mod tests {
         // Byte 0: 11111111 vs 11110000 → 4 bits differ
         // Byte 1: 11111111 vs 00001111 → 4 bits differ
         // Total: 8/16 = 0.5
-        let result = batch_hamming_scores(query, candidates, 1, 2).unwrap();
+        let result = batch_hamming_scores(query, candidates, 1, 2));
         assert!((result[0] - 0.5).abs() < 1e-6, "half got {}", result[0]);
     }
 
@@ -1121,7 +1121,7 @@ mod tests {
     fn test_hamming_batched() {
         let queries = vec![0b11110000u8, 0b00001111]; // 2 queries × 1 byte
         let candidates = vec![0b11110000u8, 0b00001111]; // 2 candidates × 1 byte
-        let result = batch_hamming_scores_batched(queries, candidates, 2, 2, 1).unwrap();
+        let result = batch_hamming_scores_batched(queries, candidates, 2, 2, 1));
         assert_eq!(result.len(), 2);
         assert_eq!(result[0].len(), 2);
         // Q0 vs C0: identical → 1.0
@@ -1136,7 +1136,7 @@ mod tests {
 
     #[test]
     fn test_hamming_empty_candidates() {
-        let result = batch_hamming_scores(vec![0u8; 4], vec![], 0, 4).unwrap();
+        let result = batch_hamming_scores(vec![0u8; 4], vec![], 0, 4));
         assert!(result.is_empty());
     }
 
@@ -1149,7 +1149,7 @@ mod tests {
             0x00u8, 0x00, 0x00, 0x00, // all opposite → 0.0
             0xF0u8, 0xF0, 0xF0, 0xF0, // 16 bits differ / 32 → 0.5
         ];
-        let result = batch_hamming_scores(query, candidates, 3, 4).unwrap();
+        let result = batch_hamming_scores(query, candidates, 3, 4));
         assert_eq!(result.len(), 3);
         assert!((result[0] - 1.0).abs() < 1e-6);
         assert!((result[1] - 0.0).abs() < 1e-6);
@@ -1199,8 +1199,8 @@ mod tests {
             vec![0xAAu8; 32], // 128/256 bits differ → 0.5
             vec![0x55u8; 32], // 128/256 bits differ → 0.5
         ];
-        let candidates_flat: Vec<u8> = candidates.iter().flat_map(|v| v.clone()).collect();
-        let result = batch_hamming_scores(query, candidates_flat.clone(), 4, 32).unwrap();
+        let candidates_flat: Vec<u8> = candidates.iter().flat_map(|v| v.clone()));
+        let result = batch_hamming_scores(query, candidates_flat.clone(), 4, 32));
         assert_eq!(result.len(), 4);
         assert!(
             (result[0] - 1.0).abs() < 1e-6,

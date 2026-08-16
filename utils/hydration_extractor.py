@@ -17,6 +17,7 @@ import re
 from typing import Final, TypeAlias
 
 import msgspec
+from compat.msgspec_gc_compat import Struct
 import orjson
 from _core import aclose
 
@@ -61,7 +62,7 @@ _RE_SKIP_TAGS: re.Pattern = re.compile(
 # ---------------------------------------------------------------------------
 
 
-class HydrationExtractionResult(msgspec.Struct, gc=False):
+class HydrationExtractionResult(Struct):
     """
     Result of static hydration extraction from HTML.
 

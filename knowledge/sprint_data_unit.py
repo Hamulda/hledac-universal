@@ -58,9 +58,7 @@ M1 8GB OPTIMIZATIONS
 - DuckDB uses Arrow IPC for zero-copy columnar data
 - No per-item persistence on hot path — batch commit only
 """
-
 from __future__ import annotations
-
 import logging as _logging
 import time as _time
 import weakref
@@ -68,28 +66,21 @@ from dataclasses import dataclass, field
 from enum import Enum, auto
 from typing import TYPE_CHECKING, Any
 from collections.abc import Iterator
-
 logger = _logging.getLogger(__name__)
-
 from hledac.universal.compat.msgspec_gc_compat import Struct
 from _core import aclose
-
 if TYPE_CHECKING:
     from hledac.universal.knowledge.target_memory import TargetMemoryUpdate
 
-# ─── Provenance Record (Immutable) ───────────────────────────────────────────
-
-
 class ProvenanceProtocol(Enum):
     """Supported source protocols for provenance tracking."""
-    HTTP = "http"
-    HTTPS = "https"
-    FILE = "file"
-    STDIN = "stdin"
-    IPC = "ipc"
-    MEMORY = "memory"
-    UNKNOWN = "unknown"
-
+    HTTP = 'http'
+    HTTPS = 'https'
+    FILE = 'file'
+    STDIN = 'stdin'
+    IPC = 'ipc'
+    MEMORY = 'memory'
+    UNKNOWN = 'unknown'
 
 @dataclass(frozen=True, slots=True)
 class ProvenanceRecord:
@@ -106,55 +97,41 @@ class ProvenanceRecord:
     """
     byte_offset: int = 0
     timestamp: float = field(default_factory=_time.time)
-    source: str = ""
+    source: str = ''
     protocol: ProvenanceProtocol = ProvenanceProtocol.UNKNOWN
-    raw_source_type: str = ""  # Original source_type string before normalization
+    raw_source_type: str = ''
 
     def __post_init__(self) -> None:
-        # Validate non-empty source for non-memory protocols
         if self.protocol not in (ProvenanceProtocol.MEMORY, ProvenanceProtocol.UNKNOWN):
             if not self.source:
-                raise ValueError(f"ProvenanceRecord requires non-empty source for protocol {self.protocol.value}")
+                raise ValueError(f'ProvenanceRecord requires non-empty source for protocol {self.protocol.value}')
 
     def to_dict(self) -> dict[str, Any]:
         """Serialize to dict for DuckDB storage."""
-        return {
-            "byte_offset": self.byte_offset,
-            "timestamp": self.timestamp,
-            "source": self.source,
-            "protocol": self.protocol.value,
-            "raw_source_type": self.raw_source_type,
-        }
+        return {'byte_offset': self.byte_offset, 'timestamp': self.timestamp, 'source': self.source, 'protocol': self.protocol.value, 'raw_source_type': self.raw_source_type}
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> ProvenanceRecord:
         """Deserialize from dict."""
-        protocol = ProvenanceProtocol(data.get("protocol", "unknown"))
-        return cls(
-            byte_offset=data.get("byte_offset", 0),
-            timestamp=data.get("timestamp", _time.time()),
-            source=data.get("source", ""),
-            protocol=protocol,
-            raw_source_type=data.get("raw_source_type", ""),
-    )
+        protocol = ProvenanceProtocol(data.get('protocol', 'unknown'))
+        return cls(byte_offset=data.get('byte_offset', 0), timestamp=data.get('timestamp', _time.time()), source=data.get('source', ''), protocol=protocol, raw_source_type=data.get('raw_source_type', ''))
 
     @classmethod
-    def from_source(cls, source: str, timestamp: float | None = None) -> ProvenanceRecord:
+    def from_source(cls, source: str, timestamp: float | None=None) -> ProvenanceRecord:
         """Create provenance from a source string (auto-detect protocol)."""
         import urllib.parse as _parse
         ts = timestamp if timestamp is not None else _time.time()
-        if source.startswith("http://"):
+        if source.startswith('http://'):
             return cls(timestamp=ts, source=source, protocol=ProvenanceProtocol.HTTP)
-        elif source.startswith("https://"):
+        elif source.startswith('https://'):
             return cls(timestamp=ts, source=source, protocol=ProvenanceProtocol.HTTPS)
-        elif source.startswith("file://") or "/" in source:
+        elif source.startswith('file://') or '/' in source:
             return cls(timestamp=ts, source=source, protocol=ProvenanceProtocol.FILE)
-        elif source == "<stdin>":
+        elif source == '<stdin>':
             return cls(timestamp=ts, source=source, protocol=ProvenanceProtocol.STDIN)
-        elif source.startswith("ipc://"):
+        elif source.startswith('ipc://'):
             return cls(timestamp=ts, source=source, protocol=ProvenanceProtocol.IPC)
         else:
-            # Try to parse as URL
             parsed = _parse.urlparse(source)
             if parsed.scheme:
                 try:
@@ -164,10 +141,6 @@ class ProvenanceRecord:
                 return cls(timestamp=ts, source=source, protocol=protocol)
             return cls(timestamp=ts, source=source, protocol=ProvenanceProtocol.UNKNOWN)
 
-
-# ─── IOC Entity Record ────────────────────────────────────────────────────────
-
-
 @dataclass(slots=True)
 class IOCEntity:
     """
@@ -176,29 +149,17 @@ class IOCEntity:
     Contains the IOC value and type along with metadata.
     """
     value: str
-    ioc_type: str  # Must be a valid IOC type (not "pending")
+    ioc_type: str
     confidence: float = 0.5
     observed_at: float = field(default_factory=_time.time)
-    raw_ioc_type: str = ""  # Original type before validation (for provenance)
+    raw_ioc_type: str = ''
 
     def __post_init__(self) -> None:
-        # Validate ioc_type is not "pending" — this is a type loss indicator
-        if self.ioc_type == "pending":
+        if self.ioc_type == 'pending':
             if self.raw_ioc_type:
-                raise ValueError(
-                    f"IOC type was demoted to 'pending' from '{self.raw_ioc_type}'. "
-                    "This indicates provenance information loss. "
-                    "Preserve the original type and use 'pending_confidence' field instead."
-    )
+                raise ValueError(f"IOC type was demoted to 'pending' from '{self.raw_ioc_type}'. This indicates provenance information loss. Preserve the original type and use 'pending_confidence' field instead.")
             else:
-                raise ValueError(
-                    "IOC type 'pending' is not allowed in SprintDataUnit. "
-                    "Use the original type with a separate 'classification_status' field."
-    )
-
-
-# ─── IOC Relation Record ──────────────────────────────────────────────────────
-
+                raise ValueError("IOC type 'pending' is not allowed in SprintDataUnit. Use the original type with a separate 'classification_status' field.")
 
 @dataclass(slots=True)
 class IOCRelation:
@@ -211,12 +172,8 @@ class IOCRelation:
     dst_value: str
     rel_type: str
     weight: float = 1.0
-    evidence: str = ""
+    evidence: str = ''
     observed_at: float = field(default_factory=_time.time)
-
-
-# ─── Sprint Data Unit ─────────────────────────────────────────────────────────
-
 
 @dataclass(slots=True)
 class SprintDataUnit:
@@ -234,30 +191,17 @@ class SprintDataUnit:
             provenance=ProvenanceRecord.from_source("https://example.com")
     )
     """
-    # Core finding data
     finding: dict[str, Any] | None = None
     raw_bytes: bytes | None = None
-
-    # IOC graph components
     ioc_entities: list[IOCEntity] = field(default_factory=list)
     ioc_relations: list[IOCRelation] = field(default_factory=list)
-
-    # Target memory updates
     target_memory_updates: list[dict[str, Any]] = field(default_factory=list)
-
-    # Provenance (REQUIRED — immutable)
     provenance: ProvenanceRecord | None = None
-
-    # Classification status for unknown types
-    classification_status: str = "classified"  # "classified" | "pending_review" | "unknown"
+    classification_status: str = 'classified'
 
     def __post_init__(self) -> None:
-        # Provenance is REQUIRED
         if self.provenance is None:
-            raise ValueError(
-                "SprintDataUnit requires provenance. "
-                "Every data item must have an immutable provenance record."
-    )
+            raise ValueError('SprintDataUnit requires provenance. Every data item must have an immutable provenance record.')
 
     def validate(self) -> list[str]:
         """
@@ -266,36 +210,22 @@ class SprintDataUnit:
         Returns list of validation errors (empty if valid).
         """
         errors: list[str] = []
-
-        # Check provenance
         if self.provenance is None:
-            errors.append("Provenance is required")
-        elif not self.provenance.source and self.provenance.protocol not in (
-            ProvenanceProtocol.MEMORY,
-            ProvenanceProtocol.UNKNOWN
-        ):
-            errors.append(f"Provenance source is empty for protocol {self.provenance.protocol}")
-
-        # Check IOC entities
+            errors.append('Provenance is required')
+        elif not self.provenance.source and self.provenance.protocol not in (ProvenanceProtocol.MEMORY, ProvenanceProtocol.UNKNOWN):
+            errors.append(f'Provenance source is empty for protocol {self.provenance.protocol}')
         for i, entity in enumerate(self.ioc_entities):
-            if entity.ioc_type == "pending":
+            if entity.ioc_type == 'pending':
                 errors.append(f"IOC entity[{i}] has type 'pending' (type loss indicator)")
             if not entity.value:
-                errors.append(f"IOC entity[{i}] has empty value")
-
-        # Check relations reference valid entities
+                errors.append(f'IOC entity[{i}] has empty value')
         entity_values = {e.value for e in self.ioc_entities}
         for i, rel in enumerate(self.ioc_relations):
             if rel.src_value not in entity_values:
                 errors.append(f"IOC relation[{i}] src '{rel.src_value}' not in entities")
             if rel.dst_value not in entity_values:
                 errors.append(f"IOC relation[{i}] dst '{rel.dst_value}' not in entities")
-
         return errors
-
-
-# ─── Transaction State ────────────────────────────────────────────────────────
-
 
 class TransactionPhase(Enum):
     """Phase of the atomic transaction."""
@@ -310,8 +240,7 @@ class TransactionPhase(Enum):
     ROLLED_BACK = auto()
     FAILED = auto()
 
-
-@dataclass
+@dataclass(slots=True)
 class SprintTransactionState:
     """
     Mutable state for a SprintTransaction.
@@ -321,31 +250,20 @@ class SprintTransactionState:
     phase: TransactionPhase = TransactionPhase.PENDING
     unit: SprintDataUnit | None = None
     finding_id: str | None = None
-    ioc_node_ids: dict[str, int] = field(default_factory=dict)  # value → node_id
+    ioc_node_ids: dict[str, int] = field(default_factory=dict)
     written_raw_bytes: bool = False
     written_finding: bool = False
     written_ioc_entities: bool = False
     written_ioc_relations: bool = False
     written_target_memory: bool = False
-    # MODERN-25 ISSUE-FIX: Track buffered hot edges for transaction-scoped rollback
-    hot_edges_buffer_snapshot: int = 0  # _DENORM_BUFFER size at transaction start
-    written_hot_edges: list[tuple[int, int]] = field(default_factory=list)  # (src_id, dst_id) pairs
+    hot_edges_buffer_snapshot: int = 0
+    written_hot_edges: list[tuple[int, int]] = field(default_factory=list)
     errors: list[str] = field(default_factory=list)
     started_at: float = field(default_factory=_time.time)
 
     def is_complete(self) -> bool:
         """Check if all components have been written."""
-        return (
-            self.written_raw_bytes
-            and self.written_finding
-            and self.written_ioc_entities
-            and self.written_ioc_relations
-            and self.written_target_memory
-    )
-
-
-# ─── Rollback Registry ────────────────────────────────────────────────────────
-
+        return self.written_raw_bytes and self.written_finding and self.written_ioc_entities and self.written_ioc_relations and self.written_target_memory
 
 class RollbackRegistry:
     """
@@ -354,6 +272,7 @@ class RollbackRegistry:
     Each action is registered with a priority (lower = earlier rollback).
     On rollback, actions are executed in reverse priority order.
     """
+    __slots__ = ('_actions', '_committed')
 
     def __init__(self) -> None:
         self._actions: list[tuple[int, callable]] = []
@@ -362,9 +281,9 @@ class RollbackRegistry:
     def register(self, priority: int, action: callable) -> None:
         """Register a rollback action."""
         if self._committed:
-            raise RuntimeError("Cannot register action on committed transaction")
+            raise RuntimeError('Cannot register action on committed transaction')
         self._actions.append((priority, action))
-        self._actions.sort(key=lambda x: x[0], reverse=True)  # Reverse order
+        self._actions.sort(key=lambda x: x[0], reverse=True)
 
     def commit(self) -> None:
         """Mark as committed — clear rollback actions."""
@@ -382,13 +301,9 @@ class RollbackRegistry:
             try:
                 action()
             except Exception as e:
-                errors.append(f"Rollback action failed: {e}")
+                errors.append(f'Rollback action failed: {e}')
         self._actions.clear()
         return errors
-
-
-# ─── Atomic Sprint Pipeline ──────────────────────────────────────────────────
-
 
 class AtomicSprintPipeline:
     """
@@ -410,6 +325,7 @@ class AtomicSprintPipeline:
     - Batch writes where possible
     - No per-item fsync on hot path (rely on WAL)
     """
+    __slots__ = ('_duckdb_store', '_graph_service', '_hot_edges_cache', '_target_memory')
 
     def __init__(self) -> None:
         self._duckdb_store: Any | None = None
@@ -460,13 +376,13 @@ class AtomicSprintPipeline:
         """
         return SprintTransaction(self)
 
-
 class SprintTransaction:
     """
     Context manager for atomic sprint writes.
 
     Tracks all write operations and provides rollback on failure.
     """
+    __slots__ = ('_closed', '_duckdb_conn', '_pipeline', '_rollback', '_state')
 
     def __init__(self, pipeline: AtomicSprintPipeline) -> None:
         self._pipeline = pipeline
@@ -490,19 +406,13 @@ class SprintTransaction:
         protocol with empty source.
         """
         if self._state.phase == TransactionPhase.COMMITTED:
-            raise RuntimeError("Cannot add to committed transaction")
+            raise RuntimeError('Cannot add to committed transaction')
         if self._state.phase == TransactionPhase.ROLLED_BACK:
-            raise RuntimeError("Cannot add to rolled-back transaction")
-
-        # ISSUE-FIX: Validate provenance is not None (required)
+            raise RuntimeError('Cannot add to rolled-back transaction')
         if provenance is None:
-            raise ValueError("Provenance cannot be None in SprintDataUnit")
-
+            raise ValueError('Provenance cannot be None in SprintDataUnit')
         self._state.phase = TransactionPhase.WRITING_RAW
-        self._state.unit = SprintDataUnit(
-            raw_bytes=raw_bytes,
-            provenance=provenance,
-    )
+        self._state.unit = SprintDataUnit(raw_bytes=raw_bytes, provenance=provenance)
 
     def add_finding(self, finding: dict[str, Any]) -> None:
         """
@@ -511,18 +421,14 @@ class SprintTransaction:
         The finding must include provenance from the source.
         """
         if self._state.phase == TransactionPhase.COMMITTED:
-            raise RuntimeError("Cannot add to committed transaction")
-
+            raise RuntimeError('Cannot add to committed transaction')
         self._state.phase = TransactionPhase.WRITING_FINDING
-
-        # Enrich finding with provenance
         if self._state.unit:
             self._state.unit.finding = finding
-            # Store provenance in finding for DuckDB
             if finding is not None:
                 prov = self._state.unit.provenance
                 if prov:
-                    finding["_provenance"] = prov.to_dict()
+                    finding['_provenance'] = prov.to_dict()
 
     def add_ioc_entities(self, entities: list[IOCEntity]) -> None:
         """
@@ -532,22 +438,17 @@ class SprintTransaction:
         Unknown IOC types are preserved with classification_status="pending_review".
         """
         if self._state.phase == TransactionPhase.COMMITTED:
-            raise RuntimeError("Cannot add to committed transaction")
+            raise RuntimeError('Cannot add to committed transaction')
         if not entities:
             self._state.written_ioc_entities = True
             return
-
         self._state.phase = TransactionPhase.WRITING_IOC_ENTITIES
-
         if self._state.unit:
             from hledac.universal.utils.ioc_extract import IOC_TYPES as _VALID_IOC_TYPES
-            # Validate all entities first — preserve unknown types with pending_review
             for entity in entities:
                 if entity.ioc_type not in _VALID_IOC_TYPES:
-                    # Preserve original type in raw_ioc_type, set pending_review
                     entity.raw_ioc_type = entity.ioc_type
-                    self._state.unit.classification_status = "pending_review"
-
+                    self._state.unit.classification_status = 'pending_review'
             self._state.unit.ioc_entities.extend(entities)
 
     def add_ioc_relations(self, relations: list[IOCRelation]) -> None:
@@ -557,13 +458,11 @@ class SprintTransaction:
         Relations are only written if all referenced entities were written.
         """
         if self._state.phase == TransactionPhase.COMMITTED:
-            raise RuntimeError("Cannot add to committed transaction")
+            raise RuntimeError('Cannot add to committed transaction')
         if not relations:
             self._state.written_ioc_relations = True
             return
-
         self._state.phase = TransactionPhase.WRITING_IOC_RELATIONS
-
         if self._state.unit:
             self._state.unit.ioc_relations.extend(relations)
 
@@ -572,20 +471,12 @@ class SprintTransaction:
         Add a target memory update to the transaction.
         """
         if self._state.phase == TransactionPhase.COMMITTED:
-            raise RuntimeError("Cannot add to committed transaction")
-
+            raise RuntimeError('Cannot add to committed transaction')
         self._state.phase = TransactionPhase.WRITING_TARGET_MEMORY
-
         if self._state.unit:
             self._state.unit.target_memory_updates.append(update)
 
-    def set_provenance(
-        self,
-        byte_offset: int = 0,
-        timestamp: float | None = None,
-        source: str = "",
-        protocol: ProvenanceProtocol | None = None,
-    ) -> None:
+    def set_provenance(self, byte_offset: int=0, timestamp: float | None=None, source: str='', protocol: ProvenanceProtocol | None=None) -> None:
         """
         Set provenance for the transaction.
 
@@ -595,28 +486,17 @@ class SprintTransaction:
         non-memory/non-unknown protocols.
         """
         if self._state.phase == TransactionPhase.COMMITTED:
-            raise RuntimeError("Cannot modify committed transaction")
-
+            raise RuntimeError('Cannot modify committed transaction')
         ts = timestamp if timestamp is not None else _time.time()
-        prov = ProvenanceRecord(
-            byte_offset=byte_offset,
-            timestamp=ts,
-            source=source,
-            protocol=protocol or ProvenanceProtocol.UNKNOWN,
-    )
-
-        # ISSUE-FIX: Validate provenance has source for non-memory protocols
+        prov = ProvenanceRecord(byte_offset=byte_offset, timestamp=ts, source=source, protocol=protocol or ProvenanceProtocol.UNKNOWN)
         if prov.protocol not in (ProvenanceProtocol.MEMORY, ProvenanceProtocol.UNKNOWN):
             if not prov.source:
-                raise ValueError(f"Provenance requires non-empty source for protocol {prov.protocol.value}")
-
+                raise ValueError(f'Provenance requires non-empty source for protocol {prov.protocol.value}')
         if self._state.unit:
-            # Validate provenance is not being downgraded
             if self._state.unit.provenance is not None:
-                raise RuntimeError("Provenance already set (immutable)")
+                raise RuntimeError('Provenance already set (immutable)')
             self._state.unit.provenance = prov
         else:
-            # Create unit with provenance
             self._state.unit = SprintDataUnit(provenance=prov)
 
     def _execute(self) -> None:
@@ -627,12 +507,9 @@ class SprintTransaction:
         """
         if self._state.phase in (TransactionPhase.COMMITTED, TransactionPhase.ROLLED_BACK):
             return
-
         if self._state.phase == TransactionPhase.FAILED:
             self._rollback_transaction()
             return
-
-        # Validate unit
         if self._state.unit:
             errors = self._state.unit.validate()
             if errors:
@@ -640,31 +517,18 @@ class SprintTransaction:
                 self._state.phase = TransactionPhase.FAILED
                 self._rollback_transaction()
                 return
-
         try:
             self._state.phase = TransactionPhase.COMMITTING
-
-            # Phase 1: Write raw bytes (if any)
             if self._state.unit and self._state.unit.raw_bytes:
                 self._write_raw_bytes()
-
-            # Phase 2: Write finding to DuckDB
             if self._state.unit and self._state.unit.finding:
                 self._write_finding()
-
-            # Phase 3: Write IOC entities to DuckPGQ
             if self._state.unit and self._state.unit.ioc_entities:
                 self._write_ioc_entities()
-
-            # Phase 4: Write IOC relations to DuckPGQ
             if self._state.unit and self._state.unit.ioc_relations:
                 self._write_ioc_relations()
-
-            # Phase 5: Update target memory
             if self._state.unit and self._state.unit.target_memory_updates:
                 self._write_target_memory()
-
-            # Mark complete
             self._state.written_raw_bytes = True
             self._state.written_finding = True
             self._state.written_ioc_entities = True
@@ -672,7 +536,6 @@ class SprintTransaction:
             self._state.written_target_memory = True
             self._state.phase = TransactionPhase.COMMITTED
             self._rollback.commit()
-
         except Exception as e:
             self._state.errors.append(str(e))
             self._state.phase = TransactionPhase.FAILED
@@ -681,8 +544,7 @@ class SprintTransaction:
 
     def _write_raw_bytes(self) -> None:
         """Write raw bytes with provenance."""
-        # Implementation delegates to raw_store
-        pass  # Placeholder for raw bytes storage
+        pass
 
     def _write_finding(self) -> None:
         """
@@ -698,96 +560,44 @@ class SprintTransaction:
         """
         if not self._state.unit or not self._state.unit.finding:
             return
-
         try:
             store = self._pipeline._get_duckdb_store()
             finding = self._state.unit.finding
-
-            # Extract all fields with proper defaults
             import time as _time
             import uuid as _uuid
-
-            finding_id = finding.get("id") or finding.get("finding_id") or str(_uuid.uuid4())
-            query = finding.get("query", "")
-            source_type = finding.get("source_type", "unknown")
-            confidence = float(finding.get("confidence", 0.5))
-            ts = float(finding.get("ts", _time.time()))
-            provenance_json = finding.get("_provenance") or self._state.unit.provenance.to_dict() if self._state.unit.provenance else None
-            payload_text = finding.get("payload_text", "")
-            claims_json = finding.get("claims_json", "")
-
-            # ISSUE-FIX: Extract WARC fields (full 13-column schema)
-            warc_record_id = finding.get("warc_record_id", "") or ""
-            warc_path = finding.get("warc_path", "") or ""
-            compressed_offset = int(finding.get("compressed_offset", 0) or 0)
-            compressed_size = int(finding.get("compressed_size", 0) or 0)
-            warc_url = finding.get("warc_url", "") or ""
-
-            # Try DuckDBShadowStore._sync_insert_finding first (full WARC support)
-            if hasattr(store, "_sync_insert_finding"):
+            finding_id = finding.get('id') or finding.get('finding_id') or str(_uuid.uuid4())
+            query = finding.get('query', '')
+            source_type = finding.get('source_type', 'unknown')
+            confidence = float(finding.get('confidence', 0.5))
+            ts = float(finding.get('ts', _time.time()))
+            provenance_json = finding.get('_provenance') or self._state.unit.provenance.to_dict() if self._state.unit.provenance else None
+            payload_text = finding.get('payload_text', '')
+            claims_json = finding.get('claims_json', '')
+            warc_record_id = finding.get('warc_record_id', '') or ''
+            warc_path = finding.get('warc_path', '') or ''
+            compressed_offset = int(finding.get('compressed_offset', 0) or 0)
+            compressed_size = int(finding.get('compressed_size', 0) or 0)
+            warc_url = finding.get('warc_url', '') or ''
+            if hasattr(store, '_sync_insert_finding'):
                 try:
-                    result = store._sync_insert_finding(
-                        finding_id=finding_id,
-                        query=query,
-                        source_type=source_type,
-                        confidence=confidence,
-                        ts=ts,
-                        provenance_json=provenance_json,
-                        payload_text=payload_text,
-                        claims_json=claims_json,
-                        warc_record_id=warc_record_id,
-                        warc_path=warc_path,
-                        compressed_offset=compressed_offset,
-                        compressed_size=compressed_size,
-                        warc_url=warc_url,
-    )
+                    result = store._sync_insert_finding(finding_id=finding_id, query=query, source_type=source_type, confidence=confidence, ts=ts, provenance_json=provenance_json, payload_text=payload_text, claims_json=claims_json, warc_record_id=warc_record_id, warc_path=warc_path, compressed_offset=compressed_offset, compressed_size=compressed_size, warc_url=warc_url)
                     if result:
                         self._state.finding_id = finding_id
                 except Exception:
-                    # Fallback: raw SQL insert
-                    finding_id = self._write_finding_raw(
-                        store, finding, finding_id, query, source_type,
-                        confidence, ts, provenance_json, payload_text, claims_json,
-                        warc_record_id, warc_path, compressed_offset, compressed_size, warc_url
-    )
+                    finding_id = self._write_finding_raw(store, finding, finding_id, query, source_type, confidence, ts, provenance_json, payload_text, claims_json, warc_record_id, warc_path, compressed_offset, compressed_size, warc_url)
                     if finding_id:
                         self._state.finding_id = finding_id
             else:
-                # DuckDBShadowStore doesn't have _sync_insert_finding
-                # Use raw SQL with full 13-column schema
-                finding_id = self._write_finding_raw(
-                    store, finding, finding_id, query, source_type,
-                    confidence, ts, provenance_json, payload_text, claims_json,
-                    warc_record_id, warc_path, compressed_offset, compressed_size, warc_url
-    )
+                finding_id = self._write_finding_raw(store, finding, finding_id, query, source_type, confidence, ts, provenance_json, payload_text, claims_json, warc_record_id, warc_path, compressed_offset, compressed_size, warc_url)
                 if finding_id:
                     self._state.finding_id = finding_id
-
-            # Register rollback action
             if self._state.finding_id:
                 self._rollback.register(100, lambda: self._rollback_finding())
         except Exception as e:
-            self._state.errors.append(f"Finding write failed: {e}")
+            self._state.errors.append(f'Finding write failed: {e}')
             raise
 
-    def _write_finding_raw(
-        self,
-        store: Any,
-        finding: dict[str, Any],
-        finding_id: str,
-        query: str,
-        source_type: str,
-        confidence: float,
-        ts: float,
-        provenance_json: dict | None,
-        payload_text: str,
-        claims_json: str,
-        warc_record_id: str,
-        warc_path: str,
-        compressed_offset: int,
-        compressed_size: int,
-        warc_url: str,
-    ) -> str | None:
+    def _write_finding_raw(self, store: Any, finding: dict[str, Any], finding_id: str, query: str, source_type: str, confidence: float, ts: float, provenance_json: dict | None, payload_text: str, claims_json: str, warc_record_id: str, warc_path: str, compressed_offset: int, compressed_size: int, warc_url: str) -> str | None:
         """
         Write finding via raw DuckDB SQL insert with full 13-column schema.
 
@@ -796,33 +606,17 @@ class SprintTransaction:
         Fallback when DuckDBShadowStore._sync_insert_finding is unavailable.
         """
         try:
-            conn = store._conn if hasattr(store, "_conn") else None
-            if conn is None and hasattr(store, "con"):
+            conn = store._conn if hasattr(store, '_conn') else None
+            if conn is None and hasattr(store, 'con'):
                 conn = store.con
             if conn is None:
                 return None
-
             import orjson
             prov_bytes = orjson.dumps(provenance_json) if provenance_json else None
-
-            # ISSUE-FIX: Full 13-column INSERT (WARC provenance fields included)
-            conn.execute(
-                """
-                INSERT INTO canonical_findings
-                (id, query, source_type, confidence, ts, provenance_json,
-                 payload_text, claims_json, warc_record_id, warc_path,
-                 compressed_offset, compressed_size, warc_url)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """,
-                [
-                    finding_id, query, source_type, confidence, ts, prov_bytes,
-                    payload_text, claims_json, warc_record_id, warc_path,
-                    compressed_offset, compressed_size, warc_url
-                ],
-    )
+            conn.execute('\n                INSERT INTO canonical_findings\n                (id, query, source_type, confidence, ts, provenance_json,\n                 payload_text, claims_json, warc_record_id, warc_path,\n                 compressed_offset, compressed_size, warc_url)\n                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)\n                ', [finding_id, query, source_type, confidence, ts, prov_bytes, payload_text, claims_json, warc_record_id, warc_path, compressed_offset, compressed_size, warc_url])
             return finding_id
         except Exception as e:
-            logger.debug(f"[SprintTX] _write_finding_raw failed: {e}")
+            logger.debug(f'[SprintTX] _write_finding_raw failed: {e}')
             return None
 
     def _write_ioc_entities(self) -> None:
@@ -835,57 +629,28 @@ class SprintTransaction:
         """
         if not self._state.unit or not self._state.unit.ioc_entities:
             return
-
         try:
             from hledac.universal.graph.quantum_pathfinder import _stable_node_id
             provenance = self._state.unit.provenance.to_dict() if self._state.unit.provenance else None
-
-            # ISSUE-FIX: Use DuckPGQGraph directly to get node_id (returns int),
-            # not GraphService.upsert_ioc (returns bool).
             graph = self._pipeline._get_graph_service()
             duckpgq = None
             try:
                 from hledac.universal.graph.quantum_pathfinder import _get_graph as _get_duckpgq
                 duckpgq = _get_duckpgq()
-            except Exception:  # noqa: BLE001
+            except Exception:
                 pass
-
             for entity in self._state.unit.ioc_entities:
-                # Track node IDs for relation resolution
                 node_id: int | None = None
-
                 if duckpgq is not None:
-                    # DuckPGQGraph.add_ioc returns int node_id
-                    node_id = duckpgq.add_ioc(
-                        value=entity.value,
-                        ioc_type=entity.ioc_type,
-                        confidence=entity.confidence,
-                        source=self._state.unit.provenance.source if self._state.unit.provenance else "",
-                        observed_at=entity.observed_at,
-                        provenance=provenance,
-                        classification_status=self._state.unit.classification_status,
-    )
+                    node_id = duckpgq.add_ioc(value=entity.value, ioc_type=entity.ioc_type, confidence=entity.confidence, source=self._state.unit.provenance.source if self._state.unit.provenance else '', observed_at=entity.observed_at, provenance=provenance, classification_status=self._state.unit.classification_status)
                 else:
-                    # Fallback: compute stable node_id from value directly
                     node_id = _stable_node_id(entity.value)
-
                 if node_id is not None:
                     self._state.ioc_node_ids[entity.value] = node_id
-                # Also register with GraphService for in-memory dedup
-                graph.upsert_ioc(
-                    value=entity.value,
-                    ioc_type=entity.ioc_type,
-                    confidence=entity.confidence,
-                    source=self._state.unit.provenance.source if self._state.unit.provenance else "",
-                    observed_at=entity.observed_at,
-                    provenance=provenance,
-                    classification_status=self._state.unit.classification_status,
-    )
-
-            # Register rollback
+                graph.upsert_ioc(value=entity.value, ioc_type=entity.ioc_type, confidence=entity.confidence, source=self._state.unit.provenance.source if self._state.unit.provenance else '', observed_at=entity.observed_at, provenance=provenance, classification_status=self._state.unit.classification_status)
             self._rollback.register(200, lambda: self._rollback_ioc_entities())
         except Exception as e:
-            self._state.errors.append(f"IOC entities write failed: {e}")
+            self._state.errors.append(f'IOC entities write failed: {e}')
             raise
 
     def _write_ioc_relations(self) -> None:
@@ -896,54 +661,38 @@ class SprintTransaction:
         """
         if not self._state.unit or not self._state.unit.ioc_relations:
             return
-
         try:
             from hledac.universal.graph.quantum_pathfinder import _stable_node_id
             from hledac.universal.knowledge import hot_edges_cache
-
             graph = self._pipeline._get_graph_service()
-
-            # ISSUE-FIX: Snapshot hot_edges buffer size for transaction-scoped rollback
             try:
                 self._state.hot_edges_buffer_snapshot = len(hot_edges_cache._DENORM_BUFFER)
-            except Exception:  # noqa: BLE001
+            except Exception:
                 self._state.hot_edges_buffer_snapshot = 0
-
             for rel in self._state.unit.ioc_relations:
-                graph.upsert_relation(
-                    src=rel.src_value,
-                    dst=rel.dst_value,
-                    rel_type=rel.rel_type,
-                    weight=rel.weight,
-                    evidence=rel.evidence,
-    )
-                # Track written edge for rollback (src_id, dst_id)
+                graph.upsert_relation(src=rel.src_value, dst=rel.dst_value, rel_type=rel.rel_type, weight=rel.weight, evidence=rel.evidence)
                 try:
                     src_id = _stable_node_id(rel.src_value)
                     dst_id = _stable_node_id(rel.dst_value)
                     self._state.written_hot_edges.append((src_id, dst_id))
-                except Exception:  # noqa: BLE001
+                except Exception:
                     pass
-
-            # Register rollback
             self._rollback.register(300, lambda: self._rollback_ioc_relations())
         except Exception as e:
-            self._state.errors.append(f"IOC relations write failed: {e}")
+            self._state.errors.append(f'IOC relations write failed: {e}')
             raise
 
     def _write_target_memory(self) -> None:
         """Write target memory updates."""
         if not self._state.unit or not self._state.unit.target_memory_updates:
             return
-
         try:
             memory = self._pipeline._get_target_memory()
             for update in self._state.unit.target_memory_updates:
                 memory.update(**update)
-
             self._rollback.register(400, lambda: self._rollback_target_memory())
         except Exception as e:
-            self._state.errors.append(f"Target memory update failed: {e}")
+            self._state.errors.append(f'Target memory update failed: {e}')
             raise
 
     def _rollback_finding(self) -> None:
@@ -956,17 +705,14 @@ class SprintTransaction:
             return
         try:
             store = self._pipeline._get_duckdb_store()
-            conn = store._conn if hasattr(store, "_conn") else None
-            if conn is None and hasattr(store, "con"):
+            conn = store._conn if hasattr(store, '_conn') else None
+            if conn is None and hasattr(store, 'con'):
                 conn = store.con
             if conn is None:
                 return
-            conn.execute(
-                "DELETE FROM canonical_findings WHERE id = ?",
-                [self._state.finding_id],
-    )
+            conn.execute('DELETE FROM canonical_findings WHERE id = ?', [self._state.finding_id])
         except Exception as e:
-            logger.warning(f"[SprintTX] rollback_finding failed: {e}")
+            logger.warning(f'[SprintTX] rollback_finding failed: {e}')
 
     def _rollback_ioc_entities(self) -> None:
         """
@@ -976,8 +722,7 @@ class SprintTransaction:
         but with their original classification_status. For true deletion,
         the caller should issue a separate cleanup pass.
         """
-        # Mark as rolled back via log (DuckPGQ INSERT OR IGNORE is idempotent)
-        logger.debug(f"[SprintTX] rollback_ioc_entities: {len(self._state.ioc_node_ids)} nodes marked")
+        logger.debug(f'[SprintTX] rollback_ioc_entities: {len(self._state.ioc_node_ids)} nodes marked')
 
     def _rollback_ioc_relations(self) -> None:
         """
@@ -992,35 +737,21 @@ class SprintTransaction:
             return
         try:
             graph = self._pipeline._get_graph_service()
-
-            # ISSUE-FIX: Delete relations from DuckPGQ and hot_edges cache
             for rel in self._state.unit.ioc_relations:
-                graph.delete_relation(
-                    src=rel.src_value,
-                    dst=rel.dst_value,
-                    rel_type=rel.rel_type,
-    )
-
-            # MODERN-35 FIX: Clear hot_edges buffer entries written during this transaction
-            # Use the new SprintDenormBuffer API instead of accessing _DENORM_BUFFER directly
+                graph.delete_relation(src=rel.src_value, dst=rel.dst_value, rel_type=rel.rel_type)
             try:
                 from hledac.universal.knowledge import hot_edges_cache as hot_cache
-                # Remove edges from LMDB cache
                 for src_id, dst_id in self._state.written_hot_edges:
                     hot_cache.delete_hot_edge(src_id, dst_id)
-                # Trim buffer to snapshot size (remove entries added during this transaction)
-                # MODERN-35: Use buffer manager API instead of direct buffer access
                 buffer = hot_cache._get_denorm_buffer()
                 buffer_len = len(buffer)
                 snapshot = self._state.hot_edges_buffer_snapshot
                 if buffer_len > snapshot:
-                    # This is approximate - exact tracking requires more complex logic
-                    # For now, just delete the specific edges we know about
                     pass
-            except Exception:  # noqa: BLE001
+            except Exception:
                 pass
         except Exception as e:
-            logger.warning(f"[SprintTX] rollback_ioc_relations failed: {e}")
+            logger.warning(f'[SprintTX] rollback_ioc_relations failed: {e}')
 
     def _rollback_target_memory(self) -> None:
         """
@@ -1035,12 +766,11 @@ class SprintTransaction:
         try:
             memory = self._pipeline._get_target_memory()
             for update in self._state.unit.target_memory_updates:
-                target_id = update.get("target_id")
-                if target_id and hasattr(memory, "_cache"):
-                    # Remove from in-memory cache (best-effort rollback)
+                target_id = update.get('target_id')
+                if target_id and hasattr(memory, '_cache'):
                     memory._cache.pop(target_id, None)
         except Exception as e:
-            logger.warning(f"[SprintTX] rollback_target_memory failed: {e}")
+            logger.warning(f'[SprintTX] rollback_target_memory failed: {e}')
 
     def _rollback_transaction(self) -> None:
         """Execute full rollback."""
@@ -1065,11 +795,9 @@ class SprintTransaction:
         """Exit context manager — commit on success, rollback on exception."""
         self._closed = True
         if exc_type is not None:
-            # Exception occurred — rollback
             self._rollback_transaction()
-            return False  # Re-raise exception
+            return False
         else:
-            # No exception — commit
             try:
                 self._execute()
             except Exception:
@@ -1077,18 +805,15 @@ class SprintTransaction:
                 raise
             return False
 
-
-# ─── Batch Pipeline ──────────────────────────────────────────────────────────
-
-
 class BatchSprintPipeline:
     """
     Batch processor for multiple SprintDataUnits.
 
     Provides efficient batch writes with transaction grouping.
     """
+    __slots__ = ('_batch_size', '_pipeline', '_units')
 
-    def __init__(self, batch_size: int = 100) -> None:
+    def __init__(self, batch_size: int=100) -> None:
         self._batch_size = batch_size
         self._pipeline = AtomicSprintPipeline()
         self._units: list[SprintDataUnit] = []
@@ -1097,7 +822,7 @@ class BatchSprintPipeline:
         """Add a unit to the batch."""
         errors = unit.validate()
         if errors:
-            raise ValueError(f"Invalid SprintDataUnit: {errors}")
+            raise ValueError(f'Invalid SprintDataUnit: {errors}')
         self._units.append(unit)
 
     def flush(self) -> dict[str, int]:
@@ -1108,15 +833,11 @@ class BatchSprintPipeline:
 
         MODERN-25: Fixed counter placement — committed count increments AFTER success.
         """
-        stats = {"committed": 0, "rolled_back": 0, "errors": 0}
-
+        stats = {'committed': 0, 'rolled_back': 0, 'errors': 0}
         for unit in self._units:
             try:
                 with self._pipeline.begin() as txn:
-                    txn.set_provenance(
-                        source=unit.provenance.source if unit.provenance else "",
-                        timestamp=unit.provenance.timestamp if unit.provenance else None,
-    )
+                    txn.set_provenance(source=unit.provenance.source if unit.provenance else '', timestamp=unit.provenance.timestamp if unit.provenance else None)
                     if unit.finding:
                         txn.add_finding(unit.finding)
                     if unit.ioc_entities:
@@ -1126,28 +847,10 @@ class BatchSprintPipeline:
                     if unit.target_memory_updates:
                         for update in unit.target_memory_updates:
                             txn.add_target_memory_update(update)
-                    # MODERN-25: Increment only on successful commit (after context exit)
-                    stats["committed"] += 1
+                    stats['committed'] += 1
             except Exception:
-                stats["rolled_back"] += 1
-                stats["errors"] += 1
-
+                stats['rolled_back'] += 1
+                stats['errors'] += 1
         self._units.clear()
         return stats
-
-
-# ─── Module exports ───────────────────────────────────────────────────────────
-
-__all__ = [
-    "SprintDataUnit",
-    "SprintTransaction",
-    "AtomicSprintPipeline",
-    "BatchSprintPipeline",
-    "ProvenanceRecord",
-    "ProvenanceProtocol",
-    "IOCEntity",
-    "IOCRelation",
-    "SprintTransactionState",
-    "TransactionPhase",
-    "RollbackRegistry",
-]
+__all__ = ['SprintDataUnit', 'SprintTransaction', 'AtomicSprintPipeline', 'BatchSprintPipeline', 'ProvenanceRecord', 'ProvenanceProtocol', 'IOCEntity', 'IOCRelation', 'SprintTransactionState', 'TransactionPhase', 'RollbackRegistry']

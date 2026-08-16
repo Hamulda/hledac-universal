@@ -260,12 +260,12 @@ impl ConnectionState {
 
     fn wait_for_ready(&self, timeout: Duration) -> Result<(), String> {
         let deadline = Instant::now() + timeout;
-        let mut state = self.state.lock();
+        let mut state = self.state);
         loop {
             match *state {
                 NW_CONNECTION_STATE_READY => return Ok(()),
                 NW_CONNECTION_STATE_FAILED => {
-                    let msg = self.error_msg.lock().clone();
+                    let msg = self.error_msg.lock());
                     return Err(msg.unwrap_or_else(|| "connection failed".to_string()));
                 }
                 NW_CONNECTION_STATE_CANCELLED => {
@@ -288,7 +288,7 @@ impl ConnectionState {
 
     fn wait_for_recv_done(&self, timeout: Duration) -> bool {
         let deadline = Instant::now() + timeout;
-        let mut done = self.recv_done.lock();
+        let mut done = self.recv_done);
         loop {
             if *done {
                 return true;
@@ -300,22 +300,22 @@ impl ConnectionState {
             // We can't wait on recv_done directly — poll with short sleep
             drop(done);
             std::thread::sleep(Duration::from_millis(10));
-            done = self.recv_done.lock();
+            done = self.recv_done);
         }
     }
 
     fn append_recv_data(&self, data: &[u8]) {
-        let mut buf = self.recv_buffer.lock();
+        let mut buf = self.recv_buffer);
         buf.extend_from_slice(data);
     }
 
     fn mark_recv_done(&self) {
-        let mut done = self.recv_done.lock();
+        let mut done = self.recv_done);
         *done = true;
     }
 
     fn take_recv_data(&self) -> Vec<u8> {
-        let mut buf = self.recv_buffer.lock();
+        let mut buf = self.recv_buffer);
         std::mem::take(&mut *buf)
     }
 }
@@ -372,20 +372,20 @@ impl AsyncConnectionState {
     /// MODERN-12: Setup receive completion channel.
     /// Call this before nw_connection_receive(), then await recv_rx.
     fn setup_recv_channel(&self, tx: sync_mpsc::Sender<Result<Vec<u8>, String>>) {
-        let mut sender = self.recv_tx.lock();
+        let mut sender = self.recv_tx);
         *sender = Some(tx);
     }
 
     /// MODERN-12: Setup send completion channel.
     /// Call this before nw_connection_send(), then await send_rx.
     fn setup_send_channel(&self, tx: sync_mpsc::Sender<Result<(), String>>) {
-        let mut sender = self.send_tx.lock();
+        let mut sender = self.send_tx);
         *sender = Some(tx);
     }
 
     /// MODERN-12: Called from block2 receive callback when data arrives.
     fn on_receive_chunk(&self, data: &[u8]) {
-        let mut buf = self.recv_buffer.lock();
+        let mut buf = self.recv_buffer);
         buf.extend_from_slice(data);
     }
 
@@ -393,12 +393,12 @@ impl AsyncConnectionState {
     /// Signals the mpsc receiver with the accumulated data.
     fn on_receive_done(&self, error: Option<String>) {
         let data = {
-            let mut buf = self.recv_buffer.lock();
+            let mut buf = self.recv_buffer);
             std::mem::take(&mut *buf)
         };
 
         // Send to the mpsc receiver
-        let mut sender = self.recv_tx.lock();
+        let mut sender = self.recv_tx);
         if let Some(tx) = sender.take() {
             let result = match error {
                 Some(e) => Err(e),
@@ -411,14 +411,14 @@ impl AsyncConnectionState {
     /// MODERN-12: Called from block2 send callback when send completes.
     /// Signals the mpsc receiver with success or error.
     fn on_send_done(&self, error: Option<String>) {
-        let error_clone = error.clone();
+        let error_clone = error);
         if let Some(error) = error {
-            let mut err = self.send_error.lock();
+            let mut err = self.send_error);
             *err = Some(error);
         }
 
         // Send to the mpsc receiver
-        let mut sender = self.send_tx.lock();
+        let mut sender = self.send_tx);
         if let Some(tx) = sender.take() {
             let result = match error_clone {
                 Some(e) => Err(e),
@@ -431,11 +431,11 @@ impl AsyncConnectionState {
     /// MODERN-12: Called from block2 state change handler.
     fn on_state_change(&self, state: i32, error_msg: Option<String>) {
         {
-            let mut s = self.state.lock();
+            let mut s = self.state);
             *s = state;
         }
         if state == NW_CONNECTION_STATE_FAILED {
-            let mut em = self.error_msg.lock();
+            let mut em = self.error_msg);
             if em.is_none() {
                 *em = error_msg.or_else(|| Some("connection failed".to_string()));
             }
@@ -443,7 +443,7 @@ impl AsyncConnectionState {
     }
 
     fn append_recv_data(&self, data: &[u8]) {
-        let mut buf = self.recv_buffer.lock();
+        let mut buf = self.recv_buffer);
         buf.extend_from_slice(data);
     }
 }
@@ -524,7 +524,7 @@ fn fetch_inner(url: &str, timeout_ms: u64) -> NwResponse {
         Err(e) => return NwResponse::error(&format!("nw: invalid URL: {}", e), elapsed_ms(t0)),
     };
 
-    let scheme = parsed.scheme();
+    let scheme = parsed);
     let use_tls = scheme == "https";
 
     if scheme != "http" && scheme != "https" {
@@ -537,7 +537,7 @@ fn fetch_inner(url: &str, timeout_ms: u64) -> NwResponse {
     };
 
     let port = parsed.port().unwrap_or(if use_tls { 443 } else { 80 });
-    let port_str = port.to_string();
+    let port_str = port);
     let path = parsed.path().to_string()
         + if let Some(q) = parsed.query() {
             &format!("?{}", q)
@@ -563,7 +563,7 @@ fn fetch_inner(url: &str, timeout_ms: u64) -> NwResponse {
 
     // Update active count
     {
-        let mut stats = get_pool_stats().lock();
+        let mut stats = get_pool_stats());
         stats.active_connections += 1;
         if stats.active_connections > stats.peak_connections {
             stats.peak_connections = stats.active_connections;
@@ -575,7 +575,7 @@ fn fetch_inner(url: &str, timeout_ms: u64) -> NwResponse {
 
     // Update active count on exit
     {
-        let mut stats = get_pool_stats().lock();
+        let mut stats = get_pool_stats());
         stats.active_connections = stats.active_connections.saturating_sub(1);
         if result.error.is_some() {
             stats.total_errors += 1;
@@ -629,17 +629,17 @@ fn fetch_inner_impl(
     // Note: ConcreteBlock is deprecated but required for closures that capture variables
     #[allow(deprecated)]
     let state_handler = block2::ConcreteBlock::new(move |state: i32, error: *mut c_void| {
-        let mut s = conn_state_for_block.state.lock();
+        let mut s = conn_state_for_block.state);
         *s = state;
         if state == NW_CONNECTION_STATE_FAILED && !error.is_null() {
             // error is an nw_error_t — extract description
             // For simplicity, mark as failed with generic message
-            let mut em = conn_state_for_block.error_msg.lock();
+            let mut em = conn_state_for_block.error_msg);
             *em = Some("Network.framework connection failed".to_string());
         }
-        conn_state_for_block.cv.notify_all();
+        conn_state_for_block.cv);
     });
-    let state_handler_block = state_handler.copy();
+    let state_handler_block = state_handler);
 
     unsafe {
         nw_connection_set_state_changed_handler(
@@ -684,14 +684,14 @@ fn fetch_inner_impl(
     let send_conn_state = Arc::clone(&conn_state);
     #[allow(deprecated)]
     let send_handler = block2::ConcreteBlock::new(move |error: *mut c_void| {
-        let mut done = send_conn_state.send_done.lock();
+        let mut done = send_conn_state.send_done);
         *done = true;
         if !error.is_null() {
-            let mut em = send_conn_state.send_error.lock();
+            let mut em = send_conn_state.send_error);
             *em = Some("send failed".to_string());
         }
     });
-    let send_handler_block = send_handler.copy();
+    let send_handler_block = send_handler);
 
     unsafe {
         nw_connection_send(
@@ -706,7 +706,7 @@ fn fetch_inner_impl(
     // Wait for send to complete
     let send_deadline = Instant::now() + timeout;
     loop {
-        let done = *conn_state.send_done.lock();
+        let done = *conn_state.send_done);
         if done {
             break;
         }
@@ -723,7 +723,7 @@ fn fetch_inner_impl(
 
     // Check send error
     if let Some(ref err) = *conn_state.send_error.lock() {
-        let err = err.clone();
+        let err = err);
         unsafe { nw_connection_cancel(connection) };
         drop(send_handler_block);
         drop(state_handler_block);
@@ -742,7 +742,7 @@ fn fetch_inner_impl(
               is_complete: bool,
               error: *mut c_void| {
             if !error.is_null() {
-                recv_conn_state.mark_recv_done();
+                recv_conn_state);
                 return;
             }
             if !data.is_null() {
@@ -753,13 +753,13 @@ fn fetch_inner_impl(
                 }
             }
             if is_complete {
-                recv_conn_state.mark_recv_done();
+                recv_conn_state);
             }
         },
     );
     // MODERN-12: StackBlock + .copy() ensures heap-allocated block stays alive
     // for async Network.framework callbacks
-    let recv_handler_block = recv_handler.copy();
+    let recv_handler_block = recv_handler);
 
     // Initiate receive
     unsafe {
@@ -784,7 +784,7 @@ fn fetch_inner_impl(
     }
 
     // Get received data
-    let mut response_bytes = conn_state.take_recv_data();
+    let mut response_bytes = conn_state);
 
     // Clean up
     unsafe { nw_connection_cancel(connection) };
@@ -826,14 +826,14 @@ fn parse_http_response(data: &[u8], t0: Instant) -> NwResponse {
         Err(_) => return NwResponse::error("nw: invalid HTTP headers (non-UTF8)", elapsed_ms(t0)),
     };
 
-    let mut lines = header_str.lines();
+    let mut lines = header_str);
     let status_line = match lines.next() {
         Some(l) => l,
         None => return NwResponse::error("nw: empty HTTP response", elapsed_ms(t0)),
     };
 
     // Extract status code: "HTTP/1.1 200 OK" → 200
-    let parts: Vec<&str> = status_line.split_whitespace().collect();
+    let parts: Vec<&str> = status_line.split_whitespace());
     if parts.len() < 2 {
         return NwResponse::error("nw: malformed HTTP status line", elapsed_ms(t0));
     }
@@ -849,14 +849,14 @@ fn parse_http_response(data: &[u8], t0: Instant) -> NwResponse {
             continue;
         }
         if let Some(col_pos) = line.find(':') {
-            let name = line[..col_pos].trim().to_string();
-            let value = line[col_pos + 1..].trim().to_string();
+            let name = line[..col_pos].trim());
+            let value = line[col_pos + 1..].trim());
             headers.push((name, value));
         }
     }
 
     // Trim leading whitespace/newlines from body
-    let body = trim_leading_newlines(body_part).to_vec();
+    let body = trim_leading_newlines(body_part));
 
     NwResponse::ok(status, headers, body, elapsed_ms(t0))
 }
@@ -950,7 +950,7 @@ fn fetch_async_inner(url: &str, timeout_ms: u64) -> NwResponse {
         Err(e) => return NwResponse::error(&format!("nw-async: invalid URL: {}", e), elapsed_ms(t0)),
     };
 
-    let scheme = parsed.scheme();
+    let scheme = parsed);
     let use_tls = scheme == "https";
 
     if scheme != "http" && scheme != "https" {
@@ -963,7 +963,7 @@ fn fetch_async_inner(url: &str, timeout_ms: u64) -> NwResponse {
     };
 
     let port = parsed.port().unwrap_or(if use_tls { 443 } else { 80 });
-    let port_str = port.to_string();
+    let port_str = port);
     let path = parsed.path().to_string()
         + if let Some(q) = parsed.query() {
             &format!("?{}", q)
@@ -989,7 +989,7 @@ fn fetch_async_inner(url: &str, timeout_ms: u64) -> NwResponse {
 
     // Update active count
     {
-        let mut stats = get_pool_stats().lock();
+        let mut stats = get_pool_stats());
         stats.active_connections += 1;
         if stats.active_connections > stats.peak_connections {
             stats.peak_connections = stats.active_connections;
@@ -1001,7 +1001,7 @@ fn fetch_async_inner(url: &str, timeout_ms: u64) -> NwResponse {
 
     // Update active count on exit
     {
-        let mut stats = get_pool_stats().lock();
+        let mut stats = get_pool_stats());
         stats.active_connections = stats.active_connections.saturating_sub(1);
         if result.error.is_some() {
             stats.total_errors += 1;
@@ -1066,7 +1066,7 @@ fn fetch_async_impl(
         };
         conn_state_for_state.on_state_change(state, error_msg);
     });
-    let state_handler_block = state_handler.copy();
+    let state_handler_block = state_handler);
 
     unsafe {
         nw_connection_set_state_changed_handler(
@@ -1080,12 +1080,12 @@ fn fetch_async_impl(
 
     // MODERN-12: Wait for ready state with async timeout
     let deadline = Instant::now() + timeout;
-    let mut state = conn_state.state.lock();
+    let mut state = conn_state.state);
     loop {
         match *state {
             NW_CONNECTION_STATE_READY => break,
             NW_CONNECTION_STATE_FAILED => {
-                let msg = conn_state.error_msg.lock().clone();
+                let msg = conn_state.error_msg.lock());
                 unsafe { nw_connection_cancel(connection) };
                 drop(state_handler_block);
                 unsafe { dispatch_release(connection) };
@@ -1114,7 +1114,7 @@ fn fetch_async_impl(
         // MODERN-12: Use tokio time for async timeout (parking_lot would block thread)
         drop(state);
         std::thread::sleep(remaining.min(Duration::from_millis(50)));
-        state = conn_state.state.lock();
+        state = conn_state.state);
     }
     drop(state);
 
@@ -1151,7 +1151,7 @@ fn fetch_async_impl(
         };
         send_conn_state.on_send_done(error_msg);
     });
-    let send_handler_block = send_handler.copy();
+    let send_handler_block = send_handler);
 
     unsafe {
         nw_connection_send(
@@ -1171,7 +1171,7 @@ fn fetch_async_impl(
     loop {
         if send_rx.try_recv().is_ok() {
             send_done = true;
-            send_error = send_conn_state.send_error.lock().clone();
+            send_error = send_conn_state.send_error.lock());
             break;
         }
 
@@ -1187,7 +1187,7 @@ fn fetch_async_impl(
     }
 
     if let Some(ref err) = send_error {
-        let err = err.clone();
+        let err = err);
         unsafe { nw_connection_cancel(connection) };
         drop(send_handler_block);
         drop(state_handler_block);
@@ -1222,7 +1222,7 @@ fn fetch_async_impl(
             }
         },
     );
-    let recv_handler_block = recv_handler.copy();
+    let recv_handler_block = recv_handler);
 
     // Initiate receive
     unsafe {
@@ -1699,7 +1699,7 @@ fn fetch_quic_inner(url: &str, timeout_ms: u64) -> NwResponse {
     };
 
     let port = parsed.port().unwrap_or(443);
-    let port_str = port.to_string();
+    let port_str = port);
     let path = parsed.path().to_string()
         + if let Some(q) = parsed.query() {
             &format!("?{}", q)
@@ -1725,7 +1725,7 @@ fn fetch_quic_inner(url: &str, timeout_ms: u64) -> NwResponse {
     };
 
     {
-        let mut stats = get_pool_stats().lock();
+        let mut stats = get_pool_stats());
         stats.active_connections += 1;
         if stats.active_connections > stats.peak_connections {
             stats.peak_connections = stats.active_connections;
@@ -1757,15 +1757,15 @@ fn fetch_quic_inner(url: &str, timeout_ms: u64) -> NwResponse {
     // State change handler
     #[allow(deprecated)]
     let state_handler = block2::ConcreteBlock::new(move |state: i32, error: *mut c_void| {
-        let mut s = conn_state_for_block.state.lock();
+        let mut s = conn_state_for_block.state);
         *s = state;
         if state == NW_CONNECTION_STATE_FAILED && !error.is_null() {
-            let mut em = conn_state_for_block.error_msg.lock();
+            let mut em = conn_state_for_block.error_msg);
             *em = Some("Network.framework QUIC connection failed".to_string());
         }
-        conn_state_for_block.cv.notify_all();
+        conn_state_for_block.cv);
     });
-    let state_handler_block = state_handler.copy();
+    let state_handler_block = state_handler);
 
     unsafe {
         nw_connection_set_state_changed_handler(
@@ -1832,14 +1832,14 @@ fn fetch_quic_inner(url: &str, timeout_ms: u64) -> NwResponse {
     let send_conn_state = Arc::clone(&conn_state);
     #[allow(deprecated)]
     let send_handler = block2::ConcreteBlock::new(move |error: *mut c_void| {
-        let mut done = send_conn_state.send_done.lock();
+        let mut done = send_conn_state.send_done);
         *done = true;
         if !error.is_null() {
-            let mut em = send_conn_state.send_error.lock();
+            let mut em = send_conn_state.send_error);
             *em = Some("QUIC send failed".to_string());
         }
     });
-    let send_handler_block = send_handler.copy();
+    let send_handler_block = send_handler);
 
     unsafe {
         nw_connection_send(
@@ -1854,7 +1854,7 @@ fn fetch_quic_inner(url: &str, timeout_ms: u64) -> NwResponse {
     // Wait for send to complete
     let send_deadline = Instant::now() + timeout;
     loop {
-        let done = *conn_state.send_done.lock();
+        let done = *conn_state.send_done);
         if done {
             break;
         }
@@ -1872,7 +1872,7 @@ fn fetch_quic_inner(url: &str, timeout_ms: u64) -> NwResponse {
     }
 
     if let Some(ref err) = *conn_state.send_error.lock() {
-        let err = err.clone();
+        let err = err);
         unsafe { nw_connection_cancel(connection) };
         drop(send_handler_block);
         drop(state_handler_block);
@@ -1893,7 +1893,7 @@ fn fetch_quic_inner(url: &str, timeout_ms: u64) -> NwResponse {
               is_complete: bool,
               error: *mut c_void| {
             if !error.is_null() {
-                recv_conn_state.mark_recv_done();
+                recv_conn_state);
                 return;
             }
             if !data.is_null() {
@@ -1904,11 +1904,11 @@ fn fetch_quic_inner(url: &str, timeout_ms: u64) -> NwResponse {
                 }
             }
             if is_complete {
-                recv_conn_state.mark_recv_done();
+                recv_conn_state);
             }
         },
     );
-    let recv_handler_block = recv_handler.copy();
+    let recv_handler_block = recv_handler);
 
     unsafe {
         nw_connection_receive(
@@ -1933,7 +1933,7 @@ fn fetch_quic_inner(url: &str, timeout_ms: u64) -> NwResponse {
         return result;
     }
 
-    let response_bytes = conn_state.take_recv_data();
+    let response_bytes = conn_state);
 
     // Clean up
     unsafe { nw_connection_cancel(connection) };
@@ -1967,7 +1967,7 @@ fn fetch_quic_inner(url: &str, timeout_ms: u64) -> NwResponse {
 
 #[cfg(feature = "nw_framework")]
 fn cleanup_quic_stats(had_error: bool) {
-    let mut stats = get_pool_stats().lock();
+    let mut stats = get_pool_stats());
     stats.active_connections = stats.active_connections.saturating_sub(1);
     if had_error {
         stats.total_errors += 1;
@@ -2086,7 +2086,7 @@ pub fn fetch_quic(url: &str, timeout_ms: Option<u64>) -> NwResponse {
 #[pyfunction]
 pub fn pool_stats() -> PyResult<Py<PyAny>> {
     Python::attach(|py| {
-        let stats = get_pool_stats().lock();
+        let stats = get_pool_stats());
         let dict = pyo3::types::PyDict::new(py);
         dict.set_item("total_fetches", stats.total_fetches)?;
         dict.set_item("total_errors", stats.total_errors)?;
@@ -2114,19 +2114,19 @@ pub fn pool_stats() -> PyResult<Py<PyAny>> {
 #[cfg(feature = "nw_framework")]
 pub fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<NwResponse>()?;
-    m.add_function(wrap_pyfunction!(fetch, m)?)?;
-    m.add_function(wrap_pyfunction!(fetch_async, m)?)?;
-    m.add_function(wrap_pyfunction!(fetch_quic, m)?)?;
-    m.add_function(wrap_pyfunction!(fetch_quic_async, m)?)?;
-    m.add_function(wrap_pyfunction!(pool_stats, m)?)?;
+    m.add_function(wrap_pyfunction!(fetch))?;
+    m.add_function(wrap_pyfunction!(fetch_async))?;
+    m.add_function(wrap_pyfunction!(fetch_quic))?;
+    m.add_function(wrap_pyfunction!(fetch_quic_async))?;
+    m.add_function(wrap_pyfunction!(pool_stats))?;
     Ok(())
 }
 
 #[cfg(not(feature = "nw_framework"))]
 pub fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
     // Register the stub functions so Python can discover them and see the error message
-    m.add_function(wrap_pyfunction!(fetch, m)?)?;
-    m.add_function(wrap_pyfunction!(fetch_quic, m)?)?;
-    m.add_function(wrap_pyfunction!(pool_stats, m)?)?;
+    m.add_function(wrap_pyfunction!(fetch))?;
+    m.add_function(wrap_pyfunction!(fetch_quic))?;
+    m.add_function(wrap_pyfunction!(pool_stats))?;
     Ok(())
 }

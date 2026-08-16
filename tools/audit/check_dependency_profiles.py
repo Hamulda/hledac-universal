@@ -35,10 +35,12 @@ from dataclasses import dataclass, field
 import msgspec
 from pathlib import Path
 from _core import aclose
+from compat.msgspec_gc_compat import Struct
+
 _PROJECT_ROOT = Path(__file__).parent.parent.resolve()
 _VENV_PYTHON = _PROJECT_ROOT / '.venv/bin/python'
 
-class ProfileCheck(msgspec.Struct, gc=False):
+class ProfileCheck(Struct):
     name: str
     uv_sync_args: list[str] = field(default_factory=list)
     import_smoke: list[str] = field(default_factory=list)

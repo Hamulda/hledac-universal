@@ -1,11 +1,14 @@
 """
 Planning package — lazy imports to avoid heavy-stack eager loading.
+
+ISSUE-003 FIX: Module-level locks registered via @auto_register decorator.
 """
 from __future__ import annotations
 
 import threading
 from typing import TYPE_CHECKING, Any
 from _core import aclose
+from _core.lock_registry import LockCategory, auto_register
 
 if TYPE_CHECKING:
     from .cost_model import AdaptiveCostModel
@@ -39,7 +42,12 @@ __all__ = [
 # ISSUE-2.4 FIX: Singleton factory — model loaded once, shared across sprints.
 # Prevents ~400MB-1GB per-sprint re-load + Metal active memory leak.
 _slm_decomposer_instance: "SLMDecomposer | None" = None
-_slm_lock: threading.Lock = threading.Lock()
+
+
+@auto_register(LockCategory.MPC)
+def _slm_lock():
+    """Module-level lock for SLMDecomposer singleton factory."""
+    return threading.Lock()
 
 
 def get_slm_decomposer(governor, cache, model_name: str = "mlx-community/Qwen2.5-0.5B-4bit", max_parallel: int = 2) -> "SLMDecomposer":
@@ -54,7 +62,7 @@ def get_slm_decomposer(governor, cache, model_name: str = "mlx-community/Qwen2.5
     Thread-safe singleton with lazy initialization.
     """
     global _slm_decomposer_instance
-    with _slm_lock:
+    with _slm_lock():
         if _slm_decomposer_instance is None:
             from .slm_decomposer import SLMDecomposer as cls
             _slm_decomposer_instance = cls(governor=governor, cache=cache, model_name=model_name, max_parallel=max_parallel)

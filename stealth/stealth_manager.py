@@ -25,6 +25,7 @@ from collections.abc import Coroutine
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 import msgspec
+from compat.msgspec_gc_compat import Struct
 from typing import Any
 from urllib.parse import urlparse
 import httpx
@@ -64,7 +65,7 @@ TCP_LIMIT = 20
 TCP_LIMIT_PER_HOST = 4
 TCP_KEEPALIVE_TIMEOUT = 30
 
-class StealthManagerConfig(msgspec.Struct, gc=False):
+class StealthManagerConfig(Struct):
     """Configuration for complete stealth system"""
     enable_rate_limiter: bool = True
     enable_header_spoofer: bool = True
@@ -338,7 +339,7 @@ class SkipFetch(Exception):
     """
     pass
 
-class StealthResponse(msgspec.Struct, frozen=True, gc=False):
+class StealthResponse(Struct, frozen=True):
     """Response from stealth HTTP request - M1 8GB optimized (no large bodies in RAM)."""
     status: int
     final_url: str

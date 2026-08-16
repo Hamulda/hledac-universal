@@ -21,12 +21,14 @@ import re
 from dataclasses import dataclass
 import msgspec
 from _core import aclose
+from compat.msgspec_gc_compat import Struct
+
 logger = logging.getLogger(__name__)
 SOURCE_NAME: str = 'commoncrawl'
 CDX_COLLINFO_URL = 'https://index.commoncrawl.org/collinfo.json'
 _CDN_NOISE_PATTERNS = ('cdn.jsdelivr.net', 'unpkg.com', 'cdnjs.cloudflare.com', 'raw.githubusercontent.com', 'github.com/-raw/', 'storage.googleapis.com', 'assets.wire.com')
 
-class RawFinding(msgspec.Struct, gc=False):
+class RawFinding(Struct):
     """Sprint F300: msgspec.Struct for OSINT findings.
 
     Nalezený výsledek z OSINT zdroje.

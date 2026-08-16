@@ -27,6 +27,7 @@ from typing import TYPE_CHECKING, Any, Callable
 
 from operator import attrgetter, itemgetter
 import msgspec
+from compat.msgspec_gc_compat import Struct
 
 from hledac.universal.runtime.scheduler_v2.protocol import InitResult
 from hledac.universal.utils.asyncx import parallel, safe_create_task
@@ -40,7 +41,7 @@ if TYPE_CHECKING:
 # ─────────────────────────────────────────────────────────────────
 
 
-class _Injection(msgspec.Struct, frozen=True, gc=False):
+class _Injection(Struct, frozen=True):
     """One declarative injection entry."""
 
     name: str

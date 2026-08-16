@@ -20,6 +20,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 import msgspec
 from datetime import datetime, UTC
+
+from compat.msgspec_gc_compat import Struct
 from enum import Enum
 from typing import Any
 
@@ -198,7 +200,7 @@ class SourceType(Enum):
     URL = "url"
 
 
-class MonitoredSource(msgspec.Struct, gc=False):
+class MonitoredSource(Struct):
     """
     Configuration for a monitored source.
 
@@ -224,7 +226,7 @@ class MonitoredSource(msgspec.Struct, gc=False):
             raise ValueError(f"Invalid source_type: {self.source_type}")
 
 
-class Change(msgspec.Struct, gc=False):
+class Change(Struct):
     """Represents a single detected change"""
 
     change_type: ChangeType
@@ -233,7 +235,7 @@ class Change(msgspec.Struct, gc=False):
     new_text: str | None
 
 
-class StreamEvent(msgspec.Struct, gc=False):
+class StreamEvent(Struct):
     """Represents a change detection event from the monitoring stream."""
 
     event_id: str
@@ -247,7 +249,7 @@ class StreamEvent(msgspec.Struct, gc=False):
     changes: list[Change]
 
 
-class Alert(msgspec.Struct, gc=False):
+class Alert(Struct):
     """Represents an alert generated from monitoring."""
 
     alert_id: str
@@ -258,7 +260,7 @@ class Alert(msgspec.Struct, gc=False):
     event: StreamEvent | None = None
 
 
-class AlertRule(msgspec.Struct, gc=False):
+class AlertRule(Struct):
     """
     Rule for generating alerts based on monitoring events.
 
@@ -297,7 +299,7 @@ class BypassMethod(Enum):
     Manual = "manual"
 
 
-class ScrapingResult(msgspec.Struct, gc=False):
+class ScrapingResult(Struct):
     """Result of a scraping operation."""
 
     url: str
@@ -310,7 +312,7 @@ class ScrapingResult(msgspec.Struct, gc=False):
     timestamp: datetime = field(default_factory=lambda: datetime.now(UTC))
 
 
-class ProxyConfig(msgspec.Struct, gc=False):
+class ProxyConfig(Struct):
     """Configuration for proxy rotation."""
 
     proxy_url: str
@@ -321,7 +323,7 @@ class ProxyConfig(msgspec.Struct, gc=False):
     last_used: datetime | None = None
 
 
-class FingerprintProfile(msgspec.Struct, gc=False):
+class FingerprintProfile(Struct):
     """
     TLS/HTTP fingerprint profile for stealth scraping.
 
@@ -337,7 +339,7 @@ class FingerprintProfile(msgspec.Struct, gc=False):
     tls_version: str
 
 
-class HeaderConfig(msgspec.Struct, gc=False):
+class HeaderConfig(Struct):
     """Configuration for HTTP header spoofing."""
 
     header_name: str
@@ -414,7 +416,7 @@ class HeaderSpoofer:
         return {"profile": self.default_profile, "header_count": len(self.headers)}
 
 
-class SearchResult(msgspec.Struct, gc=False):
+class SearchResult(Struct):
     """Represents a single search result from stealth search."""
 
     url: str

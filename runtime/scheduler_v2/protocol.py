@@ -16,6 +16,7 @@ import asyncio
 import logging
 from dataclasses import dataclass
 import msgspec
+from compat.msgspec_gc_compat import Struct
 from typing import TYPE_CHECKING, Any, Generic, Protocol, TypeVar
 from hledac.universal.utils._struct_helpers import struct_replace
 from _core import aclose
@@ -192,7 +193,7 @@ class SchedulerProtocol(Protocol):
         ...
 T = TypeVar('T', default=object)
 
-class InitResult(msgspec.Struct, Generic[T], frozen=True, gc=False):
+class InitResult(Struct, Generic[T], frozen=True):
     """Result of a fail-soft init — captures success/failure with reason.
 
     Replaces ``try/except → return None`` antipattern across all SprintSchedulerV2
@@ -234,7 +235,7 @@ class InitResult(msgspec.Struct, Generic[T], frozen=True, gc=False):
         """Construct a failure result."""
         return cls(value=None, error=error, elapsed_ms=elapsed_ms)
 
-class PreludePhaseResult(msgspec.Struct, gc=False):
+class PreludePhaseResult(Struct):
     """Result from the prelude phase."""
     lanes_attempted: list[str]
     lanes_skipped: dict[str, str]
@@ -242,7 +243,7 @@ class PreludePhaseResult(msgspec.Struct, gc=False):
     prelude_duration_s: float | None = None
     error: str | None = None
 
-class AcquisitionPhaseResult(msgspec.Struct, gc=False):
+class AcquisitionPhaseResult(Struct):
     """Result from one acquisition cycle."""
     cycles_started: int = 0
     cycles_completed: int = 0
@@ -255,14 +256,14 @@ class AcquisitionPhaseResult(msgspec.Struct, gc=False):
     unimplemented_telemetry: tuple = ()  # e.g. ("pre_windup_barrier", "ioc_cooccurrence")
     windup_unimplemented_lanes: tuple = ()  # probe lanes not implemented (WAYBACK, PDNS, etc.)
 
-class WinddownPhaseResult(msgspec.Struct, gc=False):
+class WinddownPhaseResult(Struct):
     """Result from the winddown phase."""
     export_paths: list[str] = msgspec.field(default_factory=list)
     synthesis_success: bool = False
     teardown_duration_s: float | None = None
     error: str | None = None
 
-class CycleState(msgspec.Struct, gc=False):
+class CycleState(Struct):
     """Per-cycle mutable state — isolated to prevent cross-cycle leakage.
 
     Unlike SprintContext (which is immutable/frozen), CycleState IS mutable
@@ -340,7 +341,7 @@ class CycleState(msgspec.Struct, gc=False):
     export_result: dict[str, Any] | None = None
     'Export result from winddown. Set by WinddownOrchestrator._run_export_as_task.'
 
-class SprintContext(msgspec.Struct, frozen=True, gc=False):
+class SprintContext(Struct, frozen=True):
     """Shared immutable context passed to all phase orchestrators.
 
     Unlike v1's `self._*` slots, v2 passes all state explicitly via this

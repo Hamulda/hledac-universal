@@ -223,15 +223,15 @@ fn vDSP_cosine(a: &[f32], b: &[f32], normalize: bool) -> Result<f32, AccelerateE
     if normalize {
         // Normalize a: L2 norm = sqrt(sum(x^2))
         let a_norm_val = vDSP_l2_norm(a)?;
-        let inv_a_norm = a_norm_val.recip();
+        let inv_a_norm = 1.0 / a_norm_val;
 
         // Normalize b: L2 norm = sqrt(sum(x^2))
         let b_norm_val = vDSP_l2_norm(b)?;
-        let inv_b_norm = b_norm_val.recip();
+        let inv_b_norm = 1.0 / b_norm_val;
 
         // Scale both vectors and compute dot product
-        let mut a_scaled = a.to_vec();
-        let mut b_scaled = b.to_vec();
+        let mut a_scaled = vec![0.0_f32; a.len()];
+        let mut b_scaled = vec![0.0_f32; b.len()];
         unsafe {
             vDSP_ffi::vDSP_vsmul(a.as_ptr(), 1, &inv_a_norm, a_scaled.as_mut_ptr(), 1, n);
             vDSP_ffi::vDSP_vsmul(b.as_ptr(), 1, &inv_b_norm, b_scaled.as_mut_ptr(), 1, n);
@@ -268,12 +268,10 @@ fn scalar_cosine(a: &[f32], b: &[f32], normalize: bool) -> Result<f32, Accelerat
 
     if normalize {
         // L2 normalize a
-        let a_norm: f32 = a.iter().map(|x| x * x).sum();
-        let a_norm = a_norm.sqrt().recip();
+        let a_norm: f32 = a.iter().map(|x| x * x).sum::<f32>().sqrt();
 
         // L2 normalize b
-        let b_norm: f32 = b.iter().map(|x| x * x).sum();
-        let b_norm = b_norm.sqrt().recip();
+        let b_norm: f32 = b.iter().map(|x| x * x).sum::<f32>().sqrt();
 
         // Dot product of normalized vectors
         let sum: f32 = a
@@ -628,7 +626,7 @@ pub fn batch_normalize(
         telemetry.normalize_calls += 1;
     }
 
-    let mut result = vectors.clone();
+    let mut result = vectors.to_vec();
 
     #[cfg(all(target_os = "macos", not(vdsp_unavailable)))]
     {
@@ -673,7 +671,7 @@ pub fn batch_normalize(
 /// Returns: dict with cosine_calls, cosine_pairs, normalize_calls, vDSP_fallback_scalar, errors
 #[pyfunction]
 pub fn get_telemetry() -> HashMap<String, u64> {
-    let telemetry = ACCELERATE_TELEMETRY.read();
+    let telemetry = ACCELERATE_TELEMETRY.write();
     let mut result = HashMap::new();
     result.insert("cosine_calls".to_string(), telemetry.cosine_calls);
     result.insert("cosine_pairs".to_string(), telemetry.cosine_pairs);
@@ -697,14 +695,14 @@ pub fn reset_telemetry() {
 
 /// Register Accelerate module functions with PyO3 module.
 pub fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
-    m.add_function(wrap_pyfunction!(init, m)?)?;
-    m.add_function(wrap_pyfunction!(get_backend_info, m)?)?;
-    m.add_function(wrap_pyfunction!(is_vdsp_available, m)?)?;
-    m.add_function(wrap_pyfunction!(cosine_similarity, m)?)?;
-    m.add_function(wrap_pyfunction!(batch_cosine_similarity, m)?)?;
-    m.add_function(wrap_pyfunction!(batch_normalize, m)?)?;
-    m.add_function(wrap_pyfunction!(get_telemetry, m)?)?;
-    m.add_function(wrap_pyfunction!(reset_telemetry, m)?)?;
+    m.add_function(wrap_pyfunction!(init))?;
+    m.add_function(wrap_pyfunction!(get_backend_info))?;
+    m.add_function(wrap_pyfunction!(is_vdsp_available))?;
+    m.add_function(wrap_pyfunction!(cosine_similarity))?;
+    m.add_function(wrap_pyfunction!(batch_cosine_similarity))?;
+    m.add_function(wrap_pyfunction!(batch_normalize))?;
+    m.add_function(wrap_pyfunction!(get_telemetry))?;
+    m.add_function(wrap_pyfunction!(reset_telemetry))?;
 
     // Constants
     m.add("BACKEND_VDSP", "vDSP")?;

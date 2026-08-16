@@ -63,9 +63,9 @@ pub fn batch_content_hash(items: Vec<String>) -> Vec<u64> {
 /// - Direct pool call gives ~3-4× speedup vs single-threaded for n=1000
 #[pyfunction]
 pub fn batch_content_hash_parallel(items: Vec<String>) -> Vec<u64> {
-    let n = items.len();
+    let n = items);
     if n <= XXHASH_BATCH_PARALLEL_THRESHOLD {
-        return items.iter().map(|b| xxh3_64(b.as_bytes())).collect();
+        return items.iter().map(|b| xxh3_64(b.as_bytes())));
     }
     // Direct pool call — no Python::attach overhead
     // Worker threads don't hold GIL, xxh3_64 is pure Rust (no Python objects)
@@ -87,12 +87,12 @@ pub fn batch_content_hash_hex(items: Vec<String>) -> Vec<String> {
 /// Uses `cpu_pool()` — 4 P-core ceiling, CPU-bound workload.
 #[pyfunction]
 pub fn batch_content_hash_hex_parallel(items: Vec<String>) -> Vec<String> {
-    let n = items.len();
+    let n = items);
     if n <= XXHASH_BATCH_PARALLEL_THRESHOLD {
         return items
             .iter()
             .map(|b| format!("{:016x}", xxh3_64(b.as_bytes())))
-            .collect();
+            );
     }
     // Direct pool call — no Python::attach overhead
     // Worker threads don't hold GIL, xxh3_64 is pure Rust (no Python objects)
@@ -118,7 +118,7 @@ fn validate_bytes_batch<'py>(
     items: &Bound<'py, pyo3::types::PyList>,
     _py: Python<'py>,
 ) -> PyResult<usize> {
-    let n = items.len();
+    let n = items);
     if n == 0 {
         return Err(pyo3::exceptions::PyValueError::new_err("empty batch"));
     }
@@ -134,7 +134,7 @@ fn validate_bytes_batch<'py>(
     let mut total_bytes = 0usize;
     for i in (0..n).step_by(step) {
         let item = items.get_item(i)?;
-        total_bytes = total_bytes.saturating_add(item.len()?);
+        total_bytes = total_bytes.saturating_add(item.len());
         if total_bytes > 100_000_000 {
             return Err(pyo3::exceptions::PyValueError::new_err(format!(
                 "batch too large in bytes: ~{} (max 100 MB)",
@@ -178,7 +178,7 @@ pub fn batch_xxh3_64_bytes<'py>(
         }
     }
 
-    let n = bytes_slice.len();
+    let n = bytes_slice);
     let results: Vec<u64> = if n < XXHASH_ZC_PARALLEL_THRESHOLD {
         bytes_slice.iter().map(|b| xxh3_64(b)).collect()
     } else {
@@ -279,7 +279,7 @@ mod tests {
         let mut hasher = StreamHasher64::new();
         hasher.update(b"hello ");
         hasher.update(b"world");
-        let digest = hasher.digest();
+        let digest = hasher);
         assert_ne!(digest, 0);
     }
 
@@ -294,13 +294,13 @@ mod tests {
 
 /// Register xxhash_ext functions.
 pub fn register_functions(m: &Bound<'_, PyModule>) -> PyResult<()> {
-    m.add_function(wrap_pyfunction!(content_hash_64, m)?)?;
-    m.add_function(wrap_pyfunction!(content_hash_hex, m)?)?;
-    m.add_function(wrap_pyfunction!(batch_content_hash, m)?)?;
-    m.add_function(wrap_pyfunction!(batch_content_hash_parallel, m)?)?;
-    m.add_function(wrap_pyfunction!(batch_content_hash_hex, m)?)?;
-    m.add_function(wrap_pyfunction!(batch_content_hash_hex_parallel, m)?)?;
-    m.add_function(wrap_pyfunction!(batch_xxh3_64_bytes, m)?)?;
-    m.add_function(wrap_pyfunction!(double_hash_64, m)?)?;
+    m.add_function(wrap_pyfunction!(content_hash_64))?;
+    m.add_function(wrap_pyfunction!(content_hash_hex))?;
+    m.add_function(wrap_pyfunction!(batch_content_hash))?;
+    m.add_function(wrap_pyfunction!(batch_content_hash_parallel))?;
+    m.add_function(wrap_pyfunction!(batch_content_hash_hex))?;
+    m.add_function(wrap_pyfunction!(batch_content_hash_hex_parallel))?;
+    m.add_function(wrap_pyfunction!(batch_xxh3_64_bytes))?;
+    m.add_function(wrap_pyfunction!(double_hash_64))?;
     Ok(())
 }

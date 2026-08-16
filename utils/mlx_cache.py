@@ -17,6 +17,7 @@ from hledac.universal.utils.mlx_memory import mlx_cleanup_decorator
 from typing import Any
 
 from hledac.universal._core.psutil_shim import psutil
+from hledac.universal._core.locks import LockCategory, register_lock
 
 logger = logging.getLogger(__name__)
 
@@ -69,12 +70,14 @@ _MLX_SEMAPHORE: asyncio.Semaphore | None = None
 
 # Synchronní lock pro evict_all (nezávislý na asyncio lock)
 _MLX_EVICT_LOCK = threading.Lock()
+register_lock(LockCategory.CACHE, _MLX_EVICT_LOCK, "mlx_cache._MLX_EVICT_LOCK")
 
 # ── MODERN-43 Fix: Atomic Cache Metrics ─────────────────────────────────────────
 # Cache hit/miss metrics now use Rust atomic counters when available.
 # Fallback: Python threading.Lock for environments without Rust extension.
 
 _cache_metrics_lock = threading.Lock()
+register_lock(LockCategory.CACHE, _cache_metrics_lock, "mlx_cache._cache_metrics_lock")
 _CACHE_HITS = 0
 _CACHE_MISSES = 0
 _RUST_AVAILABLE = False
@@ -290,6 +293,7 @@ _MLX_WIRED_LIMIT = _METAL_WIRED_LIMIT_BYTES
 # Thread-safe one-time init infrastructure
 _MLX_METAL_LIMITS_CONFIGURED = False
 _MLX_METAL_LIMITS_LOCK = threading.Lock()
+register_lock(LockCategory.CACHE, _MLX_METAL_LIMITS_LOCK, "mlx_cache._MLX_METAL_LIMITS_LOCK")
 _MLX_INITIALIZED = False
 
 # Diagnostic surface for setter failures

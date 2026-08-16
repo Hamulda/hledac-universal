@@ -32,6 +32,7 @@ import logging
 import re
 from dataclasses import dataclass, field
 import msgspec
+from compat.msgspec_gc_compat import Struct
 from pathlib import Path
 from hledac.universal.utils.sync_bridge import run_sync_async
 from typing import Any
@@ -61,7 +62,7 @@ MAX_HOPS = 2
 # RESULT DATA CLASSES
 # =============================================================================
 
-class AcademicPaper(msgspec.Struct, gc=False):
+class AcademicPaper(Struct):
     """Structured academic paper result."""
     title: str
     authors: list[str]

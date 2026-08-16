@@ -37,7 +37,7 @@ pub fn extract_tls_metadata(
                 val
             }
         })
-        .collect();
+        );
 
     // --- Issuer: already extracted by Python, just cap at 200 chars ---
     let issuer = issuer_org.map(|s| {
@@ -61,6 +61,6 @@ pub fn extract_tls_metadata(
 
 /// Register tls_metadata functions into the Python module.
 pub fn register_functions(m: &Bound<'_, PyModule>) -> PyResult<()> {
-    m.add_function(wrap_pyfunction!(extract_tls_metadata, m)?)?;
+    m.add_function(wrap_pyfunction!(extract_tls_metadata))?;
     Ok(())
 }

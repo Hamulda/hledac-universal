@@ -19,6 +19,7 @@ import logging
 import threading
 from dataclasses import dataclass, field
 import msgspec
+from compat.msgspec_gc_compat import Struct
 from typing import Any
 # R6: Centralized Rust access via core.rust_backend
 from hledac.universal._core.rust_backend import rust
@@ -33,7 +34,7 @@ logger = logging.getLogger(__name__)
 DEFAULT_NUM_TABLES = 16
 DEFAULT_NUM_ROWS = 4
 
-class LSHStats(msgspec.Struct, gc=False):
+class LSHStats(Struct):
     """Statistics for LSH near-duplicate detection."""
     num_documents: int = 0
     num_tables: int = DEFAULT_NUM_TABLES

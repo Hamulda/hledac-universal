@@ -43,6 +43,7 @@ from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 
 from hledac.universal._core.locks import LockCategory
+from _core.lock_registry import register_lock
 from _core import aclose
 
 if TYPE_CHECKING:
@@ -55,7 +56,12 @@ logger = logging.getLogger(__name__)
 # =============================================================================
 
 _EMERGENCY_UNLOAD_REQUESTED = False
-_UNLOAD_LOCK = threading.Lock()
+
+
+@register_lock(LockCategory.MPC)
+def _UNLOAD_LOCK() -> threading.Lock:
+    """Module-level lock for emergency unload flag."""
+    return threading.Lock()
 
 
 def request_emergency_unload() -> None:
@@ -68,7 +74,7 @@ def request_emergency_unload() -> None:
     F266-ABORT: Blocks new inference requests when memory pressure is critical.
     """
     global _EMERGENCY_UNLOAD_REQUESTED
-    with _UNLOAD_LOCK:
+    with _UNLOAD_LOCK():
         _EMERGENCY_UNLOAD_REQUESTED = True
     get_model_lifecycle_status.cache_clear()  # Invalidate cache on state change
     logger.warning("[LIFECYCLE] Emergency unload requested via emergency seam")
@@ -178,7 +184,7 @@ def _trigger_emergency_seam_clear() -> None:
     """Clear the emergency seam flag after a successful unload."""
     global _EMERGENCY_UNLOAD_REQUESTED
     if _EMERGENCY_UNLOAD_REQUESTED:
-        with _UNLOAD_LOCK:
+        with _UNLOAD_LOCK():
             _EMERGENCY_UNLOAD_REQUESTED = False
         get_model_lifecycle_status.cache_clear()  # Invalidate cache on state change
 

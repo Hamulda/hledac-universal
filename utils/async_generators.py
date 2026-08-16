@@ -13,6 +13,7 @@ import typing
 from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable, Iterable
 from dataclasses import dataclass
 import msgspec
+from compat.msgspec_gc_compat import Struct
 
 from hledac.universal.utils.asyncx import parallel_ok
 from _core import aclose
@@ -21,7 +22,7 @@ T = typing.TypeVar("T", default=object)
 R = typing.TypeVar("R", default=object)
 
 
-class BatchStats(msgspec.Struct, frozen=True, gc=False):
+class BatchStats(Struct, frozen=True):
     """Statistics pro batch processing."""
 
     items_processed: int = 0
@@ -43,13 +44,18 @@ async def async_batched[T](source: AsyncIterator[T], batch_size: int = 1024) -> 
         Batches of items (list[T])
     """
     batch: list[T] = []
-    async for item in source:
-        batch.append(item)
-        if len(batch) >= batch_size:
+    try:
+        async for item in source:
+            batch.append(item)
+            if len(batch) >= batch_size:
+                yield batch
+                batch = []
+        if batch:
             yield batch
-            batch = []
-    if batch:
-        yield batch
+    finally:
+        # PEP 479: Cleanup when generator is abandoned mid-stream
+        batch.clear()
+        batch = None
 
 
 async def async_transform[T, R](
@@ -122,13 +128,17 @@ async def async_filter[T](
     Yields:
         Items where predicate(item) is True
     """
-    async for item in source:
-        if inspect.iscoroutinefunction(predicate):
-            keep = await predicate(item)
-        else:
-            keep = predicate(item)
-        if keep:
-            yield item
+    try:
+        async for item in source:
+            if inspect.iscoroutinefunction(predicate):
+                keep = await predicate(item)
+            else:
+                keep = predicate(item)
+            if keep:
+                yield item
+    finally:
+        # PEP 479: Cleanup when generator is abandoned mid-stream
+        pass  # No local state to cleanup
 
 
 async def async_flatmap[T](source: AsyncIterator[Iterable[T] | AsyncIterator[T]]) -> AsyncGenerator[T]:
@@ -141,13 +151,17 @@ async def async_flatmap[T](source: AsyncIterator[Iterable[T] | AsyncIterator[T]]
     Yields:
         Flattened items
     """
-    async for item in source:
-        if inspect.isasyncgen(item):
-            async for subitem in item:
-                yield subitem
-        elif isinstance(item, (list, tuple)):
-            for subitem in item:
-                yield subitem
+    try:
+        async for item in source:
+            if inspect.isasyncgen(item):
+                async for subitem in item:
+                    yield subitem
+            elif isinstance(item, (list, tuple)):
+                for subitem in item:
+                    yield subitem
+    finally:
+        # PEP 479: Cleanup when generator is abandoned mid-stream
+        pass  # Source is consumed by iteration
 
 
 async def async_chunked_pipeline[T, R](
@@ -175,13 +189,17 @@ async def async_chunked_pipeline[T, R](
         Lists of processed results
     """
     stats = BatchStats()
-    async for batch_items in async_batched(source, batch_size):
-        try:
-            results = await processor(batch_items)
-            yield results
-            stats.batches_yielded += 1
-        except Exception:
-            yield []
+    try:
+        async for batch_items in async_batched(source, batch_size):
+            try:
+                results = await processor(batch_items)
+                yield results
+                stats.batches_yielded += 1
+            except Exception:
+                yield []
+    finally:
+        # PEP 479: Cleanup when generator is abandoned mid-stream
+        stats = None
 
 
 async def findings_to_duckdb_pipeline(
@@ -205,10 +223,14 @@ async def findings_to_duckdb_pipeline(
     async def process_batch(findings: list[dict]) -> list[dict]:
         return await duckdb_store.async_ingest_findings_batch(findings)
 
-    async for batch_results in async_chunked_pipeline(
-        findings_source, process_batch, batch_size=batch_size, max_pending_batches=max_pending
-    ):
-        yield batch_results
+    try:
+        async for batch_results in async_chunked_pipeline(
+            findings_source, process_batch, batch_size=batch_size, max_pending_batches=max_pending
+        ):
+            yield batch_results
+    finally:
+        # PEP 479: Cleanup when generator is abandoned mid-stream
+        pass  # No local state to cleanup
 
 
 class BackpressureMonitor:

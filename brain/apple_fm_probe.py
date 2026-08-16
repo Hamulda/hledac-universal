@@ -25,11 +25,12 @@ import subprocess
 import sys
 from dataclasses import dataclass, field
 import msgspec
+from compat.msgspec_gc_compat import Struct
 from _core import aclose
 __all__ = ['apple_fm_probe', 'is_afm_available', 'AFMProbeResult']
 _AFM_MIN_MACOS_VERSION = (26, 0)
 
-class AFMProbeResult(msgspec.Struct, gc=False):
+class AFMProbeResult(Struct):
     """Výsledek AFM probe."""
     available: bool
     macos_version: tuple[int, int]

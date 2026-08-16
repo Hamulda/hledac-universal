@@ -30,6 +30,7 @@ Publisher domains (feed aggregators — excluded as seeds unless real indicators
 import re
 
 import msgspec
+from compat.msgspec_gc_compat import Struct
 from _core import aclose
 __all__ = ['NonfeedSeed', 'SeedQuality', 'classify_seed_quality', 'extract_nonfeed_seeds_from_text', 'extract_nonfeed_seeds_from_findings', 'compute_lane_unlocks', 'PUBLISHER_DOMAINS']
 PUBLISHER_DOMAINS: frozenset[str] = frozenset(['krebsonsecurity.com', 'thehackernews.com', 'bleepingcomputer.com', 'welivesecurity.com', 'sans.edu', 'darkreading.com', 'zdnet.com', 'theregister.com', 'arstechnica.com', 'securityweek.com', 'infoworld.com', 'threatpost.com', 'darknet.com.au', 'journalofcloudsecurity.com'])
@@ -41,7 +42,7 @@ _WEAK_DOMAINS: frozenset[str] = frozenset(['mozilla.org', 'google.com', 'cloudfl
 _RANSOMWARE_KEYWORDS: frozenset[str] = frozenset(['ransomware', 'lockbit', 'conti', 'revil', 'clop', 'alphv', 'blackcat', 'hive', 'darkrace', 'vice society', 'PLAY', 'mount', 'babuk', 'avaddon', 'phobos', 'dharma', 'cem', 'mallox', 'stopdoj', 'doesp', ' Lucifer', 'malware', 'breach', 'leak', 'stolen', 'exposed', 'onion', 'darkweb', 'panel', 'victim', 'payment'])
 'Context keywords that boost weak domains to keep.'
 
-class SeedQuality(msgspec.Struct, frozen=True, gc=False):
+class SeedQuality(Struct, frozen=True):
     """
     Sprint F223B: Quality gate decision for a NonfeedSeed.
 
@@ -100,7 +101,7 @@ def classify_seed_quality(seed: NonfeedSeed, *, query: str='', context: str='') 
         return SeedQuality(decision='keep', reason='domain_contains_ransomware_keyword', score=0.85)
     return SeedQuality(decision='keep', reason='standard_ioc_preserved', score=0.65)
 
-class NonfeedSeed(msgspec.Struct, frozen=True, gc=False):
+class NonfeedSeed(Struct, frozen=True):
     """
     Sprint F222D: Bounded IOC seed for nonfeed lanes.
 

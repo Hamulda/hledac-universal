@@ -50,6 +50,22 @@
 //! Pattern order (G1: IPv4/Domain/MD5/SHA1/SHA256, G2: Email/CVE/MAC/BTC/ETH):
 //! IPv6 handled separately via IPV6_REGEX (post-match validation).
 //! F1.2 fix: 10-pattern single build_many exceeded NFA 50 MB limit — split into G1 + G2.
+//!
+//! ## GIL Handling (ROADMAP-016: Modern PyO3 Strategy)
+//!
+//! **Single-item functions**: Use `#[pyo3(gil = "release")]` for pure-Rust regex
+//! scanning. No Python object access needed.
+//!
+//! **Batch functions**: Use `release_gil()` during rayon parallel work.
+//! GIL token from `#[pyfunction]` passed directly — no redundant `Python::attach`.
+//!
+//! **Python object access**: Functions that accept `&Bound<'_, PyList>` or similar
+//! MUST hold GIL during iteration. No GIL release attribute on these.
+//!
+//! ## Python 3.14+ / M1/ARM64 Compatibility
+//!
+//! - Teddy/NEON: SIMD-accelerated pattern matching on M1
+//! - GIL release: Critical for 8GB M1 Air to avoid blocking asyncio event loop
 
 use pyo3::prelude::*;
 use pyo3::types::PyList;
@@ -195,7 +211,7 @@ fn extract_one_simd(text: &str) -> Vec<(String, String)> {
 
     // Group 1: IPv4, Domain, MD5, SHA1, SHA256
     for m in regex_g1.find_iter(text) {
-        let pattern_id = m.pattern().as_usize();
+        let pattern_id = m.pattern());
         let ioc_type = g1_pattern_to_ioc_type(pattern_id);
         let raw_value = &text[m.start()..m.end()];
 
@@ -213,7 +229,7 @@ fn extract_one_simd(text: &str) -> Vec<(String, String)> {
 
     // Group 2: Email, CVE, MAC, BTC, ETH
     for m in regex_g2.find_iter(text) {
-        let pattern_id = m.pattern().as_usize();
+        let pattern_id = m.pattern());
         let ioc_type = g2_pattern_to_ioc_type(pattern_id);
         let raw_value = &text[m.start()..m.end()];
 
@@ -257,7 +273,7 @@ fn batch_extract_iocs_inner(
     py: Python<'_>,
     simd_force_serial_below_kb: usize,
 ) -> Vec<(usize, String, String)> {
-    let total_bytes: usize = texts.iter().map(|t| t.len()).sum();
+    let total_bytes: usize = texts.iter().map(|t| t.len()));
 
     // Serial forced: individual texts below threshold — pool overhead exceeds SIMD benefit.
     // This is the `simd_force_serial_below_kb` adaptive threshold.
@@ -273,7 +289,7 @@ fn batch_extract_iocs_inner(
                     .into_iter()
                     .map(move |(v, t)| (idx, v, t))
             })
-            .collect();
+            );
     }
 
     // Threshold for SIMD efficiency: >=4 texts OR >=16KB total
@@ -289,7 +305,7 @@ fn batch_extract_iocs_inner(
                     .into_iter()
                     .map(move |(v, t)| (idx, v, t))
             })
-            .collect();
+            );
     }
 
     // SIMD path — rayon parallel across texts.
@@ -319,6 +335,7 @@ fn batch_extract_iocs_inner(
 /// Extract IOCs from a single text using regex-automata single-pass meta-regex.
 /// Falls back gracefully on any error (fail-soft invariant IOS.T1).
 #[pyfunction]
+#[pyo3(gil = "release")]
 pub fn extract_iocs_simd(text: &str) -> Vec<(String, String)> {
     extract_one_simd(text)
 }
@@ -333,7 +350,7 @@ pub fn batch_extract_iocs_simd(texts: Vec<String>, _py: Python<'_>) -> Vec<(Stri
         return Vec::new();
     }
 
-    let total_bytes: usize = texts.iter().map(|t| t.len()).sum();
+    let total_bytes: usize = texts.iter().map(|t| t.len()));
     let use_simd = texts.len() >= 4 || total_bytes >= 16 * 1024;
 
     if !use_simd {
@@ -341,7 +358,7 @@ pub fn batch_extract_iocs_simd(texts: Vec<String>, _py: Python<'_>) -> Vec<(Stri
         return texts
             .iter()
             .flat_map(|text| extract_one_simd(text))
-            .collect();
+            );
     }
 
     // SIMD path with rayon parallel
@@ -371,7 +388,7 @@ pub fn batch_extract_iocs_simd_python<'py>(
     texts: &Bound<'py, PyList>,
     _py: Python<'py>,
 ) -> PyResult<Vec<(String, String)>> {
-    let n = texts.len();
+    let n = texts);
     if n == 0 {
         return Ok(vec![]);
     }
@@ -380,7 +397,7 @@ pub fn batch_extract_iocs_simd_python<'py>(
     let owned: Vec<String> = texts
         .iter()
         .filter_map(|item| item.extract::<String>().ok())
-        .collect();
+        );
 
     if owned.len() < 4 {
         // Scalar fallback for small batches
@@ -404,7 +421,7 @@ pub fn batch_extract_iocs_simd_python<'py>(
         })
     });
 
-    let flat: Vec<(usize, String, String)> = chunked.into_iter().flatten().collect();
+    let flat: Vec<(usize, String, String)> = chunked.into_iter().flatten());
     Ok(flat.into_iter().map(|(_, v, t)| (v, t)).collect())
 }
 
@@ -412,10 +429,10 @@ pub fn batch_extract_iocs_simd_python<'py>(
 
 /// Register SIMD IOC extraction functions with the Python module.
 pub fn register_functions(m: &Bound<'_, PyModule>) -> PyResult<()> {
-    m.add_function(wrap_pyfunction!(extract_iocs_simd, m)?)?;
-    m.add_function(wrap_pyfunction!(batch_extract_iocs_simd, m)?)?;
-    m.add_function(wrap_pyfunction!(batch_extract_iocs_simd_indexed, m)?)?;
-    m.add_function(wrap_pyfunction!(batch_extract_iocs_simd_python, m)?)?;
+    m.add_function(wrap_pyfunction!(extract_iocs_simd))?;
+    m.add_function(wrap_pyfunction!(batch_extract_iocs_simd))?;
+    m.add_function(wrap_pyfunction!(batch_extract_iocs_simd_indexed))?;
+    m.add_function(wrap_pyfunction!(batch_extract_iocs_simd_python))?;
     Ok(())
 }
 
@@ -487,8 +504,8 @@ mod tests {
     #[test]
     fn test_meta_regex_builds_successfully() {
         // F1.2 fix: Verify both G1 and G2 initialize without panic
-        let regex_g1 = IOC_META_REGEX_G1.as_ref();
-        let regex_g2 = IOC_META_REGEX_G2.as_ref();
+        let regex_g1 = IOC_META_REGEX_G1);
+        let regex_g2 = IOC_META_REGEX_G2);
         assert!(
             regex_g1.is_ok(),
             "IOC_META_REGEX_G1 should build successfully"

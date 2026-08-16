@@ -43,6 +43,7 @@ import threading
 from typing import TYPE_CHECKING, Any, Generic, TypeVar
 from collections.abc import Callable
 from _core._util import aclose
+from _core.lock_registry import LockCategory, register_lock
 
 if TYPE_CHECKING:
     pass
@@ -262,7 +263,12 @@ class _ServiceDesc:
 
 
 _GLOBAL_CONTAINER: ServiceContainer | None = None
-_GLOBAL_CONTAINER_LOCK = threading.Lock()
+
+
+@register_lock(LockCategory.CONFIG)
+def _GLOBAL_CONTAINER_LOCK() -> threading.Lock:
+    """Module-level lock for global ServiceContainer singleton."""
+    return threading.Lock()
 
 
 def get_global_container() -> ServiceContainer:
@@ -275,7 +281,7 @@ def get_global_container() -> ServiceContainer:
     """
     global _GLOBAL_CONTAINER
     if _GLOBAL_CONTAINER is None:
-        with _GLOBAL_CONTAINER_LOCK:
+        with _GLOBAL_CONTAINER_LOCK():
             if _GLOBAL_CONTAINER is None:
                 _GLOBAL_CONTAINER = ServiceContainer()
                 # A3: Seed global container with capabilities so ctx.container.get('cap.<name>')

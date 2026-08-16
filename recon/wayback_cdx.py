@@ -32,6 +32,7 @@ import time
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 import msgspec
+from compat.msgspec_gc_compat import Struct
 from typing import Any
 import httpx
 from hledac.universal.transport.session_pool import session_pool
@@ -49,7 +50,7 @@ TIMEOUT_PER_REQUEST: float = 60.0
 CDX_API = 'https://web.archive.org/cdx/search/cdx'
 WAYBACK_BASE_URL = 'https://web.archive.org'
 
-class CDXSearchResult(msgspec.Struct, gc=False):
+class CDXSearchResult(Struct):
     """
     Single row from CDX deep search.
 
@@ -100,7 +101,7 @@ class CDXSearchResult(msgspec.Struct, gc=False):
         parts = [f'[CDX Deep Search] {self.original}', f'Archived: {self.timestamp}', f'Type: {self.mimetype}', f'Status: {self.status_code}', f'Size: {self.length} bytes', f'Replay: {self.replay_url}']
         return '\n'.join(parts)
 
-class CDXDeepSearchResult(msgspec.Struct, frozen=True, gc=False):
+class CDXDeepSearchResult(Struct, frozen=True):
     """Result of a cdx_deep_search() call."""
     query: str
     match_type: str

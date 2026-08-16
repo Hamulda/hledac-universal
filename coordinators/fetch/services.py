@@ -50,6 +50,7 @@ from cachetools import TTLCache
 from hledac.universal._core.feature_flags import FeatureFlag, FeatureFlags
 from hledac.universal.utils.asyncx import async_getaddrinfo, parallel
 from _core import aclose
+from compat.msgspec_gc_compat import Struct
 
 logger = logging.getLogger(__name__)
 
@@ -403,7 +404,7 @@ class CircuitBreakerService:
 # Retry Policy Service
 # =============================================================================
 
-class RetryConfig(msgspec.Struct, frozen=True, gc=False):
+class RetryConfig(Struct, frozen=True):
     """Configuration for retry policy. M1 8GB: msgspec.Struct for fast init."""
     max_retries: int = 3
     base_delay: float = 1.0
@@ -467,7 +468,7 @@ class RetryPolicyService:
 # Fetch Service Registry
 # =============================================================================
 
-class FetchServiceConfig(msgspec.Struct, frozen=True, gc=False):
+class FetchServiceConfig(Struct, frozen=True):
     """Configuration for fetch services. M1 8GB: msgspec.Struct for fast init."""
     enable_tor: bool = False
     enable_i2p: bool = False

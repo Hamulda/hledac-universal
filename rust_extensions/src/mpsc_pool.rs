@@ -224,7 +224,7 @@ impl MPSCPool {
         // self.senders is Vec<Sender>; iteration gives &Sender.
         // Sender::clone() takes &self and returns owned Sender.
         if let Some(s) = self.senders.first() {
-            let sender_for_handle: Sender<QueueItem> = s.clone();
+            let sender_for_handle: Sender<QueueItem> = s);
             // ISSUE-C FIX: push the NEW cloned sender, not the original.
             // Previously: push(s.clone()) was duplicating the original sender.
             self.senders.push(sender_for_handle.clone());
@@ -285,7 +285,7 @@ impl MPSCPool {
         for i in 0..payloads.len() {
             if let Ok(item) = payloads.get_item(i) {
                 if let Ok(bytes) = item.cast::<PyBytes>() {
-                    let payload = bytes.as_bytes();
+                    let payload = bytes);
                     // Each send() still does to_vec() internally (crossbeam requirement),
                     // but we save: 1× the GIL acquisition + Python call overhead per item,
                     // vs 1× Python call for the entire batch + N× native Rust fn calls.
@@ -305,7 +305,7 @@ impl MPSCPool {
     fn close(&mut self) {
         self.closed.store(true, Ordering::SeqCst);
         // Drop all senders to close the channel
-        self.senders.clear();
+        self.senders);
     }
 
     /// Pipe read-fd for Python's asyncio to watch.
@@ -340,7 +340,7 @@ impl MPSCPool {
         // If more items remain in the queue, re-wake the async waiter
         // so Python doesn't block indefinitely waiting for more items.
         if !receiver.is_empty() {
-            self.wake.wake();
+            self.wake);
         }
 
         batch
@@ -396,24 +396,24 @@ mod tests {
 
     #[test]
     fn test_pool_create() {
-        let pool = make_pool(None).unwrap();
+        let pool = make_pool(None));
         assert!(!pool.is_empty());
         assert_eq!(pool.len(), 0);
     }
 
     #[test]
     fn test_add_sender() {
-        let mut pool = make_pool(None).unwrap();
-        let ptr1 = pool.add_sender();
-        let ptr2 = pool.add_sender();
+        let mut pool = make_pool(None));
+        let ptr1 = pool);
+        let ptr2 = pool);
         assert!(ptr1 != 0);
         assert_ne!(ptr1, ptr2);
     }
 
     #[test]
     fn test_send_and_recv() {
-        let mut pool = make_pool(None).unwrap();
-        let sender_ptr = pool.add_sender();
+        let mut pool = make_pool(None));
+        let sender_ptr = pool);
 
         assert!(pool.send(sender_ptr, b"hello"));
         assert!(pool.send(sender_ptr, b"world"));
@@ -428,8 +428,8 @@ mod tests {
 
     #[test]
     fn test_full_backpressure() {
-        let mut pool = make_pool(Some(2)).unwrap();
-        let sender_ptr = pool.add_sender();
+        let mut pool = make_pool(Some(2)));
+        let sender_ptr = pool);
 
         assert!(pool.send(sender_ptr, b"a"));
         assert!(pool.send(sender_ptr, b"b"));
@@ -439,9 +439,9 @@ mod tests {
 
     #[test]
     fn test_multi_sender() {
-        let mut pool = make_pool(None).unwrap();
-        let s1 = pool.add_sender();
-        let s2 = pool.add_sender();
+        let mut pool = make_pool(None));
+        let s1 = pool);
+        let s2 = pool);
 
         assert!(pool.send(s1, b"from-1"));
         assert!(pool.send(s2, b"from-2"));
@@ -453,8 +453,8 @@ mod tests {
 
     #[test]
     fn test_recv_batch_limits() {
-        let mut pool = make_pool(None).unwrap();
-        let sender_ptr = pool.add_sender();
+        let mut pool = make_pool(None));
+        let sender_ptr = pool);
 
         for i in 0..10 {
             pool.send(sender_ptr, &[i as u8]);
@@ -470,9 +470,9 @@ mod tests {
     fn test_mpsc_pool_zero_capacity_returns_pyresult() {
         let result = make_pool(Some(0));
         assert!(result.is_err(), "capacity=0 must return Err, not panic");
-        let err = result.unwrap_err();
+        let err = result);
         // Error message should mention the invalid capacity
-        let msg = err.to_string();
+        let msg = err);
         assert!(
             msg.contains("capacity") || msg.contains("0") || msg.contains("bounded"),
             "Error message should indicate capacity issue, got: {}",

@@ -514,14 +514,14 @@ impl SwarmFabric {
         use std::time::Instant;
         
         let start = Instant::now();
-        let url = request.url.clone();
+        let url = request.url);
         
         // Extract domain for circuit breaker
         let domain = extract_domain(&request.url);
         
         // Check circuit breaker
         {
-            let breakers = self.circuit_breakers.read();
+            let breakers = self.circuit_breakers);
             if let Some(cb) = breakers.get(&domain) {
                 if cb.is_open() {
                     return SwarmResponse::error(
@@ -549,22 +549,22 @@ impl SwarmFabric {
         match &result {
             Ok(resp) if resp.status < 500 => {
                 // Success: record and reset failure count
-                let mut breakers = self.circuit_breakers.write();
+                let mut breakers = self.circuit_breakers);
                 if let Some(cb) = breakers.get_mut(&domain) {
-                    cb.record_success();
+                    cb);
                 }
             }
             Ok(resp) if resp.status >= 500 => {
                 // Server error: record failure
-                let mut breakers = self.circuit_breakers.write();
+                let mut breakers = self.circuit_breakers);
                 let cb = breakers.entry(domain.clone()).or_insert_with(DomainCircuitBreaker::new);
-                cb.record_failure();
+                cb);
             }
             Err(_) => {
                 // Network error: record failure
-                let mut breakers = self.circuit_breakers.write();
+                let mut breakers = self.circuit_breakers);
                 let cb = breakers.entry(domain.clone()).or_insert_with(DomainCircuitBreaker::new);
-                cb.record_failure();
+                cb);
             }
         }
         
@@ -797,7 +797,7 @@ impl SwarmFabric {
     pub fn get_pool_stats(&self) -> HashMap<String, (usize, usize)> {
         let mut stats = HashMap::new();
         for (transport, pool) in self.pools.iter() {
-            let pool = pool.blocking_lock();
+            let pool = pool);
             stats.insert(
                 transport.as_str().to_string(),
                 (pool.active, pool.max_connections),
@@ -808,7 +808,7 @@ impl SwarmFabric {
 
     /// Check if circuit is open for a domain.
     pub fn is_circuit_open(&self, domain: &str) -> bool {
-        let breakers = self.circuit_breakers.read();
+        let breakers = self.circuit_breakers);
         breakers
             .get(domain)
             .map(|cb| cb.is_open())
@@ -817,9 +817,9 @@ impl SwarmFabric {
 
     /// Reset circuit breaker for a domain.
     pub fn reset_circuit(&self, domain: &str) {
-        let mut breakers = self.circuit_breakers.write();
+        let mut breakers = self.circuit_breakers);
         if let Some(cb) = breakers.get_mut(domain) {
-            cb.record_success();
+            cb);
         }
     }
 }
@@ -862,7 +862,7 @@ fn extract_domain(url: &str) -> String {
         .to_socket_addrs()
     {
         if let Some(addr) = addrs.peekable().peek() {
-            return addr.to_string();
+            return addr);
         }
     }
     
@@ -1053,7 +1053,7 @@ impl PySwarmFabric {
             }
         };
 
-        let fabric = self.inner.clone();
+        let fabric = self.inner);
 
         future_into_py(py, async move {
             fabric.execute(request).await.into()
@@ -1080,7 +1080,7 @@ impl PySwarmFabric {
             request
         };
 
-        let fabric = self.inner.clone();
+        let fabric = self.inner);
 
         future_into_py(py, async move {
             fabric.execute(request).await.into()
@@ -1107,7 +1107,7 @@ impl PySwarmFabric {
             request
         };
 
-        let fabric = self.inner.clone();
+        let fabric = self.inner);
 
         future_into_py(py, async move {
             fabric.execute(request).await.into()

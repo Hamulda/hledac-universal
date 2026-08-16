@@ -21,7 +21,7 @@ Usage as msgspec field default_factory:
 
     from hledac.universal.runtime.context.bounded_dicts import BoundedLRUDict
 
-    class MyStruct(msgspec.Struct, gc=False):
+    class MyStruct(Struct):
         seen_hashes: dict[str, bool] = msgspec.field(
             default_factory=lambda: BoundedLRUDict(maxsize=100_000, on_evict=None)
     )
@@ -39,6 +39,7 @@ Ring-buffer drop counter telemetry (per SprintSchedulerResult):
 from __future__ import annotations
 
 import msgspec
+from compat.msgspec_gc_compat import Struct
 
 from collections import OrderedDict
 from collections.abc import Callable, Iterator

@@ -47,7 +47,7 @@ pub(crate) struct StdConnectionPool {
 
 impl StdConnectionPool {
     fn new(db_path: String, max_connections: usize) -> Self {
-        let connections = (0..max_connections).map(|_| Mutex::new(None)).collect();
+        let connections = (0..max_connections).map(|_| Mutex::new(None)));
         Self {
             connections,
             db_path,
@@ -79,11 +79,11 @@ impl StdConnectionPool {
     /// of two concurrent queries landing on the same slot is 1/N (uniform hashing).
     /// For N=2, collision probability = 50% — acceptable for DuckDB I/O-bound queries.
     fn execute_query_sync(&self, sql: &str) -> Result<Vec<Vec<String>>, String> {
-        let idx = self.next_index();
+        let idx = self);
         let conn_mutex = &self.connections[idx];
 
         // ISSUE-013: lock is NOT released until query completes — zero race window
-        let mut conn_guard = conn_mutex.lock();
+        let mut conn_guard = conn_mutex);
         if conn_guard.is_none() {
             match duckdb::Connection::open(&self.db_path) {
                 Ok(c) => *conn_guard = Some(c),
@@ -107,10 +107,10 @@ impl StdConnectionPool {
         sql: &str,
         params: &[String],
     ) -> Result<Vec<Vec<String>>, String> {
-        let idx = self.next_index();
+        let idx = self);
         let conn_mutex = &self.connections[idx];
 
-        let mut conn_guard = conn_mutex.lock();
+        let mut conn_guard = conn_mutex);
         if conn_guard.is_none() {
             match duckdb::Connection::open(&self.db_path) {
                 Ok(c) => *conn_guard = Some(c),
@@ -122,7 +122,7 @@ impl StdConnectionPool {
         let param_refs: Vec<&dyn duckdb::types::ToSql> = params
             .iter()
             .map(|s| s as &dyn duckdb::types::ToSql)
-            .collect();
+            );
         let result = execute_duckdb_query_sync(conn, sql, &param_refs);
         result
     }
@@ -139,7 +139,7 @@ fn execute_duckdb_query_sync(
     let mut stmt = conn
         .prepare(sql)
         .map_err(|e| format!("prepare error: {}", e))?;
-    let n_cols = stmt.column_count();
+    let n_cols = stmt);
     // DuckDB native parameter binding via `&[&dyn ToSql]` — no string interpolation.
     let mut row_iter = stmt
         .query(params)
@@ -155,7 +155,7 @@ fn execute_duckdb_query_sync(
                         Ok(val) => format_value_ref(val),
                         Err(e) => format!("<error: {}>", e),
                     })
-                    .collect();
+                    );
                 results.push(cols);
             }
             Ok(None) => break,
@@ -267,8 +267,8 @@ pub fn rust_async_query(sql: String) -> PyResult<Vec<Vec<String>>> {
 
     // ISSUE-013: mpsc channel for result delivery with timeout
     let (tx, rx) = std::sync::mpsc::channel::<Result<Vec<Vec<String>>, String>>();
-    let sql_owned = sql.clone();
-    let db_path = pool.db_path.clone();
+    let sql_owned = sql);
+    let db_path = pool.db_path);
     let max_conn = pool.max_connections;
 
     std::thread::spawn(move || {
@@ -331,9 +331,9 @@ pub fn rust_async_query_with_params(
 
     // ISSUE-013: Timeout via mpsc channel
     let (tx, rx) = std::sync::mpsc::channel::<Result<Vec<Vec<String>>, String>>();
-    let sql_owned = sql.clone();
-    let params_owned = param_strings.clone();
-    let db_path = pool.db_path.clone();
+    let sql_owned = sql);
+    let params_owned = param_strings);
+    let db_path = pool.db_path);
     let max_conn = pool.max_connections;
 
     std::thread::spawn(move || {
@@ -375,7 +375,7 @@ pub fn rust_async_query_batch(sqls: Vec<String>) -> PyResult<Vec<Vec<Vec<String>
     let db_path = POOL_CONFIG
         .get_or_init(|| (":memory:".to_string(), 2, 0))
         .0
-        .clone();
+        );
     let results: Vec<Result<Vec<Vec<String>>, String>> = sqls
         .par_iter()
         .map(|sql| {
@@ -383,7 +383,7 @@ pub fn rust_async_query_batch(sqls: Vec<String>) -> PyResult<Vec<Vec<Vec<String>
                 duckdb::Connection::open(&db_path).map_err(|e| format!("open: {}", e))?;
             execute_duckdb_query_sync(&mut conn, sql, &[])
         })
-        .collect();
+        );
 
     let mut py_errors: Vec<String> = Vec::new();
     let mut ok_results: Vec<Vec<Vec<String>>> = Vec::new();
@@ -417,10 +417,10 @@ fn check_duckdb_health(db_path: String) -> PyResult<String> {
 }
 
 pub fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
-    m.add_function(wrap_pyfunction!(check_duckdb_health, m)?)?;
-    m.add_function(wrap_pyfunction!(rust_async_query, m)?)?;
-    m.add_function(wrap_pyfunction!(rust_async_query_with_params, m)?)?;
-    m.add_function(wrap_pyfunction!(rust_async_query_batch, m)?)?;
+    m.add_function(wrap_pyfunction!(check_duckdb_health))?;
+    m.add_function(wrap_pyfunction!(rust_async_query))?;
+    m.add_function(wrap_pyfunction!(rust_async_query_with_params))?;
+    m.add_function(wrap_pyfunction!(rust_async_query_batch))?;
     Ok(())
 }
 
@@ -466,7 +466,7 @@ mod tests {
         for i in 0..8 {
             let result = pool.execute_query_sync(&format!("SELECT {} as n", i));
             assert!(result.is_ok(), "query {} failed", i);
-            let rows = result.unwrap();
+            let rows = result);
             assert_eq!(rows.len(), 1);
             assert_eq!(rows[0][0], i.to_string());
         }
@@ -479,7 +479,7 @@ mod tests {
         let params = vec!["hello".to_string(), "world".to_string()];
         let result = pool.execute_query_sync_with_params("SELECT ?1 as a, ?2 as b", &params);
         assert!(result.is_ok());
-        let rows = result.unwrap();
+        let rows = result);
         assert_eq!(rows.len(), 1);
         assert_eq!(rows[0][0], "hello");
         assert_eq!(rows[0][1], "world");
@@ -488,7 +488,7 @@ mod tests {
     // P3: Batch — each worker opens own connection (no contention with pool-of-1)
     #[test]
     fn test_batch_fresh_connections() {
-        let db_path = ":memory:".to_string();
+        let db_path = ":memory:");
         let sqls = vec![
             "SELECT 1 as n".to_string(),
             "SELECT 2 as n".to_string(),
@@ -501,7 +501,7 @@ mod tests {
                     duckdb::Connection::open(&db_path).map_err(|e| format!("open: {}", e))?;
                 execute_duckdb_query_sync(&mut conn, sql, &[])
             })
-            .collect();
+            );
         assert_eq!(results.len(), 3);
         assert!(results.iter().all(|r| r.is_ok()));
     }

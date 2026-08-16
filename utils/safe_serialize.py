@@ -44,12 +44,13 @@ from typing import Any
 from collections.abc import Callable
 
 import msgspec
+from compat.msgspec_gc_compat import Struct
 from _core import aclose
 
 logger = logging.getLogger(__name__)
 
 # msgspec schema for safe function calls
-class FuncCall(msgspec.Struct, gc=False):
+class FuncCall(Struct):
     """Safe function call payload — msgspec.Struct for zero-copy decode."""
     func: str  # "module.attr" format
     args: tuple[Any, ...] = ()

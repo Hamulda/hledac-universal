@@ -50,6 +50,8 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 from _core import aclose
+from compat.msgspec_gc_compat import Struct
+
 
 # ── paths ────────────────────────────────────────────────────────────────────────
 BENCH_FILE = Path(__file__).resolve()
@@ -384,7 +386,7 @@ def bench_msgspec_dto_serialization() -> dict[str, Any]:
         return {"name": "msgspec_dto_serialization", "status": "skip", "error": "msgspec not available"}
 
     # Struct mirroring CanonicalFinding fields (lightweight)
-    class FindingStruct(msgspec.Struct, gc=False):
+    class FindingStruct(Struct):
         finding_id: str
         source_type: str
         query: str

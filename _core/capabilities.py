@@ -25,6 +25,7 @@ import importlib.util
 import logging
 from dataclasses import dataclass
 import msgspec
+from compat.msgspec_gc_compat import Struct
 from typing import Any
 from _core._util import aclose
 
@@ -114,7 +115,7 @@ __all__ = [
 logger = logging.getLogger(__name__)
 
 
-class Capability(msgspec.Struct, frozen=True, gc=False):
+class Capability(Struct, frozen=True):
     """Frozen descriptor for one optional dependency."""
 
     name: str

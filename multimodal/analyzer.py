@@ -34,6 +34,7 @@ import logging
 import time as _time
 from dataclasses import dataclass, field
 import msgspec
+from compat.msgspec_gc_compat import Struct
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 from hledac.universal.utils.asyncx import parallel
@@ -611,7 +612,7 @@ class MultimodalEnricher:
                 out[fid] = enrich_data
         return out
 
-class DocumentResult(msgspec.Struct, gc=False):
+class DocumentResult(Struct):
     """
     Typed result from document extraction.
 

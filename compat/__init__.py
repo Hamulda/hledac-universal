@@ -32,4 +32,9 @@ __all__ = [
     "core_watchdog",
     "core_http",
     "core_mlx_embeddings",
+    # Pydantic compat — unified v2 API (ROADMAP-006)
+    "pydantic_compat",
+    # msgspec compat — gc=False → weakref=False translation (ROADMAP-010 / NEXUS-018-007)
+    # msgspec 0.22+ removes `gc` kwarg; use compat.Struct or compat.struct() instead
+    "msgspec_gc_compat",
 ]

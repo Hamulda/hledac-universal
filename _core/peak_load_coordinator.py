@@ -63,6 +63,7 @@ from enum import StrEnum
 from typing import Any
 
 import msgspec
+from compat.msgspec_gc_compat import Struct
 
 logger = logging.getLogger(__name__)
 
@@ -252,7 +253,7 @@ def _boost_for_deadline(priority: TaskPriority) -> TaskPriority:
 # =============================================================================
 
 
-class AllocationTicket(msgspec.Struct, frozen=True, gc=False):
+class AllocationTicket(Struct, frozen=True):
     """Immutable record of an active allocation.
 
     Created by acquire(), destroyed on release().
@@ -267,7 +268,7 @@ class AllocationTicket(msgspec.Struct, frozen=True, gc=False):
     owner: str  # caller identifier for debugging
 
 
-class AdmissionResult(msgspec.Struct, frozen=True, gc=False):
+class AdmissionResult(Struct, frozen=True):
     """Result of an admission check - used for telemetry and debugging."""
 
     granted: bool
@@ -277,7 +278,7 @@ class AdmissionResult(msgspec.Struct, frozen=True, gc=False):
     total_allocated_gib: float = 0.0
 
 
-class PeakLoadSnapshot(msgspec.Struct, frozen=True, gc=False):
+class PeakLoadSnapshot(Struct, frozen=True):
     """Read-only snapshot of current peak-load state.
 
     Used by ResourceGovernor and telemetry consumers.

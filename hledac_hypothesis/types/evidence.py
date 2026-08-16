@@ -16,13 +16,15 @@ from typing import Any
 
 import msgspec
 
+from compat.msgspec_gc_compat import Struct
+
 
 def _utc_now() -> datetime:
     """Module-level factory for UTC now — required for msgspec default_factory."""
     return datetime.now(UTC)
 
 
-class Evidence(msgspec.Struct, gc=False):
+class Evidence(Struct):
     """Evidence item supporting or conflicting with a hypothesis."""
     evidence_id: str
     source: str
@@ -37,7 +39,7 @@ class Evidence(msgspec.Struct, gc=False):
 from _core import aclose
 
 
-class SourceCredibility(msgspec.Struct, gc=False):
+class SourceCredibility(Struct):
     """
     Credibility assessment for an evidence source.
 
@@ -67,7 +69,7 @@ class SourceCredibility(msgspec.Struct, gc=False):
         self.last_updated = datetime.now(UTC)  # noqa: DTZ005
 
 
-class Event(msgspec.Struct, gc=False):
+class Event(Struct):
     """Temporal event for consistency checking."""
     event_id: str
     description: str

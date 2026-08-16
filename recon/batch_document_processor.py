@@ -49,7 +49,6 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import importlib.util
-import json
 import logging
 import os
 import time
@@ -71,6 +70,32 @@ except ImportError:
 
 from hledac.universal.utils.asyncx import _check_gathered
 from _core import aclose
+
+# orjson fallback — 5-10× faster than stdlib json, M1 optimized
+try:
+    import orjson
+
+    def _json_loads(data: str | bytes) -> Any:
+        return orjson.loads(data)
+
+    def _json_dumps(data: Any, *, indent: bool = False, sort_keys: bool = False) -> str:
+        opts = 0
+        if indent:
+            opts |= orjson.OPT_INDENT_2
+        if sort_keys:
+            opts |= orjson.OPT_SORT_KEYS
+        return orjson.dumps(data, option=opts).decode("utf-8")
+
+except ImportError:
+    import json as _stdlib_json
+
+    def _json_loads(data: str | bytes) -> Any:
+        return _stdlib_json.loads(data)
+
+    def _json_dumps(data: Any, *, indent: bool = False, sort_keys: bool = False) -> str:
+        return _stdlib_json.dumps(data, indent=2 if indent else None, sort_keys=sort_keys)
+
+
 class PDFProcessingResult:
     """Result of processing a single PDF."""
     doc_id: str  # SHA256 hash of file path
@@ -239,7 +264,7 @@ class BatchPDFProcessor:
         if manifest_path.exists():
             try:
                 with open(manifest_path) as f:
-                    manifest_data = json.load(f)
+                    manifest_data = _json_loads(f.read())
                 for doc_id, result_dict in manifest_data.items():
                     self._manifest[doc_id] = PDFProcessingResult(
                         doc_id=result_dict["doc_id"],
@@ -327,7 +352,7 @@ class BatchPDFProcessor:
         manifest_path = self.output_dir / "processed_manifest.json"
         manifest_data = {doc_id: result.to_dict() for doc_id, result in self._manifest.items()}
         with open(manifest_path, "w") as f:
-            json.dump(manifest_data, f, indent=2)
+            f.write(_json_dumps(manifest_data, indent=True))
 
         logger.info(
             f"[BATCH:PDF] Processing complete: "
@@ -375,7 +400,7 @@ class BatchPDFProcessor:
 
                 # Compute metadata hash
                 metadata_dict = analysis.metadata.to_dict() if hasattr(analysis.metadata, "to_dict") else {}
-                metadata_json = json.dumps(metadata_dict, sort_keys=True)
+                metadata_json = _json_dumps(metadata_dict, sort_keys=True)
                 metadata_hash = hashlib.sha256(metadata_json.encode()).hexdigest()
 
                 # Write OCR text to file (if present)
@@ -398,7 +423,7 @@ class BatchPDFProcessor:
                 if iocs:
                     ioc_file = self.output_dir / f"{doc_id}_iocs.json"
                     with open(ioc_file, "w") as f:
-                        json.dump(iocs, f, indent=2)
+                        f.write(_json_dumps(iocs, indent=True))
                     ioc_list_path = str(ioc_file)
 
                 result = PDFProcessingResult(

@@ -6,7 +6,26 @@
 //! was removed. This module provides GIL release utilities that work with
 //! the new PyO3 0.29 API.
 //!
-//! ## Two-Tier Pattern
+//! ## Modern PyO3 Strategy (ROADMAP-016)
+//!
+//! **Single-item functions**: Use `#[pyo3(gil = "release")]` attribute for automatic
+//! GIL release. This is the PREFERRED approach for pure-Rust functions that don't
+//! need Python object access. Example:
+//!
+//! ```ignore
+//! #[pyfunction]
+//! #[pyo3(gil = "release")]  // Automatic GIL release
+//! pub fn sha256_hex(data: &[u8]) -> String {
+//!     // GIL is released during this function's execution
+//!     blake3::hash(data).to_hex().to_string()
+//! }
+//! ```
+//!
+//! **Batch functions with rayon**: Use `release_gil(py, || { ... })` for explicit
+//! GIL release during parallel work. This allows asyncio event loop to run while
+//! CPU-bound Rust work executes.
+//!
+//! ## Two-Tier Pattern (for advanced use cases)
 //!
 //! **1. Pure Rust Operations (CAN release GIL)**
 //!    Use `release_gil(py, || { ... })` or `release_gil_py(py, || { ... })`
@@ -28,6 +47,13 @@
 //! during execution. If your closure captures non-Send types (e.g., Mutex guards,
 //! UnsafeCell), use `release_gil_py` with `AssertUnwindSafe` wrapper or restructure
 //! the code to move non-Send acquisitions outside the closure.
+//!
+//! ## Python 3.14+ / M1/ARM64 Compatibility
+//!
+//! - GIL release is CRITICAL for 8GB M1 Air to avoid memory pressure from
+//!   blocked Python threads during CPU-bound operations
+//! - Allows asyncio event loop to run while Rust CPU-bound work executes
+//! - Enables true CPU parallelism with rayon thread pool
 
 use pyo3::prelude::*;
 

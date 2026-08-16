@@ -40,6 +40,7 @@ from collections.abc import Callable
 from hledac.universal._core.locks import LockCategory, register_lock
 from hledac.universal.utils.asyncx import parallel_ok, safe_wait_for
 import msgspec
+from compat.msgspec_gc_compat import Struct
 from msgspec import field
 import numpy as np
 from _core import aclose
@@ -289,7 +290,7 @@ class _EmbeddingRequest:
         return self.priority < other.priority
 
 
-class _DispatcherContext(msgspec.Struct, gc=False):
+class _DispatcherContext(Struct):
     """
     ISSUE #15: Per-sprint context-bound state for MLX model instances.
 
@@ -725,15 +726,19 @@ class MLXDispatcher:
 
 
 _dispatcher: MLXDispatcher | None = None
-_dispatcher_lock = threading.Lock()
-register_lock(LockCategory.MPC, _dispatcher_lock, "_mlx_dispatcher._dispatcher_lock")
+
+
+@register_lock(LockCategory.MPC)
+def _dispatcher_lock() -> threading.Lock:
+    """Module-level lock for MLXDispatcher singleton factory."""
+    return threading.Lock()
 
 
 def get_mlx_dispatcher() -> MLXDispatcher:
     """Vrací singleton MLXDispatcher — thread-safe DCLP."""
     global _dispatcher
     if _dispatcher is None:
-        with _dispatcher_lock:
+        with _dispatcher_lock():
             if _dispatcher is None:
                 _dispatcher = MLXDispatcher()
     return _dispatcher

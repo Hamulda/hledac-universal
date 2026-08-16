@@ -14,6 +14,7 @@ import time
 from dataclasses import dataclass
 from enum import StrEnum
 import msgspec
+from compat.msgspec_gc_compat import Struct
 from hledac.universal.utils.import_resolver import lazy
 from _core import aclose
 _sample_uma_status = lazy('hledac.universal._core.resource_governor.sample_uma_status', fallback=None)
@@ -36,7 +37,7 @@ _FAILURE_WINDOW_S = 60.0
 _COOLDOWN_S = 30.0
 _MAX_TRACKED_MODELS = 16
 
-class ModelGuardDecision(msgspec.Struct, frozen=True, gc=False):
+class ModelGuardDecision(Struct, frozen=True):
     """Sprint F300: Frozen msgspec.Struct for model guard decisions."""
     allowed: bool
     model_key: str
@@ -44,7 +45,7 @@ class ModelGuardDecision(msgspec.Struct, frozen=True, gc=False):
     retry_after_s: float
     reason: str
 
-class ModelGuardSnapshot(msgspec.Struct, frozen=True, gc=False):
+class ModelGuardSnapshot(Struct, frozen=True):
     model_key: str
     state: str
     failure_count: int

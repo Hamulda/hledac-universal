@@ -24,13 +24,14 @@ import asyncio
 import time as _time
 from dataclasses import dataclass
 import msgspec
+from compat.msgspec_gc_compat import Struct
 from typing import Any
 from hledac.universal.runtime.sidecar_bus import SidecarBatch, classify_sidecar_network, classify_sidecar_risk, sidecar_results_to_source_family_outcomes
 from hledac.universal.utils.deduplication import SimHash
 from _core import aclose
 __all__ = ['SidecarDispatcher', 'DispatchOutcome']
 
-class DispatchOutcome(msgspec.Struct, frozen=True, gc=False):
+class DispatchOutcome(Struct, frozen=True):
     """
     Result of a sidecar dispatch call.
 

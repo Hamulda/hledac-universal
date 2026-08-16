@@ -36,6 +36,7 @@ import time
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 import msgspec
+from compat.msgspec_gc_compat import Struct
 from datetime import datetime
 from typing import TYPE_CHECKING, Any
 import httpx
@@ -59,7 +60,7 @@ TIMEOUT_PER_REQUEST: float = 30.0
 WAYBACK_CDX_API: str = 'https://web.archive.org/cdx/search/cdx'
 WAYBACK_BASE_URL: str = 'https://web.archive.org'
 
-class CDXDiffEvent(msgspec.Struct, frozen=True, gc=False):
+class CDXDiffEvent(Struct, frozen=True):
     """
     A single change event detected from Wayback CDX comparison.
 
@@ -78,7 +79,7 @@ class CDXDiffEvent(msgspec.Struct, frozen=True, gc=False):
     change_type: str
     evidence_url: str
 
-class WaybackDiffResult(msgspec.Struct, gc=False):
+class WaybackDiffResult(Struct):
     """Result of a WaybackDiffMiner.mine() call."""
     input_count: int
     change_events: list[CDXDiffEvent] = field(default_factory=list)

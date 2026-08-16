@@ -33,6 +33,7 @@ import logging
 import weakref
 from dataclasses import dataclass
 import msgspec
+from compat.msgspec_gc_compat import Struct
 from hledac.universal.compat.msgspec_gc_compat import Struct
 from typing import TYPE_CHECKING, Any
 from hledac.universal.paths import LMDB_ROOT

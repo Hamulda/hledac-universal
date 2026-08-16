@@ -30,6 +30,7 @@ NOT telemetry authority:
 """
 import logging
 import msgspec
+from compat.msgspec_gc_compat import Struct
 import msgspec.json as _json
 import time
 from collections import deque
@@ -41,7 +42,7 @@ from _core import aclose
 _OTEL_AVAILABLE: bool | None = None
 TELEMETRY_EVENT_FIELDS = frozenset(['session_id', 'phase', 'component', 'event', 'elapsed_ms'])
 
-class SprintEvent(msgspec.Struct, gc=False):
+class SprintEvent(Struct):
     """
     A single sprint telemetry event.
 

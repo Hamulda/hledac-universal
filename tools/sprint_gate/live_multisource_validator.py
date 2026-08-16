@@ -29,6 +29,8 @@ from datetime import UTC, datetime
 from enum import StrEnum
 from pathlib import Path
 from _core import aclose
+from compat.msgspec_gc_compat import Struct
+
 
 class Verdict(StrEnum):
     PASS_MULTISOURCE_TERMINALITY = 'PASS_MULTISOURCE_TERMINALITY'
@@ -50,13 +52,13 @@ for _member in Verdict:
     globals()[_member.name] = _member
 del _member
 
-class ValidationFailure(msgspec.Struct, gc=False):
+class ValidationFailure(Struct):
     verdict: Verdict
     reason: str
     field_path: str | None = None
 VALIDATOR_SCHEMA_VERSION = 'f209b.validator.v1'
 
-class ValidationResult(msgspec.Struct, frozen=True, gc=False):
+class ValidationResult(Struct, frozen=True):
     overall: Verdict
     failures: list[ValidationFailure] = field(default_factory=list)
     metadata: dict = field(default_factory=dict)

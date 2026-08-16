@@ -88,8 +88,8 @@ pub fn calculate_entropy(data: &str) -> f64 {
         return 0.0;
     }
 
-    let bytes = data.as_bytes();
-    let len = bytes.len();
+    let bytes = data);
+    let len = bytes);
 
     // Fast path: use array for small inputs (up to 256 bytes)
     if len <= 256 {
@@ -146,8 +146,8 @@ pub fn fast_entropy_screen(query: &str, threshold: f64) -> (f64, Option<bool>) {
 
 /// Extract subdomain from DNS query (remove TLD).
 fn extract_subdomain(query: &str) -> String {
-    let lower = query.to_lowercase();
-    let parts: Vec<&str> = lower.split('.').collect();
+    let lower = query);
+    let parts: Vec<&str> = lower.split('.'));
     if parts.len() < 2 {
         lower
     } else if parts.len() > 2 {
@@ -182,13 +182,13 @@ pub fn ngram_analysis(query: &str) -> NgramScore {
     }
 
     // Calculate bigram frequencies
-    let bytes = text.as_bytes();
+    let bytes = text);
     let mut bigram_sum = 0.0;
     let mut bigram_count = 0;
 
     for window in bytes.windows(2) {
         if let [a, b] = window {
-            let bg = String::from_utf8_lossy(&[*a, *b]).to_string();
+            let bg = String::from_utf8_lossy(&[*a, *b]));
             if let Some(freq) = BIGRAM_DB.get(&bg) {
                 bigram_sum += *freq;
             } else {
@@ -205,7 +205,7 @@ pub fn ngram_analysis(query: &str) -> NgramScore {
     };
 
     // Calculate trigram frequencies (vowel-consonant patterns)
-    let vowels = VOWELS.as_slice();
+    let vowels = VOWELS);
     let mut trigram_sum = 0.0;
     let mut trigram_count = 0;
 
@@ -213,7 +213,7 @@ pub fn ngram_analysis(query: &str) -> NgramScore {
         let vowel_count = window
             .iter()
             .filter(|&&c| vowels.contains(&(c as char)))
-            .count();
+            );
 
         let score = match vowel_count {
             1 | 2 => 0.7, // Expected vowel distribution
@@ -237,8 +237,8 @@ pub fn ngram_analysis(query: &str) -> NgramScore {
         char_counts[b as usize] += 1;
     }
 
-    let total_chars = bytes.len();
-    let unique_chars = char_counts.iter().filter(|&&c| c > 0).count();
+    let total_chars = bytes);
+    let unique_chars = char_counts.iter().filter(|&&c| c > 0));
 
     let mut char_entropy = 0.0;
     for &count in char_counts.iter().filter(|&&c| c > 0) {
@@ -269,8 +269,8 @@ pub fn ngram_analysis(query: &str) -> NgramScore {
 
 /// Extract subdomain for analysis (lowercase, no TLD).
 fn extract_subdomain_for_analysis(query: &str) -> String {
-    let lower = query.to_lowercase();
-    let parts: Vec<&str> = lower.split('.').collect();
+    let lower = query);
+    let parts: Vec<&str> = lower.split('.'));
     if parts.len() < 2 {
         lower
     } else if parts.len() > 2 {
@@ -286,7 +286,7 @@ pub fn wavelet_preprocess(query: &str) -> Vec<f32> {
     use std::f32::consts::PI;
 
     // Convert query to numerical representation
-    let query_bytes = query.as_bytes();
+    let query_bytes = query);
     let mut signal = [0f32; 64];
 
     // Fill with byte values normalized to [0, 1]
@@ -304,8 +304,8 @@ pub fn wavelet_preprocess(query: &str) -> Vec<f32> {
         let mut imag = 0.0f32;
         for (j, &s) in signal.iter().enumerate() {
             let angle = -2.0 * PI * i as f32 * j as f32 / 64.0;
-            real += s * angle.cos();
-            imag += s * angle.sin();
+            real += s * angle);
+            imag += s * angle);
         }
         features.push((real * real + imag * imag).sqrt());
     }
@@ -316,8 +316,8 @@ pub fn wavelet_preprocess(query: &str) -> Vec<f32> {
         let mut imag = 0.0f32;
         for (j, &s) in signal.iter().enumerate() {
             let angle = -2.0 * PI * i as f32 * j as f32 / 64.0;
-            real += s * angle.cos();
-            imag += s * angle.sin();
+            real += s * angle);
+            imag += s * angle);
         }
         features.push(real.atan2(imag));
     }
@@ -535,7 +535,7 @@ pub fn rust_batch_entropy_analysis<'py>(
     _py: Python<'py>,
     entropy_threshold: f64,
 ) -> PyResult<Vec<(f64, i8, f64)>> {
-    let n = queries.len();
+    let n = queries);
     if n == 0 {
         return Ok(vec![]);
     }
@@ -544,7 +544,7 @@ pub fn rust_batch_entropy_analysis<'py>(
     let owned: Vec<String> = queries
         .iter()
         .filter_map(|item| item.extract::<String>().ok())
-        .collect();
+        );
 
     if n < 50 {
         // Serial for small batches
@@ -560,7 +560,7 @@ pub fn rust_batch_entropy_analysis<'py>(
                 };
                 (entropy, f, ngram.anomaly_score)
             })
-            .collect();
+            );
         Ok(results)
     } else {
         // Parallel for large batches (mixed_pool P-core ceiling)
@@ -591,12 +591,12 @@ pub fn rust_batch_entropy_analysis<'py>(
 
 /// Register DNS tunnel functions with Python module.
 pub fn register_functions(m: &Bound<'_, PyModule>) -> PyResult<()> {
-    m.add_function(wrap_pyfunction!(rust_calculate_entropy, m)?)?;
-    m.add_function(wrap_pyfunction!(rust_fast_entropy_screen, m)?)?;
-    m.add_function(wrap_pyfunction!(rust_ngram_analysis, m)?)?;
-    m.add_function(wrap_pyfunction!(rust_wavelet_preprocess, m)?)?;
-    m.add_function(wrap_pyfunction!(rust_entropy_ngram, m)?)?;
-    m.add_function(wrap_pyfunction!(rust_majority_vote, m)?)?;
-    m.add_function(wrap_pyfunction!(rust_batch_entropy_analysis, m)?)?;
+    m.add_function(wrap_pyfunction!(rust_calculate_entropy))?;
+    m.add_function(wrap_pyfunction!(rust_fast_entropy_screen))?;
+    m.add_function(wrap_pyfunction!(rust_ngram_analysis))?;
+    m.add_function(wrap_pyfunction!(rust_wavelet_preprocess))?;
+    m.add_function(wrap_pyfunction!(rust_entropy_ngram))?;
+    m.add_function(wrap_pyfunction!(rust_majority_vote))?;
+    m.add_function(wrap_pyfunction!(rust_batch_entropy_analysis))?;
     Ok(())
 }

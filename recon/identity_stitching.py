@@ -47,6 +47,7 @@ from collections import defaultdict
 from dataclasses import dataclass, field
 import asyncio
 import msgspec
+from compat.msgspec_gc_compat import Struct
 from datetime import datetime, timedelta, UTC
 from typing import Any, Generic, TypeVar
 from operator import attrgetter, itemgetter
@@ -269,7 +270,7 @@ except ImportError:
     RelationshipType = None
 logger = logging.getLogger(__name__)
 
-class UsernameEntry(msgspec.Struct, gc=False):
+class UsernameEntry(Struct):
     """Represents a username on a specific platform."""
     platform: str
     username: str
@@ -780,7 +781,7 @@ class CrossModalLSHMatcher:
         self._voice_lsh.clear()
         self._profiles.clear()
 
-class StitchedIdentity(msgspec.Struct, frozen=True, gc=False):
+class StitchedIdentity(Struct, frozen=True):
     """
     Represents a stitched identity combining multiple profiles.
 

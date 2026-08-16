@@ -24,6 +24,7 @@ import hashlib
 import logging
 from dataclasses import dataclass, field
 import msgspec
+from compat.msgspec_gc_compat import Struct
 from enum import Enum
 from typing import Protocol, runtime_checkable
 from _core import aclose
@@ -37,7 +38,7 @@ class EnclaveAvailability(Enum):
     SIGNED = 'signed'
     FAIL_SOFT = 'fail_soft'
 
-class EnclaveStatus(msgspec.Struct, gc=False):
+class EnclaveStatus(Struct):
     """Current status of the secure enclave backend."""
     availability: EnclaveAvailability = EnclaveAvailability.DISABLED
     backend_name: str = 'null'
@@ -45,14 +46,14 @@ class EnclaveStatus(msgspec.Struct, gc=False):
     signed_batch_digest: str | None = None
     chunk_count: int = 0
 
-class SignedDigest(msgspec.Struct, frozen=True, gc=False):
+class SignedDigest(Struct, frozen=True):
     """A single Secure Enclave signature over a canonical batch digest."""
     batch_digest: str
     signature: bytes
     backend_name: str
     chunk_count: int
 
-class BatchManifest(msgspec.Struct, frozen=True, gc=False):
+class BatchManifest(Struct, frozen=True):
     """Canonical manifest for a chunk batch — used for signing."""
     chunk_count: int
     chunk_hashes: list[str]

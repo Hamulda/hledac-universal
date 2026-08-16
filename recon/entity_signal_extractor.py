@@ -30,6 +30,7 @@ import logging
 import re
 from dataclasses import dataclass, field
 import msgspec
+from compat.msgspec_gc_compat import Struct
 from datetime import datetime
 from typing import Any
 from hledac.universal.utils.asyncx import parallel
@@ -53,7 +54,7 @@ _DOMAIN_HANDLE_RE = re.compile('\\b([a-zA-Z0-9][a-zA-Z0-9_.-]{2,20})@([a-zA-Z0-9
 _HANDLE_RE = re.compile('@([a-zA-Z0-9][a-zA-Z0-9_.-]{1,30})')
 _URL_HOST_RE = re.compile('https?://([a-zA-Z0-9][a-zA-Z0-9-]*\\.[a-zA-Z]{2,})')
 
-class ExtractedEntity(msgspec.Struct, gc=False):
+class ExtractedEntity(Struct):
     """A single extracted entity from a finding."""
     entity_type: str
     value: str
@@ -62,7 +63,7 @@ class ExtractedEntity(msgspec.Struct, gc=False):
     finding_id: str
     confidence: float
 
-class EntitySignalProfile(msgspec.Struct, frozen=True, gc=False):
+class EntitySignalProfile(Struct, frozen=True):
     """
     Simplified identity profile for entity signal extraction.
 

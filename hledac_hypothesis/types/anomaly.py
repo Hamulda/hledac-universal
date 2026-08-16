@@ -16,13 +16,15 @@ from typing import Any
 import msgspec
 from _core import aclose
 
+from compat.msgspec_gc_compat import Struct
+
 
 def _utc_now() -> datetime:
     """Module-level factory for UTC now — required for msgspec default_factory."""
     return datetime.now(UTC)
 
 
-class Contradiction(msgspec.Struct, gc=False):
+class Contradiction(Struct):
     """
     Represents a contradiction between two claims or evidence items.
 
@@ -38,7 +40,7 @@ class Contradiction(msgspec.Struct, gc=False):
     resolution_notes: str = ""
 
 
-class CrossReferenceResult(msgspec.Struct, gc=False):
+class CrossReferenceResult(Struct):
     """Result of cross-referencing a claim across databases."""
     database_id: str
     claim_found: bool
@@ -48,7 +50,7 @@ class CrossReferenceResult(msgspec.Struct, gc=False):
     metadata: dict[str, Any] = msgspec.field(default_factory=dict)
 
 
-class AdversarialReport(msgspec.Struct, gc=False):
+class AdversarialReport(Struct):
     """
     Comprehensive adversarial verification report.
 

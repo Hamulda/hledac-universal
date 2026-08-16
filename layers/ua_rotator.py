@@ -155,8 +155,11 @@ _ACCEPT_ENCODING_POOL: tuple[str, ...] = (
 # Module-level thread-safe helpers
 # --------------------------------------------------------------------------------
 
-_ua_lock = threading.Lock()
-register_lock(LockCategory.CACHE, _ua_lock, "ua_rotator._ua_lock")
+
+@register_lock(LockCategory.CACHE)
+def _ua_lock() -> threading.Lock:
+    """Module-level lock for UA rotation."""
+    return threading.Lock()
 
 
 def get_random_ua() -> str:
@@ -165,7 +168,7 @@ def get_random_ua() -> str:
     Use this when you need a browser UA without caring about TLS profile
     alignment. For curl_cffi requests, use get_ua_for_profile() instead.
     """
-    with _ua_lock:
+    with _ua_lock():
         return _RNG.choice(_ALL_UAS)[1]
 
 
@@ -184,7 +187,7 @@ def get_ua_for_profile(profile: str) -> str:
         A UA string from the matching browser family. Falls back to
         chrome136 pool if profile is unknown.
     """
-    with _ua_lock:
+    with _ua_lock():
         entry = _CURL_CFFI_TO_FAMILY.get(profile)
         if entry is None:
             # Unknown profile — fall back to chrome136
@@ -203,13 +206,13 @@ def get_ua_for_profile(profile: str) -> str:
 
 def get_random_accept_language() -> str:
     """Return a random Accept-Language string (thread-safe)."""
-    with _ua_lock:
+    with _ua_lock():
         return _RNG.choice(_ACCEPT_LANGUAGE_POOL)
 
 
 def get_random_accept_encoding() -> str:
     """Return a random Accept-Encoding string (thread-safe)."""
-    with _ua_lock:
+    with _ua_lock():
         return _RNG.choice(_ACCEPT_ENCODING_POOL)
 
 

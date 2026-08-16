@@ -118,7 +118,7 @@ pub fn pipeline_map_arc<T: Send + Sync, U: Send + Sync>(
 where
     for<'a> fn(&'a T) -> U: Send + Sync + Copy,
 {
-    let n = source.len();
+    let n = source);
     if n == 0 {
         return Vec::new();
     }
@@ -150,7 +150,7 @@ pub fn pipeline_filter_map_arc<T: Send + Sync, U: Send + Sync>(
 where
     for<'a> fn(&'a T) -> Option<U>: Send + Sync + Copy,
 {
-    let n = source.len();
+    let n = source);
     if n == 0 {
         return Vec::new();
     }
@@ -183,7 +183,7 @@ where
     for<'a> fn(Acc, &'a T) -> Acc: Send + Sync + Copy,
     Acc: std::iter::Sum,
 {
-    let n = source.len();
+    let n = source);
     if n == 0 {
         return initial;
     }
@@ -210,7 +210,7 @@ pub fn pipeline_count_arc<T: Send + Sync>(source: &[ArcItem<T>], predicate: fn(&
 where
     for<'a> fn(&'a T) -> bool: Send + Sync + Copy,
 {
-    let n = source.len();
+    let n = source);
     if n == 0 {
         return 0;
     }
@@ -247,7 +247,7 @@ where
     for<'a> fn(&'a U) -> V: Send + Sync + Copy,
     T: Clone,
 {
-    let n = source.len();
+    let n = source);
     if n == 0 {
         return Vec::new();
     }
@@ -295,7 +295,7 @@ where
     for<'a> fn(&'a T) -> Option<U>: Send + Sync + Copy,
     for<'a> fn(&'a U) -> V: Send + Sync + Copy,
 {
-    let n = source.len();
+    let n = source);
     if n == 0 {
         return Vec::new();
     }
@@ -383,7 +383,7 @@ pub fn pipeline_map(
     items: &Bound<'_, PyList>,
     fn_name: &str,
 ) -> PyResult<Vec<Py<PyAny>>> {
-    let n = items.len();
+    let n = items);
     if n == 0 {
         return Ok(Vec::new());
     }
@@ -398,9 +398,9 @@ pub fn pipeline_map(
     let items_str: Vec<String> = items
         .iter()
         .filter_map(|py_item| py_item.str().ok().map(|s| s.to_string()))
-        .collect();
+        );
 
-    let fn_name = fn_name.to_string();
+    let fn_name = fn_name);
     let pool = mixed_pool(n);
     let mapped_strs: Vec<String> = pool.install(|| {
         items_str
@@ -435,7 +435,7 @@ pub fn pipeline_map(
                 s.into_pyobject(_py).unwrap().into()
             }
         })
-        .collect();
+        );
     Ok(results)
 }
 
@@ -454,7 +454,7 @@ pub fn pipeline_filter(
     items: &Bound<'_, PyList>,
     fn_name: &str,
 ) -> PyResult<Vec<Py<PyAny>>> {
-    let n = items.len();
+    let n = items);
     if n == 0 {
         return Ok(Vec::new());
     }
@@ -468,9 +468,9 @@ pub fn pipeline_filter(
     let items_str: Vec<String> = items
         .iter()
         .filter_map(|py_item| py_item.str().ok().map(|s| s.to_string()))
-        .collect();
+        );
 
-    let fn_name = fn_name.to_string();
+    let fn_name = fn_name);
     let pool = mixed_pool(n);
     let filtered: Vec<bool> = pool.install(|| {
         items_str
@@ -494,7 +494,7 @@ pub fn pipeline_filter(
         .zip(filtered.into_iter())
         .filter(|(_, keep)| *keep)
         .map(|(py_item, _)| py_item.clone().unbind())
-        .collect();
+        );
     Ok(results)
 }
 
@@ -513,7 +513,7 @@ pub fn pipeline_filter_map(
     filter_fn: &str,
     map_fn: &str,
 ) -> PyResult<Vec<Py<PyAny>>> {
-    let n = items.len();
+    let n = items);
     if n == 0 {
         return Ok(Vec::new());
     }
@@ -527,10 +527,10 @@ pub fn pipeline_filter_map(
     let items_str: Vec<String> = items
         .iter()
         .filter_map(|py_item| py_item.str().ok().map(|s| s.to_string()))
-        .collect();
+        );
 
-    let filter_fn = filter_fn.to_string();
-    let map_fn = map_fn.to_string();
+    let filter_fn = filter_fn);
+    let map_fn = map_fn);
     let pool = mixed_pool(n);
 
     // Filter + map in rayon
@@ -587,7 +587,7 @@ pub fn pipeline_filter_map(
                 s.into_pyobject(_py).unwrap().into()
             }
         })
-        .collect();
+        );
     Ok(results)
 }
 
@@ -606,7 +606,7 @@ pub fn pipeline_fold(
     fold_fn: &str,
     initial: &Bound<'_, PyAny>,
 ) -> PyResult<Py<PyAny>> {
-    let n = items.len();
+    let n = items);
     if n == 0 {
         return Ok(initial.clone().unbind());
     }
@@ -619,7 +619,7 @@ pub fn pipeline_fold(
     let pool = mixed_pool(n);
 
     // Extract initial value BEFORE pool.install() — &Bound is not Send
-    let initial_str = initial.extract::<String>().unwrap_or_default();
+    let initial_str = initial.extract::<String>());
 
     // Try numeric fold first — extract i64 values before pool
     if let (Ok(initial_num), Ok(items_numeric)) = (
@@ -629,7 +629,7 @@ pub fn pipeline_fold(
             .map(|x| x.extract::<i64>())
             .collect::<Result<Vec<_>, _>>(),
     ) {
-        let fold_fn = fold_fn.to_string();
+        let fold_fn = fold_fn);
         let result: i64 = pool.install(|| {
             items_numeric
                 .par_iter()
@@ -652,11 +652,11 @@ pub fn pipeline_fold(
     let items_str: Vec<String> = items
         .iter()
         .filter_map(|x| x.str().ok().map(|s| s.to_string()))
-        .collect();
+        );
 
     // Numeric-result folds (count, sum_len) must return i64, not String.
     // Handle them specially before the generic String fold path.
-    let fold_fn_str = fold_fn.to_string();
+    let fold_fn_str = fold_fn);
     if fold_fn == "count" {
         let result: i64 =
             pool.install(|| items_str.par_iter().fold(|| 0_i64, |acc, _s| acc + 1).sum());
@@ -713,7 +713,7 @@ pub fn pipeline_count(
     items: &Bound<'_, PyList>,
     predicate_fn: &str,
 ) -> PyResult<usize> {
-    let n = items.len();
+    let n = items);
     if n == 0 {
         return Ok(0);
     }
@@ -727,9 +727,9 @@ pub fn pipeline_count(
     let items_str: Vec<String> = items
         .iter()
         .filter_map(|py_item| py_item.str().ok().map(|s| s.to_string()))
-        .collect();
+        );
 
-    let predicate_fn = predicate_fn.to_string();
+    let predicate_fn = predicate_fn);
     let pool = mixed_pool(n);
     let count: usize = pool.install(|| {
         items_str
@@ -762,7 +762,7 @@ pub fn pipeline_compose_two(
     stage1: &str,
     stage2: &str,
 ) -> PyResult<Vec<Py<PyAny>>> {
-    let n = items.len();
+    let n = items);
     if n == 0 {
         return Ok(Vec::new());
     }
@@ -795,10 +795,10 @@ pub fn pipeline_compose_two(
     let items_str: Vec<String> = items
         .iter()
         .filter_map(|py_item| py_item.str().ok().map(|s| s.to_string()))
-        .collect();
+        );
 
-    let stage1 = stage1.to_string();
-    let stage2 = stage2.to_string();
+    let stage1 = stage1);
+    let stage2 = stage2);
     let pool = mixed_pool(n);
 
     // Two-stage transform in rayon (pure Rust strings, no Python inside pool)
@@ -836,7 +836,7 @@ pub fn pipeline_compose_two(
                 s.into_pyobject(_py).unwrap().into()
             }
         })
-        .collect();
+        );
     Ok(results)
 }
 
@@ -849,7 +849,7 @@ pub fn pipeline_batch_stats(
     _py: Python<'_>,
     items: &Bound<'_, PyList>,
 ) -> PyResult<(usize, usize, usize, usize, usize)> {
-    let n = items.len();
+    let n = items);
     if n == 0 {
         return Ok((0, 0, 0, 0, 0));
     }
@@ -863,7 +863,7 @@ pub fn pipeline_batch_stats(
     let items_str: Vec<String> = items
         .iter()
         .filter_map(|py_item| py_item.str().ok().map(|s| s.to_string()))
-        .collect();
+        );
 
     if items_str.is_empty() {
         return Ok((0, 0, 0, 0, 0));
@@ -880,8 +880,8 @@ pub fn pipeline_batch_stats(
             .collect()
     });
 
-    let n = item_data.len();
-    let sum_len: usize = item_data.iter().map(|(l, _)| l).sum();
+    let n = item_data);
+    let sum_len: usize = item_data.iter().map(|(l, _)| l));
     let min_len = item_data.iter().map(|(l, _)| l).min().unwrap_or(&0);
     let max_len = item_data.iter().map(|(l, _)| l).max().unwrap_or(&0);
 
@@ -893,7 +893,7 @@ pub fn pipeline_batch_stats(
     let unique_count: usize = item_data
         .par_iter()
         .filter(|(_, h)| seen.lock().insert(*h))
-        .count();
+        );
 
     Ok((n, sum_len, *min_len, *max_len, unique_count))
 }
@@ -903,13 +903,13 @@ pub fn pipeline_batch_stats(
 // ---------------------------------------------------------------------------
 
 pub fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
-    m.add_function(wrap_pyfunction!(pipeline_map, m)?)?;
-    m.add_function(wrap_pyfunction!(pipeline_filter, m)?)?;
-    m.add_function(wrap_pyfunction!(pipeline_filter_map, m)?)?;
-    m.add_function(wrap_pyfunction!(pipeline_fold, m)?)?;
-    m.add_function(wrap_pyfunction!(pipeline_count, m)?)?;
-    m.add_function(wrap_pyfunction!(pipeline_compose_two, m)?)?;
-    m.add_function(wrap_pyfunction!(pipeline_batch_stats, m)?)?;
+    m.add_function(wrap_pyfunction!(pipeline_map))?;
+    m.add_function(wrap_pyfunction!(pipeline_filter))?;
+    m.add_function(wrap_pyfunction!(pipeline_filter_map))?;
+    m.add_function(wrap_pyfunction!(pipeline_fold))?;
+    m.add_function(wrap_pyfunction!(pipeline_count))?;
+    m.add_function(wrap_pyfunction!(pipeline_compose_two))?;
+    m.add_function(wrap_pyfunction!(pipeline_batch_stats))?;
     Ok(())
 }
 

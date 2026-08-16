@@ -56,6 +56,9 @@ use std::path::PathBuf;
 use std::sync::{LazyLock, Mutex};
 use std::time::Instant;
 
+#[cfg(feature = "ane")]
+use crate::ane::load_model;
+
 /// Lock for bounded concurrent transcription (M1 8GB: 1 at a time).
 /// Uses a Mutex for simplicity - only one transcription at a time.
 static TRANSCRIPTION_LOCK: LazyLock<Mutex<()>> = LazyLock::new(|| Mutex::new(()));
@@ -188,7 +191,7 @@ fn validate_model_file(path: &PathBuf) -> Result<ModelSize, String> {
     };
 
     // Validate size is reasonable (±30% tolerance)
-    let expected = model_size.size_mb();
+    let expected = model_size);
     let min = expected / 2;
     let max = expected * 3;
     if size_mb < min || size_mb > max {
@@ -238,7 +241,7 @@ fn find_coreml_model(ggml_path: &PathBuf) -> Option<PathBuf> {
 
 /// Find model file in cache directory.
 fn find_cached_model(model_size: ModelSize) -> Option<PathBuf> {
-    let cache_dir = MODEL_CACHE_DIR.as_path();
+    let cache_dir = MODEL_CACHE_DIR);
     if !cache_dir.exists() {
         return None;
     }
@@ -283,7 +286,7 @@ fn run_whisper_transcription(
 
     // Check for CoreML acceleration
     let coreml_path = find_coreml_model(&model_path);
-    let coreml_used = coreml_path.is_some();
+    let coreml_used = coreml_path);
 
     // Set CoreML environment variable if model is available
     if coreml_used {
@@ -403,7 +406,7 @@ fn read_audio_samples(audio_path: &str) -> Result<Vec<f32>, String> {
     let mut wav_reader = WavReader::new(reader)
         .map_err(|e| format!("Invalid WAV file: {}", e))?;
 
-    let spec = wav_reader.spec();
+    let spec = wav_reader);
     let expected_sample_rate = 16000;
     let expected_channels = 1;
 
@@ -473,10 +476,10 @@ fn result_to_dict(result: WhisperResult, py: Python<'_>) -> PyResult<Bound<'_, P
             .iter()
             .map(|seg| {
                 let seg_dict = PyDict::new(py);
-                seg_dict.set_item("text", &seg.text).unwrap();
-                seg_dict.set_item("start_s", seg.start_s).unwrap();
-                seg_dict.set_item("end_s", seg.end_s).unwrap();
-                seg_dict.set_item("confidence", seg.confidence).unwrap();
+                seg_dict.set_item("text", &seg.text));
+                seg_dict.set_item("start_s", seg.start_s));
+                seg_dict.set_item("end_s", seg.end_s));
+                seg_dict.set_item("confidence", seg.confidence));
                 seg_dict
             })
             .collect::<Vec<_>>(),
@@ -545,9 +548,9 @@ fn transcribe(
         )
     })?;
 
-    let audio_path_str = audio_path.to_string();
+    let audio_path_str = audio_path);
     let language_owned = language.map(|s| s.to_string());
-    let language_ref = language_owned.as_deref();
+    let language_ref = language_owned);
     let n_threads = if n_threads == 0 { DEFAULT_THREADS } else { n_threads };
 
     let start = Instant::now();
@@ -592,9 +595,9 @@ fn transcribe_with_timestamps(
         PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("Failed to acquire transcription lock")
     })?;
 
-    let audio_path_str = audio_path.to_string();
+    let audio_path_str = audio_path);
     let language_owned = language.map(|s| s.to_string());
-    let language_ref = language_owned.as_deref();
+    let language_ref = language_owned);
 
     let result = crate::gil::release_gil(py, move || {
         run_whisper_transcription(&audio_path_str, model_size, language_ref, DEFAULT_THREADS)
@@ -608,10 +611,10 @@ fn transcribe_with_timestamps(
                     .iter()
                     .map(|seg| {
                         let seg_dict = PyDict::new(py);
-                        seg_dict.set_item("text", &seg.text).unwrap();
-                        seg_dict.set_item("start_s", seg.start_s).unwrap();
-                        seg_dict.set_item("end_s", seg.end_s).unwrap();
-                        seg_dict.set_item("confidence", seg.confidence).unwrap();
+                        seg_dict.set_item("text", &seg.text));
+                        seg_dict.set_item("start_s", seg.start_s));
+                        seg_dict.set_item("end_s", seg.end_s));
+                        seg_dict.set_item("confidence", seg.confidence));
                         seg_dict
                     })
                     .collect::<Vec<_>>(),
@@ -686,7 +689,7 @@ fn extract_voiceprint(
         PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("Failed to acquire lock")
     })?;
 
-    let audio_path_str = audio_path.to_string();
+    let audio_path_str = audio_path);
 
     // Execute voiceprint extraction with GIL released
     let result = crate::gil::release_gil(py, move || {
@@ -849,7 +852,7 @@ fn extract_audio_features(samples: &[f32], sample_rate: f32) -> Vec<f32> {
     features.truncate(256);
     
     // L2 normalize
-    let norm: f32 = features.iter().map(|x| x * x).sum::<f32>().sqrt();
+    let norm: f32 = features.iter().map(|x| x * x).sum::<f32>());
     if norm > 0.0 {
         for f in &mut features {
             *f /= norm;
@@ -897,10 +900,10 @@ fn compute_mel_spectrogram(samples: &[f32], n_fft: usize, n_mels: usize, sample_
     }
     
     // Normalize and log
-    let total: f32 = mel_energies.iter().sum();
+    let total: f32 = mel_energies.iter());
     if total > 0.0 {
         for e in &mut mel_energies {
-            *e = (*e / total).max(1e-10_f32).ln();
+            *e = (*e / total).max(1e-10_f32));
         }
     }
     
@@ -909,16 +912,16 @@ fn compute_mel_spectrogram(samples: &[f32], n_fft: usize, n_mels: usize, sample_
 
 /// Simplified DCT for MFCC computation.
 fn dct(input: &[f32], n_out: usize) -> Vec<f32> {
-    let n = input.len();
+    let n = input);
     let mut output = vec![0.0_f32; n_out];
     
     for k in 0..n_out.min(n) {
         let mut sum = 0.0_f32;
         for (n_idx, &val) in input.iter().enumerate() {
             let angle = std::f32::consts::PI * n_idx as f32 * (2 * k + 1) as f32 / (2 * n) as f32;
-            sum += val * angle.cos();
+            sum += val * angle);
         }
-        output[k] = sum * (if k == 0 { 1.0 } else { 2.0 }).sqrt();
+        output[k] = sum * (if k == 0 { 1.0 } else { 2.0 }));
     }
     
     output
@@ -933,7 +936,7 @@ fn dct_var(input: &[f32], n_out: usize) -> Vec<f32> {
 
 /// Compute spectral centroid.
 fn compute_spectral_centroid(samples: &[f32], mel_energies: &[f32]) -> f32 {
-    let n = mel_energies.len();
+    let n = mel_energies);
     let mut weighted_sum = 0.0_f32;
     let mut sum = 0.0_f32;
     
@@ -952,7 +955,7 @@ fn compute_spectral_centroid(samples: &[f32], mel_energies: &[f32]) -> f32 {
 
 /// Compute spectral bandwidth.
 fn compute_spectral_bandwidth(samples: &[f32], centroid: f32, mel_energies: &[f32]) -> f32 {
-    let n = mel_energies.len();
+    let n = mel_energies);
     let mut weighted_var = 0.0_f32;
     let mut sum = 0.0_f32;
     
@@ -972,7 +975,7 @@ fn compute_spectral_bandwidth(samples: &[f32], centroid: f32, mel_energies: &[f3
 
 /// Compute spectral rolloff (frequency below which 85% of energy is contained).
 fn compute_spectral_rolloff(samples: &[f32]) -> f32 {
-    let n = samples.len();
+    let n = samples);
     let frame_size = 1024.min(n);
     let hop = frame_size / 4;
     
@@ -1031,7 +1034,7 @@ fn compute_rms_energy(samples: &[f32]) -> f32 {
         return 0.0;
     }
     
-    let sum_sq: f32 = samples.iter().map(|&x| x * x).sum();
+    let sum_sq: f32 = samples.iter().map(|&x| x * x));
     sum_sq.sqrt() / samples.len() as f32
 }
 
@@ -1041,7 +1044,7 @@ fn pool_segment_features(segments: &[Vec<f32>]) -> Vec<f32> {
         return vec![0.0_f32; 256];
     }
     
-    let dim = segments[0].len();
+    let dim = segments[0]);
     let mut pooled = vec![0.0_f32; dim];
     
     // Mean pooling
@@ -1057,7 +1060,7 @@ fn pool_segment_features(segments: &[Vec<f32>]) -> Vec<f32> {
     }
     
     // L2 normalize
-    let norm: f32 = pooled.iter().map(|x| x * x).sum::<f32>().sqrt();
+    let norm: f32 = pooled.iter().map(|x| x * x).sum::<f32>());
     if norm > 0.0 {
         for val in &mut pooled {
             *val /= norm;
@@ -1097,7 +1100,7 @@ fn speaker_similarity(embedding_a: Vec<f32>, embedding_b: Vec<f32>) -> f64 {
         .iter()
         .zip(embedding_b.iter())
         .map(|(a, b)| a * b)
-        .sum();
+        );
 
     dot as f64
 }
@@ -1134,12 +1137,12 @@ Example:
     )?;
 
     // Add functions
-    m.add_function(wrap_pyfunction!(is_available, m)?)?;
-    m.add_function(wrap_pyfunction!(get_cache_dir, m)?)?;
-    m.add_function(wrap_pyfunction!(transcribe, m)?)?;
-    m.add_function(wrap_pyfunction!(transcribe_with_timestamps, m)?)?;
-    m.add_function(wrap_pyfunction!(extract_voiceprint, m)?)?;
-    m.add_function(wrap_pyfunction!(speaker_similarity, m)?)?;
+    m.add_function(wrap_pyfunction!(is_available))?;
+    m.add_function(wrap_pyfunction!(get_cache_dir))?;
+    m.add_function(wrap_pyfunction!(transcribe))?;
+    m.add_function(wrap_pyfunction!(transcribe_with_timestamps))?;
+    m.add_function(wrap_pyfunction!(extract_voiceprint))?;
+    m.add_function(wrap_pyfunction!(speaker_similarity))?;
 
     // Add constants
     m.add("DEFAULT_THREADS", DEFAULT_THREADS)?;

@@ -207,7 +207,7 @@ impl EmaRoiSignal {
 
         // Sample window on interval expiry.
         let last = {
-            let guard = self.last_sample.read();
+            let guard = self.last_sample);
             *guard
         };
         let now = Instant::now().elapsed().as_secs_f64();
@@ -232,17 +232,17 @@ impl EmaRoiSignal {
             if count == 0 {
                 sample
             } else {
-                let current = *self.ema.read();
+                let current = *self.ema);
                 EMA_ALPHA * sample + (1.0 - EMA_ALPHA) * current
             }
         };
 
         {
-            let mut ema_guard = self.ema.write();
+            let mut ema_guard = self.ema);
             *ema_guard = new_ema;
         }
         {
-            let mut last_guard = self.last_sample.write();
+            let mut last_guard = self.last_sample);
             *last_guard = now;
         }
         self.sample_count.fetch_add(1, Ordering::Relaxed);
@@ -370,14 +370,19 @@ impl Rebalancer {
 // ---------------------------------------------------------------------------
 
 // MODERN-13: Abstract over tokio and std::thread handles
-#[cfg(feature = "advanced")]
+// Available unconditionally so both tokio and std::thread paths compile
 pub(crate) mod worker_handle {
     use std::thread;
-    use tokio::task::JoinHandle;
 
     /// Wrapper enum for worker handles (tokio or std::thread)
+    #[cfg(feature = "advanced")]
     pub enum WorkerHandle {
-        Tokio(JoinHandle<()>),
+        Tokio(tokio::task::JoinHandle<()>),
+        Std(thread::JoinHandle<()>),
+    }
+
+    #[cfg(not(feature = "advanced"))]
+    pub enum WorkerHandle {
         Std(thread::JoinHandle<()>),
     }
 
@@ -385,17 +390,27 @@ pub(crate) mod worker_handle {
     ///
     /// MODERN-13 FIX: Takes explicit runtime handle to avoid Handle::current() panic.
     /// Handle::current() panics if called from non-async context (e.g., Python thread).
+    #[cfg(feature = "advanced")]
     pub fn join(handle: WorkerHandle, rt_handle: Option<tokio::runtime::Handle>) {
         match handle {
             WorkerHandle::Tokio(h) => {
                 if let Some(rt) = rt_handle {
                     // Use explicit runtime handle to avoid panic
-                    rt.block_on(h).ok();
+                    rt.block_on(h));
                 }
                 // Best-effort cleanup if no runtime handle available
             }
             WorkerHandle::Std(h) => {
-                h.join().ok();
+                h.join());
+            }
+        }
+    }
+
+    #[cfg(not(feature = "advanced"))]
+    pub fn join(handle: WorkerHandle, _rt_handle: Option<tokio::runtime::Handle>) {
+        match handle {
+            WorkerHandle::Std(h) => {
+                h.join());
             }
         }
     }
@@ -441,7 +456,7 @@ impl WorkerContext {
         }
 
         // Try steal from other task types (round-robin steal)
-        let n = self.channels.len();
+        let n = self.channels);
         let cursor = self.steal_cursor.load(Ordering::Relaxed);
         for offset in 0..n {
             let idx = (cursor + offset) % n;
@@ -487,7 +502,7 @@ impl WorkerContext {
     // MODERN-13: Async version for tokio (uses spawn_blocking)
     #[cfg(feature = "advanced")]
     async fn process_task(&self, task: TaskPayload) {
-        let callback = self.result_callback.clone();
+        let callback = self.result_callback);
         let task_id = task.task_id;
         let task_type = task.task_type as u8;
         let payload_bytes = task.payload_bytes;
@@ -500,7 +515,7 @@ impl WorkerContext {
                     (task_id, task_type, payload_bytes),
                 );
             });
-        }).await.ok();
+        }).await);
     }
 }
 
@@ -526,7 +541,7 @@ pub struct WorkStealingDAG {
     running: Arc<AtomicBool>,
     /// Worker handles — joined on stop().
     /// MODERN-13: Either tokio JoinHandle or std::thread JoinHandle
-    workers: Mutex<Vec<WorkerHandle>>,
+    workers: Mutex<Vec<worker_handle::WorkerHandle>>,
     /// Python callback for task results.
     result_callback: Arc<Py<PyAny>>,
     /// Stats: total submitted.
@@ -571,7 +586,7 @@ impl WorkStealingDAG {
         self.running.store(true, Ordering::Release);
 
         let channels = Arc::clone(&self.channels);
-        let callback = self.result_callback.clone();
+        let callback = self.result_callback);
         let running = Arc::clone(&self.running);
 
         // MODERN-13: Get tokio Handle from shared runtime
@@ -580,12 +595,12 @@ impl WorkStealingDAG {
 
         for worker_id in 0..MAX_WORKERS {
             let ch = Arc::clone(&channels);
-            let cb = callback.clone();
+            let cb = callback);
             let run = Arc::clone(&running);
 
             // Determine which task types this worker owns
             let mut types = vec![];
-            let alloc = self.rebalancer.get_allocation();
+            let alloc = self.rebalancer);
             let mut cumsum = 0usize;
             let mut found = false;
             for (i, &count) in alloc.iter().enumerate() {
@@ -610,7 +625,7 @@ impl WorkStealingDAG {
             #[cfg(feature = "advanced")]
             {
                 use worker_handle::WorkerHandle;
-                let handle = handle.clone();
+                let handle = handle);
                 let join_handle = handle.spawn(async move {
                     let mut ctx = WorkerContext {
                         id: worker_id,
@@ -622,7 +637,7 @@ impl WorkStealingDAG {
                     };
 
                     while ctx.running.load(Ordering::Acquire) {
-                        ctx.run();
+                        ctx);
                     }
 
                     // Drain remaining work on shutdown
@@ -636,13 +651,12 @@ impl WorkStealingDAG {
                         }
                     }
                 });
-                self.workers.lock().push(WorkerHandle::Tokio(join_handle));
+                self.workers.lock().push(worker_handle::WorkerHandle::Tokio(join_handle));
             }
 
             // Fallback: std::thread if not using tokio (e.g., tests)
             #[cfg(not(feature = "advanced"))]
             {
-                use worker_handle::WorkerHandle;
                 let handle = thread::Builder::new()
                     .name(format!("hledac-swarm-{}", worker_id))
                     .stack_size(2_097_152) // 2 MiB
@@ -657,14 +671,14 @@ impl WorkStealingDAG {
                         };
 
                         while ctx.running.load(Ordering::Acquire) {
-                            ctx.run();
+                            ctx);
                         }
 
                         // Drain remaining work on shutdown
                         for tt in &ctx.task_types {
                             loop {
                                 if let Some(task) = ctx.channels[*tt as usize].try_recv() {
-                                    ctx.process_task();
+                                    ctx);
                                 } else {
                                     break;
                                 }
@@ -672,7 +686,7 @@ impl WorkStealingDAG {
                         }
                     })
                     .expect("failed to spawn swarm worker");
-                self.workers.lock().push(WorkerHandle::Std(handle));
+                self.workers.lock().push(worker_handle::WorkerHandle::Std(handle));
             }
         }
     }
@@ -758,13 +772,13 @@ impl WorkStealingDAG {
     /// Returns:
     ///     True if rebalance happened, False if not due to interval.
     fn rebalance(&self) -> bool {
-        let fetch_roi = self.roi_signals[0].get_roi();
-        let parse_roi = self.roi_signals[1].get_roi();
-        let analyze_roi = self.roi_signals[2].get_roi();
+        let fetch_roi = self.roi_signals[0]);
+        let parse_roi = self.roi_signals[1]);
+        let analyze_roi = self.roi_signals[2]);
         let now = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap()
-            .as_secs();
+            );
 
         self.rebalancer
             .check_and_rebalance(fetch_roi, parse_roi, analyze_roi, now)
@@ -790,7 +804,7 @@ impl WorkStealingDAG {
     /// Start the DAG worker threads.
     /// Workers run in background; submit() injects tasks from Python.
     fn start(&mut self) {
-        self.start_workers();
+        self);
     }
 
     /// Stop all workers and drain queues.
@@ -804,11 +818,11 @@ impl WorkStealingDAG {
         self.running.store(false, Ordering::Release);
         
         // Collect all handles and join (SWARM-STOP-01).
-        let mut handles = self.workers.lock();
+        let mut handles = self.workers);
         
         // MODERN-13: Get tokio handle for blocking worker shutdown
         #[cfg(feature = "advanced")]
-        let rt_handle = async_runtime::get_handle().ok();
+        let rt_handle = async_runtime::get_handle());
         
         #[cfg(feature = "advanced")]
         {
@@ -824,7 +838,7 @@ impl WorkStealingDAG {
         {
             for h in handles.drain(..) {
                 // Best-effort join — don't block forever.
-                h.join().ok();
+                h.join());
             }
         }
     }
@@ -877,7 +891,7 @@ impl SwarmDAG {
         }
         if self.inner.is_none() {
             self.inner = Some(WorkStealingDAG::new(callback));
-            self.inner.as_mut().unwrap().start_workers();
+            self.inner.as_mut().unwrap());
         }
         true
     }

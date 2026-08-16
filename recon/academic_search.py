@@ -35,6 +35,7 @@ import xml.etree.ElementTree as ET
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 import msgspec
+from compat.msgspec_gc_compat import Struct
 from datetime import UTC, datetime
 from enum import Enum, auto
 from pathlib import Path
@@ -83,7 +84,7 @@ class SourceConfig:
             env_key = f'{self.name.upper()}_API_KEY'
             self.api_key = __import__('os').getenv(env_key)
 
-class SearchResult(msgspec.Struct, gc=False):
+class SearchResult(Struct):
     """A single search result."""
     title: str
     url: str
@@ -97,7 +98,7 @@ class SearchResult(msgspec.Struct, gc=False):
     def to_dict(self) -> dict[str, Any]:
         return {'title': self.title, 'url': self.url, 'snippet': self.snippet, 'source': self.source, 'result_type': self.result_type.name, 'metadata': self.metadata, 'relevance_score': self.relevance_score, 'timestamp': self.timestamp.isoformat()}
 
-class SourceResult(msgspec.Struct, frozen=True, gc=False):
+class SourceResult(Struct, frozen=True):
     """Results from a single source."""
     source_name: str
     results: list[SearchResult]
@@ -106,7 +107,7 @@ class SourceResult(msgspec.Struct, frozen=True, gc=False):
     success: bool
     error_message: str | None = None
 
-class AcademicSearchResult(msgspec.Struct, frozen=True, gc=False):
+class AcademicSearchResult(Struct, frozen=True):
     """Complete academic search result."""
     original_query: str
     all_results: list[SearchResult]
@@ -141,7 +142,7 @@ class QueryAnalysis:
         words = self.original_query.lower().split()
         return [w for w in words if w not in stop_words and len(w) > 2]
 
-class SourcePerformance(msgspec.Struct, gc=False):
+class SourcePerformance(Struct):
     """Performance metrics for a source."""
     source_name: str
     total_requests: int = 0

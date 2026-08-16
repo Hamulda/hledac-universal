@@ -27,80 +27,36 @@ NOTE (MODERN-35): Callers must set P-core affinity before mlx_lm.generate().
 See brain/deephermes3_engine.py for proper implementation pattern.
 """
 from __future__ import annotations
-
 import logging
 import threading
 from dataclasses import dataclass
 from typing import Any
-
-# MLX modules - these are loaded lazily and typed as Any
+from _core.lock_registry import LockCategory, register_lock
 _MLXModuleType = Any
-
-# MODERN-35 Fix: Import CPU affinity utilities for MLX Metal operations
-from hledac.universal.utils.cpu_affinity import (
-    set_mlx_affinity,
-    is_apple_silicon,
-    )
-
+from hledac.universal.utils.cpu_affinity import set_mlx_affinity, is_apple_silicon
 logger = logging.getLogger(__name__)
-
-# [SAFE-3] FFI Circuit Breaker
 try:
-    from hledac.universal._core.ffi_circuit_breaker import (
-        FFI_MODULE_MLX_INFERENCE,
-        get_ffi_circuit_breaker,
-    )
+    from hledac.universal._core.ffi_circuit_breaker import FFI_MODULE_MLX_INFERENCE, get_ffi_circuit_breaker
     _FFI_CB_AVAILABLE = True
 except ImportError:
     _FFI_CB_AVAILABLE = False
-    FFI_MODULE_MLX_INFERENCE = "mlx_inference"
-
-# [SAFE-3] Public API exports
-__all__ = [
-    # Lazy singletons
-    "get_mlx",
-    "get_metal",
-    "get_mlx_lm",
-    # Availability
-    "is_mlx_available",
-    # Memory
-    "MetalMemoryInfo",
-    "get_active_memory",
-    "get_memory_info",
-    "metal_clear_cache",
-    # [SAFE-3] Circuit breaker wrapped functions
-    "generate_with_circuit_breaker",
-    "embed_with_circuit_breaker",
-    # Reset (testing only)
-    "reset_mlx_interface",
-]
-
-# ---------------------------------------------------------------------------
-# Module-level lazy singletons
-# ---------------------------------------------------------------------------
-
+    FFI_MODULE_MLX_INFERENCE = 'mlx_inference'
+__all__ = ['get_mlx', 'get_metal', 'get_mlx_lm', 'is_mlx_available', 'MetalMemoryInfo', 'get_active_memory', 'get_memory_info', 'metal_clear_cache', 'generate_with_circuit_breaker', 'embed_with_circuit_breaker', 'reset_mlx_interface']
 _mlx_core: _MLXModuleType | None = None
 _mlx_metal: _MLXModuleType | None = None
 _mlx_lm_module: _MLXModuleType | None = None
 _ffi_cb: _MLXModuleType | None = None
-_init_lock = threading.Lock()
 
-
-# ---------------------------------------------------------------------------
-# Availability check
-# ---------------------------------------------------------------------------
-
-# C1-X FIX: Import MLX_AVAILABLE from SSOT (zero-import detection)
-# Uses importlib.metadata.version("mlx") — no mlx.core import at module load
+@register_lock(LockCategory.MPC)
+def _init_lock() -> threading.Lock:
+    """Module-level lock for MLX interface lazy singletons."""
+    return threading.Lock()
 from hledac.universal.utils.mlx_memory import MLX_AVAILABLE
 from _core import aclose
 
-
 def is_mlx_available() -> bool:
     """Check if MLX is available on this system."""
-    # C1-X FIX: Use SSOT MLX_AVAILABLE instead of duplicate detection
     return MLX_AVAILABLE
-
 
 def _get_ffi_cb() -> _MLXModuleType | None:
     """[SAFE-3] Get FFI circuit breaker singleton (lazy init)."""
@@ -109,14 +65,8 @@ def _get_ffi_cb() -> _MLXModuleType | None:
         try:
             _ffi_cb = get_ffi_circuit_breaker()
         except Exception as e:
-            logger.debug("[SAFE-3] FFI circuit breaker unavailable: %s", e)
+            logger.debug('[SAFE-3] FFI circuit breaker unavailable: %s', e)
     return _ffi_cb
-
-
-# ---------------------------------------------------------------------------
-# Lazy singletons
-# ---------------------------------------------------------------------------
-
 
 def get_mlx() -> _MLXModuleType:
     """
@@ -127,22 +77,16 @@ def get_mlx() -> _MLXModuleType:
     global _mlx_core
     if _mlx_core is not None:
         return _mlx_core
-    with _init_lock:
+    with _init_lock():
         if _mlx_core is None:
             try:
                 import mlx.core as mx
                 _mlx_core = mx
             except Exception as e:
-                raise RuntimeError(f"MLX not available: {e}")
+                raise RuntimeError(f'MLX not available: {e}')
     return _mlx_core
 
-
-# [SAFE-3] Circuit-breaker wrapped MLX generation
-def generate_with_circuit_breaker(
-    prompt: str,
-    max_tokens: int = 256,
-    temperature: float = 0.7,
-) -> str:
+def generate_with_circuit_breaker(prompt: str, max_tokens: int=256, temperature: float=0.7) -> str:
     """
     [SAFE-3] Generate text using MLX with circuit breaker fallback.
     
@@ -151,46 +95,34 @@ def generate_with_circuit_breaker(
     ffi_cb = _get_ffi_cb()
     if ffi_cb is None:
         return _generate_mlx(prompt, max_tokens, temperature)
-    
+
     def rust_call() -> str:
         return _generate_mlx(prompt, max_tokens, temperature)
-    
-    result = ffi_cb.call_or_fallback(
-        FFI_MODULE_MLX_INFERENCE, rust_call,
-        prompt, max_tokens, temperature
-    )
+    result = ffi_cb.call_or_fallback(FFI_MODULE_MLX_INFERENCE, rust_call, prompt, max_tokens, temperature)
     if result.success:
-        return result.value  # type: ignore[return-value]
-    return ""
+        return result.value
+    return ''
 
-
-def _generate_mlx(prompt: str, max_tokens: int = 256, temperature: float = 0.7) -> str:
+def _generate_mlx(prompt: str, max_tokens: int=256, temperature: float=0.7) -> str:
     """
     [SAFE-3] Internal MLX generation without circuit breaker.
     
     Returns empty string if MLX is unavailable.
     """
     if not is_mlx_available():
-        logger.warning("[SAFE-3] MLX unavailable for generation")
-        return ""
-    
+        logger.warning('[SAFE-3] MLX unavailable for generation')
+        return ''
     try:
         mlx_lm = get_mlx_lm()
-        # mlx_lm.generate is the standard API
         if hasattr(mlx_lm, 'generate'):
-            # MODERN-35 Fix: Set P-core affinity before MLX Metal inference
-            # E-cores are strictly reserved for I/O operations only
             if is_apple_silicon():
                 set_mlx_affinity()
-            # Synchronous generate (may need to be wrapped in asyncio)
             import mlx.core as mx
             return mlx_lm.generate(prompt, max_tokens=max_tokens, temp=temperature)
     except Exception as e:
-        logger.warning(f"[SAFE-3] MLX generation failed: {e}")
-    return ""
+        logger.warning(f'[SAFE-3] MLX generation failed: {e}')
+    return ''
 
-
-# [SAFE-3] Circuit-breaker wrapped MLX embedding
 def embed_with_circuit_breaker(text: str) -> list[float]:
     """
     [SAFE-3] Generate embeddings using MLX with circuit breaker fallback.
@@ -200,17 +132,13 @@ def embed_with_circuit_breaker(text: str) -> list[float]:
     ffi_cb = _get_ffi_cb()
     if ffi_cb is None:
         return _embed_mlx(text)
-    
+
     def rust_call() -> list[float]:
         return _embed_mlx(text)
-    
-    result = ffi_cb.call_or_fallback(
-        FFI_MODULE_MLX_INFERENCE, rust_call, text
-    )
+    result = ffi_cb.call_or_fallback(FFI_MODULE_MLX_INFERENCE, rust_call, text)
     if result.success:
-        return result.value  # type: ignore[return-value]
-    return [0.0] * 256  # Return zero vector on failure
-
+        return result.value
+    return [0.0] * 256
 
 def _embed_mlx(text: str) -> list[float]:
     """
@@ -219,22 +147,18 @@ def _embed_mlx(text: str) -> list[float]:
     Returns zero vector if MLX is unavailable.
     """
     if not is_mlx_available():
-        logger.warning("[SAFE-3] MLX unavailable for embedding")
+        logger.warning('[SAFE-3] MLX unavailable for embedding')
         return [0.0] * 256
-    
     try:
         mlx_lm = get_mlx_lm()
-        # Check for embed method
         if hasattr(mlx_lm, 'embed'):
             embeddings = mlx_lm.embed(text)
-            # Convert to list if needed
             if hasattr(embeddings, 'tolist'):
                 return embeddings.tolist()
             return list(embeddings)
     except Exception as e:
-        logger.warning(f"[SAFE-3] MLX embedding failed: {e}")
+        logger.warning(f'[SAFE-3] MLX embedding failed: {e}')
     return [0.0] * 256
-
 
 def get_metal() -> _MLXModuleType:
     """
@@ -246,14 +170,13 @@ def get_metal() -> _MLXModuleType:
     global _mlx_metal
     if _mlx_metal is not None:
         return _mlx_metal
-    with _init_lock:
+    with _init_lock():
         if _mlx_metal is None:
             mx = get_mlx()
-            if not hasattr(mx, "metal"):
-                raise RuntimeError("Metal not available on this system")
+            if not hasattr(mx, 'metal'):
+                raise RuntimeError('Metal not available on this system')
             _mlx_metal = mx.metal
     return _mlx_metal
-
 
 def get_mlx_lm() -> _MLXModuleType:
     """
@@ -264,28 +187,21 @@ def get_mlx_lm() -> _MLXModuleType:
     global _mlx_lm_module
     if _mlx_lm_module is not None:
         return _mlx_lm_module
-    with _init_lock:
+    with _init_lock():
         if _mlx_lm_module is None:
             try:
                 import mlx_lm as _mlx_lm
                 _mlx_lm_module = _mlx_lm
             except Exception as e:
-                raise RuntimeError(f"mlx_lm not available: {e}")
+                raise RuntimeError(f'mlx_lm not available: {e}')
     return _mlx_lm_module
 
-
-# ---------------------------------------------------------------------------
-# Metal memory operations
-# ---------------------------------------------------------------------------
-
-
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class MetalMemoryInfo:
     """Snapshot of Metal memory state."""
     active_bytes: int
     active_gib: float
     available: bool
-
 
 def get_active_memory() -> int:
     """
@@ -295,15 +211,14 @@ def get_active_memory() -> int:
     """
     try:
         metal = get_metal()
-        if hasattr(metal, "get_active_memory"):
+        if hasattr(metal, 'get_active_memory'):
             return int(metal.get_active_memory())
         mx = get_mlx()
-        if hasattr(mx, "get_active_memory"):
+        if hasattr(mx, 'get_active_memory'):
             return int(mx.get_active_memory())
-    except Exception:  # noqa: BLE001
+    except Exception:
         pass
     return 0
-
 
 def get_memory_info() -> MetalMemoryInfo:
     """
@@ -313,14 +228,9 @@ def get_memory_info() -> MetalMemoryInfo:
     """
     try:
         active = get_active_memory()
-        return MetalMemoryInfo(
-            active_bytes=active,
-            active_gib=active / (1024**3),
-            available=True,
-    )
+        return MetalMemoryInfo(active_bytes=active, active_gib=active / 1024 ** 3, available=True)
     except Exception:
         return MetalMemoryInfo(active_bytes=0, active_gib=0.0, available=False)
-
 
 def metal_clear_cache() -> None:
     """
@@ -332,22 +242,15 @@ def metal_clear_cache() -> None:
     try:
         import mlx.core as mx
         mx.eval([])
-        if hasattr(mx, "clear_cache"):
+        if hasattr(mx, 'clear_cache'):
             mx.clear_cache()
-    except Exception:  # noqa: BLE001
+    except Exception:
         pass
-
-
-# ---------------------------------------------------------------------------
-# Module reset (for testing)
-# ---------------------------------------------------------------------------
-
 
 def reset_mlx_interface() -> None:
     """Reset all singletons (for testing only)."""
     global _mlx_core, _mlx_metal, _mlx_lm_module
-    with _init_lock:
+    with _init_lock():
         _mlx_core = None
         _mlx_metal = None
         _mlx_lm_module = None
-        # C1-X FIX: _mlx_available removed — now uses SSOT MLX_AVAILABLE

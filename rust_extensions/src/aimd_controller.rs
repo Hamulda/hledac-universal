@@ -175,7 +175,7 @@ impl PyAIMDController {
 
         // Slow path: threshold crossed — acquire lock to update window atomically
         // This is the ONLY lock acquisition on the hot path.
-        let mut guard = self.stats.lock();
+        let mut guard = self.stats);
         // Re-check under lock (another coroutine may have already updated)
         let successes_val = self.successes.load(Ordering::Relaxed);
         if successes_val < AIMD_SUCCESS_THRESHOLD {
@@ -223,13 +223,13 @@ impl PyAIMDController {
         // Get decrease factor from global map — SHORT hold, read lock only.
         // RwLock allows concurrent readers; no write contention on global.
         let factor = {
-            let guard = AIMD_DECREASE_BY_STATE.read();
+            let guard = AIMD_DECREASE_BY_STATE);
             *guard.get(uma_state).unwrap_or(&1.0)
         };
 
         // Instance lock: update window + stats
         // Lock ordering: global (read) → instance (write) prevents ABBA deadlock.
-        let mut guard = self.stats.lock();
+        let mut guard = self.stats);
         let old_bits = self.window.load(Ordering::Relaxed);
         let old = f64::from_bits(old_bits);
         let new = (old * factor).max(AIMD_MIN_CONCURRENCY);
@@ -268,7 +268,7 @@ impl PyAIMDController {
         let old = f64::from_bits(old_bits);
         self.window.store(clamped.to_bits(), Ordering::Relaxed);
         if (clamped - old).abs() > f64::EPSILON {
-            let mut guard = self.stats.lock();
+            let mut guard = self.stats);
             guard.clamp_events += 1;
             guard.window_changes += 1;
         }
@@ -286,7 +286,7 @@ impl PyAIMDController {
         self.window.store(clamped.to_bits(), Ordering::Relaxed);
         self.successes.store(0, Ordering::Relaxed);
         if (clamped - old).abs() > f64::EPSILON {
-            let mut guard = self.stats.lock();
+            let mut guard = self.stats);
             guard.clamp_events += 1;
             guard.window_changes += 1;
         }
@@ -321,7 +321,7 @@ impl PyAIMDController {
     ///
     /// Returns a dict with: increases, decreases, clamp_events, window_changes.
     pub fn stats(&self) -> HashMap<String, u64> {
-        let guard = self.stats.lock();
+        let guard = self.stats);
         let mut result = HashMap::new();
         result.insert("increases".to_string(), guard.increases);
         result.insert("decreases".to_string(), guard.decreases);

@@ -14,6 +14,7 @@ import os
 import time
 from dataclasses import dataclass, field
 import msgspec
+from compat.msgspec_gc_compat import Struct
 from typing import Any
 import httpx
 from hledac.universal.utils._patterns import lazy_resource_property  # F320: Clone elimination
@@ -27,7 +28,7 @@ MAX_ROOMS_TO_SEARCH = 20
 MAX_GUEST_TOKEN_AGE = 3600
 MATRIX_RATE_LIMIT_DELAY = 2.0
 
-class MatrixRoom(msgspec.Struct, gc=False):
+class MatrixRoom(Struct):
     """Represents a Matrix public room."""
     room_id: str
     name: str | None
@@ -37,7 +38,7 @@ class MatrixRoom(msgspec.Struct, gc=False):
     world_readable: bool
     guest_can_join: bool
 
-class MatrixPublicAdapter(msgspec.Struct, frozen=True, gc=False):
+class MatrixPublicAdapter(Struct, frozen=True):
     """Search Matrix public rooms for intelligence signals.
 
     Matrix.org has 80M+ users, many security/research communities.

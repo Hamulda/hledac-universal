@@ -33,7 +33,6 @@ from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING, Any, TypeVar
 
 from hledac.universal.utils.asyncx._parallel import parallel
-from _core import aclose
 
 if TYPE_CHECKING:
     pass

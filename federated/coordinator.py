@@ -58,6 +58,7 @@ import os
 import time
 from dataclasses import dataclass, field, replace as _dc_replace
 import msgspec
+from compat.msgspec_gc_compat import Struct
 from typing import Any
 from hledac.universal.utils.asyncx import parallel_ok
 from .qtable import FederatedQTable
@@ -127,7 +128,7 @@ class NodeLane:
     ALL: tuple[str, ...] = (SURFACE, DARK, ARCHIVE)
     'The default 3-lane partitioning (matches MAX_VIRTUAL_NODES).'
 
-class NodeResult(msgspec.Struct, gc=False):
+class NodeResult(Struct):
     """Result of a single virtual node's research cycle."""
     lane: str
     findings: list[dict[str, Any]] = field(default_factory=list)
@@ -138,7 +139,7 @@ class NodeResult(msgspec.Struct, gc=False):
     def is_ok(self) -> bool:
         return self.error is None
 
-class FederatedResult(msgspec.Struct, frozen=True, gc=False):
+class FederatedResult(Struct, frozen=True):
     """
     Aggregated output of distribute_research().
 

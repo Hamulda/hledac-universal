@@ -14,6 +14,7 @@ import logging
 import struct
 from dataclasses import dataclass, field
 import msgspec
+from compat.msgspec_gc_compat import Struct
 from typing import Any
 from _core import aclose
 logger = logging.getLogger(__name__)
@@ -26,7 +27,7 @@ BT_HEADER_SIZE = 68
 PROTOCOL_STRING = b'BitTorrent protocol'
 BT_EXTENDED_FLAG = 16
 
-class TorrentInfo(msgspec.Struct, gc=False):
+class TorrentInfo(Struct):
     """Parsed torrent metadata."""
     name: str
     files: list[dict]
@@ -38,7 +39,7 @@ class TorrentInfo(msgspec.Struct, gc=False):
     created_by: str | None = None
     comment: str | None = None
 
-class TorrentMetadataFetcher(msgspec.Struct, frozen=True, gc=False):
+class TorrentMetadataFetcher(Struct, frozen=True):
     """BEP-9: Fetch torrent metadata via extended BitTorrent handshake.
 
     Uses TCP connections to peers that support the ut_metadata extension.

@@ -13,8 +13,10 @@ from __future__ import annotations
 import msgspec
 from _core import aclose
 
+from compat.msgspec_gc_compat import Struct
 
-class PivotTask(msgspec.Struct, frozen=True, gc=False):
+
+class PivotTask(Struct, frozen=True):
     """Pivot task pro agentic pivot loop -- prioritizován podle confidence * degree."""
 
     priority: float

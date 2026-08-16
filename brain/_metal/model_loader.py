@@ -34,6 +34,16 @@ def _get_mlx_loader() -> Any:
 
 class MetalModelLoader:
     """
+    __slots__ = (
+        '_cache',
+        '_half_precision',
+        '_loaded',
+        '_model',
+        '_model_path',
+        '_tokenizer',
+        'model_path',
+    )
+
     M1 Metal-aware model loader with hermes_cache integration.
 
     Extracted from DeepHermes3Engine to provide:
@@ -44,6 +54,12 @@ class MetalModelLoader:
     F273H+: Uses HermesModelCache singleton — single RLock for all access,
     active background pressure monitor corrects passive-only insert-time eviction.
     """
+
+    __slots__ = (
+        '_model_path',
+        '_cache',
+        '_half_precision',
+    )
 
     def __init__(
         self,
@@ -128,11 +144,20 @@ class MetalModelLoader:
 
 class ModelSwapManager:
     """
+    __slots__ = (
+        '_cache',
+        '_hermes_cache',
+    )
+
     Manages model swap between multiple model slots.
 
     For M1 8GB: Only one model loaded at a time due to memory constraints.
     Supports: hermes (primary), modernbert (embeddings), draft (speculative)
     """
+
+    __slots__ = (
+        '_hermes_cache',
+    )
 
     def __init__(self, hermes_cache: HermesModelCache | None = None) -> None:
         self._cache = hermes_cache

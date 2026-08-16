@@ -44,6 +44,7 @@ _zstd_decompressor = ZstdDecompressor()
 
 import asyncio
 import msgspec
+from compat.msgspec_gc_compat import Struct
 import hashlib
 import logging
 import msgspec.json as _json
@@ -108,7 +109,7 @@ class ContentType(Enum):
     TEXT = 'text'
     UNKNOWN = 'unknown'
 
-class Snapshot(msgspec.Struct, gc=False):
+class Snapshot(Struct):
     """Web archive snapshot (from stealth_osint integration)"""
     snapshot_id: str
     url: str
@@ -121,7 +122,7 @@ class Snapshot(msgspec.Struct, gc=False):
     available: bool
     quality_score: float = 0.0
 
-class ResurrectionResult(msgspec.Struct, gc=False):
+class ResurrectionResult(Struct):
     """Result of content resurrection (from stealth_osint integration)"""
     request_id: str
     original_url: str
@@ -135,7 +136,7 @@ class ResurrectionResult(msgspec.Struct, gc=False):
     extracted_metadata: dict[str, Any]
     processing_time: float
 
-class ResurrectionRequest(msgspec.Struct, gc=False):
+class ResurrectionRequest(Struct):
     """Request for content resurrection (from stealth_osint integration)"""
     request_id: str
     url: str
@@ -144,7 +145,7 @@ class ResurrectionRequest(msgspec.Struct, gc=False):
     extract_metadata: bool
     created_at: datetime
 
-class ArchiveResult(msgspec.Struct, gc=False):
+class ArchiveResult(Struct):
     """Result from archive discovery."""
     url: str
     title: str
@@ -158,7 +159,7 @@ class ArchiveResult(msgspec.Struct, gc=False):
     def to_dict(self) -> dict[str, Any]:
         return {'url': self.url, 'title': self.title, 'source': self.source, 'timestamp': self.timestamp.isoformat() if self.timestamp else None, 'content_type': self.content_type, 'metadata': self.metadata, 'available': self.available}
 
-class SnapshotInfo(msgspec.Struct, gc=False):
+class SnapshotInfo(Struct):
     """Wayback snapshot information."""
     timestamp: datetime
     url: str
@@ -166,7 +167,7 @@ class SnapshotInfo(msgspec.Struct, gc=False):
     digest: str
     length: int
 
-class CDXSnapshot(msgspec.Struct, gc=False):
+class CDXSnapshot(Struct):
     """CDX API snapshot result."""
     timestamp: str
     original_url: str
@@ -187,7 +188,7 @@ class CDXSnapshot(msgspec.Struct, gc=False):
         except ValueError:
             return None
 
-class DiscoveredEndpoint(msgspec.Struct, gc=False):
+class DiscoveredEndpoint(Struct):
     """Discovered endpoint with metadata."""
     url: str
     title: str | None = None
@@ -994,7 +995,7 @@ class WaybackCDX:
         async with self:
             return await self.get_snapshots(url_or_domain, limit=limit, from_year=from_year)
 
-class WaybackSnapshot(msgspec.Struct, gc=False):
+class WaybackSnapshot(Struct):
     """Structured Wayback Machine snapshot result."""
     timestamp: str
     archived_url: str
@@ -1030,7 +1031,7 @@ async def query_wayback(url: str, limit: int=10) -> list[WaybackSnapshot]:
         logger.debug(f'query_wayback({url}): {e}')
     return results
 
-class CommonCrawlSnapshot(msgspec.Struct, gc=False):
+class CommonCrawlSnapshot(Struct):
     """Structured Common Crawl result."""
     url: str
     timestamp: str
@@ -1081,7 +1082,7 @@ async def query_common_crawl(domain: str, limit: int=10) -> list[CommonCrawlSnap
         logger.debug(f'query_common_crawl({domain}): {e}')
     return results[:limit]
 
-class GitHubDorkResult(msgspec.Struct, gc=False):
+class GitHubDorkResult(Struct):
     """GitHub search result."""
     name: str
     url: str
@@ -1133,7 +1134,7 @@ class GitHubDorkingClient:
             logger.debug(f'GitHub search({query}): {e}')
         return results
 
-class PastebinResult(msgspec.Struct, gc=False):
+class PastebinResult(Struct):
     """Pastebin scrape result."""
     key: str
     title: str | None

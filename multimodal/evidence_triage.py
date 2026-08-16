@@ -24,6 +24,7 @@ from hledac.universal.utils.asyncx import safe_create_task
 import re
 from dataclasses import dataclass, field
 import msgspec
+from compat.msgspec_gc_compat import Struct
 from pathlib import Path
 from typing import Any
 from hledac.universal.tools.ocr_engine import VisionOCR, recognize_async
@@ -68,7 +69,7 @@ def _extract_urls_and_domains(text: str) -> tuple[list[str], list[str]]:
     domains = unique_domains[:MAX_URL_HITS]
     return (urls, domains)
 
-class TriageFacets(msgspec.Struct, gc=False):
+class TriageFacets(Struct):
     """
     Bounded triage facets extracted from a document/image artifact.
 

@@ -175,25 +175,25 @@ pub fn feed_stage_diagnose(
     findings_lost_to_dedup_total: i32,
 ) -> String {
     if patterns_configured == 0 {
-        return "empty_registry".to_string();
+        return "empty_registry");
     }
     if entries_seen == 0 {
-        return "empty_fetch".to_string();
+        return "empty_fetch");
     }
     if entries_with_empty_assembled_text > 0 && entries_scanned == 0 {
-        return "content_empty".to_string();
+        return "content_empty");
     }
     if entries_scanned == 0 {
-        return "no_pattern_hits".to_string();
+        return "no_pattern_hits");
     }
     if findings_built_pre_store == 0 && findings_lost_to_dedup_total > 0 {
-        return "findings_build_loss".to_string();
+        return "findings_build_loss");
     }
     if entries_with_hits == 0 {
-        return "no_pattern_hits_with_content".to_string();
+        return "no_pattern_hits_with_content");
     }
     if findings_built_pre_store > 0 {
-        return "prestore_findings_present".to_string();
+        return "prestore_findings_present");
     }
     "unknown".to_string()
 }
@@ -209,19 +209,19 @@ pub fn feed_branch_hint(
     entries_with_hits: i32,
 ) -> String {
     if entries_with_hits == 0 {
-        return "unknown".to_string();
+        return "unknown");
     }
     if feed_signal_present && fallback_waste == 0 {
-        return "feed_strong".to_string();
+        return "feed_strong");
     }
     if feed_signal_present && fallback_waste > 0 && fallback_useful == 0 {
-        return "feed_weak".to_string();
+        return "feed_weak");
     }
     if fallback_useful > 0 && findings_fallback > 0 {
-        return "fallback_valuable".to_string();
+        return "fallback_valuable");
     }
     if feed_signal_present || fallback_useful > 0 {
-        return "mixed".to_string();
+        return "mixed");
     }
     "unknown".to_string()
 }
@@ -465,10 +465,10 @@ pub fn feed_branch_verdict(
 }
 
 pub fn register_functions(m: &Bound<'_, PyModule>) -> PyResult<()> {
-    m.add_function(wrap_pyfunction!(feed_decision_classify, m)?)?;
-    m.add_function(wrap_pyfunction!(feed_stage_diagnose, m)?)?;
-    m.add_function(wrap_pyfunction!(feed_branch_hint, m)?)?;
-    m.add_function(wrap_pyfunction!(feed_economics_verdict, m)?)?;
-    m.add_function(wrap_pyfunction!(feed_branch_verdict, m)?)?;
+    m.add_function(wrap_pyfunction!(feed_decision_classify))?;
+    m.add_function(wrap_pyfunction!(feed_stage_diagnose))?;
+    m.add_function(wrap_pyfunction!(feed_branch_hint))?;
+    m.add_function(wrap_pyfunction!(feed_economics_verdict))?;
+    m.add_function(wrap_pyfunction!(feed_branch_verdict))?;
     Ok(())
 }

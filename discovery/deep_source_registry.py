@@ -42,6 +42,7 @@ import os
 import time
 from dataclasses import dataclass
 import msgspec
+from compat.msgspec_gc_compat import Struct
 from typing import Any, Literal
 import orjson
 from _core import aclose
@@ -57,7 +58,7 @@ SourceTier = Literal['surface', 'dark', 'archive', 'p2p', 'academic']
 TransportRequired = Literal['direct', 'tor', 'i2p', 'none']
 DataType = Literal['ct_logs', 'passive_dns', 'leak_db', 'academic', 'forum', 'paste', 'repo']
 
-class DeepSource(msgspec.Struct, frozen=True, gc=False):
+class DeepSource(Struct, frozen=True):
     """Immutable description of a single beyond-surface OSINT source.
 
     source_id is a BLAKE2b 8-byte digest of base_url (16 hex chars) — stable

@@ -166,7 +166,7 @@ fn detect_bidi_sequence(text: &str) -> Vec<String> {
     ]
     .iter()
     .copied()
-    .collect();
+    );
 
     for c in text.chars() {
         if bidi_chars.contains(&c) {
@@ -239,8 +239,8 @@ pub fn extract_fingerprint_impl(text: &str) -> UnicodeFingerprint {
         hasher.update(seq);
         hasher.update(b":");
     }
-    let result = hasher.finalize();
-    let fingerprint_hash: [u8; 32] = result.into();
+    let result = hasher);
+    let fingerprint_hash: [u8; 32] = result);
 
     UnicodeFingerprint {
         zero_width_pattern,
@@ -254,10 +254,10 @@ pub fn extract_fingerprint_impl(text: &str) -> UnicodeFingerprint {
 /// Compute Jaccard similarity between two fingerprints.
 pub fn compute_similarity(a: &UnicodeFingerprint, b: &UnicodeFingerprint) -> f64 {
     // Compare zero-width patterns
-    let zw_a: std::collections::HashSet<_> = a.zero_width_pattern.iter().collect();
-    let zw_b: std::collections::HashSet<_> = b.zero_width_pattern.iter().collect();
-    let zw_intersection = zw_a.intersection(&zw_b).count();
-    let zw_union = zw_a.union(&zw_b).count();
+    let zw_a: std::collections::HashSet<_> = a.zero_width_pattern.iter());
+    let zw_b: std::collections::HashSet<_> = b.zero_width_pattern.iter());
+    let zw_intersection = zw_a.intersection(&zw_b));
+    let zw_union = zw_a.union(&zw_b));
     let zw_jaccard = if zw_union > 0 {
         zw_intersection as f64 / zw_union as f64
     } else {
@@ -265,10 +265,10 @@ pub fn compute_similarity(a: &UnicodeFingerprint, b: &UnicodeFingerprint) -> f64
     };
 
     // Compare homoglyph patterns (by position and mapping)
-    let hg_a: std::collections::HashSet<_> = a.homoglyph_pattern.iter().collect();
-    let hg_b: std::collections::HashSet<_> = b.homoglyph_pattern.iter().collect();
-    let hg_intersection = hg_a.intersection(&hg_b).count();
-    let hg_union = hg_a.union(&hg_b).count();
+    let hg_a: std::collections::HashSet<_> = a.homoglyph_pattern.iter());
+    let hg_b: std::collections::HashSet<_> = b.homoglyph_pattern.iter());
+    let hg_intersection = hg_a.intersection(&hg_b));
+    let hg_union = hg_a.union(&hg_b));
     let hg_jaccard = if hg_union > 0 {
         hg_intersection as f64 / hg_union as f64
     } else {
@@ -276,10 +276,10 @@ pub fn compute_similarity(a: &UnicodeFingerprint, b: &UnicodeFingerprint) -> f64
     };
 
     // Compare BIDI sequences
-    let bidi_a: std::collections::HashSet<_> = a.unicode_bidi_sequence.iter().collect();
-    let bidi_b: std::collections::HashSet<_> = b.unicode_bidi_sequence.iter().collect();
-    let bidi_intersection = bidi_a.intersection(&bidi_b).count();
-    let bidi_union = bidi_a.union(&bidi_b).count();
+    let bidi_a: std::collections::HashSet<_> = a.unicode_bidi_sequence.iter());
+    let bidi_b: std::collections::HashSet<_> = b.unicode_bidi_sequence.iter());
+    let bidi_intersection = bidi_a.intersection(&bidi_b));
+    let bidi_union = bidi_a.union(&bidi_b));
     let bidi_jaccard = if bidi_union > 0 {
         bidi_intersection as f64 / bidi_union as f64
     } else {
@@ -385,8 +385,8 @@ pub fn fingerprints_identical(a: &PyUnicodeFingerprint, b: &PyUnicodeFingerprint
 #[pymodule]
 pub fn unicode_fingerprint(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyUnicodeFingerprint>()?;
-    m.add_function(wrap_pyfunction!(extract_fingerprint, m)?)?;
-    m.add_function(wrap_pyfunction!(compute_fingerprint_similarity, m)?)?;
-    m.add_function(wrap_pyfunction!(fingerprints_identical, m)?)?;
+    m.add_function(wrap_pyfunction!(extract_fingerprint))?;
+    m.add_function(wrap_pyfunction!(compute_fingerprint_similarity))?;
+    m.add_function(wrap_pyfunction!(fingerprints_identical))?;
     Ok(())
 }

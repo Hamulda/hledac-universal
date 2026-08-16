@@ -28,6 +28,7 @@ from typing import Any
 from collections.abc import Sequence
 
 import msgspec
+from compat.msgspec_gc_compat import Struct
 
 from hledac.universal._core.env_config import ENV
 from hledac.universal.utils.asyncx import (
@@ -48,7 +49,7 @@ log = logging.getLogger(__name__)
 # ── Cycle Result Types ──────────────────────────────────────────────────────────
 
 
-class _FeedWork(msgspec.Struct, frozen=True, gc=False):
+class _FeedWork(Struct, frozen=True):
     """Work item for one feed source. Compatible with _async_run_live_feed signature.
 
     Migrated from @dataclass(slots=True) to msgspec.Struct (frozen=True).
@@ -59,7 +60,7 @@ class _FeedWork(msgspec.Struct, frozen=True, gc=False):
     max_results: int = 10
 
 
-class CycleResult(msgspec.Struct, frozen=True, gc=False):
+class CycleResult(Struct, frozen=True):
     """Result from one acquisition cycle.
 
     Migrated from @dataclass to msgspec.Struct (frozen=True) for:
@@ -864,7 +865,7 @@ class AcquisitionOrchestrator:
     async def _build_seed_context(self, ctx: Any, _query: str) -> Any:
         """Build seed context from query and acquisition plan."""
 
-        class _SeedCtx(msgspec.Struct, gc=False):
+        class _SeedCtx(Struct):
             domains: tuple = ()
             ips: tuple = ()
             urls: tuple = ()
@@ -895,7 +896,7 @@ class AcquisitionOrchestrator:
         - Marks unmet lanes as UNIMPLEMENTED in telemetry
         """
 
-        class BarrierResult(msgspec.Struct, frozen=True, gc=False):
+        class BarrierResult(Struct, frozen=True):
             satisfied: bool = True
             required_lanes: tuple = ()
             completed_lanes: tuple = ()

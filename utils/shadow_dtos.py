@@ -25,13 +25,14 @@ import time
 from typing import Any, Literal
 
 import msgspec
+from compat.msgspec_gc_compat import Struct
 from _core import aclose
 
 # ---------------------------------------------------------------------------
 # Shadow twins
 # ---------------------------------------------------------------------------
 
-class AdmissionResultShadow(msgspec.Struct, frozen=True, gc=False):
+class AdmissionResultShadow(Struct, frozen=True):
     """
     Shadow of autonomous_orchestrator.AdmissionResult.
 
@@ -49,7 +50,7 @@ class AdmissionResultShadow(msgspec.Struct, frozen=True, gc=False):
     reason: str
 
 
-class BacklogCandidateShadow(msgspec.Struct, frozen=True, gc=False):
+class BacklogCandidateShadow(Struct, frozen=True):
     """
     Shadow of autonomous_orchestrator.BacklogCandidate.
 

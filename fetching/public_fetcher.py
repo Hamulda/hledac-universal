@@ -34,6 +34,7 @@ from collections.abc import AsyncIterator
 from typing import TYPE_CHECKING, Any, Final, cast
 
 import msgspec
+from compat.msgspec_gc_compat import Struct
 
 from hledac.universal._core.env_config import ENV
 from hledac.universal.utils.asyncx import safe_wait_for
@@ -658,7 +659,7 @@ class TransportCounters:
         self.static_hydration_insufficient = min(static_hydration_insufficient, _MAX_COUNT)
         self.macos_webkit_count = min(macos_webkit_count, _MAX_COUNT)
 
-class FetchResult(msgspec.Struct, frozen=True, gc=False):
+class FetchResult(Struct, frozen=True):
     """Frozen msgspec result — no mutations after construction. F350M-R: gc=False for M1 8GB.
 
     Backward-compatible: added fields have defaults so existing callers are unaffected.
@@ -1204,7 +1205,7 @@ def _compute_effective_max_bytes(requested: int) -> int:
     return min(max(requested, 1), hard)
 # _JS_RENDERER_SEMAPHORE imported from _js_renderers
 # _teardown_browser_pool imported from _js_renderers
-class AiohttpBodyOutcome(msgspec.Struct, frozen=True, gc=False):
+class AiohttpBodyOutcome(Struct, frozen=True):
     """F226B: aiohttp body read outcome with peek + size cap. F350M-R: gc=False for M1 8GB."""
     body: bytes
     total_read: int

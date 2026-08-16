@@ -23,6 +23,7 @@ import logging
 import threading
 from contextlib import asynccontextmanager
 import msgspec
+from compat.msgspec_gc_compat import Struct
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -45,7 +46,7 @@ logger = logging.getLogger(__name__)
 
 # ── Dataclasses ───────────────────────────────────────────────────────────────
 
-class MvDomainRecord(msgspec.Struct, gc=False):
+class MvDomainRecord(Struct):
     domain: str
     source_family: str
     ioc_type: str
@@ -106,7 +107,7 @@ class MvDomainRecord(msgspec.Struct, gc=False):
     )
 
 
-class DomainCandidateMvStats(msgspec.Struct, frozen=True, gc=False):
+class DomainCandidateMvStats(Struct, frozen=True):
     total_rows: int
     unique_domains: int
     oldest_row: datetime | None

@@ -47,6 +47,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 import msgspec
+from compat.msgspec_gc_compat import Struct
 from _core import aclose
 
 if TYPE_CHECKING:
@@ -110,7 +111,7 @@ def _ensure_ioc_scanner() -> Any | None:
 
 # ── Public types ──────────────────────────────────────────────────────────────
 
-class MediaIocResult(msgspec.Struct, frozen=True, gc=False):
+class MediaIocResult(Struct, frozen=True):
     """Result of media → IOC pipeline for a single file.
 
     Contains transcript, extracted IoCs, and performance metrics for each

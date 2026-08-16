@@ -153,10 +153,10 @@ pub struct MetalTelemetry {
 /// Returns: (available: bool, device_name: Option<String>, error_message: Option<String>)
 #[pyfunction]
 pub fn init() -> (bool, Option<String>, Option<String>) {
-    let device = METAL_DEVICE.read();
+    let device = METAL_DEVICE);
     match device.as_ref() {
         Some(d) => {
-            let mut telemetry = METAL_TELEMETRY.write();
+            let mut telemetry = METAL_TELEMETRY);
             *telemetry = MetalTelemetry::default();
             (true, Some(d.name.clone()), None)
         }
@@ -173,7 +173,7 @@ pub fn init() -> (bool, Option<String>, Option<String>) {
 /// Returns: (available: bool, device_name: str, max_buffer_bytes: usize, allocated_bytes: usize)
 #[pyfunction]
 pub fn get_device_info() -> (bool, Option<String>, usize, usize) {
-    let device = METAL_DEVICE.read();
+    let device = METAL_DEVICE);
     match device.as_ref() {
         Some(d) => (
             true,
@@ -260,7 +260,7 @@ pub fn batch_matmul(
 
     // Update telemetry
     {
-        let mut telemetry = METAL_TELEMETRY.write();
+        let mut telemetry = METAL_TELEMETRY);
         telemetry.matmul_calls += 1;
         telemetry.total_tokens = telemetry
             .total_tokens
@@ -289,7 +289,7 @@ pub fn batch_matmul(
 
     // Update fallback counter
     {
-        let mut telemetry = METAL_TELEMETRY.write();
+        let mut telemetry = METAL_TELEMETRY);
         telemetry.gpu_fallback_cpu += 1;
     }
 
@@ -465,7 +465,7 @@ pub fn batch_matvec(
     let gpu_time_ms = start.elapsed().as_secs_f64() * 1000.0;
 
     {
-        let mut telemetry = METAL_TELEMETRY.write();
+        let mut telemetry = METAL_TELEMETRY);
         telemetry.matmul_calls += 1;
         telemetry.total_tokens = telemetry
             .total_tokens
@@ -481,7 +481,7 @@ pub fn batch_matvec(
 /// Returns: dict with matmul_calls, total_tokens, gpu_fallback_cpu, out_of_memory, errors
 #[pyfunction]
 pub fn get_telemetry() -> HashMap<String, u64> {
-    let telemetry = METAL_TELEMETRY.read();
+    let telemetry = METAL_TELEMETRY);
     let mut result = HashMap::new();
     result.insert("matmul_calls".to_string(), telemetry.matmul_calls);
     result.insert("total_tokens".to_string(), telemetry.total_tokens);
@@ -494,7 +494,7 @@ pub fn get_telemetry() -> HashMap<String, u64> {
 /// Reset Metal telemetry counters.
 #[pyfunction]
 pub fn reset_telemetry() {
-    let mut telemetry = METAL_TELEMETRY.write();
+    let mut telemetry = METAL_TELEMETRY);
     *telemetry = MetalTelemetry::default();
 }
 
@@ -508,7 +508,7 @@ pub fn clear_cache() -> usize {
     // 1. Clear Metal's instruction cache
     // 2. Release unused buffers
     // 3. Call metal::Device::clear_cache()
-    let mut device = METAL_DEVICE.write();
+    let mut device = METAL_DEVICE);
     let released = device
         .as_mut()
         .map(|d| {
@@ -524,14 +524,14 @@ pub fn clear_cache() -> usize {
 
 /// Register Metal module functions with PyO3 module.
 pub fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
-    m.add_function(wrap_pyfunction!(init, m)?)?;
-    m.add_function(wrap_pyfunction!(get_device_info, m)?)?;
-    m.add_function(wrap_pyfunction!(is_metal_available, m)?)?;
-    m.add_function(wrap_pyfunction!(batch_matmul, m)?)?;
-    m.add_function(wrap_pyfunction!(batch_matvec, m)?)?;
-    m.add_function(wrap_pyfunction!(get_telemetry, m)?)?;
-    m.add_function(wrap_pyfunction!(reset_telemetry, m)?)?;
-    m.add_function(wrap_pyfunction!(clear_cache, m)?)?;
+    m.add_function(wrap_pyfunction!(init))?;
+    m.add_function(wrap_pyfunction!(get_device_info))?;
+    m.add_function(wrap_pyfunction!(is_metal_available))?;
+    m.add_function(wrap_pyfunction!(batch_matmul))?;
+    m.add_function(wrap_pyfunction!(batch_matvec))?;
+    m.add_function(wrap_pyfunction!(get_telemetry))?;
+    m.add_function(wrap_pyfunction!(reset_telemetry))?;
+    m.add_function(wrap_pyfunction!(clear_cache))?;
 
     // Constants
     m.add("METAL_MAX_BUFFER_SIZE", 256 * 1024 * 1024)?; // 256 MB
@@ -552,7 +552,7 @@ mod tests {
         #[cfg(target_os = "macos")]
         {
             assert!(device.is_some());
-            let d = device.unwrap();
+            let d = device);
             assert_eq!(d.name, "Apple M1");
         }
         #[cfg(not(target_os = "macos"))]
@@ -574,7 +574,7 @@ mod tests {
             0.0, 0.0, 1.0, 0.0, // expert 2
         ];
 
-        let (result, shape, _time) = batch_matvec(query, expert_weights, 2, 3, 4).unwrap();
+        let (result, shape, _time) = batch_matvec(query, expert_weights, 2, 3, 4));
 
         assert_eq!(shape, (2, 3));
         assert_eq!(result.len(), 6);
@@ -595,7 +595,7 @@ mod tests {
         let result = batch_matmul(query, weights, 2, 3, 4, 2);
         assert!(result.is_ok());
 
-        let (data, shape, _) = result.unwrap();
+        let (data, shape, _) = result);
         assert_eq!(shape, (2, 3, 2));
         assert_eq!(data.len(), 12);
     }

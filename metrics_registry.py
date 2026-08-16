@@ -20,7 +20,6 @@ M1 8GB Optimization:
 from __future__ import annotations
 
 import asyncio
-import json
 import logging
 import os
 import queue
@@ -33,6 +32,7 @@ from pathlib import Path
 from typing import Any
 
 import msgspec
+from compat.msgspec_gc_compat import Struct
 
 from hledac.universal.utils._patterns import safe_close  # F320: DRY close helper
 from hledac.universal.utils.cache import LRUCache, TTLCache
@@ -94,7 +94,7 @@ _GRAMMAR_KEYS = frozenset(['run_id', 'branch_id', 'provider_id', 'action_id'])
 
 # ── Data Structures ────────────────────────────────────────────────────────────
 
-class MetricSnapshot(msgspec.Struct, gc=False):
+class MetricSnapshot(Struct):
     """A single metric snapshot - compact for M1 8GB."""
     ts: datetime
     name: str
@@ -201,8 +201,10 @@ class _AsyncBatchFlusher:
                     line = self._orjson.dumps(metric, option=self._orjson.OPT_APPEND_NEWLINE)
                     self._persist_file.write(line)
             else:
+                # Fallback: import stdlib json (should never happen in production)
+                import json as _stdlib_json
                 for metric in batch:
-                    line = json.dumps(metric).encode('utf-8') + b'\n'
+                    line = _stdlib_json.dumps(metric).encode('utf-8') + b'\n'
                     self._persist_file.write(line)
             self._persist_file.flush()
             os.fsync(self._persist_file.fileno())

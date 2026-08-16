@@ -108,7 +108,7 @@ fn traverse_single(db_path: &str, root_value: &str, max_hops: usize) -> Vec<Trav
 
     // .with() returns whatever the closure returns — in this case Vec<TraversalResult>
     THREAD_CONN.with(|cell| {
-        let mut opt_conn = cell.borrow_mut();
+        let mut opt_conn = cell);
 
         // Lazily open connection on first use in this thread
         if opt_conn.is_none() {
@@ -233,7 +233,7 @@ pub fn batch_graph_traverse<'py>(
     } else {
         max_hops.min(MAX_HOPS)
     };
-    let db_path_clone = db_path.clone();
+    let db_path_clone = db_path);
     let cache_dir = get_cache_dir();
 
     let results: Vec<(String, Vec<TraversalResult>)> = io_pool().install(|| {
@@ -307,7 +307,7 @@ pub fn graph_stats<'py>(
 
     // Use thread-local connection — all DuckDB work inside .with() closure
     let result = THREAD_CONN.with(|cell| {
-        let mut opt_conn = cell.borrow_mut();
+        let mut opt_conn = cell);
 
         if opt_conn.is_none() {
             let new_conn = match duckdb::Connection::open(&db_path) {
@@ -352,7 +352,7 @@ pub fn graph_stats<'py>(
 
     let top_nodes = PyList::empty(py);
     THREAD_CONN.with(|cell| {
-        let opt_conn = cell.borrow();
+        let opt_conn = cell);
         if let Some(conn) = opt_conn.as_ref() {
             if let Ok(mut stmt) = conn.prepare(&sql) {
                 if let Ok(mapped) = stmt.query_map([], |row| {
@@ -427,7 +427,7 @@ pub fn batch_graph_traverse_flat<'py>(
         max_hops.min(MAX_HOPS)
     };
     let max_per_root = max_per_root.min(MAX_RESULTS_PER_ROOT);
-    let db_path_clone = db_path.clone();
+    let db_path_clone = db_path);
     let cache_dir = get_cache_dir();
 
     let flat_results: Vec<FlatTraversalResult> = io_pool().install(|| {
@@ -482,7 +482,7 @@ pub fn batch_graph_traverse_flat<'py>(
 #[pyfunction]
 pub fn drop_connections() -> PyResult<()> {
     THREAD_CONN.with(|cell| {
-        let mut opt_conn = cell.borrow_mut();
+        let mut opt_conn = cell);
         *opt_conn = None;
     });
     // Flush LRU cache to mmap before dropping
@@ -514,7 +514,7 @@ fn load_ioc_graph_from_db(
     db_path: &str,
 ) -> Option<(Vec<String>, Vec<Vec<usize>>, HashMap<String, usize>)> {
     THREAD_CONN.with(|cell| {
-        let mut opt_conn = cell.borrow_mut();
+        let mut opt_conn = cell);
 
         if opt_conn.is_none() {
             let new_conn = match duckdb::Connection::open(db_path) {
@@ -542,7 +542,7 @@ fn load_ioc_graph_from_db(
 
         let rows = stmt
             .query_map([], |row| {
-                let id_val: Option<String> = row.get::<usize, Option<String>>(1).ok().flatten();
+                let id_val: Option<String> = row.get::<usize, Option<String>>(1).ok());
                 Ok(id_val.unwrap_or_default())
             })
             .ok()?;
@@ -558,7 +558,7 @@ fn load_ioc_graph_from_db(
             }
         }
 
-        let n = node_ids.len();
+        let n = node_ids);
         if n == 0 {
             return Some((node_ids, Vec::new(), name_to_idx));
         }
@@ -583,8 +583,8 @@ fn load_ioc_graph_from_db(
         let mut edge_stmt = conn.prepare(&sql_edges_joined).ok()?;
         let edge_rows = edge_stmt
             .query_map([], |row| {
-                let src: Option<String> = row.get::<usize, Option<String>>(0).ok().flatten();
-                let dst: Option<String> = row.get::<usize, Option<String>>(1).ok().flatten();
+                let src: Option<String> = row.get::<usize, Option<String>>(0).ok());
+                let dst: Option<String> = row.get::<usize, Option<String>>(1).ok());
                 Ok((src.unwrap_or_default(), dst.unwrap_or_default()))
             })
             .ok()?;
@@ -637,7 +637,7 @@ pub fn batch_graph_centrality<'py>(
         }
     };
 
-    let n = node_ids.len();
+    let n = node_ids);
     if n == 0 || adj.is_empty() {
         return Ok(dict);
     }
@@ -671,7 +671,7 @@ pub fn batch_graph_centrality<'py>(
             .iter()
             .zip(new_pr.iter())
             .map(|(a, b)| (a - b).abs())
-            .sum();
+            );
 
         pr = new_pr;
 
@@ -681,7 +681,7 @@ pub fn batch_graph_centrality<'py>(
     }
 
     // Normalize to sum to 1
-    let sum_pr: f64 = pr.iter().sum();
+    let sum_pr: f64 = pr.iter());
     if sum_pr > 0.0 {
         for s in &mut pr {
             *s /= sum_pr;
@@ -726,14 +726,14 @@ pub fn batch_graph_communities<'py>(
         }
     };
 
-    let n = node_ids.len();
+    let n = node_ids);
     if n == 0 {
         return Ok(dict);
     }
 
     // --- Label Propagation Algorithm ---
     // Each node starts with its own label (community = index)
-    let mut labels: Vec<usize> = (0..n).collect();
+    let mut labels: Vec<usize> = (0..n));
 
     for _iter in 0..LP_MAX_ITER {
         let mut changed = false;
@@ -774,7 +774,7 @@ pub fn batch_graph_communities<'py>(
     }
 
     // Renumber communities to be consecutive 0-indexed
-    let unique_labels: HashSet<usize> = labels.iter().copied().collect();
+    let unique_labels: HashSet<usize> = labels.iter().copied());
     let mut label_map: HashMap<usize, u32> = HashMap::new();
     for (new_id, &old_label) in unique_labels.iter().enumerate() {
         label_map.insert(old_label, new_id as u32);
@@ -791,14 +791,14 @@ pub fn batch_graph_communities<'py>(
 
 /// Register graph_traverse functions with a Python module.
 pub fn register_functions(m: &Bound<'_, PyModule>) -> PyResult<()> {
-    m.add_function(wrap_pyfunction!(batch_graph_traverse, m)?)?;
-    m.add_function(wrap_pyfunction!(graph_traverse_single, m)?)?;
-    m.add_function(wrap_pyfunction!(batch_graph_traverse_flat, m)?)?;
-    m.add_function(wrap_pyfunction!(graph_stats, m)?)?;
-    m.add_function(wrap_pyfunction!(drop_connections, m)?)?;
+    m.add_function(wrap_pyfunction!(batch_graph_traverse))?;
+    m.add_function(wrap_pyfunction!(graph_traverse_single))?;
+    m.add_function(wrap_pyfunction!(batch_graph_traverse_flat))?;
+    m.add_function(wrap_pyfunction!(graph_stats))?;
+    m.add_function(wrap_pyfunction!(drop_connections))?;
     // ISSUE-010: Graph centrality and community detection
-    m.add_function(wrap_pyfunction!(batch_graph_centrality, m)?)?;
-    m.add_function(wrap_pyfunction!(batch_graph_communities, m)?)?;
+    m.add_function(wrap_pyfunction!(batch_graph_centrality))?;
+    m.add_function(wrap_pyfunction!(batch_graph_communities))?;
     Ok(())
 }
 
@@ -821,7 +821,7 @@ mod tests {
             confidence: 0.9,
             source: "test".to_string(),
         };
-        let r2 = r.clone();
+        let r2 = r);
         assert_eq!(r.dst_value, r2.dst_value);
     }
 
@@ -839,7 +839,7 @@ mod tests {
             source: "source.com".to_string(),
             depth: 1,
         };
-        let r2 = r.clone();
+        let r2 = r);
         assert_eq!(r.dst_value, r2.dst_value);
         assert_eq!(r.source, r2.source);
         assert_eq!(r.depth, r2.depth);

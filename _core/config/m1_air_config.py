@@ -22,6 +22,7 @@ References:
 
 from dataclasses import dataclass, field
 import msgspec
+from compat.msgspec_gc_compat import Struct
 from typing import ClassVar
 
 # MODERN-41 Fix: Import SWAP_TIERS SSOT for swap thresholds
@@ -33,7 +34,7 @@ from _core._util import aclose
 # M1AirConfig — frozen hardware profile for MacBook Air M1 8GB UMA
 # ─────────────────────────────────────────────────────────────────────────────
 
-class M1AirConfig(msgspec.Struct, frozen=True, gc=False):
+class M1AirConfig(Struct, frozen=True):
     """
     Immutable M1 8GB UMA hardware profile.
 

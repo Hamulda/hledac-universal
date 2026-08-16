@@ -34,6 +34,7 @@ from typing import Any
 from hledac.universal._core.psutil_shim import psutil
 from hledac.universal.utils.asyncx import safe_create_task, safe_wait_for
 from hledac.universal.utils.lru_cache import LRUCache
+from hledac.universal._core.locks import LockCategory, register_lock
 
 try:
     import numpy as np
@@ -44,6 +45,7 @@ except ImportError:
     NDArray = 'NDArray'
     HAS_NUMPY = False
 import msgspec
+from compat.msgspec_gc_compat import Struct
 from hledac.universal.compat.msgspec_gc_compat import Struct
 from hledac.universal.compat.msgspec_gc_compat import Struct
 
@@ -83,6 +85,7 @@ logger = logging.getLogger(__name__)
 # avoids asyncio.Lock overhead for a simple increment-only counter
 _cleanup_counter = itertools.count(1)
 _cleanup_lock = threading.Lock()
+register_lock(LockCategory.CACHE, _cleanup_lock, "memory_coordinator._cleanup_lock")
 
 
 def _next_cleanup_id() -> int:

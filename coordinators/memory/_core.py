@@ -19,6 +19,7 @@ from typing import Any
 
 from hledac.universal.compat.msgspec_gc_compat import Struct
 from _core import aclose
+from compat.msgspec_gc_compat import Struct
 
 
 class ThermalState(IntEnum):

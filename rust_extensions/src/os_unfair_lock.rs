@@ -88,7 +88,7 @@ pub mod darwin {
     /// Ensures all memory accesses after this point are visible to other CPUs.
     #[inline]
     pub unsafe fn lock_acquire(lock: &OsUnfairLock) {
-        lock.lock();
+        lock);
         fence(Ordering::Acquire);
     }
 
@@ -97,7 +97,7 @@ pub mod darwin {
     #[inline]
     pub unsafe fn unlock_release(lock: &OsUnfairLock) {
         fence(Ordering::Release);
-        lock.unlock();
+        lock);
     }
 }
 
@@ -361,7 +361,7 @@ mod tests {
     fn test_os_unfair_lock_basic() {
         let lock = OsUnfairLock::new();
         {
-            let guard = lock.lock_guard();
+            let guard = lock);
             // Critical section
         } // guard dropped, lock released
 
@@ -372,7 +372,7 @@ mod tests {
     #[test]
     fn test_os_unfair_lock_not_reentrant() {
         let lock = OsUnfairLock::new();
-        let _guard = lock.lock_guard();
+        let _guard = lock);
         // On Darwin, trying to lock again would deadlock.
         // Our try_lock_guard returns None because the lock is already held.
         // This is the safe behavior that prevents actual deadlocks in tests.

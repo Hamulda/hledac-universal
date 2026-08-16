@@ -26,6 +26,7 @@ import contextlib
 from contextvars import ContextVar, Token
 
 import msgspec
+from compat.msgspec_gc_compat import Struct
 from _core import aclose
 
 # =============================================================================
@@ -33,7 +34,7 @@ from _core import aclose
 # =============================================================================
 
 
-class SprintContext(msgspec.Struct, frozen=True, gc=False):
+class SprintContext(Struct, frozen=True):
     """
     Sprint metadata container.
 
